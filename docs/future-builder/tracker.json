@@ -3,11 +3,10 @@
   "working_target": "0.5",
   "target_is_release_commitment": false,
   "updated": "2026-10-27",
-  "phase": "FB05\u2013FB19 implemented; 0.4.0 published with scoped package verification; FB21 sun-based appearance schedules planned for 0.5; FB20 remains the recurring release gate",
+  "phase": "0.4.1 published; local 0.5 solar schedules, adaptive looks, coordinated updates and Calendar/System recipes implemented and validated; FB20 remains the release gate",
   "implementation_started": true,
   "status_source": "This file is the canonical task status; roadmap and archived proposals do not override it.",
   "next": [
-    "FB21",
     "FB20"
   ],
   "statuses": [
@@ -336,7 +335,7 @@
     {
       "id": "FB21",
       "title": "Add sun-based appearance schedules using the Weather city",
-      "status": "planned",
+      "status": "in_progress",
       "target": "0.5",
       "depends_on": [
         "FB15",
@@ -345,12 +344,68 @@
       "source_issue": "https://github.com/profilaz3/halcyon/issues/14",
       "plan": "FB21-PLAN.md",
       "exit": "Dawn, sunrise, solar noon, evening golden hour and sunset schedules reuse the enabled Weather widget city or an explicit manual city, calculate locally, and preserve geometry/content. Location lifecycle, offline use, time changes, missing events, manual overrides, migration and native UI pass the FB21 plan and final package checks.",
-      "evidence": [],
+      "evidence": [
+        "FB21-PLAN.md",
+        "probes/solar-reference.json",
+        "DELIVERY-050.md"
+      ],
       "owner": null,
-      "contract_review": "2026-10-27: singleton Weather or independent manual city; optional city-zone migration; city-local occurrence dates and UTC instants; location-revision fences at dispatch and commit; explicit appearance-only projection. Planned, not implemented."
+      "contract_review": "Implemented and locally validated: singleton Weather or independent manual city, IANA-zone migration, city-local dates/UTC instants, revision guards at dispatch and commit, appearance-only projection. Final 0.5 package acceptance remains.",
+      "implementation_status": "complete_locally"
+    },
+    {
+      "id": "FB22",
+      "title": "Adaptive Tidal, Paper and Moss appearances",
+      "status": "validated",
+      "target": "0.5",
+      "depends_on": [
+        "FB21"
+      ],
+      "plan": "ADAPTIVE-LOOKS.md",
+      "exit": "Native compact/wide previews, actual appearance-only apply, preserved content and geometry, valid-city and duplicate-cycle guards.",
+      "evidence": [
+        "ADAPTIVE-LOOKS.md",
+        "DELIVERY-050.md"
+      ],
+      "scope": "Local implementation and native validation; final package qualification is FB20.",
+      "owner": null
+    },
+    {
+      "id": "FB23",
+      "title": "Coordinated app and Islands update status",
+      "status": "validated",
+      "target": "0.5",
+      "depends_on": [
+        "FB20"
+      ],
+      "plan": "COORDINATED-UPDATES.md",
+      "exit": "Paired, partial and absent-companion offers; install/activation outcomes; compact/wide native status and actions.",
+      "evidence": [
+        "COORDINATED-UPDATES.md",
+        "DELIVERY-050.md"
+      ],
+      "scope": "Local implementation and native validation; final package qualification is FB20.",
+      "owner": null
+    },
+    {
+      "id": "FB24",
+      "title": "Calendar and system reading recipes",
+      "status": "validated",
+      "target": "0.5",
+      "depends_on": [
+        "FB17"
+      ],
+      "plan": "PERSONAL-WIDGETS-050.md",
+      "exit": "Bounded parts, privacy, existing provider demand, versioned transport, Apply/Undo, old-version refusal and compact/wide native views.",
+      "evidence": [
+        "PERSONAL-WIDGETS-050.md",
+        "DELIVERY-050.md"
+      ],
+      "scope": "Local implementation and native validation; final package qualification is FB20.",
+      "owner": null
     }
   ],
-  "release_gate_note": "FB20 applies to every shipping milestone and additionally requires validation of every feature included in that milestone. FB19 hosted discovery is separately deferrable; it does not block earlier releases. The completed 0.4.0 package verification is recorded in ../releases/0.4.0-acceptance.md; FB21 requires new implementation and acceptance for 0.5.",
+  "release_gate_note": "FB20 applies to each shipping milestone and qualifies every included feature. 0.4.1 maintenance is published with package/upgrade verification in ../releases/0.4.1-acceptance.md. Local 0.5 feature checks are recorded in DELIVERY-050.md; they do not publish or qualify a final 0.5 package.",
   "deferred": [
     "Activity-triggered layout rearrangement",
     "Timed live desktop trials",
@@ -423,10 +478,14 @@
     {
       "date": "2026-10-27",
       "change": "Added FB21 to the 0.5 plan for issue #14: sun-based appearance schedules follow the Weather widget city when enabled, with manual city fallback and local calculations. Updated planning links and the published version summary. Documentation only; no implementation, version bump or publication."
+    },
+    {
+      "date": "2026-10-27",
+      "change": "Published 0.4.1 maintenance with verified signed APT and private package upgrade. Implemented local 0.5 sun schedules/city binding, adaptive Tidal/Paper/Moss appearances, matching app/Islands update status and Calendar/System recipes. Staged reviews, focused checks and full Rust integration recorded in DELIVERY-050.md. 0.5 remains local and requires final packaged release acceptance. Final isolated COSMIC sessions pass at both window sizes, with 18 captures, keyboard Undo, unchanged fixture preferences and published-version refusal of new recipes. 73 GiB SSD space remains."
     }
   ],
   "foundation_probe_code_added": true,
   "execution_rule": "Implement in dependency order; review each implementation, fix findings and validate before advancing.",
-  "implementation_complete": false,
+  "implementation_complete": true,
   "release_eligible": false
 }

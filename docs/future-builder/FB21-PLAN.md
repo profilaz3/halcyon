@@ -2,7 +2,7 @@
 
 Status: **implemented locally**, 2026-10-27; release packaging remains pending. Tracks
 [GitHub issue #14](https://github.com/profilaz3/halcyon/issues/14).
-The released 0.4.0 supports fixed-time schedules and Day/Night widget Moments;
+The released 0.4.1 supports fixed-time schedules and Day/Night widget Moments;
 this extends those foundations. Implemented through the existing scheduler and guarded store; no 0.5 release has been published.
 
 ## Experience
@@ -20,8 +20,9 @@ current appearance until the user chooses a source.
 
 ## Location and occurrence contract
 
-The current app has one `Config.location { name, latitude, longitude }`, no saved
-time zone, and one Weather widget. Daily overview can display that same Weather
+The 0.4.1 baseline has one `Config.location { name, latitude, longitude }`, no saved
+time zone, and one Weather widget. The local 0.5 implementation adds an optional
+IANA zone to that city and a separate manual schedule city. Daily overview can display that same Weather
 section. Do not expose selection among multiple Weather instances in this slice.
 
 - Follow the singleton Weather binding. With Daily overview enabled, use its

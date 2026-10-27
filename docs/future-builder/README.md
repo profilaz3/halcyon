@@ -1,14 +1,18 @@
 # Halcyon future builder
 
-Design the foundations for expressive desktops, reusable widgets and visual editing before building the full editor. **0.5 is the next working target, not a release-date commitment.** The published application is version 0.4.0.
+Design the foundations for expressive desktops, reusable widgets and visual editing before building the full editor. **0.5 is the next working target, not a release-date commitment.** The published application is version 0.4.1.
 
-Direction accepted on 2026-10-26: shared styling, varied desktop compositions, visual editing, personal widgets and portable setups. FB05–FB19 are implemented and locally validated: shared styling, Clock choices, shared Clock/Weather presentation and measurement, keyed provider demand, and layout/input integration. The original feature implementations are complete in their documented bounded scope. See the [0.4.0 package verification](../releases/0.4.0-acceptance.md) for release evidence. FB21 adds planned sun-based appearance schedules for 0.5, following the Weather widget's city when enabled.
+Direction accepted on 2026-10-26: shared styling, varied desktop compositions, visual editing, personal widgets and portable setups. FB05–FB19 are implemented and locally validated: shared styling, Clock choices, shared Clock/Weather presentation and measurement, keyed provider demand, and layout/input integration. The original feature implementations are complete in their documented bounded scope. See the [0.4.0 package verification](../releases/0.4.0-acceptance.md) for release evidence. FB21 adds locally implemented sun-based appearance schedules for 0.5, following the enabled Weather city or a separate chosen city. Adaptive Tidal, Paper and Moss looks and coordinated package status are implemented locally. [The delivery tracker](DELIVERY-050.md) records staged checks; 0.5 is not published.
 
 ## Start here
 
 | File | Purpose |
 | --- | --- |
-| [0.5 sun-based schedules](FB21-PLAN.md) | Planned sun events, Weather city reuse, local calculations and appearance-only changes |
+| [Current delivery](DELIVERY-050.md) | 0.4.1 publication and staged local 0.5 work |
+| [Adaptive looks](ADAPTIVE-LOOKS.md) | Tidal, Paper and Moss daily appearance cycles |
+| [Coordinated updates](COORDINATED-UPDATES.md) | Matching app/Islands offers and one next action |
+| [Calendar and system recipes](PERSONAL-WIDGETS-050.md) | Personal agendas and selected system readings |
+| [0.5 sun-based schedules](FB21-PLAN.md) | Local sun events, city binding, appearance-only changes and validation |
 | [Settings structural pass](STRUCTURAL-PASS.md) | Responsive native editors, compact help, navigation and validation |
 | [Architecture](ARCHITECTURE.md) | Component boundaries, data flow, ownership and migration |
 | [Reviewed contracts](CONTRACTS.md) | Legacy setup behavior, later instance migration, override and reset rules |
