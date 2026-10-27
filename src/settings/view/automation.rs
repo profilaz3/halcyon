@@ -690,6 +690,12 @@ impl Settings {
             cosmic::widget::dropdown(&editor.profile_labels, selected, move |index| {
                 edit(Edit::Draft(DraftEdit::Profile(targets[index].clone())))
             })
+            .placeholder(if draft.kind == Kind::Solar {
+                "Choose appearance…"
+            } else {
+                "Choose setup…"
+            })
+            .width(Length::Fill)
             .into(),
         ));
         if draft.profile.is_some() && selected.is_none() {
