@@ -1042,7 +1042,11 @@ mod tests {
             search("calendar update"),
             search("calendar calendar update")
         );
-        assert!(search("calendar gpu").is_empty());
+        // Builder now supports both Calendar and GPU parts; use an actually
+        // unsupported second term to verify that search retains every word.
+        assert!(search("calendar bluetooth").is_empty());
+        assert_eq!(search("calendar agenda")[0].page, Page::Builder);
+        assert_eq!(search("gpu recipe")[0].page, Page::Builder);
         assert!(search("calendar mystery option").is_empty());
         assert!(search("desktop").len() <= 10);
     }
