@@ -1449,6 +1449,35 @@ fn fb12_native_mix_choices_preview_cancel_and_apply_fit_both_sizes() {
     }
     use crate::desktop::{DesktopStore, profiles as records, wallpaper as backgrounds};
     let root = std::path::PathBuf::from(std::env::var_os("DESKTOP_CARDS_DESKTOP_ROOT").unwrap());
+    // Supply the desktop being tested instead of inheriting this machine's
+    // installed COSMIC defaults (absent on plain Ubuntu CI runners).
+    for (namespace, key, value) in [
+        (
+            "com.system76.CosmicPanel",
+            "entries",
+            "[\"Panel\",\"Dock\"]",
+        ),
+        ("com.system76.CosmicPanel.Dock", "anchor", "Bottom"),
+        (
+            "com.system76.CosmicPanel.Dock",
+            "plugins_center",
+            "Some([\"com.system76.CosmicAppList\"])",
+        ),
+        ("com.system76.CosmicPanel.Panel", "anchor", "Top"),
+        (
+            "com.system76.CosmicPanel.Panel",
+            "plugins_wings",
+            "Some(([], [\"com.system76.CosmicAppletTime\"]))",
+        ),
+    ] {
+        let file = root
+            .join("system/cosmic")
+            .join(namespace)
+            .join("v1")
+            .join(key);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, value).unwrap();
+    }
     let directory = root
         .join("config/cosmic")
         .join(backgrounds::NAMESPACE)

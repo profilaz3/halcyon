@@ -71,7 +71,8 @@ jobs:
           PYTHONPATH=companion:scripts/compatibility:scripts/apt \
             unshare --user --map-root-user python3 -m unittest discover -s scripts/apt -p 'test_*.py'
       - name: Test Rust
-        run: cargo test --locked -- --test-threads=1
+        # Bounded rendering workers must run with the shipped optimization profile.
+        run: cargo test --release --locked -- --test-threads=1
       - name: Upload failed layout evidence
         if: failure()
         uses: actions/upload-artifact@v4
