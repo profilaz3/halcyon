@@ -3,7 +3,7 @@ use crate::settings::updates::{Check, Message as Update, UpdateChannel};
 
 impl Settings {
     pub(in crate::settings) fn updates_section(&self) -> Element<'_, Message> {
-        let mut content = vec![label("Updates", 16., FG)];
+        let mut content = Vec::new();
         let mut actions = Vec::new();
         let action =
             |title: &'static str, id: &'static str, message: Update| -> Element<'_, Message> {
@@ -15,29 +15,40 @@ impl Settings {
         match &self.updates.identity {
             None => content.push(label("Checking this installation…", 14., MUTED)),
             Some(identity) => {
-                let version = match &identity.installed_version {
-                    Some(installed) if identity.running_version != *installed => format!(
-                        "Running {} · Installed {}",
-                        identity.running_version, installed
-                    ),
-                    Some(installed) => format!("Halcyon {installed}"),
-                    _ => format!("Halcyon {}", identity.running_version),
-                };
-                content.push(label(version, 14., FG));
-                let status = match &self.updates.check {
-                    Check::NotChecked => identity.reason.to_string(),
-                    Check::Checking => "Checking system updates…".into(),
-                    Check::Current => "No newer Halcyon package found.".into(),
-                    Check::Available(version) => format!("Halcyon {version} is available."),
-                    Check::Failed(error) => error.label().into(),
-                };
-                content.push(label(status, 14., MUTED));
+                let summary = crate::settings::updates::Summary::new(
+                    identity,
+                    &self.updates.check,
+                    &self.desktop.islands.installation,
+                );
+                content.push(
+                    column::with_children(vec![
+                        label(summary.title.clone(), 20., FG),
+                        label(summary.detail.clone(), 13., MUTED),
+                    ])
+                    .spacing(6)
+                    .into(),
+                );
+                let main = identity
+                    .installed_version
+                    .as_deref()
+                    .unwrap_or(&identity.running_version);
+                content.push(split(label("Halcyon", 14., FG), label(main, 14., MUTED)));
+                let addon = identity.islands_version.as_ref().map_or_else(
+                    || self.desktop.islands.installation.status_label().to_string(),
+                    |v| format!("{v} · {}", self.desktop.islands.installation.status_label()),
+                );
+                content.push(split(label("Islands", 14., FG), label(addon, 12., MUTED)));
+                if let Check::Failed(error) = &self.updates.check
+                    && summary.title != "Update check failed"
+                {
+                    content.push(label(error.label(), 12., MUTED));
+                }
                 match identity.channel {
                     UpdateChannel::Apt if identity.can_check() => {
                         if self.updates.check == Check::Checking {
                             actions.push(action("Cancel check", "updates-cancel", Update::Cancel));
                         } else {
-                            let check = if matches!(self.updates.check, Check::Available(_)) {
+                            let check = if summary.system_action {
                                 button::standard("Check for updates")
                             } else {
                                 button::suggested("Check for updates")
@@ -51,7 +62,7 @@ impl Settings {
                         }
                         if identity.store.is_some() {
                             actions.push(
-                                (if matches!(self.updates.check, Check::Available(_)) {
+                                (if summary.system_action {
                                     button::suggested("Update in COSMIC Store")
                                 } else {
                                     button::standard("Open COSMIC Store")
@@ -63,7 +74,7 @@ impl Settings {
                                 )
                                 .into(),
                             );
-                            content.push(label("Choose Updates in COSMIC Store.", 12., MUTED));
+                            content.push(self.help("updates-system", "How updates work", "Open Updates in COSMIC Store and install the offered packages. The signed Halcyon source supplies matching app and Islands releases. Islands is not added unless you choose to install it. A new Islands host starts at your next login; no logout happens automatically."));
                         } else {
                             content.push(label(
                                 "COSMIC Store is unavailable. Use your system package manager.",
@@ -118,13 +129,6 @@ impl Settings {
         }
         if !actions.is_empty() {
             content.push(row::with_children(actions).spacing(8).wrap().into());
-        }
-        if crate::settings::updates::pending_islands(&self.desktop.islands.installation) {
-            content.push(label(
-                "Islands update ready · log out and back in to activate.",
-                12.,
-                MUTED,
-            ));
         }
         pages::section(content)
     }

@@ -9,8 +9,8 @@ requires inspection of actual native renders at compact and wide sizes.
 | Maintenance | Release the architecture repairs as 0.4.1; verify packages, upgrade, native Settings and signed updates | Complete |
 | Solar Moments | Local sun calculations, safe scheduling, city binding and native rule controls | Complete locally |
 | Adaptive setups | Coordinated Tidal, Paper and Moss appearances with truthful native previews | Complete locally |
-| Updates | One clear Halcyon/Islands status and next action through existing OS installation | In progress |
-| Personal widgets | Calendar agenda, then system readings in the existing recipe and Canvas system | Pending |
+| Updates | One clear Halcyon/Islands status and next action through existing OS installation | Complete locally |
+| Personal widgets | Calendar agenda, then system readings in the existing recipe and Canvas system | In progress |
 | Integration | Final behavior, rendering, migration and resource checks; reconcile plans and evidence | Pending |
 
 The solar contract is [FB21](FB21-PLAN.md). Architecture repairs and their earlier

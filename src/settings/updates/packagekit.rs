@@ -477,28 +477,41 @@ pub(super) async fn candidate(
         .architecture
         .as_ref()
         .ok_or(Failure::InstallationChanged)?;
-    let mut candidate = None;
-    let mut seen_main = false;
+    let mut main = None;
+    let mut islands = None;
+    let mut seen = [false; 2];
     for id in packages {
         let parts: Vec<_> = id.split(';').collect();
         if parts.len() != 4 || parts.iter().take(3).any(|s| s.is_empty()) {
             return Err(Failure::InvalidResponse);
         }
-        if parts[0] != "cosmic-ext-halcyon" || parts[2] != arch {
+        if parts[2] != arch {
             continue;
         }
-        if seen_main || !super::identity::valid_version(parts[1]) {
+        let (slot, baseline, selected) = match parts[0] {
+            "cosmic-ext-halcyon" => (0, installed, &mut main),
+            "cosmic-ext-halcyon-islands" if identity.islands_version.is_some() => {
+                (1, identity.islands_version.as_ref().unwrap(), &mut islands)
+            }
+            _ => continue,
+        };
+        if seen[slot] || !super::identity::valid_version(parts[1]) {
             return Err(Failure::InvalidResponse);
         }
-        seen_main = true;
-        // dpkg is the platform authority, including epochs, tildes, numeric
-        // revisions and Debian-equivalent spellings. Never SemVer/string order.
-        if newer(parts[1], installed).await? {
-            if candidate.replace(parts[1].to_string()).is_some() {
-                return Err(Failure::InvalidResponse);
-            }
+        seen[slot] = true;
+        // dpkg owns Debian version ordering; candidates are never installed here.
+        if newer(parts[1], baseline).await? {
+            *selected = Some(parts[1].to_owned());
         }
     }
+    if let Some(installed_islands) = &identity.islands_version {
+        let resulting_main = main.as_ref().unwrap_or(installed);
+        let resulting_islands = islands.as_ref().unwrap_or(installed_islands);
+        if resulting_main != resulting_islands {
+            return Err(Failure::IslandsMismatch);
+        }
+    }
+    let candidate = main.or(islands);
     Ok(candidate)
 }
 async fn newer(candidate: &str, installed: &str) -> Result<bool, Failure> {

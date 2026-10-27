@@ -9,7 +9,7 @@ impl Settings {
         let action = |value| Message::Updates(UpdateMessage::Islands(value));
         let state = &self.updates.islands;
         let mut rows = vec![detail(
-            "Islands (optional)",
+            "Islands setup",
             self.desktop.islands.installation.status_label(),
         )];
         match &state.phase {
@@ -41,7 +41,7 @@ impl Settings {
                 Installation::Installed { .. } => {
                     if islands::can_enable(&self.desktop.islands.installation)
                         && self.updates.identity.as_ref().is_some_and(|id| id.can_enable_islands()) {
-                        rows.push(label("Check compatibility and enable for your user, then log out and back in. Startup checks decide whether Islands can run.", 12., MUTED));
+                        rows.push(label("Enable Islands for your next login. Your current panel keeps running.", 12., MUTED));
                         rows.push(button::suggested("Enable for next login")
                             .id("enable-islands".into()).on_press(action(AddonMessage::Enable)).into());
                     } else if islands::can_enable(&self.desktop.islands.installation) {

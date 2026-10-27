@@ -251,6 +251,7 @@ fn apt() -> Identity {
         reason: "System updates · checks only when you ask.",
         running_version: "0.2.0".into(),
         installed_version: Some("0.2.0".into()),
+        islands_version: None,
         architecture: Some("amd64".into()),
         store: Some("/usr/share/applications/com.system76.CosmicStore.desktop".into()),
         islands_match: identity::IslandsMatch::Ready,
@@ -1134,4 +1135,54 @@ async fn islands_install_uses_one_file_and_keeps_unknown_outcome() {
     let path = prepared.paths[0].clone();
     drop(prepared);
     assert!(path.is_file());
+}
+
+#[tokio::test]
+async fn unified_updates_check_installed_pair_and_reject_partial_cohorts() {
+    let mut installed = apt();
+    installed.installed_version = Some("0.4.0".into());
+    installed.islands_version = Some("0.4.0".into());
+    let main = "cosmic-ext-halcyon;0.4.1;amd64;repo".to_owned();
+    let addon = "cosmic-ext-halcyon-islands;0.4.1;amd64;repo".to_owned();
+    assert_eq!(
+        packagekit::candidate(&installed, &[main.clone(), addon.clone()])
+            .await
+            .unwrap(),
+        Some("0.4.1".into())
+    );
+    assert_eq!(
+        packagekit::candidate(&installed, &[main.clone()]).await,
+        Err(Failure::IslandsMismatch)
+    );
+    assert_eq!(
+        packagekit::candidate(&installed, &[addon.clone()]).await,
+        Err(Failure::IslandsMismatch)
+    );
+    installed.installed_version = Some("0.4.1".into());
+    assert_eq!(
+        packagekit::candidate(&installed, &[addon.clone()])
+            .await
+            .unwrap(),
+        Some("0.4.1".into())
+    );
+    installed.islands_version = Some("0.4.1".into());
+    assert_eq!(packagekit::candidate(&installed, &[]).await.unwrap(), None);
+    installed.islands_version = None;
+    installed.installed_version = Some("0.4.0".into());
+    assert_eq!(
+        packagekit::candidate(&installed, &[main, addon])
+            .await
+            .unwrap(),
+        Some("0.4.1".into())
+    );
+    // An absent optional companion must never create an offer on its own.
+    assert_eq!(
+        packagekit::candidate(
+            &installed,
+            &["cosmic-ext-halcyon-islands;0.9.0;amd64;repo".into()]
+        )
+        .await
+        .unwrap(),
+        None
+    );
 }

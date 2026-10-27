@@ -54,6 +54,7 @@ pub struct Identity {
     pub reason: &'static str,
     pub running_version: String,
     pub installed_version: Option<String>,
+    pub islands_version: Option<String>,
     pub architecture: Option<String>,
     pub store: Option<PathBuf>,
     pub(super) islands_match: IslandsMatch,
@@ -69,6 +70,7 @@ impl Default for Identity {
             reason: "Installation could not be verified.",
             running_version: env!("CARGO_PKG_VERSION").into(),
             installed_version: None,
+            islands_version: None,
             architecture: None,
             store: None,
             islands_match: IslandsMatch::Unknown,
@@ -109,6 +111,7 @@ impl Identity {
             && other.can_install_islands()
             && self.evidence == other.evidence
             && self.installed_version == other.installed_version
+            && self.islands_version == other.islands_version
             && self.architecture == other.architecture
     }
     pub fn can_check(&self) -> bool {
@@ -119,6 +122,7 @@ impl Identity {
             && other.can_check()
             && self.evidence == other.evidence
             && self.installed_version == other.installed_version
+            && self.islands_version == other.islands_version
             && self.architecture == other.architecture
     }
 }
@@ -561,6 +565,11 @@ pub(super) fn measure(root: &Path, proc_exe: &Path, source_binary: &Path) -> Ide
     };
     result.installed_version = Some(version.clone());
     result.architecture = Some("amd64".into());
+    result.islands_version = db
+        .installed("cosmic-ext-halcyon-islands", "amd64")
+        .and_then(|p| p.get("Version"))
+        .filter(|v| valid_version(v))
+        .cloned();
     result.islands_match = islands_match(root, &db);
     if deleted || running_hash != installed_hash || stamp(proc_exe) != stamp(&installed_path) {
         result.reason = "The running app was replaced or removed. Restart Halcyon to recheck.";

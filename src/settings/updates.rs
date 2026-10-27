@@ -3,6 +3,8 @@ mod enrollment;
 mod identity;
 pub(super) mod islands;
 mod packagekit;
+mod summary;
+pub(super) use summary::Summary;
 #[cfg(test)]
 mod tests;
 
@@ -317,6 +319,7 @@ impl Updates {
             return;
         }
         let mut identity = Identity {
+            running_version: "0.2.5".into(),
             installed_version: Some("0.2.5".into()),
             architecture: Some("amd64".into()),
             ..Default::default()
