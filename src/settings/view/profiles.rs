@@ -608,7 +608,7 @@ impl Settings {
             preview.clone(),
             height,
             false,
-            self.page != Page::DesktopProfiles,
+            !matches!(self.page, Page::DesktopProfiles | Page::AdaptiveLooks),
         )
     }
 

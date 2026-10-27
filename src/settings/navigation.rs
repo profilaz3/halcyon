@@ -491,6 +491,12 @@ const SEARCH: &[SearchHit] = &[
         false,
     ),
     hit(
+        Page::AdaptiveLooks,
+        "Adaptive looks",
+        "adaptive tidal paper moss day evening night solar daily cycle appearance",
+        false,
+    ),
+    hit(
         Page::Moments,
         "Day & Night moments",
         "moments day night widget clock style scheduled",

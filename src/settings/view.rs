@@ -1,4 +1,5 @@
 mod adaptive;
+mod adaptive_looks;
 mod automation;
 mod calendar;
 mod canvas;
@@ -516,6 +517,7 @@ impl Settings {
             Page::DesktopShortcuts => self.shortcuts_page(),
             Page::DesktopAutomation => self.automation_page(),
             Page::Moments => self.moments_page(),
+            Page::AdaptiveLooks => self.adaptive_looks_page(),
             Page::Builder => self.recipe_page(),
         };
         let pinned = !searching && self.page == Page::DesktopAppearance && self.appearance_pinned();

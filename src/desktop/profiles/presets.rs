@@ -542,6 +542,9 @@ fn spine() -> Preset {
 
 /// The built-in preset with `id`, including the earlier releases' names.
 pub fn preset(id: &str) -> Option<Preset> {
+    if id.starts_with("adaptive-") {
+        return super::adaptive::preset(id);
+    }
     if id == "ridge" {
         return Some(ridge());
     }

@@ -106,6 +106,7 @@ pub enum Page {
     /// Profile schedules and display rules, a subpage of Pop!_OS.
     DesktopAutomation,
     Moments,
+    AdaptiveLooks,
     Builder,
 }
 impl Page {
@@ -121,7 +122,7 @@ impl Page {
             Self::General,
         ],
     )];
-    const ALL: [Self; 30] = [
+    const ALL: [Self; 31] = [
         Self::Overview,
         Self::WidgetLayout,
         Self::PendingChanges,
@@ -151,6 +152,7 @@ impl Page {
         Self::DesktopShortcuts,
         Self::DesktopAutomation,
         Self::Moments,
+        Self::AdaptiveLooks,
         Self::Builder,
     ];
     fn nav(self) -> Self {
@@ -166,9 +168,10 @@ impl Page {
             Self::Overview | Self::WidgetLayout => Self::Overview,
             Self::Builder => Self::Builder,
             Self::Appearance => Self::Appearance,
-            Self::DesktopProfiles | Self::DesktopAutomation | Self::Moments => {
-                Self::DesktopProfiles
-            }
+            Self::DesktopProfiles
+            | Self::DesktopAutomation
+            | Self::Moments
+            | Self::AdaptiveLooks => Self::DesktopProfiles,
             Self::DesktopMotion => Self::DesktopMotion,
             Self::General | Self::PendingChanges => Self::General,
             _ => Self::Widgets,
@@ -185,9 +188,10 @@ impl Page {
             | Self::DesktopWindowRules
             | Self::DesktopIcons
             | Self::DesktopShortcuts => Self::DesktopDock,
-            Self::DesktopProfiles | Self::DesktopAutomation | Self::Moments => {
-                Self::DesktopProfiles
-            }
+            Self::DesktopProfiles
+            | Self::DesktopAutomation
+            | Self::Moments
+            | Self::AdaptiveLooks => Self::DesktopProfiles,
             Self::DesktopMotion => Self::DesktopMotion,
             Self::General | Self::PendingChanges => Self::General,
             _ => Self::Widgets,
@@ -230,6 +234,7 @@ impl Page {
             Self::Widgets => &[Self::Widgets, Self::Overview, Self::Builder],
             Self::DesktopProfiles => &[
                 Self::DesktopProfiles,
+                Self::AdaptiveLooks,
                 Self::Moments,
                 Self::DesktopAutomation,
             ],
@@ -312,6 +317,7 @@ impl Page {
             Self::DesktopShortcuts => "desktop-shortcuts",
             Self::DesktopAutomation => "desktop-automation",
             Self::Moments => "moments",
+            Self::AdaptiveLooks => "adaptive",
             Self::Builder => "builder",
         }
     }
@@ -346,6 +352,7 @@ impl Page {
             Self::DesktopShortcuts => "Shortcuts",
             Self::DesktopAutomation => "Schedules & display rules",
             Self::Moments => "Moments",
+            Self::AdaptiveLooks => "Adaptive looks",
             Self::Builder => "Widget builder",
         }
     }
@@ -411,6 +418,7 @@ impl Page {
             | Self::DesktopShortcuts
             | Self::DesktopAutomation
             | Self::Moments
+            | Self::AdaptiveLooks
             | Self::Builder => "preferences-desktop-symbolic",
         }
     }
@@ -598,6 +606,11 @@ pub enum Message {
     DesktopIcons(desktop_icons::Message),
     Tools(tools::Message),
     Automation(automation::Message),
+    AdaptivePreview(
+        crate::desktop::profiles::adaptive::Look,
+        crate::desktop::profiles::adaptive::Phase,
+    ),
+    AdaptiveSource(crate::automation::solar::Source),
     Resized(Size),
     Widget(Widget, bool),
     RefreshInterval(Widget, u64),
@@ -726,6 +739,9 @@ pub struct Settings {
     depth_preview: depth::Cache,
     design: design::State,
     moment_preview: crate::moments::Phase,
+    adaptive_look: crate::desktop::profiles::adaptive::Look,
+    adaptive_phase: crate::desktop::profiles::adaptive::Phase,
+    adaptive_source: crate::automation::solar::Source,
     recipe_editor: recipes::Editor,
     moment_base_clock: bool,
     updates: updates::Updates,
@@ -965,6 +981,9 @@ impl cosmic::Application for Settings {
             depth_preview: Default::default(),
             design: design::State::load(),
             moment_preview: crate::moments::Phase::Day,
+            adaptive_look: Default::default(),
+            adaptive_phase: Default::default(),
+            adaptive_source: Default::default(),
             recipe_editor: recipes::Editor::loaded(),
             moment_base_clock: false,
             updates: updates::Updates::default(),
@@ -1098,18 +1117,32 @@ impl cosmic::Application for Settings {
         if page == Page::DesktopAppearance {
             app.system_appearance.open();
         }
-        if matches!(page, Page::DesktopProfiles | Page::Themes) {
+        if matches!(
+            page,
+            Page::DesktopProfiles | Page::Themes | Page::AdaptiveLooks
+        ) {
             app.profiles.open();
         }
         if matches!(
             page,
-            Page::DesktopAutomation | Page::Desktop | Page::DesktopProfiles
+            Page::DesktopAutomation | Page::Desktop | Page::DesktopProfiles | Page::AdaptiveLooks
         ) {
             app.automation.open();
         }
         if page == Page::Themes {
             app.wallpaper.open();
             app.system_appearance.open();
+        }
+        if page == Page::AdaptiveLooks {
+            app.adaptive_source = if app.automation.solar.weather_enabled {
+                crate::automation::solar::Source::Weather
+            } else {
+                crate::automation::solar::Source::Manual
+            };
+            app.profiles
+                .update(profiles::Message::Select(profiles::Selection::Preset(
+                    app.adaptive_look.id(app.adaptive_phase),
+                )));
         }
         app.restore_session_drafts();
         app.open_page_editor(page);
@@ -1446,7 +1479,7 @@ impl cosmic::Application for Settings {
                 .map(|_| Message::Support(support::Message::Changed)),
             );
         }
-        if self.page == Page::DesktopAutomation {
+        if matches!(self.page, Page::DesktopAutomation | Page::AdaptiveLooks) {
             let paths = self.automation.watch_paths();
             if !paths.is_empty() {
                 subscriptions.push(
@@ -2351,6 +2384,19 @@ impl Settings {
             }
             Message::Profiles(message) => return self.update_profiles(message),
             Message::Tools(message) => return self.update_tools(message),
+            Message::AdaptivePreview(look, phase) => {
+                if self.page != Page::AdaptiveLooks {
+                    return Task::none();
+                }
+                self.adaptive_look = look;
+                self.adaptive_phase = phase;
+                return self.update_profiles(profiles::Message::Select(
+                    profiles::Selection::Preset(look.id(phase)),
+                ));
+            }
+            Message::AdaptiveSource(source) => {
+                self.adaptive_source = source;
+            }
             Message::Automation(message) => return self.update_automation(message),
             Message::AppSettingsPage(page) => {
                 let navigate = if self.page != Page::General {
@@ -2818,7 +2864,12 @@ impl Settings {
             }
             Message::Page(page) => {
                 let page = page.canonical();
-                if self.page != page && matches!(self.page, Page::Themes | Page::DesktopProfiles) {
+                if self.page != page
+                    && matches!(
+                        self.page,
+                        Page::Themes | Page::DesktopProfiles | Page::AdaptiveLooks
+                    )
+                {
                     self.profiles.update(profiles::Message::Discard);
                 }
                 if self.page != page && self.page == Page::DesktopWallpaper {
@@ -2859,7 +2910,10 @@ impl Settings {
                 if page == Page::DesktopAppearance {
                     self.system_appearance.open();
                 }
-                if matches!(page, Page::DesktopProfiles | Page::Themes) {
+                if matches!(
+                    page,
+                    Page::DesktopProfiles | Page::Themes | Page::AdaptiveLooks
+                ) {
                     self.profiles.open();
                 }
                 if matches!(
@@ -2878,13 +2932,27 @@ impl Settings {
                 }
                 if matches!(
                     page,
-                    Page::DesktopAutomation | Page::Desktop | Page::DesktopProfiles
+                    Page::DesktopAutomation
+                        | Page::Desktop
+                        | Page::DesktopProfiles
+                        | Page::AdaptiveLooks
                 ) {
                     self.automation.open();
                 }
                 if page == Page::Themes {
                     self.wallpaper.open();
                     self.system_appearance.open();
+                }
+                if page == Page::AdaptiveLooks {
+                    self.adaptive_source = if self.automation.solar.weather_enabled {
+                        crate::automation::solar::Source::Weather
+                    } else {
+                        crate::automation::solar::Source::Manual
+                    };
+                    self.profiles
+                        .update(profiles::Message::Select(profiles::Selection::Preset(
+                            self.adaptive_look.id(self.adaptive_phase),
+                        )));
                 }
                 self.open_page_editor(page);
                 if !self.error {
@@ -3878,7 +3946,12 @@ impl Settings {
                 | Edit::ThemeReady(..)
                 | Edit::ShareReady(..)
         );
-        if !result && !matches!(self.page, Page::DesktopProfiles | Page::Themes) {
+        if !result
+            && !matches!(
+                self.page,
+                Page::DesktopProfiles | Page::Themes | Page::AdaptiveLooks
+            )
+        {
             return Task::none();
         }
         if self.page == Page::Themes
@@ -4416,7 +4489,9 @@ impl Settings {
     }
     fn update_automation(&mut self, message: automation::Message) -> Task<Message> {
         use automation::Message as Edit;
-        if self.page != Page::DesktopAutomation && message != Edit::Refresh {
+        if !matches!(self.page, Page::DesktopAutomation | Page::AdaptiveLooks)
+            && message != Edit::Refresh
+        {
             return Task::none();
         }
         let focus = matches!(
@@ -5669,6 +5744,7 @@ mod tests {
     include!("settings/redesign_tests.rs");
     include!("settings/product_tests.rs");
     include!("settings/solar_tests.rs");
+    include!("settings/adaptive_tests.rs");
 
     /// What Wallpaper & colors recommends for a solid color background.
     fn recommended_color(rgb: [f32; 3]) -> [u8; 3] {

@@ -53,6 +53,7 @@ pub enum DraftEdit {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Message {
+    AdaptiveRoutine(crate::desktop::profiles::adaptive::Look, Source),
     ManualCity(crate::config::Location),
     Enable(bool),
     Rule(String, bool),
@@ -350,6 +351,11 @@ impl AutomationEditor {
             .map(|preset| (ProfileRef::Preset(preset.id.into()), preset.profile.name))
             .collect();
         choices.extend(
+            profiles::adaptive::presets()
+                .into_iter()
+                .map(|p| (ProfileRef::Preset(p.id.into()), p.profile.name)),
+        );
+        choices.extend(
             crate::moments::Phase::ALL
                 .into_iter()
                 .map(|p| (ProfileRef::Moment(p), format!("{} moment", p.title()))),
@@ -514,6 +520,29 @@ impl AutomationEditor {
         }
         let store = self.store().cloned();
         match message {
+            Message::AdaptiveRoutine(look, source) => {
+                self.change(|settings, now| {
+                    let store=store.as_ref().ok_or("Desktop settings unavailable")?;
+                    Context::read(store,settings).city(source)?;
+                    if settings.rules.iter().any(|r| matches!(&r.profile,ProfileRef::Preset(id) if id.starts_with("adaptive-"))) {
+                        return Err("Adaptive rules already exist. Edit them in Schedules & display rules.".into());
+                    }
+                    if settings.rules.len()+3 > automation::rules::MAX_RULES {
+                        return Err("Remove three rules before adding this daily cycle.".into());
+                    }
+                    for phase in crate::desktop::profiles::adaptive::Phase::ALL {
+                      let id=settings.next_id();
+                      settings.rules.push(Rule {
+                        id, enabled:true, since:now,
+                        profile:ProfileRef::Preset(look.id(phase).into()),
+                        name:format!("{} · {}",look.title(),phase.title()),
+                        when:Trigger::Solar { event:phase.event(),days:Days::EVERY,source },
+                      });
+                    }
+                    if !settings.enabled { settings.enabled=true;settings.since=now; }
+                    Ok(())
+                }, Some("Daily cycle added. It starts at the next sun event.".into()));
+            }
             Message::ManualCity(city) => {
                 self.change(
                     |settings, _| {

@@ -2468,3 +2468,45 @@ fn fb15_queued_moment_respects_manual_edit_rule_revision_and_restore() {
         }
     }
 }
+
+#[test]
+fn adaptive_actual_switch_preserves_content_placement_and_native_mode() {
+    use crate::desktop::profiles::adaptive::{Look, Phase};
+    let (fixture, store) = desk("adaptive-apply");
+    let installed = Installed::discover(&store);
+    let before: serde_json::Value = serde_json::from_str(&config_text(&fixture)).unwrap();
+    let mode = std::fs::read(
+        store.user_path(
+            &crate::desktop::store::ConfigKey::new("com.system76.CosmicTheme.Mode", 1, "is_dark")
+                .unwrap(),
+        ),
+    )
+    .unwrap();
+    for phase in Phase::ALL {
+        let target = ProfileRef::Preset(Look::Tidal.id(phase).into());
+        let result = run(&store, &installed, &target, "Adaptive", &Default::default());
+        assert!(matches!(result, Ran::Applied { .. }), "{result:?}");
+        let after: serde_json::Value = serde_json::from_str(&config_text(&fixture)).unwrap();
+        for key in ["enabled_widgets", "location", "future_field"] {
+            assert_eq!(after[key], before[key]);
+        }
+        assert_eq!(
+            std::fs::read(
+                store.user_path(
+                    &crate::desktop::store::ConfigKey::new(
+                        "com.system76.CosmicTheme.Mode",
+                        1,
+                        "is_dark"
+                    )
+                    .unwrap()
+                )
+            )
+            .unwrap(),
+            mode
+        );
+        assert_eq!(
+            run(&store, &installed, &target, "Adaptive", &Default::default()),
+            Ran::AlreadySet
+        );
+    }
+}

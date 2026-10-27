@@ -504,6 +504,7 @@ impl ProfilesEditor {
             .map(profiles::discovery::credited)
             .map(|preset| profiles::fitted(preset, config, &bundled, islands))
             .chain(profiles::themes::presets())
+            .chain(profiles::adaptive::presets())
             .collect();
     }
     /// Whether choosing a widget style also restyles the dock and panel.

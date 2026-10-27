@@ -325,6 +325,11 @@ impl Settings {
             Page::DesktopShortcuts => [self.shortcuts.notice(), None, None],
             Page::DesktopProfiles => [self.profiles.notice.as_ref(), None, None],
             Page::DesktopAutomation => [self.automation.notice.as_ref(), None, None],
+            Page::AdaptiveLooks => [
+                self.automation.notice.as_ref(),
+                self.profiles.notice.as_ref(),
+                None,
+            ],
             Page::Themes => [
                 self.profiles.notice.as_ref(),
                 self.system_appearance.notice.as_ref(),

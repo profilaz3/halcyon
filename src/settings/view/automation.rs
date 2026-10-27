@@ -468,8 +468,15 @@ impl Settings {
                 segmented([(Source::Weather, "Weather city"), (Source::Manual, "Schedule city")].into_iter()
                     .map(|(source, title)| (title.into(), source == draft.source, Some(edit(Edit::Draft(DraftEdit::Source(source)))))).collect(), accent)),
         ];
+        controls.push(self.schedule_city_controls(draft.source));
+        controls.push(self.solar_next(draft.event, draft.days, draft.source));
+        column::with_children(controls).spacing(10).into()
+    }
+
+    pub(super) fn schedule_city_controls(&self, source: Source) -> Element<'_, Message> {
+        let mut controls = Vec::new();
         let context = &self.automation.solar;
-        let summary = match context.city(draft.source) {
+        let summary = match context.city(source) {
             Ok(city) => label(
                 format!("{} · {}", city.name, city.timezone.as_deref().unwrap_or("")),
                 12.,
@@ -477,7 +484,7 @@ impl Settings {
             ),
             Err(reason) => label(reason, 12., WARN),
         };
-        if draft.source == Source::Weather {
+        if source == Source::Weather {
             controls.push(split(
                 summary,
                 button::text("Open Weather")
@@ -532,8 +539,7 @@ impl Settings {
                 );
             }
         }
-        controls.push(self.solar_next(draft.event, draft.days, draft.source));
-        column::with_children(controls).spacing(10).into()
+        column::with_children(controls).spacing(8).into()
     }
 
     fn automation_rule_editor(&self, draft: &RuleDraft) -> Element<'_, Message> {
