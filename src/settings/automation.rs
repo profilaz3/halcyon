@@ -7,6 +7,7 @@
 //! While Settings holds unapplied desktop drafts it declares their parts in
 //! the hold file, so a switch touching them waits instead of making the
 //! drafts stale (`sync_hold`).
+use crate::automation::solar::{self, Context, Event, Source};
 use crate::automation::{
     self, Automation, Change, Days, DisplayWhen, Pause, ProfileRef, Rule, State, Time, Trigger,
     displays::Display,
@@ -22,6 +23,7 @@ use std::path::PathBuf;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Kind {
     Schedule,
+    Solar,
     Display,
 }
 
@@ -38,6 +40,8 @@ pub enum PauseFor {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum DraftEdit {
+    Event(Event),
+    Source(Source),
     Time(String),
     Day(usize),
     Days(Days),
@@ -49,6 +53,7 @@ pub enum DraftEdit {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Message {
+    ManualCity(crate::config::Location),
     Enable(bool),
     Rule(String, bool),
     Move(String, i32),
@@ -89,6 +94,10 @@ pub struct RuleDraft {
     pub id: Option<String>,
     pub kind: Kind,
     pub time: String,
+    #[serde(default = "default_sun_event")]
+    pub event: Event,
+    #[serde(default)]
+    pub source: Source,
     pub days: Days,
     pub change: Change,
     pub display: Option<String>,
@@ -100,12 +109,18 @@ pub struct RuleDraft {
     baseline: Option<Rule>,
 }
 
+fn default_sun_event() -> Event {
+    Event::Sunset
+}
+
 impl RuleDraft {
     fn new(kind: Kind, h24: bool) -> Self {
         let mut draft = Self {
             id: None,
             kind,
             time: Time::new(19, 0).unwrap().format(h24),
+            event: Event::Sunset,
+            source: Source::Weather,
             days: Days::EVERY,
             change: Change::Connect,
             display: None,
@@ -119,7 +134,9 @@ impl RuleDraft {
     }
     fn from_rule(rule: &Rule, h24: bool) -> Self {
         let mut draft = Self::new(
-            if rule.when.is_schedule() {
+            if matches!(rule.when, Trigger::Solar { .. }) {
+                Kind::Solar
+            } else if rule.when.is_schedule() {
                 Kind::Schedule
             } else {
                 Kind::Display
@@ -133,6 +150,15 @@ impl RuleDraft {
             Trigger::Schedule { time, days } => {
                 draft.time = time.format(h24);
                 draft.days = *days;
+            }
+            Trigger::Solar {
+                event,
+                days,
+                source,
+            } => {
+                draft.event = *event;
+                draft.days = *days;
+                draft.source = *source;
             }
             Trigger::Display(when) => {
                 draft.change = when.change;
@@ -167,7 +193,7 @@ impl RuleDraft {
     pub fn missing(&self) -> Option<&'static str> {
         match self.kind {
             Kind::Schedule if self.parsed_time().is_none() => Some("Enter a time like 19:00"),
-            Kind::Schedule if self.days.is_empty() => Some("Choose at least one day"),
+            Kind::Schedule | Kind::Solar if self.days.is_empty() => Some("Choose at least one day"),
             _ if self.profile.is_none() => Some("Choose a profile"),
             _ => None,
         }
@@ -177,6 +203,11 @@ impl RuleDraft {
             Kind::Schedule => Trigger::Schedule {
                 time: self.parsed_time()?,
                 days: self.days,
+            },
+            Kind::Solar => Trigger::Solar {
+                event: self.event,
+                days: self.days,
+                source: self.source,
             },
             Kind::Display => Trigger::Display(DisplayWhen {
                 change: self.change,
@@ -192,8 +223,10 @@ pub struct AutomationEditor {
     store: Option<Result<DesktopStore, String>>,
     settings: Option<Result<Automation, String>>,
     pub state: State,
+    pub solar: Context,
     /// Built-in starting points, then saved profiles: what a rule can apply.
     pub profiles: Vec<(ProfileRef, String)>,
+    pub profile_labels: Vec<String>,
     pub displays: Vec<Display>,
     /// Display connectors with nothing connected.
     pub ports: Vec<String>,
@@ -280,16 +313,18 @@ impl AutomationEditor {
     pub fn watch_paths(&self) -> Vec<PathBuf> {
         self.store()
             .map(|store| {
-                vec![
+                let mut paths = vec![
                     automation::path(store, automation::FILE),
                     automation::path(store, automation::STATE_FILE),
-                ]
+                ];
+                paths.extend(store.app_config().map(std::path::Path::to_path_buf));
+                paths
             })
             .unwrap_or_default()
     }
     pub fn state_key(&self) -> String {
         format!(
-            "{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
+            "{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
             self.settings,
             self.state,
             self.profiles,
@@ -297,7 +332,8 @@ impl AutomationEditor {
             self.draft,
             self.confirm_delete,
             self.notice,
-            self.manual_at
+            self.manual_at,
+            self.solar
         )
     }
 
@@ -334,8 +370,13 @@ impl AutomationEditor {
             .filter(|latest| state.applied.as_deref() != Some(latest.id.as_str()))
             .and_then(|latest| chrono::DateTime::parse_from_rfc3339(&latest.created).ok())
             .map(|at| at.timestamp());
+        self.solar = settings
+            .as_ref()
+            .map(|settings| Context::read(store, settings))
+            .unwrap_or_default();
         self.settings = Some(settings);
         self.state = state;
+        self.profile_labels = choices.iter().map(|(_, name)| name.clone()).collect();
         self.profiles = choices;
         self.displays = displays;
         self.ports = ports;
@@ -359,6 +400,11 @@ impl AutomationEditor {
     }
     /// What's wrong with a rule as it stands, if anything.
     pub fn rule_problem(&self, rule: &Rule) -> Option<String> {
+        if let Trigger::Solar { source, .. } = rule.when {
+            if let Err(reason) = self.solar.city(source) {
+                return Some(reason);
+            }
+        }
         if self
             .profiles
             .iter()
@@ -466,7 +512,18 @@ impl AutomationEditor {
         if message.writes() && !matches!(message, Message::Refresh) {
             self.notice = None;
         }
+        let store = self.store().cloned();
         match message {
+            Message::ManualCity(city) => {
+                self.change(
+                    |settings, _| {
+                        solar::validate_city(&city)?;
+                        settings.manual_city = Some(city);
+                        Ok(())
+                    },
+                    Some("Schedule city saved".into()),
+                );
+            }
             Message::Enable(on) => self.change(
                 |settings, now| {
                     settings.enabled = on;
@@ -480,6 +537,16 @@ impl AutomationEditor {
             ),
             Message::Rule(id, on) => self.change(
                 |settings, now| {
+                    if on
+                        && let Some(rule) = settings.rule(&id)
+                        && let Trigger::Solar { source, .. } = rule.when
+                    {
+                        Context::read(
+                            store.as_ref().ok_or("Desktop settings unavailable")?,
+                            settings,
+                        )
+                        .city(source)?;
+                    }
                     let rule = rule_mut(settings, &id)?;
                     rule.enabled = on;
                     if on {
@@ -514,7 +581,11 @@ impl AutomationEditor {
             }
             Message::New(kind) => {
                 self.confirm_delete = None;
-                self.draft = Some(RuleDraft::new(kind, h24));
+                let mut draft = RuleDraft::new(kind, h24);
+                if kind == Kind::Solar && !self.solar.weather_enabled {
+                    draft.source = Source::Manual;
+                }
+                self.draft = Some(draft);
             }
             Message::Draft(edit) => self.edit_draft(edit),
             Message::Save => self.save(),
@@ -552,8 +623,8 @@ impl AutomationEditor {
                 let tz = Local;
                 let now = chrono::Utc::now();
                 let next = self.settings().ok().and_then(|settings| {
-                    automation::next_switch(settings, &self.state, &tz, now)
-                        .map(|(local, _)| automation::clock::instant(&tz, local).timestamp())
+                    automation::decide::next_instant(settings, &self.state, &tz, now, &self.solar)
+                        .map(|(at, _)| at.timestamp())
                 });
                 let (until, skip) = match choice {
                     PauseFor::Next => match next {
@@ -607,6 +678,8 @@ impl AutomationEditor {
             return;
         };
         match edit {
+            DraftEdit::Event(event) => draft.event = event,
+            DraftEdit::Source(source) => draft.source = source,
             DraftEdit::Time(text) => draft.time = text.chars().take(12).collect(),
             DraftEdit::Day(index) => draft.days = draft.days.toggled(index),
             DraftEdit::Days(days) => draft.days = days,
@@ -641,9 +714,13 @@ impl AutomationEditor {
             return;
         };
         let name = self.profile_name(&profile, "");
+        let store = self.store().cloned();
         let mut turned_on = false;
         let result = self.write(
             |settings, now| {
+                if let Trigger::Solar { source, .. } = trigger {
+                    Context::read(store.as_ref().ok_or("Desktop settings unavailable")?, settings).city(source)?;
+                }
                 match &draft.id {
                     Some(id) => {
                         let rule = rule_mut(settings, id)?;
@@ -714,6 +791,7 @@ impl AutomationEditor {
         let saved = result.is_ok();
         match result {
             Ok(settings) => {
+                self.solar = Context::read(store, &settings);
                 self.running = Some(settings.running());
                 self.settings = Some(Ok(settings));
                 if let Some(done) = done {

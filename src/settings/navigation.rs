@@ -499,7 +499,7 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::DesktopAutomation,
         "Schedules & display rules",
-        "automation schedule automatic time displays monitors rules preset",
+        "automation schedule automatic time displays monitors rules preset sun solar dawn sunrise noon golden hour sunset city timezone",
         false,
     ),
     hit(

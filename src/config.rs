@@ -10,6 +10,10 @@ pub struct Location {
     pub name: String,
     pub latitude: f64,
     pub longitude: f64,
+    /// Local city metadata. Older preferences remain readable; solar rules
+    /// require an explicit city confirmation when its zone is missing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

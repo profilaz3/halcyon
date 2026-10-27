@@ -28,6 +28,7 @@ impl Settings {
             name: "Sample city".into(),
             latitude: 0.,
             longitude: 0.,
+            timezone: None,
         });
         config
     }

@@ -1,0 +1,194 @@
+[
+  {
+    "date": "2026-03-20",
+    "latitude": 45.815,
+    "longitude": 15.982,
+    "zone": "Europe/Zagreb",
+    "sunrise": 1773982768,
+    "sunset": 1774026504
+  },
+  {
+    "date": "2026-06-21",
+    "latitude": 45.815,
+    "longitude": 15.982,
+    "zone": "Europe/Zagreb",
+    "sunrise": 1782011160,
+    "sunset": 1782067786
+  },
+  {
+    "date": "2026-09-23",
+    "latitude": 45.815,
+    "longitude": 15.982,
+    "zone": "Europe/Zagreb",
+    "sunrise": 1790138645,
+    "sunset": 1790182323
+  },
+  {
+    "date": "2026-12-21",
+    "latitude": 45.815,
+    "longitude": 15.982,
+    "zone": "Europe/Zagreb",
+    "sunrise": 1797834852,
+    "sunset": 1797866043
+  },
+  {
+    "date": "2026-03-20",
+    "latitude": 52.52,
+    "longitude": 13.405,
+    "zone": "Europe/Berlin",
+    "sunrise": 1773983354,
+    "sunset": 1774027167
+  },
+  {
+    "date": "2026-06-21",
+    "latitude": 52.52,
+    "longitude": 13.405,
+    "zone": "Europe/Berlin",
+    "sunrise": 1782009785,
+    "sunset": 1782070398
+  },
+  {
+    "date": "2026-09-23",
+    "latitude": 52.52,
+    "longitude": 13.405,
+    "zone": "Europe/Berlin",
+    "sunrise": 1790139228,
+    "sunset": 1790182964
+  },
+  {
+    "date": "2026-12-21",
+    "latitude": 52.52,
+    "longitude": 13.405,
+    "zone": "Europe/Berlin",
+    "sunrise": 1797837294,
+    "sunset": 1797864838
+  },
+  {
+    "date": "2026-03-20",
+    "latitude": -33.87,
+    "longitude": 151.21,
+    "zone": "Australia/Sydney",
+    "sunrise": 1773950277,
+    "sunset": 1773994016
+  },
+  {
+    "date": "2026-06-21",
+    "latitude": -33.87,
+    "longitude": 151.21,
+    "zone": "Australia/Sydney",
+    "sunrise": 1781989197,
+    "sunset": 1782024830
+  },
+  {
+    "date": "2026-09-23",
+    "latitude": -33.87,
+    "longitude": 151.21,
+    "zone": "Australia/Sydney",
+    "sunrise": 1790106238,
+    "sunset": 1790149917
+  },
+  {
+    "date": "2026-12-21",
+    "latitude": -33.87,
+    "longitude": 151.21,
+    "zone": "Australia/Sydney",
+    "sunrise": 1797792038,
+    "sunset": 1797843926
+  },
+  {
+    "date": "2026-03-20",
+    "latitude": 40.71,
+    "longitude": -74.01,
+    "zone": "America/New_York",
+    "sunrise": 1774004358,
+    "sunset": 1774048093
+  },
+  {
+    "date": "2026-06-21",
+    "latitude": 40.71,
+    "longitude": -74.01,
+    "zone": "America/New_York",
+    "sunrise": 1782033903,
+    "sunset": 1782088246
+  },
+  {
+    "date": "2026-09-23",
+    "latitude": 40.71,
+    "longitude": -74.01,
+    "zone": "America/New_York",
+    "sunrise": 1790160278,
+    "sunset": 1790203884
+  },
+  {
+    "date": "2026-12-21",
+    "latitude": 40.71,
+    "longitude": -74.01,
+    "zone": "America/New_York",
+    "sunrise": 1797855395,
+    "sunset": 1797888711
+  },
+  {
+    "date": "2026-03-20",
+    "latitude": 1.87,
+    "longitude": -157.4,
+    "zone": "Pacific/Kiritimati",
+    "sunrise": 1774024418,
+    "sunset": 1774068011
+  },
+  {
+    "date": "2026-06-21",
+    "latitude": 1.87,
+    "longitude": -157.4,
+    "zone": "Pacific/Kiritimati",
+    "sunrise": 1782059075,
+    "sunset": 1782103107
+  },
+  {
+    "date": "2026-09-23",
+    "latitude": 1.87,
+    "longitude": -157.4,
+    "zone": "Pacific/Kiritimati",
+    "sunrise": 1790180317,
+    "sunset": 1790223901
+  },
+  {
+    "date": "2026-12-21",
+    "latitude": 1.87,
+    "longitude": -157.4,
+    "zone": "Pacific/Kiritimati",
+    "sunrise": 1797870443,
+    "sunset": 1797913704
+  },
+  {
+    "date": "2026-03-20",
+    "latitude": 78.22,
+    "longitude": 15.65,
+    "zone": "Arctic/Longyearbyen",
+    "sunrise": 1773982300,
+    "sunset": 1774027316
+  },
+  {
+    "date": "2026-06-21",
+    "latitude": 78.22,
+    "longitude": 15.65,
+    "zone": "Arctic/Longyearbyen",
+    "sunrise": null,
+    "sunset": null
+  },
+  {
+    "date": "2026-09-23",
+    "latitude": 78.22,
+    "longitude": 15.65,
+    "zone": "Arctic/Longyearbyen",
+    "sunrise": 1790138096,
+    "sunset": 1790182846
+  },
+  {
+    "date": "2026-12-21",
+    "latitude": 78.22,
+    "longitude": 15.65,
+    "zone": "Arctic/Longyearbyen",
+    "sunrise": null,
+    "sunset": null
+  }
+]

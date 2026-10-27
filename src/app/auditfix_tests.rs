@@ -45,6 +45,7 @@ fn location() -> Location {
         name: "Fixture city".into(),
         latitude: 45.,
         longitude: 15.,
+        timezone: None,
     }
 }
 

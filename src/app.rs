@@ -52,6 +52,7 @@ pub(crate) fn settings_recipe_preview(
         name: "Sample city".into(),
         latitude: 0.,
         longitude: 0.,
+        timezone: None,
     });
     let now = chrono::Local::now();
     if recipe.kind == crate::recipes::Kind::Clock {
@@ -2680,6 +2681,7 @@ mod tests {
                 name: "Test".into(),
                 latitude: 0.,
                 longitude: 0.,
+                timezone: None,
             }),
             ..Config::default()
         };

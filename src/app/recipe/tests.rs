@@ -187,6 +187,7 @@ fn fb17_stale_recipe_weather_keeps_age_and_failure_visible_at_compact_sizes() {
         name: "Private city".into(),
         latitude: 0.,
         longitude: 0.,
+        timezone: None,
     });
     let mut recipe = Recipe::starter(Kind::Weather);
     recipe.parts = vec![Part::Reading];

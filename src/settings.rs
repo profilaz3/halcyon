@@ -422,6 +422,8 @@ pub struct City {
     latitude: f64,
     longitude: f64,
     #[serde(default)]
+    timezone: Option<String>,
+    #[serde(default)]
     admin1: String,
     #[serde(default)]
     country: String,
@@ -432,6 +434,10 @@ impl City {
             name: self.name.clone(),
             latitude: self.latitude,
             longitude: self.longitude,
+            timezone: self
+                .timezone
+                .clone()
+                .filter(|zone| zone.parse::<chrono_tz::Tz>().is_ok()),
         }
     }
     fn region(&self) -> String {
@@ -667,6 +673,12 @@ pub enum Message {
     ClearCitySearch,
     Cities(u64, Result<Vec<City>, String>),
     ChooseCity(usize),
+    ScheduleCityInput(String),
+    EditScheduleCity(bool),
+    SearchScheduleCity,
+    SearchScheduleCityAfter(u64),
+    ScheduleCities(u64, Result<Vec<City>, String>),
+    ChooseScheduleCity(usize),
     FolderInput(String),
     AddFolder,
     BrowseFolder,
@@ -785,6 +797,9 @@ pub struct Settings {
     edit_generation: u64,
     save_at: Option<Instant>,
     city_search: CitySearch,
+    schedule_city_search: CitySearch,
+    schedule_city_editing: bool,
+    schedule_cities: Vec<City>,
     city_editing: bool,
     cities: Vec<City>,
     reorder: Reorder<Widget>,
@@ -1013,6 +1028,9 @@ impl cosmic::Application for Settings {
             edit_generation: 0,
             save_at: None,
             city_search: CitySearch::default(),
+            schedule_city_search: CitySearch::default(),
+            schedule_city_editing: false,
+            schedule_cities: Vec::new(),
             city_editing: false,
             placement: placement::PlacementEditor::new(&config),
             canvas: None,
@@ -1266,6 +1284,13 @@ impl cosmic::Application for Settings {
                 crate::schedule::wake_at(deadline)
                     .with(self.city_search.generation)
                     .map(|(generation, _)| Message::SearchCityAfter(generation)),
+            );
+        }
+        if let Some(deadline) = self.schedule_city_search.deadline {
+            subscriptions.push(
+                crate::schedule::wake_at(deadline)
+                    .with(("schedule-city", self.schedule_city_search.generation))
+                    .map(|((_, generation), _)| Message::SearchScheduleCityAfter(generation)),
             );
         }
         if self.reorder.source.is_some() || self.devbox_reorder.source.is_some() {
@@ -3303,6 +3328,45 @@ impl Settings {
                     self.failed(error);
                 }
             }
+            Message::EditScheduleCity(open) => {
+                self.schedule_city_editing = open;
+                self.schedule_city_search.select(String::new());
+                self.schedule_cities.clear();
+            }
+            Message::ScheduleCityInput(value) => {
+                self.schedule_city_search.edit(value, Instant::now());
+                self.schedule_cities.clear();
+            }
+            Message::SearchScheduleCity => {
+                return self.begin_schedule_city_search(self.schedule_city_search.generation);
+            }
+            Message::SearchScheduleCityAfter(generation) => {
+                return self.begin_schedule_city_search(generation);
+            }
+            Message::ScheduleCities(id, result) => {
+                let error = result.as_ref().err().cloned();
+                if !self.schedule_city_search.finish(id, error) {
+                    return Task::none();
+                }
+                if let Ok(cities) = result {
+                    self.schedule_cities = cities;
+                }
+            }
+            Message::ChooseScheduleCity(index) => {
+                if let Some(city) = self.schedule_cities.get(index) {
+                    let location = city.location();
+                    if let Err(reason) = crate::automation::solar::validate_city(&location) {
+                        self.failed(reason);
+                    } else {
+                        self.schedule_city_editing = false;
+                        self.schedule_city_search.select(city.name.clone());
+                        self.schedule_cities.clear();
+                        return self.update(Message::Automation(automation::Message::ManualCity(
+                            location,
+                        )));
+                    }
+                }
+            }
             Message::CityInput(value) => {
                 self.city_editing = true;
                 self.city_search.edit(value, Instant::now());
@@ -4256,6 +4320,16 @@ impl Settings {
             .filter(|message| capture_allows(message.writes(), fixture.is_some()))
             .map(|message| self.update_profiles(message))
             .collect()
+    }
+    fn begin_schedule_city_search(&mut self, generation: u64) -> Task<Message> {
+        let Some((query, registration)) = self.schedule_city_search.begin(generation) else {
+            return Task::none();
+        };
+        let id = self.schedule_city_search.generation;
+        self.schedule_cities.clear();
+        cosmic::task::future(async move {
+            Message::ScheduleCities(id, city_search::search(query, registration).await)
+        })
     }
     fn begin_city_search(&mut self, generation: u64) -> Task<Message> {
         let Some((query, registration)) = self.city_search.begin(generation) else {
@@ -5391,9 +5465,21 @@ fn capture_automation(event: &serde_json::Value) -> Option<automation::Message> 
     Some(if let Some(kind) = text("new") {
         Edit::New(if kind == "display" {
             Kind::Display
+        } else if kind == "solar" {
+            Kind::Solar
         } else {
             Kind::Schedule
         })
+    } else if let Some(event) = event.get("sun_event") {
+        Edit::Draft(DraftEdit::Event(
+            serde_json::from_value(event.clone()).ok()?,
+        ))
+    } else if let Some(source) = event.get("city_source") {
+        Edit::Draft(DraftEdit::Source(
+            serde_json::from_value(source.clone()).ok()?,
+        ))
+    } else if let Some(city) = event.get("schedule_city") {
+        Edit::ManualCity(serde_json::from_value(city.clone()).ok()?)
     } else if let Some(id) = text("edit") {
         Edit::Edit(id)
     } else if let Some(time) = text("time") {
@@ -5582,6 +5668,7 @@ mod tests {
     use cosmic::iced::advanced::widget::Tree;
     include!("settings/redesign_tests.rs");
     include!("settings/product_tests.rs");
+    include!("settings/solar_tests.rs");
 
     /// What Wallpaper & colors recommends for a solid color background.
     fn recommended_color(rgb: [f32; 3]) -> [u8; 3] {
@@ -8334,6 +8421,7 @@ mod tests {
             country: "Country".into(),
             latitude: 1.,
             longitude: 2.,
+            timezone: None,
         }];
         tree.diff(app.settings_view().as_widget_mut());
         app.cities.clear();
@@ -8364,6 +8452,7 @@ mod tests {
                 country: String::new(),
                 latitude: 0.,
                 longitude: 0.,
+                timezone: None,
             }]),
         ));
         assert!(app.cities.is_empty());
@@ -8401,6 +8490,7 @@ mod tests {
                 country: "Croatia".into(),
                 latitude: 45.8,
                 longitude: 15.9,
+                timezone: None,
             }]),
         ));
         assert!(!app.city_editing && !app.city_search.searching);

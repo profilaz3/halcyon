@@ -26,6 +26,7 @@
 //!   `runtime::manual_at`.
 use super::clock::{self, wall};
 use super::rules::{Automation, DisplayWhen, ProfileRef, Rule, Trigger};
+use super::solar::{self, Context};
 use chrono::{DateTime, Duration, NaiveDateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -43,6 +44,10 @@ pub enum Cause {
     /// The local wall time of the occurrence (`2026-10-18T19:00:00`).
     Schedule(String),
     Display(DisplayWhen),
+    Solar {
+        event: solar::Event,
+        date: String,
+    },
 }
 
 /// A switch that should happen.
@@ -65,11 +70,20 @@ pub struct Revision {
     activation: i64,
     rule_since: i64,
     trigger: Trigger,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    solar: Option<String>,
 }
 
 impl Revision {
     pub fn new(automation: &Automation, rule: &Rule) -> Self {
+        Self::with_solar(automation, rule, &Context::default())
+    }
+    pub fn with_solar(automation: &Automation, rule: &Rule, context: &Context) -> Self {
         Self {
+            solar: match rule.when {
+                Trigger::Solar { source, .. } => context.revision(source),
+                _ => None,
+            },
             activation: automation.since,
             rule_since: rule.since,
             trigger: rule.when.clone(),
@@ -81,17 +95,24 @@ impl Due {
     /// Validate both persisted waits and queued jobs against current rules.
     /// Trigger identity also fences edits made within the same Unix second.
     pub fn is_current(&self, automation: &Automation, now: i64) -> bool {
+        self.is_current_with(automation, now, &Context::default())
+    }
+    pub fn is_current_with(&self, automation: &Automation, now: i64, context: &Context) -> bool {
         automation.enabled
+            && (!matches!(self.cause, Cause::Solar { .. }) || self.at <= now)
             && automation.paused_at(now).is_none()
             && self.at >= automation.since
             && automation.rule(&self.rule).is_some_and(|rule| {
                 rule.enabled
                     && rule.profile == self.profile
                     && self.at >= rule.since
-                    && self.revision.as_ref() == Some(&Revision::new(automation, rule))
+                    && (!matches!(rule.when, Trigger::Solar { .. })
+                        || self.revision.as_ref().is_some_and(|r| r.solar.is_some()))
+                    && self.revision.as_ref()
+                        == Some(&Revision::with_solar(automation, rule, context))
             })
             && !automation.paused.is_some_and(|pause| match self.cause {
-                Cause::Schedule(_) => pause.stops_schedule(self.at),
+                Cause::Schedule(_) | Cause::Solar { .. } => pause.stops_schedule(self.at),
                 Cause::Display(_) => !pause.skip && pause.covers(self.at),
             })
     }
@@ -108,6 +129,7 @@ impl Due {
                 .map(|time| time.format(h24))
                 .unwrap_or_default(),
             Cause::Display(when) => when.happened(),
+            Cause::Solar { event, date } => format!("{} · {date}", event.title()),
         }
     }
 }
@@ -161,6 +183,12 @@ pub struct Observed {
     pub at: i64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SolarMark {
+    pub revision: Revision,
+    pub at: i64,
+}
+
 /// Runtime state written by the desktop (`automation-state.json`). Never
 /// part of a profile or an export.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -170,6 +198,8 @@ pub struct State {
     /// Scheduled wall times up to here are handled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub watermark: Option<String>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub solar: std::collections::BTreeMap<String, SolarMark>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub displays: Option<Observed>,
     /// The Undo ID of the last change automation made, to tell it apart
@@ -190,6 +220,7 @@ impl Default for State {
             format: STATE_FORMAT.into(),
             version: STATE_VERSION,
             watermark: None,
+            solar: Default::default(),
             displays: None,
             applied: None,
             pending: None,
@@ -265,6 +296,26 @@ pub fn decide<Tz: TimeZone>(
     displays: Option<&[String]>,
     manual_at: impl Fn() -> Option<DateTime<Utc>>,
 ) -> Decision {
+    decide_with_solar(
+        automation,
+        state,
+        tz,
+        now,
+        displays,
+        manual_at,
+        &Context::default(),
+    )
+}
+
+pub fn decide_with_solar<Tz: TimeZone>(
+    automation: &Automation,
+    state: &mut State,
+    tz: &Tz,
+    now: DateTime<Utc>,
+    displays: Option<&[String]>,
+    manual_at: impl Fn() -> Option<DateTime<Utc>>,
+    context: &Context,
+) -> Decision {
     let mut decision = Decision::default();
     let now_unix = clock::unix(now);
     let now_local = clock::local(tz, now);
@@ -288,51 +339,106 @@ pub fn decide<Tz: TimeZone>(
         }
         None => None,
     };
+    let mut best: Option<(Due, usize)> = None;
+    let mut best_fixed_local = None;
     if let Some(mark) = watermark.filter(|_| automation.enabled) {
-        let mut best: Option<(NaiveDateTime, usize)> = None;
-        for (index, rule) in automation.rules.iter().enumerate() {
+        for (index, rule) in automation
+            .rules
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.enabled)
+        {
             let Trigger::Schedule { time, days } = &rule.when else {
                 continue;
             };
-            if !rule.enabled {
-                continue;
-            }
-            if let Some(at) = clock::latest(*time, *days, mark, now_local)
-                && best.is_none_or(|(known, _)| at > known)
-            {
-                best = Some((at, index));
-            }
-        }
-        if let Some((local, index)) = best {
-            // Something was passed: the advanced watermark must survive a
-            // restart, whatever happens with it.
-            decision.persist = true;
-            let rule = &automation.rules[index];
-            let at = clock::unix(clock::instant(tz, local));
-            if active && counts(rule.since, at) {
+            if let Some(local) = clock::latest(*time, *days, mark, now_local) {
                 let due = Due {
                     revision: Some(Revision::new(automation, rule)),
                     rule: rule.id.clone(),
                     profile: rule.profile.clone(),
                     name: rule.name.clone(),
                     cause: Cause::Schedule(wall::format(local)),
-                    at,
+                    at: clock::unix(clock::instant(tz, local)),
                 };
-                match manual_at()
-                    .map(clock::unix)
-                    .filter(|manual| kept_manual(*manual, at))
-                {
-                    Some(manual) => {
-                        state.record(Outcome {
-                            transaction: None,
-                            at: now_unix,
-                            due,
-                            effect: Effect::KeptManual { manual_at: manual },
-                        });
-                        decision.kept += 1;
-                    }
-                    None => decision.due.push(due),
+                if best_fixed_local.is_none_or(|known| local > known) {
+                    best_fixed_local = Some(local);
+                    best = Some((due, index));
                 }
+            }
+        }
+    }
+    let previous = state.solar.len();
+    state.solar.retain(|id, _| {
+        automation.rules.iter().any(|rule| {
+            rule.id == *id && rule.enabled && matches!(rule.when, Trigger::Solar { .. })
+        })
+    });
+    decision.persist |= previous != state.solar.len();
+    for (index, rule) in automation
+        .rules
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.enabled)
+    {
+        let Trigger::Solar {
+            event,
+            days,
+            source,
+        } = rule.when
+        else {
+            continue;
+        };
+        let revision = Revision::with_solar(automation, rule, context);
+        if revision.solar.is_none() {
+            decision.persist |= state.solar.remove(&rule.id).is_some();
+            continue;
+        }
+        let mark = state
+            .solar
+            .get(&rule.id)
+            .filter(|mark| {
+                mark.revision == revision && mark.at <= now_unix + CLOCK_BACK_HOURS * 3600
+            })
+            .map(|mark| mark.at);
+        if let Some(mark) = mark.filter(|_| automation.enabled)
+            && let Some(at) =
+                solar::latest(context, source, event, days, clock::from_unix(mark), now)
+        {
+            let due = Due {
+                revision: Some(revision.clone()),
+                rule: rule.id.clone(),
+                profile: rule.profile.clone(),
+                name: rule.name.clone(),
+                cause: Cause::Solar {
+                    event,
+                    date: context.date(source, at).unwrap().to_string(),
+                },
+                at: at.timestamp(),
+            };
+            if best.as_ref().is_none_or(|(known, known_index)| {
+                due.at > known.at || (due.at == known.at && index < *known_index)
+            }) {
+                best = Some((due, index));
+            }
+        }
+        decision.persist |= mark.is_none();
+        state.solar.insert(
+            rule.id.clone(),
+            SolarMark {
+                revision,
+                at: mark.unwrap_or(now_unix).max(now_unix),
+            },
+        );
+    }
+    if let Some((due, index)) = best {
+        decision.persist = true;
+        if active && counts(automation.rules[index].since, due.at) {
+            match still_due(&due, manual_at(), now_unix) {
+                Err(outcome) => {
+                    state.record(outcome);
+                    decision.kept += 1;
+                }
+                Ok(()) => decision.due.push(due),
             }
         }
     }
@@ -393,7 +499,7 @@ pub fn decide<Tz: TimeZone>(
         || state
             .pending
             .as_ref()
-            .is_some_and(|pending| !pending.is_current(automation, now_unix))
+            .is_some_and(|pending| !pending.is_current_with(automation, now_unix, context))
     {
         decision.persist |= state.pending.take().is_some();
     }
@@ -471,6 +577,69 @@ pub fn next_switch<Tz: TimeZone>(
     None
 }
 
+/// The next real instant, combining fixed local times and city-local sun events.
+pub fn next_instant<Tz: TimeZone>(
+    automation: &Automation,
+    state: &State,
+    tz: &Tz,
+    now: DateTime<Utc>,
+    context: &Context,
+) -> Option<(DateTime<Utc>, usize)> {
+    if !automation.enabled {
+        return None;
+    }
+    let mut best = next_switch(automation, state, tz, now)
+        .map(|(local, index)| (clock::instant(tz, local), index));
+    for (index, rule) in automation
+        .rules
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.enabled)
+    {
+        let Trigger::Solar {
+            event,
+            days,
+            source,
+        } = rule.when
+        else {
+            continue;
+        };
+        let revision = Revision::with_solar(automation, rule, context);
+        let mut after = now.max(
+            clock::from_unix(rule.since.max(automation.since))
+                .checked_sub_signed(Duration::seconds(1))
+                .unwrap_or(now),
+        );
+        if let Some(mark) = state.solar.get(&rule.id).filter(|mark| {
+            mark.revision == revision && mark.at <= now.timestamp() + CLOCK_BACK_HOURS * 3600
+        }) {
+            after = after.max(clock::from_unix(mark.at));
+        }
+        for _ in 0..3 {
+            let Some(at) = solar::next(context, source, event, days, after) else {
+                break;
+            };
+            if let Some(pause) = automation
+                .paused
+                .filter(|pause| pause.stops_schedule(at.timestamp()))
+            {
+                match pause.until {
+                    Some(until) => {
+                        after = clock::from_unix(until - 1);
+                        continue;
+                    }
+                    None => break,
+                }
+            }
+            if best.is_none_or(|known| (at, index) < known) {
+                best = Some((at, index));
+            }
+            break;
+        }
+    }
+    best
+}
+
 /// When the desktop should look again: the next scheduled switch, but at
 /// most a minute away so clock and time-zone changes are noticed.
 pub fn next_check<Tz: TimeZone>(
@@ -479,12 +648,21 @@ pub fn next_check<Tz: TimeZone>(
     tz: &Tz,
     now: DateTime<Utc>,
 ) -> Option<DateTime<Utc>> {
+    next_check_with_solar(automation, state, tz, now, &Context::default())
+}
+pub fn next_check_with_solar<Tz: TimeZone>(
+    automation: &Automation,
+    state: &State,
+    tz: &Tz,
+    now: DateTime<Utc>,
+    context: &Context,
+) -> Option<DateTime<Utc>> {
     if !automation.running() {
         return None;
     }
     let minute = now + Duration::seconds(60);
-    let switch = next_switch(automation, state, tz, now)
-        .map(|(local, _)| clock::instant(tz, local))
+    let switch = next_instant(automation, state, tz, now, context)
+        .map(|(instant, _)| instant)
         .filter(|at| *at > now);
     let pause_end = automation
         .paused

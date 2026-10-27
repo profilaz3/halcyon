@@ -11,6 +11,7 @@ fn populated() -> Config {
         name: "Fixture".into(),
         latitude: 45.,
         longitude: 16.,
+        timezone: None,
     });
     config.project_roots = vec!["/fixture/projects".into()];
     config.widget_font = Some("Noto Sans".into());

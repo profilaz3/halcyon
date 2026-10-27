@@ -1,6 +1,6 @@
 //! The words Settings shows: what happens next, what happened last and why.
 use super::clock;
-use super::decide::{Effect, Outcome, State, next_switch};
+use super::decide::{Effect, Outcome, State};
 use super::rules::{Automation, Time, Trigger};
 use chrono::{DateTime, NaiveDateTime, TimeZone, Timelike, Utc};
 
@@ -81,7 +81,9 @@ pub fn outcome_line(outcome: &Outcome, h24: bool) -> Line {
     };
     let cause = match &outcome.due.cause {
         super::decide::Cause::Schedule(_) => format!("Scheduled for {}", outcome.due.reason(h24)),
-        super::decide::Cause::Display(_) => outcome.due.reason(h24),
+        super::decide::Cause::Display(_) | super::decide::Cause::Solar { .. } => {
+            outcome.due.reason(h24)
+        }
     };
     Line { what, cause, why }
 }
@@ -113,9 +115,29 @@ pub fn status<Tz: TimeZone>(
     manual_at: Option<i64>,
     h24: bool,
 ) -> Status {
+    status_with_solar(
+        automation,
+        state,
+        tz,
+        now,
+        manual_at,
+        h24,
+        &super::solar::Context::default(),
+    )
+}
+pub fn status_with_solar<Tz: TimeZone>(
+    automation: &Automation,
+    state: &State,
+    tz: &Tz,
+    now: DateTime<Utc>,
+    manual_at: Option<i64>,
+    h24: bool,
+    context: &super::solar::Context,
+) -> Status {
     let now_local = clock::local(tz, now);
     let now_unix = clock::unix(now);
-    let next = next_switch(automation, state, tz, now);
+    let next = super::decide::next_instant(automation, state, tz, now, context)
+        .map(|(at, index)| (clock::local(tz, at), index));
     let next_text = next.map(|(local, index)| {
         format!(
             "{} {}",
@@ -208,7 +230,8 @@ pub fn status<Tz: TimeZone>(
     }
     let headline = match &next_text {
         Some(next) => format!("Next: {next}"),
-        None => "Watching for display changes".into(),
+        None if automation.watches_displays() => "Watching for display changes".into(),
+        None => "No switch available yet".into(),
     };
     let last = state.last();
     let detail = match (manual_at, last) {

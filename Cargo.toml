@@ -30,6 +30,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 tokio = { version = "1", features = ["time", "macros", "sync", "net", "process"] }
 dirs = "5"
 chrono = { version = "0.4", features = ["clock"] }
+chrono-tz = "=0.10.4"
 libc = "0.2"
 notify = "8.2"
 ron = "0.12"

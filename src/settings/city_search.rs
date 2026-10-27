@@ -171,6 +171,7 @@ fn cities(bytes: &[u8]) -> Result<Vec<City>, String> {
                 && city.name.len() <= 256
                 && city.admin1.len() <= 256
                 && city.country.len() <= 256
+                && city.timezone.as_ref().is_none_or(|zone| zone.len() <= 128)
                 && city.latitude.is_finite()
                 && (-90.0..=90.0).contains(&city.latitude)
                 && city.longitude.is_finite()

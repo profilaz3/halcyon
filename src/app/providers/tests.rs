@@ -9,6 +9,7 @@ fn location(name: &str) -> Location {
         name: name.into(),
         latitude: 45.,
         longitude: 16.,
+        timezone: None,
     }
 }
 fn config() -> Config {

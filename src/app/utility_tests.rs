@@ -420,6 +420,7 @@ fn old_weather_and_partial_forecasts_stay_readable_at_minimum_width() {
         name: "Lisbon".into(),
         latitude: 38.72,
         longitude: -9.14,
+        timezone: None,
     });
     cards.weather_at = Some((now - Days::days(2)).to_rfc3339());
     cards.weather_error = true;
@@ -466,6 +467,7 @@ fn widgets_remain_readable_on_a_vivid_wallpaper() {
         name: "Lisbon".into(),
         latitude: 38.72,
         longitude: -9.14,
+        timezone: None,
     });
     cards.weather = Some(serde_json::from_value(serde_json::json!({
         "current":{"temperature_2m":20.0,"apparent_temperature":20.0,"weather_code":2,

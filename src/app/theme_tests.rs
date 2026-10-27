@@ -34,6 +34,7 @@ fn shared_theme_native_widgets_remain_visible_on_light_and_dark_wallpapers() {
         name: "Sample city".into(),
         latitude: 0.,
         longitude: 0.,
+        timezone: None,
     });
     cfg.glance.density = crate::config::GlanceDensity::Compact;
     let (mut cards, _) = Cards::init(Core::default(), cfg);

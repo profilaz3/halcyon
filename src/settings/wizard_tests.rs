@@ -578,6 +578,7 @@ fn cancel_undoes_setup_after_a_city_and_after_reopening() {
         longitude: 20.5,
         admin1: String::new(),
         country: "Serbia".into(),
+        timezone: None,
     }];
     let _ = app.update(Message::ChooseCity(0));
     assert!(Config::load().location.is_some());

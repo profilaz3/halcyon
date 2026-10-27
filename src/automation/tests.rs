@@ -991,7 +991,7 @@ fn settings_round_trip_and_refuse_damaged_or_newer_files() {
     );
     assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
     // Newer and damaged files are refused with a reason, never half-used.
-    let newer = text.replace("\"version\": 1", "\"version\": 3");
+    let newer = text.replace("\"version\": 1", "\"version\": 4");
     std::fs::write(&file, newer).unwrap();
     assert!(load(&store).unwrap_err().contains("newer"));
     std::fs::write(&file, "{").unwrap();
@@ -2332,7 +2332,7 @@ fn fb15_moment_rule_versions_and_hyphenated_setup_ids_roundtrip() {
     let parsed = Automation::parse(&bytes).unwrap();
     assert_eq!(parsed.version, 2);
     assert_eq!(parsed.rules, rules.rules);
-    rules.version = 3;
+    rules.version = 4;
     assert!(Automation::parse(&serde_json::to_vec(&rules).unwrap()).is_err());
 }
 #[test]
