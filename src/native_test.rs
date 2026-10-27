@@ -217,8 +217,8 @@ impl Native {
         image::save_buffer(
             dir.join(format!("{name}.png")),
             &pixels,
-            self.size.width as u32,
-            self.size.height as u32,
+            self.size.width.round() as u32,
+            self.size.height.round() as u32,
             image::ColorType::Rgba8,
         )
         .unwrap();
@@ -286,8 +286,8 @@ impl Native {
         image::save_buffer(
             dir.join(format!("{name}.png")),
             &pixels,
-            self.size.width as u32,
-            self.size.height as u32,
+            self.size.width.round() as u32,
+            self.size.height.round() as u32,
             image::ColorType::Rgba8,
         )
         .unwrap();

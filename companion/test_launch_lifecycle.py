@@ -32,6 +32,9 @@ panel_configuration.output_names=lambda env=None:['fixture-output']
 import install_status
 from bundle_contract import classify_compatibility
 cfg=json.loads(Path(sys.argv[2]).read_bytes())
+def publish(path, value):
+    path=Path(path);pending=path.with_name(path.name+'.tmp')
+    pending.write_text(json.dumps(value));pending.replace(path)
 # Test-only subreaper: collect synthetic orphan grandchildren after killpg.
 ctypes.CDLL(None).prctl(36,1,0,0,0)
 real_installed=runtime.installed_identity
@@ -57,7 +60,7 @@ def observed_wait(child,done,wedged,admission=None):
         time.sleep(.005);owner=runtime.host_identity(cfg['binary_sha256'])
     if cfg['mode']=='core-exit':os.kill(cfg['core_pid'],signal.SIGTERM)
     before=runtime.running_identity(cfg['catalog'],host=owner)
-    Path(cfg['observations']+'-early').write_text(json.dumps({'ipc_owner_verified':owner is not None,'runtime':before,'monotonic_ns':time.monotonic_ns()}))
+    publish(cfg['observations']+'-early', {'ipc_owner_verified':owner is not None,'runtime':before,'monotonic_ns':time.monotonic_ns()})
     if cfg['mode'] in ('config-change','config-aba'):
         config=Path(cfg['config_center']);old=config.read_bytes()
         config.write_text('Some([])')
@@ -73,14 +76,14 @@ def observed_wait(child,done,wedged,admission=None):
         measured=runtime.running_identity(cfg['catalog'],host=owner)
         state=install_status.detect(Path(cfg['home']),Path(cfg['library']),True,cfg['versions'],
             installed=runtime.installed_identity(cfg['catalog']),running=measured,host=owner is not None)
-        Path(cfg['observations']).write_text(json.dumps({'ready':ready,'runtime':measured,'status':state,'pid':child.pid,'monotonic_ns':time.monotonic_ns()}))
+        publish(cfg['observations'], {'ready':ready,'runtime':measured,'status':state,'pid':child.pid,'monotonic_ns':time.monotonic_ns()})
     else:
-        Path(cfg['observations']).write_text(json.dumps({'ready':False,'monotonic_ns':time.monotonic_ns()}))
+        publish(cfg['observations'], {'ready':False,'monotonic_ns':time.monotonic_ns()})
     return ready
 launcher.wait_ready=observed_wait
 try:
     result=launcher.main(bundle=Path(cfg['bundle']),pointer=cfg['pointer'])
-    Path(cfg['exit']).write_text(json.dumps({'result':result,'foreign_survived':[p.poll() is None for p in foreign]}))
+    publish(cfg['exit'], {'result':result,'foreign_survived':[p.poll() is None for p in foreign]})
 finally:
     for child in foreign:
         if child.poll() is None:child.terminate()
