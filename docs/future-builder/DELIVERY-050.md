@@ -74,3 +74,8 @@ belong to the next release preparation. Detailed evidence and source hashes are 
 
 Final available SSD space: approximately 73 GiB after builds and captures. The
 3.45 GiB cleanup preserved current artifacts, sources and unique evidence.
+
+[Maintenance CI](https://github.com/profilaz3/halcyon/actions/runs/40592896633)
+completed successfully: Rust, Python, collector, Islands core, license notices,
+Debian package build and inspection. This run covers the published maintenance
+branch and its test corrections; the 0.5 features remain local.
