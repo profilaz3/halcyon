@@ -41,6 +41,7 @@ impl Settings {
                     .collect::<Vec<_>>(),
             )
             .spacing(8)
+            .wrap()
             .into(),
         ];
         if !editor.library_labels.is_empty() {
@@ -55,6 +56,14 @@ impl Settings {
             );
         }
         content.push(column::with_children(library).spacing(8).into());
+        if recipe.kind == Kind::Calendar && self.config.glance.enabled {
+            content.push(split(
+                label("Calendar is currently part of Daily overview.", 12., MUTED),
+                button::text("Widget visibility…")
+                    .on_press(Message::Page(Page::Widgets))
+                    .into(),
+            ));
+        }
         let name_editor: Element<'_, Message> = text_input("Widget name", &recipe.name)
             .id(cosmic::widget::Id::new("recipe-name"))
             .on_input(|value| edit(Edit::Name(value)))
@@ -91,16 +100,26 @@ impl Settings {
             vec![
                 controls,
                 sample,
-                if recipe.kind == Kind::Weather {
+                if matches!(recipe.kind, Kind::Weather | Kind::Calendar) {
                     segmented(
                         vec![
                             (
-                                "Sample weather".into(),
+                                if recipe.kind == Kind::Calendar {
+                                    "Sample agenda"
+                                } else {
+                                    "Sample weather"
+                                }
+                                .into(),
                                 !editor.missing,
                                 Some(edit(Edit::Missing(false))),
                             ),
                             (
-                                "Missing location".into(),
+                                if recipe.kind == Kind::Calendar {
+                                    "Not connected"
+                                } else {
+                                    "Missing location"
+                                }
+                                .into(),
                                 editor.missing,
                                 Some(edit(Edit::Missing(true))),
                             ),
@@ -108,7 +127,7 @@ impl Settings {
                         self.settings_accent(),
                     )
                 } else {
-                    label("Uses your clock face, font and current style.", 12., MUTED)
+                    label("Uses your current style and font.", 12., MUTED)
                 },
             ],
         );
@@ -184,7 +203,7 @@ impl Settings {
                     .into(),
             );
         }
-        parts.push(self.help("recipe-parts", "Parts", "Small widgets keep the main reading and weather status. Split places the main reading beside the remaining parts."));
+        parts.push(self.help("recipe-parts", "Parts", "Small widgets keep the main content and connection status. Split places the main content beside the remaining parts. Calendar follows its existing date and privacy settings."));
         let inspector: Element<'_, Message> =
             column::with_children(vec![name_editor, group(Some("Parts"), parts)])
                 .spacing(16)

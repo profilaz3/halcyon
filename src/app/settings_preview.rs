@@ -231,7 +231,7 @@ impl SettingsSamples {
         samples.update(source);
         samples
     }
-    fn calendar() -> CalendarData {
+    pub(in crate::app) fn calendar() -> CalendarData {
         let now = Local::now();
         CalendarData {
             month: now.format("%Y-%m").to_string(),

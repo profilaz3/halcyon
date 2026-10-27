@@ -1,5 +1,6 @@
 //! Native parts reuse the Clock frame and the already-projected Weather snapshot.
 use super::*;
+pub(super) mod calendar;
 use crate::recipes::{Arrangement, Kind, Part, Recipe};
 use crate::widget_presentation::Context;
 #[derive(Clone, Default)]
@@ -9,6 +10,10 @@ pub(super) struct Reading {
     pub conditions: String,
     pub forecast: String,
     pub status: Option<String>,
+    pub date: Option<String>,
+    pub agenda: Vec<calendar::Entry>,
+    pub agenda_total: usize,
+    pub agenda_empty: String,
 }
 #[derive(Debug, Clone)]
 pub(super) struct Plan {
@@ -22,6 +27,7 @@ pub(super) struct Plan {
 fn minimum(part: Part) -> f32 {
     match part {
         Part::Face => 56.,
+        Part::Agenda => 42.,
         Part::Reading => 36.,
         Part::Forecast => 36.,
         Part::Settings => 36.,
@@ -185,7 +191,16 @@ pub(super) fn view(
             Part::Face => clock::Presentation::part(&clock_config, p)
                 .frame(now, [w, h])
                 .view(),
-            Part::Date => label(now.format("%A, %B %-d").to_string(), h, w, false),
+            Part::Date => label(
+                reading
+                    .date
+                    .clone()
+                    .unwrap_or_else(|| now.format("%A, %B %-d").to_string()),
+                h,
+                w,
+                false,
+            ),
+            Part::Agenda => calendar::part(&reading, w, h, p, font, context),
             Part::City => label(reading.city.clone(), h, w, false),
             Part::Reading => label(reading.temperature.clone(), h, w, true),
             Part::Conditions => label(reading.conditions.clone(), h, w, false),
@@ -208,10 +223,10 @@ pub(super) fn view(
                     .height(h);
                 if context == Context::Live {
                     button
-                        .on_press(if recipe.kind == Kind::Clock {
-                            Message::ClockSettings
-                        } else {
-                            Message::WeatherSettings
+                        .on_press(match recipe.kind {
+                            Kind::Clock => Message::ClockSettings,
+                            Kind::Weather => Message::WeatherSettings,
+                            Kind::Calendar => Message::CalendarSettings,
                         })
                         .into()
                 } else {
@@ -266,7 +281,11 @@ pub(super) fn view(
                     .font(font)
                     .class(cosmic::theme::Text::Color(p.muted)),
             )
-            .id(cosmic::widget::Id::new("recipe-weather-status"))
+            .id(cosmic::widget::Id::new(if recipe.kind == Kind::Weather {
+                "recipe-weather-status"
+            } else {
+                "recipe-calendar-status"
+            }))
             .height(32)
             .into(),
         );

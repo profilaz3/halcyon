@@ -242,6 +242,22 @@ pub(in crate::settings) fn card_at<'a>(
     scale: f32,
     now: Option<chrono::DateTime<chrono::Local>>,
 ) -> Element<'a, Message> {
+    if widget == Widget::Calendar
+        && let Some(recipe) = config.recipes.calendar.as_ref()
+    {
+        let scale = if scale.is_finite() && scale > 0. {
+            scale
+        } else {
+            1.
+        };
+        let source = [(size[0] / scale).max(1.), (size[1] / scale).max(1.)];
+        return super::sample::thumbnail(
+            crate::app::settings_recipe_preview(config, recipe, false, source)
+                .map(|_| Message::Preview),
+            source,
+            size,
+        );
+    }
     if matches!(widget, Widget::Clock | Widget::Weather) {
         let scale = if scale.is_finite() && scale > 0. {
             scale

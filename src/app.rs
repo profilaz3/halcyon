@@ -65,6 +65,8 @@ pub(crate) fn settings_recipe_preview(
             size,
             crate::widget_presentation::Context::LocalPreview,
         )
+    } else if recipe.kind == crate::recipes::Kind::Calendar {
+        recipe::calendar::sample(&config, recipe, missing, size)
     } else if missing {
         weather::Presentation::new(
             &config,
@@ -1921,6 +1923,9 @@ impl Cards {
         (176. + rows.iter().sum::<f32>() + rows.len().saturating_sub(1) as f32 * 3.).ceil()
     }
     fn calendar_card(&self) -> Element<'_, Message> {
+        if let Some(recipe) = &self.config.recipes.calendar {
+            return self.recipe_calendar(recipe);
+        }
         let _style = crate::widget_style::scope(&self.config);
         let p = self.config.palette();
         let now = Local::now();

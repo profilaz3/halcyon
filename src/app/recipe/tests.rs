@@ -220,3 +220,94 @@ fn fb17_stale_recipe_weather_keeps_age_and_failure_visible_at_compact_sizes() {
         );
     }
 }
+
+#[test]
+fn calendar_recipe_privacy_status_and_compact_actions_use_existing_agenda() {
+    let now = chrono::Local::now();
+    let data = CalendarData {
+        updated_at: (now - chrono::Duration::days(2)).to_rfc3339(),
+        events: vec![CalendarEvent {
+            title: "PRIVATE APPOINTMENT".into(),
+            start: (now + chrono::Duration::minutes(10)).to_rfc3339(),
+            end: (now + chrono::Duration::minutes(40)).to_rfc3339(),
+            meeting_url: Some("https://example.com/private".into()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let mut config = Config::default();
+    config.calendar_private = true;
+    let reading = calendar::reading(
+        &config,
+        Some(&data),
+        &[now.date_naive()],
+        now,
+        false,
+        true,
+        true,
+    );
+    assert_eq!(reading.agenda.len(), 1);
+    assert_eq!(reading.agenda[0].title, "Busy");
+    assert!(reading.agenda[0].details.is_none());
+    assert!(reading.status.as_ref().unwrap().contains("saved events"));
+    let recipe = Recipe::starter(Kind::Calendar);
+    for size in [[160., 100.], [320., 220.], [520., 220.]] {
+        let mut native = crate::native_test::Native::new(cosmic::iced::Size::new(size[0], size[1]));
+        let view = || {
+            super::view(
+                &config,
+                &recipe,
+                now.naive_local(),
+                reading.clone(),
+                Context::Live,
+                size,
+            )
+        };
+        let bounds = native.bounds(view(), "recipe-calendar-status");
+        assert!(bounds.y + bounds.height <= size[1], "{bounds:?}");
+        assert!(
+            native
+                .try_bounds(view(), "recipe-calendar-event-0")
+                .is_none()
+        );
+        native.capture(
+            view(),
+            &cosmic::Theme::dark(),
+            &format!("calendar-recipe-private-{}", size[0]),
+        );
+    }
+    config.calendar_private = false;
+    let public = calendar::reading(
+        &config,
+        Some(&data),
+        &[now.date_naive()],
+        now,
+        false,
+        true,
+        false,
+    );
+    assert!(
+        public.agenda[0]
+            .details
+            .as_ref()
+            .unwrap()
+            .starts_with("halcyon-event:")
+    );
+    assert!(public.status.as_ref().unwrap().contains("over a day"));
+    let mut native = crate::native_test::Native::new(cosmic::iced::Size::new(320., 220.));
+    assert!(
+        native
+            .try_bounds(
+                super::view(
+                    &config,
+                    &recipe,
+                    now.naive_local(),
+                    public,
+                    Context::LocalPreview,
+                    [320., 220.]
+                ),
+                "recipe-calendar-event-0"
+            )
+            .is_none()
+    );
+}

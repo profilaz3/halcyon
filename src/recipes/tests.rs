@@ -157,3 +157,42 @@ fn fb17_personal_recipe_public_profile_keeps_only_native_parts() {
     assert!(config.location.is_none());
     assert_eq!(config.recipes.weather, Some(recipe));
 }
+
+#[test]
+fn calendar_recipe_roundtrip_versions_reset_and_public_projection() {
+    let raw = serde_json::json!({"calendar_private":true,"location":{"name":"Private","latitude":1.,"longitude":2.}});
+    let recipe = Recipe::starter(Kind::Calendar);
+    assert_eq!(recipe.version, 2);
+    let mut document = crate::design::Document::from_legacy(&raw).unwrap();
+    document
+        .put_legacy(
+            Kind::Calendar.pointer(),
+            Some(serde_json::to_value(&recipe).unwrap()),
+        )
+        .unwrap();
+    assert_eq!(document.version, 3);
+    let restored = crate::design::Document::parse(&document.bytes().unwrap()).unwrap();
+    assert_eq!(
+        restored.project(&raw).unwrap()["recipes"]["calendar"]["id"],
+        recipe.id
+    );
+    let mut older = document.clone();
+    older.version = 2;
+    assert!(older.validate().is_err());
+    document
+        .put_legacy(Kind::Calendar.pointer(), Some(serde_json::Value::Null))
+        .unwrap();
+    assert!(document.project(&raw).unwrap()["recipes"]["calendar"].is_null());
+    use crate::desktop::profiles::{Profile, export, import};
+    let mut p = Profile::new("Agenda").unwrap();
+    p.widget_style = Some(serde_json::json!({"recipes":{"calendar":recipe}}));
+    p.version = p.written_version();
+    assert_eq!(p.version, 16);
+    let bytes = export(&p).unwrap().bytes;
+    assert!(!String::from_utf8_lossy(&bytes).contains("Private"));
+    let shared = import(&bytes).unwrap();
+    let scene = crate::settings::sharing::Scene::new(&shared).unwrap();
+    assert_eq!(scene.config().unwrap().recipes.calendar, Some(recipe));
+    p.version = 15;
+    assert!(p.validate().is_err());
+}

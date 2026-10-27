@@ -11,29 +11,41 @@ pub const MAX_LIBRARY: usize = 32;
 pub enum Kind {
     Clock,
     Weather,
+    Calendar,
 }
 impl Kind {
-    pub const ALL: [Self; 2] = [Self::Clock, Self::Weather];
+    pub const ALL: [Self; 3] = [Self::Clock, Self::Weather, Self::Calendar];
     pub fn widget(self) -> Widget {
         match self {
             Self::Clock => Widget::Clock,
             Self::Weather => Widget::Weather,
+            Self::Calendar => Widget::Calendar,
         }
     }
     pub fn title(self) -> &'static str {
         match self {
             Self::Clock => "Clock",
             Self::Weather => "Weather",
+            Self::Calendar => "Calendar",
         }
     }
     pub fn pointer(self) -> &'static str {
         match self {
             Self::Clock => "/recipes/clock",
             Self::Weather => "/recipes/weather",
+            Self::Calendar => "/recipes/calendar",
         }
     }
     pub fn parts(self) -> &'static [Part] {
         match self {
+            Self::Calendar => &[
+                Part::Date,
+                Part::Agenda,
+                Part::Caption,
+                Part::Divider,
+                Part::Space,
+                Part::Settings,
+            ],
             Self::Clock => &[
                 Part::Face,
                 Part::Date,
@@ -54,10 +66,17 @@ impl Kind {
             ],
         }
     }
+    pub fn version(self) -> u32 {
+        if self == Self::Calendar { 2 } else { 1 }
+    }
+    pub fn from_widget(widget: Widget) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.widget() == widget)
+    }
     pub fn primary(self) -> Part {
         match self {
             Self::Clock => Part::Face,
             Self::Weather => Part::Reading,
+            Self::Calendar => Part::Agenda,
         }
     }
 }
@@ -65,6 +84,7 @@ impl Kind {
 #[serde(rename_all = "snake_case")]
 pub enum Part {
     Face,
+    Agenda,
     Date,
     City,
     Reading,
@@ -79,6 +99,7 @@ impl Part {
     pub fn title(self) -> &'static str {
         match self {
             Self::Face => "Clock face",
+            Self::Agenda => "Agenda",
             Self::Date => "Date",
             Self::City => "City",
             Self::Reading => "Temperature & icon",
@@ -137,12 +158,13 @@ pub fn new_id() -> Result<String, String> {
 impl Recipe {
     pub fn starter(kind: Kind) -> Self {
         let mut recipe = Self {
-            version: 1,
+            version: kind.version(),
             id: new_id().unwrap_or_default(),
             revision: String::new(),
             name: format!("My {}", kind.title().to_lowercase()),
             kind,
             parts: match kind {
+                Kind::Calendar => vec![Part::Date, Part::Agenda, Part::Settings],
                 Kind::Clock => vec![Part::Face, Part::Date],
                 Kind::Weather => vec![Part::City, Part::Reading, Part::Conditions],
             },
@@ -166,7 +188,7 @@ impl Recipe {
         self.revision = self.digest();
     }
     pub fn validate(&self) -> Result<(), String> {
-        if self.version != 1 {
+        if self.version != self.kind.version() {
             return Err("This widget recipe needs a compatible Halcyon version".into());
         }
         if !valid_id(&self.id) || self.revision != self.digest() {
@@ -184,7 +206,7 @@ impl Recipe {
             || self.parts.len() > 8
             || !self.parts.contains(&self.kind.primary())
         {
-            return Err("Keep the main clock or weather reading in the widget".into());
+            return Err("Keep the main content in the widget".into());
         }
         for (i, p) in self.parts.iter().enumerate() {
             if !self.kind.parts().contains(p) || self.parts[..i].contains(p) {
@@ -214,18 +236,22 @@ impl Recipe {
 pub struct Applied {
     pub clock: Option<Recipe>,
     pub weather: Option<Recipe>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub calendar: Option<Recipe>,
 }
 impl Applied {
     pub fn get(&self, kind: Kind) -> Option<&Recipe> {
         match kind {
             Kind::Clock => self.clock.as_ref(),
             Kind::Weather => self.weather.as_ref(),
+            Kind::Calendar => self.calendar.as_ref(),
         }
     }
     pub fn set(&mut self, kind: Kind, value: Option<Recipe>) {
         match kind {
             Kind::Clock => self.clock = value,
             Kind::Weather => self.weather = value,
+            Kind::Calendar => self.calendar = value,
         }
     }
     pub fn validate(&self) -> Result<(), String> {

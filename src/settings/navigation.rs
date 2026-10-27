@@ -487,7 +487,7 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::Builder,
         "Personal widget builder",
-        "recipe custom clock weather native parts compose widget builder",
+        "recipe custom clock weather calendar agenda native parts compose widget builder",
         false,
     ),
     hit(

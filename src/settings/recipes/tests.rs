@@ -132,3 +132,56 @@ fn fb17_capture_preserves_legacy_versions_but_keeps_personal_and_reset_intent() 
     assert!(reset.widget_style.unwrap()["recipes"]["clock"].is_null());
     crate::design::commands::export(&Config::path().unwrap(), &destination, true).unwrap();
 }
+
+#[test]
+fn calendar_recipe_native_builder_apply_undo_and_preview_preserve_accounts() {
+    if crate::displays::test_support::isolated(
+        "settings::recipes::tests::calendar_recipe_native_builder_apply_undo_and_preview_preserve_accounts",
+    ) {
+        return;
+    }
+    use crate::settings::tests::send_settings;
+    std::fs::write(Config::path().unwrap(),br#"{"onboarded":true,"setup_dismissed":true,"calendar_private":true,"theme":"teal","glance":{"enabled":false}}"#).unwrap();
+    let store = crate::desktop::actions::history_store().unwrap();
+    store.migrate_design().unwrap();
+    let frozen = std::fs::read(Config::path().unwrap()).unwrap();
+    let (mut app, init) = Settings::init(Core::default(), Page::Builder);
+    drop(init);
+    send_settings(
+        &mut app,
+        super::super::Message::Recipe(Message::New(Kind::Calendar)),
+    );
+    for (w, h) in [(820., 600.), (1280., 800.)] {
+        app.window = cosmic::iced::Size::new(w, h);
+        let mut native = crate::native_test::Native::new(app.window);
+        native.capture(
+            app.settings_view(),
+            &cosmic::Theme::dark(),
+            &format!("calendar-builder-{w}"),
+        );
+        send_settings(
+            &mut app,
+            super::super::Message::Recipe(Message::Missing(true)),
+        );
+        native.capture(
+            app.settings_view(),
+            &cosmic::Theme::light(),
+            &format!("calendar-builder-missing-{w}"),
+        );
+        send_settings(
+            &mut app,
+            super::super::Message::Recipe(Message::Missing(false)),
+        );
+    }
+    assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), frozen);
+    send_settings(&mut app, super::super::Message::Recipe(Message::Apply));
+    let applied = Config::try_load().unwrap();
+    assert!(applied.recipes.calendar.is_some());
+    assert!(applied.calendar_private);
+    let change = store.latest_change().unwrap().unwrap();
+    store.undo_latest(&change.id).unwrap();
+    let restored = Config::try_load().unwrap();
+    assert!(restored.recipes.calendar.is_none());
+    assert!(restored.calendar_private);
+    assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), frozen);
+}
