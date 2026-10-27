@@ -79,3 +79,19 @@ Final available SSD space: approximately 73 GiB after builds and captures. The
 completed successfully: Rust, Python, collector, Islands core, license notices,
 Debian package build and inspection. This run covers the published maintenance
 branch and its test corrections; the 0.5 features remain local.
+
+## Reporting follow-up — 2026-10-28
+
+The private collector now presents activity, current version adoption, reported
+daily history and per-installation observations in four readable views. Existing
+report fields and schema 4 are unchanged; no feature telemetry or app update is
+required. Version changes are retained for up to 90 days from new observations.
+Collector version 6 is live at the same endpoint. Local checks: 49 collector tests
+and two release-gate tests. Live protocol and formatting refresh passed; original
+records were preserved and the synthetic record removed.
+
+Next is FB20 for the final 0.5 artifact: set the release identity, produce matching
+app/Islands packages and source, qualify an upgrade from 0.4.1 plus fresh setup,
+then finish the release screenshots and short notes. The local feature validation
+already recorded above remains reusable; only affected checks need repeating.
+No 0.5 package or feature publication was performed by this reporting follow-up.

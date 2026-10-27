@@ -56,7 +56,7 @@ test('opt-out and stale schema 4 activity never add timing or activity details',
  assert.equal(JSON.stringify(s.applyReport(enabled,token,activity,now)),JSON.stringify(enabled));
 });
 test('new metadata migration refuses occupied columns, formulas and malformed records before writes',()=>{
- for(let col=10;col<=15;col++) for(const [value,formula] of [[42,''],['','=""']]) {
+ for(let col=10;col<=16;col++) for(const [value,formula] of [[42,''],['','=""']]) {
   const f=fixture();f.raw.maxColumns=26;f.raw.maxRows=100;
   f.raw.put(40,col,value,formula);
   const before=f.snapshot();assert.throws(()=>f.sandbox.setup());assert.equal(f.snapshot(),before);
@@ -65,7 +65,7 @@ test('new metadata migration refuses occupied columns, formulas and malformed re
  const before=f.snapshot();assert.throws(()=>f.sandbox.maintenance());assert.equal(f.snapshot(),before);
 });
 test('interrupted activity writes retry without duplicate day counts or changed first dates',()=>{
- for(let cell=1;cell<=15;cell++) {
+ for(let cell=1;cell<=16;cell++) {
   const f=fixture();f.sandbox.setup();f.failAfterCells(cell);
   const request={postData:{contents:JSON.stringify(activity)}};
   assert.equal(f.sandbox.doPost(request).ok,false);
@@ -75,7 +75,7 @@ test('interrupted activity writes retry without duplicate day counts or changed 
  }
 });
 test('first receipt/version pair recovers after every prefix write, even on upgrade retry',()=>{
- for(let cell=1;cell<=15;cell++) {
+ for(let cell=1;cell<=16;cell++) {
   const f=fixture();f.sandbox.setup();f.failAfterCells(cell);
   assert.equal(f.sandbox.doPost({postData:{contents:JSON.stringify(activity)}}).ok,false);
   const first=f.rows()[1][9];
@@ -106,7 +106,7 @@ test('simultaneous expiry uses bounded adjacent batches for reports and maintena
   if(maintenance) s.maintenance();
   else s.write_(f.raw,rows,s.applyReport(rows,'0',activity,new Date()));
   assert.equal(writes.length,Math.ceil(count/256));
-  assert.ok(writes.every(([,col,h,w])=>col===1 && h<=256 && w===15));
+  assert.ok(writes.every(([,col,h,w])=>col===1 && h<=256 && w===16));
   assert.equal(f.rows()[1][12],maintenance?1:2);
   assert.ok(f.rows().slice(2).every(row=>row[12]===1));
  }
@@ -114,7 +114,7 @@ test('simultaneous expiry uses bounded adjacent batches for reports and maintena
 test('batch writes skip unchanged gaps and recover from interruption across a batch boundary',()=>{
  const f=fixture(),s=f.sandbox,today=s.dayNumber(new Date());s.setup();
  const rows=Array.from({length:600},(_,i)=>[String(i),today-1,'0.3.0','','enabled','','',0,'',now.toISOString(),'','0.3.0',2,JSON.stringify([today-90,today-1]),now.toISOString()]);
- f.seed(rows);f.failAfterCells(256*15+10);
+ f.seed(rows);f.failAfterCells(256*16+10);
  assert.throws(()=>s.maintenance());s.maintenance();
  assert.equal(f.rows().length,601);assert.ok(f.rows().slice(1).every(row=>row[12]===1 && row[11]==='0.3.0'));
  const before=f.rows().slice(1),after=before.map(row=>row.slice());after[0][2]='0.3.1';after[2][2]='0.3.1';

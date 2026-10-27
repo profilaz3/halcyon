@@ -3,13 +3,14 @@
  */
 const MAX_INSTALLATIONS = 20000;
 const RETENTION_DAYS = 90;
-const WIDTH = 15;
+const WIDTH = 16;
 const WRITE_BATCH_ROWS = 256;
 const HEADERS = ['Installation hash','Last active (UTC)','Version','First reported country',
   'Reporting status','Opted out at (UTC)','Status received at (UTC)','Preference revision','Choice at (UTC)',
   'First activity received since tracking (UTC)','First desktop start (client UTC; if known)',
   'First version received since tracking','Reported active days (last 90 days)',
-  'Activity days (UTC serials; internal)','Last activity received (UTC)'];
+  'Activity days (UTC serials; internal)','Last activity received (UTC)',
+  'Observed version changes (last 90 UTC days; internal)'];
 function validCountry(value) { return typeof value === 'string' && /^[A-Z]{2}$/.test(value); }
 function validVersion(v) { return typeof v === 'string' && v.length <= 48 && /^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(v); }
 function validTime(t) { return Number.isSafeInteger(t) && t >= 0 && t <= 253402300799; }
@@ -32,6 +33,22 @@ function days_(value) {
 function refreshDays_(row,today,extra=[]) {
   const days=[...new Set([...days_(row[13]),...extra])].filter(d=>d>=today-89 && d<=today).sort((a,b)=>a-b);
   row[13]=days.length ? JSON.stringify(days) : ''; row[12]=days.length || '';
+}
+function versions_(value) {
+  if (value === '' || value === undefined) return [];
+  if (typeof value !== 'string' || value.length>6000) throw Error('Invalid version history');
+  const entries=JSON.parse(value);
+  if (!Array.isArray(entries) || entries.length>90 || entries.some((e,i)=>
+    !Array.isArray(e) || e.length!==2 || !Number.isSafeInteger(e[0]) || e[0]<25569 || e[0]>2958465
+    || !validVersion(e[1]) || i>0 && e[0]<=entries[i-1][0])) throw Error('Invalid version history');
+  return entries;
+}
+function refreshVersions_(row,today,extra=[]) {
+  // At most the last observed version per UTC day. Duplicate rows merge in
+  // authority order; neither a retry nor maintenance invents an observation.
+  const entries=new Map([...versions_(row[15]),...extra]);
+  const recent=[...entries].filter(([day])=>day>=today-89 && day<=today).sort((a,b)=>a[0]-b[0]);
+  row[15]=recent.length ? JSON.stringify(recent) : '';
 }
 function validateReport(body) {
   if (typeof body !== 'string' || body.length > 1024) throw Error('Invalid report');
@@ -62,7 +79,7 @@ function normalize(row) {
     row[4] || 'enabled', row[5] instanceof Date ? row[5].toISOString() : row[5] || '',
     row[6] instanceof Date ? row[6].toISOString() : row[6] || '', Number(row[7] || 0),
     row[8] instanceof Date ? row[8].toISOString() : row[8] || '',
-    iso(row[9]),iso(row[10]),row[11] || '',row[12] || '',row[13] || '',iso(row[14])];
+    iso(row[9]),iso(row[10]),row[11] || '',row[12] || '',row[13] || '',iso(row[14]),row[15] || ''];
 }
 function currentRows(rows, today) {
   const unique = new Map();
@@ -84,13 +101,17 @@ function currentRows(rows, today) {
     // A committed higher revision is authoritative even if a failed compaction
     // left an older row later in the sheet. Equal-revision opt-out wins closed.
     const stronger = row[7] > previous[7] || row[7] === previous[7] && row[4] === 'opted_out' && previous[4] !== 'opted_out';
-    if (stronger || row[7] === previous[7] && row[4] === previous[4] && Number(row[1]) > Number(previous[1])) {
+    if (stronger || row[7] === previous[7] && row[4] === previous[4]
+      && (Number(row[1]) > Number(previous[1]) || row[1]===previous[1] && time(row[14])>time(previous[14]))) {
       row[3] = previous[3] || row[3]; unique.set(row[0], row);
     } else if (!previous[3]) previous[3] = row[3];
     const selected=unique.get(row[0]); selected.splice(9,6,...metadata); refreshDays_(selected,today,days);
+    const other=selected===row ? previous : row;
+    const history=versions_(selected[15]); selected[15]=other[15]; refreshVersions_(selected,today,history);
   }
   return Array.from(unique.values()).filter(row => {
     refreshDays_(row,today);
+    refreshVersions_(row,today);
     const receivedDay = Number.isFinite(time(row[6])) ? dayNumber(new Date(row[6])) : 0;
     // Opted-out rows expire from status receipt, never from action time or an
     // old client's replay. Enabled records also retain their recent activity.
@@ -134,6 +155,9 @@ function applyReport(rows, id, report, now) {
   if (!row[10] && report.schema === 4 && report.first_started_at !== null)
     row[10]=new Date(report.first_started_at*1000).toISOString();
   row[14]=now.toISOString(); refreshDays_(row,today,[today]);
+  const history=versions_(row[15]);
+  if (!history.length || history[history.length-1][1]!==report.version)
+    refreshVersions_(row,today,[[today,report.version]]);
   return next;
 }
 function updateRows(rows, id, version, today, country = null) {
@@ -193,6 +217,7 @@ function statusPlan_(sheet, requireHeaders = false) {
     [9,10,14].forEach(col=>iso(row[col]));
     if (row[11]!=='' && !validVersion(row[11])) throw Error('Invalid first version');
     days_(row[13]);
+    versions_(row[15]);
     if (row[12]!=='' && (!Number.isSafeInteger(row[12]) || row[12]<0 || row[12]>RETENTION_DAYS)) throw Error('Invalid active-day count');
     if (!row[0]) {
       if (!empty) throw Error('Reporting status without an installation');
@@ -295,6 +320,134 @@ function summary_(book, rows, today) {
     enabled.filter(r=>r[1]>=today-29).length,current.filter(r=>r[4]==='opted_out').length,''];
   sheet.getRange(1,1,6,2).setValues(REPORTING_LABELS.map((label,i)=>[label,values[i]]));
 }
+const ANALYTICS_OWNER='halcyon:analytics:v1';
+const ANALYTICS_TABS={
+  'Dashboard':['Metric','Installations / value','Meaning'],
+  'Versions':['Version','Active last 7 days','Active last 30 days','Share of active last 30 days'],
+  'Daily activity':['UTC date','Reported active','First seen','Returning'],
+  'Installation history':['Installation','Reporting','Last version','First seen (UTC)','Last active (UTC)',
+    'Active days / 7','Active days / 30','Active days / 90','First desktop start (client UTC)',
+    'First observed version','Observed version changes'],
+};
+function utcDay_(serial) { return new Date((serial-25569)*86400000).toISOString().slice(0,10); }
+function analytics_(rows,today) {
+  const current=currentRows(rows,today),enabled=current.filter(r=>r[4]==='enabled' && r[1]!=='' && r[1]<=today);
+  const active=days=>enabled.filter(r=>r[1]>=today-days+1);
+  const first=r=>r[9] ? dayNumber(new Date(r[9])) : null;
+  const days=(r,n)=>days_(r[13]).filter(d=>d>=today-n+1).length;
+  const last30=active(30),tracked30=last30.filter(r=>first(r)!==null);
+  const new7=enabled.filter(r=>first(r)!==null && first(r)>=today-6 && first(r)<=today).length;
+  const returning7=active(7).filter(r=>first(r)!==null && first(r)<today-6).length;
+  // Only fully elapsed return windows whose history still fits retention.
+  // This is observed return among currently enabled, retained installations,
+  // not lifetime user retention or an estimate of activity while offline.
+  const retention=(start,end)=>{
+    const eligible=enabled.filter(r=>first(r)!==null && first(r)>=today-89 && first(r)+end<today);
+    const returned=eligible.filter(r=>days_(r[13]).some(d=>d>=first(r)+start && d<=first(r)+end)).length;
+    return [eligible.length ? returned/eligible.length : 'Not enough history',
+      eligible.length ? `${returned} of ${eligible.length} reported again on days ${start}–${end} after first seen; currently enabled only.`
+        : `Waiting for complete days ${start}–${end} after first seen.`];
+  };
+  const week=retention(7,13),month=retention(30,36);
+  const dashboard=[
+    ['Active today',active(1).length,'Reported today; today is still in progress.'],
+    ['Active in 7 days',active(7).length,'Distinct installations reporting in the last 7 UTC days.'],
+    ['Active in 30 days',last30.length,'Distinct installations reporting in the last 30 UTC days.'],
+    ['First seen in 7 days',new7,'First report received since detailed tracking began; not downloads or installs.'],
+    ['Returning in 7 days',returning7,'Active this week and first seen before this 7-day window.'],
+    ['Used on 2+ days this week',active(7).filter(r=>days(r,7)>=2).length,'At least two distinct reported UTC days.'],
+    ['Average reported days / 30',tracked30.length ? tracked30.reduce((n,r)=>n+days(r,30),0)/tracked30.length : 'No reports',
+      'Among active installations with day history; missing and offline days are not reconstructed.'],
+    ['Returned in week 2',...week],['Returned in week 5',...month],
+    ['Currently opted out',current.filter(r=>r[4]==='opted_out').length,'Preference received in the retained 90-day window.'],
+    ['Active with unknown first seen',last30.filter(r=>first(r)===null).length,'Older records; excluded from new/returning and retention metrics.'],
+    ['Known first desktop start',last30.filter(r=>r[10]).length,'Client-supplied timestamp, not package installation time.'],
+  ];
+  const versions=new Map();
+  for (const row of last30) {
+    const name=validVersion(row[2]) ? row[2] : 'Unknown';
+    if (!versions.has(name)) versions.set(name,[name,0,0,0]);
+    const v=versions.get(name);if(row[1]>=today-6) v[1]++;v[2]++;
+  }
+  const versionRows=[...versions.values()].sort((a,b)=>b[2]-a[2] || a[0].localeCompare(b[0]));
+  if(versionRows.length>20) {
+    const rest=versionRows.splice(20);
+    versionRows.push(['Other versions',rest.reduce((n,r)=>n+r[1],0),rest.reduce((n,r)=>n+r[2],0),0]);
+  }
+  versionRows.forEach(r=>{r[3]=r[2]/last30.length;});
+  const daily=Array.from({length:90},(_,i)=>[utcDay_(today-89+i),0,0,0]);
+  let earliest=today+1;
+  for (const row of enabled) {
+    const observed=first(row); if(observed===null) continue;
+    earliest=Math.min(earliest,observed);
+    for (const day of days_(row[13])) {
+      const item=daily[day-(today-89)];item[1]++;
+      if(day===observed) item[2]++;else item[3]++;
+    }
+  }
+  daily.forEach((r,i)=>{if(today-89+i<earliest) r.splice(1,3,'','','');});
+  const prefixes=new Map();current.forEach(r=>prefixes.set(String(r[0]).slice(0,12),(prefixes.get(String(r[0]).slice(0,12))||0)+1));
+  // Keep source order so an ordinary report changes one installation row,
+  // rather than moving the entire table on every last-active update.
+  const history=current.map(r=>{
+    const prefix=String(r[0]).slice(0,12),observed=first(r);
+    return ['ID '+(prefixes.get(prefix)>1 ? r[0] : prefix),r[4]==='enabled'?'Enabled':'Opted out',validVersion(r[2])?r[2]:'Unknown',
+      observed===null?'Unknown':utcDay_(observed),r[1]===''?'No activity':utcDay_(r[1]),
+      days(r,7),days(r,30),days_(r[13]).length,r[10] ? r[10].slice(0,10) : 'Unknown',r[11] || 'Unknown',
+      versions_(r[15]).map(([day,v])=>`${utcDay_(day)}: ${v}`).join(' → ') || 'No version history yet'];
+  });
+  return {'Dashboard':dashboard,'Versions':versionRows,'Daily activity':daily,'Installation history':history};
+}
+// New generated tabs are separate from the owner's Summary. Only an empty tab
+// can be claimed. Reserve A:width, rows 1 onward; other columns remain untouched.
+// A1 is an explicit ownership marker, row 2 a dated explanation, row 4 headers.
+function analyticsPreflight_(book) {
+  const plan={};
+  for(const [name,headers] of Object.entries(ANALYTICS_TABS)) {
+    const sheet=book.getSheetByName(name);plan[name]=[];
+    if(!sheet || sheet.getLastRow()===0) continue;
+    if(sheet.getLastRow()>MAX_INSTALLATIONS+4 || sheet.getMaxColumns()<headers.length || sheet.getMaxRows()<4)
+      throw Error('Invalid analytics destination');
+    const marker=sheet.getRange(1,1);
+    if(marker.getValues()[0][0]!==ANALYTICS_OWNER || marker.getFormulas()[0][0]!=='')
+      throw Error('Analytics destination is not collector-owned');
+    const range=sheet.getRange(1,1,Math.max(4,sheet.getLastRow()),headers.length);
+    if(range.getFormulas().some(r=>r.some(Boolean))) throw Error('Formula in generated analytics');
+    const values=range.getValues(),labels=values[3];plan[name]=values;
+    if(labels.some((value,i)=>value!=='' && value!==headers[i])) throw Error('Edited analytics headers');
+  }
+  return plan;
+}
+function analyticsWrite_(book,rows,today,plan) {
+  const reports=analytics_(rows,today);
+  // Sheets sometimes coerces ISO days into native Date cells. Compare their
+  // UTC day, otherwise unchanged tables would be rewritten on every report.
+  const same=(a,b)=>JSON.stringify(a && a.map(v=>v instanceof Date ? v.toISOString().slice(0,10) : v))
+    ===JSON.stringify(b && b.map(v=>v instanceof Date ? v.toISOString().slice(0,10) : v));
+  for(const [name,body] of Object.entries(reports)) {
+    const headers=ANALYTICS_TABS[name],width=headers.length;
+    const sheet=book.getSheetByName(name) || book.insertSheet(name);
+    if(sheet.getMaxColumns()<width) sheet.insertColumnsAfter(sheet.getMaxColumns(),width-sheet.getMaxColumns());
+    const note=name==='Installation history'
+      ? 'Retained installation records. Version changes start with this collector upgrade; at most the last version per UTC day.'
+      : 'Currently enabled, retained installations. Missing reports are not backfilled. Historical counts can fall after opt-out or expiry.';
+    const values=[[ANALYTICS_OWNER],[`Updated ${utcDay_(today)} (UTC). ${note}`],[],headers,...body]
+      .map(r=>Array.from({length:width},(_,i)=>r[i]===undefined?'':r[i]));
+    const count=Math.max(values.length,sheet.getLastRow());
+    if(sheet.getMaxRows()<count) sheet.insertRowsAfter(sheet.getMaxRows(),count-sheet.getMaxRows());
+    // Claim before body writes so an interrupted first refresh is retryable.
+    const before=plan[name];
+    if(!before.length) sheet.getRange(1,1).setValue(ANALYTICS_OWNER);
+    while(values.length<count) values.push(Array(width).fill(''));
+    for(let offset=0;offset<values.length;) {
+      if(same(values[offset],before[offset])) {offset++;continue;}
+      let end=offset+1;
+      while(end<values.length && end-offset<WRITE_BATCH_ROWS && !same(values[end],before[end])) end++;
+      sheet.getRange(offset+1,1,end-offset,width).setValues(values.slice(offset,end));offset=end;
+    }
+    if(!before.length) sheet.setFrozenRows(4);
+  }
+}
 function json_(value) { return ContentService.createTextOutput(JSON.stringify(value)).setMimeType(ContentService.MimeType.JSON); }
 function doGet() { return json_({service:'halcyon-activity',schema:4}); }
 function doPost(event) {
@@ -306,10 +459,11 @@ function doPost(event) {
     lock = LockService.getScriptLock();
     if (!lock.tryLock(3000)) return json_({ok:false});
     const now=new Date(),today=dayNumber(now),book=book_(),sheet=book.getSheetByName('Installations');
-    const before=rows_(sheet); reporting_(book); // read-only preflight before any write
+    const before=rows_(sheet); reporting_(book); const analytics=analyticsPreflight_(book); // read-only preflight before any write
     const after=applyReport(before,id,report,now);
     write_(sheet,before,after);
     countries_(book,after,today); summary_(book,after,today);
+    analyticsWrite_(book,after,today,analytics);
     const row=after.find(r=>r[0]===id);
     return json_(report.kind === 'status' ? {ok:true,revision:row[7],enabled:row[4]==='enabled'}
       : {ok:true,day:Utilities.formatDate(now,'UTC','yyyy-MM-dd')});
@@ -320,9 +474,10 @@ function maintenance() {
   const lock=LockService.getScriptLock(); if (!lock.tryLock(10000)) return;
   try {
     const book=book_(),sheet=book.getSheetByName('Installations'),before=rows_(sheet),today=dayNumber(new Date());
-    reporting_(book); // collisions must leave even Installations untouched
+    reporting_(book); const analytics=analyticsPreflight_(book); // collisions must leave even Installations untouched
     const after=currentRows(before,today); write_(sheet,before,after);
     countries_(book,after,today); summary_(book,after,today);
+    analyticsWrite_(book,after,today,analytics);
   } finally { lock.releaseLock(); }
 }
 // Upgrade only the three documented current-count formulas wherever the owner
@@ -341,7 +496,7 @@ function setup() {
   try {
     const book=book_(),raw=book.getSheetByName('Installations');
     const plan=statusPlan_(raw);
-    reporting_(book); // finish both preflights before changing any workbook cell
+    reporting_(book); const analytics=analyticsPreflight_(book); // finish all preflights before changing any workbook cell
     claimReporting_(book); // recoverable even if the next write is interrupted
     if (raw.getMaxColumns() < WIDTH) raw.insertColumnsAfter(raw.getMaxColumns(),WIDTH-raw.getMaxColumns());
     if (raw.getMaxRows() < MAX_INSTALLATIONS+1) raw.insertRowsAfter(raw.getMaxRows(),MAX_INSTALLATIONS+1-raw.getMaxRows());
@@ -361,6 +516,7 @@ function setup() {
     if (!ScriptApp.getProjectTriggers().some(t=>t.getHandlerFunction()==='maintenance'))
       ScriptApp.newTrigger('maintenance').timeBased().everyDays(1).atHour(3).create();
     countries_(book,rows,dayNumber(new Date())); summary_(book,rows,dayNumber(new Date()));
+    analyticsWrite_(book,rows,dayNumber(new Date()),analytics);
     migrateSummary_(book.getSheetByName('Summary'));
     book.getSheetByName('Summary').getRange('B9').setValue('Configured');
     return {configured:true};

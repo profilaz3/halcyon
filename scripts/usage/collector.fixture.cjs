@@ -69,7 +69,7 @@ function fixture(source = fs.readFileSync(__dirname+'/collector.gs','utf8')) {
     snapshot:()=>JSON.stringify({timezone:state.timezone,triggers:state.triggers.map(t=>t.getHandlerFunction()),
       sheets:[...sheets].map(([name,s])=>({name,maxRows:s.maxRows,maxColumns:s.maxColumns,frozenRows:s.frozenRows,cells:[...s.cells].sort()}))}),
     summary:()=>summary.getDataRange().getFormulas(),reporting:()=>values(sheets.get('Reporting'),2).slice(0,6),
-    countries:()=>values(countries,4),rows:()=>values(raw,Math.min(raw.getMaxColumns(),15)),
+    countries:()=>values(countries,4),rows:()=>values(raw,Math.min(raw.getMaxColumns(),16)),
     status:()=>summary.cell(9,2).value,triggers:()=>state.triggers,locked:()=>state.locked,
     seed:rows=>{
       for(const key of raw.cells.keys()) if(+key.split(',')[0]>1) raw.cells.delete(key);
