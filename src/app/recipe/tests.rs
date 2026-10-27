@@ -311,3 +311,66 @@ fn calendar_recipe_privacy_status_and_compact_actions_use_existing_agenda() {
             .is_none()
     );
 }
+
+#[test]
+fn system_recipe_missing_metrics_compact_frames_and_provider_demand() {
+    use cosmic::Application;
+    let mut config = Config::default();
+    let mut recipe = Recipe::starter(Kind::System);
+    recipe.parts = vec![Part::Memory, Part::Cpu, Part::Gpu, Part::Settings];
+    recipe.seal();
+    config.recipes.devbox = Some(recipe.clone());
+    let now = Local::now().naive_local();
+    let missing = system::reading(&recipe, &Metrics::default());
+    assert!(missing.status.is_some());
+    assert!(
+        missing
+            .system
+            .iter()
+            .all(|m| m.value == "—" && m.fraction.is_none())
+    );
+    let present = system::reading(
+        &recipe,
+        &super::super::settings_preview::monitor_sample().metrics,
+    );
+    assert!(present.status.is_none());
+    assert!(present.system[0].value.contains("8.2"));
+    for size in [[160., 100.], [320., 220.], [520., 220.]] {
+        let frame = plan(&recipe, size, true);
+        assert!(frame.parts.contains(&Part::Memory));
+        let mut native = crate::native_test::Native::new(cosmic::iced::Size::new(size[0], size[1]));
+        let bounds = native.bounds(
+            view(&config, &recipe, now, missing.clone(), Context::Live, size),
+            "recipe-system-status",
+        );
+        assert!(bounds.y + bounds.height <= size[1]);
+        native.capture(
+            view(&config, &recipe, now, missing.clone(), Context::Live, size),
+            &cosmic::Theme::dark(),
+            &format!("system-recipe-missing-{}", size[0]),
+        );
+        native.capture(
+            view(
+                &config,
+                &recipe,
+                now,
+                present.clone(),
+                Context::LocalPreview,
+                size,
+            ),
+            &cosmic::Theme::light(),
+            &format!("system-recipe-sample-{}", size[0]),
+        );
+    }
+    config.widgets_visible = false;
+    let (mut cards, initial) = Cards::init(Core::default(), config);
+    drop(initial);
+    drop(cards.refresh_visible_data());
+    assert!(!cards.metrics_fetching);
+    assert!(!cards.service_fetching);
+    cards.metrics = super::super::settings_preview::monitor_sample()
+        .metrics
+        .clone();
+    drop(cards.update(Message::Metrics(Err("fixture failed sample".into()))));
+    assert!(system::reading(&recipe, &cards.metrics).status.is_some());
+}

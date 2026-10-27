@@ -2,7 +2,7 @@
 //! before text or action identities enter the presentation snapshot.
 use super::*;
 #[derive(Clone, Default, Debug, PartialEq)]
-pub(super) struct Entry {
+pub(in crate::app) struct Entry {
     pub time: String,
     pub title: String,
     pub details: Option<String>,

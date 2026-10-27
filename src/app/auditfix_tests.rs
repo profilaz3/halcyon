@@ -83,8 +83,8 @@ fn auditfix_ob03_planned_viewports_match_runtime_and_collision_positions() {
     let _output = cards.test_output_ready();
     cards.screen_size = plan.snapshot.screen;
     // Both zero detected GPUs and one placeholder use one GPU row.
-    assert_eq!(super::devbox::natural_height(&cards.config.devbox, 0), 226.);
-    assert_eq!(super::devbox::natural_height(&cards.config.devbox, 1), 226.);
+    assert_eq!(super::devbox::natural_height(&cards.config, 0), 226.);
+    assert_eq!(super::devbox::natural_height(&cards.config, 1), 226.);
     for widget in [Widget::Devbox, Widget::Notes] {
         let geometry = plan
             .snapshot

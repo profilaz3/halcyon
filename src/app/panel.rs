@@ -26,10 +26,12 @@ impl Cards {
             (self.provider_visible(Widget::Clock)).then_some(self.next_clock),
             (visible(Widget::Calendar)).then_some(self.next_calendar_view),
             (visible(Widget::Devbox)
-                && self.config.devbox.needs_sample()
+                && self.config.devbox_sampling().needs_sample()
                 && !self.metrics_fetching)
                 .then_some(self.next_metrics),
-            (visible(Widget::Devbox) && self.config.devbox.services && !self.service_fetching)
+            (visible(Widget::Devbox)
+                && self.config.devbox_sampling().services
+                && !self.service_fetching)
                 .then_some(self.next_service),
             self.provider_visible(Widget::Weather)
                 .then(|| self.weather_hub.deadline())
@@ -101,7 +103,7 @@ impl Cards {
         if self.sidebar.drag.is_some() {
             cfg.widget_order = self.config.widget_order.clone();
         }
-        if cfg.devbox != self.config.devbox {
+        if cfg.devbox_sampling() != self.config.devbox_sampling() {
             self.next_metrics = now;
             self.next_service = now;
         }
@@ -148,7 +150,7 @@ impl Cards {
             tasks.push(self.calendar_overview());
         }
         self.histories
-            .reconcile(&cfg.devbox, cfg.widget_visible(Widget::Devbox));
+            .reconcile(&cfg.devbox_sampling(), cfg.widget_visible(Widget::Devbox));
         let notes_shown = cfg.widget_visible(Widget::Notes);
         let notes_changed = notes_shown != self.config.widget_visible(Widget::Notes);
         let display_changed = self.config.widget_display != cfg.widget_display
@@ -224,7 +226,7 @@ impl Cards {
             tasks.push(self.sync_widget_surfaces());
         }
         if self.provider_visible(Widget::Devbox) {
-            if self.config.devbox.needs_sample()
+            if self.config.devbox_sampling().needs_sample()
                 && !self.metrics_fetching
                 && now >= self.next_metrics
             {
@@ -232,7 +234,7 @@ impl Cards {
                 self.next_metrics = now + self.config.refresh_intervals.duration(Widget::Devbox);
                 let mut sampler = std::mem::take(&mut self.sampler);
                 let previous = self.metrics.clone();
-                let preferences = self.config.devbox.clone();
+                let preferences = self.config.devbox_sampling().into_owned();
                 tasks.push(cosmic::task::future(async move {
                     Message::Metrics(
                         tokio::task::spawn_blocking(move || {
@@ -244,7 +246,10 @@ impl Cards {
                     )
                 }));
             }
-            if self.config.devbox.services && !self.service_fetching && now >= self.next_service {
+            if self.config.devbox_sampling().services
+                && !self.service_fetching
+                && now >= self.next_service
+            {
                 self.service_fetching = true;
                 self.next_service = now
                     + self

@@ -196,3 +196,60 @@ fn calendar_recipe_roundtrip_versions_reset_and_public_projection() {
     p.version = 15;
     assert!(p.validate().is_err());
 }
+
+#[test]
+fn system_recipe_metric_selection_sampling_and_portable_versions() {
+    use crate::config::Config;
+    let mut recipe = Recipe::starter(Kind::System);
+    recipe.parts = vec![Part::Caption, Part::Memory, Part::Settings];
+    recipe.seal();
+    recipe.validate().unwrap();
+    assert_eq!(recipe.primary(), Part::Memory);
+    assert!(!recipe.can_remove(1));
+    let mut config = Config::default();
+    config.devbox.cpu = true;
+    config.devbox.services = true;
+    config.devbox.memory = false;
+    let original = config.devbox.clone();
+    config.recipes.devbox = Some(recipe.clone());
+    let sampling = config.devbox_sampling();
+    assert!(sampling.memory && sampling.needs_sample());
+    assert!(
+        !sampling.cpu
+            && !sampling.gpu
+            && !sampling.network
+            && !sampling.services
+            && !sampling.disk
+            && !sampling.uptime
+    );
+    assert_eq!(config.devbox, original);
+    let raw = serde_json::json!({"recipes":{"devbox":recipe},"devbox":{"memory":false}});
+    let document = crate::design::Document::from_legacy(&raw).unwrap();
+    assert_eq!(document.version, 3);
+    assert_eq!(
+        document.project(&raw).unwrap()["recipes"]["devbox"],
+        raw["recipes"]["devbox"]
+    );
+    let mut old = document.clone();
+    old.version = 2;
+    assert!(old.validate().is_err());
+    let mut profile = crate::desktop::profiles::Profile::new("Readings").unwrap();
+    profile.widget_style = Some(serde_json::json!({"recipes":{"devbox":recipe}}));
+    profile.version = profile.written_version();
+    assert_eq!(profile.version, 16);
+    let bytes = crate::desktop::profiles::export(&profile).unwrap().bytes;
+    let imported = crate::desktop::profiles::import(&bytes).unwrap();
+    assert_eq!(
+        crate::settings::sharing::Scene::new(&imported)
+            .unwrap()
+            .config()
+            .unwrap()
+            .recipes
+            .devbox,
+        config.recipes.devbox
+    );
+    profile.version = 15;
+    assert!(profile.validate().is_err());
+    config.recipes.devbox = None;
+    assert_eq!(config.devbox_sampling().as_ref(), &original);
+}

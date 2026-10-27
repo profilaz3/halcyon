@@ -13,10 +13,23 @@ const EMPTY_HEIGHT: f32 = 20.;
 
 impl Cards {
     pub(super) fn devbox_natural_height(&self) -> f32 {
-        natural_height(&self.config.devbox, self.metrics.gpus.len())
+        natural_height(&self.config, self.metrics.gpus.len())
     }
 
     pub(super) fn devbox(&self) -> Element<'_, Message> {
+        if let Some(recipe) = &self.config.recipes.devbox {
+            return recipe::view(
+                &self.config,
+                recipe,
+                Local::now().naive_local(),
+                recipe::system::reading(recipe, &self.metrics),
+                crate::widget_presentation::Context::Live,
+                [
+                    self.widget_size(Widget::Devbox)[0],
+                    self.card_height(Widget::Devbox),
+                ],
+            );
+        }
         view(
             &self.config,
             &self.metrics,
@@ -26,8 +39,8 @@ impl Cards {
     }
 }
 
-pub(super) fn natural_height(preferences: &DevboxPreferences, gpu_count: usize) -> f32 {
-    crate::layout_state::devbox_content_height(preferences, gpu_count)
+pub(super) fn natural_height(config: &Config, gpu_count: usize) -> f32 {
+    crate::layout_state::devbox_height(config, gpu_count)
 }
 
 /// The same card is used on the desktop and in Settings; rendering only reads

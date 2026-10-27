@@ -130,6 +130,29 @@ impl Default for Config {
     }
 }
 impl Config {
+    /// Personal system widgets reuse the same sampler and only request their parts.
+    /// Built-in preferences stay intact for Use built-in and Undo.
+    pub fn devbox_sampling(&self) -> std::borrow::Cow<'_, DevboxPreferences> {
+        let Some(recipe) = &self.recipes.devbox else {
+            return std::borrow::Cow::Borrowed(&self.devbox);
+        };
+        use crate::recipes::Part;
+        let has = |part| recipe.parts.contains(&part);
+        std::borrow::Cow::Owned(DevboxPreferences {
+            cpu: has(Part::Cpu),
+            memory: has(Part::Memory),
+            memory_cache: false,
+            swap: false,
+            disk: has(Part::Disk),
+            network: has(Part::Network),
+            gpu: has(Part::Gpu),
+            uptime: has(Part::Uptime),
+            services: false,
+            history: Default::default(),
+            order: Vec::new(),
+        })
+    }
+
     pub fn path() -> Option<std::path::PathBuf> {
         std::env::var_os("DESKTOP_CARDS_CONFIG")
             .map(std::path::PathBuf::from)

@@ -796,6 +796,19 @@ impl Settings {
     }
 
     pub(super) fn devbox_page(&self) -> Element<'_, Message> {
+        if let Some(recipe) = &self.config.recipes.devbox {
+            return column::with_children(vec![
+                self.widget_heading(Widget::Devbox, "System monitor"),
+                self.widget_settings_body(
+                    crate::app::settings_devbox_preview(&self.config).map(|_| Message::Preview),
+                    column::with_children(vec![
+                        group(Some("Personal widget"), vec![split(label(&recipe.name, 14., FG), button::text("Edit widget…").id(cosmic::widget::Id::new("system-recipe-edit")).on_press(Message::OpenRecipe(crate::recipes::Kind::System)).into()), self.help("system-recipe-readings", "Readings", "Choose and order readings in Widget builder. Use built-in there restores your previous monitor settings.")]),
+                        self.widget_style_and_layout(Widget::Devbox),
+                        self.page_settings_advanced(Page::Devbox, vec![self.refresh_control(Widget::Devbox)]),
+                    ]).spacing(12).into(),
+                ),
+            ]).spacing(14).into();
+        }
         let order = self.config.devbox.ordered_sections();
         let mut rows = Vec::new();
         for (index, metric) in order.iter().copied().enumerate() {

@@ -242,8 +242,9 @@ pub(in crate::settings) fn card_at<'a>(
     scale: f32,
     now: Option<chrono::DateTime<chrono::Local>>,
 ) -> Element<'a, Message> {
-    if widget == Widget::Calendar
-        && let Some(recipe) = config.recipes.calendar.as_ref()
+    if matches!(widget, Widget::Calendar | Widget::Devbox)
+        && let Some(recipe) =
+            crate::recipes::Kind::from_widget(widget).and_then(|kind| config.recipes.get(kind))
     {
         let scale = if scale.is_finite() && scale > 0. {
             scale

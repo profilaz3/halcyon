@@ -185,3 +185,83 @@ fn calendar_recipe_native_builder_apply_undo_and_preview_preserve_accounts() {
     assert!(restored.calendar_private);
     assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), frozen);
 }
+
+#[test]
+fn system_recipe_native_builder_apply_edit_reset_and_undo() {
+    if crate::displays::test_support::isolated(
+        "settings::recipes::tests::system_recipe_native_builder_apply_edit_reset_and_undo",
+    ) {
+        return;
+    }
+    use crate::settings::tests::send_settings;
+    std::fs::write(Config::path().unwrap(),br#"{"onboarded":true,"setup_dismissed":true,"theme":"teal","devbox":{"memory":false,"services":true}}"#).unwrap();
+    let store = crate::desktop::actions::history_store().unwrap();
+    store.migrate_design().unwrap();
+    let frozen = std::fs::read(Config::path().unwrap()).unwrap();
+    let (mut app, init) = Settings::init(Core::default(), Page::Builder);
+    drop(init);
+    send_settings(
+        &mut app,
+        super::super::Message::Recipe(Message::New(Kind::System)),
+    );
+    for (w, h) in [(820., 600.), (1280., 800.)] {
+        app.window = cosmic::iced::Size::new(w, h);
+        let mut native = crate::native_test::Native::new(app.window);
+        let apply = native.bounds(app.settings_view(), "recipe-apply");
+        assert!(apply.y >= 0. && apply.y + apply.height <= h);
+        native.capture(
+            app.settings_view(),
+            &cosmic::Theme::dark(),
+            &format!("system-builder-{w}"),
+        );
+        send_settings(
+            &mut app,
+            super::super::Message::Recipe(Message::Missing(true)),
+        );
+        native.capture(
+            app.settings_view(),
+            &cosmic::Theme::light(),
+            &format!("system-builder-missing-{w}"),
+        );
+        send_settings(
+            &mut app,
+            super::super::Message::Recipe(Message::Missing(false)),
+        );
+    }
+    assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), frozen);
+    send_settings(&mut app, super::super::Message::Recipe(Message::Apply));
+    let applied = Config::try_load().unwrap();
+    assert!(applied.recipes.devbox.is_some() && !applied.devbox.memory && applied.devbox.services);
+    send_settings(&mut app, super::super::Message::Page(Page::Devbox));
+    app.window = cosmic::iced::Size::new(820., 600.);
+    let mut native = crate::native_test::Native::new(app.window);
+    native.capture(
+        app.settings_view(),
+        &cosmic::Theme::dark(),
+        "system-recipe-settings-820",
+    );
+    send_settings(&mut app, super::super::Message::OpenRecipe(Kind::System));
+    assert_eq!(app.page, Page::Builder);
+    assert_eq!(app.recipe_editor.draft, applied.recipes.devbox.unwrap());
+    send_settings(&mut app, super::super::Message::Recipe(Message::UseBuiltin));
+    assert!(app.config.recipes.devbox.is_none());
+    send_settings(&mut app, super::super::Message::UndoDesktop);
+    assert!(app.config.recipes.devbox.is_some());
+    assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), frozen);
+}
+
+#[test]
+fn system_recipe_editor_keeps_one_reading_and_respects_part_limit() {
+    let mut editor = Editor::default();
+    editor.update(Message::New(Kind::System));
+    editor.update(Message::Remove(0));
+    assert_eq!(editor.draft.primary(), Part::Memory);
+    editor.update(Message::Remove(1));
+    editor.update(Message::Remove(0));
+    assert_eq!(editor.draft.parts, vec![Part::Memory]);
+    for part in Kind::System.parts() {
+        editor.update(Message::Add(*part));
+    }
+    assert_eq!(editor.draft.parts.len(), 8);
+    editor.draft.validate().unwrap();
+}

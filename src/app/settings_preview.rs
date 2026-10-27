@@ -5,12 +5,12 @@ use super::*;
 use crate::data::{GpuMetrics, NetworkMetrics};
 use std::sync::OnceLock;
 
-struct MonitorSample {
-    metrics: Metrics,
+pub(in crate::app) struct MonitorSample {
+    pub(in crate::app) metrics: Metrics,
     histories: MetricHistories,
 }
 
-fn monitor_sample() -> &'static MonitorSample {
+pub(in crate::app) fn monitor_sample() -> &'static MonitorSample {
     static SAMPLE: OnceLock<MonitorSample> = OnceLock::new();
     SAMPLE.get_or_init(|| {
         let metrics = Metrics {
@@ -50,12 +50,15 @@ fn monitor_sample() -> &'static MonitorSample {
 /// Callers label this as sample data and ignore its desktop actions. Width is
 /// supplied by the enclosing Settings preview; the card uses automatic height.
 pub(crate) fn settings_devbox_preview(config: &Config) -> Element<'static, Message> {
+    if let Some(recipe) = &config.recipes.devbox {
+        return recipe::system::sample(config, recipe, false, [360., recipe.natural_height()]);
+    }
     let sample = monitor_sample();
     devbox::view(
         config,
         &sample.metrics,
         &sample.histories,
-        devbox::natural_height(&config.devbox, sample.metrics.gpus.len()),
+        devbox::natural_height(config, sample.metrics.gpus.len()),
     )
 }
 

@@ -1082,7 +1082,7 @@ impl Profile {
         self.widget_style
             .as_ref()
             .and_then(|v| v.get("recipes"))
-            .is_some_and(|v| v.get("calendar").is_some())
+            .is_some_and(|v| v.get("calendar").is_some() || v.get("devbox").is_some())
     }
     fn has_recipes(&self) -> bool {
         self.widget_style

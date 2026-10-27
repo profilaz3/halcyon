@@ -100,12 +100,14 @@ impl Settings {
             vec![
                 controls,
                 sample,
-                if matches!(recipe.kind, Kind::Weather | Kind::Calendar) {
+                if matches!(recipe.kind, Kind::Weather | Kind::Calendar | Kind::System) {
                     segmented(
                         vec![
                             (
                                 if recipe.kind == Kind::Calendar {
                                     "Sample agenda"
+                                } else if recipe.kind == Kind::System {
+                                    "Sample readings"
                                 } else {
                                     "Sample weather"
                                 }
@@ -116,6 +118,8 @@ impl Settings {
                             (
                                 if recipe.kind == Kind::Calendar {
                                     "Not connected"
+                                } else if recipe.kind == Kind::System {
+                                    "Unavailable"
                                 } else {
                                     "Missing location"
                                 }
@@ -172,8 +176,7 @@ impl Settings {
                         .into(),
                     button::text("Remove")
                         .on_press_maybe(
-                            (!busy && *part != recipe.kind.primary())
-                                .then(|| edit(Edit::Remove(i))),
+                            (!busy && recipe.can_remove(i)).then(|| edit(Edit::Remove(i))),
                         )
                         .into(),
                 ])
@@ -189,7 +192,7 @@ impl Settings {
             .filter(|p| !recipe.parts.contains(p))
             .map(|p| {
                 button::text(format!("+ {}", p.title()))
-                    .on_press_maybe((!busy).then(|| edit(Edit::Add(*p))))
+                    .on_press_maybe((!busy && recipe.parts.len() < 8).then(|| edit(Edit::Add(*p))))
                     .into()
             })
             .collect::<Vec<_>>();
@@ -203,7 +206,7 @@ impl Settings {
                     .into(),
             );
         }
-        parts.push(self.help("recipe-parts", "Parts", "Small widgets keep the main content and connection status. Split places the main content beside the remaining parts. Calendar follows its existing date and privacy settings."));
+        parts.push(self.help("recipe-parts", "Parts", "Small widgets keep the main content and connection status. Split places the main content beside the remaining parts. Calendar follows its date and privacy settings. System monitor samples the readings you select; its first reading stays visible at small sizes."));
         let inspector: Element<'_, Message> =
             column::with_children(vec![name_editor, group(Some("Parts"), parts)])
                 .spacing(16)

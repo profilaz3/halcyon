@@ -673,6 +673,7 @@ pub enum Message {
     ClockDepth(bool),
     Moment(moments::Message),
     Recipe(recipes::Message),
+    OpenRecipe(crate::recipes::Kind),
     Design(design::Message),
     ClockFace(Option<crate::widget_style::resolver::ClockFace>),
     ClockWeight(Option<crate::widget_style::resolver::ClockWeight>),
@@ -3364,6 +3365,19 @@ impl Settings {
             Message::ClockVertical(value) => self.save_clock(json!({"center_vertically": value})),
             Message::DepthPreviewReady(id, pixels) => self.depth_preview.ready(id, pixels),
             Message::Moment(edit) => self.update_moment(edit),
+            Message::OpenRecipe(kind) => {
+                let task = self.update(Message::Page(Page::Builder));
+                if let Some(recipe) = self.config.recipes.get(kind).cloned() {
+                    self.recipe_editor.expected =
+                        self.recipe_editor.library.entries.get(&recipe.id).cloned();
+                    self.recipe_editor.draft = recipe;
+                    self.recipe_editor.notice = None;
+                    self.recipe_editor.error = false;
+                } else {
+                    self.recipe_editor.update(recipes::Message::New(kind));
+                }
+                return task;
+            }
             Message::Recipe(edit) => self.update_recipe(edit),
             Message::Design(edit) => return self.update_design(edit),
             Message::ClockDepth(value) => self.save_clock(json!({"depth": value})),

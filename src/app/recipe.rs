@@ -1,10 +1,12 @@
-//! Native parts reuse the Clock frame and the already-projected Weather snapshot.
+//! Native parts use existing widget snapshots; rendering never fetches data.
 use super::*;
 pub(super) mod calendar;
+pub(super) mod system;
 use crate::recipes::{Arrangement, Kind, Part, Recipe};
 use crate::widget_presentation::Context;
 #[derive(Clone, Default)]
 pub(super) struct Reading {
+    pub system: Vec<system::Metric>,
     pub city: String,
     pub temperature: String,
     pub conditions: String,
@@ -26,6 +28,7 @@ pub(super) struct Plan {
 }
 fn minimum(part: Part) -> f32 {
     match part {
+        Part::Cpu | Part::Memory | Part::Disk | Part::Network | Part::Gpu | Part::Uptime => 42.,
         Part::Face => 56.,
         Part::Agenda => 42.,
         Part::Reading => 36.,
@@ -44,10 +47,10 @@ pub(super) fn plan(recipe: &Recipe, size: [f32; 2], status: bool) -> Plan {
     let mut split =
         recipe.arrangement(width + 16.) == Arrangement::Split && width >= 280. && parts.len() > 1;
     let required = |parts: &[Part], split: bool| {
-        let main = minimum(recipe.kind.primary());
+        let main = minimum(recipe.primary());
         let rest: f32 = parts
             .iter()
-            .filter(|p| **p != recipe.kind.primary())
+            .filter(|p| **p != recipe.primary())
             .map(|p| minimum(*p) + 4.)
             .sum();
         if split {
@@ -58,7 +61,7 @@ pub(super) fn plan(recipe: &Recipe, size: [f32; 2], status: bool) -> Plan {
     };
     let compacted = required(&parts, split) > height;
     if compacted {
-        parts = vec![recipe.kind.primary()];
+        parts = vec![recipe.primary()];
         split = false;
     }
     let mut heights: Vec<_> = parts.iter().map(|p| minimum(*p)).collect();
@@ -66,13 +69,13 @@ pub(super) fn plan(recipe: &Recipe, size: [f32; 2], status: bool) -> Plan {
         heights
             .iter()
             .zip(&parts)
-            .filter(|(_, p)| **p != recipe.kind.primary())
+            .filter(|(_, p)| **p != recipe.primary())
             .map(|(h, _)| h + 4.)
             .sum::<f32>()
     } else {
         heights.iter().sum::<f32>() + 4. * parts.len().saturating_sub(1) as f32
     };
-    if let Some(i) = parts.iter().position(|p| *p == recipe.kind.primary()) {
+    if let Some(i) = parts.iter().position(|p| *p == recipe.primary()) {
         heights[i] = if split {
             height
         } else {
@@ -91,7 +94,7 @@ pub(super) fn plan(recipe: &Recipe, size: [f32; 2], status: bool) -> Plan {
 pub(super) fn action_rect(recipe: &Recipe, size: [f32; 2]) -> Option<[u32; 4]> {
     let frame = plan(recipe, size, false);
     let i = frame.parts.iter().position(|p| *p == Part::Settings)?;
-    let primary = recipe.kind.primary();
+    let primary = recipe.primary();
     let (x, y, width) = if frame.split {
         let detail_height = frame
             .parts
@@ -173,7 +176,7 @@ pub(super) fn view(
         Some(crate::widget_style::resolver::ClockSurface::None);
     // Preserve the resolved Moment face/type while removing only this part's surface.
     clock_config.clock.face = Some(style.clock_face.value);
-    let primary = recipe.kind.primary();
+    let primary = recipe.primary();
     let part_width = |part: Part| {
         if frame.split {
             if part == primary {
@@ -201,6 +204,9 @@ pub(super) fn view(
                 false,
             ),
             Part::Agenda => calendar::part(&reading, w, h, p, font, context),
+            Part::Cpu | Part::Memory | Part::Disk | Part::Network | Part::Gpu | Part::Uptime => {
+                system::part(&reading, part, w, h, p, font)
+            }
             Part::City => label(reading.city.clone(), h, w, false),
             Part::Reading => label(reading.temperature.clone(), h, w, true),
             Part::Conditions => label(reading.conditions.clone(), h, w, false),
@@ -227,6 +233,7 @@ pub(super) fn view(
                             Kind::Clock => Message::ClockSettings,
                             Kind::Weather => Message::WeatherSettings,
                             Kind::Calendar => Message::CalendarSettings,
+                            Kind::System => Message::DevboxSettings,
                         })
                         .into()
                 } else {
@@ -283,6 +290,8 @@ pub(super) fn view(
             )
             .id(cosmic::widget::Id::new(if recipe.kind == Kind::Weather {
                 "recipe-weather-status"
+            } else if recipe.kind == Kind::System {
+                "recipe-system-status"
             } else {
                 "recipe-calendar-status"
             }))

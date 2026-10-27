@@ -160,7 +160,12 @@ impl Document {
                     RecipeId::Builtin { builtin, reset } => {
                         *builtin != instance.kind
                             || (*reset
-                                && self.version < if *builtin == Widget::Calendar { 3 } else { 2 })
+                                && self.version
+                                    < if matches!(builtin, Widget::Calendar | Widget::Devbox) {
+                                        3
+                                    } else {
+                                        2
+                                    })
                     }
                     RecipeId::Personal { personal } => {
                         personal.kind.widget() != instance.kind
@@ -298,19 +303,23 @@ impl Document {
             if key == "recipe" {
                 let reset = value.as_ref().is_some_and(Value::is_null);
                 if value.is_some() {
-                    self.version = self.version.max(if matches!(kind, Widget::Calendar) {
-                        3
-                    } else {
-                        2
-                    });
+                    self.version =
+                        self.version
+                            .max(if matches!(kind, Widget::Calendar | Widget::Devbox) {
+                                3
+                            } else {
+                                2
+                            });
                 }
                 instance.recipe = match value.filter(|v| !v.is_null()) {
                     Some(value) => {
-                        self.version = self.version.max(if matches!(kind, Widget::Calendar) {
-                            3
-                        } else {
-                            2
-                        });
+                        self.version = self.version.max(
+                            if matches!(kind, Widget::Calendar | Widget::Devbox) {
+                                3
+                            } else {
+                                2
+                            },
+                        );
                         RecipeId::Personal {
                             personal: serde_json::from_value(value).map_err(|e| e.to_string())?,
                         }

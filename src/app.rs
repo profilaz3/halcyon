@@ -67,6 +67,8 @@ pub(crate) fn settings_recipe_preview(
         )
     } else if recipe.kind == crate::recipes::Kind::Calendar {
         recipe::calendar::sample(&config, recipe, missing, size)
+    } else if recipe.kind == crate::recipes::Kind::System {
+        recipe::system::sample(&config, recipe, missing, size)
     } else if missing {
         weather::Presentation::new(
             &config,
@@ -192,6 +194,7 @@ pub enum Message {
     WeatherSettings,
     ClockSettings,
     CalendarSettings,
+    DevboxSettings,
     ProjectSettings,
     ControlFinished(Result<(), String>),
     CaptureScreens,
@@ -898,15 +901,21 @@ impl Cards {
                         metrics.t3 = self.metrics.t3;
                         self.histories.record(
                             &metrics,
-                            &self.config.devbox,
+                            &self.config.devbox_sampling(),
                             self.config.widget_visible(Widget::Devbox),
                         );
                         self.sampler = sampler;
                         self.metrics = metrics;
                     }
                     Err(error) => {
+                        if self.config.recipes.devbox.is_some() {
+                            self.metrics = Metrics {
+                                t3: self.metrics.t3,
+                                ..Default::default()
+                            };
+                        }
                         self.histories.unavailable(
-                            &self.config.devbox,
+                            &self.config.devbox_sampling(),
                             self.config.widget_visible(Widget::Devbox),
                         );
                         eprintln!("System sample: {error}");
@@ -1238,6 +1247,10 @@ impl Cards {
             Message::WeatherSettings => {
                 self.launch(crate::paths::CONTROLLER, vec!["weather-picker".into()])
             }
+            Message::DevboxSettings => self.launch(
+                crate::paths::CONTROLLER,
+                vec!["settings".into(), "--page".into(), "devbox".into()],
+            ),
             Message::CalendarSettings => self.launch(
                 crate::paths::CONTROLLER,
                 vec!["settings".into(), "--page".into(), "calendar".into()],
