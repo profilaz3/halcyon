@@ -144,6 +144,12 @@ class PackageTests(unittest.TestCase):
                 self.build()
             self.assertFalse(self.args.out.exists())
 
+    def test_bundled_release_refuses_missing_native_inputs(self):
+        (builder.REPO/'Cargo.toml').write_text('[package]\nversion="0.1.0"\n[package.metadata.halcyon]\nbundled-islands=true\n')
+        with self.assertRaisesRegex(ValueError, 'Bundled releases require'):
+            builder.build(self.args)
+        self.assertFalse(self.args.out.exists())
+
     def test_package_mode_is_explicit_and_development_cannot_enroll(self):
         self.args.release_updates = False
         with self.assertRaisesRegex(ValueError, "choose --release-updates"):

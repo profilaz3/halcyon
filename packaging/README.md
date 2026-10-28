@@ -79,13 +79,10 @@ unchanged generated trust/pin files when safe. [Ownership, opt-out and recovery]
 Release package `Version`, release manifest version and `Cargo.toml` must match
 exactly. Debian revisions and local suffixes belong to `--development` packages;
 the release app currently verifies its installed version against its Rust version.
-The Islands version is selected separately by `islands/download.json`; the two
-packages need a reviewed compatible pairing, not universally equal numbers.
-The main package declares `Breaks` against other Islands versions without
-installing Islands as a dependency. New companion packages require at least
-the main version they were built for. A later main release may explicitly retain
-that companion through its download pin. The final gate verifies these package
-relationships and the exact activation helper bytes, alongside existing checks.
+From 0.5, the Islands payload shares the main package version and ownership.
+The final gate checks the included manifest, both executable hashes and activation
+helper bytes. The old download pin remains solely for historical split-package
+verification; the app no longer downloads a companion.
 
 Prefer `python3 scripts/install.py` for per-user source work; it adds no APT source.
 The Debian builder requires an explicit mode:
@@ -93,7 +90,10 @@ The Debian builder requires an explicit mode:
 ```sh
 python3 packaging/build-deb.py --development --binary target/release/halcyon --version 0.4.0~local1 --out dist
 # Release assembly only, after reviewing the binary and public enrollment inputs:
-python3 packaging/build-deb.py --release-updates --binary target/release/halcyon --version VERSION --out dist
+python3 packaging/build-deb.py --release-updates --binary target/release/halcyon \
+  --islands-binary PATH/cosmic-panel-islands --islands-manifest PATH/companion-manifest.json \
+  --islands-licenses PATH/THIRD_PARTY_LICENSES.txt --version VERSION --out dist
+python3 packaging/islands/build-transition.py --version VERSION --out dist
 ```
 
 `--development` produces `cosmic-ext-halcyon-dev`, with no update templates or
@@ -115,3 +115,18 @@ pin. Before release, bind `main_version` to the new app version and verify the
 companion version/tag, size and SHA-256 against the approved immutable asset in
 `scripts/apt/distribution.json`. The companion may remain at an older compatible
 version. Stale or invalid metadata fails closed. Future updates remain signed APT.
+
+## Bundled releases from 0.5
+
+The main release package owns both executable payloads. The native input must
+match its reviewed manifest; package assembly refreshes helper hashes and records
+`package_owner: cosmic-ext-halcyon`. The Islands library path remains stable.
+The development package remains isolated and does not claim bundled activation.
+
+Publish the main download plus the empty upgrade bridge in the APT archive. The
+release manifest uses `packaging: bundled-islands`, `islands_package` names the
+main `.deb`, and the bridge has kind `transition-deb`. The final gate binds both
+executables to that main package, checks the bridge has no payload or scripts,
+and still requires fresh acceptance of the final artifacts. Source archives and
+build provenance must include both payload recipes and native dependency notices.
+No old native evidence automatically qualifies a new package.

@@ -35,7 +35,12 @@ impl Settings {
                 content.push(split(label("Halcyon", 14., FG), label(main, 14., MUTED)));
                 let addon = identity.islands_version.as_ref().map_or_else(
                     || self.desktop.islands.installation.status_label().to_string(),
-                    |v| format!("{v} · {}", self.desktop.islands.installation.status_label()),
+                    |_| {
+                        format!(
+                            "Included · {}",
+                            self.desktop.islands.installation.status_label()
+                        )
+                    },
                 );
                 content.push(split(label("Islands", 14., FG), label(addon, 12., MUTED)));
                 if let Check::Failed(error) = &self.updates.check
@@ -74,7 +79,7 @@ impl Settings {
                                 )
                                 .into(),
                             );
-                            content.push(self.help("updates-system", "How updates work", "Open Updates in COSMIC Store and install the offered packages. The signed Halcyon source supplies matching app and Islands releases. Islands is not added unless you choose to install it. A new Islands host starts at your next login; no logout happens automatically."));
+                            content.push(self.help("updates-system", "How updates work", "Open Updates in COSMIC Store and install the offered packages. Islands is included in the same Halcyon update and stays off until you enable it. A new Islands host starts at your next login; no logout happens automatically."));
                         } else {
                             content.push(label(
                                 "COSMIC Store is unavailable. Use your system package manager.",

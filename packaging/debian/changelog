@@ -1,3 +1,10 @@
+cosmic-ext-halcyon (0.5.0) UNRELEASED; urgency=medium
+
+  * Include Islands in Halcyon, with optional activation from Dock & panel.
+  * Upgrade older split installations without changing user selections or layouts.
+
+ -- profilaz3 <261673162+profilaz3@users.noreply.github.com>  Wed, 28 Oct 2026 12:00:00 +0000
+
 cosmic-ext-halcyon (0.4.1) unstable; urgency=medium
 
   * Fix display recovery, calendar refresh ordering and asynchronous Notes saves.

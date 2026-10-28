@@ -226,6 +226,11 @@ impl Settings {
             };
             parts.push(self.scene_frame(scene, caption));
         }
+        if !self.scene_open() {
+            // Collapsing the preview gives its width back to the controls.
+            parts.push(self.desktop_dock_page());
+            return column::with_children(parts).spacing(12).into();
+        }
         self.inspector_layout(
             column::with_children(parts).spacing(12).into(),
             self.desktop_dock_page(),
@@ -314,6 +319,13 @@ impl Settings {
             let mut names = names;
             names.dedup();
             items.push(conflict_banner(names.join(", "), edit(Edit::UseCurrent)));
+        }
+        // Activation is separate from each bar's saved visual style.
+        if !matches!(
+            self.desktop.islands.installation,
+            crate::desktop::islands::Installation::Pending
+        ) {
+            items.push(self.addons_section());
         }
         items.push(self.layout_section(draft));
         // A missing/unhealthy host must not hide the saved Islands intent or

@@ -166,7 +166,17 @@ of a removed installation can use the explicit bootstrap above. If Python itself
 has already been removed, the removal script leaves the public configuration
 intact rather than leaving an active source without its key.
 
-## In-app Islands installation
+## Islands in 0.5 (in development)
+
+The next release includes Islands in the Halcyon package. Enable it in
+**Desktop → Dock & panel → Enable for next login**. There is no second download.
+The current panel keeps running until the next login. Existing enabled or disabled
+choices and layouts are preserved. App and Islands updates arrive together.
+
+Existing two-package installations receive an empty upgrade bridge through APT;
+new installs only need Halcyon. See the [implementation and migration contract](future-builder/BUNDLED-ISLANDS.md).
+
+## Islands in published 0.4.x releases
 
 Available since Halcyon 0.4.0.
 

@@ -1,19 +1,17 @@
-# Coordinated app and Islands updates
+# Halcyon updates
 
-Implemented locally for 0.5. **App settings → Updates** shows the installed app
-and companion together, with one status and next action. The OS package manager
-continues to own installation and authentication.
+The local 0.5 implementation uses [one Halcyon package](BUNDLED-ISLANDS.md).
+Islands is included and optional to activate. **App settings → Updates** shows
+one update status. COSMIC Store or APT owns installation and authentication.
 
-When Islands is installed, an offered update must leave both packages on the same
-version. A companion-only catch-up is allowed when it matches the installed app.
-A partial or mismatched offer is refused. Without Islands, app updates continue
-normally and do not install the optional companion.
+A main-package update carries both executables. The empty upgrade bridge for older
+Islands installations does not create a separate app update offer. Fresh installs
+never need the bridge. Disabled update sources remain disabled.
 
-Restart-app and next-login states stay distinct. Next login is shown only after
-validated activation evidence; Halcyon never logs out or restarts the desktop on
-its own. Package installation, disabled/unknown compatibility and helper failures
-retain their existing guarded flows.
+Restart-app and next-login states stay distinct. Halcyon never logs out or restarts
+the desktop automatically. Activation still requires verified package ownership,
+a matching manifest and the existing guarded native checks.
 
-39 focused tests pass, including private PackageKit bus fixtures, installed/absent
-companion offers, version mismatches, preparation and activation. Compact and wide
-native views were inspected. No host packages or update sources were changed.
+The earlier two-package offer matching and in-app download flow are removed from
+0.5. Published 0.4.x releases retain their original behavior and immutable evidence.
+Validation for this change is tracked in [Bundled Islands](BUNDLED-ISLANDS.md).

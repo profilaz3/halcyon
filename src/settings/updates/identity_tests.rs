@@ -11,88 +11,88 @@ fn islands_needs_verified_package_and_preserves_source_choices() {
         evidence: Some("verified".into()),
         ..Identity::default()
     };
-    assert!(identity.can_install_islands());
+    assert!(identity.can_manage_islands());
     assert!(identity.enrollment != Enrollment::Available);
     for channel in [UpdateChannel::Source, UpdateChannel::Unknown] {
         identity.channel = channel;
-        assert!(!identity.can_install_islands());
+        assert!(!identity.can_manage_islands());
     }
     identity.channel = UpdateChannel::Apt;
     let original = identity.clone();
     identity.evidence = Some("changed".into());
     assert!(!original.same_package(&identity));
     identity.installed_version = Some("0.0.1".into());
-    assert!(!identity.can_install_islands());
+    assert!(!identity.can_manage_islands());
 }
 
 #[test]
-fn activation_eligibility_uses_measured_version_and_exact_helper() {
+fn bundled_islands_requires_main_ownership_and_matching_manifest() {
     let fixture = Fixture::new();
-    let base = fs::read_to_string(fixture.path("/var/lib/dpkg/status"))
-        .unwrap()
-        .replace(
-            "Version: 0.2.0",
-            &format!("Version: {}", env!("CARGO_PKG_VERSION")),
-        );
-    let expected = crate::settings::updates::enrollment::islands_version().unwrap();
-    for (version, helper, result) in [
+    let base = fs::read_to_string(fixture.path("/var/lib/dpkg/status")).unwrap();
+    assert_eq!(fixture.measure().islands_match, IslandsMatch::Absent);
+    let bundled = base.replacen(
+        "Package: cosmic-ext-halcyon\n",
+        "Package: cosmic-ext-halcyon\nX-Halcyon-Islands: bundled\n",
+        1,
+    );
+    fixture.put("/var/lib/dpkg/status", bundled.as_bytes());
+    let helper = "/usr/bin/halcyon-islands";
+    let manifest = "/usr/lib/cosmic-ext-halcyon-islands/companion-manifest.json";
+    fixture.put(
+        helper,
+        include_bytes!("../../../packaging/islands/halcyon-islands"),
+    );
+    fs::set_permissions(fixture.path(helper), fs::Permissions::from_mode(0o755)).unwrap();
+    let files = [EXE, helper, manifest];
+    for (owner, version, expected) in [
+        (MAIN, "0.2.0", IslandsMatch::Ready),
+        (MAIN, "99.0.0", IslandsMatch::VersionMismatch),
         (
-            expected.as_str(),
-            &include_bytes!("../../../packaging/islands/halcyon-islands")[..],
-            IslandsMatch::Ready,
-        ),
-        (
-            "99.0.0",
-            &include_bytes!("../../../packaging/islands/halcyon-islands")[..],
+            "cosmic-ext-halcyon-islands",
+            "0.2.0",
             IslandsMatch::VersionMismatch,
         ),
-        (
-            expected.as_str(),
-            &b"changed helper"[..],
-            IslandsMatch::HelperMismatch,
-        ),
     ] {
-        fixture.put("/var/lib/dpkg/status", format!("{base}Package: cosmic-ext-halcyon-islands\nStatus: install ok installed\nArchitecture: amd64\nVersion: {version}\n\n").as_bytes());
-        fixture.put("/usr/bin/halcyon-islands", helper);
-        fs::set_permissions(
-            fixture.path("/usr/bin/halcyon-islands"),
-            fs::Permissions::from_mode(0o755),
-        )
-        .unwrap();
         fixture.put(
-            "/var/lib/dpkg/info/cosmic-ext-halcyon-islands.list",
-            b"/usr/bin/halcyon-islands\n",
+            manifest,
+            serde_json::json!({"package_owner": owner, "package_version": version})
+                .to_string()
+                .as_bytes(),
         );
-        let measured = fixture.measure();
-        assert_eq!(measured.islands_match, result);
-        assert_eq!(measured.can_enable_islands(), result == IslandsMatch::Ready);
-        assert_eq!(
-            measured.islands_activation_notice().is_none(),
-            result == IslandsMatch::Ready
+        fixture.put(
+            "/var/lib/dpkg/info/cosmic-ext-halcyon.list",
+            files.join("\n").as_bytes(),
         );
+        let hashes = files
+            .iter()
+            .map(|p| {
+                format!(
+                    "{}  {}\n",
+                    md5(&fixture.path(p)).unwrap(),
+                    p.trim_start_matches('/')
+                )
+            })
+            .collect::<String>();
+        fixture.put(
+            "/var/lib/dpkg/info/cosmic-ext-halcyon.md5sums",
+            hashes.as_bytes(),
+        );
+        assert_eq!(fixture.measure().islands_match, expected);
     }
-    fixture.put("/var/lib/dpkg/status", base.as_bytes());
-    assert_eq!(fixture.measure().islands_match, IslandsMatch::Absent);
+    fixture.put("/var/lib/dpkg/info/cosmic-ext-halcyon.list", EXE.as_bytes());
+    assert_eq!(
+        fixture.measure().islands_match,
+        IslandsMatch::HelperMismatch
+    );
+    fixture.put(
+        "/var/lib/dpkg/status",
+        bundled
+            .replace("install ok installed", "install ok unpacked")
+            .as_bytes(),
+    );
     assert!(!fixture.measure().can_enable_islands());
 }
 
-#[test]
-fn islands_partial_installs_cannot_be_overwritten() {
-    let fixture = Fixture::new();
-    let original = fs::read_to_string(fixture.path("/var/lib/dpkg/status")).unwrap();
-    assert!(islands_absent(&fixture.root));
-    for (status, absent, installed) in [
-        ("install ok installed", false, true),
-        ("install ok unpacked", false, false),
-        ("install ok half-configured", false, false),
-        ("deinstall ok config-files", true, false),
-        ("install reinstreq half-installed", false, false),
-    ] {
-        fixture.put("/var/lib/dpkg/status", format!("{original}Package: cosmic-ext-halcyon-islands\nStatus: {status}\nArchitecture: amd64\nVersion: 0.3.0\n\n").as_bytes());
-        assert_eq!(islands_absent(&fixture.root), absent);
-        assert_eq!(islands_version(&fixture.root).is_some(), installed);
-    }
-}
 struct Fixture {
     root: PathBuf,
 }

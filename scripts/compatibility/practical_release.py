@@ -17,7 +17,7 @@ from runtime_compatibility import POLICY, validate_bundle
 
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT/'packaging'))
-from version_policy import verify_pair
+from version_policy import verify_pair, verify_bundled
 ACCEPTANCE=ROOT/'companion/compatibility/evidence/accepted-runtime-40071768899.json'
 FINAL_ACCEPTANCES={'0.3.0': ROOT/'companion/compatibility/evidence/accepted-final-030.json'}
 # Explicit frozen release reviews; candidate metadata cannot choose its scope.
@@ -102,6 +102,15 @@ def final_native_acceptance(root, data, bindings):
 
 def verify_download_pin(root, data, pin=None):
     """The embedded download intent must name the exact companion being released."""
+    if data.get('packaging') == 'bundled-islands':
+        main = [n for n, a in data['artifacts'].items() if a['kind'] == 'main-deb']
+        if len(main) != 1 or data['islands_package'] != main[0]:
+            raise ValueError('bundled_companion_must_be_in_main')
+        transitions = [n for n, a in data['artifacts'].items() if a['kind'] == 'transition-deb']
+        if len(transitions) != 1:
+            raise ValueError('legacy_upgrade_bridge_required')
+        verify_bundled(ROOT, root/main[0], root/transitions[0])
+        return
     if pin is None:
         pin = read_json(ROOT/'packaging/islands/download.json')
     name = data['islands_package']
@@ -133,7 +142,8 @@ def audit(root, data, expected):
     main=[n for n,v in data['artifacts'].items() if v['kind']=='main-deb']
     islands=data['islands_package']
     if len(main)!=1: raise ValueError('exact_main_package_required')
-    verify_pair(ROOT, root/main[0], root/islands)
+    if data.get('packaging') != 'bundled-islands':
+        verify_pair(ROOT, root/main[0], root/islands)
     with tempfile.TemporaryDirectory(prefix='halcyon-release-audit-') as temporary:
         work=Path(temporary)
         for name,destination in ((islands,work/'islands'),(main[0],work/'main')):
@@ -141,6 +151,10 @@ def audit(root, data, expected):
         library=work/'islands/usr/lib/cosmic-ext-halcyon-islands'
         manifest,catalog=verify_bundle(library,'companion-manifest.json')
         validate_bundle(manifest,catalog)
+        if data.get('packaging') == 'bundled-islands' and (
+                manifest.get('package_owner') != 'cosmic-ext-halcyon'
+                or manifest.get('package_version') != data['release']):
+            raise ValueError('bundled_payload_identity_mismatch')
         main_elf=digest(work/'main/usr/bin/halcyon')
         cli = verify_activation_cli(work/'islands/usr/bin/halcyon-islands')
         bindings=dict(packages={

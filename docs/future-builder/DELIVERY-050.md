@@ -9,7 +9,7 @@ requires inspection of actual native renders at compact and wide sizes.
 | Maintenance | Release the architecture repairs as 0.4.1; verify packages, upgrade, native Settings and signed updates | Complete |
 | Solar Moments | Local sun calculations, safe scheduling, city binding and native rule controls | Complete locally |
 | Adaptive setups | Coordinated Tidal, Paper and Moss appearances with truthful native previews | Complete locally |
-| Updates | One clear Halcyon/Islands status and next action through existing OS installation | Complete locally |
+| Updates | One Halcyon package including Islands, optional activation in Dock & panel and legacy upgrade bridge | Complete locally |
 | Personal widgets | Calendar agenda, then system readings in the existing recipe and Canvas system | Complete locally |
 | Integration | Final behavior, rendering, migration and resource checks; reconcile plans and evidence | Complete locally |
 
@@ -32,8 +32,7 @@ were retained. Recheck space before source/package assembly and major builds.
 - Adaptive looks: four focused checks plus ten automation-editor checks. Actual
   appearance application, preserved content/geometry, city checks, repeated
   activation and read-only native previews. [Behavior](ADAPTIVE-LOOKS.md).
-- Updates: 39 checks, including private PackageKit sessions and complete/missing
-  app-and-companion update offers. Native installation and status screens reviewed.
+- Updates: the earlier split-package checks are superseded by [bundled Islands](BUNDLED-ISLANDS.md). Read-only PackageKit checks, package ownership, activation and native on/off controls are validated locally.
   [Behavior](COORDINATED-UPDATES.md).
 - Recipes: 25 focused checks, including Calendar privacy and retained cache,
   System demand, missing readings, migration, public transport and Apply/Undo.
@@ -65,9 +64,9 @@ The published 0.4.1 executable refused both newer design records without changin
 them. All private processes were reaped. No host package, service or desktop
 configuration was changed.
 
-The current development executable has SHA256
+Before the single-package work, the development executable had SHA256
 `0813cd189306f3136678504d97e09655d716e6ea757581636d3cd3ffe92e10b1`.
-Its Cargo version remains the 0.4.1 baseline; it is not a new release artifact.
+That snapshot used the 0.4.1 Cargo baseline. The bundled-package implementation now uses local 0.5.0 identity; it is not published.
 Feature source is committed locally; release identity and final package acceptance
 belong to the next release preparation. Detailed evidence and source hashes are in
 `.task-050-delivery-20261027/integration/validation.json`.
@@ -95,3 +94,11 @@ app/Islands packages and source, qualify an upgrade from 0.4.1 plus fresh setup,
 then finish the release screenshots and short notes. The local feature validation
 already recorded above remains reusable; only affected checks need repeating.
 No 0.5 package or feature publication was performed by this reporting follow-up.
+
+## Single-package checkpoint — 2026-10-28
+
+Halcyon now includes Islands in the local 0.5.0 package. Settings offers activation
+from Dock & panel; the separate companion downloader and installer are removed.
+Older installations migrate through an empty APT bridge. See [the migration and
+validation record](BUNDLED-ISLANDS.md). This checkpoint does not publish 0.5 or
+replace the earlier evidence for unrelated features.

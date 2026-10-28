@@ -25,7 +25,7 @@ def records(home, installer):
     from journal import scan, ordered
     result = []
     for path, record in scan(home):
-        if record.get('owner') == PACKAGE and not record.get('restored'):
+        if record.get('owner') in (PACKAGE, 'cosmic-ext-halcyon') and not record.get('restored'):
             if record.get('root') != str(home):
                 raise ValueError(f'Install record belongs to another home: {path}')
             result.append((path, record))
@@ -186,7 +186,7 @@ def main():
             command += ['--root', str(home), '--library', str(LIBRARY)]
         return subprocess.run(command, timeout=8, check=False).returncode
     if not (LIBRARY / 'panel_launcher.py').is_file() or not (LIBRARY / 'install.py').is_file():
-        print('Islands package is not installed completely. Install or reinstall cosmic-ext-halcyon-islands.', file=sys.stderr)
+        print('Islands is incomplete. Install or reinstall the Halcyon package.', file=sys.stderr)
         return 1
     sys.path.insert(0, str(LIBRARY))
     import panel_launcher as launcher

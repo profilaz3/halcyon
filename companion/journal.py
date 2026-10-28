@@ -5,6 +5,7 @@ from pathlib import Path
 from bundle_contract import digest, read_json, verify_bundle
 
 PACKAGE = 'cosmic-ext-halcyon-islands'
+from bundle_contract import PACKAGE_OWNERS
 DATA = '.local/share/cosmic-desktop-cards/'
 SELECTOR = '.local/bin/cosmic-panel'
 SELECTION = DATA + 'companion/selection.json'
@@ -97,7 +98,7 @@ def records(home):
     for path, saved in scan(home):
         if saved.get('root') != str(home) or saved.get('restored'):
             continue
-        if saved.get('owner') != PACKAGE:
+        if saved.get('owner') not in PACKAGE_OWNERS:
             raise ValueError('manual_install_requires_explicit_management')
         active.append((path, saved))
     return ordered(home, active)

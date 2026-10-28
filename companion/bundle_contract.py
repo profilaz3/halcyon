@@ -370,6 +370,18 @@ def valid_catalog(catalog):
     return catalog
 
 
+LEGACY_PACKAGE = 'cosmic-ext-halcyon-islands'
+BUNDLED_PACKAGE = 'cosmic-ext-halcyon'
+PACKAGE_OWNERS = (LEGACY_PACKAGE, BUNDLED_PACKAGE)
+
+
+def package_owner(manifest):
+    owner = manifest.get('package_owner', LEGACY_PACKAGE)
+    if owner not in PACKAGE_OWNERS:
+        raise ValueError('bundle_package_owner')
+    return owner
+
+
 def verify_bundle(bundle, manifest_name='manifest.json', owner=None, context=None):
     if context is not None:
         return context.bundle(bundle, manifest_name, owner)
@@ -378,6 +390,7 @@ def verify_bundle(bundle, manifest_name='manifest.json', owner=None, context=Non
 
 def _verify_bundle(bundle, manifest_name='manifest.json', owner=None, catalogs=None):
     manifest = read_json(bundle / manifest_name)
+    package_owner(manifest)
     if owner is not None and (bundle / manifest_name).stat().st_uid != owner:
         raise ValueError('manifest_owner')
     if (bundle / manifest_name).stat().st_mode & 0o022:

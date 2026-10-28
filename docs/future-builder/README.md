@@ -10,6 +10,7 @@ Direction accepted on 2026-10-26: shared styling, varied desktop compositions, v
 | --- | --- |
 | [Current delivery](DELIVERY-050.md) | 0.4.1 publication and staged local 0.5 work |
 | [Adaptive looks](ADAPTIVE-LOOKS.md) | Tidal, Paper and Moss daily appearance cycles |
+| [One Halcyon package](BUNDLED-ISLANDS.md) | Included Islands, activation and legacy migration |
 | [Coordinated updates](COORDINATED-UPDATES.md) | Matching app/Islands offers and one next action |
 | [Calendar and system recipes](PERSONAL-WIDGETS-050.md) | Personal agendas and selected system readings |
 | [0.5 sun-based schedules](FB21-PLAN.md) | Local sun events, city binding, appearance-only changes and validation |

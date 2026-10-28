@@ -33,6 +33,66 @@ def stage_file(source, destination, mode=0o644):
     destination.chmod(mode)
 
 
+def stage_payload(staging, binary, manifest, version, licenses=None, catalog=None, *, owner=PACKAGE, epoch=None):
+    """The same verified payload serves legacy packages and the bundled app."""
+    from bundle_contract import PACKAGE_OWNERS
+    if owner not in PACKAGE_OWNERS:
+        raise ValueError('bundle_package_owner')
+    epoch = int(os.environ.get('SOURCE_DATE_EPOCH', '1792627200')) if epoch is None else epoch
+    date = datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc)
+    library = staging / 'usr/lib' / PACKAGE
+    stage_file(binary, library / 'cosmic-panel-islands', 0o755)
+    stage_file(manifest, library / 'companion-manifest.json')
+    initial = json.loads((library / 'companion-manifest.json').read_bytes())
+    if initial.get('protocol') != 1 or not re.fullmatch('[0-9a-f]{40}', initial.get('upstream', '')) or initial.get('binary_sha256') != hashlib.sha256(binary.read_bytes()).hexdigest():
+        raise ValueError('Binary or manifest fails the selector checksum, upstream or protocol checks')
+    # Shipped without debug symbols. Only symbols go, so the reviewed
+    # build's behavior is unchanged; the manifest records the new hash.
+    staged = library / 'cosmic-panel-islands'
+    if staged.read_bytes()[:4] == b'\x7fELF':
+        if licenses is None or not licenses.is_file() or not licenses.stat().st_size:
+            raise ValueError('Native releases require --licenses with dependency notices')
+        subprocess.run(['strip', '--strip-unneeded', str(staged)], check=True)
+        record = json.loads((library / 'companion-manifest.json').read_text())
+        record['binary_sha256'] = hashlib.sha256(staged.read_bytes()).hexdigest()
+        (library / 'companion-manifest.json').write_text(json.dumps(record, indent=2) + '\n')
+    record = json.loads((library / 'companion-manifest.json').read_text())
+    for name in HELPERS:
+        stage_file(COMPANION / name, library / name, 0o755 if name in ('install.py', 'panel_launcher.py', 'selector.py') else 0o644)
+    catalog_data = read_catalog_bytes(catalog or COMPANION / 'compatibility/catalog.json')
+    admitted = release_catalog(json.loads(catalog_data))
+    catalog_data = canonical(admitted)
+    (library / 'catalog.json').write_bytes(catalog_data)
+    (library / 'catalog.json').chmod(0o644)
+    del catalog_data
+    files = {p.name: {'sha256': digest(p), 'mode': p.stat().st_mode & 0o777}
+             for p in library.iterdir() if p.name != 'companion-manifest.json'}
+    payload = identity({k: v for k, v in files.items() if k != 'catalog.json'})
+    if not admitted.get('startup_policy') and any(r['payload_sha256'] != payload for r in admitted['cohorts']):
+        raise ValueError('Catalog belongs to a different finalized payload; retain a separate immutable package for that cohort')
+    record.update(format='halcyon-islands-bundle', version=2, package_version=version, package_owner=owner,
+                  files=files, payload_sha256=payload)
+    for key in ('packages', 'supported_packages', 'source_policy'):
+        record.pop(key, None)
+    (library / 'companion-manifest.json').write_bytes(canonical(record) + b'\n')
+    verify_bundle(library, 'companion-manifest.json')
+    stage_file(HERE / 'halcyon-islands-bootstrap.desktop', staging / 'etc/xdg/autostart/halcyon-islands-bootstrap.desktop')
+    stage_file(HERE / 'halcyon-islands', staging / 'usr/bin/halcyon-islands', 0o755)
+    docs = staging / 'usr/share/doc' / PACKAGE
+    stage_file(HERE / 'copyright', docs / 'copyright')
+    if licenses is not None:
+        stage_file(licenses, docs / 'THIRD_PARTY_LICENSES.txt')
+    stage_file(HERE / 'README.md', docs / 'README')
+    changelog = (f'{PACKAGE} ({version}) unstable; urgency=medium\n\n'
+                 '  * Package the optional, source-qualified Islands panel.\n\n'
+                 f' -- {MAINTAINER}  {date.strftime("%a, %d %b %Y %H:%M:%S %z")}\n')
+    (docs / 'changelog.gz').write_bytes(gzip.compress(changelog.encode(), mtime=0))
+    man = staging / 'usr/share/man/man1/halcyon-islands.1.gz'
+    man.parent.mkdir(parents=True, exist_ok=True)
+    man.write_bytes(gzip.compress((HERE / 'halcyon-islands.1').read_bytes(), mtime=0))
+    return library
+
+
 def build(binary, manifest, version, out, licenses=None, catalog=None):
     if not re.fullmatch(r'[0-9][A-Za-z0-9.+:~\-]*', version):
         raise ValueError('Invalid Debian version')
@@ -43,56 +103,8 @@ def build(binary, manifest, version, out, licenses=None, catalog=None):
     filename = f'{PACKAGE}_{version.split(":", 1)[-1]}_amd64.deb'
     with tempfile.TemporaryDirectory(prefix='islands-build-', dir=out) as temporary:
         staging = Path(temporary) / 'package'
-        library = staging / 'usr/lib' / PACKAGE
-        stage_file(binary, library / 'cosmic-panel-islands', 0o755)
-        stage_file(manifest, library / 'companion-manifest.json')
-        initial = json.loads((library / 'companion-manifest.json').read_bytes())
-        if initial.get('protocol') != 1 or not re.fullmatch('[0-9a-f]{40}', initial.get('upstream', '')) or initial.get('binary_sha256') != hashlib.sha256(binary.read_bytes()).hexdigest():
-            raise ValueError('Binary or manifest fails the selector checksum, upstream or protocol checks')
-        # Shipped without debug symbols. Only symbols go, so the reviewed
-        # build's behavior is unchanged; the manifest records the new hash.
+        library = stage_payload(staging, binary, manifest, version, licenses, catalog, epoch=epoch)
         staged = library / 'cosmic-panel-islands'
-        if staged.read_bytes()[:4] == b'\x7fELF':
-            if licenses is None or not licenses.is_file() or not licenses.stat().st_size:
-                raise ValueError('Native releases require --licenses with dependency notices')
-            subprocess.run(['strip', '--strip-unneeded', str(staged)], check=True)
-            record = json.loads((library / 'companion-manifest.json').read_text())
-            record['binary_sha256'] = hashlib.sha256(staged.read_bytes()).hexdigest()
-            (library / 'companion-manifest.json').write_text(json.dumps(record, indent=2) + '\n')
-        record = json.loads((library / 'companion-manifest.json').read_text())
-        for name in HELPERS:
-            stage_file(COMPANION / name, library / name, 0o755 if name in ('install.py', 'panel_launcher.py', 'selector.py') else 0o644)
-        catalog_data = read_catalog_bytes(catalog or COMPANION / 'compatibility/catalog.json')
-        admitted = release_catalog(json.loads(catalog_data))
-        catalog_data = canonical(admitted)
-        (library / 'catalog.json').write_bytes(catalog_data)
-        (library / 'catalog.json').chmod(0o644)
-        del catalog_data
-        files = {p.name: {'sha256': digest(p), 'mode': p.stat().st_mode & 0o777}
-                 for p in library.iterdir() if p.name != 'companion-manifest.json'}
-        payload = identity({k: v for k, v in files.items() if k != 'catalog.json'})
-        if not admitted.get('startup_policy') and any(r['payload_sha256'] != payload for r in admitted['cohorts']):
-            raise ValueError('Catalog belongs to a different finalized payload; retain a separate immutable package for that cohort')
-        record.update(format='halcyon-islands-bundle', version=2, package_version=version,
-                      files=files, payload_sha256=payload)
-        for key in ('packages', 'supported_packages', 'source_policy'):
-            record.pop(key, None)
-        (library / 'companion-manifest.json').write_bytes(canonical(record) + b'\n')
-        verify_bundle(library, 'companion-manifest.json')
-        stage_file(HERE / 'halcyon-islands-bootstrap.desktop', staging / 'etc/xdg/autostart/halcyon-islands-bootstrap.desktop')
-        stage_file(HERE / 'halcyon-islands', staging / 'usr/bin/halcyon-islands', 0o755)
-        docs = staging / 'usr/share/doc' / PACKAGE
-        stage_file(HERE / 'copyright', docs / 'copyright')
-        if licenses is not None:
-            stage_file(licenses, docs / 'THIRD_PARTY_LICENSES.txt')
-        stage_file(HERE / 'README.md', docs / 'README')
-        changelog = (f'{PACKAGE} ({version}) unstable; urgency=medium\n\n'
-                     '  * Package the optional, source-qualified Islands panel.\n\n'
-                     f' -- {MAINTAINER}  {date.strftime("%a, %d %b %Y %H:%M:%S %z")}\n')
-        (docs / 'changelog.gz').write_bytes(gzip.compress(changelog.encode(), mtime=0))
-        man = staging / 'usr/share/man/man1/halcyon-islands.1.gz'
-        man.parent.mkdir(parents=True)
-        man.write_bytes(gzip.compress((HERE / 'halcyon-islands.1').read_bytes(), mtime=0))
         debian = Path(temporary) / 'debian'
         debian.mkdir()
         (debian / 'control').write_text(

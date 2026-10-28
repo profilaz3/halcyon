@@ -39,7 +39,7 @@ def admit(root, reviewed_sha):
     packages = []
     names = set()
     for filename, record in records.items():
-        if record['kind'] not in ('main-deb', 'islands-deb', 'enrollment-deb'):
+        if record['kind'] not in ('main-deb', 'islands-deb', 'transition-deb', 'enrollment-deb'):
             continue
         path = root/filename
         deb = control(path)
@@ -47,7 +47,7 @@ def admit(root, reviewed_sha):
             raise ValueError('one_current_version_per_package_required')
         names.add(deb['package'])
         expected_kind = {'cosmic-ext-halcyon': 'main-deb',
-                         'cosmic-ext-halcyon-islands': 'islands-deb'}.get(deb['package'], 'enrollment-deb')
+                         'cosmic-ext-halcyon-islands': ('transition-deb' if manifest.get('packaging') == 'bundled-islands' else 'islands-deb')}.get(deb['package'], 'enrollment-deb')
         if record['kind'] != expected_kind:
             raise ValueError('package_kind_mismatch')
         binding = mapping['packages'][filename]

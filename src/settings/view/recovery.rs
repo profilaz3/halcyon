@@ -8,60 +8,141 @@ impl Settings {
         };
         let action = |value| Message::Updates(UpdateMessage::Islands(value));
         let state = &self.updates.islands;
+        if self.page == Page::DesktopDock {
+            let installation = &self.desktop.islands.installation;
+            let verified = self
+                .updates
+                .identity
+                .as_ref()
+                .is_some_and(|id| id.can_enable_islands());
+            let (title, id, next) = if islands::can_enable(installation) && verified {
+                (
+                    "Enable for next login",
+                    "enable-islands",
+                    AddonMessage::Enable,
+                )
+            } else if islands::can_disable(installation) && verified {
+                (
+                    "Turn off for next login",
+                    "disable-islands",
+                    AddonMessage::Disable,
+                )
+            } else {
+                ("Check again", "check-islands", AddonMessage::Recheck)
+            };
+            let mut rows = vec![split(
+                detail("Islands", installation.status_label()),
+                button::standard(title)
+                    .id(id.into())
+                    .on_press_maybe(
+                        (!state.busy() && !self.installation_busy).then_some(action(next)),
+                    )
+                    .into(),
+            )];
+            match &state.phase {
+                Phase::Enabling => {
+                    rows.push(label("Updating Islands for the next login…", 12., MUTED))
+                }
+                Phase::Failed(error) => rows.push(label(error.label(), 12., MUTED)),
+                Phase::Idle => {
+                    if let Some(notice) = self
+                        .updates
+                        .identity
+                        .as_ref()
+                        .and_then(|id| id.islands_activation_notice())
+                    {
+                        rows.push(label(notice, 12., MUTED));
+                    }
+                }
+            }
+            rows.push(self.help("islands-included", "About Islands", "Islands is included in Halcyon. Enable it here, then log out and back in when convenient. Your current panel keeps running. Dock and panel styles below stay saved when Islands is off."));
+            return pages::section(rows);
+        }
         let mut rows = vec![detail(
-            "Islands setup",
+            "Islands",
             self.desktop.islands.installation.status_label(),
         )];
         match &state.phase {
-            Phase::Preparing => {
-                rows.push(label("Downloading and verifying Islands…", 12., MUTED));
-                rows.push(button::text("Cancel").on_press(action(AddonMessage::Cancel)).into());
-            }
-            Phase::Ready => {
-                rows.push(label("Install the verified Islands package? Your system may ask for an administrator password. Activation is a separate choice after installation.", 12., MUTED));
-                rows.push(row::with_children(vec![
-                    button::suggested("Install Islands").id("install-islands-confirm".into()).on_press(action(AddonMessage::Install)).into(),
-                    button::text("Cancel").id("install-islands-cancel".into()).on_press(action(AddonMessage::Cancel)).into(),
-                ]).spacing(8).wrap().into());
-            }
-            Phase::Installing => rows.push(label("Installing Islands… Complete the system authorization dialog. The system installer continues if this window closes.", 12., MUTED)),
-            Phase::Enabling => rows.push(label("Preparing Islands for the next login…", 12., MUTED)),
+            Phase::Enabling => rows.push(label("Updating Islands for the next login…", 12., MUTED)),
             Phase::Failed(error) => {
                 rows.push(label(error.label(), 12., MUTED));
-                rows.push(button::text("Check again").on_press(action(AddonMessage::Recheck)).into());
+                rows.push(
+                    button::text("Check again")
+                        .on_press(action(AddonMessage::Recheck))
+                        .into(),
+                );
             }
-            Phase::Idle => match &self.desktop.islands.installation {
-                Installation::Absent => {
-                    rows.push(label("Add floating dock and panel islands. Halcyon works without this add-on.", 12., MUTED));
-                    if self.updates.identity.as_ref().is_some_and(|id| id.can_install_islands()) {
-                        rows.push(button::suggested("Get Islands…")
-                            .id("get-islands".into()).on_press(action(AddonMessage::Prepare)).into());
+            Phase::Idle => {
+                match &self.desktop.islands.installation {
+                    Installation::Absent => {
+                        rows.push(label("Islands is included in the Halcyon package. Install or repair Halcyon to use it.", 12., MUTED));
                     }
-                }
-                Installation::Installed { .. } => {
-                    if islands::can_enable(&self.desktop.islands.installation)
-                        && self.updates.identity.as_ref().is_some_and(|id| id.can_enable_islands()) {
-                        rows.push(label("Enable Islands for your next login. Your current panel keeps running.", 12., MUTED));
-                        rows.push(button::suggested("Enable for next login")
-                            .id("enable-islands".into()).on_press(action(AddonMessage::Enable)).into());
-                    } else if islands::can_enable(&self.desktop.islands.installation) {
-                        if let Some(notice) = self.updates.identity.as_ref().and_then(|id| id.islands_activation_notice()) {
-                            rows.push(label(notice, 12., MUTED));
+                    Installation::Installed { .. } => {
+                        if islands::can_enable(&self.desktop.islands.installation)
+                            && self
+                                .updates
+                                .identity
+                                .as_ref()
+                                .is_some_and(|id| id.can_enable_islands())
+                        {
+                            rows.push(label("Enable Islands for your next login. Your current panel keeps running.", 12., MUTED));
+                            rows.push(
+                                button::suggested("Enable for next login")
+                                    .id("enable-islands".into())
+                                    .on_press(action(AddonMessage::Enable))
+                                    .into(),
+                            );
+                        } else if islands::can_enable(&self.desktop.islands.installation) {
+                            if let Some(notice) = self
+                                .updates
+                                .identity
+                                .as_ref()
+                                .and_then(|id| id.islands_activation_notice())
+                            {
+                                rows.push(label(notice, 12., MUTED));
+                            }
+                        }
+                        if islands::can_disable(&self.desktop.islands.installation)
+                            && self
+                                .updates
+                                .identity
+                                .as_ref()
+                                .is_some_and(|id| id.can_enable_islands())
+                        {
+                            rows.push(
+                                button::standard("Turn off for next login")
+                                    .id("disable-islands".into())
+                                    .on_press(action(AddonMessage::Disable))
+                                    .into(),
+                            );
+                        }
+                        rows.push(
+                            row::with_children(vec![
+                                button::text("Check again")
+                                    .on_press_maybe(
+                                        (!self.installation_busy)
+                                            .then_some(action(AddonMessage::Recheck)),
+                                    )
+                                    .into(),
+                                button::text("Copy diagnostics")
+                                    .on_press(Message::CopyIslandsDiagnostics)
+                                    .into(),
+                                button::text("Dock & panel")
+                                    .id("manage-islands".into())
+                                    .on_press(Message::Page(Page::DesktopDock))
+                                    .into(),
+                            ])
+                            .spacing(8)
+                            .wrap()
+                            .into(),
+                        );
+                        for value in self.desktop.islands.installation.applet_messages() {
+                            rows.push(label(value, 12., MUTED));
                         }
                     }
-                    rows.push(row::with_children(vec![
-                        button::text("Check again").on_press_maybe(
-                            (!self.installation_busy).then_some(action(AddonMessage::Recheck))).into(),
-                        button::text("Copy diagnostics").on_press(Message::CopyIslandsDiagnostics).into(),
-                        button::text("Islands").id("manage-islands".into())
-                            .on_press(Message::Page(Page::DesktopDock)).into(),
-                    ]).spacing(8).wrap().into());
-                    for value in self.desktop.islands.installation.applet_messages() {
-                        rows.push(label(value, 12., MUTED));
-                    }
+                    Installation::Pending => {}
                 }
-                Installation::Pending => {}
-            },
+            }
         }
         rows.push(
             button::text("Installation guide ↗")

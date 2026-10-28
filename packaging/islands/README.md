@@ -1,4 +1,4 @@
-# Optional Islands companion
+# Islands — included in Halcyon
 
 The package contains a panel payload, a versioned local compatibility catalog,
 read-only diagnostics and a user-session bootstrap. Installation never enables
@@ -10,7 +10,12 @@ configured applets and startup readiness are checked, with stock-panel fallback
 on failure. The recorded complete-session test used COSMIC 1.11 with software
 rendering; physical GPUs and a complete 1.10 session are not validated.
 
-Install the matching main and Islands packages, then run as your desktop user:
+From 0.5, install the Halcyon package and open **Settings → Desktop → Dock & panel**.
+Choose **Enable for next login**, then log out and back in when convenient.
+No additional package download is needed. **Turn off for next login** restores
+standard startup without changing your saved bar styles or layouts.
+
+For diagnostics or terminal management, run as your desktop user:
 
 ```sh
 halcyon-islands status --json
@@ -43,8 +48,8 @@ for guarded newest-first restoration of those records.
 See [the compatibility contract](https://github.com/profilaz3/halcyon/blob/v0.3.0/docs/COMPATIBILITY.md) for signed archive
 trust, native qualification, exact artifact identity, generation recovery and
 reproducible regression commands. Fresh installations of the main Halcyon package
-enable the signed APT source by default; the Islands package does not change that
+enable the signed APT source by default; activating Islands does not change that
 choice. Existing disabled or modified sources stay unchanged. See
 [system updates](https://github.com/profilaz3/halcyon/blob/v0.3.0/docs/DISTRIBUTION.md)
-for enrollment and disabling the source. Both packages also remain available from
-GitHub Releases.
+for enrollment and disabling the source. The Halcyon package is available from GitHub Releases. Upgrades from older split
+installations use an empty transitional package; it can be removed after upgrading.

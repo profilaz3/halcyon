@@ -14,6 +14,26 @@ import practical_release as policy
 import release_gate
 
 class Release(unittest.TestCase):
+    def test_bundled_manifest_requires_one_payload_and_fresh_acceptance(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in ('main.deb', 'bridge.deb', 'source.tar'):
+                (root/name).write_bytes(b'SYNTHETIC ARTIFACT ONLY')
+            data = dict(release='0.5.0', packaging='bundled-islands', islands_package='main.deb',
+                artifacts={name:dict(kind=kind,sha256=digest(root/name)) for name,kind in
+                    [('main.deb','main-deb'),('bridge.deb','transition-deb'),('source.tar','corresponding-source')]})
+            self.assertEqual(release_gate.artifacts(root,data), ('main.deb','main.deb'))
+            with patch.object(policy, 'verify_bundled') as gate:
+                policy.verify_download_pin(root,data)
+                gate.assert_called_once_with(policy.ROOT,root/'main.deb',root/'bridge.deb')
+            with self.assertRaisesRegex(ValueError, 'acceptance_pending'):
+                policy.final_native_acceptance(root,data,{'packages':{}})
+            with self.assertRaises(ValueError):
+                release_gate.artifacts(root,{**data,'islands_package':'bridge.deb'})
+            del data['artifacts']['bridge.deb']
+            with self.assertRaisesRegex(ValueError, 'legacy_upgrade_bridge_required'):
+                policy.verify_download_pin(root,data)
+
     def test_activation_cli_matches_the_source_embedded_by_settings(self):
         with tempfile.TemporaryDirectory() as temporary:
             cli = Path(temporary)/'halcyon-islands'

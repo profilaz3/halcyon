@@ -16,6 +16,7 @@ from bundle_contract import canonical, digest, read_json, read_catalog_bytes, ve
 from panel_launcher import session_identity
 
 PACKAGE = 'cosmic-ext-halcyon-islands'
+from bundle_contract import package_owner
 DATA = '.local/share/cosmic-desktop-cards/'
 SELECTOR = '.local/bin/cosmic-panel'
 SELECTION = DATA + 'companion/selection.json'
@@ -94,14 +95,15 @@ def _stage_locked(home, library, *, session, fixture, boundary, enable, context,
     selection = read_json(install.safe_path(home, SELECTION)) if active else {'enabled': enable}
     if selection.get('enabled') is not True:
         return response('disabled', 'disabled')
+    if not fixture and (library != LIBRARY or library.is_symlink()):
+        return response('blocked', 'not_installed_package')
+    manifest, catalog = verify_bundle(library, 'companion-manifest.json', owner=os.getuid() if fixture else 0, context=context)
+    owner = package_owner(manifest)
     if not fixture:
-        if library != LIBRARY or library.is_symlink():
-            return response('blocked', 'not_installed_package')
-        result = subprocess.run(['/usr/bin/dpkg-query', '-W', '-f=${Status}\n${Version}', PACKAGE], capture_output=True, text=True, timeout=3)
+        result = subprocess.run(['/usr/bin/dpkg-query', '-W', '-f=${Status}\n${Version}', owner], capture_output=True, text=True, timeout=3)
         fields = result.stdout.splitlines()
         if result.returncode or len(fields) != 2 or not installed_package_status(fields[0]):
             return response('blocked', 'package_absent')
-    manifest, catalog = verify_bundle(library, 'companion-manifest.json', owner=os.getuid() if fixture else 0, context=context)
     if not fixture and manifest['package_version'] != fields[1]:
         return response('blocked', 'package_version_mismatch')
     current = session if session is not None else session_identity()
@@ -186,7 +188,7 @@ def _stage_locked(home, library, *, session, fixture, boundary, enable, context,
     # chain and the old flat payload. Immutable orphan generations are harmless.
     boundary('before_selection')
     guard.check()
-    install.install_contents(home, contents, PACKAGE)
+    install.install_contents(home, contents, owner)
     boundary('selected')
     return response('staged', 'next_login_after_staging', generation)
 

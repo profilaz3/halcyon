@@ -33,22 +33,61 @@ impl Summary {
             identity.islands_match,
             IslandsMatch::VersionMismatch | IslandsMatch::HelperMismatch
         ) {
-            return result("Islands needs attention",identity.islands_activation_notice().unwrap_or("Update or reinstall Halcyon and Islands together in your system package manager.").into(),true);
+            return result(
+                "Islands needs attention",
+                identity
+                    .islands_activation_notice()
+                    .unwrap_or("Update or reinstall Halcyon in your system package manager.")
+                    .into(),
+                true,
+            );
         }
         if super::pending_islands(islands) {
             return result("Islands is ready for your next login","Save your work, then log out and back in when convenient. The current panel keeps running until then.".into(),false);
         }
         match check {
-            Check::Checking=>result("Checking system updates…","Your desktop’s package service is checking the configured sources.".into(),false),
-            Check::Failed(error)=>result("Update check failed",error.label().into(),false),
-            Check::Available(version)=>result(&format!("Update {version} available"),if identity.islands_version.is_some() {"Halcyon and Islands update together in your system package manager."} else {"Install the update in your system package manager. Islands remains optional."}.into(),true),
-            Check::Current=>result("No updates found",if identity.islands_version.is_some() {"Halcyon and Islands have no newer matching packages in the configured sources."} else {"Halcyon has no newer package in the configured sources."}.into(),false),
-            Check::NotChecked=> match identity.channel {
-                UpdateChannel::Apt=>result("System updates are set up","Your system package manager updates Halcyon and any installed Islands package.".into(),false),
-                UpdateChannel::ManualDeb=>result("Manual installation",identity.reason.into(),false),
-                UpdateChannel::Source=>result("Local development build",identity.reason.into(),false),
-                UpdateChannel::Unknown=>result("Installation needs checking",identity.reason.into(),false),
-            }
+            Check::Checking => result(
+                "Checking system updates…",
+                "Your desktop’s package service is checking the configured sources.".into(),
+                false,
+            ),
+            Check::Failed(error) => result("Update check failed", error.label().into(), false),
+            Check::Available(version) => result(
+                &format!("Update {version} available"),
+                if identity.islands_version.is_some() {
+                    "Halcyon and Islands update together in your system package manager."
+                } else {
+                    "Install the update in your system package manager. Islands remains optional."
+                }
+                .into(),
+                true,
+            ),
+            Check::Current => result(
+                "No updates found",
+                if identity.islands_version.is_some() {
+                    "Halcyon, including Islands, is up to date in the configured sources."
+                } else {
+                    "Halcyon has no newer package in the configured sources."
+                }
+                .into(),
+                false,
+            ),
+            Check::NotChecked => match identity.channel {
+                UpdateChannel::Apt => result(
+                    "System updates are set up",
+                    "Your system package manager updates Halcyon, including Islands.".into(),
+                    false,
+                ),
+                UpdateChannel::ManualDeb => {
+                    result("Manual installation", identity.reason.into(), false)
+                }
+                UpdateChannel::Source => {
+                    result("Local development build", identity.reason.into(), false)
+                }
+                UpdateChannel::Unknown => {
+                    result("Installation needs checking", identity.reason.into(), false)
+                }
+            },
         }
     }
 }

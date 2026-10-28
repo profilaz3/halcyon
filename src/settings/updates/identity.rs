@@ -80,18 +80,18 @@ impl Default for Identity {
 }
 impl Identity {
     pub fn can_enable_islands(&self) -> bool {
-        self.can_install_islands() && self.islands_match == IslandsMatch::Ready
+        self.can_manage_islands() && self.islands_match == IslandsMatch::Ready
     }
     pub fn islands_activation_notice(&self) -> Option<&'static str> {
-        if !self.can_install_islands() {
+        if !self.can_manage_islands() {
             return None;
         }
         match self.islands_match {
             IslandsMatch::VersionMismatch => Some(
-                "Islands does not match this Halcyon release. Update both in your package manager.",
+                "Islands does not match this Halcyon release. Update Halcyon in your package manager.",
             ),
             IslandsMatch::HelperMismatch => Some(
-                "The Islands activation helper could not be verified. Reinstall Islands in your package manager.",
+                "The Islands activation helper could not be verified. Reinstall Halcyon in your package manager.",
             ),
             IslandsMatch::Unknown | IslandsMatch::Absent => {
                 Some("Check again to verify the Islands installation.")
@@ -99,7 +99,7 @@ impl Identity {
             IslandsMatch::Ready => None,
         }
     }
-    pub fn can_install_islands(&self) -> bool {
+    pub fn can_manage_islands(&self) -> bool {
         self.format_version == 1
             && self.evidence.is_some()
             && matches!(self.channel, UpdateChannel::Apt | UpdateChannel::ManualDeb)
@@ -107,8 +107,8 @@ impl Identity {
             && self.installed_version.as_deref() == Some(self.running_version.as_str())
     }
     pub fn same_package(&self, other: &Self) -> bool {
-        self.can_install_islands()
-            && other.can_install_islands()
+        self.can_manage_islands()
+            && other.can_manage_islands()
             && self.evidence == other.evidence
             && self.installed_version == other.installed_version
             && self.islands_version == other.islands_version
@@ -245,27 +245,9 @@ fn fields(text: &str) -> Option<BTreeMap<String, String>> {
     }
     Some(map)
 }
-pub(super) fn islands_absent(root: &Path) -> bool {
-    let Some(db) = Database::load(root) else {
-        return false;
-    };
-    db.packages
-        .get("cosmic-ext-halcyon-islands")
-        .is_none_or(|p| {
-            p.get("Status").is_some_and(|s| {
-                let fields: Vec<_> = s.split_whitespace().collect();
-                fields.len() == 3
-                    && fields[1] == "ok"
-                    && matches!(fields[2], "not-installed" | "config-files")
-            })
-        })
-}
-pub(super) fn islands_version(root: &Path) -> Option<String> {
-    Database::load(root)?
-        .installed("cosmic-ext-halcyon-islands", "amd64")?
-        .get("Version")
-        .filter(|v| valid_version(v))
-        .cloned()
+fn bundled_package(db: &Database) -> Option<&BTreeMap<String, String>> {
+    db.installed(MAIN, "amd64")
+        .filter(|p| p.get("X-Halcyon-Islands").is_some_and(|v| v == "bundled"))
 }
 pub(super) fn islands_cli_verified() -> bool {
     let Some(db) = Database::load(Path::new("/")) else {
@@ -277,7 +259,7 @@ fn cli_verified(root: &Path, db: &Database) -> bool {
     let relative = "/usr/bin/halcyon-islands";
     let path = rooted(root, relative);
     if !db
-        .record(root, "cosmic-ext-halcyon-islands", "list")
+        .record(root, MAIN, "list")
         .is_some_and(|list| list.lines().filter(|line| *line == relative).count() == 1)
     {
         return false;
@@ -293,18 +275,22 @@ fn cli_verified(root: &Path, db: &Database) -> bool {
         })
 }
 fn islands_match(root: &Path, db: &Database) -> IslandsMatch {
-    let Some(package) = db.installed("cosmic-ext-halcyon-islands", "amd64") else {
-        return if db.packages.contains_key("cosmic-ext-halcyon-islands") {
-            IslandsMatch::Unknown
-        } else {
-            IslandsMatch::Absent
-        };
+    let Some(package) = bundled_package(db) else {
+        return IslandsMatch::Absent;
     };
-    if package.get("Version") != super::enrollment::islands_version().ok().as_ref() {
-        return IslandsMatch::VersionMismatch;
-    }
-    if !cli_verified(root, db) {
+    let path = "/usr/lib/cosmic-ext-halcyon-islands/companion-manifest.json";
+    if db.verified_file(root, MAIN, path).is_none() || !cli_verified(root, db) {
         return IslandsMatch::HelperMismatch;
+    }
+    let Some(manifest) = read(&rooted(root, path), 65536)
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+    else {
+        return IslandsMatch::HelperMismatch;
+    };
+    if manifest["package_owner"] != MAIN
+        || manifest["package_version"].as_str() != package.get("Version").map(String::as_str)
+    {
+        return IslandsMatch::VersionMismatch;
     }
     IslandsMatch::Ready
 }
@@ -565,8 +551,7 @@ pub(super) fn measure(root: &Path, proc_exe: &Path, source_binary: &Path) -> Ide
     };
     result.installed_version = Some(version.clone());
     result.architecture = Some("amd64".into());
-    result.islands_version = db
-        .installed("cosmic-ext-halcyon-islands", "amd64")
+    result.islands_version = bundled_package(&db)
         .and_then(|p| p.get("Version"))
         .filter(|v| valid_version(v))
         .cloned();

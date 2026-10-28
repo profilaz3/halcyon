@@ -1,16 +1,13 @@
-//! Optional release companion. PackageKit installs; the existing helper activates.
-use super::{Failure, Identity, Settings, SettingsMessage, Task, enrollment, identity, packagekit};
+//! Included Islands payload. The guarded helper activates it for the next login.
+use super::{Failure, Identity, Settings, SettingsMessage, Task, identity, packagekit};
 use crate::desktop::islands::{CompatibilityStatus, Installation, Provenance};
-use std::{path::Path, process::Stdio, sync::Arc, time::Duration};
+use std::{process::Stdio, time::Duration};
 use tokio::sync::watch;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Phase {
     #[default]
     Idle,
-    Preparing,
-    Ready,
-    Installing,
     Enabling,
     Failed(Failure),
 }
@@ -19,23 +16,16 @@ pub struct State {
     pub phase: Phase,
     generation: u64,
     cancellation: Option<watch::Sender<bool>>,
-    prepared: Option<Arc<enrollment::Prepared>>,
-    expected: Option<Identity>,
 }
 impl State {
     pub fn busy(&self) -> bool {
-        matches!(
-            self.phase,
-            Phase::Preparing | Phase::Installing | Phase::Enabling
-        )
+        matches!(self.phase, Phase::Enabling)
     }
     fn reset(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         if let Some(cancel) = self.cancellation.take() {
             let _ = cancel.send(true);
         }
-        self.prepared = None;
-        self.expected = None;
         self.phase = Phase::Idle;
     }
 }
@@ -48,12 +38,8 @@ impl Drop for State {
 }
 #[derive(Clone, Debug)]
 pub enum Message {
-    Prepare,
-    Prepared(u64, Result<(Identity, Arc<enrollment::Prepared>), Failure>),
-    Cancel,
-    Install,
-    Installed(u64, Result<Installation, Failure>),
     Enable,
+    Disable,
     Enabled(u64, Activation),
     Recheck,
 }
@@ -63,57 +49,6 @@ fn message(value: Message) -> SettingsMessage {
 pub(super) fn update(settings: &mut Settings, value: Message) -> Task<SettingsMessage> {
     let state = &mut settings.updates.islands;
     match value {
-        Message::Prepare if !state.busy() => {
-            state.reset();
-            state.phase = Phase::Preparing;
-            let (sender, cancel) = watch::channel(false);
-            state.cancellation = Some(sender);
-            let token = state.generation;
-            return cosmic::task::future(async move {
-                message(Message::Prepared(token, prepare(cancel).await))
-            });
-        }
-        Message::Prepared(token, result)
-            if token == state.generation && state.phase == Phase::Preparing =>
-        {
-            state.cancellation = None;
-            match result {
-                Ok((expected, prepared)) => {
-                    state.expected = Some(expected);
-                    state.prepared = Some(prepared);
-                    state.phase = Phase::Ready;
-                }
-                Err(error) => state.phase = Phase::Failed(error),
-            }
-        }
-        Message::Cancel if matches!(state.phase, Phase::Preparing | Phase::Ready) => state.reset(),
-        Message::Install if state.phase == Phase::Ready => {
-            let (Some(expected), Some(prepared)) = (state.expected.clone(), state.prepared.take())
-            else {
-                state.phase = Phase::Failed(Failure::InstallationChanged);
-                return Task::none();
-            };
-            state.phase = Phase::Installing;
-            let token = state.generation;
-            return cosmic::task::future(async move {
-                message(Message::Installed(token, install(expected, prepared).await))
-            });
-        }
-        Message::Installed(token, result)
-            if token == state.generation && state.phase == Phase::Installing =>
-        {
-            state.expected = None;
-            state.phase = result
-                .as_ref()
-                .err()
-                .cloned()
-                .map(Phase::Failed)
-                .unwrap_or_default();
-            if let Ok(installation) = result {
-                settings.desktop.islands.installation = installation;
-            }
-            return refresh_installation(settings);
-        }
         Message::Enable
             if !state.busy()
                 && can_enable(&settings.desktop.islands.installation)
@@ -130,6 +65,24 @@ pub(super) fn update(settings: &mut Settings, value: Message) -> Task<SettingsMe
             let token = state.generation;
             return cosmic::task::future(async move {
                 message(Message::Enabled(token, enable(cancel).await))
+            });
+        }
+        Message::Disable
+            if !state.busy()
+                && can_disable(&settings.desktop.islands.installation)
+                && settings
+                    .updates
+                    .identity
+                    .as_ref()
+                    .is_some_and(Identity::can_enable_islands) =>
+        {
+            state.reset();
+            state.phase = Phase::Enabling;
+            let (sender, cancel) = watch::channel(false);
+            state.cancellation = Some(sender);
+            let token = state.generation;
+            return cosmic::task::future(async move {
+                message(Message::Enabled(token, disable(cancel).await))
             });
         }
         Message::Enabled(token, result)
@@ -176,6 +129,44 @@ pub fn can_enable(installation: &Installation) -> bool {
             | (None, Some(CompatibilityStatus::Disabled))
     )
 }
+pub fn can_disable(installation: &Installation) -> bool {
+    matches!(
+        installation,
+        Installation::Installed {
+            provenance: Provenance::Package,
+            enabled: true,
+            ..
+        }
+    )
+}
+async fn disable(cancel: watch::Receiver<bool>) -> Activation {
+    if identity::isolated()
+        || !identity::inspect().await.can_enable_islands()
+        || !identity::islands_cli_verified()
+    {
+        return Failure::InstallationChanged.into();
+    }
+    if !discover().await.as_ref().is_ok_and(can_disable) {
+        return Failure::InstallationChanged.into();
+    }
+    let mut command = tokio::process::Command::new("/usr/bin/halcyon-islands");
+    command.arg("disable");
+    let operation = run_activation(command, cancel, Duration::from_secs(60)).await;
+    match discover().await {
+        Ok(observed) => {
+            let off = matches!(observed, Installation::Installed { enabled: false, .. });
+            Activation {
+                observed: Some(observed),
+                failure: if off {
+                    None
+                } else {
+                    Some(operation.err().unwrap_or(Failure::Activation))
+                },
+            }
+        }
+        Err(error) => operation.err().unwrap_or(error).into(),
+    }
+}
 async fn discover() -> Result<Installation, Failure> {
     tokio::task::spawn_blocking(|| {
         crate::desktop::DesktopStore::from_env()
@@ -184,64 +175,6 @@ async fn discover() -> Result<Installation, Failure> {
     })
     .await
     .map_err(|_| Failure::Failed)?
-}
-async fn candidate() -> Result<Identity, Failure> {
-    // Never let fixtures, screenshots, or arbitrary source builds reach the host installer.
-    if identity::isolated() {
-        return Err(Failure::InstallationChanged);
-    }
-    let current = identity::inspect().await;
-    if !current.can_install_islands() {
-        return Err(Failure::ReleaseRequired);
-    }
-    if !identity::islands_absent(Path::new("/")) || discover().await? != Installation::Absent {
-        return Err(Failure::InstallationChanged);
-    }
-    Ok(current)
-}
-async fn prepare(
-    cancel: watch::Receiver<bool>,
-) -> Result<(Identity, Arc<enrollment::Prepared>), Failure> {
-    let mut interrupted = cancel.clone();
-    let operation = async {
-        let expected = candidate().await?;
-        let prepared = enrollment::prepare(cancel).await?;
-        if !expected.same_package(&candidate().await?) {
-            return Err(Failure::InstallationChanged);
-        }
-        packagekit::prepare_islands(&prepared).await?;
-        Ok((expected, prepared))
-    };
-    tokio::select! {
-        biased;
-        _ = packagekit::cancelled(&mut interrupted) => Err(Failure::Cancelled),
-        result = operation => result,
-    }
-}
-async fn install(
-    expected: Identity,
-    prepared: Arc<enrollment::Prepared>,
-) -> Result<Installation, Failure> {
-    if !expected.same_package(&candidate().await?) {
-        return Err(Failure::InstallationChanged);
-    }
-    packagekit::install_islands(prepared).await?;
-    if identity::islands_version(Path::new("/")).as_deref()
-        != Some(enrollment::islands_version()?.as_str())
-    {
-        return Err(Failure::InstallationChanged);
-    }
-    let result = discover().await?;
-    if !matches!(
-        result,
-        Installation::Installed {
-            provenance: Provenance::Package,
-            ..
-        }
-    ) {
-        return Err(Failure::InstallationChanged);
-    }
-    Ok(result)
 }
 #[derive(Clone, Debug)]
 pub struct Activation {
@@ -328,13 +261,10 @@ async fn enable(cancel: watch::Receiver<bool>) -> Activation {
         .unwrap_or_else(Activation::from)
 }
 async fn enable_checked(cancel: watch::Receiver<bool>) -> Result<Activation, Failure> {
-    if identity::isolated() || !identity::inspect().await.can_install_islands() {
+    if identity::isolated() {
         return Err(Failure::InstallationChanged);
     }
-    if identity::islands_version(Path::new("/")).as_deref()
-        != Some(enrollment::islands_version()?.as_str())
-        || !identity::islands_cli_verified()
-    {
+    if !identity::inspect().await.can_enable_islands() || !identity::islands_cli_verified() {
         return Err(Failure::IslandsMismatch);
     }
     if !can_enable(&discover().await?) {
@@ -352,6 +282,7 @@ async fn enable_checked(cancel: watch::Receiver<bool>) -> Result<Activation, Fai
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
     struct Fixture(std::path::PathBuf);
     impl Drop for Fixture {
         fn drop(&mut self) {
@@ -479,8 +410,12 @@ mod tests {
         assert!(result.observed.is_none());
     }
     #[tokio::test]
-    async fn isolated_flows_cannot_download_install_or_activate() {
-        assert_eq!(candidate().await, Err(Failure::InstallationChanged));
+    async fn isolated_flows_cannot_activate_or_disable() {
+        let (_sender, cancel) = watch::channel(false);
+        assert_eq!(
+            disable(cancel).await.failure,
+            Some(Failure::InstallationChanged)
+        );
         let (_sender, cancel) = watch::channel(false);
         assert_eq!(
             enable(cancel).await.failure,
@@ -523,7 +458,7 @@ mod tests {
         let token = state.generation;
         let (sender, mut receiver) = watch::channel(false);
         state.cancellation = Some(sender);
-        state.phase = Phase::Preparing;
+        state.phase = Phase::Enabling;
         state.reset();
         receiver.changed().await.unwrap();
         assert!(*receiver.borrow());
