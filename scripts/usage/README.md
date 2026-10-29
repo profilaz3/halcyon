@@ -298,3 +298,43 @@ batches of at most 256. Existing Summary, Countries and Reporting stay available
 The private workbook presents these views with formatted dates, percentages,
 frozen headers, and linked charts. No reporting preference or raw source record
 is changed by dashboard formatting.
+
+## Four-tab reading layout
+
+The live workbook now opens with **Overview, Activity, Versions, History**.
+The presentation is an additive reading layer; collector version 6, its endpoint,
+wire schema, consent state and source records are unchanged.
+
+- **Overview** shows active installations, repeat reporting, daily/version charts,
+  last activity receipt, and expandable countries and coverage definitions.
+- **Activity** has a 7/30/90-day selector. It omits untracked dates rather than
+  inventing zeroes. Return metrics remain available in a collapsed detail group.
+- **Versions** has a 7/30-day selector, counts, shares and a native chart.
+- **History** has a five-column filtered table and a record selector. Expand its
+  detail row group for first-seen/start dates and observed versions. Older records
+  without day history show `Unknown`, not a misleading zero. An expired selection
+  or one outside the current filter is identified explicitly.
+
+Collector-owned `Dashboard`, `Daily activity`, `Installation history`, `Summary`,
+`Countries`, `Reporting` and `Installations` are hidden, not renamed or deleted.
+`Versions!A:D` remains collector-owned and hidden; its reader controls/formulas
+live in E:L. Other reader tabs have `halcyon:presentation:v1` in hidden Z1.
+The data source names must stay unchanged. Use **View → Hidden sheets** for
+maintenance. Hiding is a navigation choice, not an access-control boundary.
+
+`presentation.cjs` builds the one-time native Sheets batch from freshly inspected
+metadata and cells. It refuses existing reader tabs, occupied IDs and nonempty
+Versions presentation cells. Its JSON input is `{metadata, inspected}` (Sheets
+metadata and a bounded CellData read of `Versions!E1:Z1000`); its output contains
+separate `stage` and `publish` requests. It performs no network calls. Apply
+`stage`, validate formulas and controls, then apply `publish`. For later edits,
+read and patch exact owned cells rather than rerunning the installer. The History
+source grid is extended to the existing 20,000-record cap without changing values.
+
+Native formulas read current collector results, so reports and daily maintenance
+refresh the visible views without an Apps Script redeployment. Column ownership
+is regression-tested for setup, activity, opt-out and maintenance. The live
+rollout checked period/status controls, unknown history, stale selection and
+selection/filter consistency. All 21 original records were unchanged; sharing
+remained private. Verification used live formula/format/chart API readback;
+no native browser screenshot was available.
