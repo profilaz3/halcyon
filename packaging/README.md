@@ -110,15 +110,15 @@ CI uses the development mode. Release assembly uses `--release-updates`, which
 retains the existing default-enrollment and administrator-preservation behavior.
 Do not reuse a published version for changed bytes.
 
-The next app build embeds `islands/download.json`, a separate reviewed companion
-pin. Before release, bind `main_version` to the new app version and verify the
-companion version/tag, size and SHA-256 against the approved immutable asset in
-`scripts/apt/distribution.json`. The companion may remain at an older compatible
-version. Stale or invalid metadata fails closed. Future updates remain signed APT.
+Historical split releases use `islands/download.json` to bind the separate
+companion download. Bundled releases no longer use this download path; both
+executables ship in the main package and update through signed APT.
 
 ## Bundled releases from 0.5
 
-The main release package owns both executable payloads. The native input must
+The main release package owns both executable payloads. Build the shared panel
+with `companion/build.py --with-penumbra` so both optional effects are included.
+The native input must
 match its reviewed manifest; package assembly refreshes helper hashes and records
 `package_owner: cosmic-ext-halcyon`. The Islands library path remains stable.
 The development package remains isolated and does not claim bundled activation.

@@ -27,7 +27,7 @@ impl Settings {
             MUTED,
         ));
         if !supported {
-            controls.push(label("Requires a panel component with Penumbra support. Update the component and log out and back in.", 11., MUTED));
+            controls.push(label("The included panel component must be active. Choose Enable for next login above, then log out and back in. The bar layout can stay Standard.", 11., MUTED));
         }
         if let Some(effect) = effect {
             controls.push(

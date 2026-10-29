@@ -24,6 +24,7 @@ FINAL_ACCEPTANCES={'0.3.0': ROOT/'companion/compatibility/evidence/accepted-fina
 FINAL_REVIEWS={
     '0.4.0': ROOT/'companion/compatibility/evidence/reviewed-final-040.json',
     '0.4.1': ROOT/'companion/compatibility/evidence/reviewed-final-041.json',
+    '0.5.0': ROOT/'companion/compatibility/evidence/reviewed-final-050.json',
 }
 LIMITATIONS=['physical-hardware-not-qualified','cosmic-1.10-not-native-qualified',
              'new-family-startup-helpers-not-native-qualified','not-full-native-matrix']
@@ -37,18 +38,27 @@ def final_package_review(root, data, bindings):
     if path is None or not path.is_file():
         raise ValueError('final_package_review_pending')
     record=read_json(path)
+    bundled = data.get('release') == '0.5.0'
+    observations = dict(installation='passed', settings='passed')
+    if bundled:
+        if data.get('packaging') != 'bundled-islands':
+            raise ValueError('bundled_final_review_requires_bundled_package')
+        observations.update(panel='passed', penumbra='passed', cleanup='passed')
     required=dict(format='halcyon-final-package-review',version=1,
                   decision='approve-release',release=data['release'],
                   policy_sha256=identity(POLICY),bindings=bindings,
                   limitations=FINAL_LIMITATIONS,
-                  observations=dict(installation='passed',settings='passed'))
+                  observations=observations)
     if any(record.get(k)!=v for k,v in required.items()):
         raise ValueError('final_package_review_mismatch')
     scope=record.get('scope',{})
-    if (scope.get('environment')!='native-settings-and-offline-package-upgrade'
+    environment = ('private-cosmic-and-isolated-package-upgrade' if bundled
+                   else 'native-settings-and-offline-package-upgrade')
+    host_key = 'compositor_sha256' if bundled else 'image_sha256'
+    if (scope.get('environment')!=environment
             or scope.get('cosmic_family')!='1.11'
-            or not isinstance(scope.get('image_sha256'),str)
-            or re.fullmatch('[0-9a-f]{64}',scope['image_sha256']) is None):
+            or not isinstance(scope.get(host_key),str)
+            or re.fullmatch('[0-9a-f]{64}',scope[host_key]) is None):
         raise ValueError('final_package_review_scope_missing')
     evidence=record.get('evidence',{}); name=evidence.get('file','')
     artifact=data['artifacts'].get(name,{})

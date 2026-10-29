@@ -4,7 +4,7 @@ The package contains a panel payload, a versioned local compatibility catalog,
 read-only diagnostics and a user-session bootstrap. Installation never enables
 Islands or restarts a bar. No package script writes a user home.
 
-**0.3.0 supports attempted startup on COSMIC 1.10 and 1.11.** GPU and kernel
+**Halcyon supports attempted startup on COSMIC 1.10 and 1.11.** GPU and kernel
 versions do not need to match the test VM. Package integrity, native interfaces,
 configured applets and startup readiness are checked, with stock-panel fallback
 on failure. The recorded complete-session test used COSMIC 1.11 with software
@@ -45,11 +45,11 @@ being overwritten. Keep the installer records if manually managing a source
 installation. After package removal, retained generations include `install.py`
 for guarded newest-first restoration of those records.
 
-See [the compatibility contract](https://github.com/profilaz3/halcyon/blob/v0.3.0/docs/COMPATIBILITY.md) for signed archive
+See [the compatibility contract](../../docs/COMPATIBILITY.md) for signed archive
 trust, native qualification, exact artifact identity, generation recovery and
 reproducible regression commands. Fresh installations of the main Halcyon package
 enable the signed APT source by default; activating Islands does not change that
 choice. Existing disabled or modified sources stay unchanged. See
-[system updates](https://github.com/profilaz3/halcyon/blob/v0.3.0/docs/DISTRIBUTION.md)
+[system updates](../../docs/DISTRIBUTION.md)
 for enrollment and disabling the source. The Halcyon package is available from GitHub Releases. Upgrades from older split
 installations use an empty transitional package; it can be removed after upgrading.

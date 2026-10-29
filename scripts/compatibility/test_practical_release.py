@@ -14,6 +14,36 @@ import practical_release as policy
 import release_gate
 
 class Release(unittest.TestCase):
+    def test_bundled_review_requires_current_panel_and_penumbra_observations(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            proof = root/'checks.zip'; proof.write_bytes(b'SYNTHETIC TEST ONLY')
+            reviewed = root/'reviewed.json'
+            bindings = {'packages': {'main': {'sha256': '1'*64}, 'islands': {'elf_sha256': '2'*64}}}
+            data = dict(release='0.5.0', packaging='bundled-islands',
+                        artifacts={'checks.zip':dict(kind='native-evidence',sha256=digest(proof))})
+            record = dict(format='halcyon-final-package-review', version=1,
+                decision='approve-release', release='0.5.0',
+                policy_sha256=policy.identity(policy.POLICY), bindings=bindings,
+                limitations=policy.FINAL_LIMITATIONS,
+                observations=dict(installation='passed', settings='passed', panel='passed',
+                                  penumbra='passed', cleanup='passed'),
+                scope=dict(environment='private-cosmic-and-isolated-package-upgrade',
+                           cosmic_family='1.11', compositor_sha256='3'*64),
+                evidence=dict(file='checks.zip',sha256=digest(proof)), review_reference='SYNTHETIC')
+            with patch.dict(policy.FINAL_REVIEWS, {'0.5.0': reviewed}, clear=True):
+                reviewed.write_bytes(canonical(record))
+                self.assertEqual(policy.final_package_review(root,data,bindings)['final_package_review_sha256'],digest(reviewed))
+                for missing in ('installation', 'settings', 'panel', 'penumbra', 'cleanup'):
+                    changed = {**record, 'observations': {k:v for k,v in record['observations'].items() if k != missing}}
+                    reviewed.write_bytes(canonical(changed))
+                    with self.assertRaises(ValueError): policy.final_package_review(root,data,bindings)
+                reviewed.write_bytes(canonical(record))
+                with self.assertRaises(ValueError): policy.final_package_review(root,{**data,'packaging':'split'},bindings)
+                with self.assertRaises(ValueError): policy.final_package_review(root,data,{'packages':{}})
+                proof.write_bytes(b'changed evidence')
+                with self.assertRaises(ValueError): policy.final_package_review(root,data,bindings)
+
     def test_bundled_manifest_requires_one_payload_and_fresh_acceptance(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

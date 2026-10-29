@@ -1,6 +1,6 @@
 # Islands compatibility and immutable qualification
 
-## Supported-family startup (0.3.0; policy v2)
+## Supported-family startup (0.5.0; policy v4)
 
 Islands supports attempted startup on COSMIC **1.10 and 1.11**, including AMD,
 Intel and NVIDIA desktops. Physical hardware and COSMIC 1.10 have **not** been

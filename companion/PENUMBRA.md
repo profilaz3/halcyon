@@ -31,6 +31,14 @@ Islands initially chooses Floating; enabling Penumbra afterwards keeps the
 Islands layout and brings the bar flush with the screen edge. Maximized
 styling continues to respect **Keep style on maximize**.
 
+## Enable the included panel host
+
+Halcyon 0.5 includes both mods in its single package. In **Desktop → Dock & panel**,
+choose **Enable for next login**, then log out and back in when convenient.
+The running desktop stays in place until then. Use **Style → Penumbra** on each
+bar; its layout can remain **Standard**. System updates replace the app and panel
+component together.
+
 ## Build the shared panel host
 
 Both mods replace COSMIC Panel, so they must run in one host. Do not stack

@@ -1,6 +1,6 @@
 # Distribution and system updates
 
-The main app and optional Islands package are available from
+Halcyon, including the optional Islands panel component, is available from
 [GitHub Releases](https://github.com/profilaz3/halcyon/releases/latest) and signed APT.
 The signed channel is `https://profilaz3.github.io/halcyon/apt`, suite `noble`,
 component `main`, architecture `amd64` (Intel and AMD x86-64 PCs).
@@ -88,17 +88,15 @@ on the user's OS policy. Store search discovery is separate from system updates;
 AppStream metadata and icons are provided, but a native Store search trial has not
 been claimed by this deployment work.
 
-Islands remains optional. Enrollment and installing/updating the main app do not
-install it. To request it explicitly:
+Since 0.5, the main package includes Islands and Penumbra. Open **Desktop →
+Dock & panel** and choose **Enable for next login** to use the included panel
+component. No additional download or administrator prompt is needed. Log out
+and back in when convenient; activation does not restart the running panel.
 
-```sh
-sudo apt install cosmic-ext-halcyon-islands
-```
-
-Installing the companion does not enable it or restart a panel. Already-installed
-Islands receives normal package updates. Existing enabled users use the guarded
-per-user refresh and next-login activation; disabled users stay disabled. There
-is no forced logout or root package script that edits user home directories.
+Existing split installations migrate automatically through an empty transition
+package. App and panel updates arrive together. Enabled users retain their
+selection and layouts; disabled users stay disabled. Package scripts do not
+edit user home directories or force a logout.
 
 Manual `.deb` downloads remain supported. Source/per-user installs remain distinct
 from `/usr` package installations; the app checks its actual running executable

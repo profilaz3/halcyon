@@ -89,8 +89,8 @@ Collector version 6 is live at the same endpoint. Local checks: 49 collector tes
 and two release-gate tests. Live protocol and formatting refresh passed; original
 records were preserved and the synthetic record removed.
 
-Next is FB20 for the final 0.5 artifact: set the release identity, produce matching
-app/Islands packages and source, qualify an upgrade from 0.4.1 plus fresh setup,
+Next is FB20 for the final 0.5 artifact: set the release identity, produce the
+bundled package and source, qualify an upgrade from 0.4.1 plus fresh setup,
 then finish the release screenshots and short notes. The local feature validation
 already recorded above remains reusable; only affected checks need repeating.
 No 0.5 package or feature publication was performed by this reporting follow-up.
@@ -115,3 +115,12 @@ Validation covers 1,399 distinct passing Rust tests (the broad run and three
 corrected UI test reruns), including 31 new regressions, plus compact/wide private
 COSMIC walkthroughs with 44 window captures. The installed desktop was not
 replaced or restarted. This checkpoint does not publish 0.5.
+
+## 0.5 release candidate — 2026-10-29
+
+Penumbra is integrated with the shared panel and the bundled installation path.
+The final package and its upgrade bridge passed fresh-install, 0.4.1 migration,
+private COSMIC rendering and full application regression checks. The new native
+binary has its own source, policy and artifact bindings. See the [0.5 acceptance
+record](../releases/0.5.0-acceptance.md). Publication is tracked separately from
+these completed checks.

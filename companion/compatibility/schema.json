@@ -479,8 +479,8 @@
     },
     "startup_policy": {
       "const": {
-        "version": 3,
-        "id": "cosmic-1.10-1.11-startup-v3",
+        "version": 4,
+        "id": "cosmic-1.10-1.11-startup-v4",
         "families": [
           "1.10",
           "1.11"
@@ -490,9 +490,10 @@
           "upstream": "ca20ce3185b3b4404f429d59d429c40b58a2ddef",
           "patch_sha256": "6207734618f4815676fd7e2c0beccfcf094f21170fa1b941dfd9946edf17053f",
           "core_sha256": "181c76a7f9903a6e3212e123264d8503d26a3f2fccb681666256bc85ebe99546",
-          "islands_sha256": "5dece621dcee8f3375b606d231e661952cf98479aadac2c748bea69d5a830043"
+          "islands_sha256": "4428bc01b14ec266af1fd82735b0370a773b82c350ef6ebbedd9c2cec088be6c",
+          "penumbra_patch_sha256": "c65009b2b68854de092ea3f9b728b5ecb5a189490f816b60575916d85f70e9ae"
         },
-        "binary_sha256": "11c321ed40d87a5daba4357338365b5ac4723254b99ff1b28fc9492dcbde01da",
+        "binary_sha256": "9133db20d917d5125f9c18e220a4be4424cc8537063c3f202703157d2ba1a9e9",
         "protocol": 1,
         "runtime_probe": 1,
         "max_outputs": 32
