@@ -7,6 +7,7 @@
 //! While Settings holds unapplied desktop drafts it declares their parts in
 //! the hold file, so a switch touching them waits instead of making the
 //! drafts stale (`sync_hold`).
+use crate::automation::solar::{self, Context, Event, Source};
 use crate::automation::{
     self, Automation, Change, Days, DisplayWhen, Pause, ProfileRef, Rule, State, Time, Trigger,
     displays::Display,
@@ -22,6 +23,7 @@ use std::path::PathBuf;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Kind {
     Schedule,
+    Solar,
     Display,
 }
 
@@ -38,6 +40,9 @@ pub enum PauseFor {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum DraftEdit {
+    Kind(Kind),
+    Event(Event),
+    Source(Source),
     Time(String),
     Day(usize),
     Days(Days),
@@ -49,11 +54,15 @@ pub enum DraftEdit {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Message {
+    AdaptiveRoutine(crate::desktop::profiles::adaptive::Look, Source),
+    ManualCity(crate::config::Location),
     Enable(bool),
     Rule(String, bool),
     Move(String, i32),
     Edit(String),
     New(Kind),
+    /// Begin a local schedule draft for a look chosen on another page.
+    Schedule(ProfileRef),
     Draft(DraftEdit),
     Save,
     Cancel,
@@ -74,6 +83,7 @@ impl Message {
             self,
             Self::Edit(_)
                 | Self::New(_)
+                | Self::Schedule(_)
                 | Self::Draft(_)
                 | Self::Cancel
                 | Self::Delete(_, false)
@@ -89,6 +99,10 @@ pub struct RuleDraft {
     pub id: Option<String>,
     pub kind: Kind,
     pub time: String,
+    #[serde(default = "default_sun_event")]
+    pub event: Event,
+    #[serde(default)]
+    pub source: Source,
     pub days: Days,
     pub change: Change,
     pub display: Option<String>,
@@ -100,12 +114,18 @@ pub struct RuleDraft {
     baseline: Option<Rule>,
 }
 
+fn default_sun_event() -> Event {
+    Event::Sunset
+}
+
 impl RuleDraft {
     fn new(kind: Kind, h24: bool) -> Self {
         let mut draft = Self {
             id: None,
             kind,
             time: Time::new(19, 0).unwrap().format(h24),
+            event: Event::Sunset,
+            source: Source::Weather,
             days: Days::EVERY,
             change: Change::Connect,
             display: None,
@@ -119,7 +139,9 @@ impl RuleDraft {
     }
     fn from_rule(rule: &Rule, h24: bool) -> Self {
         let mut draft = Self::new(
-            if rule.when.is_schedule() {
+            if matches!(rule.when, Trigger::Solar { .. }) {
+                Kind::Solar
+            } else if rule.when.is_schedule() {
                 Kind::Schedule
             } else {
                 Kind::Display
@@ -133,6 +155,15 @@ impl RuleDraft {
             Trigger::Schedule { time, days } => {
                 draft.time = time.format(h24);
                 draft.days = *days;
+            }
+            Trigger::Solar {
+                event,
+                days,
+                source,
+            } => {
+                draft.event = *event;
+                draft.days = *days;
+                draft.source = *source;
             }
             Trigger::Display(when) => {
                 draft.change = when.change;
@@ -167,7 +198,7 @@ impl RuleDraft {
     pub fn missing(&self) -> Option<&'static str> {
         match self.kind {
             Kind::Schedule if self.parsed_time().is_none() => Some("Enter a time like 19:00"),
-            Kind::Schedule if self.days.is_empty() => Some("Choose at least one day"),
+            Kind::Schedule | Kind::Solar if self.days.is_empty() => Some("Choose at least one day"),
             _ if self.profile.is_none() => Some("Choose a profile"),
             _ => None,
         }
@@ -177,6 +208,11 @@ impl RuleDraft {
             Kind::Schedule => Trigger::Schedule {
                 time: self.parsed_time()?,
                 days: self.days,
+            },
+            Kind::Solar => Trigger::Solar {
+                event: self.event,
+                days: self.days,
+                source: self.source,
             },
             Kind::Display => Trigger::Display(DisplayWhen {
                 change: self.change,
@@ -192,8 +228,11 @@ pub struct AutomationEditor {
     store: Option<Result<DesktopStore, String>>,
     settings: Option<Result<Automation, String>>,
     pub state: State,
+    pub solar: Context,
     /// Built-in starting points, then saved profiles: what a rule can apply.
     pub profiles: Vec<(ProfileRef, String)>,
+    pub profile_labels: Vec<String>,
+    profile_scopes: Vec<(ProfileRef, Vec<Domain>)>,
     pub displays: Vec<Display>,
     /// Display connectors with nothing connected.
     pub ports: Vec<String>,
@@ -280,16 +319,18 @@ impl AutomationEditor {
     pub fn watch_paths(&self) -> Vec<PathBuf> {
         self.store()
             .map(|store| {
-                vec![
+                let mut paths = vec![
                     automation::path(store, automation::FILE),
                     automation::path(store, automation::STATE_FILE),
-                ]
+                ];
+                paths.extend(store.app_config().map(std::path::Path::to_path_buf));
+                paths
             })
             .unwrap_or_default()
     }
     pub fn state_key(&self) -> String {
         format!(
-            "{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
+            "{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
             self.settings,
             self.state,
             self.profiles,
@@ -297,7 +338,9 @@ impl AutomationEditor {
             self.draft,
             self.confirm_delete,
             self.notice,
-            self.manual_at
+            self.manual_at,
+            self.solar,
+            self.profile_scopes
         )
     }
 
@@ -309,21 +352,37 @@ impl AutomationEditor {
         };
         let settings = automation::load(store);
         let state = automation::load_state(store);
-        let mut choices: Vec<(ProfileRef, String)> = profiles::presets()
+        let mut known = profiles::presets()
             .into_iter()
-            .map(|preset| (ProfileRef::Preset(preset.id.into()), preset.profile.name))
-            .collect();
-        choices.extend(
-            crate::moments::Phase::ALL
-                .into_iter()
-                .map(|p| (ProfileRef::Moment(p), format!("{} moment", p.title()))),
-        );
+            .chain(profiles::adaptive::presets())
+            .map(|preset| (ProfileRef::Preset(preset.id.into()), preset.profile))
+            .collect::<Vec<_>>();
+        let builtins = known.len();
         if let Ok(entries) = ProfileLibrary::new(store).list() {
-            choices.extend(entries.into_iter().filter_map(|entry| {
-                let profile = entry.profile.ok()?;
-                Some((ProfileRef::Saved(entry.id.as_str().into()), profile.name))
+            known.extend(entries.into_iter().filter_map(|entry| {
+                Some((
+                    ProfileRef::Saved(entry.id.as_str().into()),
+                    entry.profile.ok()?,
+                ))
             }));
         }
+        let scopes = known
+            .iter()
+            .map(|(id, profile)| (id.clone(), profile.domains()))
+            .collect();
+        let mut choices = known
+            .into_iter()
+            .map(|(id, profile)| (id, profile.name))
+            .collect::<Vec<_>>();
+        choices.splice(
+            builtins..builtins,
+            crate::moments::Phase::ALL.into_iter().map(|phase| {
+                (
+                    ProfileRef::Moment(phase),
+                    format!("{} moment", phase.title()),
+                )
+            }),
+        );
         let displays = automation::displays::describe(store);
         let ports = automation::displays::ports(store);
         let latest = store.latest_change().ok().flatten();
@@ -334,9 +393,15 @@ impl AutomationEditor {
             .filter(|latest| state.applied.as_deref() != Some(latest.id.as_str()))
             .and_then(|latest| chrono::DateTime::parse_from_rfc3339(&latest.created).ok())
             .map(|at| at.timestamp());
+        self.solar = settings
+            .as_ref()
+            .map(|settings| Context::read(store, settings))
+            .unwrap_or_default();
         self.settings = Some(settings);
         self.state = state;
+        self.profile_labels = choices.iter().map(|(_, name)| name.clone()).collect();
         self.profiles = choices;
+        self.profile_scopes = scopes;
         self.displays = displays;
         self.ports = ports;
         self.manual_at = manual_at;
@@ -350,6 +415,29 @@ impl AutomationEditor {
         );
     }
 
+    pub fn profile_scope(&self, profile: &ProfileRef, kind: Kind) -> String {
+        if matches!(profile, ProfileRef::Moment(_)) {
+            return "Widget style only · wallpaper, layout and content stay.".into();
+        }
+        if kind == Kind::Solar {
+            return "Appearance only · layout, applets and content stay.".into();
+        }
+        self.profile_scopes
+            .iter()
+            .find(|(id, _)| id == profile)
+            .map(|(_, domains)| {
+                format!(
+                    "Changes: {}.",
+                    domains
+                        .iter()
+                        .map(|d| d.title())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })
+            .unwrap_or_else(|| "The chosen setup is unavailable.".into())
+    }
+
     /// The profile name to show for a rule (the saved name when it's gone).
     pub fn profile_name(&self, profile: &ProfileRef, saved: &str) -> String {
         self.profiles
@@ -359,6 +447,11 @@ impl AutomationEditor {
     }
     /// What's wrong with a rule as it stands, if anything.
     pub fn rule_problem(&self, rule: &Rule) -> Option<String> {
+        if let Trigger::Solar { source, .. } = rule.when {
+            if let Err(reason) = self.solar.city(source) {
+                return Some(reason);
+            }
+        }
         if self
             .profiles
             .iter()
@@ -466,7 +559,41 @@ impl AutomationEditor {
         if message.writes() && !matches!(message, Message::Refresh) {
             self.notice = None;
         }
+        let store = self.store().cloned();
         match message {
+            Message::AdaptiveRoutine(look, source) => {
+                self.change(|settings, now| {
+                    let store=store.as_ref().ok_or("Desktop settings unavailable")?;
+                    Context::read(store,settings).city(source)?;
+                    if settings.rules.iter().any(|r| matches!(&r.profile,ProfileRef::Preset(id) if id.starts_with("adaptive-"))) {
+                        return Err("Adaptive rules already exist. Edit them in Automation.".into());
+                    }
+                    if settings.rules.len()+3 > automation::rules::MAX_RULES {
+                        return Err("Remove three rules before adding this daily cycle.".into());
+                    }
+                    for phase in crate::desktop::profiles::adaptive::Phase::ALL {
+                      let id=settings.next_id();
+                      settings.rules.push(Rule {
+                        id, enabled:true, since:now,
+                        profile:ProfileRef::Preset(look.id(phase).into()),
+                        name:format!("{} · {}",look.title(),phase.title()),
+                        when:Trigger::Solar { event:phase.event(),days:Days::EVERY,source },
+                      });
+                    }
+                    if !settings.enabled { settings.enabled=true;settings.since=now; }
+                    Ok(())
+                }, Some("Daily cycle added. It starts at the next sun event.".into()));
+            }
+            Message::ManualCity(city) => {
+                self.change(
+                    |settings, _| {
+                        solar::validate_city(&city)?;
+                        settings.manual_city = Some(city);
+                        Ok(())
+                    },
+                    Some("Schedule city saved".into()),
+                );
+            }
             Message::Enable(on) => self.change(
                 |settings, now| {
                     settings.enabled = on;
@@ -480,6 +607,16 @@ impl AutomationEditor {
             ),
             Message::Rule(id, on) => self.change(
                 |settings, now| {
+                    if on
+                        && let Some(rule) = settings.rule(&id)
+                        && let Trigger::Solar { source, .. } = rule.when
+                    {
+                        Context::read(
+                            store.as_ref().ok_or("Desktop settings unavailable")?,
+                            settings,
+                        )
+                        .city(source)?;
+                    }
                     let rule = rule_mut(settings, &id)?;
                     rule.enabled = on;
                     if on {
@@ -514,7 +651,24 @@ impl AutomationEditor {
             }
             Message::New(kind) => {
                 self.confirm_delete = None;
-                self.draft = Some(RuleDraft::new(kind, h24));
+                let mut draft = RuleDraft::new(kind, h24);
+                if kind == Kind::Solar && !self.solar.weather_enabled {
+                    draft.source = Source::Manual;
+                }
+                self.draft = Some(draft);
+            }
+            Message::Schedule(profile) => {
+                // A cross-page shortcut must never overwrite an existing draft.
+                if self.draft.is_some() {
+                    self.notice = Some(Notice::Error(
+                        "Finish or cancel the current rule first.".into(),
+                    ));
+                } else {
+                    self.confirm_delete = None;
+                    let mut draft = RuleDraft::new(Kind::Schedule, h24);
+                    draft.profile = Some(profile);
+                    self.draft = Some(draft);
+                }
             }
             Message::Draft(edit) => self.edit_draft(edit),
             Message::Save => self.save(),
@@ -552,8 +706,8 @@ impl AutomationEditor {
                 let tz = Local;
                 let now = chrono::Utc::now();
                 let next = self.settings().ok().and_then(|settings| {
-                    automation::next_switch(settings, &self.state, &tz, now)
-                        .map(|(local, _)| automation::clock::instant(&tz, local).timestamp())
+                    automation::decide::next_instant(settings, &self.state, &tz, now, &self.solar)
+                        .map(|(at, _)| at.timestamp())
                 });
                 let (until, skip) = match choice {
                     PauseFor::Next => match next {
@@ -607,6 +761,18 @@ impl AutomationEditor {
             return;
         };
         match edit {
+            DraftEdit::Kind(kind) => {
+                // Existing rules keep their trigger type; new drafts can choose
+                // when the selected appearance should apply.
+                if draft.id.is_none() {
+                    draft.kind = kind;
+                    if kind == Kind::Solar && !self.solar.weather_enabled {
+                        draft.source = Source::Manual;
+                    }
+                }
+            }
+            DraftEdit::Event(event) => draft.event = event,
+            DraftEdit::Source(source) => draft.source = source,
             DraftEdit::Time(text) => draft.time = text.chars().take(12).collect(),
             DraftEdit::Day(index) => draft.days = draft.days.toggled(index),
             DraftEdit::Days(days) => draft.days = days,
@@ -641,9 +807,13 @@ impl AutomationEditor {
             return;
         };
         let name = self.profile_name(&profile, "");
+        let store = self.store().cloned();
         let mut turned_on = false;
         let result = self.write(
             |settings, now| {
+                if let Trigger::Solar { source, .. } = trigger {
+                    Context::read(store.as_ref().ok_or("Desktop settings unavailable")?, settings).city(source)?;
+                }
                 match &draft.id {
                     Some(id) => {
                         let rule = rule_mut(settings, id)?;
@@ -714,6 +884,7 @@ impl AutomationEditor {
         let saved = result.is_ok();
         match result {
             Ok(settings) => {
+                self.solar = Context::read(store, &settings);
                 self.running = Some(settings.running());
                 self.settings = Some(Ok(settings));
                 if let Some(done) = done {
@@ -740,3 +911,55 @@ fn gone() -> String {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod polish050_tests {
+    use super::*;
+
+    #[test]
+    fn polish050_schedule_shortcut_retains_target_and_never_replaces_a_draft() {
+        let mut editor = AutomationEditor::default();
+        let day = ProfileRef::Moment(crate::moments::Phase::Day);
+        let night = ProfileRef::Moment(crate::moments::Phase::Night);
+        assert!(!Message::Schedule(day.clone()).writes());
+        editor.update(Message::Schedule(day.clone()), true);
+        assert_eq!(editor.draft.as_ref().unwrap().profile, Some(day.clone()));
+        editor.update(Message::Draft(DraftEdit::Kind(Kind::Solar)), true);
+        assert_eq!(editor.draft.as_ref().unwrap().source, Source::Manual);
+        assert_eq!(editor.draft.as_ref().unwrap().profile, Some(day));
+        let before = editor.draft.clone();
+        editor.update(Message::Schedule(night), true);
+        assert_eq!(editor.draft, before);
+        assert!(matches!(editor.notice, Some(Notice::Error(_))));
+    }
+
+    #[test]
+    fn polish050_schedule_scope_distinguishes_solar_projection_from_setup_layout() {
+        let mut editor = AutomationEditor::default();
+        let profile = ProfileRef::Preset("tidal".into());
+        editor.profile_scopes.push((
+            profile.clone(),
+            vec![Domain::Wallpaper, Domain::WidgetLayout],
+        ));
+        assert!(
+            editor
+                .profile_scope(&profile, Kind::Schedule)
+                .contains("Widget layout")
+        );
+        assert!(
+            !editor
+                .profile_scope(&profile, Kind::Solar)
+                .contains("Changes:")
+        );
+        assert!(
+            editor
+                .profile_scope(&profile, Kind::Solar)
+                .contains("layout, applets and content stay")
+        );
+        assert!(
+            editor
+                .profile_scope(&ProfileRef::Moment(crate::moments::Phase::Day), Kind::Solar)
+                .starts_with("Widget style only")
+        );
+    }
+}

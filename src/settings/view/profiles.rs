@@ -242,6 +242,23 @@ pub(in crate::settings) fn card_at<'a>(
     scale: f32,
     now: Option<chrono::DateTime<chrono::Local>>,
 ) -> Element<'a, Message> {
+    if matches!(widget, Widget::Calendar | Widget::Devbox)
+        && let Some(recipe) =
+            crate::recipes::Kind::from_widget(widget).and_then(|kind| config.recipes.get(kind))
+    {
+        let scale = if scale.is_finite() && scale > 0. {
+            scale
+        } else {
+            1.
+        };
+        let source = [(size[0] / scale).max(1.), (size[1] / scale).max(1.)];
+        return super::sample::thumbnail(
+            crate::app::settings_recipe_preview(config, recipe, false, source)
+                .map(|_| Message::Preview),
+            source,
+            size,
+        );
+    }
     if matches!(widget, Widget::Clock | Widget::Weather) {
         let scale = if scale.is_finite() && scale > 0. {
             scale
@@ -608,7 +625,7 @@ impl Settings {
             preview.clone(),
             height,
             false,
-            self.page != Page::DesktopProfiles,
+            !matches!(self.page, Page::DesktopProfiles | Page::AdaptiveLooks),
         )
     }
 
@@ -1181,6 +1198,12 @@ impl Settings {
         let editor = &self.profiles;
         let accent = self.settings_accent();
         let writable = editor.writable();
+        let empty_setup = self.page != Page::Themes
+            && editor.library().is_ok_and(|entries| {
+                !entries
+                    .iter()
+                    .any(|entry| entry.profile.as_ref().map_or(true, |p| !p.appearance_only))
+            });
         let mut items: Vec<Element<'_, Message>> = vec![split(
             label(
                 if self.page == Page::Themes {
@@ -1220,6 +1243,10 @@ impl Settings {
             .spacing(6)
             .into(),
         )];
+        if empty_setup {
+            items.clear();
+            items.push(label("Your setups", 15., FG));
+        }
         if editor.name.as_ref().is_some_and(|name| {
             matches!(name.action, NameAction::Capture | NameAction::CaptureTheme)
         }) {
@@ -1239,11 +1266,55 @@ impl Settings {
                         .map_or(true, |p| p.appearance_only == (self.page == Page::Themes))
                 }) =>
             {
-                items.push(container(column::with_children(vec![
-                    icon::from_name("document-save-symbolic").size(32).into(),
-                    label(if self.page == Page::Themes { "Keep a look you love" } else { "Make this desktop a keeper" }, 20., FG),
-                    label("Save your current settings, then come back to them whenever you like.", 14., MUTED),
-                ]).spacing(12)).padding([28, 16]).width(Length::Fill).into());
+                if empty_setup {
+                    let thumbnail = editor
+                        .preview()
+                        .map(|preview| self.profile_scene(preview.clone(), 126., true, false))
+                        .unwrap_or_else(|| label("Your desktop", 14., MUTED));
+                    items.push(
+                        row::with_children(vec![
+                            container(thumbnail).width(220).into(),
+                            container(
+                                column::with_children(vec![
+                                    label("Save your current desktop", 20., FG),
+                                    label("Keep a setup you can apply again.", 14., MUTED),
+                                    row::with_children(vec![
+                                        button::suggested("Save setup…")
+                                            .id(cosmic::widget::Id::new("setup-save-current"))
+                                            .on_press_maybe((writable && !editor.busy()).then_some(
+                                                edit(Edit::Name(Some(NameAction::Capture))),
+                                            ))
+                                            .into(),
+                                        button::text("Import…")
+                                            .id(cosmic::widget::Id::new("setup-import"))
+                                            .on_press_maybe(
+                                                (writable && !editor.busy())
+                                                    .then_some(edit(Edit::Import)),
+                                            )
+                                            .into(),
+                                    ])
+                                    .spacing(8)
+                                    .wrap()
+                                    .into(),
+                                    label("Current layout · sample content", 11., MUTED),
+                                ])
+                                .spacing(10),
+                            )
+                            .width(Length::Fill)
+                            .into(),
+                        ])
+                        .spacing(20)
+                        .align_y(Alignment::Center)
+                        .wrap()
+                        .into(),
+                    );
+                } else {
+                    items.push(container(column::with_children(vec![
+                        icon::from_name("document-save-symbolic").size(32).into(),
+                        label("Keep a look you love", 20., FG),
+                        label("Save your current settings, then come back to them whenever you like.", 14., MUTED),
+                    ]).spacing(12)).padding([28, 16]).width(Length::Fill).into());
+                }
             }
             Ok(entries) => {
                 for entry in entries {
@@ -1427,113 +1498,94 @@ impl Settings {
         };
         let saved = matches!(selection, Selection::Saved(_));
         let writable = editor.writable();
-        let mut actions = vec![
-            button::text(if editor.mix.is_some() {
-                "Save setup…"
-            } else {
-                "Duplicate"
-            })
-            .leading_icon(icon::from_name("edit-copy-symbolic").size(14))
-            .on_press_maybe(
-                (writable
-                    && !self.native_busy
-                    && !editor.theme_loading()
-                    && editor.theme_problem().is_none())
-                .then_some(edit(Edit::Name(Some(if editor.mix.is_some() {
-                    NameAction::SaveMix
-                } else {
-                    NameAction::Duplicate
-                })))),
-            )
-            .into(),
-        ];
-        if editor.mix.is_some() {
-            actions.clear();
-        } else if self.page != Page::Themes {
-            actions.insert(
-                0,
-                button::text("Remix…")
-                    .id(cosmic::widget::Id::new("setup-remix"))
+        let available = writable
+            && !self.native_busy
+            && !editor.busy()
+            && !editor.theme_loading()
+            && editor.theme_problem().is_none();
+        let mut library_actions: Vec<Element<'_, Message>> = Vec::new();
+        if editor.mix.is_none() {
+            library_actions.push(
+                button::text("Save a copy…")
+                    .leading_icon(icon::from_name("edit-copy-symbolic").size(14))
                     .on_press_maybe(
-                        (writable
-                            && !self.native_busy
-                            && !editor.busy()
-                            && !editor.theme_loading())
-                        .then_some(edit(Edit::RemixSelected)),
+                        available.then_some(edit(Edit::Name(Some(NameAction::Duplicate)))),
                     )
                     .into(),
             );
+            if self.page != Page::Themes {
+                library_actions.push(
+                    button::text("Remix…")
+                        .id(cosmic::widget::Id::new("setup-remix"))
+                        .on_press_maybe(available.then_some(edit(Edit::RemixSelected)))
+                        .into(),
+                );
+            }
         }
         if let Selection::Saved(id) = selection {
-            actions.push(
-                button::text("Rename")
+            library_actions.push(
+                button::text("Rename…")
                     .on_press_maybe(
-                        writable.then(|| edit(Edit::Name(Some(NameAction::Rename(id.clone()))))),
+                        available.then(|| edit(Edit::Name(Some(NameAction::Rename(id.clone()))))),
                     )
                     .into(),
             );
         }
-        actions.push(
+        if saved && !matches!(selection, Selection::Saved(id) if id.as_str() == "before-themes") {
+            library_actions.push(
+                button::text("Delete…")
+                    .leading_icon(icon::from_name("user-trash-symbolic").size(14))
+                    .on_press_maybe(available.then_some(edit(Edit::Delete(false))))
+                    .into(),
+            );
+        }
+        let mut export_actions: Vec<Element<'_, Message>> = vec![
             button::text(if editor.sharing() {
                 "Cancel image"
             } else {
-                "Save preview…"
+                "Save image…"
             })
             .id(cosmic::widget::Id::new("profiles-share-image"))
             .on_press_maybe(
-                (writable
-                    && !self.native_busy
-                    && !editor.theme_loading()
-                    && editor.theme_problem().is_none())
-                .then_some(edit(if editor.sharing() {
+                (available || editor.sharing()).then_some(edit(if editor.sharing() {
                     Edit::CancelShare
                 } else {
                     Edit::ShareImage
                 })),
             )
             .into(),
-        );
-        actions.push(
-            button::text(if editor.profile().is_some_and(|p| p.appearance_only) {
-                "Export theme…"
+            button::text(if profile.appearance_only {
+                "Theme file (.json)…"
             } else {
-                "Export setup…"
+                "Setup file (.json)…"
             })
+            .id(cosmic::widget::Id::new("setup-export-file"))
             .leading_icon(icon::from_name("document-save-as-symbolic").size(14))
-            .on_press_maybe(
-                (writable
-                    && !editor.busy()
-                    && !self.native_busy
-                    && !editor.theme_loading()
-                    && editor.theme_problem().is_none())
-                .then_some(edit(Edit::Export)),
-            )
+            .on_press_maybe(available.then_some(edit(Edit::Export)))
             .into(),
-        );
+        ];
         if self.page != Page::Themes {
-            actions.push(
-                button::text("Export package…")
+            export_actions.push(
+                button::text("Portable package (.halcyon)…")
                     .id(cosmic::widget::Id::new("package-open"))
-                    .on_press_maybe(
-                        (writable
-                            && !editor.busy()
-                            && !self.native_busy
-                            && !editor.theme_loading())
-                        .then_some(edit(Edit::Package(
-                            crate::settings::profiles::packages::Edit::Open,
-                        ))),
-                    )
+                    .on_press_maybe(available.then_some(edit(Edit::Package(
+                        crate::settings::profiles::packages::Edit::Open,
+                    ))))
                     .into(),
             );
         }
-        if saved && !matches!(selection, Selection::Saved(id) if id.as_str() == "before-themes") {
-            actions.push(
-                button::text("Delete…")
-                    .leading_icon(icon::from_name("user-trash-symbolic").size(14))
-                    .on_press_maybe(writable.then_some(edit(Edit::Delete(false))))
-                    .into(),
-            );
+        let mut more = Vec::new();
+        if !library_actions.is_empty() {
+            more.push(label("Library · save without applying", 12., MUTED));
+            more.push(row::with_children(library_actions).spacing(6).wrap().into());
         }
+        more.push(label("Export", 12., MUTED));
+        more.push(row::with_children(export_actions).spacing(6).wrap().into());
+        more.push(label(
+            "Images use sample content. Personal pictures stay on this computer.",
+            12.,
+            MUTED,
+        ));
         if let Selection::Preset(id) = selection
             && let Some(hint) = crate::desktop::profiles::preset(id).and_then(|preset| {
                 crate::desktop::profiles::missing(&preset, &editor.bundled_dir(), editor.islands())
@@ -1556,7 +1608,11 @@ impl Settings {
                 .into(),
             );
         }
-        items.push(row::with_children(actions).spacing(4).wrap().into());
+        items.push(self.disclosure(
+            "setup-library-actions",
+            "Save & export",
+            column::with_children(more).spacing(8).into(),
+        ));
         if let Some(origin) = &profile.package {
             items.push(label(
                 format!(
@@ -1582,11 +1638,7 @@ impl Settings {
         if self.page != Page::Themes {
             items.push(self.setup_sources());
         }
-        items.push(label(
-            "Preview images show the full setup with sample content. Personal pictures stay here.",
-            12.,
-            MUTED,
-        ));
+
         if editor.mix.is_none()
             && editor.name.as_ref().is_some_and(|name| {
                 !matches!(name.action, NameAction::Capture | NameAction::CaptureTheme)
@@ -1679,41 +1731,34 @@ impl Settings {
         for domain in profile.domains() {
             let on = self.profiles.included(domain);
             let part = plan.and_then(|plan| plan.domains.iter().find(|p| p.domain == domain));
-            let (status, tone) = if !on {
-                ("Keep current".to_string(), MUTED)
+            let status = if !on {
+                Some(("Keep current", MUTED))
+            } else if part.is_some_and(|part| !part.blocked.is_empty()) {
+                Some(("Needs attention", WARN))
             } else {
-                match part {
-                    Some(part) if !part.blocked.is_empty() => ("Needs attention".into(), WARN),
-                    Some(part) if part.changes.is_empty() => ("Already matches".into(), MUTED),
-                    Some(part) => (format!("{} changes", part.changes.len()), FG),
-                    None => ("Included".into(), MUTED),
-                }
+                None
             };
-            rows.push(separator());
-            rows.push(
-                row::with_children(vec![
-                    container(
-                        column::with_children(vec![
-                            cosmic::widget::checkbox(on)
-                                .label(domain.title())
-                                .on_toggle(move |on| edit(Edit::Include(domain, on)))
-                                .into(),
-                            label(status, 12., tone),
-                        ])
-                        .spacing(2),
-                    )
-                    .width(Length::Fill)
-                    .into(),
-                    super::help::explanation(
-                        domain.title(),
-                        domain.title(),
-                        domain_hint(domain),
-                        self.help_open == Some(domain.title()),
-                    ),
-                ])
-                .spacing(8)
-                .align_y(Alignment::Center)
+            let mut line = vec![
+                container(
+                    cosmic::widget::checkbox(on)
+                        .label(domain.title())
+                        .on_toggle(move |on| edit(Edit::Include(domain, on))),
+                )
+                .id(cosmic::widget::Id::new(format!(
+                    "setup-include-{}",
+                    format!("{domain:?}").to_lowercase()
+                )))
+                .width(Length::Fill)
                 .into(),
+            ];
+            if let Some((text, tone)) = status {
+                line.push(label(text, 12., tone));
+            }
+            rows.push(
+                row::with_children(line)
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .into(),
             );
         }
         if profile.local_member().is_some() {
@@ -1790,9 +1835,9 @@ impl Settings {
         }) {
             items.push(
                 button::text(if editor.details {
-                    "Hide details"
+                    "Hide changes"
                 } else {
-                    "Show details"
+                    "Review changes"
                 })
                 .trailing_icon(
                     icon::from_name(if editor.details {
@@ -2064,7 +2109,7 @@ impl Settings {
         column::with_children(vec![
             split(
                 label("Automatic switching", 14., FG),
-                button::text("Schedules and display rules")
+                button::text("Manage automation")
                     .trailing_icon(icon::from_name("go-next-symbolic").size(14))
                     .id(cosmic::widget::Id::new("presets-schedules"))
                     .on_press(Message::Page(Page::DesktopAutomation))
@@ -2154,7 +2199,20 @@ impl Settings {
 fn plan_details<'a>(plan: &ProfilePlan) -> Element<'a, Message> {
     let mut rows: Vec<Element<'a, Message>> = Vec::new();
     for part in &plan.domains {
-        let mut lines = vec![label(part.domain.title(), 12., FG)];
+        let count = part.changes.len();
+        let mut lines = vec![
+            label(
+                format!(
+                    "{} · {} {}",
+                    part.domain.title(),
+                    count,
+                    if count == 1 { "change" } else { "changes" }
+                ),
+                12.,
+                FG,
+            ),
+            label(domain_hint(part.domain), 11., MUTED),
+        ];
         if part.changes.is_empty() && part.blocked.is_empty() {
             lines.push(label("No changes", 11., MUTED));
         } else if !part.changes.is_empty() {

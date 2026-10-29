@@ -15,7 +15,7 @@ Desktop widgets, themes and layouts for **COSMIC on Pop!_OS 24.04**.
 
 ## Install
 
-1. Open the [latest release](https://github.com/profilaz3/halcyon/releases/latest) and download `cosmic-ext-halcyon_<version>_amd64.deb`. Islands is optional.
+1. Open the [latest release](https://github.com/profilaz3/halcyon/releases/latest) and download `cosmic-ext-halcyon_<version>_amd64.deb`.
 2. Open the file with **COSMIC Store**, choose **Install**, and approve the system password prompt if asked.
 3. Open **Halcyon** from the application launcher and finish setup.
 
@@ -29,9 +29,13 @@ Fresh installations enable the signed update source. Install future updates thro
 
 Islands splits the dock and panel into floating applet groups and adds bar surface finishes. Widgets and themes work without it.
 
-Open **App settings → Updates → Get Islands…**, install the add-on, then choose **Enable for next login**. Log out and back in.
+Islands is included in Halcyon. Open **Desktop → Dock & panel**, choose **Enable for next login**, then log out and back in when convenient. There is no extra download; system updates update both together.
 
 [Compatibility and manual installation](packaging/islands/README.md).
+
+## Optional Penumbra
+
+Penumbra fades the panel or dock background into your wallpaper. Activate the included panel component as above, then use **Desktop → Dock & panel → Style → Penumbra**. It works with Standard or Islands layouts. Floating and Penumbra turn each other off. [Details](companion/PENUMBRA.md).
 
 ## Calendar
 

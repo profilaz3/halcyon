@@ -309,6 +309,9 @@ fn multi_monitor_settings_assignment_preview_undo_and_layout() {
     crate::layout_state::publish(&snapshot, crate::layout_state::next_generation());
     let _ = app.update(Message::MonitorPreview("DP-2".into()));
     assert_eq!(app.placement.screen(), [1920., 1080.]);
+    let before_layout = Config::try_load().unwrap().monitor_layouts;
+    let _ = app.update(Message::Canvas(canvas::Message::Start));
+    assert!(app.canvas.is_some(), "{}", app.status);
     let _ = app.update(Message::Placement(placement::Message::Select(
         "weather".into(),
     )));
@@ -316,8 +319,12 @@ fn multi_monitor_settings_assignment_preview_undo_and_layout() {
         [-1, 0],
         false,
     )));
-    let _ = app.update(Message::Placement(placement::Message::Save));
+    assert!(app.canvas_dirty());
+    assert_eq!(Config::try_load().unwrap().monitor_layouts, before_layout);
+    let id = app.canvas.as_ref().unwrap().id;
+    let _ = app.update(Message::Canvas(canvas::Message::Apply(id)));
     assert!(!app.error, "{}", app.status);
+    assert!(app.canvas.is_none());
     let saved = Config::try_load().unwrap();
     assert!(saved.monitor_layouts["weather"].contains_key("DP-2"));
     assert!(!saved.widget_positions.contains_key("weather"));

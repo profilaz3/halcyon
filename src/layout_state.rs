@@ -122,14 +122,14 @@ fn fallback(config: &Config) -> Snapshot {
                     Widget::Clock => crate::widget_presentation::CLOCK_SIZE,
                     Widget::Calendar => [360., 320.],
                     Widget::Weather => crate::widget_presentation::WEATHER_SIZE,
-                    Widget::Devbox => [360., devbox_content_height(&config.devbox, 0)],
+                    Widget::Devbox => [360., devbox_height(config, 0)],
                     Widget::Projects => [360., 200.],
                     Widget::Glance => [config.glance.auto_width(config.glance_panel()), 220.],
                     tool => crate::tools::cards::size(tool, config),
                 },
                 natural_height: match widget {
                     Widget::Glance => Some(220.),
-                    Widget::Devbox => Some(devbox_content_height(&config.devbox, 0)),
+                    Widget::Devbox => Some(devbox_height(config, 0)),
                     _ => None,
                 },
                 position: [0., 0.],
@@ -344,6 +344,14 @@ pub fn effective_explicit_size(
         size[1] = size[1].max(height.min((screen[1] - 96.).max(1.)));
     }
     size
+}
+
+/// Shared automatic geometry for built-in and personal system widgets.
+pub fn devbox_height(config: &crate::config::Config, gpu_count: usize) -> f32 {
+    config.recipes.devbox.as_ref().map_or_else(
+        || devbox_content_height(&config.devbox, gpu_count),
+        crate::recipes::Recipe::natural_height,
+    )
 }
 
 /// System monitor content without starting a metrics sampler. Runtime supplies

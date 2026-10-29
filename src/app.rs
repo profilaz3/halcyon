@@ -52,6 +52,7 @@ pub(crate) fn settings_recipe_preview(
         name: "Sample city".into(),
         latitude: 0.,
         longitude: 0.,
+        timezone: None,
     });
     let now = chrono::Local::now();
     if recipe.kind == crate::recipes::Kind::Clock {
@@ -64,6 +65,10 @@ pub(crate) fn settings_recipe_preview(
             size,
             crate::widget_presentation::Context::LocalPreview,
         )
+    } else if recipe.kind == crate::recipes::Kind::Calendar {
+        recipe::calendar::sample(&config, recipe, missing, size)
+    } else if recipe.kind == crate::recipes::Kind::System {
+        recipe::system::sample(&config, recipe, missing, size)
     } else if missing {
         weather::Presentation::new(
             &config,
@@ -189,6 +194,7 @@ pub enum Message {
     WeatherSettings,
     ClockSettings,
     CalendarSettings,
+    DevboxSettings,
     ProjectSettings,
     ControlFinished(Result<(), String>),
     CaptureScreens,
@@ -895,15 +901,21 @@ impl Cards {
                         metrics.t3 = self.metrics.t3;
                         self.histories.record(
                             &metrics,
-                            &self.config.devbox,
+                            &self.config.devbox_sampling(),
                             self.config.widget_visible(Widget::Devbox),
                         );
                         self.sampler = sampler;
                         self.metrics = metrics;
                     }
                     Err(error) => {
+                        if self.config.recipes.devbox.is_some() {
+                            self.metrics = Metrics {
+                                t3: self.metrics.t3,
+                                ..Default::default()
+                            };
+                        }
                         self.histories.unavailable(
-                            &self.config.devbox,
+                            &self.config.devbox_sampling(),
                             self.config.widget_visible(Widget::Devbox),
                         );
                         eprintln!("System sample: {error}");
@@ -1235,6 +1247,10 @@ impl Cards {
             Message::WeatherSettings => {
                 self.launch(crate::paths::CONTROLLER, vec!["weather-picker".into()])
             }
+            Message::DevboxSettings => self.launch(
+                crate::paths::CONTROLLER,
+                vec!["settings".into(), "--page".into(), "devbox".into()],
+            ),
             Message::CalendarSettings => self.launch(
                 crate::paths::CONTROLLER,
                 vec!["settings".into(), "--page".into(), "calendar".into()],
@@ -1920,6 +1936,9 @@ impl Cards {
         (176. + rows.iter().sum::<f32>() + rows.len().saturating_sub(1) as f32 * 3.).ceil()
     }
     fn calendar_card(&self) -> Element<'_, Message> {
+        if let Some(recipe) = &self.config.recipes.calendar {
+            return self.recipe_calendar(recipe);
+        }
         let _style = crate::widget_style::scope(&self.config);
         let p = self.config.palette();
         let now = Local::now();
@@ -2680,6 +2699,7 @@ mod tests {
                 name: "Test".into(),
                 latitude: 0.,
                 longitude: 0.,
+                timezone: None,
             }),
             ..Config::default()
         };

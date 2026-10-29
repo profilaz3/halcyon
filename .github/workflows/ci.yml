@@ -115,3 +115,32 @@ jobs:
             dist/*.sha256
           if-no-files-found: error
           retention-days: 3
+
+  penumbra:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install panel build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config cmake libclang-dev \
+            libxkbcommon-dev libwayland-dev libexpat1-dev libfontconfig-dev \
+            libfreetype-dev libinput-dev libudev-dev libdbus-1-dev libseat-dev \
+            libegl1-mesa-dev libvulkan-dev libssl-dev libpulse-dev
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.93.0'
+      - name: Prepare pinned panel with both independent mods
+        run: |
+          python3 companion/build.py --with-penumbra --prepare-only \
+            --workdir "$GITHUB_WORKSPACE/penumbra-panel" \
+            --target-dir "$GITHUB_WORKSPACE/panel-target"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: penumbra-panel -> ../panel-target
+      - name: Test native panel including Penumbra
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/panel-target
+        working-directory: penumbra-panel
+        run: cargo test --locked -p cosmic-panel-bin -- --test-threads=1

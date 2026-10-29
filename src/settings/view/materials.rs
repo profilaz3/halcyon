@@ -118,8 +118,27 @@ impl Settings {
         } else {
             cosmic::widget::space().height(0).into()
         };
+        let preview_choice = row::with_children(vec![
+            label("Preview widget", 12., MUTED),
+            segmented(
+                [Widget::Weather, Widget::Devbox, Widget::Clock]
+                    .into_iter()
+                    .map(|w| {
+                        (
+                            w.title().into(),
+                            self.appearance_preview == w,
+                            Some(Message::AppearancePreview(w)),
+                        )
+                    })
+                    .collect(),
+                self.settings_accent(),
+            ),
+        ])
+        .spacing(12)
+        .align_y(Alignment::Center)
+        .wrap()
+        .into();
         let mut rows = vec![
-            heading("Surface finishes", ""),
             column::with_children(vec![
                 container(split(label("Applies to", 14., FG), scopes))
                     .id(cosmic::widget::Id::new("material-scope"))
@@ -129,26 +148,9 @@ impl Settings {
             ])
             .spacing(8)
             .into(),
-            row::with_children(vec![
-                label("Preview widget", 12., MUTED),
-                segmented(
-                    [Widget::Weather, Widget::Devbox, Widget::Clock]
-                        .into_iter()
-                        .map(|w| {
-                            (
-                                w.title().into(),
-                                self.appearance_preview == w,
-                                Some(Message::AppearancePreview(w)),
-                            )
-                        })
-                        .collect(),
-                    self.settings_accent(),
-                ),
-            ])
-            .spacing(12)
-            .align_y(Alignment::Center)
-            .wrap()
-            .into(),
+            // Choosing a finish is the primary control, not part of the
+            // specimen. Keep its two-column grid in the wider control area.
+            chooser.into(),
             split(
                 label(
                     if self.material_draft.is_some() {
@@ -240,14 +242,13 @@ impl Settings {
             ));
         }
         rows.push(self.page_settings_advanced(Page::Appearance, vec![self.legacy_widget_style()]));
-        let header = rows.remove(0);
         let controls = column::with_children(rows).spacing(12).into();
         column::with_children(vec![
-            header,
+            heading("Surface finishes", ""),
             self.inspector_layout(
                 column::with_children(vec![
                     self.scene_frame(scene, "Decorative finish"),
-                    chooser.into(),
+                    preview_choice,
                 ])
                 .spacing(16)
                 .into(),

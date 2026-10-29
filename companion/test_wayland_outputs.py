@@ -43,6 +43,14 @@ def wire_server(count=1, version=4, fault=None):
                             return b
                         def send(obj, op, b):
                             c.sendall(struct.pack('II', obj, (len(b)+8)<<16 | op)+b)
+                        def protocol_error(payload):
+                            send(1, 0, payload)
+                            # Keep the read side open for the already queued
+                            # sync request. Closing both sides races sendall and
+                            # tests a broken pipe rather than error decoding.
+                            c.shutdown(socket.SHUT_WR)
+                            while c.recv(4096):
+                                pass
                         bound = []
                         syncs = 0
                         for _ in range(40):
@@ -59,13 +67,13 @@ def wire_server(count=1, version=4, fault=None):
                             if obj == 1 and op == 1:
                                 assert new_id == 2 and len(b) == 4
                                 if fault == 'error':
-                                    send(1, 0, struct.pack('II', 2, 0)+string('Invalid new_id: 10.')); return
+                                    protocol_error(struct.pack('II', 2, 0)+string('Invalid new_id: 10.')); return
                                 if fault == 'c_error':
-                                    send(1, 0, struct.pack('II', 1, 1)+string('invalid arguments for wl_registry#2.bind')); return
+                                    protocol_error(struct.pack('II', 1, 1)+string('invalid arguments for wl_registry#2.bind')); return
                                 if fault == 'private_error':
-                                    send(1, 0, struct.pack('II', 2, 3)+string('/home/private/token\n'+'x'*1024)); return
+                                    protocol_error(struct.pack('II', 2, 3)+string('/home/private/token\n'+'x'*1024)); return
                                 if fault == 'malformed_error':
-                                    send(1, 0, struct.pack('III', 1, 0, 100)); return
+                                    protocol_error(struct.pack('III', 1, 0, 100)); return
                                 for n in range(count):
                                     send(2, 0, struct.pack('I', n+20)+string('wl_output')+struct.pack('I', version))
                             elif obj == 2 and op == 0:

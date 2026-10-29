@@ -266,6 +266,18 @@ impl DesktopStore {
     /// Explicit activation. The unchanged legacy widget domain becomes frozen;
     /// old history stays addressable through the semantic field adapter.
     pub fn migrate_design(&self) -> Result<(), DesktopError> {
+        self.activate_design(false).map(|_| ())
+    }
+
+    /// Only a genuinely empty installation starts in the current format.
+    /// Existing bytes (even `{}`), unreadable data and prior history require
+    /// explicit review. Eligibility is checked under the same locks as the
+    /// journaled publication; a competing legacy writer cannot slip between.
+    pub fn initialize_fresh_design(&self) -> Result<bool, DesktopError> {
+        self.activate_design(true)
+    }
+
+    fn activate_design(&self, fresh_only: bool) -> Result<bool, DesktopError> {
         self.ensure_writable()?;
         let path = self
             .app_config
@@ -273,14 +285,23 @@ impl DesktopStore {
             .ok_or_else(|| DesktopError::Io("No widget configuration".into()))?;
         self.confine(path)?;
         self.confine(&storage::path(path))?;
+        // Refuse obvious existing state before creating lock directories. In
+        // particular, an untouched pre-rename profile must remain discoverable
+        // by the normal folder migration. Approval is still repeated below.
+        if fresh_only && !self.design_is_fresh(path)? {
+            return Ok(false);
+        }
         let _config_lock = config::lock_config(path).map_err(DesktopError::Io)?;
         let _lock = self.lock()?;
+        if fresh_only && !self.design_is_fresh(path)? {
+            return Ok(false);
+        }
         if self.journal_path().exists() {
             return Err(DesktopError::RecoveryPending);
         }
         if storage::read(path).map_err(DesktopError::Io)?.is_some() {
             storage::check(path).map_err(DesktopError::Io)?;
-            return Ok(());
+            return Ok(false);
         }
         // A missing document with an activation marker is damaged state,
         // never permission to remigrate its frozen snapshot.
@@ -301,7 +322,97 @@ impl DesktopStore {
             design_before: None,
             design_after: Some(text),
         };
-        self.publish_design_boundary(path, physical, "migrate")
+        self.publish_design_boundary(path, physical, "migrate")?;
+        Ok(true)
+    }
+
+    fn design_is_fresh(&self, path: &Path) -> Result<bool, DesktopError> {
+        // symlink_metadata treats dangling links and non-regular entries as
+        // existing data. Inability to inspect is never proof of a fresh user.
+        fn absent(path: &Path) -> Result<bool, DesktopError> {
+            match fs::symlink_metadata(path) {
+                Ok(_) => Ok(false),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+                Err(error) => Err(io_error(
+                    "Could not inspect existing widget settings",
+                    error,
+                )),
+            }
+        }
+        fn empty_except(path: &Path, allowed: &[PathBuf]) -> Result<bool, DesktopError> {
+            let entries = match fs::read_dir(path) {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
+                Err(error) => return Err(io_error("Could not inspect existing app data", error)),
+            };
+            for entry in entries {
+                let entry = entry
+                    .map_err(|error| io_error("Could not inspect existing app data", error))?;
+                if !allowed.contains(&entry.path()) {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        if !absent(path)? || !absent(&storage::path(path))? {
+            return Ok(false);
+        }
+        let parent = path
+            .parent()
+            .ok_or_else(|| DesktopError::Io("No configuration directory".into()))?;
+        let mut lock_path = path.as_os_str().to_os_string();
+        lock_path.push(".lock");
+        let locks = [PathBuf::from(lock_path), self.state_dir.join(LOCK)];
+        let owned_entries = |root: &Path| {
+            locks
+                .iter()
+                .filter_map(|lock| {
+                    let owner = lock.parent()?;
+                    let same = owner == root
+                        || fs::canonicalize(owner)
+                            .ok()
+                            .zip(fs::canonicalize(root).ok())
+                            .is_some_and(|(a, b)| a == b);
+                    same.then(|| root.join(lock.file_name().unwrap()))
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut config_entries = owned_entries(parent);
+        // Fixtures keep the transaction state in a child of the config root.
+        if self.state_dir.parent() == Some(parent) {
+            config_entries.push(self.state_dir.clone());
+        }
+        if !empty_except(parent, &config_entries)?
+            || !empty_except(&self.state_dir, &owned_entries(&self.state_dir))?
+        {
+            return Ok(false);
+        }
+        if matches!(self.access, Access::Live) {
+            // The transaction's state_dir is the app data directory. Other
+            // persistent state and pre-rename data also identify an upgrade,
+            // including when someone has deleted their main config file.
+            for root in [crate::paths::state_dir(), crate::paths::cache_dir()]
+                .into_iter()
+                .flatten()
+            {
+                if !empty_except(&root, &owned_entries(&root))? {
+                    return Ok(false);
+                }
+            }
+            for root in [
+                dirs::config_dir(),
+                dirs::data_dir(),
+                dirs::state_dir().or_else(dirs::data_local_dir),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !absent(&root.join(crate::paths::LEGACY))? {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
     }
 
     pub fn repair_design_source(&self) -> Result<(), DesktopError> {
@@ -452,5 +563,146 @@ impl DesktopStore {
         sync_dir(&self.state_dir).map_err(|e| io_error("Could not sync migration", e))?;
         ACTION_REVISION.fetch_add(1, Ordering::Relaxed);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::desktop::store::tests::Fixture;
+    use serde_json::json;
+
+    fn fresh(name: &str) -> (Fixture, PathBuf, DesktopStore) {
+        let fixture = Fixture::new(name);
+        let path = fixture.0.join("app/config.json");
+        let store = fixture.store().with_app_config(path.clone());
+        (fixture, path, store)
+    }
+
+    #[test]
+    fn polish050_fresh_design_starts_managed_and_is_idempotent() {
+        let (_fixture, path, store) = fresh("fresh-design");
+        assert!(store.initialize_fresh_design().unwrap());
+        assert!(storage::managed(&path));
+        storage::check(&path).unwrap();
+        let bytes = fs::read(&path).unwrap();
+        let document = storage::read_bytes(&path).unwrap().unwrap();
+        let raw: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(raw, json!({"widget_design_version": 1}));
+        assert!(store.latest_change().unwrap().is_none());
+        assert!(store.pending_recovery().unwrap().is_none());
+        assert!(!store.initialize_fresh_design().unwrap());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert_eq!(storage::read_bytes(&path).unwrap().unwrap(), document);
+    }
+
+    #[test]
+    fn polish050_existing_empty_legacy_corrupt_and_unknown_configs_require_review() {
+        for (index, bytes) in [
+            b"{}".as_slice(),
+            br#"{"theme":"amber","onboarded":false}"#.as_slice(),
+            b"not json".as_slice(),
+            br#"{"widget_design_version":999}"#.as_slice(),
+            b"".as_slice(),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let (_fixture, path, store) = fresh(&format!("existing-design-{index}"));
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, bytes).unwrap();
+            assert!(!store.initialize_fresh_design().unwrap());
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+            assert!(!storage::path(&path).exists());
+            assert!(!store.journal_path().exists());
+            assert!(!store.undo_path().exists());
+        }
+    }
+
+    #[test]
+    fn polish050_orphan_design_or_old_app_data_is_never_a_fresh_profile() {
+        for (index, existing) in [
+            "app/design-v1.json",
+            "app/calendar-account.json",
+            "app/notes.json",
+            "state/desktop-undo.json",
+            "state/desktop-journal.json",
+            "state/settings-wizard.json",
+            "state/recovery/original.json",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let (fixture, path, store) = fresh(&format!("old-design-state-{index}"));
+            let previous = fixture.0.join(existing);
+            fs::create_dir_all(previous.parent().unwrap()).unwrap();
+            fs::write(&previous, b"preserve even unreadable bytes").unwrap();
+            assert!(!store.initialize_fresh_design().unwrap());
+            assert!(!path.exists());
+            assert_eq!(
+                fs::read(&previous).unwrap(),
+                b"preserve even unreadable bytes"
+            );
+        }
+    }
+
+    #[test]
+    fn polish050_fresh_design_does_not_replace_dangling_links() {
+        let (fixture, path, store) = fresh("fresh-design-symlink");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let target = fixture.0.join("missing-config");
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        assert!(!matches!(store.initialize_fresh_design(), Ok(true)));
+        assert_eq!(fs::read_link(&path).unwrap(), target);
+        assert!(!target.exists());
+        assert!(!storage::path(&path).exists());
+    }
+
+    #[test]
+    fn polish050_interrupted_fresh_design_uses_existing_recovery() {
+        for (index, fault) in [
+            Fault::InterruptBeforeWidget,
+            Fault::InterruptBetweenDesignFiles,
+            Fault::InterruptBeforeRecord,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let (fixture, path, store) = fresh(&format!("fresh-design-recover-{index}"));
+            *store.fault.borrow_mut() = Some(fault);
+            assert!(store.initialize_fresh_design().is_err());
+            let reopened = fixture.store().with_app_config(path.clone());
+            assert_eq!(reopened.pending_recovery().unwrap().unwrap().version, 4);
+            assert!(!reopened.initialize_fresh_design().unwrap());
+            reopened.recover().unwrap();
+            assert!(!path.exists());
+            assert!(!storage::path(&path).exists());
+            assert!(reopened.pending_recovery().unwrap().is_none());
+            // A recovered installation has recorded history. It is no longer
+            // silently treated as new; explicit review remains available.
+            assert!(!reopened.initialize_fresh_design().unwrap());
+            reopened.migrate_design().unwrap();
+            storage::check(&path).unwrap();
+        }
+    }
+
+    #[test]
+    fn polish050_fresh_guard_observes_a_competing_config_writer() {
+        let (_fixture, path, store) = fresh("fresh-design-writer");
+        let lock = config::lock_config(&path).unwrap();
+        let (started, ready) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            started.send(()).unwrap();
+            store.initialize_fresh_design()
+        });
+        ready
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        let legacy = br#"{"theme":"rose"}"#;
+        config::write_config_text(&path, Some(std::str::from_utf8(legacy).unwrap())).unwrap();
+        drop(lock);
+        assert!(!worker.join().unwrap().unwrap());
+        assert_eq!(fs::read(&path).unwrap(), legacy);
+        assert!(!storage::path(&path).exists());
     }
 }

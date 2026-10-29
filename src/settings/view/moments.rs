@@ -211,14 +211,44 @@ impl Settings {
         );
         column::with_children(vec![
             heading("Moments", ""),
-            split(label(format!("Active · {title}"),14.,FG),button::text("Schedules…").id(cosmic::widget::Id::new("moments-schedules")).on_press(Message::Page(Page::DesktopAutomation)).into()),
-            segmented(Phase::ALL.into_iter().map(|p|(p.title().into(),phase==p,Some(edit(Edit::Preview(p))))).collect(),self.settings_accent()),
+            label(format!("Active · {title}"), 14., FG),
+            segmented(
+                Phase::ALL
+                    .into_iter()
+                    .map(|p| (p.title().into(), phase == p, Some(edit(Edit::Preview(p)))))
+                    .collect(),
+                self.settings_accent(),
+            ),
             row::with_children(vec![
-                button::suggested(format!("Use {}",phase.title())).id(cosmic::widget::Id::new("moment-activate")).on_press(edit(Edit::Activate(Some(phase)))).into(),
-                button::text("Use base style").id(cosmic::widget::Id::new("moment-base")).on_press(edit(Edit::Activate(None))).into(),
-            ]).spacing(8).wrap().into(),
+                button::suggested(format!("Use {}", phase.title()))
+                    .id(cosmic::widget::Id::new("moment-activate"))
+                    .on_press(edit(Edit::Activate(Some(phase))))
+                    .into(),
+                button::text(format!("Schedule {}…", phase.title()))
+                    .id(cosmic::widget::Id::new("moment-schedule"))
+                    .on_press(Message::Automation(
+                        crate::settings::automation::Message::Schedule(
+                            crate::automation::ProfileRef::Moment(phase),
+                        ),
+                    ))
+                    .into(),
+                button::text("Use base style")
+                    .id(cosmic::widget::Id::new("moment-base"))
+                    .on_press(edit(Edit::Activate(None)))
+                    .into(),
+            ])
+            .spacing(8)
+            .wrap()
+            .into(),
             self.editor_with_preview(sample.into(), controls, "Preview · sample content"),
-            label("Wallpaper, placement and app content stay in place. Schedules switch once; they don’t overwrite later edits.",12.,MUTED),
-        ]).spacing(16).into()
+            label(
+                "Widget style only · wallpaper, layout and content stay.",
+                12.,
+                MUTED,
+            ),
+            self.automation_link_status("moments-schedules"),
+        ])
+        .spacing(16)
+        .into()
     }
 }

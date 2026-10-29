@@ -103,15 +103,19 @@ connection's IP and may process infrastructure metadata under its own
 
 ## Status, counts and retention after the collector upgrade
 
-The following describes the implemented replacement collector. It is **not yet
-deployed**; the temporary limitation above applies to the current server.
+The collector is live. The private dashboard uses the existing daily reports;
+the reporting upgrade does not collect feature use or add client requests.
 
 Each installation has one current row. The row keeps
 its latest activity date, version, first country, current reporting status,
 latest opt-out action time, latest choice time, collector receipt time and
 preference revision. The 0.3.0 collector also keeps first and latest activity receipt times,
 first observed version, optional client first-start time, and a bounded set of
-reported UTC activity days with its count for the last 90 days. Existing rows
+reported UTC activity days with its count for the last 90 days. The reporting
+upgrade also keeps observed version changes for up to 90 days, with at most the
+last observed version per UTC day. It uses versions already in activity reports,
+starts when the upgraded collector receives them, and does not reconstruct old
+upgrade dates. Existing rows
 start with unknown history; the first new receipt is explicitly labelled as
 observed since tracking began, not an install date. Missed/offline days are not
 backfilled, and repeated reports count once per UTC day. A status update never

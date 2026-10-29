@@ -1,6 +1,6 @@
 //! Layout edits widgets on their wallpaper. Decorative windows and shell bars
 //! belong to their own settings previews, not the widget placement canvas.
-//! Completed gestures keep the existing direct-apply and session Undo path.
+//! The landing picture opens an explicit local Canvas draft with Apply/Cancel.
 use super::*;
 
 /// A part of the picture you can click: outlined on hover or keyboard focus.
@@ -52,59 +52,60 @@ impl Settings {
             .spacing(12)
             .into();
         }
+        if self.legacy_layout_recovery() {
+            return column::with_children(vec![
+                heading(
+                    "Unfinished layout",
+                    "Review the recovered arrangement before starting a new edit.",
+                ),
+                self.placement_picture((self.window.height - 270.).clamp(180., 420.), false),
+                row::with_children(vec![
+                    button::standard("Cancel recovered layout")
+                        .id(cosmic::widget::Id::new("layout-recovery-cancel"))
+                        .on_press(Message::Placement(
+                            crate::settings::placement::Message::Cancel,
+                        ))
+                        .into(),
+                    button::suggested("Save recovered layout")
+                        .id(cosmic::widget::Id::new("layout-recovery-save"))
+                        .on_press(Message::Placement(
+                            crate::settings::placement::Message::Save,
+                        ))
+                        .into(),
+                ])
+                .spacing(8)
+                .wrap()
+                .into(),
+            ])
+            .spacing(16)
+            .into();
+        }
         // Leave room for the selected widget's inspector and keyboard hint,
         // including native window decoration, without resizing mid-gesture.
         let height = (self.window.height - 440.).clamp(120., 420.);
         let mut parts = vec![heading(
             "Layout and displays",
-            "Select a widget to move, resize or open its content settings.",
+            "Place and style your widgets on each display.",
         )];
         if self.needs_setup() {
             parts.push(self.setup_prompt());
         }
         parts.push(
-            button::suggested("Edit desktop…")
+            button::suggested("Edit layout…")
                 .id(cosmic::widget::Id::new("canvas-start"))
                 .on_press(Message::Canvas(crate::settings::canvas::Message::Start))
                 .into(),
         );
-        parts.push(self.placement_editor(height));
-        // Use the same selection message as the canvas. Keep every visible
-        // widget reachable even when cards overlap or a display is disconnected.
-        parts.push(group(
-            Some("Select a widget"),
-            vec![
-                row::with_children(
-                    Widget::ALL
-                        .into_iter()
-                        .filter(|widget| self.config.widget_visible(*widget))
-                        .map(|widget| {
-                            let selected = self.placement.selected() == Some(widget);
-                            button::custom(
-                                row::with_children(vec![
-                                    icon::from_name(widget.icon()).size(16).icon().into(),
-                                    text::body(widget.title()).into(),
-                                ])
-                                .spacing(8)
-                                .align_y(Alignment::Center),
-                            )
-                            .id(cosmic::widget::Id::new(format!(
-                                "layout-select-{}",
-                                widget.key()
-                            )))
-                            .class(nav_style(selected, self.settings_accent()))
-                            .selected(selected)
-                            .on_press(Message::Placement(
-                                crate::settings::placement::Message::Select(widget.key().into()),
-                            ))
-                            .into()
-                        })
-                        .collect::<Vec<_>>(),
-                )
-                .spacing(6)
-                .wrap()
-                .into(),
-            ],
+        parts.push(self.monitor_overview());
+        parts.push(self.scene_frame(
+            self.placement_picture(height.max(180.), false),
+            "Current layout · sample content",
+        ));
+        parts.push(split(
+            self.help("layout-editing", "Editing your desktop", "Edit layout opens a local draft. Apply saves movement, size and style together; Cancel keeps your current desktop. Arrange on desktop opens the full-size overlay with its own Save and Cancel."),
+            button::text("Arrange on desktop…")
+                .id(cosmic::widget::Id::new("layout-arrange"))
+                .on_press_maybe((!self.busy).then_some(Message::ArrangeDesktop)).into(),
         ));
         // Manual placement makes automatic column ordering irrelevant.
         if !self.config.has_custom_positions() && !self.placement.dirty() {

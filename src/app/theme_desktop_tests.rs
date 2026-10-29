@@ -25,6 +25,7 @@ fn sample_cards() -> Cards {
         name: "Sample city".into(),
         latitude: 0.,
         longitude: 0.,
+        timezone: None,
     });
     cfg.weather.show_dew_point = true;
     let (mut cards, _) = Cards::init(Core::default(), cfg);

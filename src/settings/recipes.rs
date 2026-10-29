@@ -88,17 +88,15 @@ impl Editor {
             Message::Name(name) => self.draft.name = name.chars().take(80).collect(),
             Message::Caption(caption) => self.draft.caption = caption.chars().take(120).collect(),
             Message::Add(part) => {
-                if self.draft.kind.parts().contains(&part) && !self.draft.parts.contains(&part) {
+                if self.draft.parts.len() < 8
+                    && self.draft.kind.parts().contains(&part)
+                    && !self.draft.parts.contains(&part)
+                {
                     self.draft.parts.push(part)
                 }
             }
             Message::Remove(i) => {
-                if self
-                    .draft
-                    .parts
-                    .get(i)
-                    .is_some_and(|p| *p != self.draft.kind.primary())
-                {
+                if self.draft.can_remove(i) {
                     self.draft.parts.remove(i);
                 }
             }

@@ -13,6 +13,7 @@ import panel_launcher
 from bundle_contract import installed_package_status
 
 PACKAGE = 'cosmic-ext-halcyon-islands'
+from bundle_contract import package_owner
 FORMAT = 'halcyon-islands-installation'
 
 
@@ -257,7 +258,11 @@ def main():
     else:
         library = Path('/usr/lib') / PACKAGE
         versions = {} # Relevant versions are measured only by the bounded verifier.
-        installed = installed_package_status(query(PACKAGE, '${Status}')) and regular(Path('/usr/bin/halcyon-islands'))
+        try:
+            owner = package_owner(record(library / 'companion-manifest.json'))
+            installed = installed_package_status(query(owner, '${Status}')) and regular(Path('/usr/bin/halcyon-islands'))
+        except (OSError, ValueError):
+            installed = False
     if args.root or not installed:
         print(json.dumps(detect(home, library, installed, versions), separators=(',', ':')))
         return

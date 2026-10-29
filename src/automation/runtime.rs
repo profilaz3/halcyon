@@ -52,20 +52,42 @@ impl Job {
                     Err(reason) => Ran::Failed(reason),
                     Ok(_lock) => match super::load(store) {
                         Err(reason) => Ran::Failed(reason),
-                        Ok(settings) if !due.is_current(&settings, super::now()) => Ran::Failed(
-                            "The automation rule changed. This switch was cancelled.".into(),
-                        ),
-                        Ok(_) => {
-                            crate::desktop::actions::scheduled_epoch(self.epoch, expected, || {
-                                run_for_cause(
-                                    store,
-                                    &installed,
-                                    &due.profile,
-                                    &due.name,
-                                    &super::read_hold(store),
-                                    matches!(due.cause, decide::Cause::Display(_)),
+                        Ok(settings) => {
+                            let context = if settings.rules.iter().any(|r| {
+                                r.enabled && matches!(r.when, super::Trigger::Solar { .. })
+                            }) {
+                                super::solar::Context::read(store, &settings)
+                            } else {
+                                super::solar::Context::default()
+                            };
+                            if !due.is_current_with(&settings, super::now(), &context) {
+                                Ran::Failed(
+                                    "The automation rule changed, or its city changed. This switch was cancelled.".into(),
                                 )
-                            })
+                            } else {
+                                let solar =
+                                    settings.rule(&due.rule).and_then(|rule| match rule.when {
+                                        super::Trigger::Solar { source, .. } => {
+                                            Some((&context, source))
+                                        }
+                                        _ => None,
+                                    });
+                                crate::desktop::actions::scheduled_epoch(
+                                    self.epoch,
+                                    expected,
+                                    || {
+                                        run_for_cause(
+                                            store,
+                                            &installed,
+                                            &due.profile,
+                                            &due.name,
+                                            &super::read_hold(store),
+                                            matches!(due.cause, decide::Cause::Display(_)),
+                                            solar,
+                                        )
+                                    },
+                                )
+                            }
                         }
                     },
                 }
@@ -238,9 +260,17 @@ impl Automator {
         // Clear invalid persisted waits even when all rules or the master
         // switch are disabled (the running check below would skip decide).
         if self.state.pending.as_ref().is_some_and(|pending| {
-            self.settings
-                .as_ref()
-                .is_none_or(|settings| !pending.is_current(settings, now.timestamp()))
+            self.settings.as_ref().is_none_or(|settings| {
+                !pending.is_current_with(
+                    settings,
+                    now.timestamp(),
+                    &self
+                        .store
+                        .as_ref()
+                        .map(|store| super::solar::Context::read(store, settings))
+                        .unwrap_or_default(),
+                )
+            })
         }) {
             self.state.pending = None;
             if let Some(store) = &self.store
@@ -303,13 +333,23 @@ impl Automator {
             wakes.extend(self.next_display_check);
         }
         let manual_at = || manual_at(store);
-        let decision = decide::decide(
+        let context = if settings
+            .rules
+            .iter()
+            .any(|r| r.enabled && matches!(r.when, super::Trigger::Solar { .. }))
+        {
+            super::solar::Context::read(store, &settings)
+        } else {
+            super::solar::Context::default()
+        };
+        let decision = decide::decide_with_solar(
             &settings,
             &mut self.state,
             tz,
             now,
             self.displays.as_deref(),
             &manual_at,
+            &context,
         );
         let mut persist = decision.persist || decision.kept > 0;
         let mut due = decision.due;
@@ -329,7 +369,7 @@ impl Automator {
         if persist && let Err(error) = super::save_state(store, &self.state) {
             eprintln!("Automation: could not save its state: {error}");
         }
-        if let Some(at) = decide::next_check(&settings, &self.state, tz, now) {
+        if let Some(at) = decide::next_check_with_solar(&settings, &self.state, tz, now, &context) {
             let wait = (at - now).to_std().unwrap_or_default();
             wakes.push(instant + wait.max(Duration::from_millis(200)));
         }

@@ -2,6 +2,43 @@
 use super::*;
 
 impl Settings {
+    pub(super) fn preview_header<'a>(&self, caption: &str, live: bool) -> Element<'a, Message> {
+        let (key, title, explanation) = if live {
+            (
+                "preview-live",
+                "Live controls",
+                "These controls operate your actual desktop widget. Playback and timer actions take effect immediately.",
+            )
+        } else if self.page == Page::DesktopWallpaper {
+            (
+                "preview-wallpaper",
+                "Wallpaper preview",
+                "This shows your current or selected wallpaper. Choosing a picture previews it locally; Apply wallpaper changes your desktop.",
+            )
+        } else if matches!(
+            self.page,
+            Page::Themes | Page::DesktopProfiles | Page::AdaptiveLooks | Page::DesktopDock
+        ) {
+            (
+                "preview-desktop",
+                "Desktop preview",
+                "The wallpaper and appearance reflect the current selection. Widgets use illustrative content. Highlighted objects open their settings; they do not run widget actions. Review the included changes before applying a theme or setup.",
+            )
+        } else {
+            (
+                "preview-sample",
+                "Sample content",
+                "Illustrative content shows how the design fits. Buttons inside a sample do not perform actions or connect accounts. Your connection and location are shown separately in settings.",
+            )
+        };
+        row::with_children(vec![
+            label(caption, 12., MUTED),
+            help::explanation(key, title, explanation, self.help_open == Some(key)),
+        ])
+        .spacing(4)
+        .align_y(Alignment::Center)
+        .into()
+    }
     pub(in crate::settings) fn scene_open(&self) -> bool {
         !self.collapsed_scenes.contains(&self.page)
     }
@@ -14,16 +51,15 @@ impl Settings {
         let open = self.scene_open();
         let live = caption.starts_with("Live controls");
         let header = split(
-            container(label(
+            container(self.preview_header(
                 if caption == "Sample data" {
-                    "Sample preview"
+                    "Sample content · current style"
                 } else if caption == "Live controls" {
                     "Live controls · changes your desktop widget"
                 } else {
                     caption
                 },
-                12.,
-                MUTED,
+                live,
             ))
             .width(Length::Fill)
             .into(),

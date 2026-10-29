@@ -12,6 +12,7 @@ fn configured() -> Config {
         name: "Example city".into(),
         latitude: 45.,
         longitude: 16.,
+        timezone: None,
     });
     config
 }

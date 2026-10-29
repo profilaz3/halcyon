@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -146,6 +147,18 @@ class IslandsConfiguration(unittest.TestCase):
         self.assertEqual(digest(root/'companion/dock-islands-core/src/lib.rs'),POLICY['native_source']['core_sha256'])
         section=patch_bytes.split(b'+++ b/cosmic-panel-bin/src/islands.rs\n')[1].split(b'\n--- ')[0]+b'\n'
         islands=b''.join(line[1:] for line in section.splitlines(keepends=True) if line.startswith(b'+') and not line.startswith(b'+++'))
+        penumbra = root/'companion/patches/0002-penumbra-panel.patch'
+        self.assertEqual(digest(penumbra), POLICY['native_source']['penumbra_patch_sha256'])
+        # The shipped source includes both patches. Reconstruct the actual IPC
+        # file instead of checking only the first patch's intermediate version.
+        source = self.root/'source/cosmic-panel-bin/src/islands.rs'
+        source.parent.mkdir(parents=True)
+        source.write_bytes(islands)
+        header = b'diff --git a/cosmic-panel-bin/src/islands.rs b/cosmic-panel-bin/src/islands.rs\n'
+        ipc_patch = header + penumbra.read_bytes().split(header, 1)[1].split(b'diff --git ', 1)[0]
+        subprocess.run(['patch', '--batch', '--fuzz=0', '-p1'], input=ipc_patch,
+                       cwd=self.root/'source', check=True, capture_output=True)
+        islands = source.read_bytes()
         self.assertEqual(hashlib.sha256(islands).hexdigest(),POLICY['native_source']['islands_sha256'])
         library=self.root/'bundle';manifest,catalog=bundle_fixture(library)
         self.assertEqual(catalog['cohorts'][0]['runtime']['configuration']['resolver'],CONFIGURATION_RESOLVER)

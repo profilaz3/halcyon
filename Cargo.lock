@@ -996,10 +996,12 @@ dependencies = [
 
 [[package]]
 name = "cosmic-ext-halcyon"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "base64",
  "chrono",
+ "chrono-tz",
+ "cosmic-freedesktop-icons",
  "dirs 5.0.1",
  "dock-islands-core",
  "getrandom 0.4.3",

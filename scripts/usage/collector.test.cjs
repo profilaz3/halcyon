@@ -45,7 +45,7 @@ test('real request handler stores a hash, date, version and optional country and
  const ack=f.sandbox.doPost(request);
  assert.equal(ack.ok,true);assert.equal(ack.day,new Date().toISOString().slice(0,10));
  assert.equal(f.sandbox.doPost(request).ok,true);
- assert.equal(f.rows().length,2); assert.equal(f.rows()[1].length,15);
+ assert.equal(f.rows().length,2); assert.equal(f.rows()[1].length,16);
  assert.match(f.rows()[1][0],/^[a-f0-9]{64}$/);assert.notEqual(f.rows()[1][0],payload.installation);
  assert.equal(f.rows()[1][2],payload.version);assert.equal(f.locked(),false);
  assert.equal(f.sandbox.doPost({postData:{contents:JSON.stringify({...payload,email:'private@example.com'})}}).ok,false);

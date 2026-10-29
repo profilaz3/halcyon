@@ -22,6 +22,17 @@ pub(super) struct State {
     pub notice: Option<String>,
 }
 impl State {
+    /// Settings may be constructed without the command-line startup path.
+    /// Initialize before reading Config so the first view uses the same store
+    /// as later edits. Existing profiles are only inspected, never migrated.
+    pub fn initialize() -> (Config, Self) {
+        let result = crate::design::commands::initialize_fresh();
+        let config = Config::load();
+        let mut state = Self::load();
+        state.notice = result.err();
+        (config, state)
+    }
+
     pub fn load() -> Self {
         Self {
             source_conflict: Config::path()

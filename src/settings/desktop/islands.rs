@@ -75,6 +75,7 @@ impl DesktopEditor {
         }) {
             // The event handler only consumes the structured background result.
             if !self.islands.installation.installed() {
+                self.penumbra_supported = false;
                 self.islands.lease = None;
                 self.islands.geometry = None;
                 self.islands.measured_output = None;
@@ -89,6 +90,7 @@ impl DesktopEditor {
                 crate::desktop::islands::Installation::discover_until(store, deadline);
         }
         if !self.islands.installation.installed() {
+            self.penumbra_supported = false;
             self.islands.lease = None;
             self.islands.geometry = None;
             self.islands.measured_output = None;
@@ -96,7 +98,7 @@ impl DesktopEditor {
             self.islands.status = None;
             return;
         }
-        let result = self
+        let mut result = self
             .store()
             .ok_or_else(|| "Desktop settings are unavailable".to_string())
             .and_then(|store| {
@@ -112,6 +114,9 @@ impl DesktopEditor {
                 Ok(client)
             });
         self.islands.compatible = result.is_ok();
+        self.penumbra_supported = result
+            .as_mut()
+            .is_ok_and(|client| client.penumbra_supported());
         self.islands.status = result.as_ref().err().cloned();
         if !self.arranging() {
             self.islands.geometry = None;
@@ -498,6 +503,7 @@ pub struct RuntimeStatus {
     pub requested_output: String,
     pub compatible: bool,
     pub material: bool,
+    pub penumbra: bool,
     pub status: Option<String>,
     pub geometry: Option<Layout>,
     pub output: Option<String>,
@@ -524,6 +530,7 @@ impl RuntimeStatus {
         }) {
             Ok(mut client) => {
                 result.compatible = true;
+                result.penumbra = client.penumbra_supported();
                 result.material = matches!(
                     client.request(&Request::MaterialSupport),
                     Ok(Response::MaterialSupport { version: 1 })
@@ -545,6 +552,7 @@ impl RuntimeStatus {
 }
 impl DesktopEditor {
     pub fn accept_runtime(&mut self, status: RuntimeStatus) {
+        self.penumbra_supported = status.penumbra;
         self.islands.compatible = status.compatible;
         self.islands.status = status.status;
         if !self.arranging()

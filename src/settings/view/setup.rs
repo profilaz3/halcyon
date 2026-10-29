@@ -3,14 +3,55 @@ use super::*;
 
 impl Settings {
     pub(in crate::settings) fn needs_setup(&self) -> bool {
-        // First-run setup replaces the checklist for anyone who went through it.
         self.setup_requested
+            || self.config.onboarded
+                && !self
+                    .setup_followups
+                    .pending(&self.config, self.calendar.connection.connected())
+                    .is_empty()
             || !self.config.setup_dismissed
                 && !self.config.onboarded
                 && (!self.calendar.connection.connected()
                     || self.config.location.is_none()
                     || (self.service_known && !self.service.running))
     }
+    /// Short, optional content tasks; no provider request or preference write on view.
+    pub(super) fn widget_followups(&self) -> Element<'_, Message> {
+        let pending = self
+            .setup_followups
+            .pending(&self.config, self.calendar.connection.connected());
+        let mut rows = vec![detail(
+            "Finish your widgets",
+            "Optional · add your own content",
+        )];
+        for task in pending {
+            rows.push(split(
+                label(task.title(), 14., FG),
+                row::with_children(vec![
+                    button::standard(task.action())
+                        .id(cosmic::widget::Id::new(format!(
+                            "setup-task-{}",
+                            task.key()
+                        )))
+                        .on_press(Message::Page(task.page()))
+                        .into(),
+                    button::icon(icon::from_name("window-close-symbolic").size(14))
+                        .id(cosmic::widget::Id::new(format!(
+                            "setup-task-dismiss-{}",
+                            task.key()
+                        )))
+                        .tooltip("Dismiss this reminder")
+                        .on_press(Message::DismissSetupTask(task))
+                        .into(),
+                ])
+                .spacing(6)
+                .align_y(Alignment::Center)
+                .into(),
+            ));
+        }
+        section(rows)
+    }
+
     pub(super) fn setup_card(&self) -> Element<'_, Message> {
         let accent = self.settings_accent();
         let mut startup = toggler(self.service.startup);
@@ -158,6 +199,14 @@ impl Settings {
     }
 
     pub(super) fn setup_prompt(&self) -> Element<'_, Message> {
+        if self.config.onboarded
+            && !self
+                .setup_followups
+                .pending(&self.config, self.calendar.connection.connected())
+                .is_empty()
+        {
+            return self.widget_followups();
+        }
         frame(
             split(
                 detail(

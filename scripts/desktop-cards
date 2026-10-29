@@ -202,7 +202,7 @@ def city_results(response):
         if not isinstance(place, dict):
             return False
         if any(not isinstance(place.get(key, ''), str) or len(place.get(key, '').encode()) > 256
-               for key in ('name', 'admin1', 'country')) or not place.get('name', '').strip():
+               for key in ('name', 'admin1', 'country', 'timezone')) or not place.get('name', '').strip():
             return False
         return all(isinstance(place.get(key), (int, float)) and not isinstance(place[key], bool)
                    and -bound <= place[key] <= bound for key, bound in (('latitude', 90), ('longitude', 180)))
@@ -235,6 +235,8 @@ def set_weather(query, interactive=False):
     else:
         selected = results[0]
     location = {key: selected[key] for key in ('name', 'latitude', 'longitude')}
+    if isinstance(selected.get('timezone'), str):
+        location['timezone'] = selected['timezone']
     edit_config(lambda data: data.update(location=location))
     print('Weather set to ' + selected['name'])
 
@@ -280,7 +282,7 @@ def restore():
 
 # Every page the native Settings window accepts (`Page::key` in src/settings.rs), plus the old
 # `layout` alias for Widgets.
-SETTINGS_PAGES = ('builder', 'moments', 'overview', 'pending', 'themes', 'presets', 'schedules', 'widget-style', 'system-monitor', 'daily-overview', 'focus-timer', 'app-settings', 'appearance', 'widgets', 'layout', 'glance', 'calendar', 'weather', 'devbox', 'clock',
+SETTINGS_PAGES = ('adaptive', 'builder', 'moments', 'overview', 'pending', 'themes', 'presets', 'schedules', 'widget-style', 'system-monitor', 'daily-overview', 'focus-timer', 'app-settings', 'appearance', 'widgets', 'layout', 'glance', 'calendar', 'weather', 'devbox', 'clock',
                   'projects', 'music', 'notes', 'focus', 'general', 'desktop', 'desktop-dock',
                   'desktop-appearance', 'desktop-wallpaper', 'desktop-icons', 'desktop-profiles',
                   'desktop-windows', 'desktop-workspaces', 'desktop-motion', 'desktop-window-rules',

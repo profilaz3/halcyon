@@ -43,6 +43,14 @@
   </provides>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.5.0" date="2026-10-29">
+      <description><ul>
+        <li>Include Islands and optional Penumbra gradients in one package.</li>
+        <li>Schedule appearances using local solar times and adaptive looks.</li>
+        <li>Build Calendar and system-reading widgets.</li>
+        <li>Improve onboarding, setup review, layout editing and change history.</li>
+      </ul></description>
+    </release>
     <release version="0.4.1" date="2026-10-27">
       <description><p>Fixes for display recovery, calendar refreshes, Notes saving, Islands activation and Settings navigation.</p></description>
     </release>

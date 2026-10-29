@@ -79,12 +79,18 @@ def artifacts(root,data):
     for name,record in data['artifacts'].items():
         if Path(name).name!=name or digest(root/name)!=record['sha256']:raise ValueError('artifact_mismatch')
         kinds.add(record['kind'])
-    if not {'main-deb','islands-deb','corresponding-source'} <= kinds:raise ValueError('release_incomplete')
-    package=data['islands_package']
-    if data['artifacts'][package]['kind']!='islands-deb':raise ValueError('wrong_companion')
+    bundled = data.get('packaging') == 'bundled-islands'
+    required = {'main-deb', 'corresponding-source'} | (set() if bundled else {'islands-deb'})
+    if not required <= kinds: raise ValueError('release_incomplete')
     main = [name for name, record in data['artifacts'].items() if record['kind'] == 'main-deb']
     if len(main) != 1:
         raise ValueError('exact_main_package_required')
+    package = data['islands_package']
+    if bundled:
+        if package != main[0] or 'islands-deb' in kinds:
+            raise ValueError('bundled_companion_must_be_in_main')
+    elif data['artifacts'][package]['kind'] != 'islands-deb':
+        raise ValueError('wrong_companion')
     return package, main[0]
 
 

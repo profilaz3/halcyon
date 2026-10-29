@@ -1,9 +1,9 @@
 # FB21 — Sun-based appearance schedules for 0.5
 
-Status: **planned**, accepted 2026-10-27; architecture contract reviewed the same day. Tracks
+Status: **implemented locally**, 2026-10-27; release packaging remains pending. Tracks
 [GitHub issue #14](https://github.com/profilaz3/halcyon/issues/14).
-The released 0.4.0 supports fixed-time schedules and Day/Night widget Moments;
-this extends those foundations. No implementation or version bump in this task.
+The released 0.4.1 supports fixed-time schedules and Day/Night widget Moments;
+this extends those foundations. Implemented through the existing scheduler and guarded store; no 0.5 release has been published.
 
 ## Experience
 
@@ -20,8 +20,9 @@ current appearance until the user chooses a source.
 
 ## Location and occurrence contract
 
-The current app has one `Config.location { name, latitude, longitude }`, no saved
-time zone, and one Weather widget. Daily overview can display that same Weather
+The 0.4.1 baseline has one `Config.location { name, latitude, longitude }`, no saved
+time zone, and one Weather widget. The local 0.5 implementation adds an optional
+IANA zone to that city and a separate manual schedule city. Daily overview can display that same Weather
 section. Do not expose selection among multiple Weather instances in this slice.
 
 - Follow the singleton Weather binding. With Daily overview enabled, use its
@@ -97,3 +98,23 @@ section. Do not expose selection among multiple Weather instances in this slice.
 
 Completion requires evidence for these cases. Planning does not mark FB21
 implemented or validated.
+
+## Local validation
+
+Seventeen focused solar checks passed, including NOAA reference comparisons, city
+weekdays and time zones, polar missing events, clock rollback, stale-city rejection
+at commit, appearance-only projection and native compact/wide rule controls.
+Native renders were inspected at 820 × 600 and 1280 × 800 in light and dark themes;
+Save is visible without scrolling at the compact size. The complete automation
+suite also covers fixed-time scheduling, manual precedence, pause and restart.
+
+Dawn uses a −6° solar altitude; sunrise/sunset use −0.833°; evening golden hour
+uses the descending +6° crossing. Solar noon is local solar transit. Positions use
+the published NOAA/Meeus equations, bounded to 1900–2100. The UI identifies the
+city zone and shows next-switch times in the computer’s zone. No event within the
+bounded eight-day search is shown explicitly, with no invented replacement time.
+
+Automatic changes retain the existing scheduled recovery journal and do not enter
+manual Undo history. Imported picture identity and saved theme scope survive the
+projection. Physical-device and final packaged acceptance are separate release
+checks. Evidence is retained privately in `.task-050-delivery-20261027/solar/`.

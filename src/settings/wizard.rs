@@ -1,4 +1,4 @@
-//! First-run setup: Welcome, Look, Dock & panel, Widgets, optional Weather and Ready, one
+//! First-run setup: Welcome, Look, Dock & panel, Widgets, Arrange, optional Weather and Ready, one
 //! decision per screen in the Settings window without the sidebar.
 //!
 //! A look and the dock and panel choices are applied as they are made,
@@ -6,6 +6,7 @@
 //! their order or anything else the look doesn't own. Every change is a
 //! normal desktop change; Cancel undoes the wizard's own changes, newest
 //! first. Choosing a city is a preference and stays.
+pub mod follow_up;
 pub mod widgets;
 use crate::desktop::DesktopStore;
 use crate::desktop::panels::MAX_RADIUS;
@@ -70,17 +71,6 @@ impl Step {
             Self::Arrange => "Arrange widgets",
             Self::Weather => "Weather",
             Self::Ready => "Ready",
-        }
-    }
-    pub fn hint(self) -> &'static str {
-        match self {
-            Self::Welcome => "Desktop widgets and themes for COSMIC.",
-            Self::Look => "Wallpaper, colors, windows, dock and widgets in one.",
-            Self::Bars => "Shape and placement.",
-            Self::Widgets => "Choose what you want on your desktop.",
-            Self::Arrange => "Top to bottom, then the next column.",
-            Self::Weather => "Your city for the forecast.",
-            Self::Ready => "All of this lives in Settings.",
         }
     }
 }

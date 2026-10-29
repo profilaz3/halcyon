@@ -25,7 +25,14 @@ def companion_version(root):
     return version
 
 
+def bundled(root):
+    with (root / 'Cargo.toml').open('rb') as source:
+        return tomllib.load(source)['package'].get('metadata', {}).get('halcyon', {}).get('bundled-islands') is True
+
+
 def main_breaks(root):
+    if bundled(root):
+        return 'cosmic-ext-halcyon-islands (<< 0.5.0)'
     version = companion_version(root)
     return f'cosmic-ext-halcyon-islands (<< {version}), cosmic-ext-halcyon-islands (>> {version})'
 
@@ -65,3 +72,27 @@ def verify_main_package(root, package, release):
         raise ValueError('main_package_unreadable') from error
     if fields != ['cosmic-ext-halcyon', release, 'amd64']:
         raise ValueError('main_package_identity_mismatch')
+
+
+def verify_bundled(root, main, transition=None):
+    """Bind both executables to one package; the optional bridge has no payload."""
+    if (not bundled(root) or field(main, 'X-Halcyon-Islands') != 'bundled'
+            or field(main, 'Breaks') != main_breaks(root)
+            or field(main, 'Replaces') != main_breaks(root)):
+        raise ValueError('bundled_package_contract')
+    if transition is not None:
+        if (field(transition, 'Package') != 'cosmic-ext-halcyon-islands'
+                or field(transition, 'X-Halcyon-Islands') != 'transitional'
+                or field(transition, 'Depends') != 'cosmic-ext-halcyon (>= 0.5.0)'
+                or field(transition, 'Version') != main_version(root)):
+            raise ValueError('transition_package_contract')
+        listing = subprocess.check_output(['dpkg-deb', '--fsys-tarfile', str(transition)], timeout=10)
+        import io
+        import tarfile
+        with tarfile.open(fileobj=io.BytesIO(listing)) as archive:
+            if any(not item.isdir() for item in archive):
+                raise ValueError('transition_must_be_empty')
+        scripts = subprocess.check_output(['dpkg-deb', '--ctrl-tarfile', str(transition)], timeout=10)
+        with tarfile.open(fileobj=io.BytesIO(scripts)) as archive:
+            if any(not item.isdir() and item.name.removeprefix('./') != 'control' for item in archive):
+                raise ValueError('transition_has_control_actions')

@@ -251,6 +251,7 @@ fn apt() -> Identity {
         reason: "System updates · checks only when you ask.",
         running_version: "0.2.0".into(),
         installed_version: Some("0.2.0".into()),
+        islands_version: None,
         architecture: Some("amd64".into()),
         store: Some("/usr/share/applications/com.system76.CosmicStore.desktop".into()),
         islands_match: identity::IslandsMatch::Ready,
@@ -533,6 +534,35 @@ fn ui_child() -> bool {
     for dir in ["config", "data", "cache", "state", "desktop"] {
         std::fs::create_dir_all(root.join(dir)).unwrap();
     }
+    // Dock activation needs a configured bar. Supply its defaults here so the
+    // fixture behaves identically with and without COSMIC installed on the host.
+    for (namespace, key, value) in [
+        (
+            "com.system76.CosmicPanel",
+            "entries",
+            "[\"Panel\",\"Dock\"]",
+        ),
+        ("com.system76.CosmicPanel.Dock", "anchor", "Bottom"),
+        (
+            "com.system76.CosmicPanel.Dock",
+            "plugins_center",
+            "Some([\"com.system76.CosmicAppList\"])",
+        ),
+        ("com.system76.CosmicPanel.Panel", "anchor", "Top"),
+        (
+            "com.system76.CosmicPanel.Panel",
+            "plugins_wings",
+            "Some(([], [\"com.system76.CosmicAppletTime\"]))",
+        ),
+    ] {
+        let file = root
+            .join("desktop/system/cosmic")
+            .join(namespace)
+            .join("v1")
+            .join(key);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, value).unwrap();
+    }
     std::fs::write(root.join("dconf-profile"), "").unwrap();
     std::fs::write(
         root.join("config.json"),
@@ -546,6 +576,7 @@ fn ui_child() -> bool {
         .env("DESKTOP_CARDS_DESKTOP_ROOT", root.join("desktop"))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_DATA_DIRS", root.join("data"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("XDG_STATE_HOME", root.join("state"))
         .env("DCONF_PROFILE", root.join("dconf-profile"))
@@ -635,45 +666,13 @@ fn native_updates_clicks_renders_failure_unknown_and_absence() {
         assert!(
             native
                 .try_bounds(app.settings_view(), "get-islands")
-                .is_some()
-        );
-        assert!(
-            native
-                .try_bounds(app.updates_section(), "get-islands")
                 .is_none()
         );
         assert!(
-            ui_click(&app, &mut native, "get-islands")
-                .iter()
-                .any(|message| matches!(
-                    message,
-                    SettingsMessage::Updates(Message::Islands(islands::Message::Prepare))
-                ))
-        ); // Inspect the action only; never launch the host browser.
-        // Preparation and activation are distinct, explicit native actions.
-        app.updates.islands.phase = islands::Phase::Ready;
-        assert!(
-            ui_click(&app, &mut native, "install-islands-confirm")
-                .iter()
-                .any(|m| matches!(
-                    m,
-                    SettingsMessage::Updates(Message::Islands(islands::Message::Install))
-                ))
+            native
+                .try_bounds(app.settings_view(), "install-islands-confirm")
+                .is_none()
         );
-        assert!(
-            ui_click(&app, &mut native, "install-islands-cancel")
-                .iter()
-                .any(|m| matches!(
-                    m,
-                    SettingsMessage::Updates(Message::Islands(islands::Message::Cancel))
-                ))
-        );
-        native.capture(
-            app.settings_view(),
-            &theme,
-            &format!("islands-confirm-{suffix}"),
-        );
-        app.updates.islands.phase = islands::Phase::Idle;
         app.desktop.islands.installation = Installation::Installed {
             provenance: crate::desktop::islands::Provenance::Package,
             enabled: false,
@@ -694,6 +693,65 @@ fn native_updates_clicks_renders_failure_unknown_and_absence() {
             &theme,
             &format!("islands-enable-{suffix}"),
         );
+        app.desktop.open();
+        assert!(
+            app.desktop.current().is_some_and(|draft| draft.installed()),
+            "fixture provides the configured dock without host COSMIC defaults"
+        );
+        app.page = Page::DesktopDock;
+        crate::settings::navigation::select(&mut app.nav_model, app.page);
+        app.installation_busy = false;
+        app.collapsed_scenes.push(Page::DesktopDock);
+        // Open remeasures the fixture. Restore only its declared package state.
+        app.desktop.islands.installation = Installation::Installed {
+            provenance: crate::desktop::islands::Provenance::Package,
+            enabled: false,
+            compatible: None,
+            status: Some(crate::desktop::islands::CompatibilityStatus::Disabled),
+            diagnostics: String::new(),
+        };
+        native.capture(
+            app.settings_view(),
+            &theme,
+            &format!("dock-islands-off-{suffix}"),
+        );
+        assert!(
+            ui_click(&app, &mut native, "enable-islands")
+                .iter()
+                .any(|m| matches!(
+                    m,
+                    SettingsMessage::Updates(Message::Islands(islands::Message::Enable))
+                ))
+        );
+        if let Installation::Installed {
+            enabled, status, ..
+        } = &mut app.desktop.islands.installation
+        {
+            *enabled = true;
+            *status = None;
+        }
+        native.capture(
+            app.settings_view(),
+            &theme,
+            &format!("dock-islands-on-{suffix}"),
+        );
+        assert!(
+            ui_click(&app, &mut native, "disable-islands")
+                .iter()
+                .any(|m| matches!(
+                    m,
+                    SettingsMessage::Updates(Message::Islands(islands::Message::Disable))
+                ))
+        );
+        app.page = Page::General;
+        crate::settings::navigation::select(&mut app.nav_model, app.page);
+        if let Installation::Installed {
+            enabled, status, ..
+        } = &mut app.desktop.islands.installation
+        {
+            *enabled = false;
+            *status = Some(crate::desktop::islands::CompatibilityStatus::Disabled);
+        }
         for eligibility in [
             identity::IslandsMatch::VersionMismatch,
             identity::IslandsMatch::HelperMismatch,
@@ -928,60 +986,6 @@ async fn cancellation_before_start_and_isolated_app_never_contact_the_host() {
     );
 }
 
-#[tokio::test]
-async fn installation_subscribes_before_handoff_and_preserves_failures() {
-    for (error, exit, expected) in [
-        (None, 1, Ok(())),
-        (Some(48), 1, Err(Failure::Authorization)),
-        (None, 3, Err(Failure::Cancelled)),
-        (Some(5), 1, Err(Failure::Untrusted)),
-        (None, 2, Err(Failure::Failed)),
-    ] {
-        let bus = Bus::new();
-        let prepared = enrollment::fixture(bus.directory.join("islands"));
-        let (_service, client, trace) = service(
-            &bus,
-            vec![Script {
-                error,
-                finish: Some(exit),
-                delay_reply: true,
-                ..Default::default()
-            }],
-        )
-        .await;
-        assert_eq!(packagekit::install_on(&client, &prepared).await, expected);
-        assert_eq!(
-            trace.lock().unwrap().calls,
-            ["CreateTransaction", "SetHints", "InstallFiles"]
-        );
-        assert!(
-            !prepared
-                .handed_off
-                .load(std::sync::atomic::Ordering::Relaxed)
-        );
-    }
-}
-#[tokio::test]
-async fn installation_changed_or_symlinked_files_never_reach_installer() {
-    for symlink in [false, true] {
-        let bus = Bus::new();
-        let prepared = enrollment::fixture(bus.directory.join("islands"));
-        let (_service, client, trace) = service(&bus, vec![Script::default()]).await;
-        if symlink {
-            std::fs::remove_file(&prepared.paths[0]).unwrap();
-            let other = bus.directory.join("other.deb");
-            std::fs::write(&other, b"external file").unwrap();
-            std::os::unix::fs::symlink(&other, &prepared.paths[0]).unwrap();
-        } else {
-            std::fs::write(&prepared.paths[0], b"changed").unwrap();
-        }
-        assert_eq!(
-            packagekit::install_on(&client, &prepared).await,
-            Err(Failure::Untrusted)
-        );
-        assert!(trace.lock().unwrap().calls.is_empty());
-    }
-}
 #[test]
 fn successful_check_timestamp_survives_failure_and_notes_use_stable_tags() {
     let mut updates = Updates::default();
@@ -1000,138 +1004,21 @@ fn successful_check_timestamp_survives_failure_and_notes_use_stable_tags() {
 }
 
 #[tokio::test]
-async fn islands_simulation_rejects_unrelated_changes_and_ambiguous_results() {
-    let expected = format!(
-        "cosmic-ext-halcyon-islands;{};amd64;local",
-        enrollment::islands_version().unwrap()
-    );
-    for (info, packages, accepted) in [
-        (12, vec![expected.clone()], true),
-        (
-            12,
-            vec![expected.clone(), "unrelated;1;amd64;repo".into()],
-            false,
-        ),
-        (12, vec![expected.clone(), expected.clone()], false),
-        (11, vec![expected.clone()], false),
-        (13, vec![expected.clone()], false),
-        (20, vec![expected.clone()], false),
-        (
-            12,
-            vec!["cosmic-ext-halcyon-islands;999;amd64;local".into()],
-            false,
-        ),
-        (
-            12,
-            vec!["cosmic-ext-halcyon-islands;0.3.0;arm64;local".into()],
-            false,
-        ),
-        (12, vec![], false),
-    ] {
-        let bus = Bus::new();
-        let prepared = enrollment::fixture(bus.directory.join("islands"));
-        let (_service, client, trace) = service(
-            &bus,
-            vec![Script {
-                info,
-                packages,
-                flags: 4,
-                files: 1,
-                delay_reply: true,
-                ..Default::default()
-            }],
-        )
-        .await;
+async fn bundled_updates_only_offer_the_main_package() {
+    let mut installed = apt();
+    installed.installed_version = Some("0.5.0".into());
+    installed.islands_version = Some("0.5.0".into());
+    let main = "cosmic-ext-halcyon;0.5.1;amd64;repo".to_owned();
+    let bridge = "cosmic-ext-halcyon-islands;0.5.0;amd64;repo".to_owned();
+    for packages in [vec![main.clone()], vec![main, bridge.clone()]] {
         assert_eq!(
-            packagekit::islands_preflight(&client, &prepared).await,
-            if accepted {
-                Ok(())
-            } else {
-                Err(Failure::DependencyChanges)
-            }
-        );
-        assert_eq!(
-            trace.lock().unwrap().calls,
-            ["CreateTransaction", "SetHints", "InstallFiles"]
-        );
-        assert!(
-            !prepared
-                .handed_off
-                .load(std::sync::atomic::Ordering::Relaxed)
+            packagekit::candidate(&installed, &packages).await.unwrap(),
+            Some("0.5.1".into())
         );
     }
-}
-
-#[tokio::test]
-async fn islands_busy_or_failed_simulation_never_starts_installation() {
-    for error in [None, Some(2), Some(48), Some(5)] {
-        let bus = Bus::new();
-        let prepared = enrollment::fixture(bus.directory.join("islands"));
-        let (_service, client, trace) = service(
-            &bus,
-            vec![Script {
-                error,
-                flags: 4,
-                files: 1,
-                ..Default::default()
-            }],
-        )
-        .await;
-        if error.is_none() {
-            trace
-                .lock()
-                .unwrap()
-                .active
-                .push(OwnedObjectPath::try_from("/other").unwrap());
-        }
-        let result = packagekit::islands_preflight(&client, &prepared).await;
-        assert_eq!(
-            result,
-            Err(match error {
-                None => Failure::Busy,
-                Some(2) => Failure::Offline,
-                Some(48) => Failure::Authorization,
-                _ => Failure::Untrusted,
-            })
-        );
-        if error.is_none() {
-            assert!(trace.lock().unwrap().calls.is_empty());
-        }
-        assert!(
-            !prepared
-                .handed_off
-                .load(std::sync::atomic::Ordering::Relaxed)
-        );
-    }
-}
-
-#[tokio::test]
-async fn islands_install_uses_one_file_and_keeps_unknown_outcome() {
-    let bus = Bus::new();
-    let prepared = enrollment::fixture(bus.directory.join("islands"));
-    let (_service, client, _) = service(
-        &bus,
-        vec![Script {
-            files: 1,
-            finish: None,
-            ..Default::default()
-        }],
-    )
-    .await;
-    assert!(
-        tokio::time::timeout(
-            Duration::from_millis(100),
-            packagekit::install_on(&client, &prepared)
-        )
-        .await
-        .is_err()
+    assert_eq!(
+        packagekit::candidate(&installed, &[bridge]).await.unwrap(),
+        None
     );
-    assert!(
-        prepared
-            .handed_off
-            .load(std::sync::atomic::Ordering::Relaxed)
-    );
-    let path = prepared.paths[0].clone();
-    drop(prepared);
-    assert!(path.is_file());
+    assert_eq!(packagekit::candidate(&installed, &[]).await.unwrap(), None);
 }

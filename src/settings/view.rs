@@ -1,4 +1,5 @@
 mod adaptive;
+mod adaptive_looks;
 mod automation;
 mod calendar;
 mod canvas;
@@ -394,14 +395,27 @@ impl Settings {
     }
     fn stage_width(&self) -> f32 {
         let width = self.content_width();
-        if width >= 584. {
-            width - (width * 0.38).clamp(248., 312.) - 16.
+        let scene = matches!(
+            self.page,
+            Page::Overview | Page::DesktopProfiles | Page::DesktopWallpaper
+        );
+        if scene && width >= 584. {
+            width - (width * 0.40).clamp(248., 420.) - 16.
+        } else if !scene && width >= 600. {
+            (width * 0.34).clamp(224., 340.)
         } else {
             width
         }
     }
     fn stage_height(&self) -> f32 {
-        (self.stage_width() * 0.625).clamp(180., self.inspector_height() - 48.)
+        if matches!(
+            self.page,
+            Page::Overview | Page::DesktopProfiles | Page::DesktopWallpaper
+        ) {
+            (self.stage_width() * 0.625).clamp(180., self.inspector_height() - 48.)
+        } else {
+            (self.stage_width() * 0.625).clamp(130., 210.)
+        }
     }
     fn inspector_layout<'a>(
         &'a self,
@@ -409,11 +423,12 @@ impl Settings {
         controls: Element<'a, Message>,
         id: &'static str,
     ) -> Element<'a, Message> {
-        adaptive::columns(
-            container(stage)
-                .id(cosmic::widget::Id::new(format!("{id}-stage")))
-                .width(Length::Fill)
-                .into(),
+        let pattern = match id {
+            "setup" | "mix" | "package" | "canvas" | "wallpaper" => adaptive::Pattern::Scene,
+            "content" | "notes" | "projects" => adaptive::Pattern::Form,
+            _ => adaptive::Pattern::Controls,
+        };
+        let controls = if matches!(pattern, adaptive::Pattern::Scene) {
             container(
                 scrollable(
                     container(controls)
@@ -425,19 +440,36 @@ impl Settings {
             )
             .max_height(self.inspector_height())
             .width(Length::Fill)
-            .id(cosmic::widget::Id::new(format!("{id}-inspector")))
-            .into(),
-            [
-                320.,
-                if matches!(id, "theme" | "fonts") && self.color_well.is_some() {
-                    // 300 px picker, 28 px card padding, 48 px enclosing
-                    // section padding and the 8 px scroll gutter.
-                    384.
-                } else {
-                    248.
-                },
-            ],
-            true,
+            .into()
+        } else {
+            // Ordinary settings share the page's scroll. A second viewport
+            // traps the wheel and hides useful controls below a short preview.
+            controls
+        };
+        adaptive::page(
+            container(stage)
+                .id(cosmic::widget::Id::new(format!("{id}-stage")))
+                .width(Length::Fill)
+                .into(),
+            container(controls)
+                .width(Length::Fill)
+                .id(cosmic::widget::Id::new(format!("{id}-inspector")))
+                .into(),
+            match pattern {
+                adaptive::Pattern::Scene => [320., 248.],
+                adaptive::Pattern::Form => [360., 224.],
+                _ => [
+                    224.,
+                    if matches!(id, "theme" | "fonts") && self.color_well.is_some() {
+                        // 300 px picker, 28 px card padding, 48 px enclosing
+                        // section padding and the 8 px scroll gutter.
+                        384.
+                    } else {
+                        360.
+                    },
+                ],
+            },
+            pattern,
         )
     }
     fn setting_columns<'a>(
@@ -516,6 +548,7 @@ impl Settings {
             Page::DesktopShortcuts => self.shortcuts_page(),
             Page::DesktopAutomation => self.automation_page(),
             Page::Moments => self.moments_page(),
+            Page::AdaptiveLooks => self.adaptive_looks_page(),
             Page::Builder => self.recipe_page(),
         };
         let pinned = !searching && self.page == Page::DesktopAppearance && self.appearance_pinned();
@@ -600,24 +633,12 @@ impl Settings {
         } else {
             scrolling.into()
         };
-        let status: Element<'_, Message> = if searching {
+        let status: Element<'_, Message> = if searching || self.undo_review.is_some() {
             self.simple_status()
         } else if self.page == Page::Overview && self.canvas.is_some() {
             self.canvas_actions()
-        } else if self.page == Page::Overview && self.placement.selected().is_some() {
-            let mut inspector = Vec::new();
-            if self.error {
-                inspector.push(label(&self.status, 12., Color::from_rgb8(245, 149, 138)));
-            }
-            inspector.push(self.placement_inspector());
-            inspector.push(self.simple_status());
-            container(column::with_children(inspector).spacing(6))
-                .height(Length::Shrink)
-                .padding([6, 22])
-                .width(Length::Fill)
-                .into()
         } else if self.page == Page::Builder {
-            column::with_children(vec![self.simple_status(), self.recipe_actions()]).into()
+            self.recipe_actions()
         } else if self.page == Page::DesktopWallpaper {
             self.wallpaper_actions()
         } else if matches!(self.page, Page::DesktopProfiles | Page::Themes) {

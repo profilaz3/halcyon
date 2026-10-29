@@ -14,6 +14,7 @@
 //! `pending_recovery`, `recover` and `discard_recovery`. Nothing here runs
 //! commands, palette or wallpaper helpers, or writes outside the store's
 //! transaction and the library.
+pub mod adaptive;
 mod capture;
 mod desktop_look;
 pub mod discovery;

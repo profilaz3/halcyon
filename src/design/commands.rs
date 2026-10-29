@@ -10,7 +10,8 @@ use std::{
 };
 
 /// Existing journal recovery runs before either the service or Settings starts.
-/// It does not activate migration; activation remains an explicit action.
+/// New, empty installations use the current design format. Existing profiles
+/// keep their explicit migration boundary.
 pub fn startup() -> Result<(), String> {
     let store = actions::history_store().map_err(|e| e.to_string())?;
     if let Some(journal) = store.pending_recovery().map_err(|e| e.to_string())? {
@@ -18,11 +19,28 @@ pub fn startup() -> Result<(), String> {
             store.recover().map_err(|e| e.to_string())?;
         }
     }
+    initialize_fresh()?;
     let path = Config::path().ok_or("No configuration directory")?;
     if storage::managed(&path) {
         storage::check(&path)?;
     }
     Ok(())
+}
+
+/// Also used before constructing Settings directly. This quick read only
+/// avoids unnecessary locking for normal profiles; the store repeats every
+/// fresh-state check under its publication locks.
+pub fn initialize_fresh() -> Result<bool, String> {
+    let path = Config::path().ok_or("No configuration directory")?;
+    match std::fs::symlink_metadata(&path) {
+        Ok(_) => return Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.to_string()),
+    }
+    actions::preference_store(&path)
+        .map_err(|error| error.to_string())?
+        .initialize_fresh_design()
+        .map_err(|error| error.to_string())
 }
 
 /// Export original bytes even when their schema cannot be understood. The
@@ -148,5 +166,127 @@ pub fn pending_problem() -> Option<String> {
             Some(error.to_string())
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn private_live(name: &str) -> bool {
+        if crate::displays::test_support::isolated(name) {
+            return true;
+        }
+        // The isolated process has private HOME/XDG roots and no reachable
+        // buses. Exercise the normal path resolver, never the host profile.
+        unsafe {
+            std::env::remove_var("DESKTOP_CARDS_CONFIG");
+            std::env::remove_var("DESKTOP_CARDS_DESKTOP_ROOT");
+        }
+        crate::test_env::assert_isolated();
+        false
+    }
+
+    #[test]
+    fn polish050_fresh_start_supports_shared_xdg_roots() {
+        if private_live("design::commands::tests::polish050_fresh_start_supports_shared_xdg_roots")
+        {
+            return;
+        }
+        let root = dirs::data_dir().unwrap();
+        for shared_config in [false, true] {
+            let common = root.join(if shared_config {
+                "all-roots"
+            } else {
+                "data-state"
+            });
+            let config = if shared_config {
+                common.clone()
+            } else {
+                root.join("separate-config")
+            };
+            unsafe {
+                std::env::set_var("XDG_CONFIG_HOME", &config);
+                std::env::set_var("XDG_DATA_HOME", &common);
+                std::env::set_var("XDG_STATE_HOME", &common);
+                std::env::set_var("XDG_CACHE_HOME", &common);
+            }
+            startup().unwrap();
+            assert!(
+                storage::managed(&Config::path().unwrap()),
+                "fresh overlapping XDG roots"
+            );
+            assert!(
+                !initialize_fresh().unwrap(),
+                "existing initialized profile remains unchanged"
+            );
+        }
+    }
+
+    #[test]
+    fn polish050_startup_initializes_a_new_private_user_once() {
+        if private_live(
+            "design::commands::tests::polish050_startup_initializes_a_new_private_user_once",
+        ) {
+            return;
+        }
+        startup().unwrap();
+        let path = Config::path().unwrap();
+        assert!(storage::managed(&path));
+        let original = std::fs::read(&path).unwrap();
+        let design = storage::read_bytes(&path).unwrap().unwrap();
+        assert!(!Config::load().onboarded);
+        startup().unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), original);
+        assert_eq!(
+            storage::read_bytes(&Config::path().unwrap())
+                .unwrap()
+                .unwrap(),
+            design
+        );
+    }
+
+    #[test]
+    fn polish050_startup_preserves_prior_state_without_config() {
+        if private_live(
+            "design::commands::tests::polish050_startup_preserves_prior_state_without_config",
+        ) {
+            return;
+        }
+        let state = crate::paths::state_dir().unwrap().join("usage.json");
+        std::fs::create_dir_all(state.parent().unwrap()).unwrap();
+        std::fs::write(&state, b"existing state").unwrap();
+        startup().unwrap();
+        assert!(!Config::path().unwrap().exists());
+        assert_eq!(std::fs::read(state).unwrap(), b"existing state");
+        assert!(!storage::managed(&Config::path().unwrap()));
+    }
+
+    #[test]
+    fn polish050_startup_preserves_a_pre_rename_profile_for_explicit_review() {
+        if private_live(
+            "design::commands::tests::polish050_startup_preserves_a_pre_rename_profile_for_explicit_review",
+        ) {
+            return;
+        }
+        let old = dirs::config_dir()
+            .unwrap()
+            .join(crate::paths::LEGACY)
+            .join("config.json");
+        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+        let bytes = br#"{"theme":"amber","clock":{"format_24h":false}}"#;
+        std::fs::write(&old, bytes).unwrap();
+        // Even before the rename copier runs, old data is not a new install.
+        assert!(!initialize_fresh().unwrap());
+        assert!(!Config::path().unwrap().exists());
+        assert!(!crate::paths::config_dir().unwrap().exists());
+        // The application normally copies old folders before design startup.
+        crate::paths::migrate();
+        startup().unwrap();
+        let path = Config::path().unwrap();
+        assert_eq!(std::fs::read(&old).unwrap(), bytes);
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert!(!storage::managed(&path));
+        assert_eq!(Config::load().theme, "amber");
     }
 }

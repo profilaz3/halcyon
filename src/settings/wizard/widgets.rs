@@ -92,7 +92,7 @@ impl Draft {
     pub fn new(config: &Config, raw: &Value, snapshot: &Snapshot) -> Self {
         let selected = CHOICES
             .into_iter()
-            .filter(|w| config.widgets_visible && config.data_visible(*w))
+            .filter(|w| config.widget_selected(*w))
             .map(|w| w.key().to_owned())
             .collect();
         let mut order: Vec<_> = snapshot
@@ -582,6 +582,34 @@ impl Draft {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn polish050_hidden_widgets_keep_saved_section_choices_without_running_providers() {
+        let raw = serde_json::json!({
+            "widgets_visible": false, "enabled_widgets": ["clock", "calendar", "projects"],
+            "glance": {"enabled": true, "show_clock": true, "show_weather": true, "show_calendar": false},
+            "notes": {"enabled": true}
+        });
+        let config: Config = serde_json::from_value(raw.clone()).unwrap();
+        assert!(config.widget_selected(Widget::Glance));
+        assert!(config.widget_selected(Widget::Weather));
+        assert!(!config.widget_selected(Widget::Calendar));
+        assert!(config.widget_selected(Widget::Notes));
+        assert!(Widget::ALL.into_iter().all(|w| !config.data_visible(w)));
+        let (_, _, snapshot, _) = fixture();
+        let mut draft = Draft::new(&config, &raw, &snapshot);
+        assert!(draft.selected(Widget::Clock) && draft.selected(Widget::Weather));
+        assert!(!draft.selected(Widget::Calendar));
+        assert!(!draft.pending && !draft.config(&config).widgets_visible);
+        draft.group(false);
+        assert!(draft.selected(Widget::Weather));
+        assert!(!draft.selected(Widget::Calendar));
+        assert!(draft.active().contains(&Widget::Weather));
+        draft.group(true);
+        assert!(draft.active().contains(&Widget::Glance));
+        assert!(!draft.active().contains(&Widget::Weather));
+        assert_eq!(draft.config(&config).notes.enabled, config.notes.enabled);
+    }
+
     #[test]
     fn onboarding_small_display_uses_space_between_reserved_edges() {
         let raw = serde_json::json!({

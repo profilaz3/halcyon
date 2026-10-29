@@ -320,8 +320,10 @@ impl Settings {
             }
             Message::Profiles(edit)
                 if edit.blocking()
-                    && (matches!(self.page, Page::DesktopProfiles | Page::Themes)
-                        || matches!(edit, profiles::Message::Imported(..))) =>
+                    && (matches!(
+                        self.page,
+                        Page::DesktopProfiles | Page::Themes | Page::AdaptiveLooks
+                    ) || matches!(edit, profiles::Message::Imported(..))) =>
             {
                 // Preserve the same page/scope admission as the synchronous path.
                 if self.page == Page::Themes

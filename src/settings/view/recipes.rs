@@ -22,12 +22,7 @@ impl Settings {
             ));
         }
         if !self.design.managed {
-            content.push(split(
-                label("Apply needs the current widget format.", 13., MUTED),
-                button::text("Review migration…")
-                    .on_press(Message::AppSettingsPage(AppSettingsPage::Restore))
-                    .into(),
-            ));
+            content.push(self.design_section());
         }
         let mut library = vec![
             row::with_children(
@@ -41,6 +36,7 @@ impl Settings {
                     .collect::<Vec<_>>(),
             )
             .spacing(8)
+            .wrap()
             .into(),
         ];
         if !editor.library_labels.is_empty() {
@@ -55,6 +51,14 @@ impl Settings {
             );
         }
         content.push(column::with_children(library).spacing(8).into());
+        if recipe.kind == Kind::Calendar && self.config.glance.enabled {
+            content.push(split(
+                label("Calendar is currently part of Daily overview.", 12., MUTED),
+                button::text("Widget visibility…")
+                    .on_press(Message::Page(Page::Widgets))
+                    .into(),
+            ));
+        }
         let name_editor: Element<'_, Message> = text_input("Widget name", &recipe.name)
             .id(cosmic::widget::Id::new("recipe-name"))
             .on_input(|value| edit(Edit::Name(value)))
@@ -87,20 +91,35 @@ impl Settings {
             ],
         ));
         let preview = group(
-            Some("Preview · sample content"),
+            None,
             vec![
+                self.preview_header("Sample content · candidate widget", false),
                 controls,
                 sample,
-                if recipe.kind == Kind::Weather {
+                if matches!(recipe.kind, Kind::Weather | Kind::Calendar | Kind::System) {
                     segmented(
                         vec![
                             (
-                                "Sample weather".into(),
+                                if recipe.kind == Kind::Calendar {
+                                    "Sample agenda"
+                                } else if recipe.kind == Kind::System {
+                                    "Sample readings"
+                                } else {
+                                    "Sample weather"
+                                }
+                                .into(),
                                 !editor.missing,
                                 Some(edit(Edit::Missing(false))),
                             ),
                             (
-                                "Missing location".into(),
+                                if recipe.kind == Kind::Calendar {
+                                    "Not connected"
+                                } else if recipe.kind == Kind::System {
+                                    "Unavailable"
+                                } else {
+                                    "Missing location"
+                                }
+                                .into(),
                                 editor.missing,
                                 Some(edit(Edit::Missing(true))),
                             ),
@@ -108,7 +127,7 @@ impl Settings {
                         self.settings_accent(),
                     )
                 } else {
-                    label("Uses your clock face, font and current style.", 12., MUTED)
+                    label("Uses your current style and font.", 12., MUTED)
                 },
             ],
         );
@@ -153,8 +172,7 @@ impl Settings {
                         .into(),
                     button::text("Remove")
                         .on_press_maybe(
-                            (!busy && *part != recipe.kind.primary())
-                                .then(|| edit(Edit::Remove(i))),
+                            (!busy && recipe.can_remove(i)).then(|| edit(Edit::Remove(i))),
                         )
                         .into(),
                 ])
@@ -170,7 +188,7 @@ impl Settings {
             .filter(|p| !recipe.parts.contains(p))
             .map(|p| {
                 button::text(format!("+ {}", p.title()))
-                    .on_press_maybe((!busy).then(|| edit(Edit::Add(*p))))
+                    .on_press_maybe((!busy && recipe.parts.len() < 8).then(|| edit(Edit::Add(*p))))
                     .into()
             })
             .collect::<Vec<_>>();
@@ -184,7 +202,7 @@ impl Settings {
                     .into(),
             );
         }
-        parts.push(self.help("recipe-parts", "Parts", "Small widgets keep the main reading and weather status. Split places the main reading beside the remaining parts."));
+        parts.push(self.help("recipe-parts", "Parts", "Small widgets keep the main content and connection status. Split places the main content beside the remaining parts. Calendar follows its date and privacy settings. System monitor samples the readings you select; its first reading stays visible at small sizes."));
         let inspector: Element<'_, Message> =
             column::with_children(vec![name_editor, group(Some("Parts"), parts)])
                 .spacing(16)
@@ -231,28 +249,38 @@ impl Settings {
     pub(super) fn recipe_actions(&self) -> Element<'_, Message> {
         let recipe = &self.recipe_editor.draft;
         let busy = self.native_busy;
-        let save = button::standard("Save widget").id(cosmic::widget::Id::new("recipe-save"));
+        let save = button::standard("Save to library").id(cosmic::widget::Id::new("recipe-save"));
         let apply = button::suggested(format!("Apply to {}", recipe.kind.title()))
             .id(cosmic::widget::Id::new("recipe-apply"));
-        let actions: Element<'_, Message> = row::with_children(vec![
+        let mut actions = vec![
             if busy {
                 save.into()
             } else {
                 save.on_press(edit(Edit::Save)).into()
             },
-            if busy {
-                apply.into()
-            } else {
-                apply.on_press(edit(Edit::Apply)).into()
-            },
             button::text("Use built-in")
-                .on_press_maybe((!busy).then(|| edit(Edit::UseBuiltin)))
+                .on_press_maybe((!busy && self.design.managed).then(|| edit(Edit::UseBuiltin)))
                 .into(),
-        ])
-        .spacing(8)
-        .wrap()
-        .into();
-        container(actions)
+        ];
+        if let Some(undo) = self.page_undo_button() {
+            actions.push(undo);
+        }
+        actions.push(cosmic::widget::space().width(Length::Fill).into());
+        actions.push(
+            apply
+                .on_press_maybe((!busy && self.design.managed).then(|| edit(Edit::Apply)))
+                .into(),
+        );
+        let actions: Element<'_, Message> = row::with_children(actions)
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into();
+        let mut content = Vec::new();
+        if let Some(error) = self.page_error() {
+            content.push(label(error, 12., desktop::ERROR));
+        }
+        content.push(actions);
+        container(column::with_children(content).spacing(6))
             .padding([8, 20])
             .width(Length::Fill)
             .into()

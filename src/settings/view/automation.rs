@@ -5,13 +5,26 @@ use super::desktop::{ERROR, WARN, banner, line};
 use super::pages::{group_label, section};
 use super::windows::store_pill;
 use super::*;
+use crate::automation::solar::{self, Event, Source};
 use crate::automation::status::{self as words, Tone};
-use crate::automation::{Change, Days, Effect, ProfileRef, Rule, Trigger};
+use crate::automation::{Change, Days, Effect, Rule, Trigger};
 use crate::settings::automation::{DraftEdit, Kind, Message as Edit, PauseFor, RuleDraft};
 use chrono::Local;
+use cosmic::widget::Space;
 
 fn edit(message: Edit) -> Message {
     Message::Automation(message)
+}
+
+fn rule_editor_title(draft: &RuleDraft) -> &'static str {
+    match (draft.kind, draft.id.is_some()) {
+        (Kind::Solar, false) => "New sun schedule",
+        (Kind::Solar, true) => "Edit sun schedule",
+        (Kind::Schedule, false) => "New schedule",
+        (Kind::Schedule, true) => "Edit schedule",
+        (Kind::Display, false) => "New display rule",
+        (Kind::Display, true) => "Edit display rule",
+    }
 }
 
 pub fn time_id() -> cosmic::widget::Id {
@@ -56,19 +69,19 @@ impl Settings {
     pub(super) fn automation_page(&self) -> Element<'_, Message> {
         let editor = &self.automation;
         let accent = self.settings_accent();
-        let mut items = vec![split(
+        let title = if let Some(draft) = &editor.draft {
+            // The active form owns the page title. Repeating a title inside
+            // the card pushes its primary action below compact viewports.
+            heading(rule_editor_title(draft), "")
+        } else {
             column::with_children(vec![
-                heading("Schedules & display rules", ""),
-                label(
-                    "Choose when to switch setups or Day and Night moments.",
-                    12.,
-                    MUTED,
-                ),
+                heading("Automation", ""),
+                label("Choose a look and when it changes.", 12., MUTED),
             ])
             .spacing(4)
-            .into(),
-            store_pill(editor.store(), accent),
-        )];
+            .into()
+        };
+        let mut items = vec![split(title, store_pill(editor.store(), accent))];
         if let Some(problem) = editor.unavailable() {
             items.push(banner(
                 format!("Desktop settings unavailable: {problem}"),
@@ -93,9 +106,30 @@ impl Settings {
             }
             Err(_) => return label("Reading automation…", 12., MUTED),
         };
-        items.push(self.automation_status(&settings));
+        if editor.draft.is_none() {
+            items.push(self.automation_status(&settings));
+            items.push(group(
+                Some("Choose what changes"),
+                vec![
+                    group_row(
+                        "Daily cycle",
+                        "Wallpaper, colors and surfaces follow sunrise, golden hour and sunset.",
+                        button::text("Choose a look…")
+                            .on_press(Message::Page(Page::AdaptiveLooks))
+                            .into(),
+                    ),
+                    group_row(
+                        "Day & night widget styles",
+                        "Change widget appearance while keeping wallpaper and layout.",
+                        button::text("Customize…")
+                            .on_press(Message::Page(Page::Moments))
+                            .into(),
+                    ),
+                ],
+            ));
+        }
         items.push(self.automation_rules(&settings));
-        if !editor.state.recent.is_empty() {
+        if editor.draft.is_none() && !editor.state.recent.is_empty() {
             items.push(self.disclosure(
                 "automation-recent",
                 "Recent switches",
@@ -105,17 +139,51 @@ impl Settings {
         column::with_children(items).spacing(16).into()
     }
 
+    /// Compact shared status on the pages that choose an appearance.
+    pub(super) fn automation_link_status(&self, id: &'static str) -> Element<'_, Message> {
+        let text = match self.automation.settings() {
+            Ok(settings) => {
+                let status = words::status_with_solar(
+                    settings,
+                    &self.automation.state,
+                    &Local,
+                    chrono::Utc::now(),
+                    self.automation.manual_at,
+                    self.h24(),
+                    &self.automation.solar,
+                );
+                match status.detail {
+                    Some(detail) => format!("{} · {detail}", status.headline),
+                    None => status.headline,
+                }
+            }
+            Err(_) => "Review schedules and display rules.".into(),
+        };
+        group(
+            None,
+            vec![group_row(
+                "Automation",
+                text,
+                button::text("Manage…")
+                    .id(cosmic::widget::Id::new(id))
+                    .on_press(Message::Page(Page::DesktopAutomation))
+                    .into(),
+            )],
+        )
+    }
+
     fn automation_status(&self, settings: &crate::automation::Automation) -> Element<'_, Message> {
         let editor = &self.automation;
         let accent = self.settings_accent();
         let now = chrono::Utc::now();
-        let status = words::status(
+        let status = words::status_with_solar(
             settings,
             &editor.state,
             &Local,
             now,
             editor.manual_at,
             self.h24(),
+            &editor.solar,
         );
         let (symbol, tone) = match status.tone {
             Tone::Quiet => ("media-playback-stop-symbolic", MUTED),
@@ -217,8 +285,14 @@ impl Settings {
                     .into(),
                 );
             } else {
-                let next =
-                    crate::automation::next_switch(settings, &editor.state, &Local, now).is_some();
+                let next = crate::automation::decide::next_instant(
+                    settings,
+                    &editor.state,
+                    &Local,
+                    now,
+                    &editor.solar,
+                )
+                .is_some();
                 let mut choices = vec![label("Pause", 12., MUTED)];
                 let mut options = Vec::new();
                 if next {
@@ -278,37 +352,47 @@ impl Settings {
         }
         if rows.is_empty() {
             rows.push(label(
-                "No rules yet. Add a schedule for a time of day, or a display rule for a connection change.",
+                if editor.draft.is_some() {
+                    "No saved rules yet."
+                } else {
+                    "Add a sun event, fixed time or display rule."
+                },
                 12.,
                 MUTED,
             ));
         }
         let adding =
             editor.draft.is_none() && writable && count < crate::automation::rules::MAX_RULES;
-        rows.push(
-            row::with_children(vec![
-                button::standard("Add schedule")
-                    .leading_icon(icon::from_name("list-add-symbolic").size(14))
-                    .on_press_maybe(adding.then_some(edit(Edit::New(Kind::Schedule))))
+        if editor.draft.is_none() {
+            rows.push(
+                row::with_children(vec![
+                    button::standard("Sun event")
+                        .id(cosmic::widget::Id::new("automation-add-solar"))
+                        .on_press_maybe(adding.then_some(edit(Edit::New(Kind::Solar))))
+                        .into(),
+                    button::standard("Fixed time")
+                        .leading_icon(icon::from_name("list-add-symbolic").size(14))
+                        .on_press_maybe(adding.then_some(edit(Edit::New(Kind::Schedule))))
+                        .into(),
+                    button::standard("Add display rule")
+                        .leading_icon(icon::from_name("list-add-symbolic").size(14))
+                        .on_press_maybe(adding.then_some(edit(Edit::New(Kind::Display))))
+                        .into(),
+                    container(label(
+                        "Higher rules win when two happen at once",
+                        11.,
+                        MUTED,
+                    ))
+                    .width(Length::Fill)
+                    .align_x(cosmic::iced::alignment::Horizontal::Right)
                     .into(),
-                button::standard("Add display rule")
-                    .leading_icon(icon::from_name("list-add-symbolic").size(14))
-                    .on_press_maybe(adding.then_some(edit(Edit::New(Kind::Display))))
-                    .into(),
-                container(label(
-                    "Higher rules win when two happen at once",
-                    11.,
-                    MUTED,
-                ))
-                .width(Length::Fill)
-                .align_x(cosmic::iced::alignment::Horizontal::Right)
+                ])
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .wrap()
                 .into(),
-            ])
-            .spacing(8)
-            .align_y(Alignment::Center)
-            .wrap()
-            .into(),
-        );
+            );
+        }
         let list = column::with_children(vec![
             group_label("Rules · highest priority first"),
             section(rows),
@@ -321,7 +405,9 @@ impl Settings {
         .spacing(8)
         .into();
         if let Some(draft) = &editor.draft {
-            self.inspector_layout(list, self.automation_rule_editor(draft), "automation")
+            // The form gets the useful width; the rule list is supporting context.
+            // At compact widths it follows the form instead of squeezing it.
+            adaptive::columns(self.automation_rule_editor(draft), list, [520., 300.], true)
         } else {
             list
         }
@@ -337,6 +423,7 @@ impl Settings {
         let editor = &self.automation;
         let free = writable && editor.draft.is_none();
         let symbol = match rule.when {
+            Trigger::Solar { .. } => "weather-clear-symbolic",
             Trigger::Schedule { .. } => "alarm-symbolic",
             Trigger::Display(_) => "video-display-symbolic",
         };
@@ -346,6 +433,16 @@ impl Settings {
             None => line(format!("→ {name}"), 12., MUTED),
         };
         let tone = if rule.enabled { FG } else { MUTED };
+        if !free {
+            return column::with_children(vec![
+                label(rule.when.summary(self.h24()), 14., tone),
+                target,
+                self.solar_rule_next(rule),
+            ])
+            .spacing(6)
+            .into();
+        }
+
         let mut toggle = toggler(rule.enabled);
         if free {
             let id = rule.id.clone();
@@ -354,8 +451,12 @@ impl Settings {
         row::with_children(vec![
             icon::from_name(symbol).size(18).icon().into(),
             container(
-                column::with_children(vec![line(rule.when.summary(self.h24()), 14., tone), target])
-                    .spacing(2),
+                column::with_children(vec![
+                    line(rule.when.summary(self.h24()), 14., tone),
+                    target,
+                    self.solar_rule_next(rule),
+                ])
+                .spacing(2),
             )
             .width(Length::Fill)
             .into(),
@@ -381,44 +482,210 @@ impl Settings {
         .into()
     }
 
+    fn solar_rule_next(&self, rule: &Rule) -> Element<'_, Message> {
+        let Trigger::Solar {
+            event,
+            days,
+            source,
+        } = rule.when
+        else {
+            return Space::new().height(0).into();
+        };
+        self.solar_next(event, days, source)
+    }
+
+    fn solar_next(&self, event: Event, days: Days, source: Source) -> Element<'_, Message> {
+        let context = &self.automation.solar;
+        let Ok(city) = context.city(source) else {
+            return Space::new().height(0).into();
+        };
+        let now = chrono::Utc::now();
+        let text = match solar::next(context, source, event, days, now) {
+            Some(at) => format!(
+                "{} · {} · {} ({})",
+                event.title(),
+                words::when(
+                    at.with_timezone(&Local).naive_local(),
+                    now.with_timezone(&Local).naive_local(),
+                    self.h24()
+                ),
+                city.name,
+                city.timezone.as_deref().unwrap_or("")
+            ),
+            None => format!(
+                "{} · no {} in the next 8 days",
+                city.name,
+                event.title().to_lowercase()
+            ),
+        };
+        label(text, 11., MUTED)
+    }
+
+    fn solar_rule_controls(&self, draft: &RuleDraft) -> Element<'_, Message> {
+        let accent = self.settings_accent();
+        let mut controls = vec![
+            split(self.help("solar-event", "Sun event", draft.event.help()),
+                segmented(Event::ALL.into_iter().map(|event| (event.title().into(), event == draft.event,
+                    Some(edit(Edit::Draft(DraftEdit::Event(event)))))).collect(), accent)),
+            split(self.help("solar-city", "City", "Weather follows your enabled Weather widget or Daily overview section. A schedule city is separate and does not change Weather. Times are calculated locally; the next switch is shown in this computer's time zone."),
+                segmented([(Source::Weather, "Weather city"), (Source::Manual, "Schedule city")].into_iter()
+                    .map(|(source, title)| (title.into(), source == draft.source, Some(edit(Edit::Draft(DraftEdit::Source(source)))))).collect(), accent)),
+        ];
+        controls.push(self.schedule_city_controls(draft.source));
+        controls.push(self.solar_next(draft.event, draft.days, draft.source));
+        column::with_children(controls).spacing(10).into()
+    }
+
+    pub(super) fn schedule_city_controls(&self, source: Source) -> Element<'_, Message> {
+        let mut controls = Vec::new();
+        let context = &self.automation.solar;
+        let summary = match context.city(source) {
+            Ok(city) => label(
+                format!("{} · {}", city.name, city.timezone.as_deref().unwrap_or("")),
+                12.,
+                FG,
+            ),
+            Err(reason) => label(reason, 12., WARN),
+        };
+        if source == Source::Weather {
+            controls.push(split(
+                summary,
+                button::text("Open Weather")
+                    .on_press(Message::Page(Page::Weather))
+                    .into(),
+            ));
+        } else if context.city(Source::Manual).is_ok() && !self.schedule_city_editing {
+            controls.push(split(
+                summary,
+                button::text("Change…")
+                    .on_press(Message::EditScheduleCity(true))
+                    .into(),
+            ));
+        } else {
+            controls.push(summary);
+            let state = &self.schedule_city_search;
+            controls.push(
+                row::with_children(vec![
+                    text_input("Find a schedule city", &state.query)
+                        .id(cosmic::widget::Id::new("solar-city-search"))
+                        .on_input(Message::ScheduleCityInput)
+                        .on_submit(|_| Message::SearchScheduleCity)
+                        .width(Length::Fill)
+                        .into(),
+                    button::standard("Search")
+                        .on_press_maybe(
+                            (state.query.trim().chars().count() >= 2 && !state.searching)
+                                .then_some(Message::SearchScheduleCity),
+                        )
+                        .into(),
+                ])
+                .spacing(8)
+                .into(),
+            );
+            if state.searching || state.deadline.is_some() {
+                controls.push(label("Searching cities…", 12., MUTED));
+            } else if let Some(error) = &state.error {
+                controls.push(label(error, 12., WARN));
+            } else if state.searched && self.schedule_cities.is_empty() {
+                controls.push(label("No cities found. Try a nearby city.", 12., MUTED));
+            }
+            for (index, city) in self.schedule_cities.iter().enumerate() {
+                let zone = city.timezone.as_deref().unwrap_or("Time zone unavailable");
+                controls.push(
+                    button::standard(format!("{} · {} · {zone}", city.name, city.region()))
+                        .on_press_maybe(
+                            solar::validate_city(&city.location())
+                                .is_ok()
+                                .then_some(Message::ChooseScheduleCity(index)),
+                        )
+                        .into(),
+                );
+            }
+        }
+        column::with_children(controls).spacing(8).into()
+    }
+
     fn automation_rule_editor(&self, draft: &RuleDraft) -> Element<'_, Message> {
         let editor = &self.automation;
         let accent = self.settings_accent();
-        let title = match (draft.kind, draft.id.is_some()) {
-            (Kind::Schedule, false) => "New schedule",
-            (Kind::Schedule, true) => "Edit schedule",
-            (Kind::Display, false) => "New display rule",
-            (Kind::Display, true) => "Edit display rule",
-        };
-        let mut items = vec![label(title, 14., FG)];
+        let mut items = Vec::new();
+        let targets: Vec<_> = editor
+            .profiles
+            .iter()
+            .map(|(profile, _)| profile.clone())
+            .collect();
+        let selected = targets
+            .iter()
+            .position(|profile| Some(profile) == draft.profile.as_ref());
+        items.push(field(
+            "What changes",
+            cosmic::widget::dropdown(&editor.profile_labels, selected, move |index| {
+                edit(Edit::Draft(DraftEdit::Profile(targets[index].clone())))
+            })
+            .placeholder("Choose a look or setup…")
+            .width(Length::Fill)
+            .into(),
+        ));
+        if draft.profile.is_some() && selected.is_none() {
+            items.push(label("The chosen setup is unavailable", 12., WARN));
+        }
+        if let Some(profile) = &draft.profile {
+            items.push(label(editor.profile_scope(profile, draft.kind), 12., MUTED));
+        }
+        if draft.id.is_none() {
+            items.push(split(
+                label("When", 12., MUTED),
+                segmented(
+                    [
+                        (Kind::Schedule, "Fixed time"),
+                        (Kind::Solar, "Sun event"),
+                        (Kind::Display, "Display connection"),
+                    ]
+                    .into_iter()
+                    .map(|(kind, title)| {
+                        (
+                            title.into(),
+                            draft.kind == kind,
+                            Some(edit(Edit::Draft(DraftEdit::Kind(kind)))),
+                        )
+                    })
+                    .collect(),
+                    accent,
+                ),
+            ));
+        }
         match draft.kind {
-            Kind::Schedule => {
-                let hint: Element<'_, Message> = match draft.parsed_time() {
-                    // Shows how a loosely typed time was read.
-                    Some(time) if time.format(self.h24()) != draft.time.trim() => label(
-                        format!("{} · local time", time.format(self.h24())),
-                        11.,
-                        MUTED,
-                    ),
-                    Some(_) => label("Local time", 11., MUTED),
-                    None if draft.time.trim().is_empty() => label("e.g. 19:00", 11., MUTED),
-                    None => label("Use a time like 19:00 or 7 pm", 11., WARN),
-                };
-                items.push(field(
-                    "At",
-                    row::with_children(vec![
-                        text_input("19:00", draft.time.clone())
-                            .id(time_id())
-                            .on_input(|text| edit(Edit::Draft(DraftEdit::Time(text))))
-                            .on_submit(|_| edit(Edit::Save))
-                            .width(96)
-                            .into(),
-                        hint,
-                    ])
-                    .spacing(10)
-                    .align_y(Alignment::Center)
-                    .into(),
-                ));
+            Kind::Schedule | Kind::Solar => {
+                if draft.kind == Kind::Solar {
+                    items.push(self.solar_rule_controls(draft));
+                } else {
+                    let hint: Element<'_, Message> = match draft.parsed_time() {
+                        // Shows how a loosely typed time was read.
+                        Some(time) if time.format(self.h24()) != draft.time.trim() => label(
+                            format!("{} · local time", time.format(self.h24())),
+                            11.,
+                            MUTED,
+                        ),
+                        Some(_) => label("Local time", 11., MUTED),
+                        None if draft.time.trim().is_empty() => label("e.g. 19:00", 11., MUTED),
+                        None => label("Use a time like 19:00 or 7 pm", 11., WARN),
+                    };
+                    items.push(field(
+                        "At",
+                        row::with_children(vec![
+                            text_input("19:00", draft.time.clone())
+                                .id(time_id())
+                                .on_input(|text| edit(Edit::Draft(DraftEdit::Time(text))))
+                                .on_submit(|_| edit(Edit::Save))
+                                .width(96)
+                                .into(),
+                            hint,
+                        ])
+                        .spacing(10)
+                        .align_y(Alignment::Center)
+                        .into(),
+                    ));
+                }
                 let days: Vec<Element<'_, Message>> = (0..7)
                     .map(|index| {
                         chip(
@@ -446,15 +713,17 @@ impl Settings {
                     .collect(),
                     accent,
                 );
-                items.push(field(
-                    "On",
+                items.push(
                     column::with_children(vec![
-                        row::with_children(days).spacing(4).wrap().into(),
+                        split(
+                            label("On", 12., MUTED),
+                            row::with_children(days).spacing(4).wrap().into(),
+                        ),
                         presets,
                     ])
                     .spacing(8)
                     .into(),
-                ));
+                );
             }
             Kind::Display => {
                 items.push(field(
@@ -506,29 +775,51 @@ impl Settings {
                 ));
             }
         }
-        let mut profiles: Vec<Element<'_, Message>> = Vec::new();
-        for (profile, name) in &editor.profiles {
-            let on = draft.profile.as_ref() == Some(profile);
-            profiles.push(chip(
-                name.clone(),
-                on,
-                accent,
-                edit(Edit::Draft(DraftEdit::Profile(profile.clone()))),
-            ));
+        if draft.kind == Kind::Schedule {
+            if let (Some(time), Some(profile)) = (draft.parsed_time(), draft.profile.clone()) {
+                let now = chrono::Utc::now();
+                let preview = crate::automation::Automation {
+                    enabled: true,
+                    since: now.timestamp(),
+                    rules: vec![Rule {
+                        id: "preview".into(),
+                        enabled: true,
+                        since: now.timestamp(),
+                        profile,
+                        name: String::new(),
+                        when: Trigger::Schedule {
+                            time,
+                            days: draft.days,
+                        },
+                    }],
+                    ..Default::default()
+                };
+                if let Some((at, _)) = crate::automation::decide::next_instant(
+                    &preview,
+                    &crate::automation::State::default(),
+                    &Local,
+                    now,
+                    &editor.solar,
+                ) {
+                    items.push(label(
+                        format!(
+                            "Next occurrence {} · this computer’s time",
+                            words::when(
+                                at.with_timezone(&Local).naive_local(),
+                                now.with_timezone(&Local).naive_local(),
+                                self.h24()
+                            )
+                        ),
+                        12.,
+                        MUTED,
+                    ));
+                }
+            }
         }
-        if let Some(ProfileRef::Saved(_)) = &draft.profile
-            && !editor
-                .profiles
-                .iter()
-                .any(|(known, _)| Some(known) == draft.profile.as_ref())
-        {
-            profiles.push(label("The chosen setup was deleted", 12., WARN));
-        }
-        items.push(field(
-            "Setup",
-            row::with_children(profiles).spacing(6).wrap().into(),
-        ));
-        let missing = draft.missing();
+        let city_problem = (draft.kind == Kind::Solar)
+            .then(|| editor.solar.city(draft.source).err())
+            .flatten();
+        let missing = draft.missing().or(city_problem.as_deref());
         let enables_automation = editor
             .settings()
             .is_ok_and(|settings| draft.enables_automation(settings));
@@ -546,6 +837,9 @@ impl Settings {
                             Kind::Schedule => {
                                 "Applies at that time, once a day on the chosen days."
                             }
+                            Kind::Solar => {
+                                "Changes appearance only; layout and content stay as they are."
+                            }
                             Kind::Display => "Applies once each time this happens.",
                         },
                         11.,
@@ -556,6 +850,7 @@ impl Settings {
                 .into(),
                 button::text("Cancel").on_press(edit(Edit::Cancel)).into(),
                 button::suggested(save_label)
+                    .id(cosmic::widget::Id::new("automation-save"))
                     .on_press_maybe(
                         (missing.is_none() && editor.writable()).then_some(edit(Edit::Save)),
                     )

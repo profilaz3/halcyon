@@ -991,7 +991,7 @@ fn settings_round_trip_and_refuse_damaged_or_newer_files() {
     );
     assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
     // Newer and damaged files are refused with a reason, never half-used.
-    let newer = text.replace("\"version\": 1", "\"version\": 3");
+    let newer = text.replace("\"version\": 1", "\"version\": 4");
     std::fs::write(&file, newer).unwrap();
     assert!(load(&store).unwrap_err().contains("newer"));
     std::fs::write(&file, "{").unwrap();
@@ -2332,7 +2332,7 @@ fn fb15_moment_rule_versions_and_hyphenated_setup_ids_roundtrip() {
     let parsed = Automation::parse(&bytes).unwrap();
     assert_eq!(parsed.version, 2);
     assert_eq!(parsed.rules, rules.rules);
-    rules.version = 3;
+    rules.version = 4;
     assert!(Automation::parse(&serde_json::to_vec(&rules).unwrap()).is_err());
 }
 #[test]
@@ -2466,5 +2466,47 @@ fn fb15_queued_moment_respects_manual_edit_rule_revision_and_restore() {
         if cause != "none" {
             assert_eq!(fixture.tree(), before);
         }
+    }
+}
+
+#[test]
+fn adaptive_actual_switch_preserves_content_placement_and_native_mode() {
+    use crate::desktop::profiles::adaptive::{Look, Phase};
+    let (fixture, store) = desk("adaptive-apply");
+    let installed = Installed::discover(&store);
+    let before: serde_json::Value = serde_json::from_str(&config_text(&fixture)).unwrap();
+    let mode = std::fs::read(
+        store.user_path(
+            &crate::desktop::store::ConfigKey::new("com.system76.CosmicTheme.Mode", 1, "is_dark")
+                .unwrap(),
+        ),
+    )
+    .unwrap();
+    for phase in Phase::ALL {
+        let target = ProfileRef::Preset(Look::Tidal.id(phase).into());
+        let result = run(&store, &installed, &target, "Adaptive", &Default::default());
+        assert!(matches!(result, Ran::Applied { .. }), "{result:?}");
+        let after: serde_json::Value = serde_json::from_str(&config_text(&fixture)).unwrap();
+        for key in ["enabled_widgets", "location", "future_field"] {
+            assert_eq!(after[key], before[key]);
+        }
+        assert_eq!(
+            std::fs::read(
+                store.user_path(
+                    &crate::desktop::store::ConfigKey::new(
+                        "com.system76.CosmicTheme.Mode",
+                        1,
+                        "is_dark"
+                    )
+                    .unwrap()
+                )
+            )
+            .unwrap(),
+            mode
+        );
+        assert_eq!(
+            run(&store, &installed, &target, "Adaptive", &Default::default()),
+            Ran::AlreadySet
+        );
     }
 }

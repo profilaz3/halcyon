@@ -1,6 +1,6 @@
 # Build sequence
 
-The target is a coherent, production-qualified customization system. 0.4.0 is published; 0.5 is the next working target. These stages supersede the UI-first sequencing in the archived concept proposals.
+The target is a coherent, production-qualified customization system. 0.4.1 is published; 0.5 is the next working target. These stages supersede the UI-first sequencing in the archived concept proposals.
 
 ## Next feature for 0.5
 
@@ -10,7 +10,7 @@ scheduler and FB15 Moments. Follow the Weather widget's city when enabled;
 otherwise offer a manual city. Calculate dawn, sunrise, solar noon, evening
 golden hour and sunset locally. Change appearance without moving widgets.
 Review the contracts, then calculations/scheduling, then native controls and
-final acceptance. Review and fix each stage before advancing. Status: **planned**.
+final acceptance. Review and fix each stage before advancing. Status: **implemented locally; final 0.5 package acceptance pending**. See [the delivery record](DELIVERY-050.md).
 
 ## 0 Design and measure
 

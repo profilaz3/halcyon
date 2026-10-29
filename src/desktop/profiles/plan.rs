@@ -232,6 +232,14 @@ pub struct ProfilePlan {
 }
 
 impl ProfilePlan {
+    pub(crate) fn guard_widgets(&mut self, guards: WidgetPatch) -> Result<(), String> {
+        self.widget.merge(guards).map_err(|fields| {
+            format!(
+                "The schedule would change its own location inputs: {}",
+                fields.join(", ")
+            )
+        })
+    }
     pub(crate) fn from_display_rule(&mut self, display: bool) {
         self.patch.activity_display = display;
     }

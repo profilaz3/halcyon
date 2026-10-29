@@ -18,7 +18,7 @@ import tempfile
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from version_policy import require_main_version, main_breaks
+from version_policy import require_main_version, main_breaks, bundled
 PACKAGE = "cosmic-ext-halcyon"
 APP_ID = "io.github.profilaz3.Halcyon"
 MAINTAINER = "profilaz3 <261673162+profilaz3@users.noreply.github.com>"
@@ -59,7 +59,7 @@ def install(source, destination, mode=0o644):
     destination.chmod(mode)
 
 
-def dependencies(binary, scratch):
+def dependencies(binary, scratch, islands=None):
     """Give dpkg-shlibdeps its own Debian source context, never the checkout."""
     debian = scratch / "debian"
     debian.mkdir()
@@ -71,7 +71,7 @@ def dependencies(binary, scratch):
     detected = ""
     if shutil.which("dpkg-shlibdeps"):
         result = subprocess.run(
-            ["dpkg-shlibdeps", "-O", "-e" + str(binary)],
+            ["dpkg-shlibdeps", "-O", "-e" + str(binary)] + (["-e" + str(islands)] if islands else []),
             cwd=scratch, capture_output=True, text=True,
         )
         if result.returncode == 0:
@@ -80,10 +80,15 @@ def dependencies(binary, scratch):
                     detected = line.partition("=")[2].strip()
         if not detected and result.stderr:
             print(result.stderr.strip(), file=sys.stderr)
+    if not detected and islands:
+        raise ValueError("Cannot determine dependencies of the bundled native executables")
     if not detected:
         print("Warning: no shared-library dependencies detected; using "
               "fallback libc6, libxkbcommon0.", file=sys.stderr)
         detected = "libc6, libxkbcommon0"
+    if islands:
+        import panel_launcher
+        detected += ", " + ", ".join(panel_launcher.PACKAGES)
     return detected + ", python3, git, systemd"
 
 
@@ -105,6 +110,10 @@ def build(args):
     if release_updates:
         require_main_version(REPO, args.version)
         breaks = main_breaks(REPO)
+    bundled_islands = release_updates and bundled(REPO)
+    if bundled_islands and any(getattr(args, key, None) is None for key in
+                               ('islands_binary', 'islands_manifest', 'islands_licenses')):
+        raise ValueError("Bundled releases require --islands-binary, --islands-manifest and --islands-licenses")
     binary = args.binary.resolve(strict=True)
     if not binary.is_file():
         raise ValueError("binary must be a regular file")
@@ -166,19 +175,30 @@ def build(args):
                 with gzip.GzipFile(filename="", mode="wb", fileobj=stream, mtime=0) as compressed:
                     compressed.write((REPO / "packaging/man" / name).read_bytes())
 
+        islands_binary = None
+        if bundled_islands:
+            spec = importlib.util.spec_from_file_location("halcyon_islands_package", REPO / "packaging/islands/build-deb.py")
+            islands = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(islands)
+            library = islands.stage_payload(root, args.islands_binary, args.islands_manifest,
+                args.version, args.islands_licenses, getattr(args, "islands_catalog", None), owner=PACKAGE)
+            islands_binary = library / "cosmic-panel-islands"
         control = root / "DEBIAN"
         control.mkdir()
         if release_updates:
             update_defaults(root, control)
-        depends = dependencies(binary, scratch)
+        if bundled_islands:
+            (control / "conffiles").write_text("/etc/xdg/autostart/halcyon-islands-bootstrap.desktop\n")
+        depends = dependencies(binary, scratch, islands_binary)
         # Debian Policy: regular files rounded up to KiB, plus 1 KiB per directory.
         installed_size = 1 + sum(
             math.ceil(path.stat().st_size / 1024) if path.is_file() else 1
-            for path in usr.rglob("*")
+            for path in root.rglob("*") if control not in path.parents
         )
         (control / "control").write_text(
             f"Package: {package}\nVersion: {args.version}\nArchitecture: amd64\n"
-            + (f"Conflicts: {PACKAGE}\nReplaces: {PACKAGE}\n" if development else f"Breaks: {breaks}\n") +
+            + (f"Conflicts: {PACKAGE}\nReplaces: {PACKAGE}\n" if development else f"Breaks: {breaks}\n")
+            + (f"Replaces: {breaks}\nX-Halcyon-Islands: bundled\n" if bundled_islands else "") +
             "Section: x11\nPriority: optional\n"
             f"Maintainer: {MAINTAINER}\nHomepage: {HOMEPAGE}\n"
             f"Installed-Size: {installed_size}\nDepends: {depends}\n"
@@ -229,6 +249,10 @@ def main():
     parser.add_argument("--google-client", type=Path)
     parser.add_argument("--wallpapers", type=Path,
                         help="directory of <name>.jpg files (default: assets/wallpapers-jpg)")
+    parser.add_argument("--islands-binary", type=Path)
+    parser.add_argument("--islands-manifest", type=Path)
+    parser.add_argument("--islands-licenses", type=Path)
+    parser.add_argument("--islands-catalog", type=Path)
     args = parser.parse_args()
     try:
         build(args)

@@ -355,7 +355,7 @@ const SEARCH: &[SearchHit] = &[
     ),
     hit(
         Page::Glance,
-        "At a glance",
+        "Daily overview",
         "at a glance daily overview combined separate cards clock weather calendar font background",
         false,
     ),
@@ -445,7 +445,7 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::DesktopDock,
         "Dock & panel",
-        "dock top bar panel applets position size autohide",
+        "dock top bar panel applets position size autohide penumbra gradient",
         false,
     ),
     hit(
@@ -487,7 +487,13 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::Builder,
         "Personal widget builder",
-        "recipe custom clock weather native parts compose widget builder",
+        "recipe custom clock weather calendar agenda cpu memory disk network gpu uptime system readings native parts compose widget builder",
+        false,
+    ),
+    hit(
+        Page::AdaptiveLooks,
+        "Adaptive looks",
+        "adaptive tidal paper moss day evening night solar daily cycle appearance",
         false,
     ),
     hit(
@@ -499,7 +505,7 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::DesktopAutomation,
         "Schedules & display rules",
-        "automation schedule automatic time displays monitors rules preset",
+        "automation schedule automatic time displays monitors rules preset sun solar dawn sunrise noon golden hour sunset city timezone",
         false,
     ),
     hit(
@@ -706,7 +712,8 @@ impl Page {
             Self::DesktopAppearance | Self::Appearance | Self::DesktopWallpaper => {
                 Some(Self::Themes)
             }
-            Self::DesktopAutomation | Self::Moments => Some(Self::DesktopProfiles),
+            Self::DesktopAutomation => Some(Self::DesktopProfiles),
+            Self::Moments | Self::AdaptiveLooks => Some(Self::DesktopAutomation),
             Self::PendingChanges => Some(Self::General),
             Self::DesktopWindowRules | Self::DesktopWorkspaces => Some(Self::DesktopWindows),
             Self::DesktopWindows | Self::DesktopIcons | Self::DesktopShortcuts => {
@@ -730,7 +737,7 @@ impl Page {
     }
     pub(super) fn save_hint(self) -> &'static str {
         match self {
-            Self::Overview => "Drag to move · drag a corner to resize",
+            Self::Overview => "Edit layout to preview changes before applying",
             Self::Themes => "Choose a theme to preview it here",
             Self::DesktopWallpaper => "Choose a wallpaper to preview it here",
             Self::DesktopProfiles => "Choose a setup to see what it includes",
@@ -1036,7 +1043,11 @@ mod tests {
             search("calendar update"),
             search("calendar calendar update")
         );
-        assert!(search("calendar gpu").is_empty());
+        // Builder now supports both Calendar and GPU parts; use an actually
+        // unsupported second term to verify that search retains every word.
+        assert!(search("calendar bluetooth").is_empty());
+        assert_eq!(search("calendar agenda")[0].page, Page::Builder);
+        assert_eq!(search("gpu recipe")[0].page, Page::Builder);
         assert!(search("calendar mystery option").is_empty());
         assert!(search("desktop").len() <= 10);
     }

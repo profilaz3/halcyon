@@ -50,7 +50,8 @@ pub use super::desktop_look::{
 pub const FORMAT: &str = "desktop-cards-profile";
 /// Frozen composition provenance requires version 10.
 /// Clock face, weight, italic and surface choices retain version 9.
-pub const VERSION: u32 = 15;
+pub const VERSION: u32 = 16;
+pub const VERSION_15: u32 = 15;
 pub const VERSION_14: u32 = 14;
 pub const VERSION_13: u32 = 13;
 pub const VERSION_12: u32 = 12;
@@ -981,11 +982,14 @@ impl Profile {
     }
     /// The version this record is written as.
     pub fn written_version(&self) -> u32 {
+        if self.has_extended_recipes() {
+            return VERSION;
+        }
         if let Some(package) = &self.package {
             return if package.ancestors.is_empty() {
                 VERSION_14
             } else {
-                VERSION
+                VERSION_15
             };
         }
         if self.has_recipes() {
@@ -1073,6 +1077,12 @@ impl Profile {
             }
         }
         (profile, omitted)
+    }
+    fn has_extended_recipes(&self) -> bool {
+        self.widget_style
+            .as_ref()
+            .and_then(|v| v.get("recipes"))
+            .is_some_and(|v| v.get("calendar").is_some() || v.get("devbox").is_some())
     }
     fn has_recipes(&self) -> bool {
         self.widget_style
@@ -1202,11 +1212,16 @@ impl Profile {
                 ));
             }
             package.validate().map_err(ProfileError::Invalid)?;
-            if !package.ancestors.is_empty() && self.version < VERSION {
+            if !package.ancestors.is_empty() && self.version < VERSION_15 {
                 return Err(ProfileError::Invalid(
                     "Remix credits require profile version 15".into(),
                 ));
             }
+        }
+        if self.has_extended_recipes() && self.version < VERSION {
+            return Err(ProfileError::Invalid(
+                "Calendar recipes require profile version 16".into(),
+            ));
         }
         if self.has_recipes() && self.version < VERSION_13 {
             return Err(ProfileError::Invalid(

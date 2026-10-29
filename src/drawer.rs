@@ -71,7 +71,7 @@ impl Widget {
             Self::Devbox => "System monitor",
             Self::Weather => "Weather",
             Self::Clock => "Clock",
-            Self::Glance => "At a glance",
+            Self::Glance => "Daily overview",
             Self::Music => "Music",
             Self::Notes => "Notes",
             Self::Focus => "Focus timer",

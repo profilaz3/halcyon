@@ -141,7 +141,24 @@ fn fresh_user_setup_routes_to_weather_calendar_and_local_widgets() {
         let _ = app.update(Message::Page(Page::Overview));
         click(&mut app, &mut native, "setup-open");
         click(&mut app, &mut native, "setup-back");
-        assert!(app.placement_active());
+        assert_eq!(app.page, Page::Overview);
+        assert!(
+            !app.placement_active(),
+            "Returning to the overview must not start an edit"
+        );
+        let before_layout = wizard::widgets::raw().unwrap();
+        click(&mut app, &mut native, "canvas-start");
+        assert!(
+            app.placement_active() && app.canvas.is_some(),
+            "Edit layout must open the draft editor"
+        );
+        click(&mut app, &mut native, "canvas-cancel");
+        assert!(!app.placement_active() && app.canvas.is_none());
+        assert_eq!(
+            wizard::widgets::raw().unwrap(),
+            before_layout,
+            "Opening and cancelling the layout editor must preserve saved preferences"
+        );
         assert!(!Config::load().setup_dismissed);
         click(&mut app, &mut native, "setup-open");
         click(&mut app, &mut native, "setup-skip");
@@ -234,4 +251,85 @@ fn connected_account_selector_and_errors_fit_and_reject_old_responses() {
             "failure preserves the previous account"
         );
     }
+}
+
+#[test]
+fn polish050_saved_selection_and_optional_followups_survive_hiding_and_restart() {
+    if child("polish050_saved_selection_and_optional_followups_survive_hiding_and_restart") {
+        return;
+    }
+    Config::save_changes(json!({
+        "onboarded": true, "setup_dismissed": true, "widgets_visible": true,
+        "enabled_widgets": ["weather", "calendar", "projects"], "glance": {"enabled": false},
+        "location": null, "project_roots": [], "future_preference": {"keep": 42},
+        "notes": {"enabled": false, "text": "keep my note"}
+    }))
+    .unwrap();
+    let size = Size::new(820., 600.);
+    let (mut app, _) = Settings::init(Core::default(), Page::Widgets);
+    app.calendar.connection = crate::calendar::Connection::default();
+    let _ = app.update(Message::Resized(size));
+    let mut native = Native::new(size);
+    assert!(
+        app.needs_setup(),
+        "Finish must not erase selected missing-content tasks"
+    );
+    assert_eq!(app.setup_followups.pending(&app.config, false).len(), 3);
+    native.capture(
+        app.settings_view(),
+        &controls_theme(&app.config),
+        "polish050-widget-followups-820",
+    );
+    click(&mut app, &mut native, "setup-task-dismiss-weather");
+    assert!(
+        !app.error,
+        "Dismissal must save through the production dispatcher: {}",
+        app.status
+    );
+    assert!(
+        !app.setup_followups
+            .pending(&app.config, false)
+            .contains(&wizard::follow_up::Task::Weather)
+    );
+    let raw = wizard::widgets::raw().unwrap();
+    assert_eq!(raw["future_preference"]["keep"], 42);
+    assert_eq!(raw["notes"]["text"], "keep my note");
+    assert_eq!(raw["setup_followup_weather_dismissed"], true);
+    let (mut app, _) = Settings::init(Core::default(), Page::Widgets);
+    app.calendar.connection = crate::calendar::Connection::default();
+    let _ = app.update(Message::Resized(size));
+    assert_eq!(
+        app.setup_followups.pending(&app.config, false),
+        vec![
+            wizard::follow_up::Task::Calendar,
+            wizard::follow_up::Task::Projects
+        ]
+    );
+    click(&mut app, &mut native, "widgets-show-all");
+    assert!(app.config.widget_selected(Widget::Weather));
+    assert!(!app.config.data_visible(Widget::Weather));
+    assert!(app.setup_followups.pending(&app.config, false).is_empty());
+    native.capture(
+        app.settings_view(),
+        &controls_theme(&app.config),
+        "polish050-widgets-hidden-820",
+    );
+    let _ = app.update(Message::Widget(Widget::Calendar, false));
+    assert!(!app.config.widget_selected(Widget::Calendar));
+    assert!(
+        !app.config.widgets_visible,
+        "An individual choice cannot undo Hide all"
+    );
+    click(&mut app, &mut native, "widgets-show-all");
+    assert_eq!(
+        app.setup_followups.pending(&app.config, false),
+        vec![wizard::follow_up::Task::Projects]
+    );
+    click(&mut app, &mut native, "setup-task-projects");
+    assert_eq!(app.page, Page::Projects);
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "project-choose-folders")
+            .is_some()
+    );
 }

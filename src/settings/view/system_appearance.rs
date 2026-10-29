@@ -228,20 +228,22 @@ impl Settings {
             ));
         }
         let scene = if self.scene_open() {
-            container(sample_window(
-                draft.preview(editor.variant),
-                draft,
-                self.stage_height().min(240.),
-            ))
-            .width(Length::Fill)
-            .max_width(640)
+            column::with_children(vec![
+                type_specimen(draft.preview(editor.variant), draft),
+                self.disclosure(
+                    "appearance-window-example",
+                    "Window example",
+                    sample_window(draft.preview(editor.variant), draft, 180.),
+                ),
+            ])
+            .spacing(12)
             .into()
         } else {
             cosmic::widget::space().height(0).into()
         };
         items.push(
             self.inspector_layout(
-                self.scene_frame(scene, "Sample · global desktop appearance"),
+                self.scene_frame(scene, "Sample · fonts and icons"),
                 column::with_children(vec![
                     self.search_target("appearance-fonts", self.appearance_type(draft)),
                     self.search_target("appearance-colors", self.appearance_colors(draft)),
@@ -482,7 +484,7 @@ impl Settings {
                 .width(Length::Fill)
                 .on_press(edit(Edit::Picker((!open).then_some(Picker::Font(role))))),
             )
-            .max_width(320)
+            .width(Length::Fill)
             .into(),
         ];
         if installed.is_none()
@@ -652,7 +654,7 @@ impl Settings {
                         .width(Length::Fill)
                         .on_press(edit(Edit::Picker((!open).then_some(Picker::Icons)))),
                     )
-                    .max_width(320)
+                    .width(Length::Fill)
                     .into(),
                 ];
                 if theme.is_none() {
@@ -939,6 +941,59 @@ impl Settings {
 /// a primary sidebar, a secondary card with text, a button and the accent.
 /// At its smallest it keeps one sidebar item fewer and only the accent
 /// button rather than squeezing every label.
+fn type_specimen<'a>(preview: Preview, draft: &AppearanceDraft) -> Element<'a, Message> {
+    let font = |role| match draft.font(role) {
+        Setting::Known(font) => cosmic::iced::Font::from(font),
+        Setting::Unsupported(_) => cosmic::iced::Font::default(),
+    };
+    let line = |value: &'static str, size, role| -> Element<'a, Message> {
+        text::body(value)
+            .size(size)
+            .font(font(role))
+            .class(cosmic::theme::Text::Color(color(preview.on_background)))
+            .into()
+    };
+    let mut rows = vec![
+        line("Make yourself at home", 24., FontRole::Interface),
+        line(
+            "The quick brown fox jumps over the lazy dog.",
+            15.,
+            FontRole::Interface,
+        ),
+        line("0123456789 · 09:41", 19., FontRole::Interface),
+        line("Aa Bb Cc  •  {} [] /", 14., FontRole::Monospace),
+    ];
+    if let Setting::Known(theme) = draft.icon_theme() {
+        let icons: Vec<Element<'a, Message>> =
+            ["folder", "text-x-generic", "image-x-generic", "user-trash"]
+                .into_iter()
+                .filter_map(|name| {
+                    freedesktop_icons::lookup(name)
+                        .with_theme(&theme)
+                        .with_size(32)
+                        .with_cache()
+                        .find()
+                })
+                .map(|path| icon::from_path(path).icon().size(32).into())
+                .collect();
+        if icons.is_empty() {
+            rows.push(label("Icon preview unavailable", 12., MUTED));
+        } else {
+            rows.push(row::with_children(icons).spacing(16).wrap().into());
+        }
+    }
+    fill(
+        column::with_children(rows).spacing(14).into(),
+        color(preview.background),
+        Color::TRANSPARENT,
+        0.,
+        12.,
+    )
+    .padding(16)
+    .width(Length::Fill)
+    .into()
+}
+
 fn sample_window<'a>(
     preview: Preview,
     draft: &AppearanceDraft,

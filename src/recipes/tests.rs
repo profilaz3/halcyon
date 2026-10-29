@@ -157,3 +157,99 @@ fn fb17_personal_recipe_public_profile_keeps_only_native_parts() {
     assert!(config.location.is_none());
     assert_eq!(config.recipes.weather, Some(recipe));
 }
+
+#[test]
+fn calendar_recipe_roundtrip_versions_reset_and_public_projection() {
+    let raw = serde_json::json!({"calendar_private":true,"location":{"name":"Private","latitude":1.,"longitude":2.}});
+    let recipe = Recipe::starter(Kind::Calendar);
+    assert_eq!(recipe.version, 2);
+    let mut document = crate::design::Document::from_legacy(&raw).unwrap();
+    document
+        .put_legacy(
+            Kind::Calendar.pointer(),
+            Some(serde_json::to_value(&recipe).unwrap()),
+        )
+        .unwrap();
+    assert_eq!(document.version, 3);
+    let restored = crate::design::Document::parse(&document.bytes().unwrap()).unwrap();
+    assert_eq!(
+        restored.project(&raw).unwrap()["recipes"]["calendar"]["id"],
+        recipe.id
+    );
+    let mut older = document.clone();
+    older.version = 2;
+    assert!(older.validate().is_err());
+    document
+        .put_legacy(Kind::Calendar.pointer(), Some(serde_json::Value::Null))
+        .unwrap();
+    assert!(document.project(&raw).unwrap()["recipes"]["calendar"].is_null());
+    use crate::desktop::profiles::{Profile, export, import};
+    let mut p = Profile::new("Agenda").unwrap();
+    p.widget_style = Some(serde_json::json!({"recipes":{"calendar":recipe}}));
+    p.version = p.written_version();
+    assert_eq!(p.version, 16);
+    let bytes = export(&p).unwrap().bytes;
+    assert!(!String::from_utf8_lossy(&bytes).contains("Private"));
+    let shared = import(&bytes).unwrap();
+    let scene = crate::settings::sharing::Scene::new(&shared).unwrap();
+    assert_eq!(scene.config().unwrap().recipes.calendar, Some(recipe));
+    p.version = 15;
+    assert!(p.validate().is_err());
+}
+
+#[test]
+fn system_recipe_metric_selection_sampling_and_portable_versions() {
+    use crate::config::Config;
+    let mut recipe = Recipe::starter(Kind::System);
+    recipe.parts = vec![Part::Caption, Part::Memory, Part::Settings];
+    recipe.seal();
+    recipe.validate().unwrap();
+    assert_eq!(recipe.primary(), Part::Memory);
+    assert!(!recipe.can_remove(1));
+    let mut config = Config::default();
+    config.devbox.cpu = true;
+    config.devbox.services = true;
+    config.devbox.memory = false;
+    let original = config.devbox.clone();
+    config.recipes.devbox = Some(recipe.clone());
+    let sampling = config.devbox_sampling();
+    assert!(sampling.memory && sampling.needs_sample());
+    assert!(
+        !sampling.cpu
+            && !sampling.gpu
+            && !sampling.network
+            && !sampling.services
+            && !sampling.disk
+            && !sampling.uptime
+    );
+    assert_eq!(config.devbox, original);
+    let raw = serde_json::json!({"recipes":{"devbox":recipe},"devbox":{"memory":false}});
+    let document = crate::design::Document::from_legacy(&raw).unwrap();
+    assert_eq!(document.version, 3);
+    assert_eq!(
+        document.project(&raw).unwrap()["recipes"]["devbox"],
+        raw["recipes"]["devbox"]
+    );
+    let mut old = document.clone();
+    old.version = 2;
+    assert!(old.validate().is_err());
+    let mut profile = crate::desktop::profiles::Profile::new("Readings").unwrap();
+    profile.widget_style = Some(serde_json::json!({"recipes":{"devbox":recipe}}));
+    profile.version = profile.written_version();
+    assert_eq!(profile.version, 16);
+    let bytes = crate::desktop::profiles::export(&profile).unwrap().bytes;
+    let imported = crate::desktop::profiles::import(&bytes).unwrap();
+    assert_eq!(
+        crate::settings::sharing::Scene::new(&imported)
+            .unwrap()
+            .config()
+            .unwrap()
+            .recipes
+            .devbox,
+        config.recipes.devbox
+    );
+    profile.version = 15;
+    assert!(profile.validate().is_err());
+    config.recipes.devbox = None;
+    assert_eq!(config.devbox_sampling().as_ref(), &original);
+}

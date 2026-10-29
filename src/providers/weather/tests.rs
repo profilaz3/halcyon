@@ -7,6 +7,7 @@ fn key(name: &str) -> Key {
         name: name.into(),
         latitude: 45.,
         longitude: 16.,
+        timezone: None,
     })
     .unwrap()
 }

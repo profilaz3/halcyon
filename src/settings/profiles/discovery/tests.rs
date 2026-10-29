@@ -115,6 +115,11 @@ fn fb19_native_discovery_and_keyboard_remix_fit_compact_and_wide() {
     for (w, h) in [(820., 600.), (1280., 800.)] {
         app.profiles.update(Message::Discard);
         app.profiles.update(Message::DiscoveryQuery("paper".into()));
+        crate::settings::tests::send_settings(
+            &mut app,
+            crate::settings::Message::Resized(Size::new(w, h)),
+        );
+        app.open_sections.remove("setup-library-actions");
         let mut native = crate::native_test::Native::new(Size::new(w, h));
         let search = native.bounds(app.settings_view(), "discovery-search");
         assert!(search.y + search.height <= h);
@@ -125,6 +130,45 @@ fn fb19_native_discovery_and_keyboard_remix_fit_compact_and_wide() {
         );
         app.profiles
             .update(Message::Select(Selection::Preset("paper-studio")));
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "setup-remix")
+                .is_none(),
+            "Closed Save & export must not expose hidden actions to focus"
+        );
+        crate::settings::tests::native_reveal(&app, &mut native, "setup-library-actions");
+        native.operate(
+            app.settings_view(),
+            Box::new(cosmic::iced::advanced::widget::operation::focusable::focus(
+                cosmic::widget::Id::new("setup-library-actions"),
+            )),
+        );
+        let key = keyboard::Key::Named(keyboard::key::Named::Enter);
+        let (messages, _) = native.event(
+            app.settings_view(),
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key: key.clone(),
+                modified_key: key,
+                physical_key: keyboard::key::Physical::Unidentified(
+                    keyboard::key::NativeCode::Unidentified,
+                ),
+                location: keyboard::Location::Standard,
+                modifiers: keyboard::Modifiers::empty(),
+                text: None,
+                repeat: false,
+            }),
+            Point::new(1., 1.),
+        );
+        assert!(matches!(
+            messages.as_slice(),
+            [crate::settings::Message::ToggleSection(
+                "setup-library-actions"
+            )]
+        ));
+        for message in messages {
+            crate::settings::tests::send_settings(&mut app, message);
+        }
+        assert!(app.open_sections.contains("setup-library-actions"));
         crate::settings::tests::native_reveal(&app, &mut native, "setup-remix");
         let b = native.bounds(app.settings_view(), "setup-remix");
         assert!(b.y >= 0. && b.y + b.height <= h);

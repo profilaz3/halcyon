@@ -187,6 +187,7 @@ fn fb17_stale_recipe_weather_keeps_age_and_failure_visible_at_compact_sizes() {
         name: "Private city".into(),
         latitude: 0.,
         longitude: 0.,
+        timezone: None,
     });
     let mut recipe = Recipe::starter(Kind::Weather);
     recipe.parts = vec![Part::Reading];
@@ -218,4 +219,158 @@ fn fb17_stale_recipe_weather_keeps_age_and_failure_visible_at_compact_sizes() {
             &format!("fb17-weather-stale-{}", size[0]),
         );
     }
+}
+
+#[test]
+fn calendar_recipe_privacy_status_and_compact_actions_use_existing_agenda() {
+    let now = chrono::Local::now();
+    let data = CalendarData {
+        updated_at: (now - chrono::Duration::days(2)).to_rfc3339(),
+        events: vec![CalendarEvent {
+            title: "PRIVATE APPOINTMENT".into(),
+            start: (now + chrono::Duration::minutes(10)).to_rfc3339(),
+            end: (now + chrono::Duration::minutes(40)).to_rfc3339(),
+            meeting_url: Some("https://example.com/private".into()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let mut config = Config::default();
+    config.calendar_private = true;
+    let reading = calendar::reading(
+        &config,
+        Some(&data),
+        &[now.date_naive()],
+        now,
+        false,
+        true,
+        true,
+    );
+    assert_eq!(reading.agenda.len(), 1);
+    assert_eq!(reading.agenda[0].title, "Busy");
+    assert!(reading.agenda[0].details.is_none());
+    assert!(reading.status.as_ref().unwrap().contains("saved events"));
+    let recipe = Recipe::starter(Kind::Calendar);
+    for size in [[160., 100.], [320., 220.], [520., 220.]] {
+        let mut native = crate::native_test::Native::new(cosmic::iced::Size::new(size[0], size[1]));
+        let view = || {
+            super::view(
+                &config,
+                &recipe,
+                now.naive_local(),
+                reading.clone(),
+                Context::Live,
+                size,
+            )
+        };
+        let bounds = native.bounds(view(), "recipe-calendar-status");
+        assert!(bounds.y + bounds.height <= size[1], "{bounds:?}");
+        assert!(
+            native
+                .try_bounds(view(), "recipe-calendar-event-0")
+                .is_none()
+        );
+        native.capture(
+            view(),
+            &cosmic::Theme::dark(),
+            &format!("calendar-recipe-private-{}", size[0]),
+        );
+    }
+    config.calendar_private = false;
+    let public = calendar::reading(
+        &config,
+        Some(&data),
+        &[now.date_naive()],
+        now,
+        false,
+        true,
+        false,
+    );
+    assert!(
+        public.agenda[0]
+            .details
+            .as_ref()
+            .unwrap()
+            .starts_with("halcyon-event:")
+    );
+    assert!(public.status.as_ref().unwrap().contains("over a day"));
+    let mut native = crate::native_test::Native::new(cosmic::iced::Size::new(320., 220.));
+    assert!(
+        native
+            .try_bounds(
+                super::view(
+                    &config,
+                    &recipe,
+                    now.naive_local(),
+                    public,
+                    Context::LocalPreview,
+                    [320., 220.]
+                ),
+                "recipe-calendar-event-0"
+            )
+            .is_none()
+    );
+}
+
+#[test]
+fn system_recipe_missing_metrics_compact_frames_and_provider_demand() {
+    use cosmic::Application;
+    let mut config = Config::default();
+    let mut recipe = Recipe::starter(Kind::System);
+    recipe.parts = vec![Part::Memory, Part::Cpu, Part::Gpu, Part::Settings];
+    recipe.seal();
+    config.recipes.devbox = Some(recipe.clone());
+    let now = Local::now().naive_local();
+    let missing = system::reading(&recipe, &Metrics::default());
+    assert!(missing.status.is_some());
+    assert!(
+        missing
+            .system
+            .iter()
+            .all(|m| m.value == "—" && m.fraction.is_none())
+    );
+    let present = system::reading(
+        &recipe,
+        &super::super::settings_preview::monitor_sample().metrics,
+    );
+    assert!(present.status.is_none());
+    assert!(present.system[0].value.contains("8.2"));
+    for size in [[160., 100.], [320., 220.], [520., 220.]] {
+        let frame = plan(&recipe, size, true);
+        assert!(frame.parts.contains(&Part::Memory));
+        let mut native = crate::native_test::Native::new(cosmic::iced::Size::new(size[0], size[1]));
+        let bounds = native.bounds(
+            view(&config, &recipe, now, missing.clone(), Context::Live, size),
+            "recipe-system-status",
+        );
+        assert!(bounds.y + bounds.height <= size[1]);
+        native.capture(
+            view(&config, &recipe, now, missing.clone(), Context::Live, size),
+            &cosmic::Theme::dark(),
+            &format!("system-recipe-missing-{}", size[0]),
+        );
+        native.capture(
+            view(
+                &config,
+                &recipe,
+                now,
+                present.clone(),
+                Context::LocalPreview,
+                size,
+            ),
+            &cosmic::Theme::light(),
+            &format!("system-recipe-sample-{}", size[0]),
+        );
+    }
+    config.widgets_visible = false;
+    let (mut cards, initial) = Cards::init(Core::default(), config);
+    drop(initial);
+    drop(cards.refresh_visible_data());
+    assert!(!cards.metrics_fetching);
+    assert!(!cards.service_fetching);
+    cards.metrics = super::super::settings_preview::monitor_sample()
+        .metrics
+        .clone();
+    drop(cards.update(Message::Metrics(Err("fixture failed sample".into()))));
+    assert!(system::reading(&recipe, &cards.metrics).status.is_some());
 }

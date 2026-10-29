@@ -578,6 +578,7 @@ fn cancel_undoes_setup_after_a_city_and_after_reopening() {
         longitude: 20.5,
         admin1: String::new(),
         country: "Serbia".into(),
+        timezone: None,
     }];
     let _ = app.update(Message::ChooseCity(0));
     assert!(Config::load().location.is_some());
@@ -1740,5 +1741,96 @@ fn auditfix_state02_ordinary_undo_does_not_create_or_replace_unknown_state() {
             assert!(app.status.starts_with("Undo succeeded, but could not save setup progress:"));
         }
         assert_eq!(std::fs::read_to_string(&path).ok(), state);
+    }
+}
+
+#[test]
+fn polish050_compact_choices_and_seven_step_progress_keep_default_bar_navigation() {
+    if child("polish050_compact_choices_and_seven_step_progress_keep_default_bar_navigation") {
+        return;
+    }
+    seed_desktop();
+    for size in [Size::new(820., 600.), Size::new(1024., 760.)] {
+        let (mut app, mut native) = open(size);
+        click(&mut app, &mut native, "wizard-start");
+        click(&mut app, &mut native, "wizard-look-calm");
+        click(&mut app, &mut native, "wizard-next");
+        assert_eq!(step(&app), wizard::Step::Bars);
+        native.text_bounds(app.settings_view(), "Step 3 of 7 · Dock & panel");
+        let baseline = wizard::widgets::raw().unwrap();
+        let dock = user(DOCK, "border_radius");
+        let footer = native.bounds(app.settings_view(), "wizard-next");
+        for id in [
+            "wizard-panel-bar",
+            "wizard-panel-islands",
+            "wizard-panel-square",
+            "wizard-dock-rounded",
+            "wizard-dock-floating",
+            "wizard-dock-hides",
+        ] {
+            let bounds = native.bounds(app.settings_view(), id);
+            assert!(
+                bounds.y >= 0. && bounds.y + bounds.height < footer.y,
+                "{id}: {bounds:?}"
+            );
+        }
+        native.capture(
+            app.settings_view(),
+            &controls_theme(&app.config),
+            &format!("polish050-bars-{}", size.width),
+        );
+        click(&mut app, &mut native, "wizard-next");
+        assert_eq!(
+            step(&app),
+            wizard::Step::Widgets,
+            "Untouched defaults accept Next"
+        );
+        assert_eq!(wizard::widgets::raw().unwrap(), baseline);
+        assert_eq!(user(DOCK, "border_radius"), dock);
+        native.text_bounds(app.settings_view(), "Step 4 of 7 · Your widgets");
+        let footer = native.bounds(app.settings_view(), "wizard-next");
+        for widget in wizard::widgets::CHOICES {
+            let bounds = native.bounds(
+                app.settings_view(),
+                &format!("wizard-widget-{}", widget.key()),
+            );
+            assert!(
+                bounds.y >= 0. && bounds.y + bounds.height < footer.y,
+                "{} must be visible without inner scrolling: {bounds:?}, {footer:?}",
+                widget.key()
+            );
+        }
+        let grouping = native.bounds(app.settings_view(), "wizard-widget-group");
+        assert!(grouping.y >= 0. && grouping.y + grouping.height < footer.y);
+        let selected = app.wizard.as_ref().unwrap().widgets.selected.clone();
+        let grouped = app.wizard.as_ref().unwrap().widgets.grouped;
+        click(&mut app, &mut native, "wizard-widget-group");
+        assert_eq!(app.wizard.as_ref().unwrap().widgets.grouped, !grouped);
+        assert_eq!(app.wizard.as_ref().unwrap().widgets.selected, selected);
+        click(&mut app, &mut native, "wizard-widget-group");
+        assert_eq!(app.wizard.as_ref().unwrap().widgets.grouped, grouped);
+        assert_eq!(
+            wizard::widgets::raw().unwrap(),
+            baseline,
+            "Group preview must not commit before Arrange"
+        );
+        native.capture(
+            app.settings_view(),
+            &controls_theme(&app.config),
+            &format!("polish050-widget-choices-{}", size.width),
+        );
+        for current in [
+            wizard::Step::Arrange,
+            wizard::Step::Weather,
+            wizard::Step::Ready,
+        ] {
+            let _ = app.update(Message::Wizard(wizard::Message::Show(current)));
+            native.text_bounds(
+                app.settings_view(),
+                &format!("Step {} of 7 · {}", current.index() + 1, current.title()),
+            );
+        }
+        click(&mut app, &mut native, "wizard-cancel");
+        assert!(app.wizard.is_none());
     }
 }

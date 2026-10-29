@@ -39,6 +39,15 @@ fn opening_reads_only_and_offers_every_profile_and_display() {
             "Moss",
             "Carbon",
             "Clean desktop",
+            "Tidal · Day",
+            "Tidal · Evening",
+            "Tidal · Night",
+            "Paper · Day",
+            "Paper · Evening",
+            "Paper · Night",
+            "Moss · Day",
+            "Moss · Evening",
+            "Moss · Night",
             "Day moment",
             "Night moment"
         ]
@@ -433,5 +442,56 @@ fn incomplete_new_schedule_reopens_without_starting_automation() {
     assert!(
         !fixture.0.join("state").exists(),
         "recovery itself writes nothing"
+    );
+}
+
+#[test]
+fn adaptive_cycle_requires_city_and_adds_once_without_touching_desktop_or_existing_rules() {
+    use crate::desktop::profiles::adaptive::Look;
+    let (fixture, mut editor) = editor("adaptive-cycle");
+    editor.update(Message::AdaptiveRoutine(Look::Tidal, Source::Manual), true);
+    assert!(!fixture.0.join("state/automation.json").exists());
+    editor.update(
+        Message::ManualCity(crate::config::Location {
+            name: "Zagreb".into(),
+            latitude: 45.815,
+            longitude: 15.982,
+            timezone: Some("Europe/Zagreb".into()),
+        }),
+        true,
+    );
+    editor.update(Message::New(Kind::Schedule), true);
+    editor.update(
+        Message::Draft(DraftEdit::Profile(ProfileRef::Moment(
+            crate::moments::Phase::Day,
+        ))),
+        true,
+    );
+    editor.update(Message::Save, true);
+    editor.update(Message::Pause(PauseFor::Resume), true);
+    let before = saved(&fixture);
+    let config = fixture.store().app_config().map(|p| std::fs::read(p).ok());
+    editor.update(Message::AdaptiveRoutine(Look::Tidal, Source::Manual), true);
+    let added = saved(&fixture);
+    assert_eq!(added.rules.len(), 4);
+    assert_eq!(added.rules[0], before.rules[0]);
+    assert_eq!(added.paused, before.paused);
+    assert_eq!(added.version, 3);
+    for rule in &added.rules[1..] {
+        assert!(rule.enabled);
+        assert!(matches!(
+            rule.when,
+            Trigger::Solar {
+                source: Source::Manual,
+                ..
+            }
+        ));
+    }
+    editor.update(Message::AdaptiveRoutine(Look::Tidal, Source::Manual), true);
+    editor.update(Message::AdaptiveRoutine(Look::Moss, Source::Manual), true);
+    assert_eq!(saved(&fixture), added);
+    assert_eq!(
+        fixture.store().app_config().map(|p| std::fs::read(p).ok()),
+        config
     );
 }

@@ -212,6 +212,43 @@ pub enum Background {
     Color([f32; 3]),
 }
 
+/// Penumbra's existing per-bar record, independent of the Islands sidecar.
+/// Keep the legacy key and fields compatible with motixo/penumbra-panel.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PenumbraGradient {
+    pub enabled: bool,
+    pub height: u32,
+    pub opacity: f32,
+    pub maximized_color: [u8; 3],
+    pub maximized_opacity: f32,
+}
+
+impl Default for PenumbraGradient {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            height: 96,
+            opacity: 0.4,
+            maximized_color: [0x24, 0x26, 0x2a],
+            maximized_opacity: 1.,
+        }
+    }
+}
+
+fn check_penumbra(value: &RawValue) -> Result<(), String> {
+    if let Some(effect) = value.decode::<Option<PenumbraGradient>>()?
+        && (!(16..=512).contains(&effect.height)
+            || !effect.opacity.is_finite()
+            || !(0.0..=1.0).contains(&effect.opacity)
+            || !effect.maximized_opacity.is_finite()
+            || !(0.0..=1.0).contains(&effect.maximized_opacity))
+    {
+        return Err("Unsupported Penumbra gradient settings".into());
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Output {
     All,
@@ -364,7 +401,7 @@ macro_rules! rules {
 }
 
 /// The keys this editor may write, for any panel entry.
-pub static RULES: [KeyRule; 19] = rules![
+pub static RULES: [KeyRule; 20] = rules![
     "anchor" => check_anchor,
     "anchor_gap" => check_bool,
     "margin" => check_margin,
@@ -376,6 +413,7 @@ pub static RULES: [KeyRule; 19] = rules![
     "exclusive_zone" => check_bool,
     "autohide_behavior" => check_behavior,
     "opacity" => check_opacity,
+    "top_edge_gradient" => check_penumbra,
     "border_radius" => check_radius,
     "spacing" => check_spacing,
     "padding" => check_padding,
@@ -390,7 +428,7 @@ pub static RULES: [KeyRule; 19] = rules![
 /// of them conflict, the whole group's edits are dropped.
 const GROUPS: [&[&str]; 4] = [
     &["autohide", "exclusive_zone"],
-    &["anchor_gap", "margin"],
+    &["anchor_gap", "margin", "top_edge_gradient"],
     &["size", "size_wings", "size_center"],
     &["plugins_wings", "plugins_center"],
 ];
@@ -407,6 +445,7 @@ pub fn key_label(name: &str) -> &'static str {
         "autohide" | "exclusive_zone" => "hiding",
         "autohide_behavior" => "hide timing",
         "opacity" => "opacity",
+        "top_edge_gradient" => "Penumbra gradient",
         "border_radius" => "corners",
         "spacing" => "spacing",
         "padding" => "padding",
@@ -648,6 +687,7 @@ fn upstream_default(name: &str) -> Option<RawValue> {
         "border_radius" => RawValue::encode(&8u32),
         "margin" => RawValue::encode(&4u16),
         "opacity" => RawValue::encode(&0.8f32),
+        "top_edge_gradient" => RawValue::encode(&None::<PenumbraGradient>),
         "keep_style_on_maximize" => RawValue::encode(&false),
         _ => return None,
     };
@@ -980,6 +1020,9 @@ impl PanelDraft {
     }
     /// Floating uses a gap from the screen edge (cosmic-settings uses 4 px).
     pub fn set_floating(&mut self, floating: bool) {
+        if floating {
+            self.set_penumbra(false);
+        }
         self.set("anchor_gap", &floating);
         let margin = self.margin().known().copied().unwrap_or(0);
         if floating && margin == 0 {
@@ -1002,6 +1045,43 @@ impl PanelDraft {
     }
     pub fn opacity(&self) -> Setting<f32> {
         self.get("opacity")
+    }
+    pub fn penumbra(&self) -> Setting<Option<PenumbraGradient>> {
+        if let Some(raw) = self.raw("top_edge_gradient")
+            && check_penumbra(&raw).is_err()
+        {
+            return Setting::Unsupported(raw.as_str().trim().into());
+        }
+        self.get("top_edge_gradient")
+    }
+    pub fn set_penumbra(&mut self, enabled: bool) {
+        if let Setting::Known(current) = self.penumbra() {
+            if current.is_none() && !enabled {
+                return;
+            }
+            let mut effect = current.unwrap_or_default();
+            effect.enabled = enabled;
+            self.set("top_edge_gradient", &Some(effect));
+            if enabled {
+                self.set_floating(false);
+            }
+        }
+    }
+    pub fn set_penumbra_height(&mut self, height: u32) {
+        if let Setting::Known(Some(mut effect)) = self.penumbra()
+            && effect.enabled
+        {
+            effect.height = height.clamp(16, 512);
+            self.set("top_edge_gradient", &Some(effect));
+        }
+    }
+    pub fn set_penumbra_maximized_opacity(&mut self, percent: u8) {
+        if let Setting::Known(Some(mut effect)) = self.penumbra()
+            && effect.enabled
+        {
+            effect.maximized_opacity = f32::from(percent.min(100)) / 100.;
+            self.set("top_edge_gradient", &Some(effect));
+        }
     }
     pub fn set_opacity_percent(&mut self, percent: u8) {
         let target = f32::from(percent.min(100)) / 100.;
@@ -1126,6 +1206,169 @@ mod tests {
     use crate::desktop::store::tests::Fixture;
 
     const DOCK: &str = "com.system76.CosmicPanel.Dock";
+
+    #[test]
+    fn penumbra_keeps_legacy_preferences_and_islands_independent() {
+        let fixture = live_like("penumbra-independent");
+        let store = fixture.store();
+        let sidecar = super::super::islands::key(PanelKind::Dock);
+        let islands = dock_islands_core::Settings {
+            enabled: true,
+            ..Default::default()
+        };
+        fixture.user(
+            sidecar.namespace(),
+            sidecar.key(),
+            &ron::to_string(&islands).unwrap(),
+        );
+        let original = "Some((enabled:false,height:144,opacity:0.65,maximized_color:(10,20,30),maximized_opacity:0.8))";
+        fixture.user(DOCK, "top_edge_gradient", original);
+        let mut draft = PanelDraft::load(&store, PanelKind::Dock).unwrap();
+        let before = draft.penumbra().known().unwrap().unwrap();
+        draft.set_penumbra(true);
+        let mut expected = before;
+        expected.enabled = true;
+        assert_eq!(draft.penumbra(), Setting::Known(Some(expected)));
+        assert_eq!(
+            draft.edited().collect::<Vec<_>>(),
+            ["anchor_gap", "margin", "top_edge_gradient"]
+        );
+        let change = store.apply(&draft.patch()).unwrap();
+        assert_eq!(
+            PanelDraft::load(&store, PanelKind::Dock).unwrap().islands(),
+            Setting::Known(islands)
+        );
+        assert_eq!(fixture.read(DOCK, "opacity").as_deref(), Some("0.25"));
+        assert_eq!(fixture.read(DOCK, "anchor_gap").as_deref(), Some("false"));
+        assert_eq!(fixture.read(DOCK, "margin").as_deref(), Some("0"));
+        assert_eq!(
+            fixture.read("com.system76.CosmicPanel.Panel", "top_edge_gradient"),
+            None
+        );
+        store.undo(&change).unwrap();
+        assert_eq!(fixture.read(DOCK, "anchor_gap"), None);
+        assert_eq!(fixture.read(DOCK, "margin"), None);
+        assert_eq!(
+            fixture.read(DOCK, "top_edge_gradient").as_deref(),
+            Some(original)
+        );
+    }
+
+    #[test]
+    fn penumbra_absent_and_future_records_are_preserved() {
+        let fixture = live_like("penumbra-future");
+        let store = fixture.store();
+        let mut draft = PanelDraft::load(&store, PanelKind::Dock).unwrap();
+        assert_eq!(draft.penumbra(), Setting::Known(None));
+        draft.set_penumbra(false);
+        assert!(!draft.dirty());
+        draft.set_penumbra(true);
+        let change = store.apply(&draft.patch()).unwrap();
+        store.undo(&change).unwrap();
+        assert_eq!(fixture.read(DOCK, "top_edge_gradient"), None);
+        for original in [
+            "Some((future: true))",
+            "Some((height: 0))",
+            "Some((opacity: NaN))",
+            "Some((maximized_opacity: 2.0))",
+        ] {
+            fixture.user(DOCK, "top_edge_gradient", original);
+            let mut draft = PanelDraft::load(&store, PanelKind::Dock).unwrap();
+            assert!(
+                matches!(draft.penumbra(), Setting::Unsupported(_)),
+                "{original}"
+            );
+            draft.set_penumbra(true);
+            draft.set_penumbra(false);
+            assert!(!draft.dirty());
+            draft.set_opacity_percent(50);
+            store.apply(&draft.patch()).unwrap();
+            assert_eq!(
+                fixture.read(DOCK, "top_edge_gradient").as_deref(),
+                Some(original)
+            );
+        }
+    }
+
+    #[test]
+    fn penumbra_rejects_concurrent_preference_changes() {
+        let fixture = live_like("penumbra-conflict");
+        let store = fixture.store();
+        let mut draft = PanelDraft::load(&store, PanelKind::Dock).unwrap();
+        draft.set_penumbra(true);
+        fixture.user(
+            DOCK,
+            "top_edge_gradient",
+            "Some((enabled:false,height:192))",
+        );
+        assert!(matches!(
+            store.apply(&draft.patch()),
+            Err(DesktopError::Conflict(_))
+        ));
+        assert_eq!(
+            fixture.read(DOCK, "top_edge_gradient").as_deref(),
+            Some("Some((enabled:false,height:192))")
+        );
+    }
+
+    #[test]
+    fn penumbra_and_floating_are_one_guarded_undoable_choice() {
+        let fixture = live_like("penumbra-floating");
+        let store = fixture.store();
+        let mut draft = PanelDraft::load(&store, PanelKind::Dock).unwrap();
+        draft.set_penumbra(true);
+        assert_eq!(draft.floating(), Setting::Known(false));
+        let enabled = store.apply(&draft.patch()).unwrap();
+        let mut draft = PanelDraft::load(&store, PanelKind::Dock).unwrap();
+        draft.set_floating(true);
+        assert!(!draft.penumbra().known().unwrap().unwrap().enabled);
+        assert_eq!(draft.floating(), Setting::Known(true));
+        let floating = store.apply(&draft.patch()).unwrap();
+        store.undo(&floating).unwrap();
+        let draft = PanelDraft::load(&store, PanelKind::Dock).unwrap();
+        assert!(draft.penumbra().known().unwrap().unwrap().enabled);
+        assert_eq!(draft.floating(), Setting::Known(false));
+        store.undo(&enabled).unwrap();
+        let mut draft = PanelDraft::load(&store, PanelKind::Dock).unwrap();
+        draft.set_penumbra(true);
+        fixture.user(DOCK, "anchor_gap", "true");
+        assert!(matches!(
+            store.apply(&draft.patch()),
+            Err(DesktopError::Conflict(_))
+        ));
+        assert_eq!(fixture.read(DOCK, "top_edge_gradient"), None);
+    }
+
+    #[test]
+    fn penumbra_settings_survive_disabling_and_ignore_stale_slider_events() {
+        let fixture = live_like("penumbra-settings");
+        let store = fixture.store();
+        let mut draft = PanelDraft::load(&store, PanelKind::Dock).unwrap();
+        draft.set_penumbra_height(192);
+        assert!(!draft.dirty());
+        draft.set_penumbra(true);
+        draft.set_penumbra_height(192);
+        draft.set_penumbra_maximized_opacity(65);
+        store.apply(&draft.patch()).unwrap();
+        let mut draft = PanelDraft::load(&store, PanelKind::Dock).unwrap();
+        draft.set_penumbra(false);
+        store.apply(&draft.patch()).unwrap();
+        let mut draft = PanelDraft::load(&store, PanelKind::Dock).unwrap();
+        draft.set_penumbra_height(256);
+        draft.set_penumbra_maximized_opacity(100);
+        assert!(!draft.dirty());
+        let saved = draft.penumbra().known().unwrap().unwrap();
+        assert_eq!(saved.height, 192);
+        assert_eq!(saved.maximized_opacity, 0.65);
+        draft.set_penumbra(true);
+        assert_eq!(draft.penumbra().known().unwrap().unwrap().height, 192);
+        draft.set_penumbra_height(0);
+        draft.set_penumbra_maximized_opacity(255);
+        let normalized = draft.penumbra().known().unwrap().unwrap();
+        assert_eq!(normalized.height, 16);
+        assert_eq!(normalized.maximized_opacity, 1.);
+        store.apply(&draft.patch()).unwrap();
+    }
 
     /// The installed system defaults and the live user values observed on
     /// this machine (read-only), reproduced as fixture text.

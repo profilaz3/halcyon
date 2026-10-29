@@ -1,8 +1,9 @@
-//! Explicit update discovery and optional Islands installation. The OS owns authentication and installation.
-mod enrollment;
+//! Update discovery and included Islands activation. The OS installs updates.
 mod identity;
 pub(super) mod islands;
 mod packagekit;
+mod summary;
+pub(super) use summary::Summary;
 #[cfg(test)]
 mod tests;
 
@@ -25,9 +26,6 @@ pub enum Failure {
     InvalidResponse,
     Failed,
     InstallationChanged,
-    Busy,
-    DependencyChanges,
-    ReleaseRequired,
     Activation,
     IslandsMismatch,
 }
@@ -35,13 +33,10 @@ impl Failure {
     pub fn label(&self) -> &'static str {
         match self {
             Self::IslandsMismatch => {
-                "The Islands package changed or does not match this Halcyon. Update or reinstall both in your package manager, then check again."
-            }
-            Self::ReleaseRequired => {
-                "Install the Halcyon release package to add Islands here. Source installations use the development guide."
+                "The Islands package changed or does not match this Halcyon. Update or reinstall Halcyon in your package manager, then check again."
             }
             Self::Activation => {
-                "Islands could not be enabled. Check Islands diagnostics and the installation guide before retrying."
+                "Islands could not be changed. Check Islands diagnostics and the installation guide before retrying."
             }
             Self::MissingPackageKit => "System update service unavailable.",
             Self::Offline => "Couldn’t reach the package sources. Try again when online.",
@@ -52,12 +47,6 @@ impl Failure {
             Self::InvalidResponse => "The system returned an incomplete update result.",
             Self::Failed => "The system could not complete this operation.",
             Self::InstallationChanged => "Installation changed. Reopen Settings to check it again.",
-            Self::Busy => {
-                "Another system installation is running. Wait for it to finish, then check again."
-            }
-            Self::DependencyChanges => {
-                "This add-on needs additional system changes. Use the installation guide to review them in your package manager."
-            }
         }
     }
 }
@@ -294,7 +283,7 @@ impl Updates {
         let identity = self
             .identity
             .as_ref()
-            .filter(|i| i.can_check() || i.can_install_islands())?;
+            .filter(|i| i.can_check() || i.can_manage_islands())?;
         let version = match &self.check {
             Check::Available(v) => v,
             _ => identity.installed_version.as_ref()?,
@@ -317,6 +306,7 @@ impl Updates {
             return;
         }
         let mut identity = Identity {
+            running_version: "0.2.5".into(),
             installed_version: Some("0.2.5".into()),
             architecture: Some("amd64".into()),
             ..Default::default()

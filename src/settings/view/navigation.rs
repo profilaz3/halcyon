@@ -287,17 +287,9 @@ impl Settings {
                 .into(),
         ];
         let mut empty = error.is_none();
-        if let Some((_, label, id)) = self.last_desktop_change.as_ref().filter(|(owner, _, id)| {
-            owns(*owner, self.page) && self.undo_baseline.as_ref() != Some(id)
-        }) {
+        if let Some(undo) = self.page_undo_button() {
             empty = false;
-            items.push(
-                button::text(format!("Undo {}", label.to_lowercase()))
-                    .id(cosmic::widget::Id::new("settings-undo"))
-                    .leading_icon(icon::from_name("edit-undo-symbolic").size(14))
-                    .on_press(Message::UndoDesktopShown(Some(id.clone())))
-                    .into(),
-            );
+            items.push(undo);
         }
         // Nothing to say: no empty bar at the bottom of the page.
         if empty {
@@ -313,6 +305,19 @@ impl Settings {
         .into()
     }
 
+    pub(in crate::settings) fn page_undo_button(&self) -> Option<Element<'_, Message>> {
+        let (_, label, id) = self.last_desktop_change.as_ref().filter(|(owner, _, id)| {
+            owns(*owner, self.page) && self.undo_baseline.as_ref() != Some(id)
+        })?;
+        Some(
+            button::text(format!("Undo {}", label.to_lowercase()))
+                .id(cosmic::widget::Id::new("settings-undo"))
+                .leading_icon(icon::from_name("edit-undo-symbolic").size(14))
+                .on_press(Message::UndoDesktopShown(Some(id.clone())))
+                .into(),
+        )
+    }
+
     pub(super) fn page_error(&self) -> Option<&str> {
         use crate::settings::desktop::Notice;
         let notices = match self.page {
@@ -325,6 +330,11 @@ impl Settings {
             Page::DesktopShortcuts => [self.shortcuts.notice(), None, None],
             Page::DesktopProfiles => [self.profiles.notice.as_ref(), None, None],
             Page::DesktopAutomation => [self.automation.notice.as_ref(), None, None],
+            Page::AdaptiveLooks => [
+                self.automation.notice.as_ref(),
+                self.profiles.notice.as_ref(),
+                None,
+            ],
             Page::Themes => [
                 self.profiles.notice.as_ref(),
                 self.system_appearance.notice.as_ref(),

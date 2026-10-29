@@ -12,6 +12,18 @@ Comment: Artwork origins are documented in ASSETS.md. Dependency declarations
  The two GPL-3.0-only dependencies make the combined binary GPL version 3,
  as explained in THIRD_PARTY.md; Halcyon's own source is GPL-3.0-or-later.
 
+Files: usr/lib/cosmic-ext-halcyon-islands/cosmic-panel-islands
+Copyright: System76, Inc. and cosmic-panel contributors
+ profilaz3 and Halcyon contributors
+ motixo and Penumbra Panel contributors
+License: GPL-3.0-only
+Comment: The included panel combines Islands and Penumbra. Its corresponding
+ source and dependency notices are included with the release.
+
+License: GPL-3.0-only
+ This program is free software under the GNU General Public License version 3.
+ On Debian systems the full license is in /usr/share/common-licenses/GPL-3.
+
 Files: packaging/io.github.profilaz3.Halcyon.metainfo.xml
 Copyright: 2026 profilaz3 and contributors
 License: CC0-1.0

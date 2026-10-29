@@ -18,12 +18,14 @@
 //! importing or applying a profile never turns automation on. While Settings
 //! has unapplied desktop changes it says which parts in
 //! `automation-hold.json`, and switches touching those parts wait.
+pub mod appearance;
 pub mod clock;
 pub mod decide;
 pub mod displays;
 pub mod rules;
 pub mod run;
 pub mod runtime;
+pub mod solar;
 pub mod status;
 
 #[cfg_attr(not(test), allow(unused_imports))]
@@ -204,3 +206,6 @@ pub fn now() -> i64 {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod solar_tests;

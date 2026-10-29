@@ -43,6 +43,7 @@ impl Key {
             name: self.name.clone(),
             latitude: f64::from_bits(self.latitude),
             longitude: f64::from_bits(self.longitude),
+            timezone: None,
         }
     }
 }

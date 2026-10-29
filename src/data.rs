@@ -1462,6 +1462,7 @@ print(json.dumps({'updated_at': json.dumps(observed), 'projects': [], 'requested
             name: "Test city".into(),
             latitude: 1.,
             longitude: 2.,
+            timezone: None,
         };
         let snapshot = WeatherSnapshot {
             location: location.clone(),

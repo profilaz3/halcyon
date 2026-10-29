@@ -18,6 +18,8 @@ pub enum Message {
     ),
     Toggle(usize, bool),
     SubscriptionForm(bool),
+    SubscriptionHelp(bool),
+    SubscriptionProvider(SubscriptionProvider),
     SubscriptionName(String),
     SubscriptionUrl(account::SecretText),
     AddSubscription,
@@ -30,6 +32,64 @@ pub enum Message {
     PublisherHelp(bool),
     OpenGuide,
 }
+/// Read-only subscription instructions. No account state or credentials are
+/// involved in choosing a provider here.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SubscriptionProvider {
+    #[default]
+    Google,
+    Outlook,
+    ICloud,
+    Other,
+}
+impl SubscriptionProvider {
+    pub const ALL: [Self; 4] = [Self::Google, Self::Outlook, Self::ICloud, Self::Other];
+    pub const LABELS: [&str; 4] = ["Google Calendar", "Outlook", "iCloud", "Other provider"];
+
+    // Keep these steps aligned with docs/CALENDAR.md. They are available
+    // offline inside Settings; the developer OAuth guide remains separate.
+    pub fn steps(self) -> &'static [&'static str] {
+        match self {
+            Self::Google => &[
+                "1. Open Google Calendar in a desktop browser, then Settings.",
+                "2. Under Settings for my calendars, select your calendar.",
+                "3. Open Integrate calendar. Copy Secret address in iCal format.",
+            ],
+            Self::Outlook => &[
+                "1. Open Outlook on the web, then Settings → Calendar → Shared calendars.",
+                "2. Under Publish a calendar, choose the calendar and details to share.",
+                "3. Select Publish, then copy the ICS link, not the HTML link.",
+            ],
+            Self::ICloud => &[
+                "1. Open Calendar on iCloud.com.",
+                "2. Open the information button beside your calendar.",
+                "3. Enable Public Calendar, then copy its link.",
+            ],
+            Self::Other => &[
+                "1. Find Subscribe, Export or Share in your calendar provider.",
+                "2. Copy its iCal or ICS subscription link, then paste it below.",
+                "Use an HTTPS or webcal link. Calendar webpages, local files and links needing a browser login will not work.",
+            ],
+        }
+    }
+    pub fn privacy(self) -> &'static str {
+        match self {
+            Self::Google => {
+                "Keep this secret link private. Your calendar does not need to be public. If the address is missing on a work or school account, ask your administrator."
+            }
+            Self::Outlook => {
+                "Publishing lets anyone with the link read the details you chose to share."
+            }
+            Self::ICloud => {
+                "Public Calendar lets anyone with the link read this calendar. Private invitation-only sharing will not work here."
+            }
+            Self::Other => {
+                "Anyone with a private subscription link may be able to read its events. Halcyon does not edit your calendar."
+            }
+        }
+    }
+}
+
 pub struct Editor {
     pub connection: account::Connection,
     pub client_ready: bool,
@@ -42,6 +102,8 @@ pub struct Editor {
     pub confirm_disconnect: bool,
     pub publisher_help: bool,
     pub subscription_form: bool,
+    pub subscription_help: bool,
+    pub subscription_provider: SubscriptionProvider,
     pub subscription_name: String,
     pub subscription_url: account::SecretText,
     attempt: u64,
@@ -60,6 +122,8 @@ impl Default for Editor {
             confirm_disconnect: false,
             publisher_help: false,
             subscription_form: false,
+            subscription_help: false,
+            subscription_provider: SubscriptionProvider::default(),
             subscription_name: String::new(),
             subscription_url: account::SecretText::default(),
             attempt: 0,
@@ -180,6 +244,7 @@ impl Settings {
                 match result {
                     Ok(connection) => {
                         self.calendar.subscription_form = false;
+                        self.calendar.subscription_help = false;
                         self.calendar.subscription_name.clear();
                         self.calendar.subscription_url.0.clear();
                         self.calendar.connection = connection;
@@ -280,7 +345,14 @@ impl Settings {
                 self.calendar.subscription_form = show;
                 if !show {
                     self.calendar.subscription_url.0.clear();
+                    self.calendar.subscription_help = false;
                 }
+            }
+            Message::SubscriptionHelp(show) => {
+                self.calendar.subscription_help = show;
+            }
+            Message::SubscriptionProvider(provider) => {
+                self.calendar.subscription_provider = provider;
             }
             Message::SubscriptionName(name) => {
                 self.calendar.subscription_name = name.chars().take(80).collect()
@@ -504,5 +576,109 @@ mod tests {
                 .iter()
                 .any(|c| c.id == "team")
         );
+    }
+
+    #[test]
+    fn polish050_calendar_link_guide_is_local_and_keeps_the_form() {
+        if crate::displays::test_support::isolated(
+            "settings::calendar::tests::polish050_calendar_link_guide_is_local_and_keeps_the_form",
+        ) {
+            return;
+        }
+        let (mut app, _) = Settings::init(Core::default(), Page::Calendar);
+        let before = std::fs::read(Config::path().unwrap()).unwrap();
+        let account_path = account::account_path().unwrap();
+        let connection_before = std::fs::read(&account_path).ok();
+        let _ = app.update_calendar(Message::SubscriptionForm(true));
+        let _ = app.update_calendar(Message::SubscriptionName("My calendar".into()));
+        let _ = app.update_calendar(Message::SubscriptionUrl(account::SecretText(
+            "https://example.invalid/private-calendar.ics".into(),
+        )));
+        let _ = app.update_calendar(Message::SubscriptionHelp(true));
+        for provider in SubscriptionProvider::ALL {
+            let _ = app.update_calendar(Message::SubscriptionProvider(provider));
+            assert_eq!(app.calendar.subscription_provider, provider);
+            assert!(app.calendar.subscription_help);
+            assert!(!app.calendar.busy);
+            assert!(!app.calendar.connecting);
+            assert_eq!(app.calendar.subscription_name, "My calendar");
+            assert_eq!(
+                app.calendar.subscription_url.0,
+                "https://example.invalid/private-calendar.ics"
+            );
+        }
+        let _ = app.update_calendar(Message::SubscriptionHelp(false));
+        assert!(!app.calendar.subscription_help);
+        assert!(!app.calendar.subscription_url.0.is_empty());
+        assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
+        assert_eq!(std::fs::read(account_path).ok(), connection_before);
+        let _ = app.update_calendar(Message::SubscriptionForm(false));
+        assert!(!app.calendar.subscription_help);
+        assert!(app.calendar.subscription_url.0.is_empty());
+    }
+
+    #[test]
+    fn polish050_native_calendar_link_guide_fits_compact_and_wide() {
+        if crate::displays::test_support::isolated(
+            "settings::calendar::tests::polish050_native_calendar_link_guide_fits_compact_and_wide",
+        ) {
+            return;
+        }
+        use crate::settings::tests::{native_reveal, send_settings};
+        use cosmic::iced::{Event, mouse};
+        fn click(app: &mut Settings, native: &mut crate::native_test::Native, id: &str) {
+            let bounds = native_reveal(app, native, id);
+            for event in [
+                mouse::Event::CursorMoved {
+                    position: bounds.center(),
+                },
+                mouse::Event::ButtonPressed(mouse::Button::Left),
+                mouse::Event::ButtonReleased(mouse::Button::Left),
+            ] {
+                for message in native
+                    .event(app.settings_view(), Event::Mouse(event), bounds.center())
+                    .0
+                {
+                    send_settings(app, message);
+                }
+            }
+        }
+        for (width, height) in [(820., 600.), (1280., 800.)] {
+            let (mut app, _) = Settings::init(Core::default(), Page::Calendar);
+            app.calendar.client_ready = false;
+            send_settings(
+                &mut app,
+                super::super::Message::Resized(Size::new(width, height)),
+            );
+            let mut native = crate::native_test::Native::new(Size::new(width, height));
+            click(&mut app, &mut native, "calendar-subscription-open");
+            click(&mut app, &mut native, "calendar-link-help");
+            assert!(app.calendar.subscription_help);
+            for (index, provider) in SubscriptionProvider::ALL.into_iter().enumerate() {
+                send_settings(&mut app, wrap(Message::SubscriptionProvider(provider)));
+                native_reveal(&app, &mut native, "calendar-link-guide");
+                let privacy = native.text_bounds(app.settings_view(), provider.privacy());
+                assert!(privacy.width > 0. && privacy.height > 0.);
+                assert!(privacy.x >= 0. && privacy.x + privacy.width <= width);
+                let add = native.bounds(app.settings_view(), "calendar-subscription-add");
+                assert!(
+                    add.y >= 0. && add.y + add.height <= height - 8.,
+                    "{provider:?}: {add:?}"
+                );
+                native.capture(
+                    app.settings_view(),
+                    &cosmic::Theme::dark(),
+                    &format!("polish050-calendar-link-{index}-{width}"),
+                );
+            }
+            click(&mut app, &mut native, "calendar-link-help");
+            assert!(!app.calendar.subscription_help);
+            assert!(
+                native
+                    .try_bounds(app.settings_view(), "calendar-link-guide")
+                    .is_none()
+            );
+            native_reveal(&app, &mut native, "calendar-subscription-add");
+        }
     }
 }

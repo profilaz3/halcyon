@@ -1,6 +1,6 @@
 use super::*;
 use crate::calendar::Backend;
-use crate::settings::calendar::Message as Account;
+use crate::settings::calendar::{Message as Account, SubscriptionProvider};
 
 impl Settings {
     pub(super) fn calendar_connection(&self) -> Element<'_, Message> {
@@ -198,15 +198,24 @@ impl Settings {
                 12.,
                 MUTED,
             ));
-        } else {
-            rows.push(label(
-                "Google sign-in isn’t available in this build yet",
-                12.,
-                MUTED,
-            ));
         }
         if !editor.busy && !editor.confirm_disconnect && !editor.connection.cleanup_pending() {
             if editor.subscription_form {
+                rows.push(
+                    button::text(if editor.subscription_help {
+                        "Hide calendar link guide"
+                    } else {
+                        "Get a calendar link"
+                    })
+                    .id("calendar-link-help".into())
+                    .on_press(message(Account::SubscriptionHelp(
+                        !editor.subscription_help,
+                    )))
+                    .into(),
+                );
+                if editor.subscription_help {
+                    rows.push(self.calendar_subscription_guide());
+                }
                 rows.push(
                     text_input("Calendar name", &editor.subscription_name)
                         .on_input(move |name| message(Account::SubscriptionName(name)))
@@ -224,7 +233,6 @@ impl Settings {
                     })
                     .into(),
                 );
-                rows.push(self.help("calendar-subscription-privacy", "Private link", "Saved in your system keyring. Halcyon reads events directly from the provider. Anyone with a private link may be able to read that calendar."));
                 if editor.connection.connected()
                     && editor.connection.backend != Backend::Subscription
                 {
@@ -246,21 +254,53 @@ impl Settings {
                         button::text("Cancel")
                             .on_press(message(Account::SubscriptionForm(false)))
                             .into(),
+                        self.help("calendar-subscription-privacy", "Private link", "Saved in your system keyring. Halcyon reads events directly from the provider. Anyone with a private link may be able to read that calendar."),
                     ])
                     .spacing(8)
+                    .align_y(Alignment::Center)
                     .wrap()
                     .into(),
                 );
             } else {
                 rows.push(
-                    button::standard("Add calendar link")
-                        .id(cosmic::widget::Id::new("calendar-subscription-open"))
-                        .on_press(message(Account::SubscriptionForm(true)))
-                        .into(),
+                    (if editor.client_ready || connected {
+                        button::standard("Add calendar link")
+                    } else {
+                        button::suggested("Add calendar link")
+                    })
+                    .id(cosmic::widget::Id::new("calendar-subscription-open"))
+                    .on_press(message(Account::SubscriptionForm(true)))
+                    .into(),
                 );
             }
         }
         group(Some("Calendars & connection"), rows)
+    }
+    fn calendar_subscription_guide(&self) -> Element<'_, Message> {
+        let provider = self.calendar.subscription_provider;
+        let mut rows = vec![
+            cosmic::widget::dropdown(
+                &SubscriptionProvider::LABELS,
+                SubscriptionProvider::ALL
+                    .iter()
+                    .position(|value| *value == provider),
+                |index| {
+                    Message::Calendar(Account::SubscriptionProvider(
+                        SubscriptionProvider::ALL
+                            .get(index)
+                            .copied()
+                            .unwrap_or_default(),
+                    ))
+                },
+            )
+            .into(),
+        ];
+        rows.extend(provider.steps().iter().map(|step| label(*step, 13., FG)));
+        rows.push(label(provider.privacy(), 12., MUTED));
+        container(column::with_children(rows).spacing(8))
+            .id("calendar-link-guide")
+            .width(Length::Fill)
+            .into()
     }
     pub(super) fn calendar_publisher_setup(&self) -> Element<'_, Message> {
         let mut rows = vec![
@@ -275,6 +315,9 @@ impl Settings {
             .into(),
         ];
         if self.calendar.publisher_help {
+            if !self.calendar.client_ready {
+                rows.push(label("Google sign-in is not configured in this build. You can use a calendar link without setting it up.", 12., MUTED));
+            }
             rows.push(detail("For the app publisher or a personal build", "Register a Google Desktop app with the Calendar API enabled. Users of a configured release only need the Connect button."));
             rows.push(
                 row::with_children(vec![

@@ -1786,6 +1786,7 @@ mod tests {
                     name: "Test".into(),
                     latitude: 0.,
                     longitude: 0.,
+                    timezone: None,
                 }),
                 ..Config::default()
             },

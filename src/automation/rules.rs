@@ -297,7 +297,15 @@ fn external(names: &[String]) -> usize {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Trigger {
-    Schedule { time: Time, days: Days },
+    Schedule {
+        time: Time,
+        days: Days,
+    },
+    Solar {
+        event: super::solar::Event,
+        days: Days,
+        source: super::solar::Source,
+    },
     Display(DisplayWhen),
 }
 
@@ -306,11 +314,12 @@ impl Trigger {
     pub fn summary(&self, h24: bool) -> String {
         match self {
             Self::Schedule { time, days } => format!("{} at {}", days.label(), time.format(h24)),
+            Self::Solar { event, days, .. } => format!("{} · {}", days.label(), event.title()),
             Self::Display(when) => when.summary(),
         }
     }
     pub fn is_schedule(&self) -> bool {
-        matches!(self, Self::Schedule { .. })
+        matches!(self, Self::Schedule { .. } | Self::Solar { .. })
     }
 }
 
@@ -367,6 +376,8 @@ pub struct Automation {
     pub paused: Option<Pause>,
     #[serde(default)]
     pub rules: Vec<Rule>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manual_city: Option<crate::config::Location>,
 }
 
 impl Default for Automation {
@@ -379,6 +390,7 @@ impl Default for Automation {
             since: 0,
             paused: None,
             rules: Vec::new(),
+            manual_city: None,
         }
     }
 }
@@ -398,7 +410,7 @@ impl Automation {
         if value
             .get("version")
             .and_then(serde_json::Value::as_u64)
-            .is_some_and(|version| version > u64::from(MOMENTS_VERSION))
+            .is_some_and(|version| version > 3)
         {
             return Err("The automation settings come from a newer Halcyon.".into());
         }
@@ -408,7 +420,14 @@ impl Automation {
         Ok(automation)
     }
     pub fn written_version(&self) -> u32 {
-        if self
+        if self.manual_city.is_some()
+            || self
+                .rules
+                .iter()
+                .any(|r| matches!(r.when, Trigger::Solar { .. }))
+        {
+            3
+        } else if self
             .rules
             .iter()
             .any(|r| matches!(r.profile, ProfileRef::Moment(_)))
@@ -426,13 +445,16 @@ impl Automation {
     }
     pub fn validate(&self) -> Result<(), String> {
         if self.format != FORMAT
-            || ![VERSION, MOMENTS_VERSION].contains(&self.version)
+            || ![VERSION, MOMENTS_VERSION, 3].contains(&self.version)
             || self.version < self.written_version()
         {
             return Err("The automation settings are not recognized.".into());
         }
         if self.rules.len() > MAX_RULES {
             return Err(format!("Keep at most {MAX_RULES} rules."));
+        }
+        if let Some(city) = &self.manual_city {
+            super::solar::validate_city(city)?;
         }
         if let Some(pause) = &self.paused
             && pause.until.is_some_and(|until| until < pause.since)
@@ -452,7 +474,7 @@ impl Automation {
                 return Err("A rule names an invalid profile.".into());
             }
             match &rule.when {
-                Trigger::Schedule { days, .. } if days.is_empty() => {
+                Trigger::Schedule { days, .. } | Trigger::Solar { days, .. } if days.is_empty() => {
                     return Err("A scheduled rule needs at least one day.".into());
                 }
                 Trigger::Display(when) => {
@@ -465,7 +487,7 @@ impl Automation {
                         return Err("A display rule names an invalid display.".into());
                     }
                 }
-                Trigger::Schedule { .. } => {}
+                Trigger::Schedule { .. } | Trigger::Solar { .. } => {}
             }
         }
         Ok(())

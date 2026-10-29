@@ -54,6 +54,39 @@ class Refresh(unittest.TestCase):
         self.assertEqual(len(refresh.records(self.home)),2)
         self.disable();self.assertFalse((self.home/refresh.SELECTOR).exists());self.assertFalse((self.home/refresh.POINTER).exists())
         self.assertEqual(config.read_bytes(),b'private user layout')
+    def bundled(self, version='0.5.0'):
+        self.upgrade(version)
+        path = self.library/'companion-manifest.json'
+        manifest = json.loads(path.read_bytes())
+        manifest['package_owner'] = 'cosmic-ext-halcyon'
+        path.write_bytes(canonical(manifest))
+
+    def test_bundled_upgrade_preserves_enabled_layout_and_legacy_restore_chain(self):
+        self.enable()
+        layout = self.home/'.config/cosmic/layout'
+        layout.parent.mkdir(parents=True)
+        layout.write_bytes(b'custom panel and dock')
+        self.bundled()
+        self.assertEqual(self.stage()['state'], 'staged')
+        self.assertEqual({r['owner'] for _, r in refresh.records(self.home)},
+                         {'cosmic-ext-halcyon', 'cosmic-ext-halcyon-islands'})
+        refresh.verify_owned(self.home, refresh.records(self.home))
+        self.disable()
+        self.assertFalse((self.home/refresh.SELECTOR).exists())
+        self.assertEqual(layout.read_bytes(), b'custom panel and dock')
+        self.assertEqual(self.stage()['state'], 'disabled')
+
+    def test_bundled_fresh_disabled_and_external_choices_are_preserved(self):
+        self.bundled()
+        self.assertEqual(self.stage()['state'], 'disabled')
+        self.assertFalse((self.home/refresh.SELECTOR).exists())
+        self.enable()
+        self.bundled('0.5.1')
+        selector = self.home/refresh.SELECTOR
+        selector.write_bytes(b'custom selector')
+        self.assertEqual(self.stage()['state'], 'external_change')
+        self.assertEqual(selector.read_bytes(), b'custom selector')
+
     def test_package_replacement_after_snapshot_preserves_selector_and_restore_chain(self):
         self.enable()
         old_pointer = (self.home/refresh.POINTER).read_bytes()

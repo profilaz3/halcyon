@@ -1,8 +1,7 @@
 # Activity and reporting-choice collector
 
-**0.3.0 development, local implementation only. Live Apps Script/private Sheet
-migration is pending owner execution access.** No live
-endpoint or connected Google service is needed for the tests below.
+The live private collector accepts schema 1–4. Local verification needs no live
+endpoint or connected Google service. Reporting views are described below.
 
 ## Wire protocol and compatibility
 
@@ -84,8 +83,9 @@ to make an older client report again. Broken state fails closed.
 13. Reported active days in the last 90 UTC days
 14. Internal sorted, distinct UTC day serials (at most 90)
 15. Last activity receipt (server UTC)
+16. Observed version changes: bounded JSON pairs of UTC day and version (internal)
 
-J:O starts empty for existing rows. The next accepted activity initializes first
+J:O started empty for legacy rows; the new P column also starts empty. The next accepted activity initializes first
 observation/version, not an inferred historical install time. The active-day count
 starts with reports actually received after this collector upgrade; missed/offline
 activity is not backfilled. Repeats count once per UTC day. Maintenance ages the
@@ -93,7 +93,7 @@ activity is not backfilled. Repeats count once per UTC day. Maintenance ages the
 inflating counts. Client startup time is informational and never drives retention.
 No operating system, hardware or widget-type information is added.
 
-Migration preflights **values and formulas** throughout E:O before any workbook
+Migration preflights **values and formulas** throughout E:P before any workbook
 write. A blank status header authorizes only a genuinely empty column, never an
 occupied body cell or a formula whose evaluated result looks empty/numeric.
 Recognized headers must contain coherent status/revision/timestamp records;
@@ -158,6 +158,22 @@ The accepted source avoids Apps Script's unsupported logical assignment syntax
 and accepts Sheets' native date coercion for the owned snapshot date. Local
 collector coverage is 38 passing tests. Restricted migration evidence remains
 outside the repository; release evidence contains only sanitized results.
+
+## Reporting dashboard deployment
+
+On 2026-10-28 (local date; 2026-10-27 UTC), immutable collector version 6
+replaced version 5 at the existing endpoint. The update adds only column P and
+four generated views; the request schema remains 4. All 20 existing A:O records
+were verified unchanged. Eight synthetic protocol cases and a post-format refresh
+passed live; synthetic records were then removed and aggregates verified.
+
+Remote Apps Script function execution still returns 403. The preflighted additive
+header was applied through the Sheets API, followed by the immutable deployment
+update. The existing trigger, configuration and manifest were preserved.
+Local validation: 49 collector tests and two release-endpoint tests passed.
+Native Sheet formats, charts, dates and percentages were read back through the
+API; the inline aggregate presentation was visually checked at desktop and
+mobile widths. A native Google Sheets browser render was not available.
 
 ## Maintainer deployment procedure
 
@@ -242,13 +258,83 @@ person count; a shared embedded secret would not authenticate installations.
 See [Privacy](../../docs/PRIVACY.md) for the user-facing disclosure and retention.
 
 
-### Deployment state checked 2026-10-24
+## Readable activity and version history
 
-The connected account can read the existing private Sheet. Its Installations
-header still contains A:D only. A harmless Apps Script `validCountry` execution
-returned HTTP 403, and T3's Default browser profile was signed out of the editor.
-No live source, deployment or Sheet changes were made for this extension.
-Restore owner execution before migrating. Preserve the existing endpoint and
-original rows. The prior deployment procedure, restricted backup and customized
-Summary formula review still apply; do not publish the schema 4 client as if its
-reports were being counted until collector acceptance passes.
+The 2026-10-28 reporting upgrade uses existing schema 1–4 requests; no client
+update, new payload fields, feature telemetry or additional requests are needed.
+
+- **Dashboard:** active today / 7 / 30 days, first seen and returning this week,
+  repeat use, average reported days, observed return in weeks 2 and 5, opt-outs
+  and history coverage. Return rates show “Not enough history” until their full
+  observation window has elapsed. Denominators include only currently enabled,
+  retained installations with a known first observation within 90 days.
+- **Versions:** latest observed version among active installations, seven/30-day
+  counts and 30-day share. The 20 largest categories are shown; the rest are
+  combined. This is current adoption, not historical version market share.
+- **Daily activity:** up to 90 UTC days of reported activity, first seen and
+  returning installations. Blank days precede known tracking. Counts are rebuilt
+  from currently enabled retained records, so opt-out and expiry can reduce
+  historical counts. This is not an immutable lifetime activity log.
+- **Installation history:** readable installation references, reporting choice,
+  latest version, first seen, last activity, 7/30/90-day counts, optional client
+  first-start date, first observed version and observed version changes. Missing
+  history stays unknown; first seen is never labelled as a package install date.
+
+Column P stores only actual accepted version observations from this upgrade
+onward. The last observed version wins within a UTC day. Unchanged daily reports
+do not add entries; version observations age out after 90 days, with at most 90
+entries per retained installation. The first observed version/date already stored
+in J:L remain separate; they do not imply a complete upgrade timeline. Suppressed
+activity and preference updates never add version observations.
+
+The four generated tabs use the ownership marker `halcyon:analytics:v1` in A1,
+a dated explanation in row 2 and fixed headers in row 4. Their first 3/4/4/11
+columns respectively are collector-owned; add notes outside those columns.
+Unmarked nonempty destinations, edited headers and formulas in generated ranges
+are refused before any source write. Refreshes preserve formatting and unrelated
+columns, compare native date coercion correctly, and write only changed rows in
+batches of at most 256. Existing Summary, Countries and Reporting stay available.
+
+The private workbook presents these views with formatted dates, percentages,
+frozen headers, and linked charts. No reporting preference or raw source record
+is changed by dashboard formatting.
+
+## Four-tab reading layout
+
+The live workbook now opens with **Overview, Activity, Versions, History**.
+The presentation is an additive reading layer; collector version 6, its endpoint,
+wire schema, consent state and source records are unchanged.
+
+- **Overview** shows active installations, repeat reporting, daily/version charts,
+  last activity receipt, and expandable countries and coverage definitions.
+- **Activity** has a 7/30/90-day selector. It omits untracked dates rather than
+  inventing zeroes. Return metrics remain available in a collapsed detail group.
+- **Versions** has a 7/30-day selector, counts, shares and a native chart.
+- **History** has a five-column filtered table and a record selector. Expand its
+  detail row group for first-seen/start dates and observed versions. Older records
+  without day history show `Unknown`, not a misleading zero. An expired selection
+  or one outside the current filter is identified explicitly.
+
+Collector-owned `Dashboard`, `Daily activity`, `Installation history`, `Summary`,
+`Countries`, `Reporting` and `Installations` are hidden, not renamed or deleted.
+`Versions!A:D` remains collector-owned and hidden; its reader controls/formulas
+live in E:L. Other reader tabs have `halcyon:presentation:v1` in hidden Z1.
+The data source names must stay unchanged. Use **View → Hidden sheets** for
+maintenance. Hiding is a navigation choice, not an access-control boundary.
+
+`presentation.cjs` builds the one-time native Sheets batch from freshly inspected
+metadata and cells. It refuses existing reader tabs, occupied IDs and nonempty
+Versions presentation cells. Its JSON input is `{metadata, inspected}` (Sheets
+metadata and a bounded CellData read of `Versions!E1:Z1000`); its output contains
+separate `stage` and `publish` requests. It performs no network calls. Apply
+`stage`, validate formulas and controls, then apply `publish`. For later edits,
+read and patch exact owned cells rather than rerunning the installer. The History
+source grid is extended to the existing 20,000-record cap without changing values.
+
+Native formulas read current collector results, so reports and daily maintenance
+refresh the visible views without an Apps Script redeployment. Column ownership
+is regression-tested for setup, activity, opt-out and maintenance. The live
+rollout checked period/status controls, unknown history, stale selection and
+selection/filter consistency. All 21 original records were unchanged; sharing
+remained private. Verification used live formula/format/chart API readback;
+no native browser screenshot was available.

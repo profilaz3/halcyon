@@ -10,6 +10,10 @@ pub struct Location {
     pub name: String,
     pub latitude: f64,
     pub longitude: f64,
+    /// Local city metadata. Older preferences remain readable; solar rules
+    /// require an explicit city confirmation when its zone is missing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,6 +130,29 @@ impl Default for Config {
     }
 }
 impl Config {
+    /// Personal system widgets reuse the same sampler and only request their parts.
+    /// Built-in preferences stay intact for Use built-in and Undo.
+    pub fn devbox_sampling(&self) -> std::borrow::Cow<'_, DevboxPreferences> {
+        let Some(recipe) = &self.recipes.devbox else {
+            return std::borrow::Cow::Borrowed(&self.devbox);
+        };
+        use crate::recipes::Part;
+        let has = |part| recipe.parts.contains(&part);
+        std::borrow::Cow::Owned(DevboxPreferences {
+            cpu: has(Part::Cpu),
+            memory: has(Part::Memory),
+            memory_cache: false,
+            swap: false,
+            disk: has(Part::Disk),
+            network: has(Part::Network),
+            gpu: has(Part::Gpu),
+            uptime: has(Part::Uptime),
+            services: false,
+            history: Default::default(),
+            order: Vec::new(),
+        })
+    }
+
     pub fn path() -> Option<std::path::PathBuf> {
         std::env::var_os("DESKTOP_CARDS_CONFIG")
             .map(std::path::PathBuf::from)
@@ -301,6 +328,19 @@ impl Config {
             _ => {}
         }
         self.enabled_widgets.iter().any(|key| key == widget.key())
+    }
+    /// The saved choice shown in Settings, independent of the master visibility switch.
+    /// When Daily overview is enabled, its section choices replace standalone toggles.
+    pub fn widget_selected(&self, widget: Widget) -> bool {
+        if self.glance.enabled {
+            match widget {
+                Widget::Clock => return self.glance.show_clock,
+                Widget::Weather => return self.glance.show_weather,
+                Widget::Calendar => return self.glance.show_calendar,
+                _ => {}
+            }
+        }
+        self.widget_enabled(widget)
     }
     pub fn data_visible(&self, widget: Widget) -> bool {
         if !self.widgets_visible {

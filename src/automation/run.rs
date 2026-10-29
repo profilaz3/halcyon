@@ -107,7 +107,7 @@ pub fn run(
     name: &str,
     held: &BTreeSet<Domain>,
 ) -> Ran {
-    run_for_cause(store, installed, target, name, held, false)
+    run_for_cause(store, installed, target, name, held, false, None)
 }
 pub(super) fn run_for_cause(
     store: &DesktopStore,
@@ -116,6 +116,7 @@ pub(super) fn run_for_cause(
     name: &str,
     held: &BTreeSet<Domain>,
     display: bool,
+    solar: Option<(&super::solar::Context, super::solar::Source)>,
 ) -> Ran {
     if !store.writable() {
         return Ran::Failed("Automatic switching is off in preview mode.".into());
@@ -132,13 +133,27 @@ pub(super) fn run_for_cause(
     for attempt in 0..2 {
         // Fitted again on every attempt, so a retry never applies a look
         // fitted to widget settings that have since changed.
-        let profile = match load(store, target, name) {
+        let profile = match load(store, target, name).and_then(|profile| {
+            if solar.is_some() && !matches!(target, ProfileRef::Moment(_)) {
+                super::appearance::project(&profile)
+            } else {
+                Ok(profile)
+            }
+        }) {
             Ok(profile) => profile,
             Err(reason) => return Ran::Failed(reason),
         };
         let label = label(&profile.name);
         let selected: BTreeSet<Domain> = profile.domains().into_iter().collect();
         let mut plan = profiles::plan(store, installed, &profile, &selected);
+        if let Some((context, source)) = solar {
+            if let Err(reason) = context
+                .guards(source)
+                .and_then(|guards| plan.guard_widgets(guards))
+            {
+                return Ran::Failed(reason);
+            }
+        }
         plan.from_display_rule(display);
         let skipped = Vec::new();
         // A coordinated setup is atomic. A missing asset or unavailable
