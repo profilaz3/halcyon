@@ -89,7 +89,7 @@ index 0000000..dbdd099
 +        self.to = target;
 +        self.started = now;
 +        let duration = if maximized { TRANSITION_DURATION } else { RESTORE_DURATION };
-+        self.duration = duration.mul_f32((self.to - self.from).abs());
++        self.duration = duration.mul_f64(f64::from((self.to - self.from).abs()));
 +    }
 +}
 +
