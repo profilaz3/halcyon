@@ -534,6 +534,35 @@ fn ui_child() -> bool {
     for dir in ["config", "data", "cache", "state", "desktop"] {
         std::fs::create_dir_all(root.join(dir)).unwrap();
     }
+    // Dock activation needs a configured bar. Supply its defaults here so the
+    // fixture behaves identically with and without COSMIC installed on the host.
+    for (namespace, key, value) in [
+        (
+            "com.system76.CosmicPanel",
+            "entries",
+            "[\"Panel\",\"Dock\"]",
+        ),
+        ("com.system76.CosmicPanel.Dock", "anchor", "Bottom"),
+        (
+            "com.system76.CosmicPanel.Dock",
+            "plugins_center",
+            "Some([\"com.system76.CosmicAppList\"])",
+        ),
+        ("com.system76.CosmicPanel.Panel", "anchor", "Top"),
+        (
+            "com.system76.CosmicPanel.Panel",
+            "plugins_wings",
+            "Some(([], [\"com.system76.CosmicAppletTime\"]))",
+        ),
+    ] {
+        let file = root
+            .join("desktop/system/cosmic")
+            .join(namespace)
+            .join("v1")
+            .join(key);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, value).unwrap();
+    }
     std::fs::write(root.join("dconf-profile"), "").unwrap();
     std::fs::write(
         root.join("config.json"),
@@ -547,6 +576,7 @@ fn ui_child() -> bool {
         .env("DESKTOP_CARDS_DESKTOP_ROOT", root.join("desktop"))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_DATA_DIRS", root.join("data"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("XDG_STATE_HOME", root.join("state"))
         .env("DCONF_PROFILE", root.join("dconf-profile"))
@@ -664,6 +694,10 @@ fn native_updates_clicks_renders_failure_unknown_and_absence() {
             &format!("islands-enable-{suffix}"),
         );
         app.desktop.open();
+        assert!(
+            app.desktop.current().is_some_and(|draft| draft.installed()),
+            "fixture provides the configured dock without host COSMIC defaults"
+        );
         app.page = Page::DesktopDock;
         crate::settings::navigation::select(&mut app.nav_model, app.page);
         app.installation_busy = false;
