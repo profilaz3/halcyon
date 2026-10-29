@@ -1,14 +1,14 @@
 # Halcyon future builder
 
-Design the foundations for expressive desktops, reusable widgets and visual editing before building the full editor. **0.5 is the next working target, not a release-date commitment.** The published application is version 0.4.1.
+Design the foundations for expressive desktops, reusable widgets and visual editing before building the full editor. The published application is [version 0.5.0](https://github.com/profilaz3/halcyon/releases/tag/v0.5.0).
 
-Direction accepted on 2026-10-26: shared styling, varied desktop compositions, visual editing, personal widgets and portable setups. FB05–FB19 are implemented and locally validated: shared styling, Clock choices, shared Clock/Weather presentation and measurement, keyed provider demand, and layout/input integration. The original feature implementations are complete in their documented bounded scope. See the [0.4.0 package verification](../releases/0.4.0-acceptance.md) for release evidence. FB21 adds locally implemented sun-based appearance schedules for 0.5, following the enabled Weather city or a separate chosen city. Adaptive Tidal, Paper and Moss looks and coordinated package status are implemented locally. [The delivery tracker](DELIVERY-050.md) records staged checks; 0.5 is not published.
+Direction accepted on 2026-10-26: shared styling, varied desktop compositions, visual editing, personal widgets and portable setups. FB05–FB19 are implemented and locally validated: shared styling, Clock choices, shared Clock/Weather presentation and measurement, keyed provider demand, and layout/input integration. The original feature implementations are complete in their documented bounded scope. See the [0.5.0 package verification](../releases/0.5.0-acceptance.md) for release evidence. FB21 adds sun-based appearance schedules, following the enabled Weather city or a separate chosen city. Version 0.5 also ships adaptive Tidal, Paper and Moss looks, bundled Islands and Penumbra, Calendar/System recipes and Settings polish. [The delivery tracker](DELIVERY-050.md) records implementation checks and publication.
 
 ## Start here
 
 | File | Purpose |
 | --- | --- |
-| [Current delivery](DELIVERY-050.md) | 0.4.1 publication and staged local 0.5 work |
+| [Current delivery](DELIVERY-050.md) | 0.5.0 publication and validation |
 | [Product polish](PRODUCT-POLISH-050.md) | Screenshot-review fixes, onboarding, shared layouts and acceptance |
 | [Adaptive looks](ADAPTIVE-LOOKS.md) | Tidal, Paper and Moss daily appearance cycles |
 | [One Halcyon package](BUNDLED-ISLANDS.md) | Included Islands, activation and legacy migration |

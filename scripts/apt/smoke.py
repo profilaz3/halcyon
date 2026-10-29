@@ -43,7 +43,7 @@ def check(uri, inputs, public):
         expected = {}
         for release in data['releases']:
             for name, record in release['assets'].items():
-                if record['kind'] in ('main-deb', 'islands-deb'):
+                if record['kind'] in ('main-deb', 'islands-deb', 'transition-deb'):
                     package_name = 'cosmic-ext-halcyon' if record['kind'] == 'main-deb' else 'cosmic-ext-halcyon-islands'
                     policy = apt.cmd('policy', package_name, tool='apt-cache')
                     if f'Candidate: {release["release"]}' not in policy:

@@ -7,15 +7,15 @@ requires inspection of actual native renders at compact and wide sizes.
 | Stage | Outcome | Status |
 |---|---|---|
 | Maintenance | Release the architecture repairs as 0.4.1; verify packages, upgrade, native Settings and signed updates | Complete |
-| Solar Moments | Local sun calculations, safe scheduling, city binding and native rule controls | Complete locally |
-| Adaptive setups | Coordinated Tidal, Paper and Moss appearances with truthful native previews | Complete locally |
-| Updates | One Halcyon package including Islands, optional activation in Dock & panel and legacy upgrade bridge | Complete locally |
-| Personal widgets | Calendar agenda, then system readings in the existing recipe and Canvas system | Complete locally |
-| Integration | Final behavior, rendering, migration and resource checks; reconcile plans and evidence | Complete locally |
+| Solar Moments | Local sun calculations, safe scheduling, city binding and native rule controls | Published in 0.5.0 |
+| Adaptive setups | Coordinated Tidal, Paper and Moss appearances with truthful native previews | Published in 0.5.0 |
+| Updates | One Halcyon package including Islands, optional activation in Dock & panel and legacy upgrade bridge | Published in 0.5.0 |
+| Personal widgets | Calendar agenda, then system readings in the existing recipe and Canvas system | Published in 0.5.0 |
+| Integration | Final behavior, rendering, migration and resource checks; reconcile plans and evidence | Published in 0.5.0 |
 
 The solar contract is [FB21](FB21-PLAN.md). Architecture repairs and their earlier
 validation are in [the follow-up tracker](../ARCHITECTURE-FOLLOWUP.md).
-The 0.5 feature implementation does not itself publish a 0.5 release.
+Version 0.5.0 was published on 2026-10-29. The dated checkpoints below preserve the earlier implementation history.
 
 Private build logs, checkpoints, visual reviews and artifact records live in
 `.task-050-delivery-20261027/`. Keep one Cargo invocation at a time. Reuse valid
@@ -124,3 +124,16 @@ private COSMIC rendering and full application regression checks. The new native
 binary has its own source, policy and artifact bindings. See the [0.5 acceptance
 record](../releases/0.5.0-acceptance.md). Publication is tracked separately from
 these completed checks.
+
+## 0.5.0 publication — 2026-10-29
+
+[Halcyon 0.5.0](https://github.com/profilaz3/halcyon/releases/tag/v0.5.0) is published.
+PRs #15 and #16 are merged, with the Penumbra contributor history preserved.
+Both [release CI checks](https://github.com/profilaz3/halcyon/actions/runs/40872686122)
+passed: 1,407 Rust tests passed and 18 existing platform/worker cases were excluded.
+The final test fixture supplies its own COSMIC defaults on Ubuntu runners.
+
+The release contains the verified main package, the empty upgrade bridge and
+complete corresponding source. Signed APT promotion pins those exact release
+assets. A distribution regression covers the bridge through preparation, signing
+and real APT candidate discovery; all 12 distribution tests pass.

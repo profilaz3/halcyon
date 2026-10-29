@@ -9,6 +9,7 @@ import shutil
 import sys
 import tarfile
 import unittest
+from unittest.mock import patch
 
 import archive
 import live
@@ -84,6 +85,49 @@ class LiveDistribution(unittest.TestCase):
         for approved in (None, '', '0'*64):
             with self.assertRaisesRegex(ValueError, 'parent_distribution_approval_pin_required'):
                 live.verify(work/'unsigned', self.inputs, approved, self.f.public)
+
+    def test_bundled_transition_reaches_signed_indexes_and_public_candidates(self):
+        cache = self.root/'release-cache'
+        cache.mkdir()
+        main = fixtures.package(cache, archive.PACKAGES[0], '0.5.0')
+        bridge = fixtures.package(cache, archive.PACKAGES[1], '0.5.0',
+                                  depends='cosmic-ext-halcyon (>= 0.5.0)')
+        release = self.data['releases'][0]
+        release['release'] = '0.5.0'
+        release['assets'] = {
+            p.name: dict(kind=kind, sha256=archive.sha(p), bytes=p.stat().st_size)
+            for p, kind in ((main, 'main-deb'), (bridge, 'transition-deb'))}
+        # Synthetic packages exercise distribution only, never native approval.
+        manifest = cache/'release-manifest.json'
+        manifest.write_bytes(archive.canonical({'fixture': 'not-native-approval'}))
+        release['assets'][manifest.name] = dict(kind='release-manifest',
+            sha256=archive.sha(manifest), bytes=manifest.stat().st_size)
+        boot = self.root/'bootstrap-cache'
+        boot.mkdir()
+        for p in self.f.bootstrap:
+            shutil.copyfile(p, boot/p.name)
+        manifest = boot/'bootstrap-manifest.json'
+        manifest.write_bytes(archive.canonical(dict(package_version='1.0',
+            public_key_sha256=archive.sha(self.f.public),
+            artifacts=self.data['bootstrap']['assets'])))
+        self.data['bootstrap']['assets'][manifest.name] = dict(kind='bootstrap-manifest',
+            sha256=archive.sha(manifest), bytes=manifest.stat().st_size)
+        self.inputs.write_bytes(archive.canonical(self.data))
+        work = self.root/'bundled-prepared'
+        with patch.object(live.release_gate, 'verify_published', return_value={
+                'release': release['release'], 'compatibility_policy': release['policy']}):
+            result = live.prepare(self.inputs, self.f.public, work, self.f.epoch+60,
+                                  bootstrap=True, release_cache=cache, bootstrap_cache=boot)
+        signed = self.sign(work, result['distribution_sha256'])
+        site = self.root/'bundled-site'
+        live.pages(signed, self.inputs, self.f.public, site)
+        server = fixtures.Server(site)
+        self.addCleanup(server.close)
+        result = smoke.check(server.uri, self.inputs, self.f.public)
+        self.assertEqual(result['candidate_packages'], {
+            archive.PACKAGES[0]: archive.sha(main), archive.PACKAGES[1]: archive.sha(bridge)})
+        self.assertTrue(result['bootstrap_only_installed'])
+        self.assertTrue(result['missing_key_rejected'])
 
     def test_previous_download_authenticates_descriptor_and_all_retained_bytes(self):
         fetched = self.root/'previous-download'

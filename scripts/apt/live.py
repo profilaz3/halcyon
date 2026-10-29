@@ -23,6 +23,7 @@ PUBLIC = ROOT/'packaging/updates/halcyon-archive-keyring.gpg'
 INPUTS = ROOT/'scripts/apt/distribution.json'
 RELEASE_BASE = 'https://github.com/profilaz3/halcyon/releases/download/'
 MAX_SITE = 850_000_000
+PACKAGE_KINDS = ('main-deb', 'islands-deb', 'transition-deb', 'enrollment-deb')
 
 
 def safe_path(name):
@@ -157,7 +158,7 @@ def verify(root, inputs, approved, public, previous_proof=None):
     current = set()
     for release in [*data['releases'], data['bootstrap']]:
         for name, record in release['assets'].items():
-            if record['kind'] not in ('main-deb', 'islands-deb', 'enrollment-deb'):
+            if record['kind'] not in PACKAGE_KINDS:
                 continue
             matching = [r for r in staged['packages'] if r['sha256'] == record['sha256']]
             if len(matching) != 1:
@@ -245,7 +246,7 @@ def prepare(inputs, public, work, epoch, bootstrap=False, release_cache=None, bo
                     or any(manifest['artifacts'][n] != r for n, r in release['assets'].items() if n != 'bootstrap-manifest.json')):
                 raise ValueError('bootstrap_binding_mismatch')
         for name, record in release['assets'].items():
-            if record['kind'] in ('main-deb', 'islands-deb', 'enrollment-deb'):
+            if record['kind'] in PACKAGE_KINDS:
                 packages.append(directory/name)
             if record['kind'] in ('release-manifest', 'release-approval', 'release-notes', 'source-provenance', 'bootstrap-manifest'):
                 retained[prefix+release['tag']+'/'+name] = directory/name
@@ -324,8 +325,9 @@ def pages(signed, inputs, public, out):
             links.append(f'<li><a href="{html.escape(record["url"])}">{html.escape(name)}</a>'
                          f' — SHA256 <code>{record["sha256"]}</code></li>')
     page = ('<!doctype html><html lang="en"><meta charset="utf-8"><title>Halcyon system updates</title>'
-            '<h1>Halcyon system updates</h1><p>Explicit enrollment for noble/main, amd64. '
-            'Installing the app or optional Islands does not enroll or activate anything automatically.</p>'
+            '<h1>Halcyon system updates</h1><p>Packages for noble/main, amd64. '
+            'Halcyon includes Islands and sets up system updates on first installation. '
+            'Existing update-source preferences are respected. Enable Islands in Dock &amp; panel when wanted.</p>'
             '<p><a href="https://github.com/profilaz3/halcyon/blob/main/docs/DISTRIBUTION.md">'
             'Enrollment, fingerprint verification and removal instructions</a></p>'
             '<p>After enrollment use normal system updates or COSMIC Store → Updates. '
