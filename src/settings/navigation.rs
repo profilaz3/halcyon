@@ -355,7 +355,7 @@ const SEARCH: &[SearchHit] = &[
     ),
     hit(
         Page::Glance,
-        "At a glance",
+        "Daily overview",
         "at a glance daily overview combined separate cards clock weather calendar font background",
         false,
     ),
@@ -712,7 +712,8 @@ impl Page {
             Self::DesktopAppearance | Self::Appearance | Self::DesktopWallpaper => {
                 Some(Self::Themes)
             }
-            Self::DesktopAutomation | Self::Moments => Some(Self::DesktopProfiles),
+            Self::DesktopAutomation => Some(Self::DesktopProfiles),
+            Self::Moments | Self::AdaptiveLooks => Some(Self::DesktopAutomation),
             Self::PendingChanges => Some(Self::General),
             Self::DesktopWindowRules | Self::DesktopWorkspaces => Some(Self::DesktopWindows),
             Self::DesktopWindows | Self::DesktopIcons | Self::DesktopShortcuts => {
@@ -736,7 +737,7 @@ impl Page {
     }
     pub(super) fn save_hint(self) -> &'static str {
         match self {
-            Self::Overview => "Drag to move · drag a corner to resize",
+            Self::Overview => "Edit layout to preview changes before applying",
             Self::Themes => "Choose a theme to preview it here",
             Self::DesktopWallpaper => "Choose a wallpaper to preview it here",
             Self::DesktopProfiles => "Choose a setup to see what it includes",

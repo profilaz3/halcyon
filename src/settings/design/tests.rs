@@ -199,3 +199,74 @@ fn fb16_native_old_client_conflict_requires_review_before_keep() {
             .contains("Older changes saved")
     );
 }
+
+#[test]
+fn polish050_fresh_settings_uses_current_design_before_first_view() {
+    if isolated(
+        "settings::design::tests::polish050_fresh_settings_uses_current_design_before_first_view",
+    ) {
+        return;
+    }
+    let original = Config::path().unwrap();
+    let path = original.parent().unwrap().join("fresh/config.json");
+    // This test already runs alone in the isolated child process.
+    unsafe { std::env::set_var("DESKTOP_CARDS_CONFIG", &path) };
+    let (config, state) = State::initialize();
+    assert!(state.managed);
+    assert!(state.notice.is_none());
+    assert!(config.design_problem.is_none());
+    assert!(!config.onboarded);
+    let before = std::fs::read(&path).unwrap();
+    let (_, again) = State::initialize();
+    assert!(again.managed);
+    assert_eq!(std::fs::read(path).unwrap(), before);
+}
+
+#[test]
+fn polish050_builder_migration_review_stays_with_unsaved_recipe() {
+    if isolated(
+        "settings::design::tests::polish050_builder_migration_review_stays_with_unsaved_recipe",
+    ) {
+        return;
+    }
+    let mut app = fixture();
+    send_settings(&mut app, super::super::Message::Page(Page::Builder));
+    send_settings(
+        &mut app,
+        super::super::Message::Recipe(crate::settings::recipes::Message::Name(
+            "My clock draft".into(),
+        )),
+    );
+    let before = raw();
+    let draft = app.recipe_editor.draft.clone();
+    send_settings(&mut app, super::super::Message::Design(Message::Migrate));
+    assert!(!app.design.managed, "migration requires explicit review");
+    send_settings(&mut app, super::super::Message::Design(Message::Review));
+    assert_eq!(app.page, Page::Builder);
+    assert_eq!(raw(), before);
+    for (width, height) in [(820., 600.), (1280., 800.)] {
+        send_settings(
+            &mut app,
+            super::super::Message::Resized(Size::new(width, height)),
+        );
+        let mut native = crate::native_test::Native::new(Size::new(width, height));
+        crate::settings::tests::native_reveal(&app, &mut native, "design-migrate");
+        native.capture(
+            app.settings_view(),
+            &cosmic::Theme::dark(),
+            &format!("polish050-builder-migration-{width}"),
+        );
+    }
+    send_settings(&mut app, super::super::Message::Design(Message::Cancel));
+    assert_eq!(app.page, Page::Builder);
+    assert!(!app.design.managed);
+    assert_eq!(raw(), before);
+    assert_eq!(app.recipe_editor.draft, draft);
+    send_settings(&mut app, super::super::Message::Design(Message::Review));
+    send_settings(&mut app, super::super::Message::Design(Message::Migrate));
+    assert_eq!(app.page, Page::Builder);
+    assert!(app.design.managed);
+    assert_eq!(app.recipe_editor.draft, draft);
+    assert_eq!(app.config.theme, "teal");
+    assert_eq!(app.config.location.as_ref().unwrap().name, "PRIVATE");
+}

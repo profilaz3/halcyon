@@ -240,13 +240,13 @@ fn choice<'a>(
         column::with_children(vec![
             container(picture)
                 .width(Length::Fill)
-                .height(34.)
+                .height(18.)
                 .align_x(Alignment::Center)
                 .align_y(Alignment::Center)
                 .into(),
             words(name, 12., if enabled { INK } else { SOFT }),
         ])
-        .spacing(6)
+        .spacing(3)
         .align_x(Alignment::Center),
     )
     .id(cosmic::widget::Id::new(id))
@@ -260,7 +260,7 @@ fn choice<'a>(
         if selected { LAVENDER } else { EDGE },
         10.,
     ))
-    .padding([8, 6])
+    .padding([5, 4])
     .width(Length::Fill)
     .on_press_maybe(message)
     .into()
@@ -377,6 +377,7 @@ impl Settings {
             ]
         };
         let intro = column::with_children(vec![
+            words("Step 1 of 7", 12., SOFT),
             heading("Welcome to Halcyon", 32.),
             words(
                 "Choose a look, add widgets and arrange your desktop. Every step is optional.",
@@ -440,45 +441,24 @@ impl Settings {
             Screen::Ready => self.wizard_ready(wizard),
             Screen::Welcome => cosmic::iced::widget::space().into(),
         };
-        let progress = match step {
-            Screen::Look => 0,
-            Screen::Bars => 1,
-            Screen::Ready => 3,
-            _ => 2,
-        };
         let mut parts = vec![
-            row::with_children(
-                ["Setup", "Dock & panel", "Widgets", "Ready"]
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, title)| {
-                        fill_box(
-                            words(
-                                format!(
-                                    "{}  {title}",
-                                    if i < progress {
-                                        "✓".to_string()
-                                    } else {
-                                        (i + 1).to_string()
-                                    }
-                                ),
-                                11.,
-                                if i == progress { LAVENDER } else { SOFT },
-                            ),
-                            if i == progress {
-                                TILE
-                            } else {
-                                Color::TRANSPARENT
-                            },
-                            Color::TRANSPARENT,
-                            6.,
-                        )
-                        .padding([4, 8])
-                        .into()
-                    })
-                    .collect::<Vec<Element<'_, Message>>>(),
-            )
-            .spacing(4)
+            row::with_children(vec![
+                container(words(
+                    format!(
+                        "Step {} of {} · {}",
+                        step.index() + 1,
+                        Screen::ALL.len(),
+                        step.title()
+                    ),
+                    12.,
+                    SOFT,
+                ))
+                .id(cosmic::widget::Id::new("wizard-progress"))
+                .width(Length::Fill)
+                .into(),
+                dots(step),
+            ])
+            .align_y(Alignment::Center)
             .into(),
             heading(
                 match step {
@@ -509,8 +489,8 @@ impl Settings {
                 14.,
                 SOFT,
             ),
-            cosmic::iced::widget::space().height(10.).into(),
-            scrollable(container(body).padding([0, 12, 0, 0]))
+            cosmic::iced::widget::space().height(6.).into(),
+            scrollable(container(body).padding([0, 12, 12, 0]))
                 .id(cosmic::widget::Id::new("wizard-body"))
                 .height(Length::Fill)
                 .into(),
@@ -734,41 +714,50 @@ impl Settings {
         let dock = vec![
             words("Dock", 15., INK),
             line("Shape", shapes(bars.dock_shape, "dock", Step::DockShape)),
-            line(
-                "Behavior",
-                vec![
-                    choice(
-                        position(true),
-                        "Floating",
-                        "wizard-dock-floating".into(),
-                        bars.floating,
-                        Some(go(Step::Floating(true))),
-                    ),
-                    choice(
-                        position(false),
-                        "Attached",
-                        "wizard-dock-attached".into(),
-                        !bars.floating,
-                        Some(go(Step::Floating(false))),
-                    ),
-                    choice(
-                        dock_drawing(bars.dock_shape, 5.),
-                        "Shown",
-                        "wizard-dock-shown".into(),
-                        !bars.hides,
-                        Some(go(Step::Hides(false))),
-                    ),
-                    choice(
-                        column::with_children(vec![words("↓", 13., SOFT), edge()])
-                            .align_x(Alignment::Center)
-                            .into(),
-                        "Hides",
-                        "wizard-dock-hides".into(),
-                        bars.hides,
-                        Some(go(Step::Hides(true))),
-                    ),
-                ],
-            ),
+            row::with_children(vec![
+                line(
+                    "Attachment",
+                    vec![
+                        choice(
+                            position(true),
+                            "Floating",
+                            "wizard-dock-floating".into(),
+                            bars.floating,
+                            Some(go(Step::Floating(true))),
+                        ),
+                        choice(
+                            position(false),
+                            "Attached",
+                            "wizard-dock-attached".into(),
+                            !bars.floating,
+                            Some(go(Step::Floating(false))),
+                        ),
+                    ],
+                ),
+                line(
+                    "Visibility",
+                    vec![
+                        choice(
+                            dock_drawing(bars.dock_shape, 5.),
+                            "Shown",
+                            "wizard-dock-shown".into(),
+                            !bars.hides,
+                            Some(go(Step::Hides(false))),
+                        ),
+                        choice(
+                            column::with_children(vec![words("↓", 13., SOFT), edge()])
+                                .align_x(Alignment::Center)
+                                .into(),
+                            "Hides",
+                            "wizard-dock-hides".into(),
+                            bars.hides,
+                            Some(go(Step::Hides(true))),
+                        ),
+                    ],
+                ),
+            ])
+            .spacing(12)
+            .into(),
         ];
         let controls = vec![
             column::with_children(panel)
@@ -783,17 +772,16 @@ impl Settings {
         let controls = row::with_children(controls).spacing(18).into();
         let mut parts = vec![
             self.wizard_bars_preview(wizard),
-            words(
-                "Preview · Islands appearance requires the running add-on.",
-                12.,
-                SOFT,
+            self.help(
+                "wizard-bars-options", "Selected setup preview",
+                "Islands needs to be enabled for this session. You can fine-tune size and spacing later in Desktop → Dock & panel, under More options.",
             ),
             controls,
         ];
         if bars.islands && !self.desktop.islands.installation.installed() {
             parts.push(words("Islands is selected; the preview shows the standard panel fallback. Check the add-on in App settings after setup.", 12., DANGER));
         }
-        column::with_children(parts).spacing(16).into()
+        column::with_children(parts).spacing(10).into()
     }
 
     /// The chosen look's wallpaper, full width, with the panel on top and
@@ -980,8 +968,28 @@ impl Settings {
                 Screen::Widgets,
             ),
         ];
-        if wizard.widgets.selected(Widget::Weather) {
+        if wizard.widgets.selected(Widget::Weather) && self.config.location.is_some() {
             parts.push(summary("Weather", city, Screen::Weather));
+        }
+        let projected = wizard.widgets.config(&self.config);
+        let pending = crate::settings::wizard::follow_up::Task::ALL
+            .into_iter()
+            .filter(|task| task.needed(&projected, self.calendar.connection.connected()))
+            .map(|task| task.title())
+            .collect::<Vec<_>>();
+        if !pending.is_empty() {
+            parts.push(
+                container(words(
+                    format!(
+                        "After setup: {}. These are optional; find them in My widgets.",
+                        pending.join(" · ")
+                    ),
+                    12.,
+                    SOFT,
+                ))
+                .id(cosmic::widget::Id::new("wizard-followups"))
+                .into(),
+            );
         }
         if !wizard.widgets.active().is_empty() {
             parts.push(

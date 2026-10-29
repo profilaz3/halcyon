@@ -125,15 +125,17 @@ impl Settings {
             heading(title, ""),
             row::with_children(vec![
                 label(
-                    if combined {
-                        "Part of At a glance"
+                    if !self.config.widgets_visible {
+                        "Widgets hidden"
+                    } else if combined {
+                        "In Daily overview"
                     } else {
                         "On desktop"
                     },
                     11.,
                     MUTED,
                 ),
-                toggler(self.config.data_visible(widget))
+                toggler(self.config.widget_selected(widget))
                     .on_toggle(move |visible| Message::Widget(widget, visible))
                     .into(),
             ])
@@ -159,7 +161,8 @@ impl Settings {
         }
     }
 
-    /// Each widget has one row: its name opens settings and its switch controls visibility.
+    /// Selection is independent of the desktop's global visibility. Daily overview
+    /// owns its three section toggles; standalone widgets keep their own settings.
     pub(super) fn widgets_page(&self) -> Element<'_, Message> {
         let group = |title: &'static str, widgets: &[Widget]| -> Element<'_, Message> {
             cosmic::widget::settings::section()
@@ -167,35 +170,72 @@ impl Settings {
                 .extend(widgets.iter().map(|&widget| self.widget_list_row(widget)))
                 .into()
         };
-        let information = group(
-            "Information",
-            &[
-                Widget::Glance,
-                Widget::Clock,
-                Widget::Calendar,
-                Widget::Weather,
-                Widget::Devbox,
-                Widget::Projects,
-            ],
-        );
+        let daily = cosmic::widget::settings::section()
+            .title(if self.config.glance.enabled {
+                "Daily overview"
+            } else {
+                "Daily essentials"
+            })
+            .add(self.widget_list_row(Widget::Glance))
+            .add(
+                container(
+                    column::with_children(
+                        [Widget::Clock, Widget::Weather, Widget::Calendar]
+                            .into_iter()
+                            .map(|w| self.widget_list_row(w))
+                            .collect::<Vec<_>>(),
+                    )
+                    .spacing(8),
+                )
+                .padding([
+                    0,
+                    0,
+                    0,
+                    if self.config.glance.enabled { 24 } else { 0 },
+                ]),
+            )
+            .into();
+        let information = column::with_children(vec![
+            daily,
+            group("Information", &[Widget::Devbox, Widget::Projects]),
+        ])
+        .spacing(16)
+        .into();
         let tools = group("Tools", &[Widget::Music, Widget::Notes, Widget::Focus]);
         let groups =
             super::desktop::inspector::paired(self.window.width >= 1100., information, tools);
-        column::with_children(vec![
-            heading(
-                "My widgets",
-                "Choose a widget to customize it. Use its switch to show or hide it.",
+        let visibility = split(
+            detail(
+                "Show widgets",
+                if self.config.widgets_visible {
+                    "Your selected widgets appear on the desktop."
+                } else {
+                    "Widgets are hidden. Your selections are kept."
+                },
             ),
-            groups,
-        ])
-        .spacing(16)
-        .into()
+            container(toggler(self.config.widgets_visible).on_toggle(Message::Desktop))
+                .id(cosmic::widget::Id::new("widgets-show-all"))
+                .into(),
+        );
+        let mut parts = vec![
+            heading("My widgets", "Choose a widget to customize it."),
+            visibility,
+        ];
+        if !self
+            .setup_followups
+            .pending(&self.config, self.calendar.connection.connected())
+            .is_empty()
+        {
+            parts.push(self.widget_followups());
+        }
+        parts.push(groups);
+        column::with_children(parts).spacing(16).into()
     }
     fn widget_list_row(&self, widget: Widget) -> Element<'_, Message> {
-        let on = self.config.data_visible(widget);
+        let on = self.config.widget_selected(widget);
         let inside = self.config.glance.enabled
             && matches!(widget, Widget::Clock | Widget::Weather | Widget::Calendar);
-        let status = if widget == Widget::Notes && self.tools.dirty() {
+        let readiness = if widget == Widget::Notes && self.tools.dirty() {
             "Unsaved note"
         } else if widget == Widget::Calendar && !self.calendar.connection.connected() {
             "Connect your calendar"
@@ -203,12 +243,23 @@ impl Settings {
             "Choose a city"
         } else if widget == Widget::Projects && self.config.project_roots.is_empty() {
             "Choose folders"
-        } else if inside {
-            "Part of At a glance"
-        } else if widget == Widget::Glance {
-            "Clock, weather and calendar in one widget"
         } else {
             ""
+        };
+        let status = if widget == Widget::Glance {
+            if self.config.glance.enabled {
+                "One widget · choose its sections below".to_string()
+            } else {
+                "Combine clock, weather and calendar".to_string()
+            }
+        } else if inside {
+            if readiness.is_empty() {
+                "Section of Daily overview".to_string()
+            } else {
+                format!("Daily overview · {readiness}")
+            }
+        } else {
+            readiness.to_string()
         };
         row::with_children(vec![
             button::custom(
@@ -440,8 +491,8 @@ impl Settings {
         .align_y(Alignment::Center);
         let mut events = if self.config.glance.enabled {
             vec![
-                self.help("calendar-days", "At a glance agenda",
-                    "Today is always shown. These days belong to At a glance; the separate Calendar keeps its own choices."),
+                self.help("calendar-days", "Daily overview agenda",
+                    "Today is always shown. These days belong to Daily overview; the separate Calendar keeps its own choices."),
                 split(label("Tomorrow", 14., FG),
                     container(toggler(self.config.glance.show_tomorrow).on_toggle(Message::GlanceTomorrow))
                         .id(cosmic::widget::Id::new("glance-tomorrow")).into()),
@@ -466,7 +517,7 @@ impl Settings {
         events.push(
             column::with_children(vec![
                 self.help("meeting-highlight", "Highlight before",
-                    "Meetings are highlighted this many minutes before they start. This also applies to At a glance."),
+                    "Meetings are highlighted this many minutes before they start. This also applies to Daily overview."),
                 notice.into(),
             ])
             .spacing(6)
@@ -482,9 +533,9 @@ impl Settings {
         )];
         if self.config.glance.enabled {
             style.push(group_row(
-                "At a glance",
+                "Daily overview",
                 "Layout and surface",
-                button::text("At a glance")
+                button::text("Daily overview")
                     .trailing_icon(icon::from_name("go-next-symbolic").size(14))
                     .on_press(Message::Page(Page::Glance))
                     .into(),
@@ -514,19 +565,15 @@ impl Settings {
         ));
         column::with_children(vec![
             self.widget_heading(Widget::Calendar, "Calendar"),
+            self.calendar_connection(),
             self.inspector_layout(
-                column::with_children(vec![
-                    self.calendar_connection(),
-                    self.scene_frame(
-                        self.preview_stage(super::sample::fit(
-                            self.samples.calendar_view().map(|_| Message::Preview),
-                            180.,
-                        )),
-                        "Sample agenda",
-                    ),
-                ])
-                .spacing(16)
-                .into(),
+                self.scene_frame(
+                    self.preview_stage(super::sample::fit(
+                        self.samples.calendar_view().map(|_| Message::Preview),
+                        180.,
+                    )),
+                    "Sample agenda · current style",
+                ),
                 column::with_children(items).spacing(12).into(),
                 "calendar",
             ),
@@ -626,7 +673,7 @@ impl Settings {
                         self.help(
                             "dew-point",
                             "Dew point",
-                            "The temperature at which moisture condenses. Shown in Weather and At a glance when available.",
+                            "The temperature at which moisture condenses. Shown in Weather and Daily overview when available.",
                         ),
                         container(
                             toggler(self.config.weather.show_dew_point)
@@ -684,10 +731,9 @@ impl Settings {
             ));
         }
         if self.config.project_roots.is_empty() {
-            roots.push(label(
-                "Choose a folder containing your repositories.",
-                12.,
-                MUTED,
+            roots.push(detail(
+                "No project folders yet",
+                "Choose a folder containing your repositories to show their status.",
             ));
         }
         roots.push(
@@ -712,8 +758,9 @@ impl Settings {
             button::standard(if self.folder_pending {
                 "Choosing folder…"
             } else {
-                "Browse folders…"
+                "Choose folders…"
             })
+            .id(cosmic::widget::Id::new("project-choose-folders"))
             .on_press_maybe((!self.folder_pending).then_some(Message::BrowseFolder))
             .into(),
         );
@@ -1231,7 +1278,7 @@ impl Settings {
             ),
         ));
         let mut sections = vec![self.help("glance-sections", "Sections",
-            "Clock appearance, weather city and calendar account are shared with the separate cards. Turning At a glance off restores those cards and their saved positions.")];
+            "Clock appearance, weather city and calendar account are shared with the separate cards. Turning Daily overview off restores those cards and their saved positions.")];
         for (widget, page, key, on) in [
             (
                 Widget::Clock,
@@ -1285,7 +1332,7 @@ impl Settings {
         .spacing(16)
         .into();
         // The cached sample switches to the actual combined renderer when
-        // At a glance is enabled; opening this editor starts no providers.
+        // Daily overview is enabled; opening this editor starts no providers.
         let body = if g.enabled {
             self.widget_settings_body(
                 self.samples.calendar_view().map(|_| Message::Preview),
@@ -1295,7 +1342,7 @@ impl Settings {
             controls
         };
         column::with_children(vec![
-            self.widget_heading(Widget::Glance, "At a glance"),
+            self.widget_heading(Widget::Glance, "Daily overview"),
             label(
                 if g.enabled {
                     "Clock, weather and calendar together in one widget. Turn it off to show them as separate cards again."
@@ -1491,9 +1538,9 @@ impl Settings {
                     group(Some("Clock surface"),vec![segmented(
                         [(follow,None),("None",Some(ClockSurface::None)),("Panel",Some(ClockSurface::Panel))].into_iter()
                             .map(|(name,value)|(name.into(),clock.surface==value,Some(self.clock_moment_edit(Message::ClockSurface(value))))).collect(),self.settings_accent()),
-                        label(if self.config.glance.enabled {"The separate clock uses this surface. At a glance keeps its shared background."} else {"Readability assistance can add a background."},12.,MUTED)]),
+                        label(if self.config.glance.enabled {"The separate clock uses this surface. Daily overview keeps its shared background."} else {"Readability assistance can add a background."},12.,MUTED)]),
                     group(Some("Depth"),vec![switch("Behind the landscape", "Requires Ridge wallpaper, a digital clock, no surface and auto-hiding bars. Other backgrounds, unsupported displays and Arrange show a plain clock.", clock.depth, Message::ClockDepth)]),
-                    self.help("clock-position", "Position & size", "Move, resize or center the widget in Layout. In At a glance, the whole card moves together."),
+                    self.help("clock-position", "Position & size", "Move, resize or center the widget in Layout. In Daily overview, the whole card moves together."),
                     self.widget_style_and_layout(Widget::Clock),
                     self.page_settings_advanced(Page::Clock, vec![self.refresh_control(Widget::Clock)])])
                     .spacing(16).into()),

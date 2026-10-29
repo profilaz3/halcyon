@@ -9,6 +9,7 @@ Direction accepted on 2026-10-26: shared styling, varied desktop compositions, v
 | File | Purpose |
 | --- | --- |
 | [Current delivery](DELIVERY-050.md) | 0.4.1 publication and staged local 0.5 work |
+| [Product polish](PRODUCT-POLISH-050.md) | Screenshot-review fixes, onboarding, shared layouts and acceptance |
 | [Adaptive looks](ADAPTIVE-LOOKS.md) | Tidal, Paper and Moss daily appearance cycles |
 | [One Halcyon package](BUNDLED-ISLANDS.md) | Included Islands, activation and legacy migration |
 | [Coordinated updates](COORDINATED-UPDATES.md) | Matching app/Islands offers and one next action |

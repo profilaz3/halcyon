@@ -898,6 +898,13 @@ fn line<'a>(width: f32, height: f32, color: Color) -> Element<'a, super::Message
 }
 
 impl Settings {
+    pub(super) fn legacy_layout_recovery(&self) -> bool {
+        self.canvas.is_none()
+            && (self.placement.dirty() || !self.placement.session_actions.is_empty())
+    }
+    pub(super) fn finish_layout_recovery(&mut self) {
+        self.placement.session_actions.clear();
+    }
     fn placement_card<'a>(
         &'a self,
         geometry: &WidgetGeometry,
@@ -905,10 +912,14 @@ impl Settings {
         scale: f32,
         selected: bool,
         dragging: bool,
+        interactive: bool,
     ) -> Element<'a, super::Message> {
         let widget = Widget::parse(&geometry.key).unwrap();
         let accent = self.settings_accent();
         let content = super::view::profiles::card(widget, size, self.canvas_config(), scale);
+        if !interactive {
+            return content;
+        }
         // The native button supplies Tab focus and keyboard activation. Its
         // child owns pointer press, so a drag never opens a settings page.
         let body = button::custom(
@@ -1333,21 +1344,14 @@ impl Settings {
         .into()
     }
     /// The widget placement canvas on Layout. `height` follows the window.
-    pub(super) fn placement_editor(&self, height: f32) -> Element<'_, super::Message> {
+    pub(super) fn placement_picture(
+        &self,
+        height: f32,
+        interactive: bool,
+    ) -> Element<'_, super::Message> {
         let editor = &self.placement;
         let palette = self.config.palette();
-        let dirty = editor.dirty();
-        let switch = |title: &'static str, value: bool, event: fn(bool) -> Message| {
-            row::with_children(vec![
-                label(title, 12., if value { FOREGROUND } else { MUTED }),
-                toggler(value)
-                    .on_toggle(move |value| message(event(value)))
-                    .into(),
-            ])
-            .spacing(8)
-            .align_y(Alignment::Center)
-        };
-        let preview = responsive(move |available| {
+        responsive(move |available| {
             let scale = (available.width.max(1.) / editor.snapshot.screen[0])
                 .min(available.height.max(1.) / editor.snapshot.screen[1]);
             let screen = [
@@ -1434,6 +1438,7 @@ impl Settings {
                         scale,
                         selected,
                         dragging,
+                        interactive,
                     ))
                     .position(Point::new(position[0] * scale, position[1] * scale))
                     .into(),
@@ -1449,10 +1454,15 @@ impl Settings {
                         .into(),
                 );
             }
-            let canvas = mouse_area(stack(layers).width(screen[0]).height(screen[1]).clip(true))
-                .on_move(move |point| message(Message::Pointer(point, scale)))
-                .on_exit(message(Message::Leave))
-                .on_press(message(Message::ClearSelection));
+            let canvas = mouse_area(stack(layers).width(screen[0]).height(screen[1]).clip(true));
+            let canvas = if interactive {
+                canvas
+                    .on_move(move |point| message(Message::Pointer(point, scale)))
+                    .on_exit(message(Message::Leave))
+                    .on_press(message(Message::ClearSelection))
+            } else {
+                canvas
+            };
             container(
                 container(canvas)
                     .id(cosmic::widget::Id::new("placement-canvas"))
@@ -1466,7 +1476,24 @@ impl Settings {
             .into()
         })
         .width(Length::Fill)
-        .height(height);
+        .height(height)
+        .into()
+    }
+
+    pub(super) fn placement_editor(&self, height: f32) -> Element<'_, super::Message> {
+        let editor = &self.placement;
+        let dirty = editor.dirty();
+        let switch = |title: &'static str, value: bool, event: fn(bool) -> Message| {
+            row::with_children(vec![
+                label(title, 12., if value { FOREGROUND } else { MUTED }),
+                toggler(value)
+                    .on_toggle(move |value| message(event(value)))
+                    .into(),
+            ])
+            .spacing(8)
+            .align_y(Alignment::Center)
+        };
+        let preview = self.placement_picture(height, true);
         let hint = editor
             .selected
             .as_deref()
@@ -1725,6 +1752,27 @@ mod tests {
         );
     }
     use super::*;
+
+    fn start_canvas(app: &mut Settings) {
+        use cosmic::Application;
+        let _ = app.update(super::super::Message::Canvas(
+            super::super::canvas::Message::Start,
+        ));
+        assert!(app.canvas.is_some(), "{}", app.status);
+        assert!(app.placement_active());
+    }
+
+    fn apply_canvas(app: &mut Settings) {
+        use cosmic::Application;
+        let id = app.canvas.as_ref().expect("an active canvas").id;
+        let _ = app.update(super::super::Message::Canvas(
+            super::super::canvas::Message::Apply(id),
+        ));
+        assert!(!app.error, "{}", app.status);
+        assert!(app.canvas.is_none(), "Apply must finish the canvas");
+        assert!(!app.placement.dirty());
+    }
+
     #[test]
     fn center_actions_preserve_neighbors_and_roundtrip_through_undo_and_save() {
         use super::super::{Message as App, Page};
@@ -1749,15 +1797,15 @@ mod tests {
             assert!((p[axis] + size[axis] / 2. - app.placement.screen()[axis] / 2.).abs() < 0.01);
         }
         assert_eq!(app.placement.position("weather"), Some(neighbor));
+        assert!(app.canvas_dirty());
         assert!(
-            !Config::load().widget_positions.is_empty(),
-            "Each completed alignment is saved"
+            Config::load().widget_positions.is_empty(),
+            "Alignment remains local until Apply"
         );
         let _ = app.update(App::Placement(Message::Undo));
         assert!((app.placement.position("clock").unwrap()[1] - original[1]).abs() < 0.01);
         let _ = app.update(App::Placement(Message::Center(1)));
-        let _ = app.update(App::Placement(Message::Save));
-        assert!(!app.error, "{}", app.status);
+        apply_canvas(&mut app);
         let (reopened, _) = Settings::init(cosmic::app::Core::default(), Page::Overview);
         assert_eq!(reopened.placement.position("clock"), Some(p));
         assert_eq!(reopened.placement.position("weather"), Some(neighbor));
@@ -1801,6 +1849,7 @@ mod tests {
             return;
         }
         let (mut app, _) = Settings::init(cosmic::app::Core::default(), Page::Overview);
+        start_canvas(&mut app);
         app.placement.select("focus");
         let _ = app.update(App::Placement(Message::Automatic));
         assert!(
@@ -1811,8 +1860,8 @@ mod tests {
         for _ in 0..5 {
             let _ = app.update(App::Placement(Message::Resize([0, 1], true)));
         }
-        let _ = app.update(App::Placement(Message::Save));
-        assert!(!app.error, "{}", app.status);
+        assert!(app.canvas_dirty());
+        apply_canvas(&mut app);
         assert_eq!(Config::load().widget_sizes["focus"], [280., 320.]);
         assert!(!Config::load().widget_positions.contains_key("notes"));
         let _ = app.update(App::Widget(Widget::Notes, true));
@@ -1820,6 +1869,7 @@ mod tests {
         let before = app.placement.position("notes").unwrap();
         assert_eq!(before, [800., 422.]);
         let saved_before_automatic = Config::load();
+        start_canvas(&mut app);
         app.placement.select("focus");
         let _ = app.update(App::Placement(Message::Automatic));
         assert_eq!(app.placement.position("notes"), Some(before));
@@ -1827,8 +1877,8 @@ mod tests {
         assert_eq!(app.placement.display_size("focus"), Some([280., 320.]));
         assert_eq!(app.placement.position("notes"), Some(before));
         let _ = app.update(App::Placement(Message::Automatic));
-        let _ = app.update(App::Placement(Message::Save));
-        assert!(!app.error, "{}", app.status);
+        assert!(app.canvas_dirty());
+        apply_canvas(&mut app);
         let after = app.placement.position("notes").unwrap();
         assert!(
             (0..2).all(|axis| (after[axis] - before[axis]).abs() < 0.01),
@@ -1860,6 +1910,7 @@ mod tests {
             return;
         }
         let (mut app, _) = Settings::init(cosmic::app::Core::default(), Page::Overview);
+        start_canvas(&mut app);
         app.placement.select("focus");
         let old_point = app.placement.position("focus").unwrap();
         let _ = app.update(App::Placement(Message::ResizeMode(true)));
@@ -1874,7 +1925,17 @@ mod tests {
         );
         let point = app.placement.position("focus").unwrap();
         assert!((0..2).all(|axis| (point[axis] - old_point[axis]).abs() < 0.01));
-        let _ = app.update(App::Placement(Message::Cancel));
+        let _ = app.update(App::Canvas(super::super::canvas::Message::Cancel));
+        assert!(!app.placement_active());
+        app.placement.select("focus");
+        let _ = app.update(App::Placement(Message::Nudge([0, 1], false)));
+        assert_eq!(
+            app.placement.position("focus"),
+            Some(old_point),
+            "late actions after Cancel are ignored"
+        );
+        assert_eq!(app.placement.display_size("focus"), Some([280., 160.]));
+        start_canvas(&mut app);
         app.placement.select("focus");
         let _ = app.update(App::Placement(Message::Nudge([0, 1], false)));
         assert_eq!(app.placement.display_size("focus"), Some([280., 160.]));
@@ -2342,18 +2403,25 @@ mod tests {
             .map(|key| (key, settings.placement.position(key).unwrap()))
             .collect();
         for key in ["weather", "focus"] {
+            start_canvas(&mut settings);
+            let saved_before = Config::load().widget_sizes;
             settings.placement.select(key);
             let _ = settings.update(super::super::Message::Placement(Message::Resize(
                 [0, 1],
                 true,
             )));
+            assert!(settings.canvas_dirty());
+            assert_eq!(
+                Config::load().widget_sizes,
+                saved_before,
+                "Resize stays local until Apply"
+            );
+            apply_canvas(&mut settings);
         }
         let mut positions = Config::load().widget_positions;
         positions.insert("devbox".into(), [0.3, 0.2]);
         Config::save_changes(serde_json::json!({"widget_positions":positions,"theme":"amber"}))
             .unwrap();
-        let _ = settings.update(super::super::Message::Placement(Message::Save));
-        assert!(!settings.error, "{}", settings.status);
         let saved = Config::try_load().unwrap();
         let reopened = PlacementEditor::new(&saved);
         for (key, point) in initial {
@@ -2368,7 +2436,7 @@ mod tests {
         let _ = settings.update(super::super::Message::UndoPreferences);
         assert!(
             Config::load().widget_sizes.contains_key("weather"),
-            "each completed resize has its own Undo"
+            "each explicitly applied canvas has its own Undo"
         );
         let _ = settings.update(super::super::Message::UndoDesktop);
         assert!(
@@ -2534,7 +2602,14 @@ mod tests {
 
     #[test]
     fn layout_links_open_the_arrangement_editor() {
-        use super::super::Page;
+        use super::super::{Message as App, Page};
+        use cosmic::Application;
+        if run_isolated(
+            "layout_links_open_the_arrangement_editor",
+            r#"{"enabled_widgets":["weather"]}"#,
+        ) {
+            return;
+        }
         assert_eq!(Page::parse("layout"), Page::Overview);
         assert!(Page::ALL.contains(&Page::WidgetLayout));
         assert_eq!(Page::WidgetLayout.nav(), Page::Overview);
@@ -2542,8 +2617,20 @@ mod tests {
             cosmic::app::Core::default(),
             Page::parse("layout"),
         );
+        assert!(
+            !settings.placement_active(),
+            "Layout opens its read-only landing"
+        );
+        start_canvas(&mut settings);
+        let _ = settings.update(App::Page(Page::Calendar));
+        assert!(!settings.placement_active());
+        assert!(
+            settings.canvas.is_some(),
+            "Navigation keeps the local canvas"
+        );
+        let _ = settings.update(App::Page(Page::Overview));
         assert!(settings.placement_active());
-        settings.page = Page::Calendar;
+        let _ = settings.update(App::Canvas(super::super::canvas::Message::Cancel));
         assert!(!settings.placement_active());
     }
 
@@ -2558,13 +2645,15 @@ mod tests {
             return;
         }
         let (mut settings, _) = Settings::init(cosmic::app::Core::default(), Page::WidgetLayout);
+        start_canvas(&mut settings);
+        let before = Config::load().widget_positions;
         settings.placement.selected = Some("weather".into());
         let _ = settings.update(App::Placement(Message::Nudge([-1, 0], false)));
-        assert!(!settings.placement.dirty());
+        assert!(settings.placement.dirty());
         let draft = settings.placement.positions.clone();
         // Visiting a widget's page keeps the draft and silences the editor.
         let _ = settings.update(App::Page(Page::Weather));
-        assert!(!settings.placement.dirty());
+        assert!(settings.placement.dirty());
         let _ = settings.update(App::Placement(Message::Nudge([-1, 0], true)));
         let _ = settings.update(App::Placement(Message::Cancel));
         assert_eq!(settings.placement.positions, draft);
@@ -2581,9 +2670,10 @@ mod tests {
         let _ = settings.update(App::Tick);
         assert_eq!(settings.placement.positions, draft);
         let _ = settings.update(App::Page(Page::WidgetLayout));
-        assert_eq!(settings.status, "Drag to move · drag a corner to resize");
-        let _ = settings.update(App::Placement(Message::Save));
-        assert!(!settings.error, "{}", settings.status);
+        assert!(settings.placement_active());
+        assert!(settings.canvas_dirty());
+        assert_eq!(Config::load().widget_positions, before);
+        apply_canvas(&mut settings);
         let saved = Config::try_load().unwrap();
         assert_eq!(saved.widget_positions["weather"], draft["weather"]);
         assert!(saved.widget_visible(Widget::Devbox));
@@ -2602,6 +2692,8 @@ mod tests {
         }
         let order = vec![Widget::Weather, Widget::Devbox, Widget::Projects];
         let (mut settings, _) = Settings::init(cosmic::app::Core::default(), Page::WidgetLayout);
+        start_canvas(&mut settings);
+        let before = Config::load().widget_positions;
         let at = settings.placement.position("weather").unwrap();
         let point = Point::new((at[0] + 20.) * 0.25, (at[1] + 20.) * 0.25);
         // A column drag owns the pointer: the miniature ignores presses and Esc.
@@ -2624,13 +2716,16 @@ mod tests {
             0.25,
         )));
         let _ = settings.update(App::Placement(Message::Release));
-        assert!(!settings.placement.dirty());
-        // The completed gesture is durable; the explicit custom layout keeps column order fixed.
+        assert!(settings.placement.dirty());
+        assert_eq!(Config::load().widget_positions, before);
+        // A local canvas also blocks automatic column reordering until cancelled.
         let _ = settings.update(App::Move(Widget::Weather, 1));
         let _ = settings.update(App::DragStart(Widget::Weather));
         assert!(settings.reorder.source.is_none());
         assert_eq!(Config::load().ordered_right_cards(), order);
-        let _ = settings.update(App::Placement(Message::Cancel));
+        let _ = settings.update(App::Canvas(super::super::canvas::Message::Cancel));
+        assert!(!settings.placement_active());
+        assert_eq!(Config::load().widget_positions, before);
         let _ = settings.update(App::Move(Widget::Weather, 1));
         assert_eq!(
             Config::load().ordered_right_cards(),
@@ -2661,6 +2756,7 @@ mod tests {
         }
         publish_devbox_height(280.);
         let (mut settings, _) = Settings::init(cosmic::app::Core::default(), Page::WidgetLayout);
+        start_canvas(&mut settings);
         let size = |settings: &Settings| settings.placement.geometry("devbox").unwrap().size;
         assert_eq!(size(&settings), [360., 280.]);
         settings.placement.selected = Some("weather".into());
@@ -2678,7 +2774,7 @@ mod tests {
         assert_eq!(settings.placement.positions, draft);
         assert_eq!(settings.placement.columns, 24);
         assert_eq!(settings.placement.save_baseline(), baseline);
-        assert!(!settings.placement.dirty());
+        assert!(settings.placement.dirty());
         assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
         // Geometry published mid-drag waits so the grab offset stays exact,
         // then lands as soon as the drag ends without another file event.
@@ -2699,10 +2795,10 @@ mod tests {
         assert!((moved[1] - (at[1] + 40.)).abs() < 0.01);
         let _ = settings.update(App::Placement(Message::Release));
         assert_eq!(size(&settings), [360., 300.]);
-        assert!(!settings.placement.dirty());
-        // Save still writes only what the draft changed.
-        let _ = settings.update(App::Placement(Message::Save));
-        assert!(!settings.error, "{}", settings.status);
+        assert!(settings.placement.dirty());
+        assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
+        // Apply still writes only what the draft changed.
+        apply_canvas(&mut settings);
         let saved = Config::try_load().unwrap();
         assert_eq!(
             saved.widget_positions.keys().collect::<Vec<_>>(),

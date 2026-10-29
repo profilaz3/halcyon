@@ -1,6 +1,5 @@
 use super::*;
 use crate::drawer::Widget;
-use crate::settings::wizard::widgets::CHOICES;
 use cosmic::iced::widget::pin;
 use cosmic::widget::{dropdown, responsive};
 
@@ -133,81 +132,84 @@ impl Settings {
                 ));
             }
         } else {
-            controls.push(words(
-                format!(
-                    "8 available · {} on your desktop",
-                    wizard.widgets.active().len()
-                ),
-                13.,
-                SOFT,
-            ));
-            let mut rows = Vec::new();
-            for pair in CHOICES.chunks(2) {
-                let tiles = pair
-                    .iter()
-                    .map(|widget| {
-                        let on = wizard.widgets.selected(*widget);
-                        button::custom(
-                            column::with_children(vec![
-                                row::with_children(vec![
-                                    icon::from_name(widget.icon()).size(18).into(),
-                                    cosmic::widget::space().width(Length::Fill).into(),
-                                    words(
-                                        if on { "✓" } else { "○" },
-                                        15.,
-                                        if on { LAVENDER } else { SOFT },
-                                    ),
-                                ])
-                                .into(),
-                                words(widget.title(), 13., INK),
-                                words(description(*widget), 11., SOFT),
-                            ])
-                            .spacing(3),
-                        )
-                        .class(button_style(
-                            TILE,
-                            TILE,
-                            if on { LAVENDER } else { EDGE },
-                            10.,
-                        ))
-                        .id(cosmic::widget::Id::new(format!(
-                            "wizard-widget-{}",
-                            widget.key()
-                        )))
-                        .padding([10, 12])
-                        .width(Length::Fill)
-                        .on_press(go(Step::Widget(*widget)))
-                        .into()
-                    })
-                    .collect::<Vec<Element<'_, Message>>>();
-                rows.push(row::with_children(tiles).spacing(8).into());
-            }
-            controls.push(
-                scrollable(column::with_children(rows).spacing(8))
-                    .id(cosmic::widget::Id::new("wizard-widget-list"))
-                    .height(available.min(320.))
-                    .into(),
-            );
-            controls.push(
+            // One compact list keeps all eight choices visible at the normal
+            // window size. Section membership is shown before readiness.
+            let pick = |widget: Widget| -> Element<'a, Message> {
+                let on = wizard.widgets.selected(widget);
+                let grouped = wizard.widgets.grouped
+                    && matches!(widget, Widget::Clock | Widget::Weather | Widget::Calendar);
+                button::custom(
+                    row::with_children(vec![
+                        icon::from_name(widget.icon()).size(16).into(),
+                        container(words(widget.title(), 13., INK))
+                            .width(Length::Fill)
+                            .into(),
+                        words(
+                            if on { "✓" } else { "○" },
+                            14.,
+                            if on { LAVENDER } else { SOFT },
+                        ),
+                    ])
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .id(cosmic::widget::Id::new(format!(
+                    "wizard-widget-{}",
+                    widget.key()
+                )))
+                .class(button_style(
+                    TILE,
+                    TILE,
+                    if on { LAVENDER } else { EDGE },
+                    8.,
+                ))
+                .padding([4, 8, 4, if grouped { 20 } else { 8 }])
+                .width(Length::Fill)
+                .on_press(go(Step::Widget(widget)))
+                .into()
+            };
+            let mut choices = vec![
                 row::with_children(vec![
-                    container(
-                        column::with_children(vec![
-                            words("Keep daily essentials together", 12., INK),
-                            words("Clock, weather & calendar in At a glance", 11., SOFT),
-                        ])
-                        .spacing(2),
-                    )
-                    .width(Length::Fill)
-                    .into(),
-                    toggler(wizard.widgets.grouped)
-                        .id(cosmic::widget::Id::new("wizard-widget-group"))
-                        .on_toggle(|on| go(Step::GroupWidgets(on)))
+                    container(words("Daily overview", 13., INK))
+                        .width(Length::Fill)
                         .into(),
+                    container(
+                        toggler(wizard.widgets.grouped).on_toggle(|on| go(Step::GroupWidgets(on))),
+                    )
+                    .id(cosmic::widget::Id::new("wizard-widget-group"))
+                    .into(),
                 ])
                 .spacing(8)
                 .align_y(Alignment::Center)
                 .into(),
+                words(
+                    if wizard.widgets.grouped {
+                        "Clock, weather & calendar share one widget"
+                    } else {
+                        "Clock, weather & calendar are separate"
+                    },
+                    11.,
+                    SOFT,
+                ),
+            ];
+            choices.extend(
+                [Widget::Clock, Widget::Weather, Widget::Calendar]
+                    .into_iter()
+                    .map(pick),
             );
+            choices.push(words("More widgets", 11., SOFT));
+            choices.extend(
+                [
+                    Widget::Devbox,
+                    Widget::Notes,
+                    Widget::Focus,
+                    Widget::Music,
+                    Widget::Projects,
+                ]
+                .into_iter()
+                .map(pick),
+            );
+            controls.push(column::with_children(choices).spacing(4).into());
         }
         if !arrange && wizard.widgets.customized && wizard.look.is_some() {
             controls.push(
@@ -218,7 +220,16 @@ impl Settings {
         }
         let mut preview = vec![
             words("Desktop preview · Sample content", 12., SOFT),
-            self.wizard_widget_preview(wizard, if compact { 205. } else { 270. }),
+            self.wizard_widget_preview(wizard, if compact { 180. } else { 270. }),
+            words(
+                format!(
+                    "{} selected · {} desktop widgets",
+                    wizard.widgets.selected.len(),
+                    wizard.widgets.active().len()
+                ),
+                12.,
+                SOFT,
+            ),
         ];
         if self.displays.outputs().len() > 1 || !plan.elsewhere.is_empty() {
             preview.push(words("Preview display", 12., INK));

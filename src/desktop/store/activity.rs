@@ -73,17 +73,40 @@ const SETTINGS: &[&str] = &[
     "Widget snap",
 ];
 impl Summary {
-    pub fn title(&self) -> &'static str {
+    pub fn title(&self) -> String {
         if self.action == Action::Undone {
-            return "Undid a desktop change";
+            return "Undid a desktop change".into();
         }
         if self.action == Action::Kept {
-            return "Kept current settings";
+            return "Kept current settings".into();
         }
         if self.cause == Cause::WallpaperColors {
-            return "Updated colors from the wallpaper";
+            return "Updated colors from the wallpaper".into();
         }
-        match Owner::parse(&self.owner) {
+        let owner = Owner::parse(&self.owner);
+        // Display only the same bounded, non-content values accepted by the
+        // journal. Old records and composite changes retain useful fallbacks.
+        if !matches!(owner, Some(Owner::Profile | Owner::Recovery))
+            && self.details.len() == 1
+            && self.areas.len() == 1
+        {
+            let detail = &self.details[0];
+            if SETTINGS.contains(&detail.setting.as_str())
+                && safe_scalar(&detail.before)
+                && safe_scalar(&detail.after)
+            {
+                let unit = match detail.setting.as_str() {
+                    "Bar spacing" | "Bar padding" | "Bar margin" | "Widget corners" => " px",
+                    "Clock scale" | "Widget opacity" => "%",
+                    _ => "",
+                };
+                return format!(
+                    "{}: {} → {}{}",
+                    detail.setting, detail.before, detail.after, unit
+                );
+            }
+        }
+        let title = match owner {
             Some(Owner::Profile) => "Applied a theme or setup",
             Some(Owner::Recovery) => "Restored desktop settings",
             Some(Owner::DockPanel) => "Changed Dock & panel",
@@ -95,7 +118,19 @@ impl Summary {
             Some(Owner::Shortcuts) => "Changed shortcuts",
             Some(Owner::DesktopIcons) => "Changed desktop icons",
             _ => "Changed widget settings",
+        };
+        if matches!(owner, Some(Owner::Profile | Owner::Recovery)) {
+            let areas = self
+                .areas
+                .iter()
+                .filter(|a| AREAS.contains(&a.as_str()))
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            if !areas.is_empty() {
+                return format!("{title} · {}", areas.join(", "));
+            }
         }
+        title.into()
     }
     fn valid(&self) -> bool {
         super::valid_name(&self.id, 96)
@@ -320,6 +355,26 @@ mod tests {
             .apply_action(&patch, None, Owner::DockPanel, "PRIVATE_SENTINEL", source)
             .unwrap()
     }
+    #[test]
+    fn polish050_history_titles_keep_safe_detail_and_legacy_fallback() {
+        let f = Fixture::new("polish050-history-title");
+        apply(&f.store(), 7, Source::Manual, false);
+        let mut entry = f.store().recent_changes().unwrap().entries.pop().unwrap();
+        assert_eq!(entry.title(), "Bar spacing: Default → 7 px");
+        entry.details.clear();
+        assert_eq!(entry.title(), "Changed Dock & panel");
+        entry.details.push(Detail {
+            setting: "Note text".into(),
+            before: "PRIVATE_SENTINEL".into(),
+            after: "SECRET".into(),
+        });
+        assert_eq!(entry.title(), "Changed Dock & panel");
+        entry.details[0].setting = "Bar spacing".into();
+        assert_eq!(entry.title(), "Changed Dock & panel");
+        entry.action = Action::Undone;
+        assert_eq!(entry.title(), "Undid a desktop change");
+    }
+
     #[test]
     fn palette_acknowledgement_does_not_report_a_desktop_change() {
         let f = Fixture::new("activity-acknowledgement");

@@ -17,6 +17,8 @@ path = "src/main.rs"
 
 [dependencies]
 dock-islands-core = { path = "companion/dock-islands-core" }
+# Reuse libcosmic's already locked icon resolver for selected-theme specimens.
+freedesktop-icons = { package = "cosmic-freedesktop-icons", git = "https://github.com/pop-os/freedesktop-icons" }
 cosmic = { package = "libcosmic", git = "https://github.com/pop-os/libcosmic", default-features = false, features = [
     "autosize",
     "multi-window",

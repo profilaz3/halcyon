@@ -238,13 +238,22 @@ impl Settings {
                 entry.cause.title(),
                 entry.areas.join(", ")
             );
+            let mut actions = vec![action(
+                if open { "Hide details" } else { "Details" },
+                Edit::Details(if open { None } else { Some(entry.id.clone()) }),
+            )];
+            if eligible {
+                actions.push(
+                    button::standard("Review Undo")
+                        .id(cosmic::widget::Id::new("history-review-undo"))
+                        .on_press(Message::UndoDesktopShown(Some(entry.id.clone())))
+                        .into(),
+                );
+            }
             let mut rows = vec![group_row(
                 entry.title(),
                 meta,
-                action(
-                    if open { "Hide details" } else { "Details" },
-                    Edit::Details(if open { None } else { Some(entry.id.clone()) }),
-                ),
+                row::with_children(actions).spacing(8).wrap().into(),
             )];
             if open {
                 if entry.details.is_empty() {
@@ -272,13 +281,7 @@ impl Settings {
                         FG,
                     ));
                 }
-                if eligible {
-                    rows.push(
-                        button::standard("Review Undo")
-                            .on_press(Message::UndoDesktopShown(Some(entry.id.clone())))
-                            .into(),
-                    );
-                } else {
+                if !eligible {
                     rows.push(label("This entry is a record of what happened. Undo is available only for the latest eligible manual change.",12.,MUTED));
                 }
                 let destination = match entry.cause {

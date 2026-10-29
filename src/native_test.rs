@@ -18,11 +18,14 @@ impl Native {
         Self::with_backend(size, "tiny-skia")
     }
     pub fn with_backend(size: Size, backend: &str) -> Self {
+        Self::with_text_size(size, backend, 14.)
+    }
+    pub fn with_text_size(size: Size, backend: &str, points: f32) -> Self {
         Self {
             renderer: cosmic::iced::futures::executor::block_on(
                 <cosmic::Renderer as Headless>::new(
                     cosmic::font::default(),
-                    cosmic::iced::Pixels(14.),
+                    cosmic::iced::Pixels(points),
                     Some(backend),
                 ),
             )

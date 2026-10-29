@@ -278,13 +278,14 @@ fn native_task_navigation_and_widget_switches_keep_layout_drafts() {
     let original = std::fs::read(Config::path().unwrap()).unwrap();
     for size in [Size::new(820., 600.), Size::new(1024., 720.)] {
         let (mut app, _) = Settings::init(Core::default(), Page::Overview);
+        let _ = app.update(Message::Canvas(canvas::Message::Start));
         let _ = app.update(Message::Resized(size));
         let mut native = Native::new(size);
         let _ = app.update(Message::Placement(placement::Message::Select(
             "clock".into(),
         )));
         let _ = app.update(Message::Placement(placement::Message::Nudge([1, 0], false)));
-        assert!(!app.placement.dirty());
+        assert!(app.placement.dirty());
         let draft = serde_json::to_value(app.placement.session_draft()).unwrap();
         let widgets = app
             .nav_model
@@ -357,7 +358,7 @@ fn native_task_navigation_and_widget_switches_keep_layout_drafts() {
             serde_json::from_slice(&std::fs::read(Config::path().unwrap()).unwrap()).unwrap();
         assert_eq!(saved["future_preference"], 37);
         assert!(
-            saved.get("widget_positions").is_some(),
+            saved.get("widget_positions").is_none(),
             "navigation never applies the layout"
         );
         // Restore this fixture between sizes; no live preferences are accessible.
@@ -373,6 +374,7 @@ fn split_sidebar_keyboard_navigation_keeps_focus_and_drafts() {
     use cosmic::iced::keyboard::{self, key::Named};
     let before = std::fs::read(Config::path().unwrap()).unwrap();
     let (mut app, _) = Settings::init(Core::default(), Page::Overview);
+    let _ = app.update(Message::Canvas(canvas::Message::Start));
     let _ = app.update(Message::Resized(Size::new(820., 600.)));
     let _ = app.update(Message::Placement(placement::Message::Select(
         "clock".into(),
@@ -425,7 +427,7 @@ fn split_sidebar_keyboard_navigation_keeps_focus_and_drafts() {
             .iter()
             .any(|message| matches!(message, Message::NavSelected(_)))
     );
-    assert_ne!(std::fs::read(Config::path().unwrap()).unwrap(), before);
+    assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
 }
 
 #[test]
@@ -1583,6 +1585,9 @@ fn fb13_native_share_actions_fit_compact_and_wide_setup_review() {
             profiles::Selection::Preset("spine"),
         )));
         let mut native = Native::new(size);
+        super::tests::native_reveal(&app, &mut native, "setup-library-actions");
+        click(&mut app, &mut native, "setup-library-actions");
+        assert!(app.open_sections.contains("setup-library-actions"));
         reveal(&app, &mut native, "profiles-share-image");
         // Do not execute the returned asynchronous dialog task in this UI test.
         let bounds = native.bounds(app.settings_view(), "profiles-share-image");

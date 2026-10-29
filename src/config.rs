@@ -329,6 +329,19 @@ impl Config {
         }
         self.enabled_widgets.iter().any(|key| key == widget.key())
     }
+    /// The saved choice shown in Settings, independent of the master visibility switch.
+    /// When Daily overview is enabled, its section choices replace standalone toggles.
+    pub fn widget_selected(&self, widget: Widget) -> bool {
+        if self.glance.enabled {
+            match widget {
+                Widget::Clock => return self.glance.show_clock,
+                Widget::Weather => return self.glance.show_weather,
+                Widget::Calendar => return self.glance.show_calendar,
+                _ => {}
+            }
+        }
+        self.widget_enabled(widget)
+    }
     pub fn data_visible(&self, widget: Widget) -> bool {
         if !self.widgets_visible {
             return false;

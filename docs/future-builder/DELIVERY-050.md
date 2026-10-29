@@ -102,3 +102,16 @@ from Dock & panel; the separate companion downloader and installer are removed.
 Older installations migrate through an empty APT bridge. See [the migration and
 validation record](BUNDLED-ISLANDS.md). This checkpoint does not publish 0.5 or
 replace the earlier evidence for unrelated features.
+
+
+## Product polish checkpoint — 2026-10-28
+
+The four 0.4.1 screenshot reviews are implemented in the local 0.5 tree. The
+[product polish tracker](PRODUCT-POLISH-050.md) maps every current finding to its
+implementation and checks, while keeping the review's two later feature proposals
+separate. Dock & panel remains a dedicated onboarding step.
+
+Validation covers 1,399 distinct passing Rust tests (the broad run and three
+corrected UI test reruns), including 31 new regressions, plus compact/wide private
+COSMIC walkthroughs with 44 window captures. The installed desktop was not
+replaced or restarted. This checkpoint does not publish 0.5.

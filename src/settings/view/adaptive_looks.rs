@@ -33,7 +33,7 @@ impl Settings {
             && !self.native_busy
             && !has_rules;
         let mut controls=vec![
-            split(label("Daily cycle",16.,FG),self.help("adaptive-cycle","", "Adds three ordinary rules: Day at sunrise, Evening at golden hour, Night at sunset. Each switch applies once and respects manual edits and pauses. Missing sun events are skipped. Edit times, priority or disable individual rules in Schedules & display rules.")),
+            split(label("Daily cycle",16.,FG),self.help("adaptive-cycle","", "Adds three ordinary rules: Day at sunrise, Evening at golden hour, Night at sunset. Each switch applies once and respects manual edits and pauses. Missing sun events are skipped. Edit times, priority or disable individual rules in Automation.")),
             label("Sunrise → Day · Golden hour → Evening · Sunset → Night",12.,MUTED),
             segmented([(Source::Weather,"Weather city"),(Source::Manual,"Schedule city")].into_iter().map(|(s,title)|(title.into(),self.adaptive_source==s,Some(Message::AdaptiveSource(s)))).collect(),accent),
             self.schedule_city_controls(self.adaptive_source),
@@ -61,6 +61,22 @@ impl Settings {
                 )))
                 .into()
         });
+        controls.push(
+            button::text("Schedule this look…")
+                .id(cosmic::widget::Id::new("adaptive-schedule"))
+                .on_press(Message::Automation(
+                    crate::settings::automation::Message::Schedule(
+                        crate::automation::ProfileRef::Preset(look.id(phase).into()),
+                    ),
+                ))
+                .into(),
+        );
+        controls.push(label(
+            "Wallpaper, colors and surfaces · layout and content stay.",
+            12.,
+            MUTED,
+        ));
+        controls.push(self.automation_link_status("adaptive-automation"));
         if self
             .config
             .moments

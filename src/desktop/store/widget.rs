@@ -312,6 +312,9 @@ pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/sidebar_slide", "Sidebar animation", Style, boolean;
     "/settings_animations", "Settings animation", Style, boolean;
     "/setup_dismissed", "Setup guide", Style, boolean;
+    "/setup_followup_weather_dismissed", "Weather setup reminder", Style, boolean;
+    "/setup_followup_calendar_dismissed", "Calendar setup reminder", Style, boolean;
+    "/setup_followup_projects_dismissed", "Projects setup reminder", Style, boolean;
     "/onboarded", "First-run setup", Style, boolean;
     "/music/player", "Music player", Style, |v| v.is_null() || v.as_str().is_some_and(|s| s.len() <= 256);
     "/focus/focus_minutes", "Focus duration", Style, |v| int_in(v,1,180);

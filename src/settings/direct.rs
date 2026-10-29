@@ -171,7 +171,7 @@ pub(super) fn label(message: &Message) -> String {
         | Message::ClockDepth(_) => "Clock",
         edit if moments::clock_style_edit(edit).is_some() => "Clock",
         Message::GlanceOpacity(_) | Message::GlanceStyle(_) | Message::GlanceDensity(_) => {
-            "At a glance"
+            "Daily overview"
         }
         Message::Desktop(_) => "Show widgets",
         _ => "Settings",

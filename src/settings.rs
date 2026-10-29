@@ -232,12 +232,7 @@ impl Page {
                 Self::DesktopShortcuts,
             ],
             Self::Widgets => &[Self::Widgets, Self::Overview, Self::Builder],
-            Self::DesktopProfiles => &[
-                Self::DesktopProfiles,
-                Self::AdaptiveLooks,
-                Self::Moments,
-                Self::DesktopAutomation,
-            ],
+            Self::DesktopProfiles => &[Self::DesktopProfiles, Self::DesktopAutomation],
             Self::DesktopMotion => &[Self::DesktopMotion],
             _ => &[Self::General],
         }
@@ -245,6 +240,7 @@ impl Page {
     /// The short sidebar name.
     fn nav_title(self) -> &'static str {
         match self {
+            Self::DesktopAutomation => "Automation",
             Self::Overview => "Layout & displays",
             Self::Widgets => "My widgets",
             Self::WidgetLayout => "Layout",
@@ -328,7 +324,7 @@ impl Page {
             Self::PendingChanges => "Recover unfinished work",
             Self::Appearance => "Surface finishes",
             Self::Widgets => "My widgets",
-            Self::Glance => "At a glance",
+            Self::Glance => "Daily overview",
             Self::Calendar => "Calendar",
             Self::Weather => "Weather",
             Self::Devbox => "System monitor",
@@ -707,6 +703,7 @@ pub enum Message {
     Calendar(calendar::Message),
     SetupDismissed(bool),
     SetupOpen(bool),
+    DismissSetupTask(wizard::follow_up::Task),
     OpenWeatherSource,
     UndoDesktopRestore(String),
     DesktopRestorePreview,
@@ -763,6 +760,7 @@ pub struct Settings {
     wizard: Option<wizard::Wizard>,
     search_query: String,
     setup_requested: bool,
+    setup_followups: wizard::follow_up::State,
     search_selected: Option<navigation::SearchHit>,
     advanced_pages: Vec<Page>,
     help_open: Option<&'static str>,
@@ -970,7 +968,7 @@ impl cosmic::Application for Settings {
         // Styles name their fonts; learn which are installed before drawing.
         crate::desktop_theme::load_installed_fonts();
         let page = page.canonical();
-        let config = Config::load();
+        let (config, design) = design::State::initialize();
         let wizard = OPEN_WIZARD
             .swap(false, std::sync::atomic::Ordering::Relaxed)
             .then_some(())
@@ -980,7 +978,7 @@ impl cosmic::Application for Settings {
         let usage = crate::usage::preference();
         let mut app = Self {
             depth_preview: Default::default(),
-            design: design::State::load(),
+            design,
             moment_preview: crate::moments::Phase::Day,
             adaptive_look: Default::default(),
             adaptive_phase: Default::default(),
@@ -999,6 +997,7 @@ impl cosmic::Application for Settings {
             wizard,
             search_query: String::new(),
             setup_requested: false,
+            setup_followups: wizard::follow_up::State::load(),
             search_selected: None,
             advanced_pages: Vec::new(),
             help_open: None,
@@ -1126,7 +1125,11 @@ impl cosmic::Application for Settings {
         }
         if matches!(
             page,
-            Page::DesktopAutomation | Page::Desktop | Page::DesktopProfiles | Page::AdaptiveLooks
+            Page::DesktopAutomation
+                | Page::Desktop
+                | Page::DesktopProfiles
+                | Page::AdaptiveLooks
+                | Page::Moments
         ) {
             app.automation.open();
         }
@@ -1480,7 +1483,10 @@ impl cosmic::Application for Settings {
                 .map(|_| Message::Support(support::Message::Changed)),
             );
         }
-        if matches!(self.page, Page::DesktopAutomation | Page::AdaptiveLooks) {
+        if matches!(
+            self.page,
+            Page::DesktopAutomation | Page::AdaptiveLooks | Page::Moments
+        ) {
             let paths = self.automation.watch_paths();
             if !paths.is_empty() {
                 subscriptions.push(
@@ -1634,6 +1640,18 @@ impl cosmic::Application for Settings {
         Some(Message::FlushEdits)
     }
     fn update(&mut self, message: Message) -> Task<Message> {
+        if self.page == Page::Overview
+            && self.canvas.is_none()
+            && matches!(&message, Message::Placement(edit) if !matches!(edit,
+                placement::Message::Select(_) | placement::Message::ClearSelection
+                | placement::Message::Cancel | placement::Message::Undo | placement::Message::Escape
+                | placement::Message::CancelDrag | placement::Message::Leave | placement::Message::Guides(_))
+                && !(matches!(edit, placement::Message::Save) && self.legacy_layout_recovery()))
+        {
+            // Landing previews never commit gestures, including delayed input
+            // from a canvas that was just applied or cancelled.
+            return Task::none();
+        }
         if self.config.design_problem.is_some() {
             match &message {
                 Message::Design(_)
@@ -1985,6 +2003,13 @@ impl Settings {
                 self.save(json!({"setup_dismissed":on}));
                 return self.handle(Message::SetupOpen(!on));
             }
+            Message::DismissSetupTask(task) => match self.setup_followups.dismiss(task) {
+                Ok(config) => {
+                    self.config = config;
+                    self.saved();
+                }
+                Err(error) => self.failed(error),
+            },
             Message::SearchSettings(query) => {
                 if !query.trim().is_empty() {
                     self.placement.leave();
@@ -2230,18 +2255,36 @@ impl Settings {
                 let navigation = self.handle(Message::Page(Page::Overview));
                 let selection =
                     self.update_placement(placement::Message::Select(widget.key().into()));
-                return Task::batch([navigation, selection]);
+                let editor = if self.legacy_layout_recovery() {
+                    Task::none()
+                } else {
+                    self.update_canvas(canvas::Message::Start)
+                };
+                return Task::batch([navigation, selection, editor]);
             }
             Message::Placement(message) => {
                 // The widget list and the miniature share one pointer; a
                 // column reorder in progress owns it until drop or cancel.
                 if self.reorder.source.is_some()
                     || self.devbox_reorder.source.is_some()
-                    || !self.placement_active()
+                    || (!self.placement_active()
+                        && !(self.legacy_layout_recovery()
+                            && matches!(
+                                message,
+                                placement::Message::Save
+                                    | placement::Message::Cancel
+                                    | placement::Message::Undo
+                            )))
                 {
                     return Task::none();
                 }
-                return self.update_placement(message);
+                let recovering =
+                    self.legacy_layout_recovery() && matches!(message, placement::Message::Save);
+                let task = self.update_placement(message);
+                if recovering && !self.error && !self.placement.dirty() {
+                    self.finish_layout_recovery();
+                }
+                return task;
             }
             Message::DesktopEditor(message) => {
                 if self.page == Page::DesktopDock
@@ -2447,6 +2490,7 @@ impl Settings {
             Message::Tick => {
                 self.refresh_usage();
                 self.calendar.refresh();
+                self.setup_followups = wizard::follow_up::State::load();
                 match Config::try_load() {
                     Ok(config) => self.config = config,
                     Err(error)
@@ -2865,6 +2909,11 @@ impl Settings {
             }
             Message::Page(page) => {
                 let page = page.canonical();
+                if self.page != page {
+                    // A previous page's change stays available in Recent
+                    // changes and keyboard Undo, not as this task's footer.
+                    self.undo_baseline = navigation::latest_desktop_change().map(|(_, _, id)| id);
+                }
                 if self.page != page
                     && matches!(
                         self.page,
@@ -2934,6 +2983,7 @@ impl Settings {
                 if matches!(
                     page,
                     Page::DesktopAutomation
+                        | Page::Moments
                         | Page::Desktop
                         | Page::DesktopProfiles
                         | Page::AdaptiveLooks
@@ -3909,6 +3959,7 @@ impl Settings {
     /// listeners run only while it is on screen.
     fn placement_active(&self) -> bool {
         matches!(self.page, Page::Overview | Page::WidgetLayout)
+            && (self.page != Page::Overview || self.canvas.is_some())
             && !self.setup_requested
             && self.search_query.trim().is_empty()
     }
@@ -4141,6 +4192,7 @@ impl Settings {
     /// preferences and the other editors' current values. Their drafts stay.
     /// Returns the Wallpaper page's media work the refresh started.
     fn after_desktop_change(&mut self) -> Task<Message> {
+        self.setup_followups = wizard::follow_up::State::load();
         if let Ok(config) = Config::try_load() {
             self.config = config;
         }
@@ -4503,6 +4555,11 @@ impl Settings {
     }
     fn update_automation(&mut self, message: automation::Message) -> Task<Message> {
         use automation::Message as Edit;
+        if matches!(message, Edit::Schedule(_)) && self.page != Page::DesktopAutomation {
+            let navigation = self.handle(Message::Page(Page::DesktopAutomation));
+            let editor = self.update_automation(message);
+            return Task::batch([navigation, editor]);
+        }
         if !matches!(self.page, Page::DesktopAutomation | Page::AdaptiveLooks)
             && message != Edit::Refresh
         {
@@ -4510,7 +4567,7 @@ impl Settings {
         }
         let focus = matches!(
             message,
-            Edit::New(automation::Kind::Schedule) | Edit::Edit(_)
+            Edit::New(automation::Kind::Schedule) | Edit::Schedule(_) | Edit::Edit(_)
         );
         self.automation
             .update(message, self.config.clock.format_24h);
@@ -5759,6 +5816,7 @@ mod tests {
     include!("settings/product_tests.rs");
     include!("settings/solar_tests.rs");
     include!("settings/adaptive_tests.rs");
+    include!("settings/polish_tests.rs");
 
     /// What Wallpaper & colors recommends for a solid color background.
     fn recommended_color(rgb: [f32; 3]) -> [u8; 3] {
@@ -6079,6 +6137,7 @@ mod tests {
                     &controls_theme(&app.config),
                     &format!("clock-settings-{}-{combined}", size.width),
                 );
+                let saved_layout = raw_preferences();
                 click(&mut app, &mut native, "clock-edit-layout");
                 assert_eq!(app.page, Page::Overview);
                 assert_eq!(
@@ -6091,7 +6150,12 @@ mod tests {
                 );
                 click(&mut app, &mut native, "layout-center-x");
                 click(&mut app, &mut native, "layout-center-y");
-                assert!(!app.placement.dirty());
+                assert!(app.canvas.is_some());
+                assert_eq!(
+                    raw_preferences(),
+                    saved_layout,
+                    "alignment remains a local preview, including an already-centered no-op"
+                );
                 let key = if combined { "glance" } else { "clock" };
                 let card = native.bounds(app.settings_view(), &format!("placement-card-{key}"));
                 let desktop = native.bounds(app.settings_view(), "placement-canvas");
@@ -6102,6 +6166,14 @@ mod tests {
                     &controls_theme(&app.config),
                     &format!("center-controls-{}-{combined}", size.width),
                 );
+                if app.canvas_dirty() {
+                    let id = app.canvas.as_ref().unwrap().id;
+                    send_settings(&mut app, Message::Canvas(canvas::Message::Apply(id)));
+                } else {
+                    send_settings(&mut app, Message::Canvas(canvas::Message::Cancel));
+                }
+                assert!(!app.error, "{}", app.status);
+                assert!(!app.placement.dirty());
             }
         }
     }
@@ -6143,6 +6215,7 @@ mod tests {
             let before = raw_preferences();
             let (mut app, _) = Settings::init(Core::default(), Page::Overview);
             let _ = app.update(Message::Resized(size));
+            send_settings(&mut app, Message::Canvas(canvas::Message::Start));
             let mut native = Native::new(size);
             let theme = controls_theme(&app.config);
             native.capture(
@@ -6187,11 +6260,12 @@ mod tests {
                 "{after_move:?} → {resized:?}"
             );
             assert!((resized.height - after_move.height - 26.).abs() < 1.);
-            assert_ne!(
+            assert_eq!(
                 raw_preferences(),
                 before,
-                "release completes native gestures"
+                "gestures remain local until Apply"
             );
+            assert!(app.canvas_dirty());
             let after_gestures = raw_preferences();
             let canvas = native.bounds(app.settings_view(), "placement-canvas");
             let cards: Vec<_> = Widget::ALL
@@ -6229,10 +6303,7 @@ mod tests {
                 None,
                 "empty canvas clears selection"
             );
-            assert!(
-                !app.placement.dirty(),
-                "deselecting retains completed gestures"
-            );
+            assert!(app.placement.dirty(), "deselecting retains draft gestures");
             assert_eq!(
                 raw_preferences(),
                 after_gestures,
@@ -6245,6 +6316,15 @@ mod tests {
                 app.settings_view(),
                 &theme,
                 &format!("home-resized-{}x{}", size.width, size.height),
+            );
+            let id = app.canvas.as_ref().unwrap().id;
+            send_settings(&mut app, Message::Canvas(canvas::Message::Apply(id)));
+            assert!(!app.error, "{}", app.status);
+            assert_ne!(raw_preferences(), before);
+            send_settings(&mut app, Message::Canvas(canvas::Message::Start));
+            send_settings(
+                &mut app,
+                Message::Placement(placement::Message::Select("weather".into())),
             );
             let _ = app.update(Message::Placement(placement::Message::ResizeMode(true)));
             let old = app.placement.display_size("weather").unwrap();
@@ -6271,7 +6351,7 @@ mod tests {
             let _ = app.update(Message::Page(Page::WidgetLayout));
             assert_eq!(app.placement.display_size("weather"), Some(desired));
             let _ = app.update(Message::Page(Page::Overview));
-            let save = native.bounds(app.settings_view(), "layout-done").center();
+            let save = native.bounds(app.settings_view(), "canvas-apply").center();
             assert!(save.y < size.height, "Save remains visible");
             pointer(&mut app, &mut native, save, None);
             pointer(&mut app, &mut native, save, Some(true));
@@ -6282,12 +6362,13 @@ mod tests {
             let _ = app.update(Message::UndoPreferences);
             assert_eq!(Config::load().widget_sizes["weather"], old);
             assert_eq!(Config::load().theme, "amber");
+            send_settings(&mut app, Message::Canvas(canvas::Message::Start));
             let _ = app.update(Message::Placement(placement::Message::Select(
                 "music".into(),
             )));
             let _ = app.update(Message::Placement(placement::Message::Resize([0, 1], true)));
-            assert!(!app.placement.dirty());
-            let _ = app.update(Message::Placement(placement::Message::Cancel));
+            assert!(app.canvas_dirty());
+            send_settings(&mut app, Message::Canvas(canvas::Message::Cancel));
             assert_eq!(Config::load().widget_sizes["weather"], old);
             assert!(!app.placement.dirty());
             evidence.push(json!({"window":[size.width,size.height],"move_pixels":[after_move.x-original.x,after_move.y-original.y],"resize_pixels":[resized.width-after_move.width,resized.height-after_move.height],"saved_dimensions":desired,"saved_then_undone":true,"cancelled_tool_resize":true}));
@@ -6317,6 +6398,8 @@ mod tests {
         let before = live_tree(&root);
         let preferences = raw_preferences();
         let (mut app, _) = Settings::init(Core::default(), Page::WidgetLayout);
+        assert!(!app.placement_active());
+        send_settings(&mut app, Message::Canvas(canvas::Message::Start));
         assert!(app.placement_active());
         let _ = app.update(Message::SearchSettings("gpu".into()));
         assert!(!app.placement_active());
@@ -6372,8 +6455,9 @@ mod tests {
         let live = live_tree(&root);
         let preferences = raw_preferences();
         let (mut app, _) = Settings::init(Core::default(), Page::WidgetLayout);
+        send_settings(&mut app, Message::Canvas(canvas::Message::Start));
         let _ = app.update(Message::Placement(placement::Message::Snap(false)));
-        assert!(!app.placement.dirty());
+        assert!(app.placement.dirty());
         let _ = app.update(Message::SearchSettings("gpu".into()));
         let _ = app.update(Message::Back);
         assert!(app.search_query.is_empty());
@@ -6388,10 +6472,7 @@ mod tests {
             Page::Widgets,
             "Back from Layout returns to the Widgets root"
         );
-        assert!(
-            !app.placement.dirty(),
-            "navigation never cancels the layout"
-        );
+        assert!(app.placement.dirty(), "navigation never cancels the layout");
         let _ = app.update(Message::Page(Page::Weather));
         let _ = app.update(Message::Back);
         assert_eq!(app.page, Page::Widgets);
@@ -6399,8 +6480,17 @@ mod tests {
         let _ = app.update(Message::Page(Page::DesktopWindowRules));
         let _ = app.update(Message::Back);
         assert_eq!(app.page, Page::DesktopWindows);
-        assert!(!app.pending_pages().contains(&Page::WidgetLayout));
-        assert_ne!(raw_preferences(), preferences);
+        assert!(app.canvas_dirty());
+        assert_eq!(
+            raw_preferences(),
+            preferences,
+            "navigation preserves local edits without committing"
+        );
+        assert!(Config::load().placement.snap);
+        send_settings(&mut app, Message::Page(Page::Overview));
+        let id = app.canvas.as_ref().unwrap().id;
+        send_settings(&mut app, Message::Canvas(canvas::Message::Apply(id)));
+        assert!(!app.error, "{}", app.status);
         assert!(!Config::load().placement.snap);
         assert_eq!(live_tree(&root), live);
     }
@@ -6679,9 +6769,9 @@ mod tests {
                 ("gallery-hidden", Page::Widgets, Message::Page(Page::Glance)),
                 ("gallery-shown", Page::Widgets, Message::Page(Page::Clock)),
                 (
-                    "home-widget",
+                    "home-editor",
                     Page::Overview,
-                    Message::Placement(placement::Message::Select("clock".into())),
+                    Message::Canvas(canvas::Message::Start),
                 ),
             ] {
                 let (mut app, _) = Settings::init(Core::default(), page);
@@ -6719,6 +6809,10 @@ mod tests {
                         && match (&messages[0], &expected) {
                             (Message::Page(actual), Message::Page(expected)) => actual == expected,
                             (
+                                Message::Canvas(canvas::Message::Start),
+                                Message::Canvas(canvas::Message::Start),
+                            ) => true,
+                            (
                                 Message::Placement(placement::Message::Select(actual)),
                                 Message::Placement(placement::Message::Select(expected)),
                             ) => actual == expected,
@@ -6732,7 +6826,7 @@ mod tests {
                         ui.operate(&renderer, &mut focused);
                         let (id, bounds) = focused.0.expect("focused button");
                         // Desktop sidebar links can share the same destination.
-                        if bounds.x > 184. {
+                        if bounds.x >= 184. {
                             activated = Some((messages.pop().unwrap(), id, bounds));
                             break;
                         }
@@ -6836,6 +6930,10 @@ mod tests {
                             app.placement.selected().map(Widget::key),
                             Some(key.as_str())
                         );
+                    }
+                    Message::Canvas(canvas::Message::Start) => {
+                        assert_eq!(app.page, Page::Overview);
+                        assert!(app.canvas.is_some());
                     }
                     Message::Page(page) => assert_eq!(app.page, page),
                     Message::OpenBar(kind) => {
@@ -8153,6 +8251,7 @@ mod tests {
         let (mut app, _) = Settings::init(Core::default(), Page::WidgetLayout);
         let before = raw_preferences();
         let original = app.config.enabled_widgets.clone();
+        send_settings(&mut app, Message::Canvas(canvas::Message::Start));
         let _ = app.update(Message::Placement(placement::Message::Snap(false)));
         let _ = app.update(Message::Widget(Widget::Glance, true));
         let _ = app.update(Message::Page(Page::Glance));
@@ -8161,7 +8260,7 @@ mod tests {
         let _ = app.update(Message::GlanceSection("show_tomorrow", true));
         let _ = app.update(Message::GlanceSection("show_weather", false));
         let _ = app.update(Message::DevboxHistory("cpu", true));
-        assert!(!app.placement.dirty());
+        assert!(app.placement.dirty());
         assert!(app.config.devbox.history.cpu);
         assert_eq!(app.config.glance.density, GlanceDensity::Comfortable);
         assert!(app.config.glance.show_tomorrow);
@@ -8177,8 +8276,12 @@ mod tests {
         assert_eq!(raw["widget_positions"], before["widget_positions"]);
         assert_eq!(raw["future_field"], 42);
         assert_eq!(raw["devbox"]["future_metric"], 17);
-        assert!(raw.get("placement").is_some());
-        assert!(!app.placement.dirty());
+        assert!(
+            raw.get("placement").is_none(),
+            "the layout draft remains local"
+        );
+        assert!(app.canvas_dirty());
+        assert!(app.placement.dirty());
     }
 
     #[test]
@@ -8189,9 +8292,10 @@ mod tests {
             return;
         }
         let (mut app, _) = Settings::init(Core::default(), Page::WidgetLayout);
+        send_settings(&mut app, Message::Canvas(canvas::Message::Start));
         let _ = app.update(Message::Placement(placement::Message::Snap(false)));
         let _ = app.update(Message::Page(Page::Devbox));
-        assert!(!app.placement.dirty());
+        assert!(app.placement.dirty());
         devbox_command(
             &mut app,
             json!([
@@ -8233,12 +8337,13 @@ mod tests {
         assert_eq!(latest["devbox"]["swap"], false);
         assert_eq!(latest["devbox"]["order"], raw["devbox"]["order"]);
         assert!(
-            !app.placement.dirty(),
+            app.placement.dirty(),
             "A Devbox change must preserve the layout draft"
         );
         assert_eq!(
-            latest["placement"]["snap"], false,
-            "completed placement preference stays saved"
+            latest["placement"]["snap"],
+            serde_json::Value::Null,
+            "unapplied layout preferences stay local"
         );
         assert!(!app.busy, "Visibility must not run a service command");
     }
@@ -10261,13 +10366,8 @@ mod tests {
         let fixed = id.starts_with("nav-")
             || matches!(
                 id,
-                "settings-search"
-                    | "settings-back"
-                    | "settings-undo"
-                    | "wallpaper-apply"
-                    | "layout-done"
-            )
-            || id.starts_with("layout-center-");
+                "settings-search" | "settings-back" | "settings-undo" | "wallpaper-apply"
+            );
         let viewport = if fixed {
             cosmic::iced::Rectangle::with_size(native.size)
         } else {

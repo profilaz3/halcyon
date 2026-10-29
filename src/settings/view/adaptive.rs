@@ -6,18 +6,46 @@ use cosmic::iced::advanced::{Clipboard, Layout, Shell, Widget, layout, overlay, 
 use cosmic::iced::{Event, Rectangle, Size, Vector, mouse};
 use cosmic::{Renderer, Theme};
 
+/// Keep the same two child trees while changing their proportions. A scene
+/// needs room to inspect objects; a settings page needs room for its controls.
+#[derive(Clone, Copy)]
+pub(super) enum Pattern {
+    Balanced,
+    Scene,
+    Controls,
+    Form,
+}
+
+pub(super) fn page<'a>(
+    left: Element<'a, Message>,
+    right: Element<'a, Message>,
+    minimum: [f32; 2],
+    pattern: Pattern,
+) -> Element<'a, Message> {
+    Element::new(Columns {
+        children: vec![left, right],
+        minimum,
+        pattern,
+        field: false,
+    })
+}
+
 pub(super) fn columns<'a>(
     left: Element<'a, Message>,
     right: Element<'a, Message>,
     minimum: [f32; 2],
     inspector: bool,
 ) -> Element<'a, Message> {
-    Element::new(Columns {
-        children: vec![left, right],
+    page(
+        left,
+        right,
         minimum,
-        inspector,
-        field: false,
-    })
+        if inspector {
+            Pattern::Scene
+        } else {
+            Pattern::Balanced
+        },
+    )
 }
 pub(super) fn field<'a>(
     left: Element<'a, Message>,
@@ -26,14 +54,14 @@ pub(super) fn field<'a>(
     Element::new(Columns {
         children: vec![left, right],
         minimum: [100., 0.],
-        inspector: false,
+        pattern: Pattern::Balanced,
         field: true,
     })
 }
 struct Columns<'a> {
     children: Vec<Element<'a, Message>>,
     minimum: [f32; 2],
-    inspector: bool,
+    pattern: Pattern,
     field: bool,
 }
 impl Widget<Message, Theme, Renderer> for Columns<'_> {
@@ -66,13 +94,8 @@ impl Widget<Message, Theme, Renderer> for Columns<'_> {
                 )
                 .size()
                 .width
-        } else if self.inspector {
-            (width * 0.38).clamp(
-                self.minimum[1] * scale,
-                312_f32.max(self.minimum[1]) * scale,
-            )
         } else {
-            (width - gap) / 2.
+            right_width(self.pattern, width, self.minimum, scale, gap)
         };
         let side = if self.field {
             width >= self.minimum[0] * scale + right + gap
@@ -233,8 +256,59 @@ impl Widget<Message, Theme, Renderer> for Columns<'_> {
     }
 }
 
+fn right_width(pattern: Pattern, width: f32, minimum: [f32; 2], scale: f32, gap: f32) -> f32 {
+    match pattern {
+        Pattern::Balanced => (width - gap) / 2.,
+        Pattern::Scene => (width * 0.40).clamp(minimum[1] * scale, 420_f32.max(minimum[1]) * scale),
+        Pattern::Controls => {
+            width - gap - (width * 0.34).clamp(minimum[0] * scale, 340_f32.max(minimum[0]) * scale)
+        }
+        Pattern::Form => (width * 0.32).clamp(minimum[1] * scale, 340_f32.max(minimum[1]) * scale),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn polish050_control_pattern_prioritizes_controls_and_reflows_for_large_text() {
+        use super::*;
+        let view = || {
+            page(
+                container(label("Sample", 14., FG))
+                    .id("polish-stage")
+                    .width(Length::Fill)
+                    .height(150)
+                    .into(),
+                container(
+                    text_input("Title", "Unsaved")
+                        .id("polish-field".into())
+                        .on_input(|_| Message::Preview),
+                )
+                .id("polish-controls")
+                .width(Length::Fill)
+                .into(),
+                [224., 360.],
+                Pattern::Controls,
+            )
+        };
+        for width in [616., 1056.] {
+            let mut native = crate::native_test::Native::new(Size::new(width, 600.));
+            let stage = native.bounds(view(), "polish-stage");
+            let controls = native.bounds(view(), "polish-controls");
+            assert!(controls.width >= 360. && controls.width > stage.width);
+            assert!(controls.x + controls.width <= width);
+        }
+        let mut native =
+            crate::native_test::Native::with_text_size(Size::new(616., 600.), "tiny-skia", 21.);
+        let stage = native.bounds(view(), "polish-stage");
+        let controls = native.bounds(view(), "polish-controls");
+        assert!(controls.y >= stage.y + stage.height && controls.width == 616.);
+        native.capture(
+            view(),
+            &cosmic::Theme::dark(),
+            "polish050-control-large-text",
+        );
+    }
     use super::*;
     #[test]
     fn structural_columns_reflow_for_enlarged_text_and_long_controls() {
