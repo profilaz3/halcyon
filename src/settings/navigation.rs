@@ -445,7 +445,7 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::DesktopDock,
         "Dock & panel",
-        "dock top bar panel applets position size autohide",
+        "dock top bar panel applets position size autohide penumbra gradient",
         false,
     ),
     hit(

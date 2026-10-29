@@ -16,6 +16,7 @@ pub(super) fn completion(message: &Message) -> Option<Message> {
                     | Dock::Size(_)
                     | Dock::AutoHide(_)
                     | Dock::Floating(_)
+                    | Dock::Penumbra(_)
                     | Dock::Extend(_)
                     | Dock::Output(_)
                     | Dock::Background(_)
@@ -147,6 +148,9 @@ pub(super) fn label(message: &Message) -> String {
         }
         Message::DesktopEditor(edit) => match edit {
             desktop::Message::Opacity(_) => "Dock opacity",
+            desktop::Message::Penumbra(_)
+            | desktop::Message::PenumbraHeight(_)
+            | desktop::Message::PenumbraMaximizedOpacity(_) => "Penumbra gradient",
             desktop::Message::Anchor(_) => "Dock position",
             _ => "Dock & panel",
         },

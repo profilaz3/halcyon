@@ -23,6 +23,9 @@ pub enum Message {
     Margin(u16),
     Extend(bool),
     Opacity(u8),
+    Penumbra(bool),
+    PenumbraHeight(u32),
+    PenumbraMaximizedOpacity(u8),
     Radius(u32),
     RadiusChoice(u32),
     Spacing(u32),
@@ -118,6 +121,7 @@ pub enum Notice {
 #[derive(Default)]
 pub struct DesktopEditor {
     pub islands: islands::State,
+    pub penumbra_supported: bool,
     store: Option<Result<DesktopStore, String>>,
     drafts: BTreeMap<PanelKind, PanelDraft>,
     pub selected: PanelKind,
@@ -148,6 +152,7 @@ impl DesktopEditor {
     pub fn display_snapshot(&self) -> Self {
         Self {
             islands: self.islands.display_snapshot(),
+            penumbra_supported: self.penumbra_supported,
             store: self.store.clone(),
             drafts: self.drafts.clone(),
             selected: self.selected,
@@ -497,6 +502,15 @@ impl DesktopEditor {
             Message::Margin(value) => self.edit(|draft| draft.set_margin(value)),
             Message::Extend(value) => self.edit(|draft| draft.set_extend(value)),
             Message::Opacity(value) => self.edit(|draft| draft.set_opacity_percent(value)),
+            Message::Penumbra(value) => {
+                if self.penumbra_supported || !value {
+                    self.edit(|draft| draft.set_penumbra(value));
+                }
+            }
+            Message::PenumbraHeight(value) => self.edit(|draft| draft.set_penumbra_height(value)),
+            Message::PenumbraMaximizedOpacity(value) => {
+                self.edit(|draft| draft.set_penumbra_maximized_opacity(value));
+            }
             Message::Radius(value) | Message::RadiusChoice(value) => {
                 self.edit(|draft| draft.set_radius(value))
             }
@@ -875,6 +889,58 @@ mod tests {
     use crate::desktop::store::tests::Fixture;
 
     const DOCK: &str = "com.system76.CosmicPanel.Dock";
+
+    #[test]
+    fn penumbra_requires_its_own_support_and_does_not_enable_islands() {
+        let fixture = Fixture::new("penumbra-editor");
+        let mut editor = editor(&fixture);
+        editor.islands.compatible = true;
+        editor.update(Message::Penumbra(true));
+        assert!(!editor.dirty());
+        editor.penumbra_supported = true;
+        editor.update(Message::Penumbra(true));
+        assert_eq!(
+            editor.current().unwrap().edited().collect::<Vec<_>>(),
+            ["margin", "top_edge_gradient"]
+        );
+        editor.update(Message::Apply);
+        assert!(!editor.dirty());
+        assert!(!editor.current().unwrap().islands().known().unwrap().enabled);
+        assert!(
+            editor
+                .current()
+                .unwrap()
+                .penumbra()
+                .known()
+                .unwrap()
+                .unwrap()
+                .enabled
+        );
+        editor.penumbra_supported = false;
+        editor.update(Message::Penumbra(false));
+        editor.update(Message::Apply);
+        assert!(
+            !editor
+                .current()
+                .unwrap()
+                .penumbra()
+                .known()
+                .unwrap()
+                .unwrap()
+                .enabled
+        );
+        editor.update(Message::Undo);
+        assert!(
+            editor
+                .current()
+                .unwrap()
+                .penumbra()
+                .known()
+                .unwrap()
+                .unwrap()
+                .enabled
+        );
+    }
 
     fn editor(fixture: &Fixture) -> DesktopEditor {
         fixture.system(

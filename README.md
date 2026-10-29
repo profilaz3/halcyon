@@ -33,6 +33,10 @@ Open **App settings → Updates → Get Islands…**, install the add-on, then c
 
 [Compatibility and manual installation](packaging/islands/README.md).
 
+## Optional Penumbra
+
+Penumbra adds a theme-aware gradient that fades the panel or dock into your wallpaper. Its independent switch is under Desktop → Dock & panel → Style → Penumbra. Floating and Penumbra turn each other off. It requires a panel component built with Penumbra support; enabling Islands is optional. See [Penumbra setup and compatibility](companion/PENUMBRA.md).
+
 ## Calendar
 
 Add read-only calendar subscription links from Google Calendar, Outlook or other providers. [Calendar setup guide](docs/CALENDAR.md).

@@ -23,3 +23,11 @@ Release packages include the full license text of every dependency
 (generated from `Cargo.lock` at release time) next to the binary.
 
 Artwork is described in `ASSETS.md`.
+
+The optional Penumbra panel mod in `companion/patches/0002-penumbra-panel.patch`
+adapts the renderer and configuration schema from
+[motixo/penumbra-panel](https://github.com/motixo/penumbra-panel), revision
+`3ef32c8ba54c2e296fc18840a419bc5c11fc58bb`, under GPL-3.0-only. It is based on
+System76's COSMIC Panel. The native patch retains its SPDX license notice;
+the full GPL version 3 text is in `LICENSE`. Halcyon's Penumbra controls retain
+the original preference format for interoperability.

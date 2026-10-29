@@ -2,6 +2,10 @@
 
 Dock Islands is an optional style on Desktop > Dock & panel. Standard remains the default. It uses the existing Start, Center and End applet sections, including repeated and unknown IDs. No applet or top bar is added automatically.
 
+[Penumbra](PENUMBRA.md) is a separate optional gradient mod. A panel built with
+`--with-penumbra` supports both mods in one host, with independent controls and
+preferences. Standard layout can use Penumbra without enabling Islands.
+
 Together has one exact gap and a movable compact group. Separate has individual positions and a minimum gap. Both layouts are saved. Choose an edge, use Arrange, drag the temporary handles, then Done and Apply. Tab selects handles, arrows move or reorder, Home/End place at the ends, and Escape cancels a gesture first. Settings also has move buttons. Cancel restores the draft from before Arrange. Discard and persistent Undo keep their existing meanings.
 
 Apply native screen-edge or applet-list edits before arranging the live dock. Those edits can recreate native applets, so a companion restart or an external structural edit ends Arrange safely. Unapplied drafts retain their baselines. Dock Islands does not write preferences during pointer motion.

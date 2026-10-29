@@ -352,12 +352,29 @@ impl Client {
         if bytes.len() > MAX_WIRE_BYTES {
             return Err("Island request is too large".into());
         }
+        let data = self.exchange(&bytes)?;
+        match serde_json::from_slice(&data).map_err(|_| "Invalid panel reply")? {
+            Response::Error(error) => Err(error),
+            response => Ok(response),
+        }
+    }
+
+    /// Penumbra is an independent optional extension, not an Islands capability.
+    /// An older host returns its ordinary unknown-request error and stays usable.
+    pub fn penumbra_supported(&mut self) -> bool {
+        self.exchange(b"\"PenumbraSupport\"\n")
+            .ok()
+            .and_then(|data| serde_json::from_slice::<serde_json::Value>(&data).ok())
+            .is_some_and(|reply| reply["PenumbraSupport"]["version"] == 1)
+    }
+
+    fn exchange(&mut self, bytes: &[u8]) -> Result<Vec<u8>, String> {
         let data = if let Some(deadline) = self.read_only_deadline {
-            self.read_only_exchange(&bytes, deadline)?
+            self.read_only_exchange(bytes, deadline)?
         } else {
             self.stream
                 .get_mut()
-                .write_all(&bytes)
+                .write_all(bytes)
                 .map_err(|_| "The Islands panel component disconnected")?;
             let mut data = Vec::new();
             self.stream
@@ -373,10 +390,7 @@ impl Client {
         if data.len() > MAX_WIRE_BYTES || !data.ends_with(b"\n") {
             return Err("Invalid panel reply".into());
         }
-        match serde_json::from_slice(&data).map_err(|_| "Invalid panel reply")? {
-            Response::Error(error) => Err(error),
-            response => Ok(response),
-        }
+        Ok(data)
     }
     pub fn capabilities(&mut self) -> Result<Capabilities, String> {
         match self.request(&Request::Capabilities)? {
@@ -393,6 +407,38 @@ mod tests {
         panels::{PanelDraft, Setting},
         store::{Owner, tests::Fixture},
     };
+    #[test]
+    fn penumbra_probe_is_independent_and_old_hosts_keep_their_protocol() {
+        for (reply, supported) in [
+            ("{\"PenumbraSupport\":{\"version\":1}}\n", true),
+            ("{\"PenumbraSupport\":{\"version\":2}}\n", false),
+            ("{\"Error\":\"Invalid islands request\"}\n", false),
+        ] {
+            let (stream, mut server) = UnixStream::pair().unwrap();
+            stream.set_nonblocking(true).unwrap();
+            let worker = std::thread::spawn(move || {
+                let mut reader = BufReader::new(server.try_clone().unwrap());
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                assert_eq!(line, "\"PenumbraSupport\"\n");
+                server.write_all(reply.as_bytes()).unwrap();
+                line.clear();
+                reader.read_line(&mut line).unwrap();
+                assert_eq!(line, "\"Capabilities\"\n");
+                let mut reply =
+                    serde_json::to_vec(&Response::Capabilities(Capabilities::default())).unwrap();
+                reply.push(b'\n');
+                server.write_all(&reply).unwrap();
+            });
+            let mut client = Client {
+                stream: BufReader::new(stream),
+                read_only_deadline: Some(Instant::now() + Duration::from_secs(2)),
+            };
+            assert_eq!(client.penumbra_supported(), supported);
+            assert!(client.capabilities().is_ok());
+            worker.join().unwrap();
+        }
+    }
     #[test]
     fn observed_status_is_read_only_and_trickle_cannot_extend_deadline() {
         let fixture = Fixture::new("islands-read-only-deadline");

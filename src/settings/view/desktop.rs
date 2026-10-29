@@ -15,6 +15,7 @@ pub(super) mod inspector;
 mod islands;
 pub(super) use inspector::paired;
 mod panel;
+mod penumbra;
 pub(super) mod preview;
 
 pub(super) const WARN: Color = Color::from_rgb(0.96, 0.78, 0.45);
@@ -486,6 +487,8 @@ impl Settings {
                 accent,
             ),
         ));
+        style.push(separator());
+        style.push(self.penumbra_controls(draft));
         paired(
             self.window.width >= 1120.,
             section(vec![

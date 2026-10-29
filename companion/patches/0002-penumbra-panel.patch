@@ -1,0 +1,1172 @@
+# Penumbra Panel gradient mod, applied after 0001-dock-islands.patch.
+# Adapted from motixo/penumbra-panel at 3ef32c8 (GPL-3.0-only).
+# https://github.com/motixo/penumbra-panel
+# Keeps Penumbra preferences and activation independent of Islands.
+
+diff --git a/cosmic-panel-bin/src/islands.rs b/cosmic-panel-bin/src/islands.rs
+index e0acdcc..e004e1f 100644
+--- a/cosmic-panel-bin/src/islands.rs
++++ b/cosmic-panel-bin/src/islands.rs
+@@ -421,6 +421,14 @@ fn connection(stream: UnixStream, id: u64, tx: &calloop::channel::Sender<crate::
+             Ok(_) if bytes.len() > MAX_WIRE_BYTES || !bytes.ends_with(b"\n") => break,
+             _ => {},
+         }
++        // Independent, read-only Penumbra extension. Older Islands clients
++        // and the version-1 layout protocol remain unchanged.
++        if bytes == b"\"PenumbraSupport\"\n" {
++            if writer.write_all(b"{\"PenumbraSupport\":{\"version\":1}}\n").is_err() {
++                break;
++            }
++            continue;
++        }
+         let response = match serde_json::from_slice::<Request>(&bytes) {
+             Ok(request) => {
+                 let (reply, result) = mpsc::sync_channel(1);
+diff --git a/cosmic-panel-bin/src/space/edge_gradient.rs b/cosmic-panel-bin/src/space/edge_gradient.rs
+new file mode 100644
+index 0000000..dbdd099
+--- /dev/null
++++ b/cosmic-panel-bin/src/space/edge_gradient.rs
+@@ -0,0 +1,891 @@
++// SPDX-License-Identifier: GPL-3.0-only
++
++use std::time::{Duration, Instant};
++
++use anyhow::Result;
++use cosmic_panel_config::{PanelAnchor, TopEdgeGradient};
++use sctk::compositor::Region;
++use sctk::reexports::client::protocol::{
++    wl_shm, wl_subsurface::WlSubsurface, wl_surface::WlSurface,
++};
++use sctk::shell::WaylandSurface;
++use sctk::shm::slot::{Buffer, SlotPool};
++use wayland_protocols::wp::viewporter::client::wp_viewport::WpViewport;
++
++use super::PanelSpace;
++use crate::xdg_shell_wrapper::client_state::ClientState;
++
++const TRANSITION_DURATION: Duration = Duration::from_millis(200);
++const RESTORE_DURATION: Duration = Duration::from_millis(200);
++
++/// Blend between backgrounds, continuously retargetable during a switch.
++#[derive(Debug, Clone)]
++struct Reveal {
++    from: f32,
++    to: f32,
++    started: Instant,
++    duration: Duration,
++}
++
++fn fade_mix(value: f32) -> f32 {
++    let t = value.clamp(0.0, 1.0);
++    1.0 - (1.0 - t).powi(2)
++}
++
++impl Reveal {
++    fn settled(maximized: bool, now: Instant) -> Self {
++        let value = if maximized { 1.0 } else { 0.0 };
++        Self { from: value, to: value, started: now, duration: Duration::ZERO }
++    }
++
++    fn value(&self, now: Instant) -> f32 {
++        if self.duration.is_zero() {
++            return self.to;
++        }
++        let elapsed = now.saturating_duration_since(self.started).as_secs_f32();
++        let t = (elapsed / self.duration.as_secs_f32()).clamp(0.0, 1.0);
++        let eased = fade_mix(t);
++        self.from + (self.to - self.from) * eased
++    }
++
++    fn retarget(&mut self, maximized: bool, now: Instant, presented: Option<f32>) {
++        let target = if maximized { 1.0 } else { 0.0 };
++        if self.to == target {
++            return;
++        }
++        // A pending frame can lag behind the clock. Reversing from a future
++        // value would first darken the bar before it starts to retract.
++        self.from = presented.unwrap_or_else(|| self.value(now));
++        self.to = target;
++        self.started = now;
++        let duration = if maximized { TRANSITION_DURATION } else { RESTORE_DURATION };
++        self.duration = duration.mul_f32((self.to - self.from).abs());
++    }
++}
++
++fn scrim_alpha(config: TopEdgeGradient, y: f32) -> f32 {
++    let remaining = (1.0 - y / (config.height - 1) as f32).clamp(0.0, 1.0);
++    config.opacity * remaining * remaining
++}
++
++fn blend_pixel(from: u32, to: u32, mix: f32) -> u32 {
++    let mix = mix.clamp(0.0, 1.0);
++    [0, 8, 16, 24].into_iter().fold(0, |pixel, shift| {
++        let a = ((from >> shift) & 255) as f32;
++        let b = ((to >> shift) & 255) as f32;
++        pixel | (((a + (b - a) * mix).round() as u32) << shift)
++    })
++}
++
++fn premultiplied_pixel(color: [u8; 3], opacity: f32) -> u32 {
++    let [r, g, b] = color.map(|v| (v as f32 * opacity).round() as u32);
++    let a = (opacity * 255.0).round() as u32;
++    (a << 24) | (r << 16) | (g << 8) | b
++}
++
++fn transition_pixel(
++    config: TopEdgeGradient,
++    y: f32,
++    panel_height: f32,
++    from: u32,
++    maximizing: bool,
++    elapsed: f32,
++    color: [u8; 3],
++) -> u32 {
++    let target = row_pixel(config, y, panel_height, if maximizing { 1.0 } else { 0.0 }, color);
++    // Use the same uniform fade and easing in both directions.
++    blend_pixel(from, target, fade_mix(elapsed))
++}
++
++/// Native-endian ARGB8888, with RGB already premultiplied by coverage.
++fn row_pixel(
++    config: TopEdgeGradient,
++    y: f32,
++    panel_height: f32,
++    progress: f32,
++    color: [u8; 3],
++) -> u32 {
++    let gradient = premultiplied_pixel(color, scrim_alpha(config, y));
++    let maximized =
++        if y < panel_height { premultiplied_pixel(color, config.maximized_opacity) } else { 0 };
++    blend_pixel(gradient, maximized, progress)
++}
++
++/// Geometry is expressed from the outer panel edge towards the desktop.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++struct GradientGeometry {
++    anchor: PanelAnchor,
++    length: i32,
++    thickness: i32,
++    extent: i32,
++    along_start: i32,
++    margin: i32,
++}
++
++impl GradientGeometry {
++    fn new(
++        anchor: PanelAnchor,
++        width: i32,
++        height: i32,
++        content_length: i32,
++        margin: i32,
++        reference_extent: u32,
++    ) -> Self {
++        let horizontal = matches!(anchor, PanelAnchor::Top | PanelAnchor::Bottom);
++        let (along, cross) = if horizontal { (width, height) } else { (height, width) };
++        let length = if content_length > 0 { content_length.min(along) } else { along }.max(1);
++        let thickness = (cross - margin).max(1);
++        let extent = ((reference_extent as f64 * thickness as f64 / 32.0).round() as i32)
++            .max(thickness)
++            .max(2);
++        Self { anchor, length, thickness, extent, along_start: (along - length) / 2, margin }
++    }
++
++    fn horizontal(self) -> bool {
++        matches!(self.anchor, PanelAnchor::Top | PanelAnchor::Bottom)
++    }
++    fn reversed(self) -> bool {
++        matches!(self.anchor, PanelAnchor::Bottom | PanelAnchor::Right)
++    }
++
++    fn destination(self) -> (i32, i32) {
++        if self.horizontal() { (self.length, self.extent) } else { (self.extent, self.length) }
++    }
++
++    fn position(self, shift: i32) -> (i32, i32) {
++        match self.anchor {
++            PanelAnchor::Top => (self.along_start, self.margin + shift),
++            PanelAnchor::Bottom => (self.along_start, -shift + self.thickness - self.extent),
++            PanelAnchor::Left => (self.margin + shift, self.along_start),
++            PanelAnchor::Right => (-shift + self.thickness - self.extent, self.along_start),
++        }
++    }
++
++    fn pixel_index(self, x: usize, y: usize, cross_pixels: usize) -> usize {
++        let cross = if self.horizontal() { y } else { x };
++        if self.reversed() { cross_pixels - 1 - cross } else { cross }
++    }
++}
++
++fn visible_opacity(
++    autohide: bool,
++    visibility: crate::xdg_shell_wrapper::space::Visibility,
++    shift: i32,
++    travel: i32,
++) -> f32 {
++    use crate::xdg_shell_wrapper::space::Visibility;
++    if !autohide || matches!(visibility, Visibility::Visible) {
++        return 1.0;
++    }
++    if matches!(visibility, Visibility::Hidden) {
++        return 0.0;
++    }
++    (1.0 + shift as f32 / travel.max(1) as f32).clamp(0.0, 1.0)
++}
++
++/// Input-transparent child below applets. Its geometry follows the panel while
++/// retaining the parent's exclusive zone, input region and hide trigger.
++#[derive(Debug)]
++pub(crate) struct EdgeGradient {
++    parent: WlSurface,
++    subsurface: WlSubsurface,
++    surface: WlSurface,
++    viewport: Option<WpViewport>,
++    pool: SlotPool,
++    buffers: Vec<Buffer>,
++    geometry: GradientGeometry,
++    buffer_width: i32,
++    buffer_height: i32,
++    rows: i32,
++    config: TopEdgeGradient,
++    color: [u8; 3],
++    scale: f64,
++    opacity: f32,
++    position: (i32, i32),
++    hidden: bool,
++    reveal: Reveal,
++    last_progress: Option<f32>,
++    last_pixels: Vec<u32>,
++    transition_source: Option<Vec<u32>>,
++    dirty: bool,
++    frame_ready: bool,
++}
++
++impl Drop for EdgeGradient {
++    fn drop(&mut self) {
++        self.subsurface.destroy();
++        if let Some(viewport) = &self.viewport {
++            viewport.destroy();
++        }
++        self.surface.destroy();
++    }
++}
++
++impl EdgeGradient {
++    fn new(
++        parent: WlSurface,
++        geometry: GradientGeometry,
++        config: TopEdgeGradient,
++        color: [u8; 3],
++        scale: f64,
++        reveal: Reveal,
++        client: &ClientState,
++    ) -> Result<Self> {
++        let use_viewport = client.viewporter_state.is_some();
++        let rows = if use_viewport {
++            (geometry.extent as f64 * scale).ceil() as i32
++        } else {
++            geometry.extent
++        };
++        let along = if use_viewport { 1 } else { geometry.length };
++        let (buffer_width, buffer_height) =
++            if geometry.horizontal() { (along, rows) } else { (rows, along) };
++        let pool =
++            SlotPool::new((buffer_width * 4 * buffer_height * 3) as usize, &client.shm_state)?;
++        let input = Region::new(&client.compositor_state)?;
++        let (subsurface, surface) =
++            client.subcompositor.create_subsurface(parent.clone(), &client.queue_handle);
++        let viewport = client
++            .viewporter_state
++            .as_ref()
++            .map(|v| v.get_viewport(&surface, &client.queue_handle));
++        if let Some(viewport) = &viewport {
++            let (w, h) = geometry.destination();
++            viewport.set_destination(w, h);
++        }
++        surface.set_input_region(Some(input.wl_region()));
++        let position = geometry.position(0);
++        subsurface.set_position(position.0, position.1);
++        subsurface.place_below(&parent);
++        subsurface.set_desync();
++        parent.commit();
++        Ok(Self {
++            parent,
++            subsurface,
++            surface,
++            viewport,
++            pool,
++            buffers: Vec::new(),
++            geometry,
++            buffer_width,
++            buffer_height,
++            rows,
++            config,
++            color,
++            scale,
++            opacity: 1.0,
++            position,
++            hidden: false,
++            reveal,
++            last_progress: None,
++            last_pixels: Vec::new(),
++            transition_source: None,
++            dirty: true,
++            frame_ready: true,
++        })
++    }
++
++    pub(crate) fn frame(&mut self, surface: &WlSurface) -> bool {
++        if self.surface == *surface {
++            self.frame_ready = true;
++            return true;
++        }
++        false
++    }
++
++    fn hide(&mut self) {
++        if !self.hidden {
++            self.surface.attach(None, 0, 0);
++            self.surface.commit();
++            self.hidden = true;
++            self.frame_ready = true;
++        }
++    }
++
++    fn tick(&mut self, maximized: bool, now: Instant, client: &ClientState) -> Result<()> {
++        if self.hidden {
++            self.hidden = false;
++            self.reveal = Reveal::settled(maximized, now);
++            self.last_progress = None;
++            self.last_pixels.clear();
++            self.transition_source = None;
++            self.dirty = true;
++            self.frame_ready = true;
++        }
++        let target = if maximized { 1.0 } else { 0.0 };
++        if self.reveal.to != target && !self.last_pixels.is_empty() {
++            self.transition_source = Some(self.last_pixels.clone());
++        }
++        self.reveal.retarget(maximized, now, self.last_progress);
++        let progress = self.reveal.value(now);
++        if !self.frame_ready
++            || (!self.dirty
++                && self.transition_source.is_none()
++                && self.last_progress == Some(progress))
++        {
++            return Ok(());
++        }
++        let stride = self.buffer_width * 4;
++        let index = if let Some(index) =
++            self.buffers.iter().position(|buffer| self.pool.canvas(buffer).is_some())
++        {
++            Some(index)
++        } else if self.buffers.len() < 3 {
++            let (buffer, _) = self.pool.create_buffer(
++                self.buffer_width,
++                self.buffer_height,
++                stride,
++                wl_shm::Format::Argb8888,
++            )?;
++            self.buffers.push(buffer);
++            Some(self.buffers.len() - 1)
++        } else {
++            None
++        };
++        if index.is_none() {
++            return Ok(());
++        }
++        if let Some(index) = index {
++            let elapsed = if self.reveal.duration.is_zero() {
++                1.0
++            } else {
++                (now.saturating_duration_since(self.reveal.started).as_secs_f32()
++                    / self.reveal.duration.as_secs_f32())
++                .clamp(0.0, 1.0)
++            };
++            let render_config =
++                TopEdgeGradient { height: self.geometry.extent as u32, ..self.config };
++            let pixels: Vec<u32> = (0..self.rows)
++                .map(|y| {
++                    let logical_y = y as f32 * self.geometry.extent as f32 / self.rows as f32;
++                    if let Some(from) =
++                        self.transition_source.as_ref().and_then(|p| p.get(y as usize))
++                    {
++                        transition_pixel(
++                            render_config,
++                            logical_y,
++                            self.geometry.thickness as f32,
++                            *from,
++                            maximized,
++                            elapsed,
++                            self.color,
++                        )
++                    } else {
++                        row_pixel(
++                            render_config,
++                            logical_y,
++                            self.geometry.thickness as f32,
++                            progress,
++                            self.color,
++                        )
++                    }
++                })
++                .collect();
++            let canvas = self.pool.canvas(&self.buffers[index]).expect("free buffer slot");
++            for (y, row) in canvas.chunks_exact_mut(stride as usize).enumerate() {
++                for (x, dst) in row.chunks_exact_mut(4).enumerate() {
++                    let pixel = pixels[self.geometry.pixel_index(x, y, self.rows as usize)];
++                    dst.copy_from_slice(&blend_pixel(0, pixel, self.opacity).to_ne_bytes());
++                }
++            }
++            self.buffers[index].attach_to(&self.surface)?;
++            self.surface.damage_buffer(0, 0, self.buffer_width, self.buffer_height);
++            self.last_progress = Some(progress);
++            self.last_pixels = pixels;
++            if elapsed >= 1.0 {
++                self.transition_source = None;
++            }
++            self.dirty = false;
++        }
++        self.frame_ready = false;
++        self.surface.frame(&client.queue_handle, self.surface.clone());
++        self.surface.commit();
++        Ok(())
++    }
++}
++
++impl PanelSpace {
++    pub(crate) fn edge_gradient_config(&self) -> Option<TopEdgeGradient> {
++        if self.edge_gradient_failed {
++            return None;
++        }
++        self.config.panel_gradient()
++    }
++
++    pub(crate) fn update_edge_gradient(&mut self, client: &ClientState) -> Result<()> {
++        let Some(config) = self.edge_gradient_config() else {
++            if let Some(gradient) = &mut self.edge_gradient {
++                gradient.hide();
++            }
++            return Ok(());
++        };
++        let Some(layer) = &self.layer else {
++            self.edge_gradient = None;
++            return Ok(());
++        };
++        let (width, height) = (self.dimensions.w, self.dimensions.h);
++        if width <= 0 || height <= 0 {
++            return Ok(());
++        }
++        let now = Instant::now();
++        let geometry = GradientGeometry::new(
++            self.config.anchor,
++            width,
++            height,
++            self.container_length,
++            self.config.margin as i32,
++            config.height,
++        );
++        let cross = if self.config.is_horizontal() { height } else { width };
++        let opacity = visible_opacity(
++            self.config.autohide_enabled(),
++            self.visibility,
++            self.anchor_gap,
++            cross - self.config.get_hide_handle() as i32,
++        );
++        let position = geometry.position(self.anchor_gap);
++        let [r, g, b, _] = self.colors.bg_color(1.0, false);
++        let color = [r, g, b].map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8);
++        let same_geometry = self.edge_gradient.as_ref().is_some_and(|g| {
++            g.parent == *layer.wl_surface() && g.geometry == geometry && g.scale == self.scale
++        });
++        if !same_geometry {
++            let reveal = self
++                .edge_gradient
++                .as_ref()
++                .filter(|g| g.parent == *layer.wl_surface())
++                .map(|g| g.reveal.clone())
++                .unwrap_or_else(|| Reveal::settled(self.maximized, now));
++            self.edge_gradient = Some(EdgeGradient::new(
++                layer.wl_surface().clone(),
++                geometry,
++                config,
++                color,
++                self.scale,
++                reveal,
++                client,
++            )?);
++        }
++        if let Some(gradient) = &mut self.edge_gradient {
++            if gradient.color != color {
++                gradient.color = color;
++                gradient.transition_source = None;
++                gradient.dirty = true;
++            }
++            if gradient.config != config {
++                gradient.config = config;
++                gradient.dirty = true;
++            }
++            if gradient.opacity != opacity || gradient.position != position {
++                gradient.opacity = opacity;
++                gradient.position = position;
++                gradient.subsurface.set_position(position.0, position.1);
++                gradient.dirty = true;
++                // Hidden surfaces may not receive a compositor callback until
++                // visible again. The parent's hide animation paces these frames.
++                gradient.frame_ready = true;
++            }
++            gradient.tick(self.maximized, now, client)?;
++        }
++        Ok(())
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn background_opacity_controls_the_gradient_and_survives_maximizing() {
++        for opacity in [0.0, 0.25, 0.7, 1.0] {
++            let mut config = cosmic_panel_config::CosmicPanelConfig {
++                opacity,
++                anchor_gap: false,
++                top_edge_gradient: Some(TopEdgeGradient {
++                    opacity: 0.93,
++                    maximized_opacity: 0.96,
++                    ..Default::default()
++                }),
++                ..Default::default()
++            };
++            assert_eq!(config.panel_gradient().unwrap().opacity, opacity);
++            config.maximize();
++            let effect = config.panel_gradient().unwrap();
++            assert_eq!(effect.opacity, opacity);
++            assert_eq!(effect.maximized_opacity, 0.96);
++        }
++    }
++
++    #[test]
++    fn gap_suspends_the_gradient_even_when_maximizing_removes_the_gap() {
++        let saved = cosmic_panel_config::CosmicPanelConfig {
++            anchor_gap: true,
++            top_edge_gradient: Some(TopEdgeGradient::default()),
++            ..Default::default()
++        };
++        assert!(saved.panel_gradient().is_none());
++        let mut maximized = saved.clone();
++        maximized.maximize();
++        assert!(!maximized.anchor_gap);
++        assert!(maximized.panel_gradient().is_none());
++        let mut restored = saved;
++        restored.anchor_gap = false;
++        assert!(restored.panel_gradient().is_some());
++    }
++
++    #[test]
++    fn all_four_edges_fade_inwards_and_keep_the_maximized_bar_at_the_outer_edge() {
++        for anchor in [PanelAnchor::Top, PanelAnchor::Bottom, PanelAnchor::Left, PanelAnchor::Right]
++        {
++            let horizontal = matches!(anchor, PanelAnchor::Top | PanelAnchor::Bottom);
++            let (width, height) = if horizontal { (1920, 32) } else { (32, 1080) };
++            let g = GradientGeometry::new(anchor, width, height, 0, 0, 96);
++            assert_eq!(g.extent, 96);
++            assert_eq!(g.thickness, 32);
++            let outer = if g.reversed() { 95 } else { 0 };
++            let inner = if g.reversed() { 0 } else { 95 };
++            let index = |value| {
++                if horizontal { g.pixel_index(0, value, 96) } else { g.pixel_index(value, 0, 96) }
++            };
++            assert_eq!(index(outer), 0);
++            assert_eq!(index(inner), 95);
++            let (x, y) = g.position(0);
++            match anchor {
++                PanelAnchor::Top | PanelAnchor::Left => assert_eq!((x, y), (0, 0)),
++                PanelAnchor::Bottom => assert_eq!((x, y), (0, -64)),
++                PanelAnchor::Right => assert_eq!((x, y), (-64, 0)),
++            }
++        }
++    }
++
++    #[test]
++    fn gradient_extent_tracks_panel_thickness_and_floating_panel_length() {
++        for thickness in [16, 32, 48, 64, 96] {
++            for anchor in
++                [PanelAnchor::Top, PanelAnchor::Bottom, PanelAnchor::Left, PanelAnchor::Right]
++            {
++                let horizontal = matches!(anchor, PanelAnchor::Top | PanelAnchor::Bottom);
++                let (w, h) = if horizontal { (1920, thickness + 4) } else { (thickness + 4, 1080) };
++                let g = GradientGeometry::new(anchor, w, h, 400, 4, 96);
++                assert_eq!(g.thickness, thickness);
++                assert_eq!(g.extent, thickness * 3);
++                assert_eq!(g.length, 400);
++                assert_eq!(g.along_start, (if horizontal { 1920 } else { 1080 } - 400) / 2);
++                assert_eq!(
++                    g.destination(),
++                    if horizontal { (400, thickness * 3) } else { (thickness * 3, 400) }
++                );
++            }
++        }
++    }
++
++    #[test]
++    fn auto_hide_fades_the_entire_background_and_leaves_no_shadow_when_hidden() {
++        use crate::xdg_shell_wrapper::space::Visibility;
++        let transition = Visibility::TransitionToHidden {
++            last_instant: Instant::now(),
++            progress: Duration::ZERO,
++            prev_margin: -14,
++        };
++        assert_eq!(visible_opacity(true, Visibility::Hidden, -28, 28), 0.0);
++        assert_eq!(visible_opacity(true, Visibility::Visible, 0, 28), 1.0);
++        assert_eq!(visible_opacity(true, transition, -14, 28), 0.5);
++        assert_eq!(visible_opacity(false, Visibility::Hidden, -28, 28), 1.0);
++        for shift in -40..=5 {
++            assert!((0.0..=1.0).contains(&visible_opacity(true, transition, shift, 28)));
++        }
++        assert_eq!(
++            blend_pixel(0, 0xf0cbd3da, visible_opacity(true, Visibility::Hidden, -28, 28)),
++            0
++        );
++    }
++
++    #[test]
++    fn theme_colors_keep_coverage_and_reach_the_translucent_bar() {
++        let config = TopEdgeGradient {
++            height: 128,
++            opacity: 0.72,
++            maximized_opacity: 0.94,
++            ..Default::default()
++        };
++        let light = [216, 224, 232];
++        let dark = [24, 27, 31];
++        assert_eq!(row_pixel(config, 0.0, 32.0, 0.0, light), 0xb89ca1a7);
++        assert_eq!(row_pixel(config, 0.0, 32.0, 1.0, light), 0xf0cbd3da);
++        assert_eq!(row_pixel(config, 0.0, 32.0, 1.0, dark), 0xf017191d);
++        for color in [light, dark] {
++            for y in 0..128 {
++                for step in 0..=20 {
++                    let pixel = row_pixel(config, y as f32, 32.0, step as f32 / 20.0, color);
++                    let alpha = pixel >> 24;
++                    for shift in [0, 8, 16] {
++                        assert!((pixel >> shift & 255) <= alpha);
++                    }
++                }
++            }
++            assert_eq!(row_pixel(config, 32.0, 32.0, 1.0, color), 0);
++            assert_eq!(row_pixel(config, 127.0, 32.0, 0.0, color), 0);
++        }
++    }
++
++    #[test]
++    fn theme_colors_fade_continuously_in_both_directions() {
++        let config = TopEdgeGradient::default();
++        for color in [[216, 224, 232], [24, 27, 31]] {
++            for maximizing in [false, true] {
++                for y in 0..128 {
++                    let from = row_pixel(
++                        config,
++                        y as f32,
++                        32.0,
++                        if maximizing { 0.0 } else { 1.0 },
++                        color,
++                    );
++                    let target = row_pixel(
++                        config,
++                        y as f32,
++                        32.0,
++                        if maximizing { 1.0 } else { 0.0 },
++                        color,
++                    );
++                    assert_eq!(
++                        transition_pixel(config, y as f32, 32.0, from, maximizing, 0.0, color),
++                        from
++                    );
++                    assert_eq!(
++                        transition_pixel(config, y as f32, 32.0, from, maximizing, 1.0, color),
++                        target
++                    );
++                    for step in 0..=20 {
++                        let pixel = transition_pixel(
++                            config,
++                            y as f32,
++                            32.0,
++                            from,
++                            maximizing,
++                            step as f32 / 20.0,
++                            color,
++                        );
++                        for shift in [0, 8, 16, 24] {
++                            let value = pixel >> shift & 255;
++                            let a = from >> shift & 255;
++                            let b = target >> shift & 255;
++                            assert!((a.min(b)..=a.max(b)).contains(&value));
++                        }
++                    }
++                }
++            }
++        }
++    }
++
++    #[test]
++    fn scrim_fades_smoothly_to_zero() {
++        let config = TopEdgeGradient::default();
++        assert_eq!(row_pixel(config, 0.0, 32.0, 0.0, config.maximized_color) >> 24, 102);
++        assert_eq!(row_pixel(config, 95.0, 32.0, 0.0, config.maximized_color), 0);
++        let values: Vec<_> = (0..96)
++            .map(|y| row_pixel(config, y as f32, 32.0, 0.0, config.maximized_color))
++            .collect();
++        assert!(values.windows(2).all(|w| w[0] >= w[1]));
++    }
++
++    #[test]
++    fn final_maximized_bar_is_solid_and_has_no_shadow_tail() {
++        let config = TopEdgeGradient { maximized_color: [25, 27, 31], ..Default::default() };
++        for y in 0..32 {
++            assert_eq!(row_pixel(config, y as f32, 32.0, 1.0, config.maximized_color), 0xff191b1f);
++        }
++        for y in 32..128 {
++            assert_eq!(row_pixel(config, y as f32, 32.0, 1.0, config.maximized_color), 0);
++        }
++    }
++
++    #[test]
++    fn intermediate_fades_keep_premultiplied_pixels() {
++        let config = TopEdgeGradient { maximized_color: [25, 27, 31], ..Default::default() };
++        assert_ne!(
++            row_pixel(config, 0.0, 32.0, 0.5, config.maximized_color),
++            row_pixel(config, 0.0, 32.0, 0.0, config.maximized_color)
++        );
++        assert_ne!(
++            row_pixel(config, 0.0, 32.0, 0.5, config.maximized_color),
++            row_pixel(config, 0.0, 32.0, 1.0, config.maximized_color)
++        );
++        assert_ne!(row_pixel(config, 30.0, 32.0, 0.35, config.maximized_color) >> 24, 255);
++        for step in 0..=20 {
++            for y in 0..128 {
++                let pixel =
++                    row_pixel(config, y as f32, 32.0, step as f32 / 20.0, config.maximized_color);
++                let alpha = pixel >> 24;
++                for shift in [0, 8, 16] {
++                    assert!((pixel >> shift & 255) <= alpha);
++                }
++            }
++        }
++    }
++
++    #[test]
++    fn translucent_bar_keeps_premultiplied_colors() {
++        let black = TopEdgeGradient {
++            maximized_color: [0, 0, 0],
++            maximized_opacity: 0.9,
++            ..Default::default()
++        };
++        for y in 0..32 {
++            assert_eq!(row_pixel(black, y as f32, 32.0, 1.0, black.maximized_color), 0xe6000000);
++        }
++        let tinted = TopEdgeGradient {
++            maximized_color: [240, 140, 40],
++            maximized_opacity: 0.5,
++            ..Default::default()
++        };
++        assert_eq!(row_pixel(tinted, 16.0, 32.0, 1.0, tinted.maximized_color), 0x80784614);
++        assert_eq!(row_pixel(black, 50.0, 32.0, 1.0, black.maximized_color), 0);
++    }
++
++    #[test]
++    fn rapid_reversal_is_continuous_and_reaches_its_target() {
++        let now = Instant::now();
++        let mut reveal = Reveal::settled(false, now);
++        reveal.retarget(true, now, None);
++        let mid = now + TRANSITION_DURATION / 2;
++        let before = reveal.value(mid);
++        assert!(before > 0.0 && before < 1.0);
++        reveal.retarget(false, mid, None);
++        assert_eq!(reveal.value(mid), before);
++        assert!(reveal.value(mid + Duration::from_millis(50)) < before);
++        assert_eq!(reveal.value(mid + TRANSITION_DURATION), 0.0);
++    }
++
++    #[test]
++    fn restore_reveals_the_panel_promptly_and_finishes_in_200ms() {
++        let now = Instant::now();
++        let mut reveal = Reveal::settled(true, now);
++        reveal.retarget(false, now, None);
++        let config = TopEdgeGradient { height: 128, opacity: 0.72, ..Default::default() };
++        let early = reveal.value(now + Duration::from_millis(32));
++        assert!(early < 0.9);
++        assert!(row_pixel(config, 30.0, 32.0, early, config.maximized_color) >> 24 < 255);
++        assert_eq!(reveal.value(now + RESTORE_DURATION), 0.0);
++        assert_eq!(reveal.duration, RESTORE_DURATION);
++        reveal.retarget(true, now + RESTORE_DURATION, None);
++        assert_eq!(reveal.duration, TRANSITION_DURATION);
++    }
++
++    #[test]
++    fn reversing_a_delayed_frame_does_not_jump_to_a_darker_future_frame() {
++        let now = Instant::now();
++        let mut reveal = Reveal::settled(false, now);
++        reveal.retarget(true, now, Some(0.0));
++        let delayed = now + Duration::from_millis(450);
++        assert!(reveal.value(delayed) > 0.6);
++        let last_presented = 0.25;
++        reveal.retarget(false, delayed, Some(last_presented));
++        assert_eq!(reveal.value(delayed), last_presented);
++        let config = TopEdgeGradient {
++            height: 128,
++            opacity: 0.72,
++            maximized_color: [0, 0, 0],
++            maximized_opacity: 0.94,
++            ..Default::default()
++        };
++        for y in 0..32 {
++            let initial_alpha =
++                row_pixel(config, y as f32, 32.0, last_presented, config.maximized_color) >> 24;
++            for ms in 0..=50 {
++                let alpha = row_pixel(
++                    config,
++                    y as f32,
++                    32.0,
++                    reveal.value(delayed + Duration::from_millis(ms)),
++                    config.maximized_color,
++                ) >> 24;
++                assert!(alpha <= initial_alpha, "unexpected dark flash at {ms}ms, row {y}");
++            }
++        }
++    }
++
++    #[test]
++    fn restoring_from_any_painted_frame_fades_without_a_dark_flash() {
++        let config = TopEdgeGradient {
++            height: 128,
++            opacity: 0.72,
++            maximized_color: [0, 0, 0],
++            maximized_opacity: 0.94,
++            ..Default::default()
++        };
++        for position in [0.1, 0.35, 0.7, 1.0] {
++            for y in 0..32 {
++                let from = row_pixel(config, y as f32, 32.0, position, config.maximized_color);
++                assert_eq!(
++                    transition_pixel(
++                        config,
++                        y as f32,
++                        32.0,
++                        from,
++                        false,
++                        0.0,
++                        config.maximized_color
++                    ),
++                    from
++                );
++                let mut previous = from >> 24;
++                for step in 1..=20 {
++                    let next = transition_pixel(
++                        config,
++                        y as f32,
++                        32.0,
++                        from,
++                        false,
++                        step as f32 / 20.0,
++                        config.maximized_color,
++                    ) >> 24;
++                    assert!(next <= previous);
++                    previous = next;
++                }
++                assert_eq!(
++                    transition_pixel(
++                        config,
++                        y as f32,
++                        32.0,
++                        from,
++                        false,
++                        1.0,
++                        config.maximized_color
++                    ),
++                    row_pixel(config, y as f32, 32.0, 0.0, config.maximized_color)
++                );
++            }
++        }
++    }
++
++    #[test]
++    fn accepts_saved_colors_and_older_preferences() {
++        let c: Option<TopEdgeGradient> =
++            ron::from_str("Some((height: 128, opacity: 0.72, maximized_color: (25, 27, 31)))")
++                .unwrap();
++        let c = c.unwrap();
++        assert!(c.enabled);
++        assert_eq!(c.maximized_color, [25, 27, 31]);
++        let c: Option<TopEdgeGradient> =
++            ron::from_str("Some((height: 128, opacity: 0.72))").unwrap();
++        assert_eq!(c.unwrap().maximized_color, [36, 38, 42]);
++        let c: Option<TopEdgeGradient> = ron::from_str(
++            "Some((enabled: false, height: 128, opacity: 0.72, maximized_opacity: 0.96))",
++        )
++        .unwrap();
++        let c = c.unwrap().normalized();
++        assert!(!c.enabled);
++        assert_eq!(c.height, 128);
++        assert_eq!(c.opacity, 0.72);
++        assert_eq!(c.maximized_opacity, 0.96);
++    }
++
++    #[test]
++    fn gradient_settings_are_bounded() {
++        let c = TopEdgeGradient { height: u32::MAX, opacity: f32::NAN, ..Default::default() }
++            .normalized();
++        assert_eq!(c.height, 512);
++        assert_eq!(c.opacity, 0.4);
++    }
++}
+diff --git a/cosmic-panel-bin/src/space/mod.rs b/cosmic-panel-bin/src/space/mod.rs
+index 7ec56f2..cbb43d1 100644
+--- a/cosmic-panel-bin/src/space/mod.rs
++++ b/cosmic-panel-bin/src/space/mod.rs
+@@ -2,6 +2,7 @@
+ //! separate process and compositing them in a layer shell surface as configured
+ //! PanelSpace *partially* implements the WrapperSpace abstraction
+
++mod edge_gradient;
+ mod layout;
+ mod overflow;
+ mod panel_space;
+diff --git a/cosmic-panel-bin/src/space/panel_space.rs b/cosmic-panel-bin/src/space/panel_space.rs
+index 14a1540..04004af 100644
+--- a/cosmic-panel-bin/src/space/panel_space.rs
++++ b/cosmic-panel-bin/src/space/panel_space.rs
+@@ -312,6 +312,8 @@ pub struct PanelSharedState {
+ // space for the cosmic panel
+ #[derive(Debug)]
+ pub struct PanelSpace {
++    pub(crate) edge_gradient: Option<super::edge_gradient::EdgeGradient>,
++    pub(crate) edge_gradient_failed: bool,
+     // XXX implicitly drops egl_surface first to avoid segfault
+     pub egl_surface: Option<EGLSurface>,
+     pub c_display: Option<WlDisplay>,
+@@ -414,6 +416,8 @@ impl PanelSpace {
+             if config.autohide_enabled() { Visibility::Hidden } else { Visibility::Visible };
+         let color_override = config.bg_color_override();
+         Self {
++            edge_gradient: None,
++            edge_gradient_failed: false,
+             config: config.clone(),
+             shared: shared.clone(),
+             space: Space::default(),
+@@ -719,6 +723,10 @@ impl PanelSpace {
+     }
+
+     pub fn bg_color(&self) -> [f32; 4] {
++        // Islands retain their individual surfaces above the independent scrim.
++        if self.edge_gradient_config().is_some() && !self.islands.settings.enabled {
++            return [0.0; 4];
++        }
+         let native = if let Some(animatable_state) = self.animate_state.as_ref() {
+             animatable_state.cur.bg_color
+         } else {
+@@ -1955,6 +1963,18 @@ impl PanelSpace {
+             return;
+         }
+
++        if !self.islands.settings.enabled
++            && self.edge_gradient_config().is_some()
++            && config.panel_gradient().is_some()
++        {
++            // The edge-gradient surface owns this transition. The stock color
++            // animation would also rebuild the transparent EGL background.
++            self.animate_state = None;
++            self.maximized = maximized;
++            self.apply_config(config, Some([0.0; 4]), false);
++            return;
++        }
++
+         let bg_color = self.colors.bg_color(opacity, was_maximized);
+         let animate = !self.config.autohide_enabled();
+         if !was_maximized {
+@@ -2160,7 +2180,7 @@ impl PanelSpace {
+         rect: smithay::utils::Rectangle<i32, Logical>,
+         mut corners: [u32; 4],
+     ) {
+-        if self.material_blur() {
++        if self.edge_gradient_config().is_none() && self.material_blur() {
+             if let Some(corner_radius_wlr) = self.corner_radius_wlr.as_ref() {
+                 let gap =
+                     (self.gap() as u32).min(rect.size.h as u32 / 2).min(rect.size.w as u32 / 2);
+diff --git a/cosmic-panel-bin/src/xdg_shell_wrapper/client/handlers/compositor.rs b/cosmic-panel-bin/src/xdg_shell_wrapper/client/handlers/compositor.rs
+index a590c7a..779eabc 100644
+--- a/cosmic-panel-bin/src/xdg_shell_wrapper/client/handlers/compositor.rs
++++ b/cosmic-panel-bin/src/xdg_shell_wrapper/client/handlers/compositor.rs
+@@ -28,6 +28,11 @@ impl CompositorHandler for GlobalState {
+         time: u32,
+     ) {
+         // TODO proxied layer surfaces
++        for panel in &mut self.space.space_list {
++            if panel.edge_gradient.as_mut().is_some_and(|gradient| gradient.frame(surface)) {
++                return;
++            }
++        }
+         if let Some((icon, s_surface)) = self.server_state.seats.iter_mut().find_map(|s| {
+             s.client
+                 .dnd_icon
+diff --git a/cosmic-panel-bin/src/xdg_shell_wrapper/mod.rs b/cosmic-panel-bin/src/xdg_shell_wrapper/mod.rs
+index f9fc5f5..1e4fed9 100644
+--- a/cosmic-panel-bin/src/xdg_shell_wrapper/mod.rs
++++ b/cosmic-panel-bin/src/xdg_shell_wrapper/mod.rs
+@@ -139,6 +139,18 @@ pub fn run(
+         event_loop.dispatch(dispatch_timeout, &mut global_state)?;
+
+         // rendering
++        for panel in &mut global_state.space.space_list {
++            if let Err(err) = panel.update_edge_gradient(&global_state.client_state) {
++                tracing::error!(
++                    ?err,
++                    "Unable to draw top-edge gradient; restoring panel background"
++                );
++                panel.edge_gradient_failed = true;
++                panel.is_background_dirty = true;
++                panel.is_dirty = true;
++                panel.needs_layout = true;
++            }
++        }
+         {
+             let space = &mut global_state.space;
+
+diff --git a/cosmic-panel-config/src/container_config.rs b/cosmic-panel-config/src/container_config.rs
+index 42d0c02..837b37d 100644
+--- a/cosmic-panel-config/src/container_config.rs
++++ b/cosmic-panel-config/src/container_config.rs
+@@ -176,6 +176,7 @@ impl Default for CosmicPanelContainerConfig {
+                     autohover_delay_ms: Some(500),
+                     padding_overlap: 0.5,
+                     keep_style_on_maximize: false,
++                    top_edge_gradient: None,
+                 },
+                 CosmicPanelConfig {
+                     name: "Dock".to_string(),
+@@ -210,6 +211,7 @@ impl Default for CosmicPanelContainerConfig {
+                     autohover_delay_ms: Some(500),
+                     padding_overlap: 0.5,
+                     keep_style_on_maximize: false,
++                    top_edge_gradient: None,
+                 },
+             ],
+         }
+diff --git a/cosmic-panel-config/src/panel_config.rs b/cosmic-panel-config/src/panel_config.rs
+index cf4df3c..02f0e75 100644
+--- a/cosmic-panel-config/src/panel_config.rs
++++ b/cosmic-panel-config/src/panel_config.rs
+@@ -404,6 +404,57 @@ impl From<CosmicPanelOuput> for WrapperOutput {
+     }
+ }
+
++/// Panel-colored background that fades towards the desktop.
++#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq)]
++#[serde(default, deny_unknown_fields)]
++pub struct TopEdgeGradient {
++    /// Retain appearance preferences while the effect is disabled.
++    pub enabled: bool,
++    /// Fade extent for a 32-logical-pixel-thick panel. The renderer scales it
++    /// proportionally to the actual panel thickness on every screen edge.
++    pub height: u32,
++    /// Legacy gradient opacity. Rendering follows the panel's background opacity.
++    pub opacity: f32,
++    /// Solid panel RGB when a window is maximized on this output.
++    /// Accepted for compatibility with earlier preferences. Rendering uses
++    /// the panel's background color in both light and dark mode.
++    pub maximized_color: [u8; 3],
++    /// Opacity of the uniform background when a window is maximized.
++    pub maximized_opacity: f32,
++}
++
++impl Default for TopEdgeGradient {
++    fn default() -> Self {
++        Self {
++            enabled: true,
++            height: 96,
++            opacity: 0.4,
++            maximized_color: [0x24, 0x26, 0x2a],
++            maximized_opacity: 1.0,
++        }
++    }
++}
++
++impl TopEdgeGradient {
++    pub fn normalized(self) -> Self {
++        Self {
++            enabled: self.enabled,
++            maximized_color: self.maximized_color,
++            maximized_opacity: if self.maximized_opacity.is_finite() {
++                self.maximized_opacity.clamp(0.0, 1.0)
++            } else {
++                Self::default().maximized_opacity
++            },
++            height: self.height.clamp(16, 512),
++            opacity: if self.opacity.is_finite() {
++                self.opacity.clamp(0.0, 1.0)
++            } else {
++                Self::default().opacity
++            },
++        }
++    }
++}
++
+ #[cfg(feature = "wayland-rs")]
+ // TODO refactor to have separate dock mode config & panel mode config
+ /// Config structure for the cosmic panel
+@@ -465,6 +516,9 @@ pub struct CosmicPanelConfig {
+     /// keep panel styling when windows are maximized
+     #[serde(default)]
+     pub keep_style_on_maximize: bool,
++    /// Optional Penumbra scrim on any screen edge, independent of Islands.
++    #[serde(default)]
++    pub top_edge_gradient: Option<TopEdgeGradient>,
+ }
+
+ impl PartialEq for CosmicPanelConfig {
+@@ -493,6 +547,7 @@ impl PartialEq for CosmicPanelConfig {
+             && self.size_wings == other.size_wings
+             && (self.opacity - other.opacity).abs() < 0.01
+             && self.keep_style_on_maximize == other.keep_style_on_maximize
++            && self.top_edge_gradient == other.top_edge_gradient
+     }
+ }
+
+@@ -525,6 +580,7 @@ impl Default for CosmicPanelConfig {
+             autohover_delay_ms: Some(500),
+             padding_overlap: 0.5,
+             keep_style_on_maximize: false,
++            top_edge_gradient: None,
+         }
+     }
+ }
+@@ -737,11 +793,29 @@ impl CosmicPanelConfig {
+         Config::new(&entry_name, VERSION)
+     }
+
++    pub fn panel_gradient(&self) -> Option<TopEdgeGradient> {
++        if self.anchor_gap {
++            return None;
++        }
++        self.top_edge_gradient.filter(|effect| effect.enabled).map(|mut effect| {
++            effect.opacity = self.opacity;
++            effect.normalized()
++        })
++    }
++
+     pub fn maximize(&mut self) {
+         if self.keep_style_on_maximize {
+             return;
+         }
+-        self.opacity = 1.0;
++        // Maximizing removes the stock gap. Keep a gap-disabled gradient off
++        // in this temporary configuration, and retain the user's opacity for
++        // the gradient's maximize/restore fade.
++        if self.anchor_gap {
++            self.top_edge_gradient = None;
++        }
++        if self.panel_gradient().is_none() {
++            self.opacity = 1.0;
++        }
+         if self.autohide_enabled() {
+             return;
+         }

@@ -1,4 +1,90 @@
 // Included inside settings::tests to share the isolated desktop/native harness.
+#[test]
+fn penumbra_control_is_separate_reachable_and_uses_the_normal_action_path() {
+    let name = "penumbra_control_is_separate_reachable_and_uses_the_normal_action_path";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    send_settings(
+        &mut app,
+        Message::DesktopEditor(desktop::Message::Select(
+            crate::desktop::panels::PanelKind::Panel,
+        )),
+    );
+    let before = app.desktop.current().unwrap().islands();
+    for size in [Size::new(1280., 900.), Size::new(820., 600.)] {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        app.desktop.penumbra_supported = false;
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "penumbra-fade")
+                .is_none()
+        );
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "penumbra-maximized-opacity")
+                .is_none()
+        );
+        let bounds = native_reveal(&app, &mut native, "penumbra-gradient");
+        assert!(bounds.x >= 0. && bounds.x + bounds.width <= size.width);
+        assert!(bounds.y >= 0. && bounds.y + bounds.height <= size.height);
+        app.desktop.penumbra_supported = true;
+        native_send(
+            &mut app,
+            &mut native,
+            Message::DesktopEditor(desktop::Message::Penumbra(true)),
+        );
+        assert!(!app.desktop.dirty());
+        assert!(
+            app.desktop
+                .current()
+                .unwrap()
+                .penumbra()
+                .known()
+                .unwrap()
+                .unwrap()
+                .enabled
+        );
+        assert_eq!(app.desktop.current().unwrap().islands(), before);
+        // The fixture supplies the optional host capability for visual evidence.
+        app.desktop.penumbra_supported = true;
+        native_reveal(&app, &mut native, "penumbra-controls");
+        native_reveal(&app, &mut native, "penumbra-fade");
+        native_reveal(&app, &mut native, "penumbra-maximized-opacity");
+        native.capture(
+            app.settings_view(),
+            &cosmic::Theme::dark(),
+            &format!("penumbra-{}", size.width),
+        );
+        native_send(
+            &mut app,
+            &mut native,
+            Message::DesktopEditor(desktop::Message::Penumbra(false)),
+        );
+        assert!(
+            !app.desktop
+                .current()
+                .unwrap()
+                .penumbra()
+                .known()
+                .unwrap()
+                .unwrap()
+                .enabled
+        );
+        assert_eq!(app.desktop.current().unwrap().islands(), before);
+    }
+}
+
 fn native_send(app: &mut Settings, native: &mut crate::native_test::Native, message: Message) {
     use cosmic::iced::futures::StreamExt;
     use cosmic::iced::runtime::Action;
