@@ -99,11 +99,17 @@ def _stage_locked(home, library, *, session, fixture, boundary, enable, context,
         return response('blocked', 'not_installed_package')
     manifest, catalog = verify_bundle(library, 'companion-manifest.json', owner=os.getuid() if fixture else 0, context=context)
     owner = package_owner(manifest)
+    from runtime_identity import rpm_system, package_version, watch_package_database, version_newer
     if not fixture:
-        result = subprocess.run(['/usr/bin/dpkg-query', '-W', '-f=${Status}\n${Version}', owner], capture_output=True, text=True, timeout=3)
-        fields = result.stdout.splitlines()
-        if result.returncode or len(fields) != 2 or not installed_package_status(fields[0]):
-            return response('blocked', 'package_absent')
+        if rpm_system():
+            installed_version = package_version(owner)
+            if installed_version is None: return response('blocked', 'package_absent')
+            fields = ['install ok installed', installed_version]
+        else:
+            result = subprocess.run(['/usr/bin/dpkg-query', '-W', '-f=${Status}\n${Version}', owner], capture_output=True, text=True, timeout=3)
+            fields = result.stdout.splitlines()
+            if result.returncode or len(fields) != 2 or not installed_package_status(fields[0]):
+                return response('blocked', 'package_absent')
     if not fixture and manifest['package_version'] != fields[1]:
         return response('blocked', 'package_version_mismatch')
     current = session if session is not None else session_identity()
@@ -122,11 +128,12 @@ def _stage_locked(home, library, *, session, fixture, boundary, enable, context,
     except FileNotFoundError:
         if install.safe_path(home, POINTER).exists():
             return response('external_change', 'generation_missing')
-    from runtime_compatibility import enabled as family_policy, family
+    from runtime_compatibility import enabled as family_policy, family, validate_platform
     from verification import bounded
     if family_policy(catalog):
-        guard.watch.add(Path('/var/lib/dpkg/status'))
+        watch_package_database(guard.watch)
         try:
+            if not fixture: validate_platform(catalog)
             # Staging is eligibility only. Actual interfaces, configuration and
             # child ownership are checked at the next launch, never live-swapped.
             if fixture:
@@ -142,7 +149,7 @@ def _stage_locked(home, library, *, session, fixture, boundary, enable, context,
         from runtime_target import installed_matches
         from verification import bounded
         if not fixture:
-            guard.watch.add(Path('/var/lib/dpkg/status'))
+            watch_package_database(guard.watch)
             for row in catalog['cohorts']:
                 for path in row.get('runtime_target', {}).get('installed_files', {}): guard.resolve(Path(path))
         installed = bounded(lambda: installed_identity(catalog), 5) if not fixture else read_json(home / 'installed-identity.json')
@@ -150,7 +157,7 @@ def _stage_locked(home, library, *, session, fixture, boundary, enable, context,
                    and r['qualification'] == 'native-session' and r['payload_sha256'] == manifest['payload_sha256'] for r in catalog['cohorts']):
             return response('blocked', 'installed_runtime_unqualified')
     # A changed payload at the same version is also an unapproved replacement.
-    if subprocess.run(['/usr/bin/dpkg', '--compare-versions', manifest['package_version'], 'gt', old_version], timeout=2).returncode != 0:
+    if not version_newer(manifest['package_version'], old_version):
         return response('blocked', 'non_monotonic_version')
     generations = install.safe_path(home, DATA + 'companion/generations')
     generations.mkdir(parents=True, exist_ok=True, mode=0o700)

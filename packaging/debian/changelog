@@ -1,3 +1,11 @@
+cosmic-ext-halcyon (0.5.5) unstable; urgency=medium
+
+  * Add GPU wallpaper rain, snow, fog and cloud shadows with adjustable quality.
+  * Customize Music and Focus widgets, circular players and audio spectrum.
+  * Add native Fedora RPM packaging and coordinated signed system updates.
+
+ -- profilaz3 <261673162+profilaz3@users.noreply.github.com>  Sat, 31 Oct 2026 01:40:00 +0000
+
 cosmic-ext-halcyon (0.5.0) unstable; urgency=medium
 
   * Include Islands in Halcyon, with optional activation from Dock & panel.

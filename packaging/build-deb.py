@@ -89,7 +89,7 @@ def dependencies(binary, scratch, islands=None):
     if islands:
         import panel_launcher
         detected += ", " + ", ".join(panel_launcher.PACKAGES)
-    return detected + ", python3, git, systemd"
+    return detected + ", python3, git, systemd, pulseaudio-utils"
 
 
 def default_wallpapers():
@@ -97,6 +97,55 @@ def default_wallpapers():
         if any(path.glob("*.jpg")):
             return path
     return REPO / "assets/wallpapers-jpg"
+
+
+def stage_application(root, binary, wallpapers, google_client, package):
+    """Shared application payload; native package backends own dependencies and enrollment."""
+    usr = root / "usr"
+    install(binary, usr / "bin/halcyon", 0o755)
+    install(REPO / "scripts/desktop-cards", usr / "bin/halcyon-ctl", 0o755)
+    install(REPO / "companion/panel_launcher.py", usr / "lib" / PACKAGE / "panel_launcher.py")
+    install(REPO / "companion/install_status.py", usr / "lib" / PACKAGE / "islands-status.py", 0o755)
+    for helper in ("bundle_contract.py", "journal.py", "runtime_identity.py", "panel_configuration.py", "runtime_target.py", "verification.py", "runtime_compatibility.py"):
+        install(REPO / "companion" / helper, usr / "lib" / PACKAGE / helper)
+    for name in ("calendar-sync.py", "project-status.py"):
+        install(REPO / "scripts" / name, usr / "lib" / PACKAGE / name, 0o755)
+    install(REPO / "docs/google-calendar-setup.html",
+            usr / "share" / PACKAGE / "google-calendar-setup.html")
+    if google_client:
+        install(google_client, usr / "share" / PACKAGE / "google-calendar-client.json")
+    install(REPO / "assets/wallpapers/halcyon-ridge.png", usr / "share/backgrounds/halcyon/halcyon-ridge.png")
+    for wallpaper in wallpapers:
+        install(wallpaper, usr / "share/backgrounds/halcyon" / wallpaper.name)
+    install(REPO / "packaging/systemd/halcyon.service",
+            usr / "lib/systemd/user/halcyon.service")
+    for suffix, directory in (("desktop", "applications"), ("metainfo.xml", "metainfo")):
+        name = f"{APP_ID}.{suffix}"
+        install(REPO / "packaging" / name, usr / "share" / directory / name)
+    for size in ICON_SIZES:
+        name = f"{APP_ID}.png"
+        install(REPO / "packaging/icons" / str(size) / name,
+                usr / f"share/icons/hicolor/{size}x{size}/apps" / name)
+    docs = usr / "share/doc" / package
+    for name in ("LICENSE", "THIRD_PARTY.md", "ASSETS.md"):
+        install(REPO / name, docs / name)
+    install(REPO / "packaging/debian/copyright", docs / "copyright")
+    bundle = REPO / "packaging/licenses/THIRD_PARTY_LICENSES.txt"
+    if bundle.is_file():
+        install(bundle, docs / bundle.name)
+    else:
+        print("Warning: dependency license bundle absent; generate it with "
+              "packaging/collect-licenses.py before distributing.", file=sys.stderr)
+    # Equivalent to gzip -n: omit the input filename and timestamp.
+    with (docs / "changelog.gz").open("wb") as stream:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=stream, mtime=0) as compressed:
+            compressed.write((REPO / "packaging/debian/changelog").read_bytes())
+    for name in ("halcyon.1", "halcyon-ctl.1"):
+        destination = usr / "share/man/man1" / (name + ".gz")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("wb") as stream:
+            with gzip.GzipFile(filename="", mode="wb", fileobj=stream, mtime=0) as compressed:
+                compressed.write((REPO / "packaging/man" / name).read_bytes())
 
 
 def build(args):
@@ -129,51 +178,11 @@ def build(args):
     with tempfile.TemporaryDirectory(prefix="halcyon-deb-") as temp:
         scratch = Path(temp)
         root = scratch / "package"
+        stage_application(root, binary, wallpapers, args.google_client, package)
         usr = root / "usr"
-        install(binary, usr / "bin/halcyon", 0o755)
-        install(REPO / "scripts/desktop-cards", usr / "bin/halcyon-ctl", 0o755)
-        install(REPO / "companion/panel_launcher.py", usr / "lib" / PACKAGE / "panel_launcher.py")
-        install(REPO / "companion/install_status.py", usr / "lib" / PACKAGE / "islands-status.py", 0o755)
-        for helper in ("bundle_contract.py", "journal.py", "runtime_identity.py", "panel_configuration.py", "runtime_target.py", "verification.py", "runtime_compatibility.py"):
-            install(REPO / "companion" / helper, usr / "lib" / PACKAGE / helper)
-        for name in ("calendar-sync.py", "project-status.py"):
-            install(REPO / "scripts" / name, usr / "lib" / PACKAGE / name, 0o755)
-        install(REPO / "docs/google-calendar-setup.html",
-                usr / "share" / PACKAGE / "google-calendar-setup.html")
-        if args.google_client:
-            install(args.google_client, usr / "share" / PACKAGE / "google-calendar-client.json")
-        install(REPO / "assets/wallpapers/halcyon-ridge.png", usr / "share/backgrounds/halcyon/halcyon-ridge.png")
-        for wallpaper in wallpapers:
-            install(wallpaper, usr / "share/backgrounds/halcyon" / wallpaper.name)
-        install(REPO / "packaging/systemd/halcyon.service",
-                usr / "lib/systemd/user/halcyon.service")
-        for suffix, directory in (("desktop", "applications"), ("metainfo.xml", "metainfo")):
-            name = f"{APP_ID}.{suffix}"
-            install(REPO / "packaging" / name, usr / "share" / directory / name)
-        for size in ICON_SIZES:
-            name = f"{APP_ID}.png"
-            install(REPO / "packaging/icons" / str(size) / name,
-                    usr / f"share/icons/hicolor/{size}x{size}/apps" / name)
-        docs = usr / "share/doc" / package
-        for name in ("LICENSE", "THIRD_PARTY.md", "ASSETS.md"):
-            install(REPO / name, docs / name)
-        install(REPO / "packaging/debian/copyright", docs / "copyright")
-        bundle = REPO / "packaging/licenses/THIRD_PARTY_LICENSES.txt"
-        if bundle.is_file():
-            install(bundle, docs / bundle.name)
-        else:
-            print("Warning: dependency license bundle absent; generate it with "
-                  "packaging/collect-licenses.py before distributing.", file=sys.stderr)
-        # Equivalent to gzip -n: omit the input filename and timestamp.
-        with (docs / "changelog.gz").open("wb") as stream:
-            with gzip.GzipFile(filename="", mode="wb", fileobj=stream, mtime=0) as compressed:
-                compressed.write((REPO / "packaging/debian/changelog").read_bytes())
-        for name in ("halcyon.1", "halcyon-ctl.1"):
-            destination = usr / "share/man/man1" / (name + ".gz")
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            with destination.open("wb") as stream:
-                with gzip.GzipFile(filename="", mode="wb", fileobj=stream, mtime=0) as compressed:
-                    compressed.write((REPO / "packaging/man" / name).read_bytes())
+        (usr / "share" / PACKAGE / "installation.json").write_text(json.dumps(dict(
+            format="halcyon-installation", version=1, app_version=args.version,
+            package_version=args.version, package_format="deb", architecture="amd64"), sort_keys=True) + "\n")
 
         islands_binary = None
         if bundled_islands:

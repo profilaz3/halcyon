@@ -46,6 +46,8 @@ pub struct Config {
     pub materials: crate::materials::Materials,
     #[serde(default = "yes")]
     pub material_motion: bool,
+    #[serde(default, skip_serializing_if = "crate::rain::Preferences::is_default")]
+    pub rain: crate::rain::Preferences,
     /// Widget text font family; `None` uses the widget style's own.
     pub widget_font: Option<String>,
     /// The clock's font family; `None` follows `widget_font`, then the style.
@@ -105,6 +107,7 @@ impl Default for Config {
             appearance: Appearance::default(),
             materials: Default::default(),
             material_motion: true,
+            rain: Default::default(),
             widget_font: None,
             clock_font: None,
             clock: ClockPreferences::default(),
@@ -220,6 +223,7 @@ impl Config {
         }
     }
     fn validate(&self) -> Result<(), String> {
+        self.rain.validate()?;
         self.recipes.validate()?;
         self.validate_monitors()?;
         if self
@@ -304,6 +308,18 @@ impl Config {
             self.appearance.contrast_assist,
         )
     }
+    /// Personal recipes own their visible parts; built-in preferences stay intact.
+    pub fn music_artwork(&self) -> bool {
+        if self.music.visualizer.circle != crate::tools::visualizer::Circle::Off {
+            return false;
+        }
+        self.recipes
+            .music
+            .as_ref()
+            .map_or(self.music.show_artwork, |r| {
+                r.parts.contains(&crate::recipes::Part::Artwork)
+            })
+    }
     pub fn widget_visible(&self, widget: Widget) -> bool {
         if !self.widgets_visible {
             return false;
@@ -372,6 +388,22 @@ impl Config {
     pub fn save_changes(changes: serde_json::Value) -> Result<Self, String> {
         let path = Self::path().ok_or("Configuration directory unavailable")?;
         Self::save_changes_at(&path, changes)
+    }
+    pub fn save_rain(
+        expected: &crate::rain::Preferences,
+        next: &crate::rain::Preferences,
+    ) -> Result<Self, String> {
+        next.validate()?;
+        let path = Self::path().ok_or("Configuration directory unavailable")?;
+        let value = patch_config(&path, |value| {
+            let current: Self = serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
+            if &current.rain != expected && &current.rain != next {
+                return Err("Wallpaper effects changed elsewhere. Reopen Wallpaper before trying again.".into());
+            }
+            value["rain"] = serde_json::to_value(next).map_err(|e| e.to_string())?;
+            Ok(())
+        })?;
+        Self::from_saved_value(value)
     }
     fn save_changes_at(path: &std::path::Path, changes: serde_json::Value) -> Result<Self, String> {
         let changes = changes.as_object().ok_or("Settings must be an object")?;
@@ -1290,6 +1322,8 @@ impl Default for DevboxPreferences {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct MusicPreferences {
+    #[serde(skip_serializing_if = "crate::tools::visualizer::Preferences::is_default")]
+    pub visualizer: crate::tools::visualizer::Preferences,
     pub enabled: bool,
     /// The preferred player's bus name without `org.mpris.MediaPlayer2.`,
     /// for example `spotify`; `None` follows whichever player is playing.
@@ -1300,6 +1334,7 @@ pub struct MusicPreferences {
 impl Default for MusicPreferences {
     fn default() -> Self {
         Self {
+            visualizer: Default::default(),
             enabled: false,
             player: None,
             show_artwork: true,
@@ -1309,6 +1344,7 @@ impl Default for MusicPreferences {
 }
 impl MusicPreferences {
     fn validate(&self) -> Result<(), String> {
+        self.visualizer.validate()?;
         if let Some(player) = &self.player
             && !valid_player_key(player)
         {

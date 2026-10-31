@@ -142,6 +142,7 @@ pub(super) fn completion(message: &Message) -> Option<Message> {
 }
 pub(super) fn label(message: &Message) -> String {
     match message {
+        Message::Rain(_) => "Wallpaper effect",
         Message::Moment(_) => "Moment",
         Message::WidgetDisplay(_) | Message::WidgetMonitor(..) | Message::WidgetMonitorHide(..) => {
             "Widget display"

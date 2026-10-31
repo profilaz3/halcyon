@@ -161,7 +161,9 @@ impl Document {
                         *builtin != instance.kind
                             || (*reset
                                 && self.version
-                                    < if matches!(builtin, Widget::Calendar | Widget::Devbox) {
+                                    < if matches!(builtin, Widget::Music | Widget::Focus) {
+                                        4
+                                    } else if matches!(builtin, Widget::Calendar | Widget::Devbox) {
                                         3
                                     } else {
                                         2
@@ -169,7 +171,7 @@ impl Document {
                     }
                     RecipeId::Personal { personal } => {
                         personal.kind.widget() != instance.kind
-                            || self.version < if personal.kind.version() == 1 { 2 } else { 3 }
+                            || self.version < personal.kind.version() + 1
                             || personal.validate().is_err()
                     }
                 }
@@ -184,6 +186,9 @@ impl Document {
                     .ok_or("Unsupported widget property")?;
                 legacy::validate_value(&pointer, value)?;
             }
+        }
+        if self.shared.contains_key("/rain") && self.version < 5 {
+            return Err("Wallpaper rain requires design version 5".into());
         }
         for (pointer, value) in &self.shared {
             if legacy::instance_slot(pointer).is_some() {
@@ -305,7 +310,9 @@ impl Document {
                 if value.is_some() {
                     self.version =
                         self.version
-                            .max(if matches!(kind, Widget::Calendar | Widget::Devbox) {
+                            .max(if matches!(kind, Widget::Music | Widget::Focus) {
+                                4
+                            } else if matches!(kind, Widget::Calendar | Widget::Devbox) {
                                 3
                             } else {
                                 2
@@ -313,13 +320,15 @@ impl Document {
                 }
                 instance.recipe = match value.filter(|v| !v.is_null()) {
                     Some(value) => {
-                        self.version = self.version.max(
-                            if matches!(kind, Widget::Calendar | Widget::Devbox) {
-                                3
-                            } else {
-                                2
-                            },
-                        );
+                        self.version =
+                            self.version
+                                .max(if matches!(kind, Widget::Music | Widget::Focus) {
+                                    4
+                                } else if matches!(kind, Widget::Calendar | Widget::Devbox) {
+                                    3
+                                } else {
+                                    2
+                                });
                         RecipeId::Personal {
                             personal: serde_json::from_value(value).map_err(|e| e.to_string())?,
                         }
@@ -339,6 +348,9 @@ impl Document {
         } else {
             let value = value.map(|v| self.encode_list(pointer, v)).transpose()?;
             if let Some(value) = value {
+                if pointer == "/rain" {
+                    self.version = self.version.max(5);
+                }
                 self.shared.insert(pointer.into(), value);
             } else {
                 self.shared.remove(pointer);

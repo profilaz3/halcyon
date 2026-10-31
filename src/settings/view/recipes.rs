@@ -1,6 +1,7 @@
 use super::*;
-use crate::recipes::{Arrangement, Kind, Part};
+use crate::recipes::{Arrangement, Finish, Kind, Part, Recipe, TimerFace};
 use crate::settings::recipes::Message as Edit;
+use crate::tools::cards::recipe::PreviewState;
 fn edit(message: Edit) -> Message {
     Message::Recipe(message)
 }
@@ -26,13 +27,16 @@ impl Settings {
         }
         let mut library = vec![
             row::with_children(
-                Kind::ALL
-                    .into_iter()
-                    .map(|kind| {
-                        button::text(format!("New {}", kind.title()))
-                            .on_press_maybe((!busy).then(|| edit(Edit::New(kind))))
-                            .into()
-                    })
+                std::iter::once(label("New", 12., MUTED))
+                    .chain(Kind::ALL.into_iter().map(|kind| {
+                        button::text(if kind == Kind::System {
+                            "System"
+                        } else {
+                            kind.title()
+                        })
+                        .on_press_maybe((!busy).then(|| edit(Edit::New(kind))))
+                        .into()
+                    }))
                     .collect::<Vec<_>>(),
             )
             .spacing(8)
@@ -74,29 +78,75 @@ impl Settings {
             ],
             self.settings_accent(),
         );
-        let sample_size = if editor.wide {
+        let sample_size = if recipe.tool() && !editor.wide {
+            recipe.tool_size()
+        } else if editor.wide {
             [520., 220.]
         } else {
             [320., 220.]
         };
-        let sample =
+        let sample = if recipe.tool() {
+            crate::tools::cards::recipe::sample(
+                &self.config,
+                recipe,
+                editor.preview_state,
+                sample_size,
+            )
+            .map(|_| Message::Preview)
+        } else {
             crate::app::settings_recipe_preview(&self.config, recipe, editor.missing, sample_size)
-                .map(|_| Message::Preview);
+                .map(|_| Message::Preview)
+        };
+        let preview_width = if recipe.tool() {
+            (self.content_width() - 16.) * 0.5 - 48.
+        } else {
+            self.stage_width().max(240.) - 28.
+        };
+        let preview_height = if recipe.tool() {
+            (sample_size[1] * ((preview_width - 28.) / sample_size[0]).min(1.)).min(300.)
+        } else {
+            self.stage_height().min(260.)
+        };
         let sample = self.preview_stage(super::sample::thumbnail(
             sample,
             sample_size,
-            [
-                self.stage_width().max(240.) - 28.,
-                self.stage_height().min(260.),
-            ],
+            [preview_width.max(180.) - 28., preview_height],
         ));
         let preview = group(
             None,
             vec![
-                self.preview_header("Sample content · candidate widget", false),
+                self.preview_header("Sample preview", false),
                 controls,
                 sample,
-                if matches!(recipe.kind, Kind::Weather | Kind::Calendar | Kind::System) {
+                if recipe.tool() {
+                    let states = PreviewState::choices(recipe.kind);
+                    let labels: Vec<_> = states
+                        .iter()
+                        .map(|s| {
+                            if *s == PreviewState::Active {
+                                if recipe.kind == Kind::Music {
+                                    "Playing"
+                                } else {
+                                    "Running"
+                                }
+                            } else {
+                                s.title()
+                            }
+                        })
+                        .collect();
+                    row::with_children(vec![
+                        label("Preview state", 13., MUTED),
+                        cosmic::widget::dropdown(
+                            labels,
+                            states.iter().position(|s| *s == editor.preview_state),
+                            move |i| edit(Edit::PreviewState(states[i])),
+                        )
+                        .into(),
+                    ])
+                    .spacing(12)
+                    .align_y(Alignment::Center)
+                    .into()
+                } else if matches!(recipe.kind, Kind::Weather | Kind::Calendar | Kind::System) {
                     segmented(
                         vec![
                             (
@@ -202,12 +252,85 @@ impl Settings {
                     .into(),
             );
         }
-        parts.push(self.help("recipe-parts", "Parts", "Small widgets keep the main content and connection status. Split places the main content beside the remaining parts. Calendar follows its date and privacy settings. System monitor samples the readings you select; its first reading stays visible at small sizes."));
-        let inspector: Element<'_, Message> =
-            column::with_children(vec![name_editor, group(Some("Parts"), parts)])
-                .spacing(16)
-                .into();
-        content.push(self.inspector_layout(preview, inspector, "recipe"));
+        parts.push(self.help("recipe-parts", "Parts", "Small widgets keep the main reading and controls. Optional details collapse when space runs out. Music without artwork uses the full width. Previews use sample data and never control your player or timer."));
+        let mut details = vec![name_editor];
+        if recipe.tool() {
+            details.push(group(
+                Some("Design"),
+                vec![segmented(
+                    Recipe::template_names(recipe.kind)
+                        .iter()
+                        .enumerate()
+                        .map(|(i, name)| {
+                            (
+                                (*name).into(),
+                                recipe.name == *name,
+                                Some(edit(Edit::Template(i))),
+                            )
+                        })
+                        .collect(),
+                    self.settings_accent(),
+                )],
+            ));
+            let mut finishes = vec![(
+                "Desktop".into(),
+                recipe.finish.is_none(),
+                Some(edit(Edit::Finish(None))),
+            )];
+            finishes.extend(Finish::ALL.into_iter().map(|finish| {
+                (
+                    finish.title().into(),
+                    recipe.finish == Some(finish),
+                    Some(edit(Edit::Finish(Some(finish)))),
+                )
+            }));
+            details.push(group(
+                Some("Finish"),
+                vec![segmented(finishes, self.settings_accent())],
+            ));
+            if recipe.kind == Kind::Focus {
+                details.push(segmented(
+                    vec![
+                        (
+                            "Ring".into(),
+                            recipe.timer_face == Some(TimerFace::Ring),
+                            Some(edit(Edit::TimerFace(TimerFace::Ring))),
+                        ),
+                        (
+                            "Digits".into(),
+                            recipe.timer_face != Some(TimerFace::Ring),
+                            Some(edit(Edit::TimerFace(TimerFace::Digits))),
+                        ),
+                    ],
+                    self.settings_accent(),
+                ));
+            }
+            details.push(
+                button::text(if recipe.kind == Kind::Music {
+                    "Player settings…"
+                } else {
+                    "Timer settings…"
+                })
+                .on_press(Message::Page(if recipe.kind == Kind::Music {
+                    Page::Music
+                } else {
+                    Page::Focus
+                }))
+                .into(),
+            );
+        }
+        details.push(group(Some("Parts"), parts));
+        let inspector: Element<'_, Message> = column::with_children(details).spacing(16).into();
+        content.push(if recipe.tool() && self.content_width() >= 560. {
+            row::with_children(vec![
+                container(preview).width(Length::FillPortion(1)).into(),
+                container(inspector).width(Length::FillPortion(1)).into(),
+            ])
+            .spacing(16)
+            .into()
+        } else {
+            self.inspector_layout(preview, inspector, "recipe")
+        });
         content.push(
             row::with_children(vec![
                 button::text("Make a copy")

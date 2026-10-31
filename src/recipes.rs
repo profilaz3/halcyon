@@ -13,15 +13,26 @@ pub enum Kind {
     Weather,
     Calendar,
     System,
+    Music,
+    Focus,
 }
 impl Kind {
-    pub const ALL: [Self; 4] = [Self::Clock, Self::Weather, Self::Calendar, Self::System];
+    pub const ALL: [Self; 6] = [
+        Self::Clock,
+        Self::Weather,
+        Self::Calendar,
+        Self::System,
+        Self::Music,
+        Self::Focus,
+    ];
     pub fn widget(self) -> Widget {
         match self {
             Self::Clock => Widget::Clock,
             Self::Weather => Widget::Weather,
             Self::Calendar => Widget::Calendar,
             Self::System => Widget::Devbox,
+            Self::Music => Widget::Music,
+            Self::Focus => Widget::Focus,
         }
     }
     pub fn title(self) -> &'static str {
@@ -30,6 +41,8 @@ impl Kind {
             Self::Weather => "Weather",
             Self::Calendar => "Calendar",
             Self::System => "System monitor",
+            Self::Music => "Music",
+            Self::Focus => "Focus",
         }
     }
     pub fn pointer(self) -> &'static str {
@@ -38,10 +51,29 @@ impl Kind {
             Self::Weather => "/recipes/weather",
             Self::Calendar => "/recipes/calendar",
             Self::System => "/recipes/devbox",
+            Self::Music => "/recipes/music",
+            Self::Focus => "/recipes/focus",
         }
     }
     pub fn parts(self) -> &'static [Part] {
         match self {
+            Self::Music => &[
+                Part::Track,
+                Part::Artwork,
+                Part::Progress,
+                Part::Playback,
+                Part::Caption,
+                Part::Divider,
+                Part::Space,
+            ],
+            Self::Focus => &[
+                Part::Timer,
+                Part::Caption,
+                Part::SessionDots,
+                Part::TimerControls,
+                Part::Divider,
+                Part::Space,
+            ],
             Self::System => &[
                 Part::Cpu,
                 Part::Memory,
@@ -83,7 +115,9 @@ impl Kind {
         }
     }
     pub fn version(self) -> u32 {
-        if matches!(self, Self::Calendar | Self::System) {
+        if matches!(self, Self::Music | Self::Focus) {
+            3
+        } else if matches!(self, Self::Calendar | Self::System) {
             2
         } else {
             1
@@ -98,12 +132,21 @@ impl Kind {
             Self::Weather => Part::Reading,
             Self::Calendar => Part::Agenda,
             Self::System => Part::Cpu,
+            Self::Music => Part::Track,
+            Self::Focus => Part::Timer,
         }
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Part {
+    Track,
+    Artwork,
+    Progress,
+    Playback,
+    Timer,
+    TimerControls,
+    SessionDots,
     Cpu,
     Memory,
     Disk,
@@ -131,6 +174,13 @@ impl Part {
     }
     pub fn title(self) -> &'static str {
         match self {
+            Self::Track => "Track & player",
+            Self::Artwork => "Artwork",
+            Self::Progress => "Track progress",
+            Self::Playback => "Playback controls",
+            Self::Timer => "Time & phase",
+            Self::TimerControls => "Timer controls",
+            Self::SessionDots => "Sessions today",
             Self::Cpu => "CPU",
             Self::Memory => "Memory",
             Self::Disk => "Disk",
@@ -166,6 +216,29 @@ impl Arrangement {
         }
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Finish {
+    Tidal,
+    Paper,
+    Carbon,
+}
+impl Finish {
+    pub const ALL: [Self; 3] = [Self::Tidal, Self::Paper, Self::Carbon];
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Tidal => "Tidal",
+            Self::Paper => "Paper",
+            Self::Carbon => "Carbon",
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimerFace {
+    Ring,
+    Digits,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Recipe {
@@ -178,6 +251,10 @@ pub struct Recipe {
     pub caption: String,
     pub compact: Arrangement,
     pub wide: Arrangement,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finish: Option<Finish>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timer_face: Option<TimerFace>,
 }
 pub fn valid_id(s: &str) -> bool {
     s.strip_prefix("r-").is_some_and(|s| {
@@ -203,6 +280,13 @@ impl Recipe {
             name: format!("My {}", kind.title().to_lowercase()),
             kind,
             parts: match kind {
+                Kind::Music => vec![Part::Artwork, Part::Track, Part::Progress, Part::Playback],
+                Kind::Focus => vec![
+                    Part::Timer,
+                    Part::Caption,
+                    Part::TimerControls,
+                    Part::SessionDots,
+                ],
                 Kind::System => vec![Part::Cpu, Part::Memory, Part::Network],
                 Kind::Calendar => vec![Part::Date, Part::Agenda, Part::Settings],
                 Kind::Clock => vec![Part::Face, Part::Date],
@@ -211,9 +295,69 @@ impl Recipe {
             caption: "Make room for today".into(),
             compact: Arrangement::Stack,
             wide: Arrangement::Split,
+            finish: None,
+            timer_face: (kind == Kind::Focus).then_some(TimerFace::Ring),
         };
+        if kind == Kind::Focus {
+            recipe.caption = "Deep work".into();
+        }
+        if kind == Kind::Music {
+            recipe.name = "Sleeve".into();
+        }
+        if kind == Kind::Focus {
+            recipe.name = "Orbit".into();
+        }
         recipe.seal();
         recipe
+    }
+    pub fn template_names(kind: Kind) -> &'static [&'static str] {
+        match kind {
+            Kind::Music => &["Sleeve", "Player", "Quiet"],
+            Kind::Focus => &["Orbit", "Type", "Edge"],
+            _ => &[],
+        }
+    }
+    pub fn template(kind: Kind, index: usize) -> Self {
+        let mut r = Self::starter(kind);
+        if let Some(name) = Self::template_names(kind).get(index) {
+            r.name = (*name).into();
+        }
+        match (kind, index) {
+            (Kind::Music, 1) => r.compact = Arrangement::Split,
+            (Kind::Music, 2) => {
+                r.parts = vec![Part::Track, Part::Playback, Part::Progress];
+                r.compact = Arrangement::Split;
+            }
+            (Kind::Focus, 1) => {
+                r.timer_face = Some(TimerFace::Digits);
+                r.parts = vec![Part::Timer, Part::Caption, Part::TimerControls];
+            }
+            (Kind::Focus, 2) => {
+                r.timer_face = Some(TimerFace::Digits);
+                r.parts = vec![Part::Timer, Part::TimerControls];
+                r.compact = Arrangement::Split;
+            }
+            _ => {}
+        }
+        r.seal();
+        r
+    }
+    pub fn tool_size(&self) -> [f32; 2] {
+        match self.kind {
+            Kind::Music
+                if self.parts.contains(&Part::Artwork) && self.compact == Arrangement::Stack =>
+            {
+                [320., 400.]
+            }
+            Kind::Music => [360., 200.],
+            Kind::Focus if self.timer_face == Some(TimerFace::Ring) => [280., 320.],
+            Kind::Focus if self.compact == Arrangement::Split => [320., 160.],
+            Kind::Focus => [280., 240.],
+            _ => [320., self.natural_height()],
+        }
+    }
+    pub fn tool(&self) -> bool {
+        matches!(self.kind, Kind::Music | Kind::Focus)
     }
     /// The first selected metric stays visible when a system widget is small.
     pub fn primary(&self) -> Part {
@@ -263,6 +407,11 @@ impl Recipe {
         self.revision = self.digest();
     }
     pub fn validate(&self) -> Result<(), String> {
+        if (!self.tool() && self.finish.is_some())
+            || (self.kind != Kind::Focus && self.timer_face.is_some())
+        {
+            return Err("Unsupported presentation choice for this widget".into());
+        }
         if self.version != self.kind.version() {
             return Err("This widget recipe needs a compatible Halcyon version".into());
         }
@@ -312,6 +461,10 @@ pub struct Applied {
     pub calendar: Option<Recipe>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub devbox: Option<Recipe>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub music: Option<Recipe>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub focus: Option<Recipe>,
 }
 impl Applied {
     pub fn get(&self, kind: Kind) -> Option<&Recipe> {
@@ -320,6 +473,8 @@ impl Applied {
             Kind::Weather => self.weather.as_ref(),
             Kind::Calendar => self.calendar.as_ref(),
             Kind::System => self.devbox.as_ref(),
+            Kind::Music => self.music.as_ref(),
+            Kind::Focus => self.focus.as_ref(),
         }
     }
     pub fn set(&mut self, kind: Kind, value: Option<Recipe>) {
@@ -328,6 +483,8 @@ impl Applied {
             Kind::Weather => self.weather = value,
             Kind::Calendar => self.calendar = value,
             Kind::System => self.devbox = value,
+            Kind::Music => self.music = value,
+            Kind::Focus => self.focus = value,
         }
     }
     pub fn validate(&self) -> Result<(), String> {

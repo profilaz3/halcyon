@@ -2,6 +2,7 @@
 //! previews in Settings. Each takes the palette and card look from the
 //! configuration, like every other widget, and an optional action mapper:
 //! without one the card is drawn without controls that respond.
+pub(crate) mod recipe;
 use super::{focus, music, notes};
 use crate::config::{Config, Palette};
 use crate::drawer::Widget;
@@ -40,6 +41,18 @@ const WARN: Color = Color::from_rgb(233. / 255., 192. / 255., 124. / 255.);
 
 /// The card's logical size on the desktop.
 pub fn size(widget: Widget, config: &Config) -> [f32; 2] {
+    if widget == Widget::Music
+        && config.music.visualizer.circle != crate::tools::visualizer::Circle::Off
+    {
+        return [300., 300.];
+    }
+    if let Some(recipe) = match widget {
+        Widget::Music => config.recipes.music.as_ref(),
+        Widget::Focus => config.recipes.focus.as_ref(),
+        _ => None,
+    } {
+        return recipe.tool_size();
+    }
     match widget {
         Widget::Music => [
             360.,
@@ -327,12 +340,34 @@ pub struct MusicView<'a> {
     pub problem: bool,
 }
 
-pub fn music<'a, M: Clone + 'a>(
+pub fn music<'a, M: Clone + 'static>(
     view: MusicView<'a>,
     config: &Config,
     on: Option<fn(Action) -> M>,
     dimensions: Option<[f32; 2]>,
 ) -> Element<'a, M> {
+    music_visualized(
+        view,
+        config,
+        on,
+        dimensions,
+        [0.; crate::tools::visualizer::BINS],
+    )
+}
+
+pub fn music_visualized<'a, M: Clone + 'static>(
+    view: MusicView<'a>,
+    config: &Config,
+    on: Option<fn(Action) -> M>,
+    dimensions: Option<[f32; 2]>,
+    bins: [f32; crate::tools::visualizer::BINS],
+) -> Element<'a, M> {
+    if config.music.visualizer.circle != crate::tools::visualizer::Circle::Off {
+        return self::recipe::circular(view, config, on, dimensions, bins);
+    }
+    if let Some(recipe) = &config.recipes.music {
+        return self::recipe::music(view, config, recipe, on, dimensions);
+    }
     let _style = crate::widget_style::scope(config);
     let p = config.palette();
     let [_, height] = dimensions.unwrap_or_else(|| size(Widget::Music, config));
@@ -869,7 +904,7 @@ fn checkbox<'a, M: 'a>(done: bool, p: Palette) -> Element<'a, M> {
 }
 
 /// The Focus card: the countdown, its progress and the next step.
-pub fn focus<'a, M: Clone + 'a>(
+pub fn focus<'a, M: Clone + 'static>(
     session: &focus::Session,
     config: &Config,
     now_ms: i64,
@@ -879,6 +914,11 @@ pub fn focus<'a, M: Clone + 'a>(
 ) -> Element<'a, M> {
     let _style = crate::widget_style::scope(config);
     let p = config.palette();
+    if let Some(recipe) = &config.recipes.focus {
+        return self::recipe::focus(
+            session, config, recipe, now_ms, today, on, dimensions, false,
+        );
+    }
     let prefs = &config.focus;
     let [_, height] = dimensions.unwrap_or_else(|| size(Widget::Focus, config));
     let act = |action: Action| on.map(|on| on(action));

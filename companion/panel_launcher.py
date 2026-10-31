@@ -74,6 +74,9 @@ def digest(path):
 
 def installed_versions():
     """Keep partial diagnostics when one package is missing or cannot be read."""
+    from runtime_identity import rpm_system, package_version
+    if rpm_system():
+        return {name: package_version(name) for name in PACKAGES}
     versions = {}
     for name in PACKAGES:
         try:

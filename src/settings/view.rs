@@ -35,6 +35,7 @@ mod themes;
 mod tools;
 mod updates;
 mod wallpaper;
+mod rain;
 mod widget_text;
 mod window_rules;
 mod windows;

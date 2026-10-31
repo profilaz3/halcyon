@@ -43,6 +43,14 @@
   </provides>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.5.5" date="2026-10-31">
+      <description><ul>
+        <li>Add GPU wallpaper rain, snow, fog and cloud shadows.</li>
+        <li>Customize Music and Focus widgets and circular audio visualizers.</li>
+        <li>Place and resize an audio spectrum, including behind the dock.</li>
+        <li>Add a Fedora RPM package with signed system updates.</li>
+      </ul></description>
+    </release>
     <release version="0.5.0" date="2026-10-29">
       <description><ul>
         <li>Include Islands and optional Penumbra gradients in one package.</li>

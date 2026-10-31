@@ -3,6 +3,10 @@ use crate::recipes::{self as model, Arrangement, Kind, Part, Recipe};
 #[derive(Clone, Debug)]
 pub enum Message {
     New(Kind),
+    Template(usize),
+    Finish(Option<model::Finish>),
+    TimerFace(model::TimerFace),
+    PreviewState(crate::tools::cards::recipe::PreviewState),
     Name(String),
     Caption(String),
     Add(Part),
@@ -29,6 +33,7 @@ pub struct Editor {
     pub expected: Option<Recipe>,
     pub wide: bool,
     pub missing: bool,
+    pub preview_state: crate::tools::cards::recipe::PreviewState,
     pub delete_review: bool,
     pub notice: Option<String>,
     pub error: bool,
@@ -43,6 +48,7 @@ impl Default for Editor {
             expected: None,
             wide: false,
             missing: false,
+            preview_state: Default::default(),
             delete_review: false,
             notice: None,
             error: false,
@@ -82,9 +88,18 @@ impl Editor {
         match edit {
             Message::New(kind) => {
                 self.draft = Recipe::starter(kind);
+                self.preview_state = Default::default();
                 self.expected = None;
                 self.notice = None;
             }
+            Message::Template(index) => {
+                self.draft = Recipe::template(self.draft.kind, index);
+                self.expected = None;
+                self.notice = None;
+            }
+            Message::Finish(finish) => self.draft.finish = finish,
+            Message::TimerFace(face) => self.draft.timer_face = Some(face),
+            Message::PreviewState(state) => self.preview_state = state,
             Message::Name(name) => self.draft.name = name.chars().take(80).collect(),
             Message::Caption(caption) => self.draft.caption = caption.chars().take(120).collect(),
             Message::Add(part) => {
@@ -123,6 +138,9 @@ impl Editor {
             Message::Missing(missing) => self.missing = missing,
             Message::Load(id) => {
                 if let Some(r) = self.library.entries.get(&id) {
+                    if self.draft.kind != r.kind {
+                        self.preview_state = Default::default();
+                    }
                     self.draft = r.clone();
                     self.expected = Some(r.clone());
                     self.notice = None;

@@ -36,6 +36,7 @@ mod privacy;
 #[cfg(test)]
 mod privacy_tests;
 mod profiles;
+mod rain;
 mod recipes;
 mod recovery;
 mod reorder;
@@ -599,6 +600,7 @@ pub enum Message {
     WindowRules(window_rules::Message),
     Shortcuts(shortcuts::Message),
     Wallpaper(wallpaper::Message),
+    Rain(rain::Edit),
     DesktopIcons(desktop_icons::Message),
     Tools(tools::Message),
     Automation(automation::Message),
@@ -735,6 +737,7 @@ pub enum Message {
 
 pub struct Settings {
     depth_preview: depth::Cache,
+    rain: rain::State,
     design: design::State,
     moment_preview: crate::moments::Phase,
     adaptive_look: crate::desktop::profiles::adaptive::Look,
@@ -978,6 +981,7 @@ impl cosmic::Application for Settings {
         let usage = crate::usage::preference();
         let mut app = Self {
             depth_preview: Default::default(),
+            rain: Default::default(),
             design,
             moment_preview: crate::moments::Phase::Day,
             adaptive_look: Default::default(),
@@ -1238,6 +1242,11 @@ impl cosmic::Application for Settings {
                 .color_subscription()
                 .map(|_| Message::DesktopPaletteChanged),
         ];
+        if self.page == Page::DesktopWallpaper && (self.config.rain.enabled || self.rain.preview) {
+            subscriptions.push(
+                crate::rain::lifecycle::watch().map(|s| Message::Rain(rain::Edit::Lifecycle(s))),
+            );
+        }
         if self
             .wizard
             .as_ref()
@@ -1527,6 +1536,7 @@ impl cosmic::Application for Settings {
         if (self.page == Page::Focus && self.tools.focus.running())
             || (self.page == Page::Music
                 && self.config.music.show_progress
+                && self.config.music.visualizer.circle == crate::tools::visualizer::Circle::Off
                 && self.tools.playing(&self.config))
         {
             subscriptions.push(
@@ -1780,7 +1790,8 @@ impl cosmic::Application for Settings {
         };
         let starts_gesture = matches!(
             &message,
-            Message::AppearanceValue(..)
+            Message::Rain(rain::Edit::Draft(_))
+                | Message::AppearanceValue(..)
                 | Message::Notice(_)
                 | Message::Placement(
                     placement::Message::Press(_) | placement::Message::ResizePress(_)
@@ -1793,7 +1804,8 @@ impl cosmic::Application for Settings {
         }
         let finishes_gesture = matches!(
             &message,
-            Message::SaveAppearance
+            Message::Rain(rain::Edit::Commit | rain::Edit::Set(_))
+                | Message::SaveAppearance
                 | Message::SaveNotice
                 | Message::FlushEdits
                 | Message::Page(_)
@@ -2924,6 +2936,7 @@ impl Settings {
                 }
                 if self.page != page && self.page == Page::DesktopWallpaper {
                     self.wallpaper.cancel_preview();
+                    self.rain.clear();
                 }
                 self.devbox_reordering = false;
                 self.devbox_reorder.cancel();
@@ -3320,6 +3333,29 @@ impl Settings {
                 }
             }
             Message::MaterialSave => self.save_material_draft(),
+            Message::Rain(edit) => match edit {
+                rain::Edit::Lifecycle(state) => self.rain.lifecycle = state,
+                rain::Edit::Draft(p) => {
+                    if p.validate().is_ok() {
+                        self.rain
+                            .base
+                            .get_or_insert_with(|| self.config.rain.clone());
+                        self.rain.draft = Some(p);
+                    }
+                }
+                rain::Edit::Preview(on) => self.rain.preview = on,
+                rain::Edit::Commit => {
+                    if let Some(p) = self.rain.draft.take() {
+                        self.save_rain(p);
+                    }
+                }
+                rain::Edit::Set(p) => {
+                    if p.validate().is_ok() {
+                        self.rain.draft = None;
+                        self.save_rain(p);
+                    }
+                }
+            },
             Message::MaterialMotion(on) => self.save(json!({"material_motion":on})),
             Message::AppearancePreview(widget) => self.appearance_preview = widget,
             Message::WidgetSurface(value) => self.save_appearance(json!({"surface":value})),
@@ -3890,6 +3926,7 @@ impl Settings {
 
 fn desktop_write_message(message: &Message) -> bool {
     match message {
+        Message::Rain(rain::Edit::Set(_) | rain::Edit::Commit) => true,
         Message::DesktopEditor(message) => message.writes(),
         Message::SystemAppearance(message) => message.writes(),
         Message::Profiles(message) => message.writes(),
@@ -4482,6 +4519,9 @@ impl Settings {
     }
     fn flush_edits(&mut self) {
         self.save_material_draft();
+        if let Some(p) = self.rain.draft.take() {
+            self.save_rain(p);
+        }
         self.save_at = None;
         self.edit_generation = self.edit_generation.wrapping_add(1);
         let pending = std::mem::take(&mut self.appearance_pending);
@@ -4624,6 +4664,22 @@ impl Settings {
             ])
         } else {
             task
+        }
+    }
+    fn save_rain(&mut self, p: crate::rain::Preferences) {
+        match Config::save_rain(self.rain.base.as_ref().unwrap_or(&self.config.rain), &p) {
+            Ok(config) => {
+                self.rain.base = None;
+                if self.config.rain.enabled && !config.rain.enabled {
+                    self.rain.clear();
+                }
+                self.config = config;
+                self.saved();
+            }
+            Err(error) => {
+                self.rain.draft = Some(p);
+                self.failed(error);
+            }
         }
     }
     fn save_glance(&mut self, changes: serde_json::Value) {
@@ -5993,6 +6049,25 @@ mod tests {
         }
         if env.fixture {
             command.env(crate::desktop::store::FIXTURE_ENV, &root);
+        }
+        if name == "rain_native_settings_preview_commit_undo_and_clipping"
+            && std::env::var_os("VK_DRIVER_FILES").is_none()
+            && std::env::var_os("VK_ICD_FILENAMES").is_none()
+        {
+            // XDG_DATA_DIRS above deliberately isolates desktop settings, but
+            // Vulkan also uses it to find drivers. Keep the actual installed
+            // drivers available without exposing the user's desktop config.
+            let drivers: Vec<_> = ["/etc/vulkan/icd.d", "/usr/share/vulkan/icd.d"]
+                .into_iter()
+                .filter_map(|path| std::fs::read_dir(path).ok())
+                .flatten()
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+                .collect();
+            if !drivers.is_empty() {
+                command.env("VK_DRIVER_FILES", std::env::join_paths(drivers).unwrap());
+            }
         }
         let status = command.status().unwrap();
         let _ = std::fs::remove_dir_all(dir);
@@ -9240,6 +9315,158 @@ mod tests {
             "explicit native accent survives a theme"
         );
         assert_eq!(raw_preferences()["future_field"], 42);
+    }
+
+    #[test]
+    fn rain_native_settings_preview_commit_undo_and_clipping() {
+        if desktop_test_child(
+            "rain_native_settings_preview_commit_undo_and_clipping",
+            DesktopEnv {
+                app_config: true,
+                fixture: true,
+                ..Default::default()
+            },
+        ) {
+            return;
+        }
+        use crate::desktop::wallpaper::{BgEntry, BgSource, WallpaperDraft, shared_key};
+        let store = crate::desktop::DesktopStore::from_env().unwrap();
+        let path = store.user_path(&shared_key());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            path,
+            ron::to_string(&BgEntry::new(
+                "all",
+                BgSource::Path(
+                    concat!(
+                        env!("CARGO_MANIFEST_DIR"),
+                        "/assets/looks/evening-wallpaper.jpg"
+                    )
+                    .into(),
+                ),
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        let paper_before = store.load(&WallpaperDraft::keys()).unwrap();
+        let raw_before = raw_preferences();
+        for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+            let (mut app, initial) = Settings::init(Core::default(), Page::DesktopWallpaper);
+            settle_settings(&mut app, initial);
+            drive_wallpaper(&mut app);
+            send_settings(&mut app, Message::Resized(size));
+            app.rain.lifecycle = crate::rain::lifecycle::State {
+                ready: true,
+                ..Default::default()
+            };
+            let mut native = crate::native_test::Native::with_backend(size, "wgpu");
+            native_click(&mut app, &mut native, "rain-try");
+            assert!(app.rain.preview);
+            assert!(!Config::load().rain.enabled);
+            let mut p = app.config.rain.clone();
+            p.enabled = true;
+            p.mode = crate::rain::Mode::Hybrid;
+            send_settings(&mut app, Message::Rain(rain::Edit::Set(p.clone())));
+            assert_eq!(Config::load().rain, p);
+            native.scroll(app.settings_view(), "settings-content", -10000.);
+            native.capture(
+                app.settings_view(),
+                &controls_theme(&app.config),
+                &format!("rain-settings-{}", size.width),
+            );
+            // Scrolling the preview partly offscreen must keep GPU viewport/UVs valid.
+            native.scroll(app.settings_view(), "settings-content", 170.);
+            native.capture(
+                app.settings_view(),
+                &controls_theme(&app.config),
+                &format!("rain-scrolled-{}", size.width),
+            );
+            native_reveal(&mut app, &mut native, "rain-trails");
+            native.capture(
+                app.settings_view(),
+                &controls_theme(&app.config),
+                &format!("rain-trails-{}", size.width),
+            );
+            native_click(&mut app, &mut native, "rain-adjust");
+            native_reveal(&mut app, &mut native, "rain-size");
+            native.capture(
+                app.settings_view(),
+                &controls_theme(&app.config),
+                &format!("rain-adjust-{}", size.width),
+            );
+            p.intensity = 82;
+            p.trails = 0;
+            send_settings(&mut app, Message::Rain(rain::Edit::Draft(p.clone())));
+            assert_ne!(Config::load().rain.intensity, 82);
+            assert_ne!(Config::load().rain.trails, 0);
+            send_settings(&mut app, Message::Rain(rain::Edit::Commit));
+            assert_eq!(Config::load().rain.intensity, 82);
+            assert_eq!(Config::load().rain.trails, 0);
+            send_settings(&mut app, Message::UndoDesktop);
+            assert_ne!(Config::load().rain.intensity, 82);
+            assert_eq!(Config::load().rain.trails, 35);
+            send_settings(&mut app, Message::UndoDesktop);
+            assert!(!Config::load().rain.enabled);
+            assert_eq!(
+                raw_preferences().get("future_field"),
+                raw_before.get("future_field")
+            );
+            assert_eq!(
+                store.load(&WallpaperDraft::keys()).unwrap(),
+                paper_before,
+                "rain never replaces native wallpaper ownership"
+            );
+            for effect in [
+                crate::rain::Effect::Snow,
+                crate::rain::Effect::Fog,
+                crate::rain::Effect::Clouds,
+            ] {
+                let before = Config::load().rain;
+                let mut next = before.clone();
+                next.enabled = true;
+                next.effect = effect;
+                send_settings(&mut app, Message::Rain(rain::Edit::Set(next.clone())));
+                app.rain.lifecycle = crate::rain::lifecycle::State {
+                    ready: true,
+                    ..Default::default()
+                };
+                native_reveal(
+                    &mut app,
+                    &mut native,
+                    if effect == crate::rain::Effect::Fog {
+                        "rain-opacity"
+                    } else {
+                        "rain-intensity"
+                    },
+                );
+                native.capture(
+                    app.settings_view(),
+                    &controls_theme(&app.config),
+                    &format!("effect-{effect:?}-settings-{}", size.width),
+                );
+                native_click(
+                    &mut app,
+                    &mut native,
+                    if effect != crate::rain::Effect::Snow {
+                        "rain-opacity"
+                    } else {
+                        "rain-size"
+                    },
+                );
+                assert_ne!(Config::load().rain, next);
+                assert_eq!(
+                    Config::load().rain.intensity,
+                    before.intensity,
+                    "snow does not overwrite rain settings"
+                );
+                send_settings(&mut app, Message::UndoDesktop);
+                assert_eq!(Config::load().rain, next);
+                send_settings(&mut app, Message::UndoDesktop);
+                assert_eq!(Config::load().rain, before);
+            }
+            send_settings(&mut app, Message::Page(Page::Themes));
+            assert!(!app.rain.preview);
+        }
     }
 
     /// Runs the Wallpaper page's background work synchronously and hands

@@ -1,12 +1,13 @@
 {
   "title": "Halcyon future builder",
-  "working_target": "0.5",
+  "working_target": "next release (version unassigned)",
   "target_is_release_commitment": false,
-  "updated": "2026-10-27",
-  "phase": "0.4.1 published; local 0.5 solar schedules, adaptive looks, coordinated updates and Calendar/System recipes implemented and validated; FB20 remains the release gate",
+  "updated": "2026-10-30",
+  "phase": "0.5.0 remains published. Native Fedora RPM/shared updates and Music/Focus widget designs are implemented locally; collector schema 5 and the private reporting workbook are updated. Spectrum, circular audio visualizers and native rain are also locally implemented and validated. No new app or repository publication is authorized.",
   "implementation_started": true,
   "status_source": "This file is the canonical task status; roadmap and archived proposals do not override it.",
   "next": [
+    "FB25",
     "FB20"
   ],
   "statuses": [
@@ -403,9 +404,107 @@
       ],
       "scope": "Local implementation and native validation; final package qualification is FB20.",
       "owner": null
+    },
+    {
+      "id": "FB25",
+      "title": "Fedora RPM and shared native upgrade experience",
+      "status": "in_progress",
+      "target": "next release (version unassigned)",
+      "depends_on": [
+        "FB23"
+      ],
+      "source_issue": "https://github.com/profilaz3/halcyon/issues/17",
+      "plan": "REPORTING-AND-CHANNELS.md",
+      "exit": "One native package per supported system; verified Debian/RPM identity and version ordering; signed repository enrollment preserving administrator choices; safe app/panel handoff; exact-artifact install and upgrade acceptance on Pop!_OS/COSMIC and Fedora COSMIC.",
+      "evidence": [
+        "../FEDORA-PACKAGING.md",
+        "../../.task-channels-reporting-20261030/result.json"
+      ],
+      "owner": null,
+      "implementation_complete": true,
+      "validation_scope": "Native Fedora 43 COSMIC build; signed DNF install/reinstall/upgrade and negative signatures; preserved source/user files and on/off activation; native panel rendering and shared update UI captures. Full Fedora login, enforcing SELinux, installer prompts, physical hardware and exact release source/artifacts remain release acceptance."
+    },
+    {
+      "id": "FB26",
+      "title": "Readable reporting of package channels and version changes",
+      "status": "validated",
+      "target": "next release (version unassigned)",
+      "depends_on": [
+        "FB25"
+      ],
+      "plan": "REPORTING-AND-CHANNELS.md",
+      "exit": "Schemas 1\u20135, consent, retention and channel histories validated with isolated fixtures; additive live migration preserves records, deployment endpoint and ownership; native formulas, filters and coverage verified without fabricating live activity.",
+      "evidence": [
+        "../REPORTING-CHANNELS.md",
+        "../../.task-channels-reporting-20261030/result.json"
+      ],
+      "owner": null,
+      "dependency_scope": "Shares the verified installation facts from FB25. Collector and reader design can proceed before RPM publication.",
+      "implementation_complete": true,
+      "validation_scope": "Collector and private workbook updated; next client remains unreleased. Live schema-5 client delivery is not yet observed. No feature-use telemetry and no README/release-note reporting changes. Collector/presentation regressions also run in the existing CI wildcard."
+    },
+    {
+      "id": "FB27",
+      "title": "Music and Focus widget designs",
+      "status": "validated",
+      "depends_on": [
+        "FB17"
+      ],
+      "exit": "Native designs, no-artwork layouts, persistent timer and media safeguards, library/apply/Undo, portability and compact/wide visual acceptance.",
+      "evidence": [
+        "MUSIC-AND-FOCUS.md"
+      ],
+      "owner": null,
+      "validation_scope": "Local release-mode build, 228 distinct selected regression passes (2 existing ignored), native isolated captures, keyboard/capability checks and persistence/portability tests. No installation or publication."
+    },
+    {
+      "id": "FB28",
+      "title": "Spectrum and circular audio visualizers",
+      "status": "validated",
+      "depends_on": [
+        "FB27"
+      ],
+      "exit": "Opt-in local audio spectrum with opacity, edge placement and dock overlap; three circular Music presentations; native controls, persistence, cancellation and compositor validation.",
+      "evidence": [
+        "AUDIO-VISUALIZERS.md"
+      ],
+      "owner": null,
+      "validation": "127 distinct Rust regressions passed; native widget captures, isolated audio monitor and cancellation, and private COSMIC dock/placement/pause checks passed. Unreleased; physical multi-monitor and power-use qualification not performed."
+    },
+    {
+      "id": "FB29",
+      "title": "Native wallpaper rain",
+      "status": "validated",
+      "depends_on": [
+        "FB28"
+      ],
+      "exit": "Two native rain modes, shared controls and guarded setup/Undo behavior; bounded rendering, session/power pause, behind-dock and occlusion behavior. No video.",
+      "evidence": [
+        "LIVING-WALLPAPER.md",
+        "../../.task-rain-implementation-20261030/result.json",
+        "../../.task-rain-trails-20261030/result.json"
+      ],
+      "owner": null,
+      "validation": "Initial implementation: 76 distinct regression tests and hardware GPU benchmark. Trail polish: 18 focused regressions plus renewed hardware benchmark and private COSMIC checks on the rebuilt ELF. Irregular fading traces, independent density/trail controls, save/Undo and compact/wide native captures passed. Local only; physical-device, power-use and package qualification are separate."
+    },
+    {
+      "id": "FB30",
+      "title": "Manual snow, fog and cloud shadows",
+      "status": "in_progress",
+      "depends_on": [
+        "FB29"
+      ],
+      "exit": "Three manually selected GPU wallpaper effects with independent controls, shared pause/input/lifecycle rules, native visual review and measured GPU cost. No video or automatic Weather connection.",
+      "evidence": [
+        "WALLPAPER-EFFECTS.md",
+        "../../.task-wallpaper-effects-20261030/result.json",
+        "../../.task-effects-optimization-20261031/result.json"
+      ],
+      "owner": null,
+      "validation": "Implementation complete. Initial 22 regressions, native control captures, setup round trips, 15 hardware GPU cases and two private desktop runs passed. Optimization pass: 26 regressions, 25 hardware stress cases, 22 before/after pixel comparisons and a rebuilt-app desktop behavior run passed; smaller atmosphere textures, reusable backgrounds and simulation storage, cached stationary fields and hidden-preview redraw suppression. Native visual confirmation remains open after intermittent Clock clipping in a nested compositor logging EGL failures. Local only; no release."
     }
   ],
-  "release_gate_note": "FB20 applies to each shipping milestone and qualifies every included feature. 0.4.1 maintenance is published with package/upgrade verification in ../releases/0.4.1-acceptance.md. Local 0.5 feature checks are recorded in DELIVERY-050.md; they do not publish or qualify a final 0.5 package.",
+  "release_gate_note": "FB20 applies to each shipping milestone. Published 0.5.0 verification is in ../releases/0.5.0-acceptance.md and publication is recorded in DELIVERY-050.md. New DEB/RPM artifacts require their own qualification; historical checks do not qualify a future package.",
   "deferred": [
     "Activity-triggered layout rearrangement",
     "Timed live desktop trials",
@@ -415,6 +514,10 @@
   ],
   "evidence_policy": "Validated design tasks FB01\u2013FB04 qualify documentation/contracts/current baseline and scoped capability probes only. They do not validate future behavior. Implementation tasks require exact source/artifact, environment and reproducible results.",
   "log": [
+    {
+      "date": "2026-10-30",
+      "change": "Planned FB25 for issue #17: Fedora COSMIC RPM, signed DNF, shared update presentation and preserved enrollment/activation. Planned FB26 for readable channel/version history with minimal proposed schema-5 fields and unchanged reporting choice. Recorded implementation order and acceptance; no app, collector, package, live Sheet or release changes. Updated the top-level baseline to published 0.5.0."
+    },
     {
       "date": "2026-10-26",
       "change": "Created architecture-first project, consolidated twelve concepts and references, recorded open model/measurement/capability gates. No production code changed."
@@ -482,6 +585,10 @@
     {
       "date": "2026-10-27",
       "change": "Published 0.4.1 maintenance with verified signed APT and private package upgrade. Implemented local 0.5 sun schedules/city binding, adaptive Tidal/Paper/Moss appearances, matching app/Islands update status and Calendar/System recipes. Staged reviews, focused checks and full Rust integration recorded in DELIVERY-050.md. 0.5 remains local and requires final packaged release acceptance. Final isolated COSMIC sessions pass at both window sizes, with 18 captures, keyboard Undo, unchanged fixture preferences and published-version refusal of new recipes. 73 GiB SSD space remains."
+    },
+    {
+      "date": "2026-10-30",
+      "change": "Implemented FB25 locally and validated FB26 collector/workbook. Signed RPM acceptance uses a private test key; APT and published 0.5.0 remain untouched. User requested stopping before a new release. See REPORTING-AND-CHANNELS.md and private result.json for scope."
     }
   ],
   "foundation_probe_code_added": true,

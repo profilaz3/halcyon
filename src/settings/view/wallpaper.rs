@@ -145,6 +145,11 @@ impl Settings {
             .height(height)
             .into(),
         };
+        let picture = if let Some(rain) = self.rain_preview(height) {
+            cosmic::iced::widget::Stack::with_children(vec![picture, rain]).into()
+        } else {
+            picture
+        };
         let mut layers = vec![
             cosmic::iced::widget::space()
                 .width(Length::Fill)
@@ -558,6 +563,7 @@ impl Settings {
         if let Some(displays) = self.wallpaper_displays() {
             side.push(displays);
         }
+        side.push(self.rain_controls());
         side.push(self.wallpaper_related());
         items.push(self.inspector_layout(
             preview,

@@ -82,6 +82,8 @@ struct Report<'a> {
     version: &'a str,
     country: Option<&'a str>,
     first_started_at: Option<i64>,
+    #[serde(flatten)]
+    installation_info: crate::installation::Observation,
 }
 #[derive(Serialize)]
 struct StatusReport<'a> {
@@ -532,13 +534,14 @@ async fn send(
         client,
         url,
         &Report {
-            schema: 4,
+            schema: 5,
             kind: "activity",
             installation,
             revision,
             version: env!("CARGO_PKG_VERSION"),
             country,
             first_started_at,
+            installation_info: crate::installation::reporting_observation().await,
         },
     )
     .await?;

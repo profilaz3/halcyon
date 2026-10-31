@@ -7,7 +7,7 @@ pub(crate) mod legacy;
 pub(crate) mod storage;
 
 pub const FORMAT: &str = "halcyon-widget-design";
-pub const VERSION: u32 = 3;
+pub const VERSION: u32 = 5;
 pub const MAX_BYTES: usize = 512 * 1024;
 pub const MAX_INSTANCES: usize = 64;
 

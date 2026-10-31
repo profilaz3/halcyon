@@ -228,6 +228,7 @@ impl SettingsSamples {
             woke_at: (Instant::now(), SystemTime::now()),
             wake_generation: 0,
             depth: Default::default(),
+            rain: Default::default(),
             wallpaper_color_generation: Default::default(),
         };
         let mut samples = Self { cards };

@@ -53,6 +53,8 @@ pub(super) struct Tools {
     geometry: BTreeMap<Widget, [u32; 2]>,
     /// Whether the Music card is on the desktop now.
     pub music_shown: bool,
+    pub spectrum_key: Option<String>,
+    pub audio_bins: [f32; crate::tools::visualizer::BINS],
 }
 
 impl Tools {
@@ -71,6 +73,8 @@ impl Tools {
             focus: focus::Session::load(),
             geometry: BTreeMap::new(),
             music_shown: false,
+            spectrum_key: None,
+            audio_bins: [0.; crate::tools::visualizer::BINS],
         }
     }
     pub(super) fn sample() -> Self {
@@ -88,6 +92,8 @@ impl Tools {
             focus: focus::Session::default(),
             geometry: BTreeMap::new(),
             music_shown: false,
+            spectrum_key: None,
+            audio_bins: [0.; crate::tools::visualizer::BINS],
         }
     }
     fn players(&self) -> &[music::Player] {
@@ -176,11 +182,11 @@ impl Cards {
             Widget::Music => {
                 let player = self.current_player();
                 let art = player
-                    .filter(|_| self.config.music.show_artwork)
+                    .filter(|_| self.config.music_artwork())
                     .and_then(|player| player.art_url.as_deref())
                     .and_then(|url| self.tools.art(url))
                     .and_then(Option::as_ref);
-                cards::music(
+                cards::music_visualized(
                     cards::MusicView {
                         feed: self.tools.feed.as_ref(),
                         player,
@@ -193,6 +199,7 @@ impl Cards {
                     &self.config,
                     Some(on_desktop),
                     Some(self.widget_size(widget)),
+                    self.tools.audio_bins,
                 )
             }
             Widget::Notes => cards::notes(
@@ -238,7 +245,7 @@ impl Cards {
     }
 
     fn music_art_task(&mut self) -> Task<Message> {
-        if !self.config.music.show_artwork || self.tools.art_loading.is_some() {
+        if !self.config.music_artwork() || self.tools.art_loading.is_some() {
             return Task::none();
         }
         let Some(url) = self
@@ -639,7 +646,10 @@ impl Cards {
         let music = self
             .music_demand()
             .then_some(())
-            .filter(|_| self.config.music.show_progress)
+            .filter(|_| {
+                self.config.music.show_progress
+                    && self.config.music.visualizer.circle == crate::tools::visualizer::Circle::Off
+            })
             .and_then(|_| self.current_player())
             .and_then(|player| player.progress_delay(now))
             .map(|delay| now + delay);

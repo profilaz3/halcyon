@@ -1,0 +1,10 @@
+[halcyon]
+name=Halcyon for Fedora $releasever
+baseurl=https://profilaz3.github.io/halcyon/rpm/fedora/$releasever/$basearch/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-halcyon
+includepkgs=cosmic-ext-halcyon
+skip_if_unavailable=1
+metadata_expire=6h

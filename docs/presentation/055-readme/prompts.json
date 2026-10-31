@@ -1,0 +1,251 @@
+[
+  {
+    "name": "desktop-configurations",
+    "prompt": "Use case: compositing.\nAsset type: a wide feature illustration for the GitHub README of Halcyon, an existing native COSMIC Linux desktop customization app. This will be captioned as an illustration, not a screenshot.\nInput 1 is a reference for the real app's digital clock, circular music widget, native flat surfaces and spectrum. Input 2 is a reference for its warm Paper analog clock/weather cards and layout; ignore the surrounding Settings editor.\nCreate one carefully composed landscape illustration, roughly 2:1, showing three distinct desktop configurations in three equal side-by-side rectangular panels. Flat head-on desktop views; no computer hardware or floating perspective windows.\nFirst panel: misty dark pine forest and jade lake wallpaper, clean white digital clock, small restrained dark teal weather and system-reading cards, separated small native panel islands.\nSecond panel: warm pale sandstone landscape and soft morning sun, cream Paper analog clock and weather card, warm dark typography; quiet light-theme desktop.\nThird panel: indigo volcanic coast at dusk, charcoal circular music widget with slender lavender radial bars and a low audio spectrum behind a simple dock.\nRetain the native widget language from the references: flat or lightly translucent rounded surfaces, readable unembellished UI typography, simple controls. Keep wallpaper visible and the placement composed. Few widgets, not a dashboard crammed with data.\nThe three environments should be richly detailed original landscape art with distinct light and textures, not repeated recolorings. UI overlays are modest and plausible, not futuristic.\nOnly minimal sample widget text: \"09:41\", \"21°\", \"Golden Hour\", \"Aura\". No headlines, labels outside widgets, brand slogans, logos, badges or marketing copy. No fake windows, no controls or capabilities beyond those described. No macOS hardware or interface. No glow, shiny glass, 3D floating cards, artificial bokeh, or gratuitous gradients.",
+    "reference_images": [
+      "docs/screenshots/055/desktop.png",
+      "docs/screenshots/040/remix.png"
+    ],
+    "destination": "docs/presentation/055-readme/desktop-configurations.png",
+    "tool": "built-in image_gen",
+    "transparent_background": false,
+    "sha256": "290d4a199893297c47c94e8a6aee1cd0e5a5223098a9f2556f32ea2b6a04ba99",
+    "bytes": 2458946
+  },
+  {
+    "name": "wallpaper-effects",
+    "prompt": "Use case: illustration-story.\nAsset type: one landscape feature illustration for the README of Halcyon, an app offering GPU wallpaper effects. This is illustrative artwork, not a screenshot.\nCreate a visually striking but restrained four-panel landscape image, approximately 2:1 overall. Four equal vertical panels, clean straight divisions, no border, no text, no UI.\nThe panels demonstrate FOUR DISTINCT effects over FOUR DISTINCT original desktop wallpapers:\n1. Rain: blue-grey wooded lake in late afternoon seen through clear glass with varied small droplets and a few short irregular trails; restrained refraction, crisp landscape still visible.\n2. Snow: snow-covered fir trees and a distant alpine ridge in cold morning light, varied small falling snowflakes across foreground and background. No giant blurry circles.\n3. Fog: moss-green valley and calm water at dawn, low horizontal layers of soft pale fog, foreground rocks visible, no rain or snow.\n4. Cloud shadows: sunlit ochre dunes and a rocky plateau, broad soft cool shadows from passing clouds visible across the land, clear atmosphere.\nDetailed natural landscape illustration with convincing light and high-quality texture. Not four versions of the same purple sunset. Distinct weather and terrain should read clearly at thumbnail size. Calm, sophisticated desktop artwork rather than advertising. No mystical objects, characters, buildings, UI, logos, titles, watermarks or fantasy particles.",
+    "reference_images": [],
+    "destination": "docs/presentation/055-readme/wallpaper-effects.png",
+    "tool": "built-in image_gen",
+    "transparent_background": false,
+    "sha256": "e1390fbc48b32aff53a178656e6f5bfc2c8975f6fa663a9fbbc886adb91b7024",
+    "bytes": 3030370
+  },
+  {
+    "name": "audio-visualizers",
+    "prompt": "Use case: compositing.\nAsset type: wide audio-visualizer feature illustration for Halcyon's GitHub README.\nThe three input images are exact native widget references: radial bars, orbit dots, pulse rings. Preserve their distinct geometry, flat charcoal disc, small lavender controls, proportions and restrained line weights. Keep all three widget designs recognizable; do not replace them with a new invented player.\nCompose these three players side by side, equal size and comfortably spaced, over a single original ultrawide dark coastal wallpaper: deep ink-blue sea, low charcoal rock silhouettes, thin warm light along the distant horizon. Approximately 2:1 landscape. The backdrop has depth and texture but remains low contrast behind the widgets.\nShow a low, translucent lavender frequency spectrum along the lower edge of the wallpaper, comfortably below the player controls. Spectrum consists only of discrete vertical bars, not a continuous wave. A small understated native COSMIC dock sits in front of a short central section, demonstrating spectrum behind dock; avoid recognizable third-party app logos.\nUse text inside each player only: \"NOW PLAYING\", \"Golden Hour\", \"Aura\", plus previous/pause/next control icons. No album artwork, fake empty artwork slot, labels outside the players, headers, brand copy, badges or claims. No neon glow, perspective device mockup, chrome reflections, glass bubbles or photorealistic physical speakers.\nThis is a labeled generated illustration of existing feature types, not a proposed new settings screen.",
+    "reference_images": [
+      "docs/screenshots/055/music-bars.png",
+      "docs/screenshots/055/music-dots.png",
+      "docs/screenshots/055/music-rings.png"
+    ],
+    "destination": "docs/presentation/055-readme/audio-visualizers.png",
+    "tool": "built-in image_gen",
+    "transparent_background": false,
+    "sha256": "5e4f65c23700f56f2c3c41b2e5a9f4e11691f941f16e7ee6c5da56a9170fb67e",
+    "bytes": 2210337
+  },
+  {
+    "name": "widget-customization",
+    "prompt": "Use case: compositing.\nCreate a wide 2:1 feature illustration for the GitHub README of Halcyon, a native COSMIC desktop customization app. It will be labeled as generated illustration.\nInputs 1 and 2 show actual Weather and System widgets. Input 3 is the actual Focus timer. Input 4 shows the Paper analog clock in a setup scene; ignore the surrounding Settings window. Retain their recognizable layouts, flat rounded surfaces and understated native controls.\nCompose one coherent desktop example over original art of a shaded green lake, forested mountains and soft morning light. Show four well-spaced widgets: a light cream analog Clock card, a restrained dark green Weather card, a dark graphite System card, and the native green Focus timer. The contrast between finishes and sizes should demonstrate customization while the desktop remains usable and calm. The widgets must be aligned sensibly with substantial open wallpaper between them, no overlap, no perspective tilt and no fake application chrome.\nUse the reference content and simple sample data only: \"21°\", \"CPU\", \"RAM\", \"Disk\", \"FOCUS\", \"18:42\", \"Deep work\", \"Pause\". No busy tiny paragraphs, no random numbers, no dashboard full of graphs.\nOriginal high-quality landscape art, crisp native-looking widgets. No title, promotional slogans, numbered labels, arrows, glowing glass, physical devices, floating 3D panels or badges. No imagined feature controls. This is a configuration illustration, not a screenshot or a new interface design.",
+    "reference_images": [
+      "docs/presentation/sources/weather.png",
+      "docs/presentation/sources/system.png",
+      "docs/presentation/055-readme/references/tool-Focus-0-false-Active.png",
+      "docs/screenshots/040/remix.png"
+    ],
+    "destination": "docs/presentation/055-readme/widget-customization.png",
+    "tool": "built-in image_gen",
+    "transparent_background": false,
+    "sha256": "edbacda504201e80112dfd5a5954968e742d850d2593aa808eb6ed11a4e52c60",
+    "bytes": 2229691
+  },
+  {
+    "name": "dock-panel-layouts",
+    "prompt": "Use case: illustration-story.\nCreate a clean wide 2:1 feature illustration comparing two supported COSMIC Linux desktop panel treatments in Halcyon. Two equal side-by-side straight-on desktop examples with the same original subdued warm-grey mountain-lake wallpaper, no physical screen frame or Settings window.\nLEFT, floating Islands: three distinct low-profile flat charcoal pill-shaped applet groups along the top edge, separated by generous empty space. Left group contains small workspace/app-grid symbols, center group has simple \"09:41\" time, right group has simple sound/network/power symbols. A compact centered floating dock is near the bottom edge, with a small number of plain generic app icons. Subtle corners, matte surfaces, no glossy glass.\nRIGHT, Penumbra: SAME icon positions and simple top panel contents, but on a non-floating panel flush to the top screen edge. Its charcoal background fades smoothly downward into the wallpaper across a shallow vertical band. No separate floating rounded background behind these icons. The dock is flush to the bottom edge with a similarly restrained upward background fade. The fade is modest and supports legibility; it should not cover most of the landscape.\nBoth scenes otherwise uncluttered, no widgets or open windows, no bright accents. The distinction between discrete floating groups and edge-attached fading bars must be immediately readable. Use consistent restrained native Linux styling, not macOS.\nNo title, external labels, slogans, brand logos, badges, arrows, UI controls or artistic effects that imply unsupported blur. This is a generated feature illustration and will be described as a comparison, not a captured desktop.",
+    "reference_images": [],
+    "destination": "docs/presentation/055-readme/dock-panel-layouts.png",
+    "tool": "built-in image_gen",
+    "transparent_background": false,
+    "sha256": "b1347a70215e7d4a5c91b62a4373f197ac851dd5cc090a8a8107502fd5789c40",
+    "bytes": 2082164
+  },
+  {
+    "name": "scheduled-appearances",
+    "prompt": "Use case: illustration-story.\nCreate one wide 2:1 triptych feature illustration for Halcyon's saved desktop setups and sun-based appearance scheduling. Three equal panels show separate saved appearances of EXACTLY the same original alpine valley and lake composition at dawn, midday and sunset. These are three discrete configurations, not a video or a continuously changing scene.\nKeep terrain, camera viewpoint, and widget geometry/positions identical across all three. Each has one simple native COSMIC-style digital Clock near the upper left and one compact weather card near the lower right. No open windows. At dawn, muted teal shadows and soft rose light with a restrained dark teal card. At midday, bright but natural greens and light sky, cream Paper-style weather card with dark text. At sunset, amber low sunlight and indigo shadows, dark graphite card with pale lavender accents. The wallpaper atmosphere and widget finish change together; placement does not.\nOnly small sample widget text: clocks \"06:10\", \"12:00\", \"18:40\"; weather \"21°\". Simple outline weather symbols. No forecast details, no city names, no dates. Flat native rounded surfaces, no shiny glass, no futuristic interface.\nBeautiful textured landscape illustration with consistent geography, realistic light, clear color differences and ample wallpaper space. No marketing title, labels, arrows, timeline, branding, screens, borders or badges. This will be labeled as a generated illustration of three scheduled appearances.",
+    "reference_images": [],
+    "destination": "docs/presentation/055-readme/scheduled-appearances.png",
+    "tool": "built-in image_gen",
+    "transparent_background": false,
+    "sha256": "6e2846024edfb1e80d516149e3c2b8e2d06284eac4eb63f1bb6d9611224b33d1",
+    "bytes": 2909097
+  },
+  {
+    "name": "widgets-elements",
+    "prompt": "Use case: compositing. Create a tightly framed component showcase for the Halcyon GitHub README on a perfectly flat LIGHT WARM GREY background, opaque, no gradient or pattern.\nThe five references are exact native UI examples: 1 Weather; 2 System monitor; 3 Focus timer; 4 Music player; 5 Notes. Keep their actual simple flat appearance, shapes, text and controls. Add one cream Paper-style analog Clock card with slim dark hands and hour ticks, no numerals needed.\nShow ONLY these six individual widget cards in a balanced two-row, three-column editorial grid. Top row Clock, Weather, Notes; lower row System, Focus, Music. Each widget occupies most of its grid cell; modest gutters and small outer margins. Landscape around 3:2. Natural different shapes, not stretched. Native flat rounded corners. Dark purple Weather/System/Notes, green Focus, cream Music and Clock.\nKeep sample content from references. No outside labels, imaginary controls, decorative shadows, glossy reflections, glass, neon or perspective. No desktop, wallpaper, scenery, sky, dock, window chrome, computer or physical screen. The six widgets are the entire subject. Empty space is ONLY a flat light warm-grey presentation surface. This is a generated illustration of existing component types.",
+    "reference_images": [
+      "docs/presentation/sources/weather.png",
+      "docs/presentation/sources/system.png",
+      "docs/presentation/055-readme/references/tool-Focus-0-false-Active.png",
+      "docs/presentation/055-readme/references/widgets-elements-input-3.png",
+      "docs/presentation/sources/notes.png"
+    ],
+    "initial_prompt": null,
+    "destination": "docs/presentation/055-readme/widgets-elements.png",
+    "tool": "built-in image_gen",
+    "transparent_background": false,
+    "sha256": "d6fb62bf8bc020e965342ed3a35e9dd1e9e63e5ddeeb81ff9cabcd2d1b2c7a92",
+    "bytes": 1359244
+  },
+  {
+    "name": "panel-elements",
+    "prompt": "Edit this close-up comparison of panel and dock components. Keep its two-column, two-row layout, exact \"Islands\" and \"Penumbra\" labels, the three separate pill groups on the left and the edge fades on the right, and all existing icons and time. Replace transparent background with a perfectly flat LIGHT WARM GREY opaque surface. Make the two labels solid dark charcoal and readable. Remove any cutout edge artifacts. Right-hand Penumbra backgrounds should fade smoothly into this neutral surface: upper panel downward, lower dock upward. Left-hand capsule edges remain defined. Keep native flat matte surfaces and generic icons. No added shadows, wallpaper, landscape, desktop framing, window chrome or physical hardware. Tightly frame the components with modest margins; the isolated elements are the entire subject.",
+    "reference_images": [
+      "docs/presentation/055-readme/references/panel-elements-input-0.png"
+    ],
+    "initial_prompt": "Use case: ui-mockup. Create a CLOSE-UP component illustration for Halcyon's dock and panel customization feature, on a genuinely TRANSPARENT background. Landscape 2:1 canvas, tightly framed around the actual bar elements, not around a desktop.\nTwo clear columns: left has exact small heading \"Islands\"; right has exact small heading \"Penumbra\". Use neutral readable medium-grey headings, not marketing typography.\nLEFT column upper row: a horizontal panel made of three separate matte charcoal rounded pill groups: simple app-grid/workspace dots in the first; \"09:41\" in the middle; sound/wifi/power line symbols in the last. Lower row: one compact matte charcoal rounded dock with five modest generic application icons, such as files, browser circle, terminal, document and settings.\nRIGHT column upper row: the same three icon/time groups without separate pill backgrounds, laid over one shallow charcoal background that fades DOWN into transparent alpha. Lower row: the same five generic dock icons over a charcoal background that fades UP into transparent alpha. This demonstrates Penumbra's edge-attached scrim; do not give the right-hand elements floating rounded capsule backgrounds.\nLarge close-up elements and consistent spacing. Every row must be clear as a distinct UI component. Keep the dark surfaces visible against both light and dark webpage themes using subtle native edge definition. No full screen framing, landscape, wallpaper, horizon, monitor, open windows, big empty rectangle, arrows, explanatory text, glossy glass, shadows behind an imaginary window, neon or brand logos. No checkerboard: real transparent alpha around the isolated elements. These are separate style examples, not a desktop screenshot.",
+    "destination": "docs/presentation/055-readme/panel-elements.png",
+    "tool": "built-in image_gen",
+    "transparent_background": false,
+    "sha256": "ae2c1abf8eff75423b35ad72d7b062302d0c9d30fafdea0f4f8b6e1c981300ca",
+    "bytes": 1232649
+  },
+  {
+    "name": "audio-elements",
+    "prompt": "Edit this component illustration. Keep the arrangement of the three circular Music widgets and the separate spectrum below, preserving all text, controls and geometry. Replace all transparent empty areas with a perfectly flat LIGHT WARM GREY opaque background. Clean ALL stray magenta, blue, white and black flecks and jagged cutout artifacts around and between the components. The visualization bars, dots and rings must be clean flat muted lavender with crisp smooth edges, no glow, halo, shiny outlines or bevels. Retain the dark charcoal player interiors. Keep \"NOW PLAYING\", \"Golden Hour\", \"Aura\" and the native control icons intact. The low spectrum contains simple separate flat lavender bars, no connecting wavy outline. No other changes. No wallpaper, scenery, desktop, dock, physical devices or window chrome. This is a clean sheet of isolated UI elements on a neutral presentation surface, not a desktop.",
+    "reference_images": [
+      "docs/presentation/055-readme/references/audio-elements-input-0.png"
+    ],
+    "initial_prompt": "Use case: compositing. Create an isolated audio-visualizer COMPONENT SHOWCASE for Halcyon's GitHub README using the three native widget references. Genuinely TRANSPARENT background, landscape around 2:1.\nShow the actual three circular players side by side: radial bars, orbit dots, pulse rings. Preserve the reference proportions, matte charcoal circles, fine lavender visualization lines/dots, readable native text and previous/pause/next controls. Keep the three designs distinct. Exact text inside each: \"NOW PLAYING\", \"Golden Hour\", \"Aura\". No album-art area.\nBelow these three players, show one separate low horizontal spectrum made only of discrete lavender vertical bars at varying heights. It should span nearly the full composition width. Leave a modest gap so the spectrum is clearly a separate component.\nTight editorial framing: widgets take up most of the image; narrow outer margins, comfortable gutters. No surrounding desktop, wallpaper, landscape, dock, taskbar, window chrome, physical hardware, background photograph, labels or headlines. No glow, 3D lighting, fake reflections, glass, invented controls or decorative waveform. Transparent alpha in all empty space, never a checkerboard. The result should look like a concise sheet of actual UI parts, not a poster or a full desktop.",
+    "destination": "docs/presentation/055-readme/audio-elements.png",
+    "tool": "built-in image_gen",
+    "transparent_background": false,
+    "sha256": "cde1f021a2372a0943d9da04a484f9fcb60d60213ba9d935f90da5de00d32623",
+    "bytes": 1479470
+  },
+  {
+    "name": "widgets-elements-dark",
+    "prompt": "Use case: precise-object-edit. Edit the supplied Halcyon feature illustration. Replace ONLY the pale warm-grey presentation background with a deep charcoal-navy surface (#141820), with an extremely subtle broad tonal variation. No white, cream or pale backdrop anywhere outside the actual components. No wallpaper, landscape, desktop, added scenery, texture, glow, reflections or framing. Preserve the existing tightly framed composition, exact component geometry, arrangement, spacing, controls and text. This is a factual UI component illustration, not a new interface. Clean smooth edges. Keep the existing image aspect ratio. Preserve all SIX widget cards: analog Clock, Weather, Notes, System monitor, Focus and Music. The cream Clock and Music card faces are intentional existing widget finishes: KEEP those cream faces and their dark readable text intact; only their surrounding backdrop becomes dark. Preserve the purple and green card finishes and lavender/mint accents. Ensure the dark widget edges remain subtly discernible from the charcoal backdrop without added glows or heavy borders.",
+    "reference_images": [
+      "docs/presentation/055-readme/widgets-elements.png"
+    ],
+    "destination": "docs/presentation/055-readme/widgets-elements-dark.png",
+    "tool": "built-in image_gen",
+    "transparent_background": false,
+    "sha256": "0cd2ffdf1a81f8a2179cedab2bda4437f51135ccc1ac98f5cecd63fddeff584a",
+    "bytes": 1378496
+  },
+  {
+    "name": "panel-elements-dark",
+    "prompt": "Use case: precise-object-edit. Edit the supplied Halcyon feature illustration. Replace ONLY the pale warm-grey presentation background with a deep charcoal-navy surface (#141820), with an extremely subtle broad tonal variation. No white, cream or pale backdrop anywhere outside the actual components. No wallpaper, landscape, desktop, added scenery, texture, glow, reflections or framing. Preserve the existing tightly framed composition, exact component geometry, arrangement, spacing, controls and text. This is a factual UI component illustration, not a new interface. Clean smooth edges. Keep the existing image aspect ratio. Change the outside headings 'Islands' and 'Penumbra' to soft off-white for readability. Preserve the left column three separate panel capsules and the bottom compact dock. Preserve the right column continuous panel/dock scrims: their existing directional fades now fade smoothly INTO the deep charcoal-navy background, not into light grey. Maintain restrained tonal separation between the charcoal capsules and background, all existing icons and exact '09:41' time. No bright outlines or extra shadows. Both labels and all bars must remain clearly visible.",
+    "reference_images": [
+      "docs/presentation/055-readme/panel-elements.png"
+    ],
+    "destination": "docs/presentation/055-readme/panel-elements-dark.png",
+    "tool": "built-in image_gen",
+    "transparent_background": false,
+    "sha256": "00047948e8585cd8a81344c6d0a7251702e28a0a4b630e0800dd41ab4bffc300",
+    "bytes": 1227256
+  },
+  {
+    "name": "audio-elements-dark",
+    "prompt": "Use case: precise-object-edit. Edit the supplied Halcyon feature illustration. Replace ONLY the pale warm-grey presentation background with a deep charcoal-navy surface (#141820), with an extremely subtle broad tonal variation. No white, cream or pale backdrop anywhere outside the actual components. No wallpaper, landscape, desktop, added scenery, texture, glow, reflections or framing. Preserve the existing tightly framed composition, exact component geometry, arrangement, spacing, controls and text. This is a factual UI component illustration, not a new interface. Clean smooth edges. Keep the existing image aspect ratio. Keep all three dark circular Music players, lavender radial bars/dots/rings and the separate low spectrum across the bottom. Preserve the exact native text 'NOW PLAYING', 'Golden Hour', 'Aura', and existing playback controls. Keep crisp flat lavender visualization marks, no bloom or neon glow. Player faces remain subtly distinct from the backdrop. Do not add album artwork or merge the separate spectrum with any player.",
+    "reference_images": [
+      "docs/presentation/055-readme/audio-elements.png"
+    ],
+    "destination": "docs/presentation/055-readme/audio-elements-dark.png",
+    "tool": "built-in image_gen",
+    "transparent_background": false,
+    "sha256": "19b93a715fe4bb7c322b7ebe351f449e74d7140aed7ad869c810de954a43bbba",
+    "bytes": 1600878
+  },
+  {
+    "name": "hero",
+    "prompt": "Use case: compositing.\nAsset: ONE premium wide 2:1 hero illustration for Halcyon's GitHub README, around 2560×1280. A single coherent customized COSMIC desktop, straight-on and edge-to-edge. It will be labeled generated illustration.\nThe three input images are component/style references, not layouts to reproduce: image 1 native-inspired widget cards; image 2 Islands panel/dock shapes; image 3 circular Music players and spectrum. Select only a few components as specified below. Do not make a collage or multiple desktop examples.\n\nART DIRECTION: An unforgettable original dark twilight wallpaper. A secluded rocky coast with deep petrol-teal water, layered indigo mountains, and a narrow luminous apricot sunset at the horizon. In the center, a small jewel-blue and burnt-orange kingfisher rests on an elegant weathered branch above the water. The bird belongs naturally to the wallpaper artwork, not a logo or app mascot sticker. Detailed painterly landscape, carefully shaped reflected light, atmospheric depth, controlled rich color; deep charcoal at the outer edges. Elegant and vivid, not generic stock scenery. The center landscape and bird should be unobstructed. No white sheet or pale page background.\n\nDESKTOP COMPOSITION: Native, flat, clean components arranged with deliberate balance and breathing room, never a dashboard full of boxes. A large thin off-white frameless digital clock at upper-left reads exactly \"19:41\", with a small simple date line \"Friday, October 30\". Beneath it at lower-left, ONE compact dark-teal rounded weather card showing a small partly-cloudy symbol, \"21°\", \"Partly cloudy\", and a simple \"23° / 14°\" line; keep content sparse and easy to read. At mid-right, ONE circular charcoal Music widget with a restrained lavender radial-bars visualization, as in image 3's left player, exact simple text \"NOW PLAYING\", \"Golden Hour\", \"Aura\", and previous/pause/next controls. Keep this player elegant and medium-sized, not giant; no other circular visualization.\nAlong the top, three subtle small Islands groups from image 2, charcoal capsules: a workspace-dot group near the left edge, a tiny date/time group centered, sound/wifi/power symbols near the right edge. Along the bottom, a compact centered charcoal floating dock with five generic file/browser/terminal/document/settings icons. A low, restrained lavender audio spectrum sits at the bottom edge, behind the dock, short uneven bars; never tall enough to dominate the landscape. No top-level Halcyon title or marketing text inside the image; GitHub headings will supply them.\n\nCONSTRAINTS: This should resemble an inviting usable desktop configuration assembled from the supplied existing UI components. Crisp flat native typography, legible labels, subtle rounded opaque/tinted surfaces, no invented controls. Keep all UI comfortably inset from image edges. The wallpaper is the hero and the components demonstrate the product. No Settings window, no physical monitor, laptop, perspective tilt, device frame, exploded layers, split screens, feature labels, badges, arrows, slogans, white background, glossy glass, bloom around controls or gratuitous neon. No extra windows or widgets. The little kingfisher is part of the still wallpaper, not an animated feature. High-end editorial composition with a rich dark atmosphere.",
+    "reference_images": [
+      "docs/presentation/055-readme/widgets-elements-dark.png",
+      "docs/presentation/055-readme/panel-elements-dark.png",
+      "docs/presentation/055-readme/audio-elements-dark.png"
+    ],
+    "edits": [
+      {
+        "prompt": "Edit only the tiny time text in the small capsule at the TOP CENTER of this hero image: change \"09:41\" to \"19:41\" so it matches the large desktop Clock at the upper left. Keep the capsule geometry, font, size and alignment. Preserve every other pixel/composition/detail as closely as possible: the kingfisher, sunset landscape, large clock/date, weather card, circular Music visualizer, dock, spectrum and dark palette. No other changes.",
+        "reference_images": [
+          "docs/presentation/055-readme/references/hero-before-clock-correction.png"
+        ]
+      }
+    ],
+    "destination": "docs/presentation/055-readme/hero.png",
+    "tool": "built-in image_gen",
+    "transparent_background": false,
+    "sha256": "06741709232590356dbfb1dbb453971ac9cf14383635499f29022d5a3cbc1e8d",
+    "bytes": 2210153
+  },
+  {
+    "name": "hero-boreal",
+    "title": "Boreal",
+    "prompt": "Use case: compositing. Create ONE polished, wide 2:1 hero illustration for Halcyon, a native COSMIC desktop customization app. It will be labeled generated illustration. One coherent desktop, straight-on edge-to-edge wallpaper; no physical device, Settings window, inset screenshot, collage, title, slogan, feature annotations or outer presentation sheet.\nReference 1 is the real native System monitor: preserve its simple CPU/RAM/Disk row arrangement and progress bars, recoloring to the specified theme. Reference 2 is the native REGULAR RECTANGULAR Music widget: preserve its horizontal track/artwork row, small playback controls and progress bar, but use the exact fictional metadata given below. Include a modest square original album cover (no placeholder and no third-party cover). Reference 3 demonstrates Islands shapes only: USE THE LEFT COLUMN'S SEPARATE CAPSULES; ignore the Penumbra column and all headings.\nMANDATORY BAR LAYOUT: At the TOP CENTER, place ONE COMPACT CLUSTER of THREE immediately adjacent separate Islands capsules, with only small even gaps: [app grid and workspace dots] [time] [sound, wifi, power]. The whole cluster spans about one-third of the desktop width. ALL THREE PILLS TOUCH NEIGHBORING GAPS NEAR THE CENTER; absolutely NO panel groups in the left or right corners. No full-width bar. Bottom center: a compact charcoal dock with five file/browser/terminal/document/settings icons.\nMANDATORY WIDGETS: Both a SYSTEM monitor and a NORMAL RECTANGULAR Music player must be present, clearly recognizable, pleasantly sized and readable. No circular player, no radial visualizer, no spectrum. System sample data: \"CPU\" and \"18% · 46°C\"; \"RAM\" and \"7.9 / 31 GiB\"; \"Disk\" and \"112 / 256 GiB\", each with a slim appropriately filled progress line. Music content and theme-specific details below.\nNative flat rounded matte/tinted dark surfaces, subtle edges, coherent accent colors, sharp typography; never glossy glass, 3D blocks, excessive transparency or neon halos. Well-balanced generous wallpaper space, no overlaps, align widget edges deliberately. Do not add undescribed components, logos, logos-as-wallpaper, explanatory labels, weather cards or invented features. Keep all widgets comfortably inset from edges. A beautiful desktop configuration, not a generic dashboard. Original wallpaper artwork with rich atmospheric depth. No white or pale page background.\n\nTHEME BOREAL: midnight pine forest around a fjord, immense dark mountain silhouettes, a restrained natural emerald aurora high above and a pale mint reflection on still water. Deep petrol greens, blue-black shadows, silver mist; cinematic original matte painting with fine natural textures, not neon science fiction. A distant wooden cabin with one warm amber window is a quiet focal point near the center-right, unobstructed.\nLayout: frameless large thin off-white digital \"22:18\" at upper-left with small \"Wednesday, October 28\". Matching \"22:18\" in the top-center Islands clock. A medium forest-charcoal System card below that clock, left side. A medium regular rectangular Music widget in lower-right, charcoal-green with mint accents and small original fjord album art: exact \"Northern Lights\", \"Lumen\", previous/pause/next, \"1:42\" and \"3:56\", slim mint progress bar. Keep the music controls compact and native. Center is open wallpaper. No calendar in this variant. The two rectangles should take up roughly one fifth of desktop width each. Visually luxurious but usable, no large foreground bird.\n",
+    "reference_images": [
+      "docs/presentation/sources/system.png",
+      "docs/presentation/sources/music.png",
+      "docs/presentation/055-readme/panel-elements-dark.png"
+    ],
+    "destination": "docs/presentation/055-readme/hero-boreal.png",
+    "tool": "built-in image_gen",
+    "transparent_background": false,
+    "sha256": "488b5625ad58269047aff3b9c1ddd82916d626afc4c5ad5bd7c47731c97cb2ae",
+    "bytes": 2341659,
+    "dimensions": [
+      1774,
+      887
+    ]
+  },
+  {
+    "name": "hero-ember",
+    "title": "Ember",
+    "prompt": "Use case: compositing. Create ONE polished, wide 2:1 hero illustration for Halcyon, a native COSMIC desktop customization app. It will be labeled generated illustration. One coherent desktop, straight-on edge-to-edge wallpaper; no physical device, Settings window, inset screenshot, collage, title, slogan, feature annotations or outer presentation sheet.\nReference 1 is the real native System monitor: preserve its simple CPU/RAM/Disk row arrangement and progress bars, recoloring to the specified theme. Reference 2 is the native REGULAR RECTANGULAR Music widget: preserve its horizontal track/artwork row, small playback controls and progress bar, but use the exact fictional metadata given below. Include a modest square original album cover (no placeholder and no third-party cover). Reference 3 demonstrates Islands shapes only: USE THE LEFT COLUMN'S SEPARATE CAPSULES; ignore the Penumbra column and all headings.\nMANDATORY BAR LAYOUT: At the TOP CENTER, place ONE COMPACT CLUSTER of THREE immediately adjacent separate Islands capsules, with only small even gaps: [app grid and workspace dots] [time] [sound, wifi, power]. The whole cluster spans about one-third of the desktop width. ALL THREE PILLS TOUCH NEIGHBORING GAPS NEAR THE CENTER; absolutely NO panel groups in the left or right corners. No full-width bar. Bottom center: a compact charcoal dock with five file/browser/terminal/document/settings icons.\nMANDATORY WIDGETS: Both a SYSTEM monitor and a NORMAL RECTANGULAR Music player must be present, clearly recognizable, pleasantly sized and readable. No circular player, no radial visualizer, no spectrum. System sample data: \"CPU\" and \"18% · 46°C\"; \"RAM\" and \"7.9 / 31 GiB\"; \"Disk\" and \"112 / 256 GiB\", each with a slim appropriately filled progress line. Music content and theme-specific details below.\nNative flat rounded matte/tinted dark surfaces, subtle edges, coherent accent colors, sharp typography; never glossy glass, 3D blocks, excessive transparency or neon halos. Well-balanced generous wallpaper space, no overlaps, align widget edges deliberately. Do not add undescribed components, logos, logos-as-wallpaper, explanatory labels, weather cards or invented features. Keep all widgets comfortably inset from edges. A beautiful desktop configuration, not a generic dashboard. Original wallpaper artwork with rich atmospheric depth. No white or pale page background.\n\nTHEME EMBER: a dramatic original red-sandstone canyon at blue hour, sculptural orange rock walls and a winding river catching the last warm light, dusky plum sky with a thin crescent moon. Rich terracotta, aubergine, deep warm graphite, restrained copper accents. Calm fine-art landscape with strong sculptural composition, not the previous lake/kingfisher scene, no lush forest. Desktop surfaces are dark cocoa and aubergine; no cream-colored cards.\nLayout: a medium minimalist analog Clock card at upper-left, dark aubergine, copper hour ticks and pale hands set to 18:40 (minute hand at eight; hour hand between six and seven). The adjacent top-center Islands time reads exactly \"18:40\". System card below the analog Clock, with muted copper progress lines. Regular rectangular Music widget in lower-right with original abstract sandstone album art, exact \"Slow Current\", \"Sable\", native previous/pause/next and \"1:42\" / \"3:56\", copper progress bar. Clock, System and Music are three separate coherent widgets. Center canyon remains unobstructed. No calendar in this variant. Evening warmth without bright yellow UI or glowing edges.\n",
+    "reference_images": [
+      "docs/presentation/sources/system.png",
+      "docs/presentation/sources/music.png",
+      "docs/presentation/055-readme/panel-elements-dark.png"
+    ],
+    "destination": "docs/presentation/055-readme/hero-ember.png",
+    "tool": "built-in image_gen",
+    "transparent_background": false,
+    "sha256": "9c9a22e479a0af89d0224bdd5202bce48e50d9ec072270b5baf4ef99c62a70af",
+    "bytes": 2300865,
+    "dimensions": [
+      1774,
+      887
+    ]
+  },
+  {
+    "name": "hero-nocturne",
+    "title": "Nocturne",
+    "prompt": "Use case: compositing. Create ONE polished, wide 2:1 hero illustration for Halcyon, a native COSMIC desktop customization app. It will be labeled generated illustration. One coherent desktop, straight-on edge-to-edge wallpaper; no physical device, Settings window, inset screenshot, collage, title, slogan, feature annotations or outer presentation sheet.\nReference 1 is the real native System monitor: preserve its simple CPU/RAM/Disk row arrangement and progress bars, recoloring to the specified theme. Reference 2 is the native REGULAR RECTANGULAR Music widget: preserve its horizontal track/artwork row, small playback controls and progress bar, but use the exact fictional metadata given below. Include a modest square original album cover (no placeholder and no third-party cover). Reference 3 demonstrates Islands shapes only: USE THE LEFT COLUMN'S SEPARATE CAPSULES; ignore the Penumbra column and all headings.\nMANDATORY BAR LAYOUT: At the TOP CENTER, place ONE COMPACT CLUSTER of THREE immediately adjacent separate Islands capsules, with only small even gaps: [app grid and workspace dots] [time] [sound, wifi, power]. The whole cluster spans about one-third of the desktop width. ALL THREE PILLS TOUCH NEIGHBORING GAPS NEAR THE CENTER; absolutely NO panel groups in the left or right corners. No full-width bar. Bottom center: a compact charcoal dock with five file/browser/terminal/document/settings icons.\nMANDATORY WIDGETS: Both a SYSTEM monitor and a NORMAL RECTANGULAR Music player must be present, clearly recognizable, pleasantly sized and readable. No circular player, no radial visualizer, no spectrum. System sample data: \"CPU\" and \"18% · 46°C\"; \"RAM\" and \"7.9 / 31 GiB\"; \"Disk\" and \"112 / 256 GiB\", each with a slim appropriately filled progress line. Music content and theme-specific details below.\nNative flat rounded matte/tinted dark surfaces, subtle edges, coherent accent colors, sharp typography; never glossy glass, 3D blocks, excessive transparency or neon halos. Well-balanced generous wallpaper space, no overlaps, align widget edges deliberately. Do not add undescribed components, logos, logos-as-wallpaper, explanatory labels, weather cards or invented features. Keep all widgets comfortably inset from edges. A beautiful desktop configuration, not a generic dashboard. Original wallpaper artwork with rich atmospheric depth. No white or pale page background.\n\nReference 4 is an actual CONNECTED Calendar card. Keep that recognizable structure: Today header, date/week strip, timed event rows and small provider link at the bottom. Replace the test fixture text with the sample events specified here; no real account/email, no sign-in button, no empty state.\nTHEME NOCTURNE: a rainy indigo city at early blue morning, viewed across a quiet river with a long bridge, layered mid-rise silhouettes and a handful of warm lit windows. Restrained lavender reflections on wet slate, deep navy sky and blue-violet shadows. Sophisticated original cinematic illustration, no huge neon signs, no legible billboards, no cyberpunk clutter. Foreground and side edges dark enough for clear widget contrast.\nLayout: large frameless digital Clock \"08:42\" upper-left, small \"Wednesday, October 28\"; all panel time text also \"08:42\". System card beneath it at mid-left, graphite-violet surfaces and pale lavender progress lines. REGULAR RECTANGULAR Music at lower-left below System, same width, modest original indigo-city album cover, exact \"Blue Hour\", \"Mira\", native previous/pause/next, progress \"1:42\" / \"3:56\".\nAt mid-right, one larger CONNECTED Calendar card, dark graphite-violet. Header \"Today\" and \"Wed, 28 Oct\". Week range \"26 Oct – 1 Nov 2026\". A small Mon–Sun strip with dates 26,27,28,29,30,31,1; highlight Wed 28. Exactly two future sample agenda rows: \"09:30\" — \"Team stand-up\"; \"14:00\" — \"Design review\", with small lavender vertical event markers. Footer \"Google Calendar ↗\". Keep readable native Calendar text, no invented connected badge or account email. This is an illustration of a connected calendar populated with fictional events, not a connection settings panel. Center of wallpaper remains unobstructed. Cards align cleanly with balanced margins; spacious enough to feel inviting, not dense.\n",
+    "reference_images": [
+      "docs/presentation/sources/system.png",
+      "docs/presentation/sources/music.png",
+      "docs/presentation/055-readme/panel-elements-dark.png",
+      "docs/presentation/055-readme/references/calendar-connected-native.png"
+    ],
+    "destination": "docs/presentation/055-readme/hero-nocturne.png",
+    "tool": "built-in image_gen",
+    "transparent_background": false,
+    "sha256": "aa73102699e5c18e08fbf247bc810cc062f6e76225383a5dce2b2fd16ccbfc87",
+    "bytes": 2223952,
+    "dimensions": [
+      1774,
+      887
+    ]
+  },
+  {
+    "name": "hero-graphic",
+    "prompt": "Use case: compositing.\nCreate a striking art-directed GitHub HERO BANNER for HALCYON. One wide 2:1 composition. This is a designed brand/product illustration, not an OS screenshot. The overall impression should be bold, sophisticated, tactile and instantly recognizable at thumbnail size.\n\nINPUT ROLES:\n1. Existing Halcyon app icon: brand identity reference. Use the exact recognizable kingfisher app icon as a modest icon above the title, not an enormous repeated logo.\n2. Native System monitor: retain this existing widget's flat rounded panel, CPU/RAM/Disk rows, slim progress bars, and understated controls.\n3. Nocturne desktop: ONLY a reference for the real regular RECTANGULAR Music card, Calendar agenda, and THREE adjacent grouped Islands capsules. Ignore ALL city wallpaper, clock, dock and original desktop arrangement.\n\nCOMPOSITION:\nLeft 40%: assured editorial typography and ample breathing room. The product name \"Halcyon\" is VERY LARGE, beautifully kerned off-white geometric sans-serif, on one line, with the exact subtitle \"Complete Desktop\\nCustomization\" underneath in restrained pale lavender. Above the wordmark sits the small native icon. No other slogans, platform labels, buttons, badges, version numbers or paragraphs.\nRight 60%: a precisely composed cluster of real-looking desktop components, with lively staggered positions and clean separate silhouettes instead of a rigid grid. At upper-right, the three Islands capsules sit CLOSE TOGETHER as one compact cluster: app-grid/workspace, \"08:42\", sound/wifi/power. Beneath them, a System monitor toward upper-middle and a Calendar toward far-right; a REGULAR rectangular Music widget below toward center-right. Only these three cards and the bar cluster. Keep all card content readable, corners subtly rounded, surfaces opaque graphite/aubergine, with pale lavender accents. Straight-on, no angled 3D UI, no translucent glass. Components must never obscure each other's text. Give them enough air and make them large enough to feel like the product, not tiny decoration.\n\nART BACKDROP:\nNear-black ink across the whole canvas, no white or pale sheet. Behind the right-hand components, ONE dramatic abstract sculptural form inspired by the sweeping wing of the kingfisher logo: broad folded satin ribbons or finely layered feathers, deep ultramarine turning into luminous periwinkle, with a small warm peach edge. It sweeps diagonally from lower-center toward upper-right and naturally frames the widgets. Rich directional light, fine material detail, strong elegant silhouette, controlled contrast. More contemporary album-cover/industrial-design art than a generic AI glow. The artwork must stay behind the UI and never interfere with legibility. Left title area stays almost-black and calm. Subtle studio shadows give hierarchy; no space nebula, stars, orbital rings, wireframe grids, lens flares, neon outlines or glitter. No landscape, no mountains, no sunset, no real bird, no computer/monitor, no screenshot border.\n\nWIDGET CONTENT:\nSystem: \"CPU\" \"18% · 46°C\"; \"RAM\" \"7.9 / 31 GiB\"; \"Disk\" \"112 / 256 GiB\", each with its native slim lavender bar.\nMusic: compact square original blue/lavender abstract album cover, \"Blue Hour\", \"Mira\", previous/pause/next icons, thin progress line, \"1:42 / 3:56\". Rectangular player, never a circular visualizer.\nCalendar: native header \"Today\", small \"Wed, 28 Oct\", small week strip Mon26 Tue27 Wed28 Thu29 Fri30 Sat31 Sun1 with Wed28 selected. Two neat agenda rows: \"09:30  Team stand-up\" and \"14:00  Design review\". Bottom small \"Google Calendar ↗\". Fictional sample data, no account or email. No invented connection badge.\n\nFINAL IMPRESSION: A strong memorable product identity with confidently oversized type and a luminous sculptural wing carrying a cluster of useful UI. High-end graphic composition, not a sparse template landing page, not a busy feature poster. Dark and beautiful. Exact readable spelling. No extra text. No changes to the essential native component types.",
+    "reference_images": [
+      "docs/brand/halcyon-icon.png",
+      "docs/presentation/sources/system.png",
+      "docs/presentation/055-readme/hero-nocturne.png"
+    ],
+    "destination": "docs/presentation/055-readme/hero-graphic.png",
+    "tool": "built-in image_gen",
+    "transparent_background": false,
+    "sha256": "6dbf7bfdce2227947f7369913ab5482fc750c8c26dcf09777fbf4cc6f86c23cf",
+    "bytes": 1852809,
+    "dimensions": [
+      1774,
+      887
+    ]
+  }
+]

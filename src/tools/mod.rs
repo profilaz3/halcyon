@@ -10,6 +10,7 @@ pub mod focus;
 pub mod music;
 pub mod notes;
 mod seek_bar;
+pub mod visualizer;
 
 use crate::config::Config;
 use std::path::{Path, PathBuf};

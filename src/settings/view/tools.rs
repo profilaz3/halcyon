@@ -140,21 +140,37 @@ impl Settings {
                 12.,
                 MUTED,
             ),
-            group(
-                Some("Music card"),
-                vec![
-                    switch("Album art", "", self.config.music.show_artwork, |value| {
-                        option(Widget::Music, "show_artwork", value)
-                    }),
-                    switch(
-                        "Progress",
-                        "Click the bar to seek when the player supports it.",
-                        self.config.music.show_progress,
-                        |value| option(Widget::Music, "show_progress", value),
-                    ),
-                ],
-            ),
+            if let Some(recipe) = &self.config.recipes.music {
+                group(
+                    Some("Personal widget"),
+                    vec![split(
+                        label(&recipe.name, 14., FG),
+                        button::text("Edit widget…")
+                            .on_press(Message::OpenRecipe(crate::recipes::Kind::Music))
+                            .into(),
+                    )],
+                )
+            } else {
+                group(
+                    Some("Music card"),
+                    vec![
+                        switch("Album art", "", self.config.music.show_artwork, |value| {
+                            option(Widget::Music, "show_artwork", value)
+                        }),
+                        switch(
+                            "Progress",
+                            "Click the bar to seek when the player supports it.",
+                            self.config.music.show_progress,
+                            |value| option(Widget::Music, "show_progress", value),
+                        ),
+                        button::text("Design a Music widget…")
+                            .on_press(Message::OpenRecipe(crate::recipes::Kind::Music))
+                            .into(),
+                    ],
+                )
+            },
         ];
+        items.insert(0, self.visualizer_controls());
         items.push(self.widget_style_and_layout(Widget::Music));
         column::with_children(vec![
             self.widget_heading(Widget::Music, "Music"),
@@ -435,6 +451,9 @@ impl Settings {
             every.sort_unstable();
         }
         let mut items = vec![
+            button::text("Design a Focus widget…")
+                .on_press(Message::OpenRecipe(crate::recipes::Kind::Focus))
+                .into(),
             label(
                 if visible {
                     "Live controls run your desktop timer."
@@ -520,5 +539,156 @@ impl Settings {
         ])
         .spacing(16)
         .into()
+    }
+}
+
+impl Settings {
+    fn visualizer_controls(&self) -> Element<'_, Message> {
+        use crate::tools::visualizer::Circle;
+        let p = self
+            .tools
+            .visualizer_draft
+            .as_ref()
+            .unwrap_or(&self.config.music.visualizer)
+            .clone();
+        let set = |p| {
+            option(
+                Widget::Music,
+                "visualizer",
+                serde_json::to_value(p).unwrap(),
+            )
+        };
+        let mut rows=vec![self.help("visualizer-help","Audio visualizers","Reacts to all sound on the default audio output while your selected player is playing. Never reads the microphone, saves audio or uploads it. Stops when Music is hidden or Reduce motion is enabled. Circular size and display use Music’s Layout controls.")];
+        rows.push(segmented(
+            [
+                (Circle::Off, "Card"),
+                (Circle::Bars, "Radial bars"),
+                (Circle::Dots, "Orbit dots"),
+                (Circle::Rings, "Pulse rings"),
+            ]
+            .into_iter()
+            .map(|(c, title)| {
+                let mut next = p.clone();
+                next.circle = c;
+                (title.into(), p.circle == c, Some(set(next)))
+            })
+            .collect(),
+            self.settings_accent(),
+        ));
+        let next = p.clone();
+        rows.push(switch("Spectrum", "", p.spectrum, move |enabled| {
+            let mut p = next.clone();
+            p.spectrum = enabled;
+            option(
+                Widget::Music,
+                "visualizer",
+                serde_json::to_value(p).unwrap(),
+            )
+        }));
+        if p.spectrum {
+            let sample: Element<'_, Message> =
+                cosmic::widget::canvas(crate::tools::visualizer::drawing::Visual {
+                    bins: std::array::from_fn(|i| 0.15 + (i as f32 * 0.37).sin().abs() * 0.7),
+                    circle: Circle::Off,
+                    color: Color {
+                        a: f32::from(p.opacity) / 100.,
+                        ..self.settings_accent()
+                    },
+                    region: Some(p.clone()),
+                    backdrop: None,
+                })
+                .width(Length::Fill)
+                .height(150)
+                .into();
+            rows.push(
+                column::with_children(vec![
+                    label("Spectrum placement · sample audio", 12., MUTED),
+                    self.preview_stage_padded(sample, 0),
+                ])
+                .spacing(6)
+                .into(),
+            );
+            for (key, title, value, range) in [
+                ("opacity", "Opacity", p.opacity, 0..=100),
+                ("width", "Width", p.width, 10..=100),
+                ("height", "Height", p.height, 4..=100),
+                ("x", "Horizontal position", p.x, 0..=100),
+                ("y", "Vertical position", p.y, 0..=100),
+            ] {
+                let next = p.clone();
+                rows.push(
+                    column::with_children(vec![
+                        split(
+                            label(title, 13., FG),
+                            label(format!("{value}%"), 12., MUTED),
+                        ),
+                        container(
+                            slider(range, value, move |v| {
+                                let mut p = next.clone();
+                                match key {
+                                    "opacity" => p.opacity = v,
+                                    "width" => p.width = v,
+                                    "height" => p.height = v,
+                                    "x" => p.x = v,
+                                    _ => p.y = v,
+                                };
+                                edit(Edit::Visualizer(p))
+                            })
+                            .on_release(edit(Edit::VisualizerSave))
+                            .width(Length::Fill)
+                            .apply(|v| completed_slider(v.into(), edit(Edit::VisualizerSave))),
+                        )
+                        .id(cosmic::widget::Id::new(format!("spectrum-{key}")))
+                        .into(),
+                    ])
+                    .spacing(6)
+                    .into(),
+                );
+            }
+            let mut full = p.clone();
+            full.width = 100;
+            full.x = 50;
+            let mut bottom = p.clone();
+            bottom.y = 100;
+            rows.push(
+                row::with_children(vec![
+                    button::text("Full width").on_press(set(full)).into(),
+                    button::text("Bottom edge").on_press(set(bottom)).into(),
+                ])
+                .spacing(8)
+                .into(),
+            );
+            let next = p.clone();
+            rows.push(switch(
+                "Allow behind dock",
+                "",
+                p.behind_dock,
+                move |enabled| {
+                    let mut p = next.clone();
+                    p.behind_dock = enabled;
+                    option(
+                        Widget::Music,
+                        "visualizer",
+                        serde_json::to_value(p).unwrap(),
+                    )
+                },
+            ));
+            rows.push(self.help("spectrum-dock-help","Dock overlap","The dock stays in front and remains clickable. Opaque dock surfaces cover bars underneath. Turn this off to respect the space reserved by panels and docks."));
+        }
+        if !self.config.material_motion {
+            rows.push(label(
+                "Reduce motion is on. Audio visualization is paused.",
+                12.,
+                MUTED,
+            ));
+        }
+        if !std::path::Path::new("/usr/bin/parec").exists() {
+            rows.push(label(
+                "Audio capture needs pulseaudio-utils. It is included as a package dependency.",
+                12.,
+                WARN,
+            ));
+        }
+        group(Some("Visualizers"), rows)
     }
 }

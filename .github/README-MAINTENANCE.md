@@ -8,12 +8,28 @@ notes describe what changed in a release.
 - Keep the title, overview, section order and feature groups across releases.
 - Use `/releases/latest` for downloads and `/releases` for release notes. Package
   filenames in the README use `<version>` rather than a hard-coded release.
-- Keep one representative screenshot. Replace it only when it no longer
-  represents the app or a specific presentation change is requested. Its archived
-  path may contain a version; that alone is not a reason to replace it.
+- Keep the feature gallery stable. Replace an image when the feature changes
+  materially or a presentation change is requested. An archived path containing
+  a version is not a reason to replace it. Label generated artwork as illustration
+  and link native captures separately; illustrations are not feature-validation
+  evidence or a promise of exact visual output.
+- Describe capabilities directly. Use feature names as headings; avoid slogans,
+  sales language and second-person claims about customization.
+- Lead with "Complete Desktop Customization". Keep numbered feature sections,
+  each with a relevant supporting image, instead of an unstructured component
+  inventory. Installation and developer links follow the feature sections.
+- Match each image's framing to its feature. Show widgets as a collection of
+  individual widgets, bars as close-ups, and visualizers as isolated components.
+  Do not put a full desktop or decorative landscape behind every feature.
+  Whole-desktop compositions belong with the hero, appearance and saved setups; wallpaper
+  effect examples may show the affected wallpaper itself. Use dark charcoal
+  presentation backgrounds for component illustrations; avoid white or pale sheets.
+  Individual widgets may retain their own light theme finishes.
 - Keep setup instructions in focused guides: Calendar in `docs/CALENDAR.md`,
   installation/updates in `docs/DISTRIBUTION.md`, and privacy in `docs/PRIVACY.md`.
-- Keep default usage sharing and optional Islands clearly disclosed.
+- Keep optional Islands and its next-login activation clear. Keep the Privacy
+  guide linked; reporting changes belong in that guide and the existing consent
+  screens, not in README or release-note feature promotion.
 
 ## During a release
 

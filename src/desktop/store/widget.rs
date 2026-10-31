@@ -156,7 +156,9 @@ macro_rules! fields {
 }
 
 /// Every member a profile, its Undo or its recovery may write.
-pub static FIELDS: [WidgetField; 104] = fields![
+pub static FIELDS: [WidgetField; 108] = fields![
+    "/recipes/music", "Music recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Music);
+    "/recipes/focus", "Focus recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Focus);
     "/recipes/devbox", "System recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::System);
     "/recipes/calendar", "Calendar recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Calendar);
     "/recipes/clock", "Clock recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Clock);
@@ -173,6 +175,7 @@ pub static FIELDS: [WidgetField; 104] = fields![
     "/moments/night/clock/italic", "Night clock italic", Style, |v| v.is_null() || v.is_boolean();
     "/moments/night/clock/surface", "Night clock surface", Style, |v| v.is_null() || matches!(v.as_str(), Some("none" | "panel"));
     "/material_motion", "Liquid widget motion", Style, boolean;
+    "/rain", "Wallpaper rain", Style, |v| serde_json::from_value::<crate::rain::Preferences>(v.clone()).is_ok_and(|p| p.validate().is_ok());
     "/materials/shared", "Shared material", Style, material;
     "/materials/widgets", "Widget material", Style, material;
     "/materials/dock", "Dock material", Style, material;
@@ -230,6 +233,7 @@ pub static FIELDS: [WidgetField; 104] = fields![
     "/devbox/history/gpu", "Devbox GPU history", Style, boolean;
     "/calendar_show_today", "Calendar today", Style, boolean;
     "/calendar_show_tomorrow", "Calendar tomorrow", Style, boolean;
+    "/music/visualizer", "Audio visualizer", Style, |v| serde_json::from_value::<crate::tools::visualizer::Preferences>(v.clone()).is_ok_and(|p| p.validate().is_ok());
     "/music/show_artwork", "Music artwork", Style, boolean;
     "/music/show_progress", "Music progress", Style, boolean;
     "/notes/size", "Notes size", Style, notes_size;

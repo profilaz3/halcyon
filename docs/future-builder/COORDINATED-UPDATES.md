@@ -1,6 +1,6 @@
 # Halcyon updates
 
-The local 0.5 implementation uses [one Halcyon package](BUNDLED-ISLANDS.md).
+Published 0.5.0 uses [one Halcyon package](BUNDLED-ISLANDS.md).
 Islands is included and optional to activate. **App settings → Updates** shows
 one update status. COSMIC Store or APT owns installation and authentication.
 
@@ -15,3 +15,8 @@ a matching manifest and the existing guarded native checks.
 The earlier two-package offer matching and in-app download flow are removed from
 0.5. Published 0.4.x releases retain their original behavior and immutable evidence.
 Validation for this change is tracked in [Bundled Islands](BUNDLED-ISLANDS.md).
+
+The next [reporting and DEB/RPM plan](REPORTING-AND-CHANNELS.md) extends this
+experience to Fedora COSMIC, preserving OS-owned installation and existing
+activation choices. Native Fedora RPM building and the shared update UI are implemented locally.
+The signed DNF repository is prepared and tested privately; it is not published.

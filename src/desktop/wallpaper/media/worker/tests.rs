@@ -245,3 +245,25 @@ async fn fb09_owner_drop_and_timeout_retire_the_exact_worker() {
         drop(owner);
     }
 }
+
+#[tokio::test]
+async fn rain_wallpaper_worker_uses_exact_output_bounds_and_cancellation() {
+    let _guard = TEST_LOCK.lock().await;
+    let (owner, cancel) = watch::channel(false);
+    for size in [[1920, 1080], [720, 1280]] {
+        let result = wallpaper(entry(false), size, cancel.clone()).await.unwrap();
+        assert_eq!([result.width, result.height], size);
+        assert_eq!(result.rgba.len(), (size[0] * size[1] * 4) as usize);
+    }
+    assert!(
+        wallpaper(entry(false), [8192, 8192], cancel.clone())
+            .await
+            .is_none()
+    );
+    owner.send_replace(true);
+    assert!(
+        wallpaper(entry(false), [1920, 1080], cancel)
+            .await
+            .is_none()
+    );
+}

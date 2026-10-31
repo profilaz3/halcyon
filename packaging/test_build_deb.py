@@ -100,7 +100,7 @@ class PackageTests(unittest.TestCase):
         checksum = package.with_suffix(".deb.sha256").read_text()
         self.assertEqual(checksum, hashlib.sha256(package.read_bytes()).hexdigest() + "  " + package.name + "\n")
         depends = subprocess.check_output(["dpkg-deb", "-f", str(package), "Depends"], text=True)
-        self.assertEqual(depends.strip(), "libc6, libxkbcommon0, python3, git, systemd")
+        self.assertEqual(depends.strip(), "libc6, libxkbcommon0, python3, git, systemd, pulseaudio-utils")
         breaks = subprocess.check_output(["dpkg-deb", "-f", str(package), "Breaks"], text=True)
         self.assertEqual(breaks.strip(), "cosmic-ext-halcyon-islands (<< 0.0.9), cosmic-ext-halcyon-islands (>> 0.0.9)")
 

@@ -16,6 +16,8 @@ use cosmic::widget::text_editor;
 
 #[derive(Clone, Debug)]
 pub enum Message {
+    Visualizer(crate::tools::visualizer::Preferences),
+    VisualizerSave,
     /// A control on a preview card.
     Card(Action),
     Players(Result<Vec<music::Player>, String>),
@@ -43,6 +45,7 @@ pub enum Message {
 pub struct ToolsEditor {
     /// What this window sees on the session bus; `None` until asked.
     pub feed: Option<music::Feed>,
+    pub visualizer_draft: Option<crate::tools::visualizer::Preferences>,
     recent: Vec<String>,
     pub pinned: Option<String>,
     pub music_problem: bool,
@@ -77,6 +80,7 @@ impl Default for ToolsEditor {
         let draft = notes::load_draft();
         let mut editor = Self {
             feed: None,
+            visualizer_draft: None,
             recent: Vec::new(),
             pinned: None,
             music_problem: false,
@@ -271,7 +275,7 @@ impl ToolsEditor {
     }
 
     fn art_task(&mut self, config: &Config) -> Task<crate::settings::Message> {
-        if !config.music.show_artwork || self.art_loading {
+        if !config.music_artwork() || self.art_loading {
             return Task::none();
         }
         let Some(url) = self
@@ -407,6 +411,21 @@ impl ToolsEditor {
                         key.map(|key| music::app_key(&key).to_string()).into(),
                     )),
                 );
+            }
+            Message::Visualizer(p) => {
+                self.visualizer_draft = Some(p);
+            }
+            Message::VisualizerSave => {
+                if let Some(p) = self.visualizer_draft.take() {
+                    return (
+                        Task::none(),
+                        Some(Saved::Tool(
+                            Widget::Music,
+                            "visualizer",
+                            serde_json::to_value(p).unwrap(),
+                        )),
+                    );
+                }
             }
             Message::Option(widget, key, value) => {
                 return (Task::none(), Some(Saved::Tool(widget, key, value)));
