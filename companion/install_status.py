@@ -218,12 +218,12 @@ def inspect(home, library, installed, versions, initial):
                 from runtime_compatibility import enabled as family_policy, family, Session, validate_platform
                 if family_policy(catalog):
                     validate_platform(catalog)
-                    measured = family()
+                    measured = family(policy=catalog['startup_policy'])
                     _, selected, _, _ = selected_generation(home, context=context)
                     owner = host_identity(selected['binary_sha256'])
                     host = False
                     try:
-                        observation = Session(versions=measured['package_versions'])
+                        observation = Session(versions=measured['package_versions'], policy=catalog['startup_policy'])
                         try:
                             if owner is not None and selected['payload_sha256'] == manifest['payload_sha256']:
                                 host = observation.inventory(owner)

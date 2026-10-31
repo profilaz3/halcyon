@@ -97,3 +97,65 @@ class DistributionTests(unittest.TestCase):
     def test_historical_deb_only_feed_does_not_create_an_rpm_directory(self):
         self.assertEqual(subject.stage({},None,self.root,None,None),0)
         self.assertFalse((self.root/'rpm').exists())
+
+    def dual_fixture(self):
+        root, release, pin, package = self.fixture()
+        record = json.loads((root/'release.json').read_text())
+        first = {k:record.pop(k) for k in ('target', 'package', 'observations')}
+        second = dict(target='fedora44-x86_64', package=package.replace('/43/', '/44/').replace('.fc43.', '.fc44.'), observations=first['observations'].copy())
+        record.update(version=2, targets={'43':first, '44':second})
+        for old, metadata in list(record['files'].items()):
+            name = old.replace('/43/', '/44/').replace('.fc43.', '.fc44.')
+            path = root/name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text(name)
+            record['files'][name] = dict(sha256=subject.digest(path), bytes=path.stat().st_size)
+        release['assets'][Path(second['package']).name] = dict(kind='main-rpm', **record['files'][second['package']])
+        self.repin(root, record, pin)
+        return root, release, pin, record
+
+    def repin(self, root, record, pin):
+        (root/'release.json').write_text(json.dumps(record))
+        pin['manifest_sha256'] = subject.digest(root/'release.json')
+
+    def test_both_targets_are_verified_in_one_review(self):
+        root, release, pin, record = self.dual_fixture()
+        with patch.object(subject, 'signature') as signature, patch.object(subject, 'run', return_value='signatures OK') as run:
+            self.assertEqual(subject.verify(root, release, pin, self.root/'key'), record)
+            self.assertEqual(signature.call_count, 3)
+            checked = [c.args[0][-1] for c in run.call_args_list if '--checksig' in c.args[0]]
+            self.assertEqual(set(checked), {str(root/t['package']) for t in record['targets'].values()})
+
+    def test_new_review_cannot_drop_fedora43_or_add_unreviewed_platforms(self):
+        root, release, pin, record = self.dual_fixture()
+        original = record['targets']
+        for targets in ({'44':original['44']}, {'43':original['43']}, {**original, '45':original['44']}):
+            record['targets'] = targets; self.repin(root, record, pin)
+            with patch.object(subject, 'signature'), patch.object(subject, 'run') as run:
+                with self.assertRaisesRegex(ValueError, 'review_incomplete'):
+                    subject.verify(root, release, pin, self.root/'key')
+                run.assert_not_called()
+
+    def test_each_platform_requires_its_own_matching_package_and_complete_review(self):
+        root, release, pin, record = self.dual_fixture()
+        target = record['targets']['44']; original = target.copy()
+        for replacement in (dict(package=record['targets']['43']['package']), dict(target='fedora43-x86_64'), dict(observations={**target['observations'], 'panel':'pending'})):
+            record['targets']['44'] = {**original, **replacement}; self.repin(root, record, pin)
+            with patch.object(subject, 'signature'):
+                with self.assertRaisesRegex(ValueError, 'review_incomplete'):
+                    subject.verify(root, release, pin, self.root/'key')
+
+    def test_second_platform_tampering_is_rejected(self):
+        root, release, pin, record = self.dual_fixture()
+        (root/record['targets']['44']['package']).write_text('tampered')
+        with patch.object(subject, 'signature'), patch.object(subject, 'run') as run:
+            with self.assertRaisesRegex(ValueError, 'file_changed'):
+                subject.verify(root, release, pin, self.root/'key')
+            run.assert_not_called()
+
+    def test_historical_fedora43_review_keeps_its_original_contract(self):
+        root, release, pin, package = self.fixture()
+        with patch.object(subject, 'signature') as signature, patch.object(subject, 'run', return_value='signatures OK') as run:
+            record = subject.verify(root, release, pin, self.root/'key')
+            self.assertEqual(record['version'], 1)
+            self.assertEqual(signature.call_count, 2)
+            checked = [c.args[0][-1] for c in run.call_args_list if '--checksig' in c.args[0]]
+            self.assertEqual(checked, [str(root/package)])

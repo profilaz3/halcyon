@@ -155,8 +155,8 @@ class Processes(config_fixture.Configuration):
     def test_package_metadata_changed_during_family_query_refuses(self):
         status=self.root/'var/lib/dpkg/status';status.parent.mkdir(parents=True);status.write_bytes(b'old')
         original=c.family
-        def changed(versions):
-            result=original(versions)
+        def changed(versions, policy=None):
+            result=original(versions, policy=policy)
             status.write_bytes(b'new');status.write_bytes(b'old')
             return result
         with patch.object(c,'family',side_effect=changed):

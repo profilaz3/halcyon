@@ -1,8 +1,9 @@
 # Fedora packaging and updates
 
-Available from 0.5.5 for Fedora 43 COSMIC on x86-64. Download the RPM from
+Available for Fedora 43 and 44 COSMIC on x86-64. Fedora 44 support starts with 0.5.6. Download the RPM from
 [GitHub Releases](https://github.com/profilaz3/halcyon/releases/latest). The signed
-update repository is `https://profilaz3.github.io/halcyon/rpm/fedora/43/x86_64/`.
+update source selects `rpm/fedora/$releasever/x86_64/` for the installed Fedora version.
+Choose the `.fc43` or `.fc44` download to match it.
 Atomic variants and other RPM distributions are not covered.
 
 ## One package
@@ -37,7 +38,8 @@ Fedora build record, exact native manifest, catalog and license notices. It uses
 the shared DEB payload staging functions without converting a DEB. Product
 version must match Cargo; native epoch/version/release remains separate.
 
-The Fedora startup policy binds its own native ELF and Fedora COSMIC 1.10 family.
+Each Fedora startup policy binds its platform and native ELF. Fedora 43 supports
+COSMIC 1.10 and 1.11; Fedora 44 supports COSMIC 1.11.
 Debian qualification is not reused. RPM database changes still invalidate
 admission; SQLite reader bookkeeping does not. Unrelated multilib packages and
 retained older kernels do not hide otherwise unambiguous COSMIC measurements.
@@ -48,12 +50,13 @@ and signs/verifies `repomd.xml`. The candidate manifest hashes the final signed
 bytes and records `published: false`. It does not upload or change the APT feed.
 Both `gpgcheck` and `repo_gpgcheck` are enabled in the packaged DNF source.
 
-Publication adds a signed `release.json` binding the RPM, repository files,
+Publication adds a signed `release.json` binding both RPMs, repository files,
 corresponding source and acceptance evidence. `scripts/rpm/distribution.py`
 verifies those bindings, the package signature and the repository signature
 against the approved archive key. The approved distribution pins this immutable
 repository archive. APT and DNF are deployed together, so daily APT renewal
-preserves the reviewed RPM repository.
+preserves both reviewed RPM repositories. Version-2 reviews require both Fedora
+targets; historical version-1 reviews retain their original Fedora 43 contract.
 
 For key rotation, deliver overlapping old/new public keys through a package
 signed by the old key before changing the repository signer. Enrollment replaces

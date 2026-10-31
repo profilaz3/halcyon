@@ -43,6 +43,9 @@
   </provides>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.5.6" date="2026-10-31">
+      <description><p>Add native Fedora 44 packages and signed updates. Support COSMIC 1.11 on Fedora 43 and 44.</p></description>
+    </release>
     <release version="0.5.5" date="2026-10-31">
       <description><ul>
         <li>Add GPU wallpaper rain, snow, fog and cloud shadows.</li>

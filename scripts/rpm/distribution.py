@@ -12,7 +12,8 @@ import subprocess
 import tarfile
 import tempfile
 
-PREFIX = 'fedora/43/x86_64/'
+PREFIX = 'fedora/43/x86_64/'  # Immutable version-1 review contract.
+TARGETS = ('43', '44')
 MAX_BYTES = 256 * 1024 * 1024
 CHECKS = ('package', 'installation', 'upgrade', 'source', 'panel', 'settings', 'signatures')
 
@@ -74,35 +75,49 @@ def verify(root, release, pin, public):
     signature(public, manifest, pin['signer'])
     record = json.loads(manifest.read_bytes())
     version = release['release']
-    package = PREFIX+f'cosmic-ext-halcyon-{version}-1.fc43.x86_64.rpm'
-    if (record.get('format') != 'halcyon-rpm-release' or record.get('version') != 1
-            or record.get('release') != version or record.get('target') != 'fedora43-x86_64'
-            or record.get('package') != package
-            or record.get('observations') != dict.fromkeys(CHECKS, 'passed')
+    if (record.get('format') != 'halcyon-rpm-release' or record.get('release') != version
             or not record.get('review_reference')):
         raise ValueError('rpm_release_review_incomplete')
+    if record.get('version') == 1:
+        targets = {'43': {k: record.get(k) for k in ('target', 'package', 'observations')}}
+    elif record.get('version') == 2 and set(record.get('targets', {})) == set(TARGETS):
+        targets = record['targets']
+    else:
+        raise ValueError('rpm_release_review_incomplete')
+    packages = []
+    prefixes = []
+    for fedora, target in targets.items():
+        prefix = f'fedora/{fedora}/x86_64/'
+        package = prefix+f'cosmic-ext-halcyon-{version}-1.fc{fedora}.x86_64.rpm'
+        if target != dict(target=f'fedora{fedora}-x86_64', package=package,
+                          observations=dict.fromkeys(CHECKS, 'passed')):
+            raise ValueError('rpm_release_review_incomplete')
+        prefixes.append(prefix)
+        packages.append(package)
     for key, kind in (('source', 'corresponding-source'), ('evidence', 'native-evidence')):
         bound = record[key]
         expected = release['assets'].get(bound['file'])
         if expected != {k: bound[k] for k in ('kind', 'sha256', 'bytes')} or bound['kind'] != kind:
             raise ValueError('rpm_source_or_evidence_binding_mismatch')
     files = record['files']
-    if not {package, PREFIX+'repodata/repomd.xml', PREFIX+'repodata/repomd.xml.asc',
-            PREFIX+'RPM-GPG-KEY-halcyon'} <= files.keys():
-        raise ValueError('rpm_repository_incomplete')
+    for prefix, package in zip(prefixes, packages):
+        if not {package, prefix+'repodata/repomd.xml', prefix+'repodata/repomd.xml.asc',
+                prefix+'RPM-GPG-KEY-halcyon'} <= files.keys():
+            raise ValueError('rpm_repository_incomplete')
     actual = {p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file()}
     if actual != set(files) | {'release.json', 'release.json.asc'}:
         raise ValueError('rpm_repository_inventory_mismatch')
     for name, expected in files.items():
         safe_name(name)
-        if not name.startswith(PREFIX) or digest(root/name) != expected['sha256'] or (root/name).stat().st_size != expected['bytes']:
+        if not name.startswith(tuple(prefixes)) or digest(root/name) != expected['sha256'] or (root/name).stat().st_size != expected['bytes']:
             raise ValueError('rpm_repository_file_changed')
-    if [name for name in files if name.endswith('.rpm')] != [package]:
+    if {name for name in files if name.endswith('.rpm')} != set(packages):
         raise ValueError('unexpected_rpm_package')
-    asset = release['assets'].get(Path(package).name)
-    if asset != {'kind': 'main-rpm', **files[package]}:
-        raise ValueError('rpm_download_and_update_bytes_differ')
-    signature(public, root/(PREFIX+'repodata/repomd.xml'), pin['signer'])
+    for prefix, package in zip(prefixes, packages):
+        asset = release['assets'].get(Path(package).name)
+        if asset != {'kind': 'main-rpm', **files[package]}:
+            raise ValueError('rpm_download_and_update_bytes_differ')
+        signature(public, root/(prefix+'repodata/repomd.xml'), pin['signer'])
     # Trust only the reviewed archive key, never a key supplied by the archive.
     with tempfile.TemporaryDirectory(prefix='halcyon-rpm-package-trust-') as temporary:
         work = Path(temporary)
@@ -111,9 +126,10 @@ def verify(root, release, pin, public):
                             str(public.resolve()), '--armor', '--export']))
         db = work/'rpmdb'
         run(['rpmkeys', '--dbpath', str(db), '--import', str(key)])
-        result = run(['rpmkeys', '--dbpath', str(db), '--checksig', str(root/package)])
-        if 'signatures OK' not in result:
-            raise ValueError('rpm_package_signature_failed')
+        for package in packages:
+            result = run(['rpmkeys', '--dbpath', str(db), '--checksig', str(root/package)])
+            if 'signatures OK' not in result:
+                raise ValueError('rpm_package_signature_failed')
     return record
 
 

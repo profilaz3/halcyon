@@ -11,9 +11,9 @@ For a new installation, open the
 `cosmic-ext-halcyon_<version>_amd64.deb`, and open it with COSMIC Store to install.
 Then open Halcyon from the launcher. [Terminal fallback](#install-a-downloaded-package).
 
-For **Fedora 43 COSMIC (x86-64)**, download
-`cosmic-ext-halcyon-<version>-1.fc43.x86_64.rpm` instead. Open it with the system
-package installer, or use `sudo dnf install ./cosmic-ext-halcyon-<version>-1.fc43.x86_64.rpm`.
+For **Fedora 43 or 44 COSMIC (x86-64)**, download the `.fc43` or `.fc44` RPM
+matching your Fedora version. Open it with the system
+package installer, or use `sudo dnf install ./cosmic-ext-halcyon-<version>-1.fc<fedora>.x86_64.rpm`.
 The first installation adds the signed Halcyon DNF source. Later updates arrive
 through **COSMIC Store → Updates** or `sudo dnf upgrade --refresh cosmic-ext-halcyon`.
 Both package formats include Halcyon, Islands and Penumbra. See
