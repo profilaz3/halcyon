@@ -66,7 +66,7 @@ Choose your package from the **[latest release](https://github.com/profilaz3/hal
 | Desktop | Package | Install |
 | --- | --- | --- |
 | Pop!_OS 24.04 with COSMIC | `.deb` · amd64 | Open with **COSMIC Store** → Install |
-| Fedora 43 with COSMIC | `.rpm` · x86_64 | Install with **DNF** using the command below |
+| Fedora 43 or 44 with COSMIC | `.rpm` · x86_64 | Install with **DNF** using the command below |
 
 Open **Halcyon** from the application launcher and finish setup. Packages support 64-bit Intel and AMD PCs; missing dependencies may require an internet connection.
 
@@ -81,7 +81,7 @@ Run in the folder containing the downloaded package.
 sudo apt install ./cosmic-ext-halcyon_*_amd64.deb
 ```
 
-**Fedora COSMIC**
+**Fedora COSMIC** — download the `.fc43` or `.fc44` package matching your Fedora version.
 
 ```sh
 sudo dnf install ./cosmic-ext-halcyon-*.x86_64.rpm

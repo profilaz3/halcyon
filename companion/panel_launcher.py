@@ -98,11 +98,12 @@ def compatible(bundle, versions=None, manifest_name='manifest.json'):
                 from runtime_identity import installed_identity, running_identity, host_identity
                 with VerificationContext() as context:
                     captured, catalog = verify_bundle(bundle, manifest_name, context=context)
-                    from runtime_compatibility import enabled, Session
+                    from runtime_compatibility import enabled, Session, validate_platform
                     if enabled(catalog):
+                        validate_platform(catalog)
                         owner = host_identity(captured['binary_sha256'])
                         if owner is None: return False
-                        session = Session()
+                        session = Session(policy=catalog['startup_policy'])
                         try:
                             ready = session.inventory(owner)
                             context.check()

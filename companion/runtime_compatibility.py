@@ -27,13 +27,19 @@ POLICY = dict(version=4, id='cosmic-1.10-1.11-startup-v4', families=['1.10','1.1
 FEDORA_POLICY = {**POLICY, 'id':'fedora43-cosmic-1.10-startup-v1', 'families':['1.10'],
     'platform':{'id':'fedora','version':'43','architecture':'x86_64'},
     'binary_sha256':'17ab8522091680f81d2595e3a9c1f26a8a6e043c589b51165ecf203b2e559b8c'}
+FEDORA43_POLICY = {**FEDORA_POLICY, 'id':'fedora43-cosmic-1.10-1.11-startup-v2',
+    'families':['1.10','1.11']}
+FEDORA44_POLICY = {**POLICY, 'id':'fedora44-cosmic-1.11-startup-v1', 'families':['1.11'],
+    'platform':{'id':'fedora','version':'44','architecture':'x86_64'},
+    'binary_sha256':'070e0684c9cdce957d3033012d8b9fdd1d899d98db68122d4698c42f1b11ac5d'}
+POLICIES = (POLICY, FEDORA_POLICY, FEDORA43_POLICY, FEDORA44_POLICY)
 CORE = ('cosmic-comp', 'cosmic-session', 'cosmic-settings-daemon')
 
 
 def enabled(catalog):
     value = catalog.get('startup_policy')
     if value is None: return False
-    if value not in (POLICY,FEDORA_POLICY): raise ValueError('unsupported_startup_policy')
+    if value not in POLICIES: raise ValueError('unsupported_startup_policy')
     return True
 
 
@@ -45,22 +51,41 @@ def validate_bundle(manifest, catalog):
         raise ValueError('startup_native_source_or_interface')
 
 
+def os_release():
+    values = {}
+    for line in Path('/etc/os-release').read_text()[:65536].splitlines():
+        key, separator, value = line.partition('=')
+        if separator: values[key] = value.strip('"')
+    return values
+
+
+def current_policy():
+    if not rpm_system(): return POLICY
+    release = os_release()
+    policies = {'43': FEDORA43_POLICY, '44': FEDORA44_POLICY}
+    if release.get('ID') != 'fedora' or release.get('VERSION_ID') not in policies:
+        raise ValueError('unsupported_package_platform')
+    return policies[release['VERSION_ID']]
+
+
 def validate_platform(catalog):
     """Platform eligibility is checked at use, not while inspecting a package."""
-    policy=catalog['startup_policy']
-    if policy == FEDORA_POLICY:
+    if not enabled(catalog): raise ValueError('startup_policy_missing')
+    policy = catalog['startup_policy']
+    target = policy.get('platform')
+    if target:
         import platform
-        values={}
-        for line in Path('/etc/os-release').read_text()[:65536].splitlines():
-            key,separator,value=line.partition('=')
-            if separator: values[key]=value.strip('"')
-        if values.get('ID')!='fedora' or values.get('VERSION_ID')!='43' or platform.machine()!='x86_64':
+        values = os_release()
+        if (values.get('ID') != target['id'] or values.get('VERSION_ID') != target['version']
+                or platform.machine() != target['architecture']):
             raise ValueError('unsupported_package_platform')
     elif rpm_system():
         raise ValueError('unsupported_package_platform')
 
 
-def family(versions=None):
+def family(versions=None, policy=None):
+    policy = current_policy() if policy is None else policy
+    if policy not in POLICIES: raise ValueError('unsupported_startup_policy')
     if versions is None:
         names = ('cosmic-panel','cosmic-session','cosmic-comp','cosmic-settings-daemon')
         if rpm_system():
@@ -82,7 +107,6 @@ def family(versions=None):
         match=re.match(r'^(?:[0-9]+:)?(1\.(?:10|11))(?:\.\d+)?(?:[~+\-].*)?$',value)
         return match[1] if match else None
     selected=release('cosmic-panel')
-    policy=FEDORA_POLICY if rpm_system() else POLICY
     if selected not in policy['families'] or release('cosmic-session') != selected:
         raise ValueError('unsupported_cosmic_family')
     if not versions.get('cosmic-comp') or not versions.get('cosmic-settings-daemon'):
@@ -99,14 +123,14 @@ def state(observation=None, running=False):
 
 class Session:
     """One launch/status observation; no acceptance cache or write authority."""
-    def __init__(self, versions=None, env=None, root=Path('/'), proc=Path('/proc')):
+    def __init__(self, versions=None, env=None, root=Path('/'), proc=Path('/proc'), policy=None):
         self.env=dict(os.environ if env is None else env); self.proc=proc
         self.watch=Watch(); self.files={}; self.configuration=None; self.core=None
         try:
             # Watch before querying: a package transaction/ABA during the
             # family read must not bless a later executable generation.
             watch_package_database(self.watch,root)
-            self.observation=family(versions)
+            self.observation=family(versions, policy=policy)
             if not self.env.get('XDG_SESSION_ID') or any(self.env.get(k) for k in LOADER_ENV):
                 raise ValueError('session_or_loader_environment')
             def pin(path, core=False):
@@ -220,7 +244,7 @@ class Session:
 def prepare(manifest,catalog,context):
     validate_bundle(manifest,catalog)
     validate_platform(catalog)
-    session=Session(); completed=False; owner=None
+    session=Session(policy=catalog['startup_policy']); completed=False; owner=None
     try:
         if not session.inventory(): session.close(); return None
     except BaseException: session.close(); raise

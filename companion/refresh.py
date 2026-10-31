@@ -137,9 +137,9 @@ def _stage_locked(home, library, *, session, fixture, boundary, enable, context,
             # Staging is eligibility only. Actual interfaces, configuration and
             # child ownership are checked at the next launch, never live-swapped.
             if fixture:
-                family(read_json(home / 'installed-identity.json').get('package_versions', {}))
+                family(read_json(home / 'installed-identity.json').get('package_versions', {}), policy=catalog['startup_policy'])
             else:
-                bounded(family, 2)
+                bounded(lambda: family(policy=catalog['startup_policy']), 2)
         except (OSError, ValueError, TimeoutError, subprocess.SubprocessError):
             return response('blocked', 'unsupported_cosmic_family')
     else:

@@ -27,9 +27,9 @@ def digest(path):
 def prepare(args):
     if args.out.exists():raise ValueError('Choose a new repository directory')
     if not re.fullmatch('[0-9A-F]{40,64}',args.fingerprint):raise ValueError('Full signing-key fingerprint required')
-    if args.fedora!='43':raise ValueError('Only Fedora 43 x86_64 is currently supported')
+    if args.fedora not in ('43', '44'):raise ValueError('Only Fedora 43 and 44 x86_64 are supported')
     identity=run(['rpm','-qp','--qf','%{NAME}\t%{VERSION}\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}\t%{ARCH}',str(args.package)]).split('\t')
-    if len(identity)!=4 or identity[0]!=PACKAGE or identity[3]!='x86_64' or not identity[2].endswith('.fc43'):
+    if len(identity)!=4 or identity[0]!=PACKAGE or identity[3]!='x86_64' or not identity[2].endswith('.fc'+args.fedora):
         raise ValueError('Unexpected native package target')
     if not re.fullmatch(r'\d+\.\d+\.\d+',identity[1]):raise ValueError('Stable product version required')
     keys=run(['gpg','--batch','--with-colons','--show-keys',str(args.public_key)])
@@ -54,7 +54,7 @@ def prepare(args):
         run(['gpg','--homedir',home,'--batch','--import',str(public)])
         run(['gpg','--homedir',home,'--batch','--verify',str(metadata)+'.asc',str(metadata)])
     proof={'format':'halcyon-rpm-repository-candidate','version':1,'published':False,
-           'target':'fedora43-x86_64','product_version':identity[1],'package_version':identity[2],
+           'target':f'fedora{args.fedora}-x86_64','product_version':identity[1],'package_version':identity[2],
            'signing_fingerprint':args.fingerprint,'artifacts':{str(p.relative_to(args.out)):digest(p)
              for p in sorted(args.out.rglob('*')) if p.is_file()},
            'release_gate':'held; corresponding source and final native acceptance required'}

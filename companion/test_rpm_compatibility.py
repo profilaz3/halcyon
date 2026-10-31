@@ -60,9 +60,51 @@ class RpmPolicy(unittest.TestCase):
         with patch.object(r,'rpm_system',return_value=True):
             with self.assertRaises(ValueError):r.validate_platform({'startup_policy':r.POLICY})
             versions={name:'0:1.10.0-2.fc43' for name in ('cosmic-panel',*r.CORE)}
-            self.assertEqual(r.family(versions)['policy'],r.FEDORA_POLICY['id'])
+            self.assertEqual(r.family(versions, policy=r.FEDORA_POLICY)['policy'],r.FEDORA_POLICY['id'])
             versions['cosmic-panel']='0:1.11.0-1.fc43'
-            with self.assertRaises(ValueError):r.family(versions)
+            with self.assertRaises(ValueError):r.family(versions, policy=r.FEDORA_POLICY)
+
+    def test_new_policies_remain_platform_and_binary_specific(self):
+        for policy in (r.FEDORA43_POLICY, r.FEDORA44_POLICY):
+            catalog = {'startup_policy': policy}
+            manifest = dict(upstream=r.CONFIGURATION_SOURCE['upstream'], protocol=1,
+                            runtime_probe=1, binary_sha256=policy['binary_sha256'])
+            r.validate_bundle(manifest, catalog)
+            for other in (r.POLICY, r.FEDORA43_POLICY, r.FEDORA44_POLICY):
+                if other['binary_sha256'] != policy['binary_sha256']:
+                    with self.assertRaises(ValueError):
+                        r.validate_bundle({**manifest, 'binary_sha256': other['binary_sha256']}, catalog)
+            for version in ('42', '43', '44', '45'):
+                with patch('platform.machine', return_value='x86_64'), patch.object(r, 'os_release', return_value=dict(ID='fedora', VERSION_ID=version)):
+                    if version == policy['platform']['version']:
+                        r.validate_platform(catalog)
+                    else:
+                        with self.assertRaises(ValueError): r.validate_platform(catalog)
+            with patch('platform.machine', return_value='aarch64'), patch.object(r, 'os_release', return_value=dict(ID='fedora', VERSION_ID=policy['platform']['version'])):
+                with self.assertRaises(ValueError): r.validate_platform(catalog)
+
+    def test_family_selection_does_not_broaden_a_historical_catalog(self):
+        for policy, supported in ((r.FEDORA_POLICY, ('1.10',)),
+                                  (r.FEDORA43_POLICY, ('1.10', '1.11')),
+                                  (r.FEDORA44_POLICY, ('1.11',))):
+            for family in ('1.9', '1.10', '1.11', '1.12'):
+                versions = {n: f'0:{family}.0-2.fc{policy["platform"]["version"]}' for n in ('cosmic-panel', *r.CORE)}
+                if family in supported:
+                    self.assertEqual(r.family(versions, policy=policy)['policy'], policy['id'])
+                else:
+                    with self.assertRaises(ValueError): r.family(versions, policy=policy)
+        versions = {n: '0:1.11.0-2.fc44' for n in ('cosmic-panel', *r.CORE)}
+        versions['cosmic-session'] = '0:1.10.0-2.fc44'
+        with self.assertRaises(ValueError): r.family(versions, policy=r.FEDORA44_POLICY)
+
+    def test_default_policy_uses_the_actual_fedora_release(self):
+        with patch.object(r, 'rpm_system', return_value=True):
+            for version, policy in (('43', r.FEDORA43_POLICY), ('44', r.FEDORA44_POLICY)):
+                with patch.object(r, 'os_release', return_value=dict(ID='fedora', VERSION_ID=version)):
+                    self.assertEqual(r.current_policy(), policy)
+            for release in (dict(ID='fedora', VERSION_ID='45'), dict(ID='rhel', VERSION_ID='44')):
+                with patch.object(r, 'os_release', return_value=release):
+                    with self.assertRaises(ValueError): r.current_policy()
 
 
 if __name__=='__main__':unittest.main()

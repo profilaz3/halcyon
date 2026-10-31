@@ -1,3 +1,10 @@
+cosmic-ext-halcyon (0.5.6) unstable; urgency=medium
+
+  * Add native Fedora 44 packages and signed DNF updates.
+  * Support COSMIC 1.11 on Fedora 43 and Fedora 44.
+
+ -- profilaz3 <261673162+profilaz3@users.noreply.github.com>  Sat, 31 Oct 2026 12:00:00 +0000
+
 cosmic-ext-halcyon (0.5.5) unstable; urgency=medium
 
   * Add GPU wallpaper rain, snow, fog and cloud shadows with adjustable quality.

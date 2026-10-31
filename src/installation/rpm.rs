@@ -386,12 +386,19 @@ mod tests {
             identity.installed_version.as_deref(),
             Some(env!("CARGO_PKG_VERSION"))
         );
+        let release = fs::read_to_string("/etc/os-release").unwrap();
+        let fedora = release
+            .lines()
+            .find_map(|line| line.strip_prefix("VERSION_ID="))
+            .unwrap()
+            .trim_matches('"');
+        assert!(matches!(fedora, "43" | "44"));
         assert!(
             identity
                 .package_version
                 .as_deref()
                 .unwrap()
-                .ends_with(".fc43")
+                .ends_with(&format!(".fc{fedora}"))
         );
         assert_eq!(identity.islands_match, IslandsMatch::Ready);
         let observed = observation(root);

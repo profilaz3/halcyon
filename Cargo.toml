@@ -1,6 +1,6 @@
 [package]
 name = "cosmic-ext-halcyon"
-version = "0.5.5"
+version = "0.5.6"
 description = "Desktop widgets and themes for COSMIC"
 homepage = "https://github.com/profilaz3/halcyon"
 repository = "https://github.com/profilaz3/halcyon"

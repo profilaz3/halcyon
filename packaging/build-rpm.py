@@ -28,7 +28,7 @@ def module(name, path):
 def build(args):
     if not re.fullmatch(r'\d+\.\d+\.\d+(?:[.~][A-Za-z0-9.]+)?',args.version):
         raise ValueError('Invalid product version')
-    if not re.fullmatch(r'[0-9][A-Za-z0-9.]*',args.release) or not re.fullmatch(r'\d{2}',args.fedora):
+    if not re.fullmatch(r'[0-9][A-Za-z0-9.]*',args.release) or args.fedora not in ('43', '44'):
         raise ValueError('Invalid RPM release or Fedora target')
     if subprocess.check_output(['rpm','--eval','%{_arch}'],text=True).strip() != 'x86_64':
         raise ValueError('Only x86_64 is supported')
@@ -41,6 +41,9 @@ def build(args):
                     host_sha256=hashlib.sha256(args.islands_binary.read_bytes()).hexdigest())
     if any(proof.get(k) != v for k,v in expected.items()):
         raise ValueError('Fedora build provenance does not match this target and both executables')
+    catalog = json.loads(args.islands_catalog.read_text())
+    if catalog.get('startup_policy', {}).get('platform') != dict(id='fedora', version=args.fedora, architecture='x86_64'):
+        raise ValueError('Native startup policy does not match the RPM target')
     evr = f'0:{args.version}-{args.release}.fc{args.fedora}'
     args.out.mkdir(parents=True,exist_ok=True)
     wallpapers = sorted((args.wallpapers or app.default_wallpapers()).glob('*.jpg'))
