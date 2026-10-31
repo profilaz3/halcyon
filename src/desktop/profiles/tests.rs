@@ -1490,3 +1490,41 @@ fn fb15_moments_profile_requires_v12_preserves_private_state_and_undo() {
     assert_eq!(fs::read(&desk.config).unwrap(), before);
     assert!(capture(&store, "Old").unwrap().profile.written_version() < 12);
 }
+
+#[test]
+fn rain_setup_capture_keeps_explicit_off_and_applies_with_undo() {
+    let desk = desk(
+        "rain-reset",
+        Srgb::new(0.3, 0.4, 0.7),
+        Srgb::new(0.2, 0.4, 0.7),
+        "teal",
+    );
+    let mut raw: Value = serde_json::from_slice(&fs::read(&desk.config).unwrap()).unwrap();
+    raw["rain"] = serde_json::to_value(crate::rain::Preferences::default()).unwrap();
+    fs::write(&desk.config, serde_json::to_vec(&raw).unwrap()).unwrap();
+    let store = desk.store();
+    let captured = capture(&store, "Rain off").unwrap().profile;
+    assert_eq!(captured.written_version(), 19);
+    assert_eq!(
+        captured.widget_style.as_ref().unwrap()["rain"]["enabled"],
+        false
+    );
+    raw["rain"]["enabled"] = true.into();
+    fs::write(&desk.config, serde_json::to_vec(&raw).unwrap()).unwrap();
+    let before = fs::read(&desk.config).unwrap();
+    let proposal = plan(
+        &store,
+        &desk.installed(),
+        &captured,
+        &[Domain::WidgetStyle].into(),
+    );
+    assert!(proposal.can_apply(), "{:?}", proposal.blocking_reasons());
+    let receipt = apply(&store, &proposal).unwrap();
+    let after: Value = serde_json::from_slice(&fs::read(&desk.config).unwrap()).unwrap();
+    assert_eq!(after["rain"]["enabled"], false);
+    store.undo_latest(&receipt.id).unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(&desk.config).unwrap()).unwrap(),
+        serde_json::from_slice::<Value>(&before).unwrap()
+    );
+}

@@ -409,6 +409,9 @@ fn capture_widgets(
         .iter()
         .any(|pointer| raw.pointer(pointer).is_some());
     for field in widget::fields(group) {
+        if field.pointer == "/rain" && raw.get("rain").is_none() {
+            continue;
+        }
         // Never-configured recipes keep legacy exports compatible. An applied
         // recipe or explicit reset is captured so later Apply restores intent.
         if field.pointer.starts_with("/recipes/") && raw.pointer(field.pointer).is_none() {
@@ -460,7 +463,11 @@ fn capture_widgets(
             // A widget without a saved position uses its default place.
             widget::get(raw, field.pointer).unwrap_or(Value::Null)
         } else {
-            match widget::get(effective, field.pointer) {
+            match widget::get(effective, field.pointer).or_else(|| {
+                (field.pointer == "/rain")
+                    .then(|| widget::get(raw, field.pointer))
+                    .flatten()
+            }) {
                 Some(value) => value,
                 None => continue,
             }

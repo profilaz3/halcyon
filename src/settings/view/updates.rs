@@ -49,7 +49,7 @@ impl Settings {
                     content.push(label(error.label(), 12., MUTED));
                 }
                 match identity.channel {
-                    UpdateChannel::Apt if identity.can_check() => {
+                    UpdateChannel::Apt | UpdateChannel::Dnf if identity.can_check() => {
                         if self.updates.check == Check::Checking {
                             actions.push(action("Cancel check", "updates-cancel", Update::Cancel));
                         } else {
@@ -68,9 +68,9 @@ impl Settings {
                         if identity.store.is_some() {
                             actions.push(
                                 (if summary.system_action {
-                                    button::suggested("Update in COSMIC Store")
+                                    button::suggested("Open system updates")
                                 } else {
-                                    button::standard("Open COSMIC Store")
+                                    button::standard("Open system updates")
                                 })
                                 .id(cosmic::widget::Id::new("updates-store"))
                                 .on_press_maybe(
@@ -86,9 +86,17 @@ impl Settings {
                                 12.,
                                 MUTED,
                             ));
+                            if let Some(command) = identity.update_command() {
+                                content.push(label(command, 12., MUTED));
+                                actions.push(action(
+                                    "Copy update command",
+                                    "updates-copy-command",
+                                    Update::CopyCommand,
+                                ));
+                            }
                         }
                     }
-                    UpdateChannel::ManualDeb => {
+                    UpdateChannel::ManualDeb | UpdateChannel::ManualRpm => {
                         actions.push(action(
                             "Download a release",
                             "updates-releases",

@@ -194,6 +194,11 @@ def generation_status(result, home, library, installed=None, running=None, host=
 
 
 def query(package, field):
+    from runtime_identity import rpm_system, package_version
+    if rpm_system():
+        version = package_version(package)
+        if field == '${Status}': return 'install ok installed' if version else ''
+        return version or '' if field == '${Version}' else ''
     try:
         return subprocess.check_output(['/usr/bin/dpkg-query', '-W', '-f=' + field, package], stderr=subprocess.DEVNULL, text=True, timeout=1).strip()
     except (OSError, subprocess.SubprocessError):
@@ -210,8 +215,9 @@ def inspect(home, library, installed, versions, initial):
             manifest, catalog = verify_bundle(library, 'companion-manifest.json', context=context)
             # Disabled management needs no OS or live-process measurement.
             if initial['enabled']:
-                from runtime_compatibility import enabled as family_policy, family, Session
+                from runtime_compatibility import enabled as family_policy, family, Session, validate_platform
                 if family_policy(catalog):
+                    validate_platform(catalog)
                     measured = family()
                     _, selected, _, _ = selected_generation(home, context=context)
                     owner = host_identity(selected['binary_sha256'])

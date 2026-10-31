@@ -2,18 +2,20 @@ ${CHANGES}
 
 ## Install
 
-[Download Halcyon ${VERSION}](https://github.com/${REPOSITORY}/releases/download/${TAG}/cosmic-ext-halcyon_${VERSION}_amd64.deb) for Pop!_OS 24.04 with COSMIC, on 64-bit Intel or AMD PCs.
+[Pop!_OS 24.04 · DEB](https://github.com/${REPOSITORY}/releases/download/${TAG}/cosmic-ext-halcyon_${VERSION}_amd64.deb) · [Fedora 43 COSMIC · RPM](https://github.com/${REPOSITORY}/releases/download/${TAG}/cosmic-ext-halcyon-${VERSION}-1.fc43.x86_64.rpm)
 
-Open the file in COSMIC Store and choose **Install**. Or use:
+For 64-bit Intel and AMD PCs. Open the DEB in COSMIC Store, or install from the download folder:
 
 ```sh
 sudo apt install ./cosmic-ext-halcyon_${VERSION}_amd64.deb
 ```
 
-**Optional Islands:** Open **App settings → Updates → Get Islands…**, install, then choose **Enable for next login**. Log out and back in.
+On Fedora:
 
-**Calendar subscriptions:** [Setup guide](https://github.com/${REPOSITORY}/blob/${TAG}/docs/CALENDAR.md).
+```sh
+sudo dnf install ./cosmic-ext-halcyon-${VERSION}-1.fc43.x86_64.rpm
+```
 
-**Google sign-in:** ${CALENDAR}
+Existing installations update through COSMIC Store, APT or DNF. Islands is included; enable it in **Desktop → Dock & panel**. Enabled panel updates take effect at the next login.
 
-Usage sharing is on by default; disable it during setup or in **App settings → Privacy**.
+[Installation guide](https://github.com/${REPOSITORY}/blob/${TAG}/docs/DISTRIBUTION.md) · [Calendar setup](https://github.com/${REPOSITORY}/blob/${TAG}/docs/CALENDAR.md)

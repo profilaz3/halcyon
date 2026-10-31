@@ -35,6 +35,7 @@ fn message_scope(config: &Config, message: &Message) -> Vec<String> {
     let mut fields = Vec::new();
     let mut add = |parts: &[&str]| fields.push(pointer(parts));
     match message {
+        Message::Rain(super::rain::Edit::Commit | super::rain::Edit::Set(_)) => add(&["rain"]),
         Message::Moment(edit) => {
             if let Some(path) = super::moments::scope(edit) {
                 fields.push(path);
@@ -160,6 +161,9 @@ impl Settings {
             _ => false,
         };
         if flushes {
+            if self.rain.draft.is_some() {
+                fields.push("/rain".into());
+            }
             fields.extend(self.appearance_pending.iter().map(|control| {
                 pointer(&[
                     "appearance",

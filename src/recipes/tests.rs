@@ -253,3 +253,66 @@ fn system_recipe_metric_selection_sampling_and_portable_versions() {
     config.recipes.devbox = None;
     assert_eq!(config.devbox_sampling().as_ref(), &original);
 }
+
+#[test]
+fn tool_recipe_versions_roundtrip_reset_and_reject_downgrades() {
+    let raw = serde_json::json!({"music":{"player":"private-player"},"focus":{"focus_minutes":50}});
+    for kind in [Kind::Music, Kind::Focus] {
+        for template in 0..3 {
+            let mut recipe = Recipe::template(kind, template);
+            recipe.finish = Some(Finish::Paper);
+            recipe.seal();
+            recipe.validate().unwrap();
+            let mut doc = crate::design::Document::from_legacy(&raw).unwrap();
+            doc.put_legacy(kind.pointer(), Some(serde_json::to_value(&recipe).unwrap()))
+                .unwrap();
+            assert_eq!(doc.version, 4);
+            let roundtrip = crate::design::Document::parse(&doc.bytes().unwrap()).unwrap();
+            assert_eq!(
+                roundtrip
+                    .project(&raw)
+                    .unwrap()
+                    .pointer(kind.pointer())
+                    .unwrap(),
+                &serde_json::to_value(&recipe).unwrap()
+            );
+            doc.version = 3;
+            assert!(doc.validate().is_err());
+            doc.version = 4;
+            doc.put_legacy(kind.pointer(), Some(serde_json::Value::Null))
+                .unwrap();
+            assert!(
+                doc.project(&raw)
+                    .unwrap()
+                    .pointer(kind.pointer())
+                    .unwrap()
+                    .is_null()
+            );
+            let mut profile = crate::desktop::profiles::Profile::new("Portable tool").unwrap();
+            profile.widget_style =
+                Some(serde_json::json!({"recipes":{kind.widget().key():recipe}}));
+            profile.version = profile.written_version();
+            assert_eq!(profile.version, 17);
+            let bytes = crate::desktop::profiles::export(&profile).unwrap().bytes;
+            assert!(!String::from_utf8_lossy(&bytes).contains("private-player"));
+            let imported = crate::desktop::profiles::import(&bytes).unwrap();
+            let scene = crate::settings::sharing::Scene::new(&imported).unwrap();
+            assert_eq!(scene.config().unwrap().recipes.get(kind), Some(&recipe));
+            profile.version = 16;
+            assert!(profile.validate().is_err());
+        }
+    }
+    for kind in [Kind::Clock, Kind::Weather, Kind::Calendar, Kind::System] {
+        let recipe = Recipe::starter(kind);
+        let json = serde_json::to_value(&recipe).unwrap();
+        assert!(json.get("finish").is_none() && json.get("timer_face").is_none());
+        assert_eq!(
+            Recipe::parse(&serde_json::to_vec(&json).unwrap()).unwrap(),
+            recipe
+        );
+        let mut invalid = recipe;
+        invalid.finish = Some(Finish::Paper);
+        invalid.seal();
+        assert!(invalid.validate().is_err());
+    }
+}

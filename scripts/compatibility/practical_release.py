@@ -25,6 +25,7 @@ FINAL_REVIEWS={
     '0.4.0': ROOT/'companion/compatibility/evidence/reviewed-final-040.json',
     '0.4.1': ROOT/'companion/compatibility/evidence/reviewed-final-041.json',
     '0.5.0': ROOT/'companion/compatibility/evidence/reviewed-final-050.json',
+    '0.5.5': ROOT/'companion/compatibility/evidence/reviewed-final-055.json',
 }
 LIMITATIONS=['physical-hardware-not-qualified','cosmic-1.10-not-native-qualified',
              'new-family-startup-helpers-not-native-qualified','not-full-native-matrix']
@@ -38,7 +39,7 @@ def final_package_review(root, data, bindings):
     if path is None or not path.is_file():
         raise ValueError('final_package_review_pending')
     record=read_json(path)
-    bundled = data.get('release') == '0.5.0'
+    bundled = data.get('packaging') == 'bundled-islands'
     observations = dict(installation='passed', settings='passed')
     if bundled:
         if data.get('packaging') != 'bundled-islands':

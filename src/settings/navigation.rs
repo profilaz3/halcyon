@@ -432,6 +432,13 @@ const SEARCH: &[SearchHit] = &[
     .at("dock-advanced"),
     hit(
         Page::DesktopWallpaper,
+        "Wallpaper effects",
+        "rain snow fog cloud shadows living wallpaper droplets flakes opacity mist wind refraction animation",
+        false,
+    )
+    .at("rain-controls"),
+    hit(
+        Page::DesktopWallpaper,
         "Wallpaper & colors",
         "wallpaper background pictures slideshow gradient widget color colors palette accent sync automatic follow desktop pop os",
         false,

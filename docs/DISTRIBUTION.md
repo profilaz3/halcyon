@@ -1,7 +1,8 @@
 # Distribution and system updates
 
 Halcyon, including the optional Islands panel component, is available from
-[GitHub Releases](https://github.com/profilaz3/halcyon/releases/latest) and signed APT.
+[GitHub Releases](https://github.com/profilaz3/halcyon/releases/latest), signed APT
+and signed DNF repositories.
 The signed channel is `https://profilaz3.github.io/halcyon/apt`, suite `noble`,
 component `main`, architecture `amd64` (Intel and AMD x86-64 PCs).
 
@@ -9,6 +10,15 @@ For a new installation, open the
 [latest release](https://github.com/profilaz3/halcyon/releases/latest), download
 `cosmic-ext-halcyon_<version>_amd64.deb`, and open it with COSMIC Store to install.
 Then open Halcyon from the launcher. [Terminal fallback](#install-a-downloaded-package).
+
+For **Fedora 43 COSMIC (x86-64)**, download
+`cosmic-ext-halcyon-<version>-1.fc43.x86_64.rpm` instead. Open it with the system
+package installer, or use `sudo dnf install ./cosmic-ext-halcyon-<version>-1.fc43.x86_64.rpm`.
+The first installation adds the signed Halcyon DNF source. Later updates arrive
+through **COSMIC Store → Updates** or `sudo dnf upgrade --refresh cosmic-ext-halcyon`.
+Both package formats include Halcyon, Islands and Penumbra. See
+[Fedora packaging and updates](FEDORA-PACKAGING.md) for the supported target and
+repository details.
 
 **Release packages since 0.3.0 enable signed system updates on a clean install.** No bootstrap
 download is needed. The main package contains the reviewed public key, scoped
@@ -163,16 +173,6 @@ needs them. Administrator changes and bootstrap-owned files are retained. Recove
 of a removed installation can use the explicit bootstrap above. If Python itself
 has already been removed, the removal script leaves the public configuration
 intact rather than leaving an active source without its key.
-
-## Islands in 0.5 (in development)
-
-The next release includes Islands in the Halcyon package. Enable it in
-**Desktop → Dock & panel → Enable for next login**. There is no second download.
-The current panel keeps running until the next login. Existing enabled or disabled
-choices and layouts are preserved. App and Islands updates arrive together.
-
-Existing two-package installations receive an empty upgrade bridge through APT;
-new installs only need Halcyon. See the [implementation and migration contract](future-builder/BUNDLED-ISLANDS.md).
 
 ## Islands in published 0.4.x releases
 

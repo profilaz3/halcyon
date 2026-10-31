@@ -1,5 +1,5 @@
 //! Update discovery and included Islands activation. The OS installs updates.
-mod identity;
+use crate::installation as identity;
 pub(super) mod islands;
 mod packagekit;
 mod summary;
@@ -68,6 +68,7 @@ pub enum Message {
     Cancel,
     Checked(u64, Result<Option<String>, Failure>),
     OpenStore,
+    CopyCommand,
     StoreOpened(u64, Result<(), String>),
     Releases,
     Information,
@@ -201,6 +202,16 @@ impl Settings {
                     );
                 }
             }
+            Message::CopyCommand => {
+                if let Some(command) = self
+                    .updates
+                    .identity
+                    .as_ref()
+                    .and_then(Identity::update_command)
+                {
+                    return cosmic::iced::clipboard::write(command.to_owned());
+                }
+            }
             Message::Information => {
                 return super::run_command(
                     "/usr/bin/xdg-open".into(),
@@ -288,8 +299,22 @@ impl Updates {
             Check::Available(v) => v,
             _ => identity.installed_version.as_ref()?,
         };
-        // Only stable upstream x.y.z tags; do not invent tags for epochs or prereleases.
-        let upstream = version.split_once('-').map_or(version.as_str(), |(v, _)| v);
+        // RPM's native epoch/release identify package revisions. Release notes
+        // use the separate stable product version, never the Fedora suffix.
+        let native = if identity.channel == UpdateChannel::Dnf {
+            version
+                .split_once(':')
+                .map_or(version.as_str(), |(epoch, value)| {
+                    if !epoch.is_empty() && epoch.bytes().all(|c| c.is_ascii_digit()) {
+                        value
+                    } else {
+                        ""
+                    }
+                })
+        } else {
+            version.as_str()
+        };
+        let upstream = native.split_once('-').map_or(native, |(v, _)| v);
         let parts: Vec<_> = upstream.split('.').collect();
         (parts.len() == 3
             && parts

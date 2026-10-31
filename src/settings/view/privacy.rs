@@ -19,7 +19,7 @@ impl Settings {
             .align_y(Alignment::Center)
             .into(),
             label(
-                "Reports app version, first start, country and daily activity. Never widget content.",
+                "Reports versions, update channel, first start, country and daily activity. Never widget content.",
                 12.,
                 MUTED,
             ),

@@ -585,7 +585,7 @@ fn polish_privacy_discloses_activity_and_opt_out_status_in_view() {
     send_settings(&mut app, Message::AppSettingsPage(AppSettingsPage::Privacy));
     let mut native = crate::native_test::Native::new(size);
     for label in [
-        "Reports app version, first start, country and daily activity. Never widget content.",
+        "Reports versions, update channel, first start, country and daily activity. Never widget content.",
         "Turning this off stops activity reporting and queues a final preference update.",
     ] {
         let bounds = native.text_bounds(app.settings_view(), label);

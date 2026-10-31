@@ -106,7 +106,7 @@ test('simultaneous expiry uses bounded adjacent batches for reports and maintena
   if(maintenance) s.maintenance();
   else s.write_(f.raw,rows,s.applyReport(rows,'0',activity,new Date()));
   assert.equal(writes.length,Math.ceil(count/256));
-  assert.ok(writes.every(([,col,h,w])=>col===1 && h<=256 && w===16));
+  assert.ok(writes.every(([,col,h,w])=>col===1 && h<=256 && w===17));
   assert.equal(f.rows()[1][12],maintenance?1:2);
   assert.ok(f.rows().slice(2).every(row=>row[12]===1));
  }
@@ -114,9 +114,9 @@ test('simultaneous expiry uses bounded adjacent batches for reports and maintena
 test('batch writes skip unchanged gaps and recover from interruption across a batch boundary',()=>{
  const f=fixture(),s=f.sandbox,today=s.dayNumber(new Date());s.setup();
  const rows=Array.from({length:600},(_,i)=>[String(i),today-1,'0.3.0','','enabled','','',0,'',now.toISOString(),'','0.3.0',2,JSON.stringify([today-90,today-1]),now.toISOString()]);
- f.seed(rows);f.failAfterCells(256*16+10);
+ f.seed(rows);f.failAfterCells(256*17+10);
  assert.throws(()=>s.maintenance());s.maintenance();
  assert.equal(f.rows().length,601);assert.ok(f.rows().slice(1).every(row=>row[12]===1 && row[11]==='0.3.0'));
- const before=f.rows().slice(1),after=before.map(row=>row.slice());after[0][2]='0.3.1';after[2][2]='0.3.1';
+ const before=f.raw.getRange(2,1,600,17).getValues(),after=before.map(row=>row.slice());after[0][2]='0.3.1';after[2][2]='0.3.1';
  const count=f.state.writes;s.write_(f.raw,before,after);assert.equal(f.state.writes-count,2);
 });

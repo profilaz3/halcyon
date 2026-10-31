@@ -13,8 +13,84 @@ import subprocess
 from bundle_contract import digest, runtime_id, valid_runtime
 
 
+def rpm_system(root=Path('/')):
+    try:
+        with (root/'etc/os-release').open('rb') as stream:
+            raw = stream.read(65537)
+        if len(raw) > 65536: return False
+        return any(line.partition('=')[0] == 'ID' and line.partition('=')[2].strip('"') == 'fedora'
+                   for line in raw.decode().splitlines())
+    except (OSError, UnicodeError): return False
+
+
+def package_database_paths(root=Path('/')):
+    if rpm_system(root):
+        # Fedora's sqlite database may update via WAL or atomic replacement.
+        base = root/'usr/lib/sysimage/rpm'
+        # The SHM file is SQLite reader coordination, not package state. Readers
+        # update it on every query; the database and WAL contain actual state.
+        return (base, base/'rpmdb.sqlite', base/'rpmdb.sqlite-wal')
+    return (root/'var/lib/dpkg/status',)
+
+
+def watch_package_database(watch,root=Path('/')):
+    rpm=rpm_system(root)
+    for path in package_database_paths(root):
+        (watch.add_content if rpm else watch.add)(path)
+
+
+def rpm_query(arguments, timeout=3):
+    return subprocess.run(['/usr/bin/rpm', '--dbpath', '/usr/lib/sysimage/rpm', *arguments],
+                          capture_output=True, text=True, timeout=timeout)
+
+
+def package_version(name):
+    """Installed native version, or None. No filename or version guessing."""
+    if not re.fullmatch(r'[a-z0-9][a-z0-9+.-]{0,127}', name): return None
+    try:
+        if rpm_system():
+            result = rpm_query(['-q', '--qf', '%{NAME}\\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}\\n', name])
+            rows = result.stdout.splitlines()
+            if result.returncode or len(rows) != 1: return None
+            package, version = rows[0].split('\t')
+            return version if package == name and re.fullmatch(r'[A-Za-z0-9.+:~^_-]{1,128}', version) else None
+        result = subprocess.run(['/usr/bin/dpkg-query', '-W', '-f=${Status}\\n${Version}', name],
+                                capture_output=True, text=True, timeout=3)
+        rows = result.stdout.splitlines()
+        from bundle_contract import installed_package_status
+        return rows[1] if not result.returncode and len(rows) == 2 and installed_package_status(rows[0]) else None
+    except (OSError, ValueError, subprocess.SubprocessError): return None
+
+
+def version_newer(candidate, installed):
+    if not all(isinstance(v,str) and re.fullmatch(r'[A-Za-z0-9.+:~^_-]{1,128}',v) for v in (candidate, installed)):
+        return False
+    if rpm_system():
+        # Strict alphabet above excludes Lua quotes and RPM macro expansion.
+        result = rpm_query(['--eval', "%{lua:print(rpm.vercmp('" + candidate + "','" + installed + "'))}"], timeout=2)
+        return not result.returncode and result.stdout.strip() == '1'
+    return subprocess.run(['/usr/bin/dpkg','--compare-versions',candidate,'gt',installed],
+                          stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=2).returncode == 0
+
+
 def versions():
     try:
+        if rpm_system():
+            result = rpm_query(['-qa', '--qf', '%{NAME}\\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}\\t%{ARCH}\\n'])
+            if result.returncode or len(result.stdout) > 4*1024*1024: return {}
+            candidates = {}
+            for name, version, arch in (line.split('\t') for line in result.stdout.splitlines()):
+                candidates.setdefault(name, []).append((version, arch))
+            result_rows = {}
+            for name, installed in candidates.items():
+                # Fedora retains older kernels and can have unrelated multilib
+                # packages. Ambiguity invalidates that package, not all COSMIC.
+                if len(installed) == 1:
+                    result_rows[name] = installed[0]
+                for version, arch in installed:
+                    if sum(other_arch == arch for _, other_arch in installed) == 1:
+                        result_rows[name + ':' + arch] = (version, arch)
+            return result_rows
         result = subprocess.run(['/usr/bin/dpkg-query', '-W', '-f=${binary:Package}\t${Version}\t${Architecture}\t${db:Status-Status}\n'],
                                 capture_output=True, text=True, timeout=3, check=True)
         return {name: (version, architecture) for name, version, architecture, state in
@@ -47,8 +123,9 @@ def installed_identity(catalog, root=Path('/'), package_versions=None, system=No
             with path.open('rb') as stream: data = stream.read(65537)
             if len(data)>65536: return result
             values = dict(line.split('=', 1) for line in data.decode().splitlines() if '=' in line)
-            architecture = subprocess.check_output(['/usr/bin/dpkg','--print-architecture'], text=True, timeout=2).strip() if root == Path('/') else None
-            system = dict(distribution=values['ID'].strip('"'), suite=values.get('VERSION_CODENAME',values.get('UBUNTU_CODENAME','')).strip('"'), architecture=architecture)
+            rpm = rpm_system(root)
+            architecture = (rpm_query(['--eval', '%{_arch}']).stdout.strip() if rpm else subprocess.check_output(['/usr/bin/dpkg','--print-architecture'], text=True, timeout=2).strip()) if root == Path('/') else None
+            system = dict(distribution=values['ID'].strip('"'), suite=values.get('VERSION_ID' if rpm else 'VERSION_CODENAME',values.get('UBUNTU_CODENAME','')).strip('"'), architecture=architecture)
         except (OSError, KeyError, ValueError, subprocess.SubprocessError): return result
     # The loader can select code outside the declared closure. Do not silently
     # sanitize an already running user's processes and claim they match.
@@ -58,7 +135,7 @@ def installed_identity(catalog, root=Path('/'), package_versions=None, system=No
     with (contextlib.nullcontext(measurement) if measurement is not None else FileMeasurement(root=root, **work)) as measurement:
         measurement.max_files=work['max_files']; measurement.max_bytes=work['max_bytes']
         if package_versions is None:
-            measurement.watch.add(Path('/var/lib/dpkg/status'))
+            watch_package_database(measurement.watch, root)
             package_versions=versions()
         for row in catalog['cohorts']:
             if row['qualification'] != 'native-session': continue

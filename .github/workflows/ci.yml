@@ -26,7 +26,7 @@ jobs:
             libxkbcommon-dev libwayland-dev libexpat1-dev libfontconfig-dev \
             fonts-open-sans fonts-noto-mono \
             libfreetype-dev libinput-dev libudev-dev libdbus-1-dev libseat-dev \
-            libegl1-mesa-dev libvulkan-dev libssl-dev libclang-dev \
+            libegl1-mesa-dev libvulkan-dev mesa-vulkan-drivers libssl-dev libclang-dev \
             dpkg-dev apt-utils gnupg util-linux apparmor appstream desktop-file-utils lintian python3 python3-yaml
       - name: Install Rust 1.93
         uses: dtolnay/rust-toolchain@master
@@ -50,6 +50,7 @@ jobs:
           python3 -m unittest discover -s packaging -p 'test_*.py'
           python3 -m unittest discover -s packaging/updates -p 'test_*.py'
           python3 -m unittest discover -s packaging/islands -p 'test_*.py'
+          python3 -m unittest discover -s scripts/rpm -p 'test_*.py'
           PYTHONPATH=companion python3 -m unittest discover -s companion -p 'test_*.py'
           PYTHONPATH=companion:scripts/compatibility python3 -m unittest discover -s scripts/compatibility -p 'test_*.py'
           # Ubuntu 24.04 restricts unprivileged user namespaces. Grant only

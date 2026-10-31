@@ -46,6 +46,15 @@ pub(crate) fn settings_recipe_preview(
     missing: bool,
     size: [f32; 2],
 ) -> cosmic::Element<'static, Message> {
+    if recipe.tool() {
+        return crate::tools::cards::recipe::sample(
+            config,
+            recipe,
+            crate::tools::cards::recipe::PreviewState::Active,
+            size,
+        )
+        .map(|_| Message::Preview);
+    }
     let mut config = config.clone();
     config.recipes.set(recipe.kind, Some(recipe.clone()));
     config.location = (!missing).then(|| crate::config::Location {
@@ -106,6 +115,7 @@ pub(crate) use settings_preview::{
 };
 #[cfg(test)]
 mod look_render_tests;
+mod rain;
 #[cfg(test)]
 mod theme_desktop_tests;
 #[cfg(test)]
@@ -113,6 +123,7 @@ mod theme_tests;
 mod tools;
 #[cfg(test)]
 mod utility_tests;
+mod visualizer;
 mod wallpaper_colors;
 mod weather;
 use chrono::{Datelike, Duration as Days, Local, NaiveDate};
@@ -131,6 +142,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    Preview,
     Tick,
     /// The wake for this deadline fired, this much earlier than the
     /// monotonic clock reached it (time lost in suspend).
@@ -138,6 +150,14 @@ pub enum Message {
     FilesChanged,
     DesktopPaletteChanged,
     WallpaperColorsChanged,
+    RainLifecycle(crate::rain::lifecycle::State),
+    RainReady(
+        window::Id,
+        u64,
+        Option<crate::desktop::wallpaper::BgEntry>,
+        Option<crate::desktop::wallpaper::media::Pixels>,
+        Option<crate::watch::FileStamp>,
+    ),
     DepthObserved(u64, Option<crate::desktop::wallpaper::BgEntry>),
     DepthReady(u64, Option<crate::desktop::wallpaper::media::Pixels>),
     WallpaperColorsReady(
@@ -201,6 +221,7 @@ pub enum Message {
     Captured(usize, window::Screenshot),
     /// A Music, Notes or Focus card control.
     Tool(crate::tools::cards::Action),
+    Audio(crate::tools::visualizer::Event),
     MusicFeed(crate::tools::music::Feed),
     MusicArt(String, Result<crate::tools::music::Art, String>),
     ToolDone(Result<(), String>),
@@ -228,7 +249,7 @@ pub enum Message {
 }
 pub struct Cards {
     core: Core,
-    ids: [window::Id; 12],
+    ids: [window::Id; 13],
     layout_editor: layout::LayoutEditor,
     surface_geometry: Option<layout::SurfaceGeometry>,
     displays: crate::displays::Registry,
@@ -300,6 +321,7 @@ pub struct Cards {
     /// the same deadline.
     wake_generation: u64,
     depth: depth::State,
+    rain: rain::State,
     wallpaper_color_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 impl cosmic::Application for Cards {
@@ -398,6 +420,7 @@ impl cosmic::Application for Cards {
             woke_at: (Instant::now(), SystemTime::now()),
             wake_generation: 0,
             depth: Default::default(),
+            rain: Default::default(),
             wallpaper_color_generation: Default::default(),
         };
         // Output discovery creates the first probe, including on late startup.
@@ -408,6 +431,15 @@ impl cosmic::Application for Cards {
     }
     fn subscription(&self) -> Subscription<Message> {
         let mut subscriptions = Vec::new();
+        if self.config.rain.enabled {
+            subscriptions.push(crate::rain::lifecycle::watch().map(Message::RainLifecycle));
+            let paths = self.rain.paths();
+            if !paths.is_empty() {
+                subscriptions.push(
+                    crate::watch::image_files(paths).map(|_| Message::WallpaperColorsChanged),
+                );
+            }
+        }
         if let Some(deadline) = self.wake_deadline() {
             subscriptions.push(
                 crate::schedule::wake_at(deadline)
@@ -418,6 +450,9 @@ impl cosmic::Application for Cards {
         // Players are followed only while the Music card is shown.
         if self.music_demand() {
             subscriptions.push(crate::tools::music::watch().map(Message::MusicFeed));
+        }
+        if self.visualizer_demand() {
+            subscriptions.push(crate::tools::visualizer::watch().map(Message::Audio));
         }
         let paths = Config::path()
             .into_iter()
@@ -433,7 +468,8 @@ impl cosmic::Application for Cards {
                 .color_subscription()
                 .map(|_| Message::DesktopPaletteChanged),
         );
-        if (self.config.clock.depth
+        if (self.config.rain.enabled
+            || self.config.clock.depth
             || self.config.appearance.wallpaper_colors
             || self.config.appearance.family.is_some())
             && let Ok(store) = crate::desktop::DesktopStore::from_env()
@@ -527,6 +563,9 @@ impl cosmic::Application for Cards {
         text::body("").into()
     }
     fn view_window(&self, id: window::Id) -> Element<'_, Message> {
+        if let Some(view) = self.rain_view(id) {
+            return view;
+        }
         if !self.ids.contains(&id) {
             return empty_surface();
         }
@@ -563,7 +602,9 @@ impl cosmic::Application for Cards {
             self.sync_music_shown()
         };
         let depth = self.depth_sync();
-        Task::batch([task, surfaces, depth])
+        let spectrum = self.sync_spectrum();
+        let rain = self.rain_sync();
+        Task::batch([task, surfaces, depth, spectrum, rain])
     }
     fn style(&self) -> Option<cosmic::iced::theme::Style> {
         Some(cosmic::iced::theme::Style {
@@ -576,6 +617,9 @@ impl cosmic::Application for Cards {
 
 impl Cards {
     fn surface_view(&self, id: window::Id) -> Element<'_, Message> {
+        if id == self.ids[12] {
+            return self.spectrum_view();
+        }
         if self.extra_probes.iter().any(|p| p.id == id) {
             return empty_surface();
         }
@@ -810,6 +854,15 @@ impl Cards {
     }
     fn handle_update(&mut self, msg: Message) -> Task<Message> {
         match msg {
+            Message::RainLifecycle(state) => {
+                self.rain.lifecycle = state;
+                Task::none()
+            }
+            Message::RainReady(id, generation, entry, pixels, stamp) => {
+                self.rain.ready(id, generation, entry, pixels, stamp);
+                Task::none()
+            }
+            Message::Preview => Task::none(),
             Message::SurfaceMessage(epoch, message) => {
                 if epoch != self.display_generation || !self.output_known {
                     return Task::none();
@@ -875,7 +928,8 @@ impl Cards {
             }
             Message::WallpaperColorsChanged => {
                 self.depth.invalidate();
-                self.wallpaper_colors_changed()
+                let rain = self.rain.invalidate();
+                Task::batch([rain, self.wallpaper_colors_changed()])
             }
             Message::DepthObserved(id, entry) => {
                 self.depth.observe(id, entry);
@@ -936,6 +990,9 @@ impl Cards {
                 Task::none()
             }
             Message::SurfaceResized(id, size) => {
+                if self.rain.owns(id) {
+                    return Task::none();
+                }
                 // A previously queued Create can finish after migration's
                 // Destroy. Its fresh ID cannot impersonate the new epoch;
                 // close that late surface as well as ignoring its geometry.
@@ -1301,6 +1358,17 @@ impl Cards {
             Message::Tool(action) => {
                 let task = self.update_tool(action);
                 Task::batch([task, self.capture_if_changed()])
+            }
+            Message::Audio(event) => {
+                self.tools.audio_bins = if self.visualizer_demand() {
+                    match event {
+                        crate::tools::visualizer::Event::Frame(bins) => bins,
+                        _ => [0.; crate::tools::visualizer::BINS],
+                    }
+                } else {
+                    [0.; crate::tools::visualizer::BINS]
+                };
+                Task::none()
             }
             Message::MusicFeed(feed) => {
                 let task = self.music_feed(feed);

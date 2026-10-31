@@ -204,7 +204,7 @@ class LiveDistribution(unittest.TestCase):
         self.assertTrue(result['missing_key_rejected'])
 
     def test_bootstrap_bytes_and_checksums_match_published_rust_identity(self):
-        source = (fixtures.ROOT/'src/settings/updates/identity.rs').read_text()
+        source = (fixtures.ROOT/'src/installation.rs').read_text()
         source_text = json.loads(re.search(r'const SOURCE_TEXT: &str = ("(?:[^"\\]|\\.)*");', source)[1])
         prefs_text = json.loads(re.search(r'const PREFS_TEXT: &str = ("(?:[^"\\]|\\.)*");', source)[1])
         self.assertEqual(fixtures.enrollment.configuration(), (source_text, prefs_text))

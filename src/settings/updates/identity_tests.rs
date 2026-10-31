@@ -2,6 +2,40 @@ use super::*;
 use std::os::unix::fs::{PermissionsExt, symlink};
 
 #[test]
+fn channel_update_commands_require_verified_enrollment() {
+    let mut value = Identity {
+        channel: UpdateChannel::Dnf,
+        enrollment: Enrollment::Enrolled,
+        architecture: Some("x86_64".into()),
+        evidence: Some("fixture".into()),
+        installed_version: Some(env!("CARGO_PKG_VERSION").into()),
+        ..Identity::default()
+    };
+    assert_eq!(
+        value.update_command(),
+        Some("sudo dnf upgrade --refresh cosmic-ext-halcyon")
+    );
+    value.channel = UpdateChannel::Apt;
+    assert!(
+        value
+            .update_command()
+            .unwrap()
+            .contains("--only-upgrade cosmic-ext-halcyon")
+    );
+    for channel in [
+        UpdateChannel::ManualRpm,
+        UpdateChannel::ManualDeb,
+        UpdateChannel::Unknown,
+    ] {
+        value.channel = channel;
+        assert!(value.update_command().is_none());
+    }
+    value.channel = UpdateChannel::Dnf;
+    value.evidence = None;
+    assert!(value.update_command().is_none());
+}
+
+#[test]
 fn islands_needs_verified_package_and_preserves_source_choices() {
     let mut identity = Identity {
         channel: UpdateChannel::ManualDeb,

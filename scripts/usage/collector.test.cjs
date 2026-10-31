@@ -50,7 +50,7 @@ test('real request handler stores a hash, date, version and optional country and
  assert.equal(f.rows()[1][2],payload.version);assert.equal(f.locked(),false);
  assert.equal(f.sandbox.doPost({postData:{contents:JSON.stringify({...payload,email:'private@example.com'})}}).ok,false);
  assert.equal(f.rows().length,2);
- assert.deepEqual(f.sandbox.doGet(),{service:'halcyon-activity',schema:4});
+ assert.deepEqual(f.sandbox.doGet(),{service:'halcyon-activity',schema:5});
 });
 
 test('retry after an interrupted pruning write counts each installation once',()=>{

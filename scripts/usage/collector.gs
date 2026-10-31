@@ -3,17 +3,39 @@
  */
 const MAX_INSTALLATIONS = 20000;
 const RETENTION_DAYS = 90;
-const WIDTH = 16;
+const WIDTH = 17;
 const WRITE_BATCH_ROWS = 256;
 const HEADERS = ['Installation hash','Last active (UTC)','Version','First reported country',
   'Reporting status','Opted out at (UTC)','Status received at (UTC)','Preference revision','Choice at (UTC)',
   'First activity received since tracking (UTC)','First desktop start (client UTC; if known)',
   'First version received since tracking','Reported active days (last 90 days)',
   'Activity days (UTC serials; internal)','Last activity received (UTC)',
-  'Observed version changes (last 90 UTC days; internal)'];
+  'Observed version changes (last 90 UTC days; internal)',
+  'Daily package observations (last 90 UTC days; internal)'];
 function validCountry(value) { return typeof value === 'string' && /^[A-Z]{2}$/.test(value); }
 function validVersion(v) { return typeof v === 'string' && v.length <= 48 && /^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(v); }
 function validTime(t) { return Number.isSafeInteger(t) && t >= 0 && t <= 253402300799; }
+function validInstallation_(format,channel,installed) {
+  if (!['deb','rpm','source','unknown'].includes(format) || !['apt','dnf','manual','disabled','source','unknown'].includes(channel)
+      || !(installed===null || validVersion(installed))) return false;
+  if (format==='source') return channel==='source' && installed===null;
+  if (format==='unknown') return channel==='unknown' && installed===null;
+  return ['manual','disabled','unknown',format==='deb'?'apt':'dnf'].includes(channel);
+}
+function observations_(value) {
+  if (value==='' || value===undefined) return [];
+  if (typeof value!=='string' || value.length>20000) throw Error('Invalid package observations');
+  const rows=JSON.parse(value);
+  if (!Array.isArray(rows) || rows.length>90 || rows.some((r,i)=>!Array.isArray(r) || r.length!==6
+      || !Number.isSafeInteger(r[0]) || r[0]<25569 || r[0]>2958465 || i>0 && r[0]<=rows[i-1][0]
+      || !validInstallation_(r[1],r[2],r[3] || null) || !validVersion(r[4]) || typeof r[5] !== 'string' || iso(r[5]) !== r[5] || dayNumber(new Date(r[5])) !== r[0])) throw Error('Invalid package observations');
+  return rows;
+}
+function refreshObservations_(row,today,extra=[]) {
+  const byDay=new Map([...observations_(row[16]),...extra].map(r=>[r[0],r]));
+  const rows=[...byDay.values()].filter(r=>r[0]>=today-89 && r[0]<=today).sort((a,b)=>a[0]-b[0]);
+  row[16]=rows.length?JSON.stringify(rows):'';
+}
 function iso(value) {
   if (value === '' || value === undefined) return '';
   const date=value instanceof Date ? value : typeof value === 'string' ? new Date(value) : null;
@@ -50,6 +72,13 @@ function refreshVersions_(row,today,extra=[]) {
   const recent=[...entries].filter(([day])=>day>=today-89 && day<=today).sort((a,b)=>a[0]-b[0]);
   row[15]=recent.length ? JSON.stringify(recent) : '';
 }
+function latestObservation_(row) {
+  const entries=observations_(row[16]),latest=entries[entries.length-1];
+  // A prefix write may have persisted the newer receipt but not this JSON cell.
+  // Retain older history, but never attach its channel to that newer report.
+  return latest && latest[0]===row[1] && latest[4]===row[2] && latest[5]===row[14]
+    ? latest : [row[1],'unknown','unknown','',row[2],row[14]];
+}
 function validateReport(body) {
   if (typeof body !== 'string' || body.length > 1024) throw Error('Invalid report');
   const v = JSON.parse(body);
@@ -63,12 +92,17 @@ function validateReport(body) {
   const detailed = v.schema === 4 && v.kind === 'activity' && keys === 'country,first_started_at,installation,kind,revision,schema,version'
     && revision && validVersion(v.version) && (v.country === null || validCountry(v.country))
     && (v.first_started_at === null || validTime(v.first_started_at));
+  const channel = v.schema === 5 && v.kind === 'activity'
+    && keys === 'country,first_started_at,installation,installed_app_version,kind,package_format,revision,schema,update_channel,version'
+    && revision && validVersion(v.version) && (v.country===null || validCountry(v.country))
+    && (v.first_started_at===null || validTime(v.first_started_at))
+    && validInstallation_(v.package_format,v.update_channel,v.installed_app_version);
   // Client action time is informational, never a receipt/retention clock. Accept
   // skew within the representable UTC range; revision alone orders choices.
   const status = v.schema === 3 && v.kind === 'status' && keys === 'changed_at,enabled,installation,kind,revision,schema'
     && revision && v.revision > 0 && typeof v.enabled === 'boolean'
     && Number.isSafeInteger(v.changed_at) && v.changed_at >= 0 && v.changed_at <= 253402300799;
-  if (!(legacy || activity || detailed || status)) throw Error('Invalid report');
+  if (!(legacy || activity || detailed || channel || status)) throw Error('Invalid report');
   return v;
 }
 function dayNumber(date) { return Math.floor(date.getTime() / 86400000) + 25569; }
@@ -79,7 +113,8 @@ function normalize(row) {
     row[4] || 'enabled', row[5] instanceof Date ? row[5].toISOString() : row[5] || '',
     row[6] instanceof Date ? row[6].toISOString() : row[6] || '', Number(row[7] || 0),
     row[8] instanceof Date ? row[8].toISOString() : row[8] || '',
-    iso(row[9]),iso(row[10]),row[11] || '',row[12] || '',row[13] || '',iso(row[14]),row[15] || ''];
+    iso(row[9]),iso(row[10]),row[11] || '',row[12] || '',row[13] || '',iso(row[14]),row[15] || '',
+    row[16] || ''];
 }
 function currentRows(rows, today) {
   const unique = new Map();
@@ -108,10 +143,12 @@ function currentRows(rows, today) {
     const selected=unique.get(row[0]); selected.splice(9,6,...metadata); refreshDays_(selected,today,days);
     const other=selected===row ? previous : row;
     const history=versions_(selected[15]); selected[15]=other[15]; refreshVersions_(selected,today,history);
+    const observations=observations_(selected[16]); selected[16]=other[16]; refreshObservations_(selected,today,observations);
   }
   return Array.from(unique.values()).filter(row => {
     refreshDays_(row,today);
     refreshVersions_(row,today);
+    refreshObservations_(row,today);
     const receivedDay = Number.isFinite(time(row[6])) ? dayNumber(new Date(row[6])) : 0;
     // Opted-out rows expire from status receipt, never from action time or an
     // old client's replay. Enabled records also retain their recent activity.
@@ -152,12 +189,14 @@ function applyReport(rows, id, report, now) {
   row[1] = today; row[2] = report.version;
   if (!row[3]) row[3] = validCountry(report.country) ? report.country : '';
   if (!row[9]) { row[9]=now.toISOString(); row[11]=report.version; }
-  if (!row[10] && report.schema === 4 && report.first_started_at !== null)
+  if (!row[10] && report.schema >= 4 && report.first_started_at !== null)
     row[10]=new Date(report.first_started_at*1000).toISOString();
   row[14]=now.toISOString(); refreshDays_(row,today,[today]);
   const history=versions_(row[15]);
   if (!history.length || history[history.length-1][1]!==report.version)
     refreshVersions_(row,today,[[today,report.version]]);
+  refreshObservations_(row,today,[[today,report.schema===5?report.package_format:'unknown',
+    report.schema===5?report.update_channel:'unknown',report.schema===5?report.installed_app_version || '':'',report.version,row[14]]]);
   return next;
 }
 function updateRows(rows, id, version, today, country = null) {
@@ -218,6 +257,7 @@ function statusPlan_(sheet, requireHeaders = false) {
     if (row[11]!=='' && !validVersion(row[11])) throw Error('Invalid first version');
     days_(row[13]);
     versions_(row[15]);
+    observations_(row[16]);
     if (row[12]!=='' && (!Number.isSafeInteger(row[12]) || row[12]<0 || row[12]>RETENTION_DAYS)) throw Error('Invalid active-day count');
     if (!row[0]) {
       if (!empty) throw Error('Reporting status without an installation');
@@ -328,6 +368,10 @@ const ANALYTICS_TABS={
   'Installation history':['Installation','Reporting','Last version','First seen (UTC)','Last active (UTC)',
     'Active days / 7','Active days / 30','Active days / 90','First desktop start (client UTC)',
     'First observed version','Observed version changes'],
+  'Installation channels':['Installation','Package','Channel','Installed version','Last observation (UTC)','Channel observations'],
+  'Channel versions':['Package','Channel','Version','Active last 7 days','Active last 30 days'],
+  'Channel activity':['UTC date','Package','Channel','Reported active','First seen','Returning'],
+  'Version changes':['From version','To version','Package','Channel','Last observed (UTC)','Installations / 7 days','Installations / 30 days'],
 };
 function utcDay_(serial) { return new Date((serial-25569)*86400000).toISOString().slice(0,10); }
 function analytics_(rows,today) {
@@ -396,7 +440,47 @@ function analytics_(rows,today) {
       days(r,7),days(r,30),days_(r[13]).length,r[10] ? r[10].slice(0,10) : 'Unknown',r[11] || 'Unknown',
       versions_(r[15]).map(([day,v])=>`${utcDay_(day)}: ${v}`).join(' → ') || 'No version history yet'];
   });
-  return {'Dashboard':dashboard,'Versions':versionRows,'Daily activity':daily,'Installation history':history};
+  const channels=current.map((r,i)=>{
+    const entries=observations_(r[16]),changes=entries.filter((e,n)=>!n || e[1]!==entries[n-1][1] || e[2]!==entries[n-1][2]);
+    const latest=latestObservation_(r);
+    return [history[i][0],latest[1],latest[2],latest[3] || 'Unknown',
+      entries.length?utcDay_(entries[entries.length-1][0]):'Unknown',
+      changes.map(e=>`${utcDay_(e[0])}: ${e[1]} / ${e[2]}`).join(' → ') || 'No channel history yet'];
+  });
+  const channelVersions=new Map(),channelDays=new Map(),transitions=new Map();
+  for(const row of enabled) {
+    const observed=first(row),entries=new Map(observations_(row[16]).map(e=>[e[0],e]));
+    for(const day of days_(row[13])) {
+      const entry=entries.get(day),format=entry?entry[1]:'unknown',channel=entry?entry[2]:'unknown',key=[day,format,channel].join('|');
+      if(!channelDays.has(key)) channelDays.set(key,[utcDay_(day),format,channel,0,0,0]);
+      const value=channelDays.get(key);value[3]++;value[observed===day?4:5]++;
+    }
+    if(row[1]>=today-29) {
+      const latest=latestObservation_(row),format=latest[1],channel=latest[2],key=[format,channel,row[2]].join('|');
+      // Bound generated categories; retain aggregate counts for the remainder.
+      const bounded=channelVersions.has(key) || channelVersions.size<200 ? key : 'Other';
+      if(!channelVersions.has(bounded)) channelVersions.set(bounded,bounded==='Other'?['Other','Other','Other',0,0]:[format,channel,row[2],0,0]);
+      const value=channelVersions.get(bounded);value[4]++;if(row[1]>=today-6)value[3]++;
+    }
+    const versionHistory=versions_(row[15]),seen7=new Set(),seen30=new Set();
+    for(let i=1;i<versionHistory.length;i++) {
+      const [day,to]=versionHistory[i],from=versionHistory[i-1][1];
+      if(day<today-29 || from===to) continue;
+      const entry=entries.get(day),format=entry?entry[1]:'unknown',channel=entry?entry[2]:'unknown';
+      const key=[from,to,format,channel].join('|'),bounded=transitions.has(key) || transitions.size<200?key:'Other';
+      if(!transitions.has(bounded)) transitions.set(bounded,bounded==='Other'?['Other','Other','Other','Other',utcDay_(day),0,0]:[from,to,format,channel,utcDay_(day),0,0]);
+      const value=transitions.get(bounded);value[4]=value[4]>utcDay_(day)?value[4]:utcDay_(day);
+      if(!seen30.has(bounded)){value[6]++;seen30.add(bounded);}
+      if(day>=today-6 && !seen7.has(bounded)){value[5]++;seen7.add(bounded);}
+    }
+  }
+  dashboard.push(['Known package / 30 days',last30.filter(r=>latestObservation_(r)[1]!=='unknown').length,'Package format was actually reported; older clients remain unknown.'],
+    ['Unknown package / 30 days',last30.filter(r=>latestObservation_(r)[1]==='unknown').length,'No inferred DEB/RPM classifications.'],
+    ['Different installed version / 30 days',last30.filter(r=>latestObservation_(r)[3] && latestObservation_(r)[3]!==r[2]).length,'Installed and running versions differ; not an upgrade failure or a success rate.']);
+  return {'Dashboard':dashboard,'Versions':versionRows,'Daily activity':daily,'Installation history':history,
+    'Installation channels':channels,'Channel versions':[...channelVersions.values()].sort((a,b)=>b[4]-a[4] || a.join('|').localeCompare(b.join('|'))),
+    'Channel activity':[...channelDays.values()].sort((a,b)=>a.join('|').localeCompare(b.join('|'))),
+    'Version changes':[...transitions.values()].sort((a,b)=>b[6]-a[6] || a.join('|').localeCompare(b.join('|')))};
 }
 // New generated tabs are separate from the owner's Summary. Only an empty tab
 // can be claimed. Reserve A:width, rows 1 onward; other columns remain untouched.
@@ -449,7 +533,7 @@ function analyticsWrite_(book,rows,today,plan) {
   }
 }
 function json_(value) { return ContentService.createTextOutput(JSON.stringify(value)).setMimeType(ContentService.MimeType.JSON); }
-function doGet() { return json_({service:'halcyon-activity',schema:4}); }
+function doGet() { return json_({service:'halcyon-activity',schema:5}); }
 function doPost(event) {
   let lock;
   try {

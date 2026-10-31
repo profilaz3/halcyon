@@ -283,8 +283,8 @@ impl Settings {
                 .and_then(|i| i.installed_version.clone()),
             platform: self.support.local.platform.clone(),
             channel: match self.updates.identity.as_ref().map(|i| i.channel) {
-                Some(UpdateChannel::Apt) => "System packages",
-                Some(UpdateChannel::ManualDeb) => "Manual package",
+                Some(UpdateChannel::Apt | UpdateChannel::Dnf) => "System packages",
+                Some(UpdateChannel::ManualDeb | UpdateChannel::ManualRpm) => "Manual package",
                 Some(UpdateChannel::Source) => "Source build",
                 _ => "Not verified",
             },

@@ -5,6 +5,13 @@ their explicit compatibility policy. Published releases retain their original
 artifact hashes and approval scope. The older 0.2.1 implementation plan and the
 initial 0.2.5 bootstrap examples below are historical.
 
+Since 0.5.5, the same atomic Pages deployment also carries the signed Fedora RPM
+repository. `distribution.json` pins its release asset and signed review manifest.
+`scripts/rpm/distribution.py` checks the archive inventory, source/evidence
+bindings, RPM signature and repository signature before staging `rpm/` beside
+`apt/`. Daily APT renewal retains those immutable RPM bytes. See
+[Fedora packaging](FEDORA-PACKAGING.md) for its separate native qualification.
+
 ## Trust and immutable inputs
 
 `scripts/apt/distribution.json` pins every public GitHub asset by SHA256 and byte

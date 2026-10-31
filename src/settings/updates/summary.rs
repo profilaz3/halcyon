@@ -73,12 +73,12 @@ impl Summary {
                 false,
             ),
             Check::NotChecked => match identity.channel {
-                UpdateChannel::Apt => result(
+                UpdateChannel::Apt | UpdateChannel::Dnf => result(
                     "System updates are set up",
                     "Your system package manager updates Halcyon, including Islands.".into(),
                     false,
                 ),
-                UpdateChannel::ManualDeb => {
+                UpdateChannel::ManualDeb | UpdateChannel::ManualRpm => {
                     result("Manual installation", identity.reason.into(), false)
                 }
                 UpdateChannel::Source => {

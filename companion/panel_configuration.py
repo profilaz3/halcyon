@@ -38,6 +38,7 @@ class Watch:
         self.paths = {}
         self.registrations = set()
         self.optional_registrations = set()
+        self.content_only = set()
         self.dirty = False
 
     def add(self, path, directory=False, *, entry=False, optional=False):
@@ -78,6 +79,15 @@ class Watch:
                 resolved = candidate
         self._add(resolved, directory)
 
+    def add_content(self, path):
+        """RPM WAL reads change bookkeeping without changing package data.
+
+        Still detect writes, truncation, removal, replacement and ABA. Used for
+        package database files only, never configuration or executable watches.
+        """
+        self.add(path)
+        self.content_only.add(self._add(Path(path), False))
+
     def _add(self, path, directory):
         parent, name = (path, None) if directory and path.is_dir() else (path.parent, path.name)
         while not parent.is_dir():
@@ -89,6 +99,7 @@ class Watch:
         self.paths.setdefault(wd, set()).add(name)
         if len(self.paths) > 4096:
             raise ValueError('configuration_watch_limit')
+        return wd, name
 
     def changed(self):
         while self.fd >= 0:
@@ -103,7 +114,9 @@ class Watch:
                 wd, mask, _, size = struct.unpack_from('iIII', data, offset)
                 name = os.fsdecode(data[offset+16:offset+16+size].split(b'\0')[0])
                 watched = self.paths.get(wd, set())
-                if mask & (0x4000 | 0x8000 | 0x400 | 0x800) or None in watched or name in watched:
+                relevant = name in watched and ((wd, name) not in getattr(self, 'content_only', ())
+                    or mask & (0x2 | 0x40 | 0x80 | 0x100 | 0x200))
+                if mask & (0x4000 | 0x8000 | 0x400 | 0x800) or None in watched or relevant:
                     self.dirty = True
                 offset += 16 + size
         return self.dirty

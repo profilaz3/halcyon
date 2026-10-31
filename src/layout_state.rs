@@ -148,6 +148,21 @@ fn size_for_tool(state: &Snapshot, widget: Widget) -> [f32; 2] {
 }
 
 fn default_positions(mut state: Snapshot, config: &Config) -> Snapshot {
+    // Tool recipes can change their automatic dimensions before the running
+    // desktop publishes a new snapshot (including a saved Setup preview).
+    for geometry in &mut state.widgets {
+        if let Some(widget @ (Widget::Music | Widget::Focus)) = Widget::parse(&geometry.key) {
+            let natural = crate::tools::cards::size(widget, config);
+            let natural = [
+                natural[0].min((state.screen[0] - 48.).max(1.)),
+                natural[1].min((state.screen[1] - 96.).max(1.)),
+            ];
+            geometry.natural_size = Some(natural);
+            if !config.widget_sizes.contains_key(&geometry.key) {
+                geometry.size = natural;
+            }
+        }
+    }
     let ordered: Vec<_> = config
         .ordered_right_cards()
         .into_iter()
@@ -572,5 +587,53 @@ mod tests {
                 504.
             );
         }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn tool_recipe_projection_refreshes_cached_geometry_and_keeps_explicit_sizes() {
+    let original = Config::default();
+    let cached = fallback(&original);
+    let mut candidate = original.clone();
+    candidate.recipes.music = Some(crate::recipes::Recipe::template(
+        crate::recipes::Kind::Music,
+        0,
+    ));
+    candidate.recipes.focus = Some(crate::recipes::Recipe::template(
+        crate::recipes::Kind::Focus,
+        0,
+    ));
+    let projected = project(cached.clone(), &candidate);
+    for widget in [Widget::Music, Widget::Focus] {
+        let geometry = projected
+            .widgets
+            .iter()
+            .find(|g| g.key == widget.key())
+            .unwrap();
+        assert_eq!(geometry.size, crate::tools::cards::size(widget, &candidate));
+    }
+    candidate.widget_sizes.insert("music".into(), [480., 230.]);
+    let explicit = project(cached, &candidate);
+    assert_eq!(
+        explicit
+            .widgets
+            .iter()
+            .find(|g| g.key == "music")
+            .unwrap()
+            .size,
+        [480., 230.]
+    );
+    let reset = project(explicit, &original);
+    for widget in [Widget::Music, Widget::Focus] {
+        assert_eq!(
+            reset
+                .widgets
+                .iter()
+                .find(|g| g.key == widget.key())
+                .unwrap()
+                .size,
+            crate::tools::cards::size(widget, &original)
+        );
     }
 }

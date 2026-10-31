@@ -950,7 +950,7 @@ impl reqwest::dns::Resolve for PublicOnly {
     }
 }
 
-fn thumbnail(bytes: &[u8]) -> Result<Art, String> {
+pub(super) fn thumbnail(bytes: &[u8]) -> Result<Art, String> {
     let format = image::guess_format(bytes).map_err(|error| error.to_string())?;
     if !matches!(format, image::ImageFormat::Png | image::ImageFormat::Jpeg) {
         return Err("Unsupported artwork format".into());

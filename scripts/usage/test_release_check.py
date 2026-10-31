@@ -24,7 +24,7 @@ class ReleaseEndpointTests(unittest.TestCase):
                 module.validate_endpoint(bad)
 
     def test_live_gate_requires_installation_metadata_support(self):
-        for schema in (1, 2, 3, 4):
+        for schema in (1, 2, 3, 4, 5):
             response = MagicMock()
             response.__enter__.return_value = response
             response.status = 200
@@ -34,7 +34,7 @@ class ReleaseEndpointTests(unittest.TestCase):
             with patch("sys.argv", ["release-check", "--check-live"]), \
                     patch.object(module.urllib.request, "build_opener", return_value=opener), \
                     contextlib.redirect_stdout(io.StringIO()):
-                if schema < 4:
+                if schema < 5:
                     with self.assertRaises(SystemExit):
                         module.main()
                 else:

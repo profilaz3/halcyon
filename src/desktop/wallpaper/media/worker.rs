@@ -7,7 +7,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::watch;
 
 const INPUT: usize = 16 * 1024;
-const OUTPUT: usize = (SCENE.0 * SCENE.1 * 4) as usize;
 static SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 const MAGIC: &[u8] = b"HCBACKDROP1\n";
 
@@ -106,6 +105,28 @@ pub(crate) async fn prepare_static(work: impl FnOnce() + Send + 'static) {
 enum Kind {
     Scene,
     Thumbnail,
+    Wallpaper([u32; 2]),
+}
+
+pub(crate) async fn wallpaper(
+    entry: BgEntry,
+    size: [u32; 2],
+    cancel: watch::Receiver<bool>,
+) -> Option<Pixels> {
+    if !wallpaper_size(size) {
+        return None;
+    }
+    run_kind(
+        entry,
+        Kind::Wallpaper(size),
+        cancel,
+        Duration::from_secs(8),
+        |_| {},
+    )
+    .await
+}
+fn wallpaper_size([w, h]: [u32; 2]) -> bool {
+    w > 0 && h > 0 && w <= 8192 && h <= 8192 && u64::from(w) * u64::from(h) <= 3840 * 2160
 }
 
 pub(crate) async fn render(entry: BgEntry, cancel: watch::Receiver<bool>) -> Option<Pixels> {
@@ -311,13 +332,16 @@ async fn run_owned(
                 match kind {
                     Kind::Scene => SCENE,
                     Kind::Thumbnail => super::THUMB,
+                    Kind::Wallpaper(size) => (size[0], size[1]),
                 }
             };
             if width == 0
                 || height == 0
                 || width > bounds.0
                 || height > bounds.1
-                || !depth && matches!(kind, Kind::Scene) && (width, height) != SCENE
+                || !depth
+                    && matches!(kind, Kind::Scene | Kind::Wallpaper(_))
+                    && (width, height) != bounds
             {
                 return None;
             }
@@ -327,7 +351,7 @@ async fn run_owned(
                 .take(if depth {
                     (crate::depth::MAX_RASTER[0] * crate::depth::MAX_RASTER[1] * 4) as u64 + 1
                 } else {
-                    OUTPUT as u64 + 1
+                    u64::from(bounds.0) * u64::from(bounds.1) * 4 + 1
                 })
                 .read_to_end(&mut rgba)
                 .await
@@ -442,6 +466,22 @@ pub(crate) fn main() -> ! {
             }
         }
         let pixels = match kind {
+            Kind::Wallpaper(size) => {
+                if !wallpaper_size(size) {
+                    return None;
+                }
+                match &entry.source {
+                    BgSource::Color(color) => super::render_color(color, size[0], size[1]),
+                    BgSource::Path(path) => {
+                        // Runtime resolves a slideshow to its actual displayed
+                        // image. Never silently choose the first file instead.
+                        let Preview::Ready(source) = super::read_preview(path, (8192, 8192)) else {
+                            return None;
+                        };
+                        super::fit_preview(&source, &entry.scaling_mode, size[0], size[1])
+                    }
+                }
+            }
             Kind::Scene => pixels(&entry)?,
             Kind::Thumbnail => {
                 let BgSource::Path(path) = &entry.source else {

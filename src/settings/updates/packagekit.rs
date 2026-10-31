@@ -240,8 +240,9 @@ pub(super) async fn candidate(
     packages: &[String],
 ) -> Result<Option<String>, Failure> {
     let installed = identity
-        .installed_version
+        .package_version
         .as_ref()
+        .or(identity.installed_version.as_ref())
         .ok_or(Failure::InstallationChanged)?;
     let arch = identity
         .architecture
@@ -261,19 +262,99 @@ pub(super) async fn candidate(
             "cosmic-ext-halcyon" => (0, installed, &mut main),
             _ => continue,
         };
-        if seen[slot] || !super::identity::valid_version(parts[1]) {
+        if seen[slot] || !valid_native_version(parts[1], identity.channel) {
             return Err(Failure::InvalidResponse);
         }
         seen[slot] = true;
-        // dpkg owns Debian version ordering; candidates are never installed here.
-        if newer(parts[1], baseline).await? {
+        // The native package manager owns version ordering.
+        if newer(parts[1], baseline, identity.channel).await? {
             *selected = Some(parts[1].to_owned());
         }
     }
     let candidate = main;
     Ok(candidate)
 }
-async fn newer(candidate: &str, installed: &str) -> Result<bool, Failure> {
+fn valid_native_version(value: &str, channel: super::UpdateChannel) -> bool {
+    if channel == super::UpdateChannel::Dnf {
+        !value.is_empty()
+            && value.len() <= 128
+            && value
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b".+:~^_-".contains(&c))
+    } else {
+        super::identity::valid_version(value)
+    }
+}
+
+#[cfg(test)]
+mod rpm_tests {
+    use super::*;
+    #[test]
+    fn native_version_input_cannot_contain_macro_or_lua_syntax() {
+        for value in ["0:0.5.0-0.1.next.fc43", "1.0~rc1-1.fc43", "1.0^git2-1.fc43"] {
+            assert!(valid_native_version(
+                value,
+                super::super::UpdateChannel::Dnf
+            ));
+        }
+        for value in ["", "%{lua:print(1)}", "1');os.execute('id')", "1\n2", "1;2"] {
+            assert!(!valid_native_version(
+                value,
+                super::super::UpdateChannel::Dnf
+            ));
+        }
+    }
+    #[tokio::test]
+    #[ignore = "Requires Fedora's rpm implementation in the isolated acceptance container"]
+    async fn fedora_native_ordering_handles_epoch_release_and_prerelease() {
+        for (candidate, installed, expected) in [
+            ("0:0.5.0-2.fc43", "0:0.5.0-1.fc43", true),
+            ("1:0.4.0-1.fc43", "0:0.5.0-2.fc43", true),
+            ("0:0.6.0~rc1-1.fc43", "0:0.6.0-1.fc43", false),
+            ("0:0.5.0-1.fc43", "0:0.5.0-1.fc43", false),
+        ] {
+            assert_eq!(
+                newer(candidate, installed, super::super::UpdateChannel::Dnf)
+                    .await
+                    .unwrap(),
+                expected
+            );
+        }
+    }
+}
+async fn newer(
+    candidate: &str,
+    installed: &str,
+    channel: super::UpdateChannel,
+) -> Result<bool, Failure> {
+    if !valid_native_version(candidate, channel) || !valid_native_version(installed, channel) {
+        return Err(Failure::InvalidResponse);
+    }
+    if channel == super::UpdateChannel::Dnf {
+        // Values have a restricted native-version alphabet: no Lua/macro syntax.
+        let expression = format!("%{{lua:print(rpm.vercmp('{candidate}', '{installed}'))}}");
+        let output = timeout(
+            Duration::from_secs(2),
+            tokio::process::Command::new("/usr/bin/rpm")
+                .args(["--eval", &expression])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .map_err(|_| Failure::Timeout)?
+        .map_err(|_| Failure::Failed)?;
+        if !output.status.success() {
+            return Err(Failure::Failed);
+        }
+        return match output.stdout.as_slice() {
+            b"1\n" => Ok(true),
+            b"0\n" | b"-1\n" => Ok(false),
+            _ => Err(Failure::InvalidResponse),
+        };
+    }
     let status = timeout(
         Duration::from_secs(2),
         tokio::process::Command::new("/usr/bin/dpkg")

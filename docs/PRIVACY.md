@@ -55,6 +55,15 @@ create it; an already recorded date stays local and can be reported again after
 explicit re-enable. The collector accepts this field; historical start dates
 remain unknown where no client supplied one.
 
+The next client uses schema 5 and adds three bounded fields to the same daily
+request: `package_format` (`deb`, `rpm`, `source` or `unknown`), `update_channel`
+(`apt`, `dnf`, `manual`, `disabled`, `source` or `unknown`) and
+`installed_app_version` (the verified product version, or `null`). These come
+from local package metadata. Repository URLs, package inventories and native
+package release suffixes are not sent. The running app version remains separate:
+an update can be installed while an older process is still open. These fields
+are absent from preference/opt-out messages and create no extra requests.
+
 The installation token is randomly generated locally with 256 bits of entropy.
 It is not a Google identity, machine ID, username, email or hardware identifier.
 It stays the same across restarts and upgrades. Copying or deleting local state
@@ -123,6 +132,11 @@ advances activity or supplies startup time, country or version. Re-enabling pres
 identifiable choice information ages out. Client action time is informational:
 clock skew cannot change receipt dates, retention or preference ordering.
 
+Schema 5 keeps at most one package/channel observation per UTC day for 90 days,
+alongside the running and installed product versions reported that day. Earlier
+clients and days without these fields remain unknown. A channel change is an
+observation, not a package-manager transaction log.
+
 Duplicate delivery does not refresh status receipt or retention. Older status
 revisions and mismatched activity revisions cannot replace the current choice.
 Legacy schema 1/2 activity cannot re-enable a retained opted-out record.
@@ -185,6 +199,16 @@ and then checks for a newer Halcyon package. Those sources receive the usual
 package-manager requests and connection IP; Halcyon sends no reporting token or
 widget data. The check can be cancelled. Authentication and installation belong
 to the operating system; Halcyon never asks for a password or installs updates.
-**Open COSMIC Store** opens the Store, where you choose Updates. Release and
+**Open system updates** opens COSMIC Store, where you choose Updates. If the
+Store is unavailable, a verified enrolled installation can copy its APT or DNF
+command. Halcyon does not run that command or enable a disabled source. Release and
 installation-information links open GitHub only when selected. System update
 enrollment is unavailable until the source and bootstrap assets are verified.
+
+## Audio visualization
+
+Spectrum and circular Music visualizers are optional and off by default. When
+enabled, Halcyon reads the default output monitor locally while the selected media
+player is playing. This includes other sound on that output. It does not select
+the microphone, save audio, or transmit samples. Capture stops when Music is hidden,
+playback stops, Arrange is open, or Reduce motion is enabled.

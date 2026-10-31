@@ -33,7 +33,7 @@ def stage_file(source, destination, mode=0o644):
     destination.chmod(mode)
 
 
-def stage_payload(staging, binary, manifest, version, licenses=None, catalog=None, *, owner=PACKAGE, epoch=None):
+def stage_payload(staging, binary, manifest, version, licenses=None, catalog=None, *, owner=PACKAGE, epoch=None, strip_binary=True):
     """The same verified payload serves legacy packages and the bundled app."""
     from bundle_contract import PACKAGE_OWNERS
     if owner not in PACKAGE_OWNERS:
@@ -52,7 +52,8 @@ def stage_payload(staging, binary, manifest, version, licenses=None, catalog=Non
     if staged.read_bytes()[:4] == b'\x7fELF':
         if licenses is None or not licenses.is_file() or not licenses.stat().st_size:
             raise ValueError('Native releases require --licenses with dependency notices')
-        subprocess.run(['strip', '--strip-unneeded', str(staged)], check=True)
+        if strip_binary:
+            subprocess.run(['strip', '--strip-unneeded', str(staged)], check=True)
         record = json.loads((library / 'companion-manifest.json').read_text())
         record['binary_sha256'] = hashlib.sha256(staged.read_bytes()).hexdigest()
         (library / 'companion-manifest.json').write_text(json.dumps(record, indent=2) + '\n')

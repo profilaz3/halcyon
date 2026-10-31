@@ -1,4 +1,105 @@
-//! Local evidence only. No PATH lookup, APT invocation, network, or D-Bus.
+//! Shared, read-only package identity. No network, package writes or D-Bus.
+mod rpm;
+
+#[derive(Clone, Debug, serde::Serialize, PartialEq, Eq)]
+pub(crate) struct Observation {
+    pub package_format: &'static str,
+    pub update_channel: &'static str,
+    pub installed_app_version: Option<String>,
+}
+impl Default for Observation {
+    fn default() -> Self {
+        Self {
+            package_format: "unknown",
+            update_channel: "unknown",
+            installed_app_version: None,
+        }
+    }
+}
+fn observed_channel(state: Enrollment, system: &'static str) -> &'static str {
+    match state {
+        Enrollment::Enrolled => system,
+        Enrollment::Disabled => "disabled",
+        Enrollment::Available => "manual",
+        _ => "unknown",
+    }
+}
+/// Small local metadata observation for the existing daily report. No package
+/// refresh, service access, content reads, or hashing of the large executables.
+pub(crate) async fn reporting_observation() -> Observation {
+    if isolated() {
+        return Observation::default();
+    }
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        tokio::task::spawn_blocking(|| {
+            let root = Path::new("/");
+            let target = fs::read_link("/proc/self/exe").ok();
+            if target.as_deref() == Some(Path::new(env!("HALCYON_BUILD_BINARY"))) {
+                return Observation {
+                    package_format: "source",
+                    update_channel: "source",
+                    installed_app_version: None,
+                };
+            }
+            if !target.as_ref().is_some_and(|p| {
+                p == Path::new(EXE) || p == Path::new("/usr/bin/halcyon (deleted)")
+            }) {
+                return Observation::default();
+            }
+            if rpm::system(root) {
+                return rpm::observation(root);
+            }
+            let Some(db) = Database::load(root) else {
+                return Observation::default();
+            };
+            let metadata = "/usr/share/cosmic-ext-halcyon/installation.json";
+            let Some(package) = db.installed(MAIN, "amd64") else {
+                return Observation::default();
+            };
+            if db.verified_file(root, MAIN, metadata).is_none() {
+                return Observation::default();
+            }
+            let Some(value) = read(&rooted(root, metadata), 8192)
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            else {
+                return Observation::default();
+            };
+            let Some(version) = value["app_version"].as_str() else {
+                return Observation::default();
+            };
+            if value["format"] != "halcyon-installation"
+                || value["version"] != 1
+                || value["package_format"] != "deb"
+                || value["architecture"] != "amd64"
+                || package.get("Version").map(String::as_str) != Some(version)
+                || value["package_version"] != version
+                || !valid_version(version)
+            {
+                return Observation::default();
+            }
+            let state = match enrollment(root, &db) {
+                Some(Some(_)) => Enrollment::Enrolled,
+                Some(None) => manual_enrollment(root, &db),
+                None => Enrollment::Unknown,
+            };
+            if read(&rooted(root, "/var/lib/dpkg/status"), 32 * 1024 * 1024).as_ref()
+                != Some(&db.raw)
+            {
+                return Observation::default();
+            }
+            Observation {
+                package_format: "deb",
+                update_channel: observed_channel(state, "apt"),
+                installed_app_version: Some(version.into()),
+            }
+        }),
+    )
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or_default()
+}
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
@@ -24,7 +125,9 @@ const PREFS_TEXT: &str = "Package: cosmic-ext-halcyon cosmic-ext-halcyon-islands
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UpdateChannel {
     Apt,
+    Dnf,
     ManualDeb,
+    ManualRpm,
     Source,
     Unknown,
 }
@@ -54,6 +157,9 @@ pub struct Identity {
     pub reason: &'static str,
     pub running_version: String,
     pub installed_version: Option<String>,
+    /// Native package version, including RPM epoch and release. The UI uses
+    /// installed_version, which is the separately verified product version.
+    pub package_version: Option<String>,
     pub islands_version: Option<String>,
     pub architecture: Option<String>,
     pub store: Option<PathBuf>,
@@ -70,6 +176,7 @@ impl Default for Identity {
             reason: "Installation could not be verified.",
             running_version: env!("CARGO_PKG_VERSION").into(),
             installed_version: None,
+            package_version: None,
             islands_version: None,
             architecture: None,
             store: None,
@@ -79,6 +186,20 @@ impl Default for Identity {
     }
 }
 impl Identity {
+    /// Only verified enrolled installations receive an update command. This
+    /// never enables a disabled source or executes a privileged operation.
+    pub(crate) fn update_command(&self) -> Option<&'static str> {
+        if !self.can_check() {
+            return None;
+        }
+        match self.channel {
+            UpdateChannel::Apt => {
+                Some("sudo apt update && sudo apt install --only-upgrade cosmic-ext-halcyon")
+            }
+            UpdateChannel::Dnf => Some("sudo dnf upgrade --refresh cosmic-ext-halcyon"),
+            _ => None,
+        }
+    }
     pub fn can_enable_islands(&self) -> bool {
         self.can_manage_islands() && self.islands_match == IslandsMatch::Ready
     }
@@ -102,8 +223,14 @@ impl Identity {
     pub fn can_manage_islands(&self) -> bool {
         self.format_version == 1
             && self.evidence.is_some()
-            && matches!(self.channel, UpdateChannel::Apt | UpdateChannel::ManualDeb)
-            && self.architecture.as_deref() == Some("amd64")
+            && matches!(
+                self.channel,
+                UpdateChannel::Apt
+                    | UpdateChannel::Dnf
+                    | UpdateChannel::ManualDeb
+                    | UpdateChannel::ManualRpm
+            )
+            && matches!(self.architecture.as_deref(), Some("amd64" | "x86_64"))
             && self.installed_version.as_deref() == Some(self.running_version.as_str())
     }
     pub fn same_package(&self, other: &Self) -> bool {
@@ -111,17 +238,21 @@ impl Identity {
             && other.can_manage_islands()
             && self.evidence == other.evidence
             && self.installed_version == other.installed_version
+            && self.package_version == other.package_version
             && self.islands_version == other.islands_version
             && self.architecture == other.architecture
     }
     pub fn can_check(&self) -> bool {
-        self.format_version == 1 && self.channel == UpdateChannel::Apt && self.evidence.is_some()
+        self.format_version == 1
+            && matches!(self.channel, UpdateChannel::Apt | UpdateChannel::Dnf)
+            && self.evidence.is_some()
     }
     pub fn same_installation(&self, other: &Self) -> bool {
         self.can_check()
             && other.can_check()
             && self.evidence == other.evidence
             && self.installed_version == other.installed_version
+            && self.package_version == other.package_version
             && self.islands_version == other.islands_version
             && self.architecture == other.architecture
     }
@@ -250,6 +381,9 @@ fn bundled_package(db: &Database) -> Option<&BTreeMap<String, String>> {
         .filter(|p| p.get("X-Halcyon-Islands").is_some_and(|v| v == "bundled"))
 }
 pub(super) fn islands_cli_verified() -> bool {
+    if rpm::system(Path::new("/")) {
+        return rpm::cli_verified(Path::new("/"));
+    }
     let Some(db) = Database::load(Path::new("/")) else {
         return false;
     };
@@ -270,9 +404,8 @@ fn cli_verified(root: &Path, db: &Database) -> bool {
     meta.is_file()
         && (root != Path::new("/") || meta.uid() == 0)
         && meta.mode() & 0o022 == 0
-        && read(&path, 65536).is_some_and(|s| {
-            s.as_bytes() == include_bytes!("../../../packaging/islands/halcyon-islands")
-        })
+        && read(&path, 65536)
+            .is_some_and(|s| s.as_bytes() == include_bytes!("../packaging/islands/halcyon-islands"))
 }
 fn islands_match(root: &Path, db: &Database) -> IslandsMatch {
     let Some(package) = bundled_package(db) else {
@@ -532,6 +665,9 @@ pub(super) fn measure(root: &Path, proc_exe: &Path, source_binary: &Path) -> Ide
         }
         return result;
     }
+    if rpm::system(root) {
+        return rpm::measure(root, proc_exe, &running_hash, deleted);
+    }
     let Some(db) = Database::load(root) else {
         return result;
     };
@@ -550,6 +686,7 @@ pub(super) fn measure(root: &Path, proc_exe: &Path, source_binary: &Path) -> Ide
         return result;
     };
     result.installed_version = Some(version.clone());
+    result.package_version = Some(version.clone());
     result.architecture = Some("amd64".into());
     result.islands_version = bundled_package(&db)
         .and_then(|p| p.get("Version"))
@@ -569,31 +706,7 @@ pub(super) fn measure(root: &Path, proc_exe: &Path, source_binary: &Path) -> Ide
         }
         Some(None) => {
             result.channel = UpdateChannel::ManualDeb;
-            let source = rooted(root, SOURCE);
-            result.enrollment = if source.exists() {
-                Enrollment::Disabled
-            } else if rooted(root, RECEIPT).symlink_metadata().is_ok() {
-                match default_receipt(root)
-                    .as_ref()
-                    .and_then(|v| v.get("phase"))
-                    .and_then(|p| p.as_str())
-                {
-                    Some("complete" | "disabled" | "preserved") => Enrollment::Disabled,
-                    Some("pending") => Enrollment::Incomplete,
-                    _ => Enrollment::Unknown,
-                }
-            } else if db.installed("halcyon-update-source", "all").is_some() {
-                // An owned conffile removed by its administrator stays removed.
-                Enrollment::Disabled
-            } else if db.installed("halcyon-archive-keyring", "all").is_some()
-                || rooted(root, KEY).exists()
-                || rooted(root, PREFS).exists()
-                || rooted(root, DEFAULTS).exists()
-            {
-                Enrollment::Incomplete
-            } else {
-                Enrollment::Available
-            };
+            result.enrollment = manual_enrollment(root, &db);
             result.evidence = Some(running_hash.clone());
             result.reason = match result.enrollment {
                 Enrollment::Disabled => {
@@ -622,6 +735,33 @@ pub(super) fn measure(root: &Path, proc_exe: &Path, source_binary: &Path) -> Ide
         result.reason = "Installation changed. Reopen Settings to check it again.";
     }
     result
+}
+
+fn manual_enrollment(root: &Path, db: &Database) -> Enrollment {
+    if rooted(root, SOURCE).exists() {
+        Enrollment::Disabled
+    } else if rooted(root, RECEIPT).symlink_metadata().is_ok() {
+        match default_receipt(root)
+            .as_ref()
+            .and_then(|v| v.get("phase"))
+            .and_then(|p| p.as_str())
+        {
+            Some("complete" | "disabled" | "preserved") => Enrollment::Disabled,
+            Some("pending") => Enrollment::Incomplete,
+            _ => Enrollment::Unknown,
+        }
+    } else if db.installed("halcyon-update-source", "all").is_some() {
+        // An owned conffile removed by its administrator stays removed.
+        Enrollment::Disabled
+    } else if db.installed("halcyon-archive-keyring", "all").is_some()
+        || rooted(root, KEY).exists()
+        || rooted(root, PREFS).exists()
+        || rooted(root, DEFAULTS).exists()
+    {
+        Enrollment::Incomplete
+    } else {
+        Enrollment::Available
+    }
 }
 pub(super) fn valid_version(value: &str) -> bool {
     if value.is_empty() || value.len() > 128 {
@@ -745,5 +885,5 @@ pub(super) async fn open_store() -> Result<(), String> {
 }
 
 #[cfg(test)]
-#[path = "identity_tests.rs"]
+#[path = "settings/updates/identity_tests.rs"]
 mod tests;

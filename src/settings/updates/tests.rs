@@ -251,6 +251,7 @@ fn apt() -> Identity {
         reason: "System updates · checks only when you ask.",
         running_version: "0.2.0".into(),
         installed_version: Some("0.2.0".into()),
+        package_version: None,
         islands_version: None,
         architecture: Some("amd64".into()),
         store: Some("/usr/share/applications/com.system76.CosmicStore.desktop".into()),

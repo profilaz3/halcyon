@@ -50,7 +50,10 @@ pub use super::desktop_look::{
 pub const FORMAT: &str = "desktop-cards-profile";
 /// Frozen composition provenance requires version 10.
 /// Clock face, weight, italic and surface choices retain version 9.
-pub const VERSION: u32 = 16;
+pub const VERSION: u32 = 19;
+pub const VERSION_18: u32 = 18;
+pub const VERSION_17: u32 = 17;
+pub const VERSION_16: u32 = 16;
 pub const VERSION_15: u32 = 15;
 pub const VERSION_14: u32 = 14;
 pub const VERSION_13: u32 = 13;
@@ -982,8 +985,17 @@ impl Profile {
     }
     /// The version this record is written as.
     pub fn written_version(&self) -> u32 {
-        if self.has_extended_recipes() {
+        if self.has_rain() {
             return VERSION;
+        }
+        if self.has_visualizer() {
+            return VERSION_18;
+        }
+        if self.has_tool_recipes() {
+            return VERSION_17;
+        }
+        if self.has_extended_recipes() {
+            return VERSION_16;
         }
         if let Some(package) = &self.package {
             return if package.ancestors.is_empty() {
@@ -1077,6 +1089,22 @@ impl Profile {
             }
         }
         (profile, omitted)
+    }
+    fn has_rain(&self) -> bool {
+        self.widget_style
+            .as_ref()
+            .is_some_and(|v| v.pointer("/rain").is_some())
+    }
+    fn has_visualizer(&self) -> bool {
+        self.widget_style
+            .as_ref()
+            .is_some_and(|v| v.pointer("/music/visualizer").is_some())
+    }
+    fn has_tool_recipes(&self) -> bool {
+        self.widget_style
+            .as_ref()
+            .and_then(|v| v.get("recipes"))
+            .is_some_and(|v| v.get("music").is_some() || v.get("focus").is_some())
     }
     fn has_extended_recipes(&self) -> bool {
         self.widget_style
@@ -1218,7 +1246,22 @@ impl Profile {
                 ));
             }
         }
-        if self.has_extended_recipes() && self.version < VERSION {
+        if self.has_rain() && self.version < VERSION {
+            return Err(ProfileError::Invalid(
+                "Wallpaper rain requires profile version 19".into(),
+            ));
+        }
+        if self.has_visualizer() && self.version < VERSION_18 {
+            return Err(ProfileError::Invalid(
+                "Audio visualizers require profile version 18".into(),
+            ));
+        }
+        if self.has_tool_recipes() && self.version < VERSION_17 {
+            return Err(ProfileError::Invalid(
+                "Music and Focus recipes require profile version 17".into(),
+            ));
+        }
+        if self.has_extended_recipes() && self.version < VERSION_16 {
             return Err(ProfileError::Invalid(
                 "Calendar recipes require profile version 16".into(),
             ));

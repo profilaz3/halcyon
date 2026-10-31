@@ -58,7 +58,7 @@ jobs:
           name: apt-verified-${{ github.run_id }}
           path: prepared
       - name: Install trusted index/signature verifier dependencies
-        run: sudo apt-get update && sudo apt-get install -y apt-utils gnupg appstream
+        run: sudo apt-get update && sudo apt-get install -y apt-utils gnupg appstream rpm
       - name: Revalidate independent parent approval before secret use
         env:
           APPROVED_INPUTS: ${{ vars.HALCYON_APT_DISTRIBUTION_SHA256 }}

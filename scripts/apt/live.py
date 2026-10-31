@@ -335,6 +335,13 @@ def pages(signed, inputs, public, out):
             '<h2>Retained release packages, corresponding source and reviewed evidence</h2><ul>'
             +''.join(links)+'</ul></html>')
     (out/'index.html').write_text(page)
+    # DNF metadata is signed and reviewed before release. Renewing APT must
+    # retain those exact immutable RPM bytes in the same atomic Pages deploy.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('halcyon_rpm_distribution', ROOT/'scripts/rpm/distribution.py')
+    rpm = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rpm)
+    rpm.stage(data, public, out, download, asset_url)
     total = sum(p.stat().st_size for p in out.rglob('*') if p.is_file())
     if total > data['pages_max_bytes']:
         raise ValueError('pages_size_budget_exceeded')

@@ -6,6 +6,7 @@ __pycache__/
 *.tmp
 
 # Local working material, kept on the maintainer's machine only.
+/.task-*/
 /private/
 /docs/audit/
 /docs/superpowers/
