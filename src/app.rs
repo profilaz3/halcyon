@@ -103,6 +103,7 @@ pub(crate) fn settings_clock_face_rows(
         .frame(now, size)
         .face_rows()
 }
+mod activity;
 mod history;
 mod layout;
 mod panel;
@@ -143,6 +144,7 @@ use std::time::{Duration, Instant, SystemTime};
 #[derive(Debug, Clone)]
 pub enum Message {
     Preview,
+    Activity(crate::activity_island::bridge::Event),
     Tick,
     /// The wake for this deadline fired, this much earlier than the
     /// monotonic clock reached it (time lost in suspend).
@@ -248,6 +250,7 @@ pub enum Message {
     Switched(Vec<(crate::automation::Due, crate::automation::run::Ran)>),
 }
 pub struct Cards {
+    activity: crate::activity_island::bridge::Owner,
     core: Core,
     ids: [window::Id; 13],
     layout_editor: layout::LayoutEditor,
@@ -352,6 +355,7 @@ impl cosmic::Application for Cards {
         let weather = config.location.as_ref().and_then(WeatherSnapshot::cached);
         let calendar_refresh = config.refresh_intervals.duration(Widget::Calendar);
         let mut app = Self {
+            activity: Default::default(),
             core,
             ids,
             layout_editor: layout::LayoutEditor::default(),
@@ -427,10 +431,19 @@ impl cosmic::Application for Cards {
         tasks.extend(app.refresh_visible_data());
         tasks.push(app.wallpaper_colors_changed());
         tasks.push(app.publish_display_state());
+        app.publish_activity();
+        tasks.push(cosmic::task::future(async {
+            tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+            Message::Activity(crate::activity_island::bridge::Event::Settled)
+        }));
         (app, Task::batch(tasks))
     }
     fn subscription(&self) -> Subscription<Message> {
-        let mut subscriptions = Vec::new();
+        let mut subscriptions = vec![
+            self.activity
+                .subscription(self.config.activity_island)
+                .map(Message::Activity),
+        ];
         if self.config.rain.enabled {
             subscriptions.push(crate::rain::lifecycle::watch().map(Message::RainLifecycle));
             let paths = self.rain.paths();
@@ -580,6 +593,18 @@ impl cosmic::Application for Cards {
         // refused, leaving a surface with a stale size and input region.
         // Surface work runs beside the update's other work (an artwork or
         // weather download), never queued behind it.
+        let activity_dirty = matches!(
+            &msg,
+            Message::Activity(_)
+                | Message::MusicFeed(_)
+                | Message::MusicControlDone(_)
+                | Message::FocusCommand(_)
+                | Message::Tool(_)
+                | Message::Calendar(..)
+                | Message::PreviewCalendar(_)
+                | Message::FilesChanged
+                | Message::Woke(..)
+        );
         let outer = !self.updating;
         self.updating = true;
         // Include watcher/timer/command dispatches: any synchronous writer
@@ -604,6 +629,9 @@ impl cosmic::Application for Cards {
         let depth = self.depth_sync();
         let spectrum = self.sync_spectrum();
         let rain = self.rain_sync();
+        if activity_dirty {
+            self.publish_activity();
+        }
         Task::batch([task, surfaces, depth, spectrum, rain])
     }
     fn style(&self) -> Option<cosmic::iced::theme::Style> {
@@ -854,6 +882,7 @@ impl Cards {
     }
     fn handle_update(&mut self, msg: Message) -> Task<Message> {
         match msg {
+            Message::Activity(event) => self.activity_message(event),
             Message::RainLifecycle(state) => {
                 self.rain.lifecycle = state;
                 Task::none()
@@ -1471,9 +1500,9 @@ fn timestamp_text(value: Option<&str>, failed: bool, now: chrono::DateTime<Local
             } else if date.date_naive() == now.date_naive() - Days::days(1) {
                 format!("Yesterday · {}", date.format("%H:%M"))
             } else if date.year() == now.year() {
-                date.format("%-d %b · %H:%M").to_string()
+                date.format("%b %-d · %H:%M").to_string()
             } else {
-                date.format("%-d %b %Y · %H:%M").to_string()
+                date.format("%b %-d, %Y · %H:%M").to_string()
             }
         })
         .unwrap_or_else(|| "—".into());
@@ -1501,9 +1530,16 @@ fn timestamp<'a>(
 }
 
 fn forecast_temperature(value: Option<&f64>) -> String {
+    forecast_temperature_in(crate::config::WeatherPreferences::default(), value)
+}
+/// A reading in the chosen units, rounded, without a "-0".
+fn forecast_temperature_in(units: crate::config::WeatherPreferences, value: Option<&f64>) -> String {
     value
         .filter(|value| value.is_finite())
-        .map(|value| format!("{value:.0}°"))
+        .map(|value| {
+            let rounded = units.degrees(*value).round();
+            format!("{:.0}°", if rounded == 0. { 0. } else { rounded })
+        })
         .unwrap_or_else(|| "—".into())
 }
 
@@ -1680,13 +1716,13 @@ fn weather_dew_point_degrees(config: &Config, current: &data::Current) -> Option
     let value = current
         .dew_point_2m
         .filter(|value| config.weather.show_dew_point && value.is_finite())?;
-    let rounded = value.round();
+    let rounded = config.weather.degrees(value).round();
     // Avoid a misleading "-0" when the reading is just below freezing.
     let rounded = if rounded == 0. { 0. } else { rounded };
     Some(format!("{rounded:.0}°"))
 }
 fn weather_dew_point(config: &Config, current: &data::Current) -> Option<String> {
-    weather_dew_point_degrees(config, current).map(|degrees| format!("Dew point {degrees}C"))
+    weather_dew_point_degrees(config, current).map(|degrees| format!("Dew point {degrees}"))
 }
 
 /// Compatibility wrapper for existing focused fixtures.
@@ -1727,13 +1763,13 @@ fn week_label(day: NaiveDate) -> String {
     if start.year() != end.year() {
         format!(
             "{} – {}",
-            start.format("%-d %b %Y"),
-            end.format("%-d %b %Y")
+            start.format("%b %-d, %Y"),
+            end.format("%b %-d, %Y")
         )
     } else if start.month() != end.month() {
-        format!("{} – {}", start.format("%-d %b"), end.format("%-d %b %Y"))
+        format!("{} – {}", start.format("%b %-d"), end.format("%b %-d, %Y"))
     } else {
-        format!("{}–{}", start.day(), end.format("%-d %b %Y"))
+        format!("{}–{}", start.format("%b %-d"), end.format("%-d, %Y"))
     }
 }
 fn bar<'a>(segments: &[(f32, Color)], p: Palette) -> Element<'a, Message> {
@@ -2024,7 +2060,7 @@ impl Cards {
         };
         let mut rows = vec![spread(
             label(heading, 23., p.foreground),
-            label(display_day.format("%a, %-d %b").to_string(), 11., p.muted),
+            label(display_day.format("%a, %b %-d").to_string(), 11., p.muted),
         )];
         rows.push(spread(
             label(week_label(display_day), 11., p.muted),
@@ -2113,7 +2149,7 @@ impl Cards {
                     container(spread(
                         {
                             let name = label(
-                                if *day == today { "TODAY" } else { "TOMORROW" },
+                                if *day == today { "Today" } else { "Tomorrow" },
                                 11.,
                                 p.accent,
                             );
@@ -2127,7 +2163,7 @@ impl Cards {
                                 name
                             }
                         },
-                        label(day.format("%a, %-d %b").to_string(), 10., p.muted),
+                        label(day.format("%a, %b %-d").to_string(), 10., p.muted),
                     ))
                     .padding([8, 2, 4, 2])
                     .into(),
@@ -2175,8 +2211,8 @@ impl Cards {
                         p.accent
                     };
                     let status = match state {
-                        MeetingState::Soon(minutes) => format!("IN {minutes} MIN"),
-                        MeetingState::Live => "LIVE NOW".into(),
+                        MeetingState::Soon(minutes) => format!("In {minutes} min"),
+                        MeetingState::Live => "Live now".into(),
                         _ => String::new(),
                     };
                     let end = if event.all_day {
@@ -2998,7 +3034,7 @@ mod tests {
         assert_eq!(week_start(new_year), date(2026, 12, 28));
         assert_eq!(week_start(date(2027, 1, 3)), date(2026, 12, 28));
         assert_eq!(week_start(date(2027, 1, 4)), date(2027, 1, 4));
-        assert_eq!(week_label(new_year), "28 Dec 2026 – 3 Jan 2027");
+        assert_eq!(week_label(new_year), "Dec 28, 2026 – Jan 3, 2027");
     }
     #[test]
     fn week_navigation_preserves_the_selected_weekday() {
@@ -3013,8 +3049,8 @@ mod tests {
         let _ = cards.update(Message::Week(-1));
         assert_eq!(cards.selected_day, sunday);
         assert_eq!(cards.month, date(2026, 5, 1));
-        assert_eq!(week_label(sunday), "25–31 May 2026");
-        assert_eq!(week_label(date(2026, 9, 30)), "28 Sep – 4 Oct 2026");
+        assert_eq!(week_label(sunday), "May 25–31, 2026");
+        assert_eq!(week_label(date(2026, 9, 30)), "Sep 28 – Oct 4, 2026");
     }
     #[test]
     fn navigation_ignores_an_old_fetch_and_today_restores_the_current_week() {

@@ -6,7 +6,113 @@ use crate::settings::desktop::{AppletControl, control_id};
 const SEARCH_FROM: usize = 8;
 
 impl Settings {
-    pub(super) fn applets_section(&self, draft: &PanelDraft) -> Element<'_, Message> {
+    pub(super) fn activity_preferences(&self) -> Element<'_, Message> {
+        let p = self.config.activity_island;
+        let toggle = |name: &'static str, key: &'static str, on: bool, nested: bool| {
+            let row = split(
+                label(name, if nested { 13. } else { 14. }, FG),
+                container(
+                    toggler(on)
+                        .width(Length::Shrink)
+                        .on_toggle(move |on| Message::ActivityPreference(key, on)),
+                )
+                .id(cosmic::widget::Id::new(format!(
+                    "activity-preference-{key}"
+                )))
+                .into(),
+            );
+            if nested {
+                container(row).padding([0, 0, 0, 20]).into()
+            } else {
+                row
+            }
+        };
+        // Still in beta: said once, beside its heading.
+        let heading = row::with_children(vec![
+            label("Show in the island", 16., FG),
+            pill("Beta", MUTED),
+        ])
+        .spacing(8)
+        .align_y(Alignment::Center);
+        let mut controls = cosmic::widget::column::with_children([heading.into()]).spacing(12);
+        controls = controls
+            .push(toggle("Playing media", "media", p.media, false))
+            .push(toggle("Upcoming meetings", "calendar", p.calendar, false))
+            .push(toggle("Notifications", "notifications", p.notifications, false));
+        if p.notifications {
+            controls = controls
+                .push(toggle(
+                    "Use the island instead of popups",
+                    "replace_popups",
+                    p.replace_popups,
+                    true,
+                ))
+                .push(toggle(
+                    "Show message text",
+                    "notification_text",
+                    p.notification_text,
+                    true,
+                ));
+        }
+        controls = controls.push(toggle("System activities", "system", p.system, false));
+        if p.system {
+            for (name, key, on) in [
+                ("Battery", "battery", p.battery),
+                ("Sound output", "sound", p.sound),
+                ("Microphone in use", "microphone", p.microphone),
+                ("Camera in use", "camera", p.camera),
+                ("Network", "network", p.network),
+                ("Bluetooth devices", "bluetooth", p.bluetooth),
+                ("Software updates", "updates", p.updates),
+            ] {
+                controls = controls.push(toggle(name, key, on, true));
+            }
+        }
+        controls = controls.push(toggle("Brief automatic reveals", "reveals", p.reveals, false));
+        controls = controls.push(split(
+            label("Meeting reminder", 14., FG),
+            cosmic::widget::dropdown(
+                &["5 minutes", "10 minutes", "15 minutes"],
+                Some(match p.lead_minutes {
+                    10 => 1,
+                    15 => 2,
+                    _ => 0,
+                }),
+                Message::ActivityLead,
+            )
+            .into(),
+        ));
+        container(controls).id("activity-preferences").into()
+    }
+    /// A top panel without the Activity island offers to add it, centred.
+    pub(super) fn add_activity_island(
+        &self,
+        draft: &PanelDraft,
+        regions: &crate::desktop::panels::Regions,
+    ) -> Option<Element<'_, Message>> {
+        let editor = &self.desktop;
+        (draft.kind() == PanelKind::Panel
+            && draft.anchor().known() == Some(&crate::desktop::panels::Anchor::Top)
+            && editor.catalog.known(crate::activity_island::APPLET_ID)
+            && !Region::ALL.iter().any(|r| {
+                regions
+                    .list(*r)
+                    .iter()
+                    .any(|id| id == crate::activity_island::APPLET_ID)
+            }))
+        .then(|| {
+            split(
+                label("Beta · System, music and meetings", 13., MUTED),
+                button::text("Add Activity island")
+                    .id("panel-add-activity".into())
+                    .on_press_maybe((!self.native_busy && !editor.drag.active()).then_some(edit(
+                        Edit::Add(Region::Center, crate::activity_island::APPLET_ID.into()),
+                    )))
+                    .into(),
+            )
+        })
+    }
+        pub(super) fn applets_section(&self, draft: &PanelDraft) -> Element<'_, Message> {
         let accent = self.settings_accent();
         let editor = &self.desktop;
         let horizontal = draft
@@ -17,9 +123,9 @@ impl Settings {
             Setting::Known(regions) => regions,
             Setting::Unsupported(raw) => {
                 return section(vec![
-                    label("Applets", 16., FG),
+                    label("Items", 14., FG),
                     banner(
-                        "This applet layout uses a format Halcyon does not edit. It is kept as is.",
+                        "This layout uses a format Halcyon can’t edit. It is kept as it is.",
                         WARN,
                         Vec::new(),
                     ),
@@ -27,19 +133,23 @@ impl Settings {
                 ]);
             }
         };
-        let total = regions.start.len() + regions.center.len() + regions.end.len();
-        let mut blocks: Vec<Element<'_, Message>> = vec![split(
-            label("Applets", 16., FG),
+        // The heading sits above the card, like every other section.
+        let header: Element<'_, Message> = split(
+            text::heading("Items").into(),
             label(
                 if editor.drag.active() {
-                    "Drop on a row or region · Esc cancels".to_string()
+                    "Drop on a row or region · Esc cancels"
                 } else {
-                    format!("{total} placed")
+                    ""
                 },
                 11.,
                 MUTED,
             ),
-        )];
+        );
+        let mut blocks: Vec<Element<'_, Message>> = Vec::new();
+        if let Some(add) = self.add_activity_island(draft, &regions) {
+            blocks.push(add);
+        }
         // Drop targets never appear or disappear when a drag starts, so the
         // layout cannot shift under the pointer: a region's header inserts at
         // its start, a row takes that row's place, an empty region's zone
@@ -61,15 +171,18 @@ impl Settings {
                 || (dragging && editor.drag.target == Some(start) && !list.is_empty());
             let header = container(split(
                 label(
-                    format!(
-                        "{} · {}",
-                        region.title(horizontal).to_uppercase(),
-                        list.len()
-                    ),
-                    10.,
-                    if header_target { accent } else { MUTED },
+                    match (region, horizontal) {
+                        (Region::Center, true) => "Middle",
+                        _ => region.title(horizontal),
+                    },
+                    13.,
+                    if header_target { accent } else { FG },
                 ),
                 button::text(if picking { "Close" } else { "Add" })
+                    .id(cosmic::widget::Id::new(format!(
+                        "applets-add-{}",
+                        region.key()
+                    )))
                     .leading_icon(
                         icon::from_name(if picking {
                             "window-close-symbolic"
@@ -79,7 +192,8 @@ impl Settings {
                         .size(14),
                     )
                     .on_press_maybe(
-                        (!dragging).then(|| edit(Edit::Picker((!picking).then_some(region)))),
+                        (!dragging && !self.native_busy)
+                            .then(|| edit(Edit::Picker((!picking).then_some(region)))),
                     )
                     .into(),
             ))
@@ -119,7 +233,7 @@ impl Settings {
                     if dragging {
                         "Drop here"
                     } else {
-                        "Empty · drag an applet here or use Add"
+                        "Empty. Drag an item here or use Add"
                     },
                     11.,
                     if target { accent } else { MUTED },
@@ -151,12 +265,9 @@ impl Settings {
             }
             blocks.push(column::with_children(rows).spacing(2).into());
         }
-        blocks.push(label(
-            "Drag the handles, or use the arrows to move between regions.",
-            11.,
-            MUTED,
-        ));
-        section(blocks)
+        column::with_children(vec![header, section(blocks)])
+            .spacing(8)
+            .into()
     }
 
     fn applet_row(&self, id: &str, slot: Slot, len: usize, accent: Color) -> Element<'_, Message> {
@@ -167,27 +278,33 @@ impl Settings {
         let focused = editor.focus == Some(slot);
         let first = slot.region == Region::Start && slot.index == 0;
         let last = slot.region == Region::End && slot.index + 1 == len;
-        let idle = !editor.drag.active();
+        let idle = !editor.drag.active() && !self.native_busy;
+        let handle = mouse_area(
+            container(icon::from_name("grip-lines-symbolic").size(16).icon())
+                .padding(6)
+                .id(control_id(slot, AppletControl::Drag)),
+        )
+        .on_release(edit(Edit::DropAt(slot)))
+        .interaction(if dragging {
+            cosmic::iced::mouse::Interaction::Grabbing
+        } else {
+            cosmic::iced::mouse::Interaction::Grab
+        });
+        let handle = if idle {
+            handle.on_press(edit(Edit::DragStart(slot)))
+        } else {
+            handle
+        };
         let mut parts: Vec<Element<'_, Message>> = vec![
-            mouse_area(
-                container(icon::from_name("grip-lines-symbolic").size(16).icon()).padding(6),
-            )
-            .on_press(edit(Edit::DragStart(slot)))
-            .on_release(edit(Edit::DropAt(slot)))
-            .interaction(if dragging {
-                cosmic::iced::mouse::Interaction::Grabbing
-            } else {
-                cosmic::iced::mouse::Interaction::Grab
-            })
-            .into(),
+            handle.into(),
             icon::from_name(editor.catalog.icon(id))
                 .size(18)
                 .icon()
                 .into(),
         ];
-        // The label and its optional pill share one child, so the named
+        // The label and its optional status share one child, so the named
         // controls below keep fixed positions in this row. libcosmic matches
-        // their state by id but keeps it at the old index; a pill appearing in
+        // their state by id but keeps it at the old index; status appearing in
         // front of them during a drag would otherwise break the layout.
         let mut title = vec![
             container(line(
@@ -199,7 +316,7 @@ impl Settings {
             .into(),
         ];
         if target || dragging || !known {
-            title.push(pill(
+            title.push(label(
                 if target {
                     "Drop here"
                 } else if dragging {
@@ -207,41 +324,46 @@ impl Settings {
                 } else {
                     "Not installed"
                 },
+                10.,
                 if target { accent } else { MUTED },
             ));
         }
         parts.push(
-            row::with_children(title)
-                .spacing(8)
-                .align_y(Alignment::Center)
-                .width(Length::Fill)
-                .into(),
+            cosmic::widget::tooltip(
+                column::with_children(title).spacing(2).width(Length::Fill),
+                text::body(editor.catalog.label(id)),
+                cosmic::widget::tooltip::Position::Bottom,
+            )
+            .into(),
         );
         // Stable per-occurrence ids let focus follow a keyboard move.
         parts.push(
             button::icon(icon::from_name("go-up-symbolic"))
-                .tooltip("Move applet up")
+                .padding(6)
+                .tooltip("Move up")
                 .id(control_id(slot, AppletControl::Up))
                 .on_press_maybe((!first && idle).then_some(edit(Edit::Step(slot, -1))))
                 .into(),
         );
         parts.push(
             button::icon(icon::from_name("go-down-symbolic"))
-                .tooltip("Move applet down")
+                .padding(6)
+                .tooltip("Move down")
                 .id(control_id(slot, AppletControl::Down))
                 .on_press_maybe((!last && idle).then_some(edit(Edit::Step(slot, 1))))
                 .into(),
         );
         parts.push(
-            button::icon(icon::from_name("list-remove-symbolic"))
-                .tooltip("Remove applet")
+            button::icon(icon::from_name("window-close-symbolic"))
+                .padding(6)
+                .tooltip("Remove")
                 .id(control_id(slot, AppletControl::Remove))
                 .on_press_maybe(idle.then_some(edit(Edit::Remove(slot))))
                 .into(),
         );
         let content = container(
             row::with_children(parts)
-                .spacing(8)
+                .spacing(4)
                 .align_y(Alignment::Center),
         )
         .padding([2, 6])
@@ -283,7 +405,7 @@ impl Settings {
     }
 
     fn applet_search(&self) -> Element<'_, Message> {
-        cosmic::widget::search_input("Search applets", &self.desktop.applet_query)
+        cosmic::widget::search_input("Search", &self.desktop.applet_query)
             .on_input(|text| edit(Edit::Search(text)))
             .on_clear(edit(Edit::Search(String::new())))
             .width(Length::Fill)
@@ -335,102 +457,6 @@ impl Settings {
         .into()
     }
 
-    /// Every installed applet, where each is used, and Add for those not in
-    /// the selected bar.
-    pub(super) fn installed_applets(&self, draft: &PanelDraft) -> Element<'_, Message> {
-        let editor = &self.desktop;
-        let all = editor.catalog.sorted();
-        let used = all
-            .iter()
-            .filter(|info| !editor.placements(&info.id).is_empty())
-            .count();
-        let horizontal = draft
-            .anchor()
-            .known()
-            .is_none_or(|anchor| anchor.horizontal());
-        let mut blocks: Vec<Element<'_, Message>> = vec![split(
-            column::with_children(vec![
-                label("Installed applets", 16., FG),
-                label(
-                    format!("{} installed · {used} in use", all.len()),
-                    11.,
-                    MUTED,
-                ),
-            ])
-            .spacing(2)
-            .into(),
-            button::text(if editor.overview { "Hide" } else { "Show" })
-                .trailing_icon(
-                    icon::from_name(if editor.overview {
-                        "go-up-symbolic"
-                    } else {
-                        "go-down-symbolic"
-                    })
-                    .size(14),
-                )
-                .on_press_maybe(
-                    (!editor.drag.active()).then(|| edit(Edit::Overview(!editor.overview))),
-                )
-                .into(),
-        )];
-        if !editor.overview {
-            return section(blocks);
-        }
-        // Without a search field, a leftover query filters nothing.
-        let searchable = all.len() >= SEARCH_FROM;
-        if searchable {
-            blocks.push(self.applet_search());
-        }
-        let placed = draft.applets().known().cloned().unwrap_or_default();
-        let shown: Vec<_> = all
-            .into_iter()
-            .filter(|info| !searchable || editor.matches(info))
-            .collect();
-        if shown.is_empty() {
-            blocks.push(label(
-                if editor.catalog.sorted().is_empty() {
-                    "No COSMIC applets are installed."
-                } else {
-                    "No installed applet matches."
-                },
-                12.,
-                MUTED,
-            ));
-        }
-        let region = editor.usual_region().title(horizontal);
-        for (index, info) in shown.into_iter().enumerate() {
-            if index > 0 {
-                blocks.push(separator());
-            }
-            let action: Element<'_, Message> = if placed.contains(&info.id) {
-                container(label("In this bar", 11., MUTED))
-                    .padding([0, 8])
-                    .into()
-            } else {
-                button::text("Add")
-                    .on_press_maybe(
-                        draft
-                            .applets()
-                            .known()
-                            .is_some()
-                            .then(|| edit(Edit::AddToBar(info.id.clone()))),
-                    )
-                    .into()
-            };
-            blocks.push(self.applet_entry(info, action));
-        }
-        blocks.push(label(
-            format!(
-                "Add puts an applet at the {} of the {}; move it from there. Nothing is installed or removed from your computer.",
-                region.to_lowercase(),
-                editor.selected.title()
-            ),
-            11.,
-            MUTED,
-        ));
-        section(blocks)
-    }
-
     fn applet_picker(&self, draft: &PanelDraft, region: Region) -> Element<'_, Message> {
         let horizontal = draft
             .anchor()
@@ -451,7 +477,7 @@ impl Settings {
             .filter(|info| !searchable || self.desktop.matches(info))
             .collect();
         let mut rows: Vec<Element<'_, Message>> = vec![label(
-            format!("Choose an applet for {}", region.title(horizontal)),
+            format!("Add to the {}", region.title(horizontal)),
             12.,
             MUTED,
         )];
@@ -460,12 +486,12 @@ impl Settings {
         }
         if unplaced.is_empty() {
             rows.push(label(
-                "Every installed applet is already in this bar.",
+                "Everything installed is already here.",
                 12.,
                 MUTED,
             ));
         } else if available.is_empty() {
-            rows.push(label("No installed applet matches.", 12., MUTED));
+            rows.push(label("Nothing matches.", 12., MUTED));
         }
         for (index, info) in available.into_iter().enumerate() {
             if index > 0 {
@@ -475,7 +501,13 @@ impl Settings {
                 self.applet_entry(
                     info,
                     button::text("Add")
-                        .on_press(edit(Edit::Add(region, info.id.clone())))
+                        .id(cosmic::widget::Id::new(format!(
+                            "applet-picker-add-{}",
+                            info.id
+                        )))
+                        .on_press_maybe(
+                            (!self.native_busy).then_some(edit(Edit::Add(region, info.id.clone()))),
+                        )
                         .into(),
                 ),
             );

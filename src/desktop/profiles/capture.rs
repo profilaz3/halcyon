@@ -177,6 +177,7 @@ fn capture_panel(
                 None
             }
         },
+        include_applets: Vec::new(),
     };
     Ok(Some(look))
 }

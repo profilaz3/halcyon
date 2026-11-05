@@ -93,6 +93,16 @@ impl Drop for Updates {
     }
 }
 impl Updates {
+    /// One line for the Settings landing. It never claims more than a check found.
+    pub fn summary_line(&self) -> String {
+        match &self.check {
+            Check::NotChecked => "Installed by your system’s updater".into(),
+            Check::Checking => "Checking…".into(),
+            Check::Current => "Up to date".into(),
+            Check::Available(version) => format!("{version} available"),
+            Check::Failed(_) => "Last check didn’t finish".into(),
+        }
+    }
     pub fn cancel(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         if let Some(cancel) = self.cancellation.take() {

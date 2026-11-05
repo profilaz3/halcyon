@@ -269,7 +269,17 @@ impl Cards {
         }
         let position = match widget {
             Widget::Clock | Widget::Glance => [82., 88.],
-            Widget::Calendar => [42., (self.widget_screen(widget)[1] - size[1]) / 2.],
+            Widget::Calendar => {
+                // Under the clock when the centred spot would overlap it.
+                let below_clock = if self.config.widget_visible(Widget::Clock)
+                    && self.same_widget_display(Widget::Clock, widget)
+                {
+                    88. + self.widget_size(Widget::Clock)[1] + drawer::CARD_GAP
+                } else {
+                    0.
+                };
+                [42., ((self.widget_screen(widget)[1] - size[1]) / 2.).max(below_clock)]
+            }
             _ => {
                 let widgets: Vec<_> = self
                     .config

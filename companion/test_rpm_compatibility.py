@@ -97,6 +97,24 @@ class RpmPolicy(unittest.TestCase):
         versions['cosmic-session'] = '0:1.10.0-2.fc44'
         with self.assertRaises(ValueError): r.family(versions, policy=r.FEDORA44_POLICY)
 
+    def test_published_policies_still_verify_during_an_upgrade(self):
+        # A user with Islands enabled has a generation staged by the installed
+        # package. The upgraded helpers must still read it to replace it.
+        published = (r.PUBLISHED_POLICY, r.FEDORA_POLICY, r.PUBLISHED_FEDORA43_POLICY, r.PUBLISHED_FEDORA44_POLICY)
+        self.assertEqual([p['id'] for p in published],
+                         ['cosmic-1.10-1.11-startup-v4', 'fedora43-cosmic-1.10-startup-v1',
+                          'fedora43-cosmic-1.10-1.11-startup-v2', 'fedora44-cosmic-1.11-startup-v1'])
+        for policy in published:
+            self.assertTrue(r.enabled({'startup_policy': policy}))
+            manifest = dict(upstream=r.CONFIGURATION_SOURCE['upstream'], protocol=1,
+                            runtime_probe=1, binary_sha256=policy['binary_sha256'])
+            r.validate_bundle(manifest, {'startup_policy': policy})
+        self.assertEqual(len({p['binary_sha256'] for p in (*published, r.POLICY, r.FEDORA43_POLICY, r.FEDORA44_POLICY)}), 6)
+        with patch.object(r, 'rpm_system', return_value=True):
+            for version in ('43', '44'):
+                with patch.object(r, 'os_release', return_value=dict(ID='fedora', VERSION_ID=version)):
+                    self.assertNotIn(r.current_policy(), published)
+
     def test_default_policy_uses_the_actual_fedora_release(self):
         with patch.object(r, 'rpm_system', return_value=True):
             for version, policy in (('43', r.FEDORA43_POLICY), ('44', r.FEDORA44_POLICY)):

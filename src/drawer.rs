@@ -80,12 +80,12 @@ impl Widget {
     pub fn icon(self) -> &'static str {
         match self {
             Self::Calendar => "x-office-calendar-symbolic",
-            Self::Projects => "utilities-terminal-symbolic",
+            Self::Projects => "folder-symbolic",
             Self::Devbox => "utilities-system-monitor-symbolic",
-            Self::Weather => "weather-clear-symbolic",
+            Self::Weather => "weather-few-clouds-symbolic",
             Self::Clock => "preferences-system-time-symbolic",
             Self::Glance => "view-grid-symbolic",
-            Self::Music => "multimedia-audio-player-symbolic",
+            Self::Music => "audio-x-generic-symbolic",
             Self::Notes => "accessories-text-editor-symbolic",
             Self::Focus => "alarm-symbolic",
         }
@@ -95,11 +95,18 @@ impl Widget {
     }
 }
 
-pub const SIDEBAR_WIDTH: u32 = 184;
-pub const SIDEBAR_HEIGHT: u32 = 548;
-pub const FIRST_ROW: f32 = 64.;
-pub const ROW_STEP: f32 = 50.;
-pub const ROW_HEIGHT: f32 = 44.;
+pub const SIDEBAR_WIDTH: u32 = 212;
+pub const SIDEBAR_HEIGHT: u32 = 580;
+/// The rail's layout, top down; `FIRST_ROW` is where the draggable rows
+/// start, so a pointer position maps to a row.
+pub const RAIL_PADDING: f32 = 12.;
+pub const HEADER: f32 = 40.;
+pub const HEADER_GAP: f32 = 12.;
+pub const SECTION_LABEL: f32 = 16.;
+pub const LABEL_GAP: f32 = 6.;
+pub const FIRST_ROW: f32 = RAIL_PADDING + HEADER + HEADER_GAP + SECTION_LABEL + LABEL_GAP;
+pub const ROW_STEP: f32 = 42.;
+pub const ROW_HEIGHT: f32 = 40.;
 pub const CARD_GAP: f32 = 14.;
 pub const EDGE_DWELL: Duration = Duration::from_secs(1);
 const HIDDEN_MARGIN: i32 = -(SIDEBAR_WIDTH as i32) - 8;

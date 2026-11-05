@@ -31,6 +31,7 @@ use cosmic::widget::image::Handle;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+mod effect;
 
 /// Thumbnails kept in memory.
 const CACHE: usize = 48;
@@ -165,6 +166,7 @@ pub enum Message {
     ApplyColors,
     ResolveThemeAccent,
     KeepColors,
+    ResolveEffect(bool),
     SuggestAccent,
     // Legacy preference route retained for compatibility regression coverage.
     #[cfg_attr(not(test), allow(dead_code))]
@@ -175,6 +177,8 @@ pub enum Message {
     Undo,
     Refresh,
     UseCurrent,
+    /// Keeps the edits over a value changed outside this editor.
+    KeepMine,
     Recover,
     KeepRecovery,
 }
@@ -648,6 +652,8 @@ pub struct Shown {
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct SavedWallpaper {
+    #[serde(default)]
+    effect: Option<effect::EffectDraft>,
     pub(super) draft: WallpaperDraft,
     pub(super) target: Target,
     pub(super) custom: BTreeMap<Target, Custom>,
@@ -661,6 +667,14 @@ pub(super) struct SavedWallpaper {
 }
 
 pub struct WallpaperEditor {
+    /// Earlier states of this preview, oldest first. Ctrl+Z stays inside it.
+    steps: Vec<Option<String>>,
+    /// An exhausted preview history stays local until Apply or Discard.
+    preview_open: bool,
+    /// The state before a slider gesture, recorded when it finishes.
+    gesture: Option<Option<String>>,
+    effect: Option<effect::EffectDraft>,
+    effect_conflict: bool,
     pub(super) core: DraftEditor<WallpaperDraft>,
     pub tab: Tab,
     pub palette_choices: bool,
@@ -722,6 +736,11 @@ pub struct WallpaperEditor {
 impl Default for WallpaperEditor {
     fn default() -> Self {
         Self {
+            steps: Vec::new(),
+            preview_open: false,
+            gesture: None,
+            effect: None,
+            effect_conflict: false,
             core: DraftEditor::new(Owner::Wallpaper, "Wallpaper"),
             tab: Tab::Bundled,
             palette_choices: false,
@@ -787,6 +806,7 @@ impl WallpaperEditor {
             self.refresh_accent(false);
         }
         self.refresh_outline();
+        self.refresh_effect();
         self.sync();
     }
     #[cfg(test)]
@@ -836,6 +856,7 @@ impl WallpaperEditor {
         self.dirty()
             .then(|| {
                 self.draft().cloned().map(|draft| SavedWallpaper {
+                    effect: self.effect.clone(),
                     draft,
                     target: self.target.clone(),
                     custom: self.custom.clone(),
@@ -848,6 +869,9 @@ impl WallpaperEditor {
             .flatten()
     }
     pub(super) fn restore_session(&mut self, saved: SavedWallpaper) -> Result<(), String> {
+        if let Some(effect) = &saved.effect {
+            effect.validate()?;
+        }
         if saved
             .accent_text
             .as_ref()
@@ -898,6 +922,7 @@ impl WallpaperEditor {
         self.core
             .keep_session_form_baseline(!saved.custom.is_empty() || !saved.fit_text.is_empty());
         self.core.restore_session(saved.draft)?;
+        self.effect = saved.effect;
         self.target = saved.target;
         self.custom = saved.custom;
         self.fit_text = saved.fit_text;
@@ -950,7 +975,8 @@ impl WallpaperEditor {
     }
     /// Edits or typed colour text not applied yet.
     pub fn dirty(&self) -> bool {
-        self.core.dirty()
+        self.effect.is_some()
+            || self.core.dirty()
             || self.colors_dirty()
             || self.accent_dirty()
             || self.typed_error().is_some()
@@ -986,6 +1012,7 @@ impl WallpaperEditor {
     /// and the cached checks of every newly shown picture or folder.
     pub fn can_apply(&self) -> bool {
         self.dirty()
+            && !self.effect_conflict
             && self.draft().is_some()
             && self.writable()
             && self.recovery().is_none()
@@ -1122,7 +1149,7 @@ impl WallpaperEditor {
                 .is_none_or(|draft| draft.blocked().is_empty())
             && self.colors_ready()
     }
-    fn colors_ready(&self) -> bool {
+    pub fn colors_ready(&self) -> bool {
         self.automatic_analysis.is_none()
             && self
                 .colors
@@ -1202,18 +1229,6 @@ impl WallpaperEditor {
     }
     pub fn accent_conflicts(&self) -> &[crate::desktop::ConfigKey] {
         self.accent.as_ref().map_or(&[], AppearanceDraft::conflicts)
-    }
-    pub fn cancel_preview(&mut self) {
-        let custom = self.custom.clone();
-        let fit_text = self.fit_text.clone();
-        let accent_text = self.accent_text.clone();
-        self.update(Message::Discard);
-        self.custom = custom;
-        self.fit_text = fit_text;
-        self.accent_text = accent_text;
-        if self.accent_text.is_some() {
-            let _ = self.ensure_colors();
-        }
     }
     pub fn set_notice(&mut self, notice: Notice) {
         self.core.notice = Some(notice);
@@ -1308,13 +1323,17 @@ impl WallpaperEditor {
     /// Applies the background draft; a theme's wallpaper polarity goes with
     /// it in the same change and Undo.
     fn apply_background(&mut self) {
-        let polarity = match self.polarity() {
+        let mut polarity = match self.polarity() {
             Ok(polarity) => polarity,
             Err(reason) => {
                 self.set_notice(Notice::Error(reason));
                 return;
             }
         };
+        if let Err(error) = self.merge_effect(&mut polarity) {
+            self.set_notice(Notice::Error(error));
+            return;
+        }
         let applied = match polarity {
             None => self.core.apply(),
             Some(polarity) => {
@@ -1330,6 +1349,7 @@ impl WallpaperEditor {
             }
         };
         if applied {
+            self.effect = None;
             self.keep_applied_colors();
         }
     }
@@ -1398,6 +1418,10 @@ impl WallpaperEditor {
                 return;
             }
         };
+        if include_background && let Err(error) = self.merge_effect(&mut widgets) {
+            self.set_notice(Notice::Error(error));
+            return;
+        }
         // A theme's wallpaper polarity, for the wallpaper this Apply shows.
         if include_background || !self.core.dirty() {
             match self.polarity() {
@@ -1462,6 +1486,9 @@ impl WallpaperEditor {
         {
             self.keep_applied_colors();
             self.clear_colors();
+            if include_background {
+                self.effect = None;
+            }
             let message = if sync {
                 "Colors applied to widgets and Pop!_OS"
             } else {
@@ -2065,6 +2092,7 @@ impl WallpaperEditor {
                     }
                 }
             }
+            Message::ResolveEffect(keep) => self.resolve_effect(keep),
             Message::ClearAccent => {
                 self.accent_text = None;
                 self.clear_colors();
@@ -2088,6 +2116,7 @@ impl WallpaperEditor {
                     Some(Notice::Error("Reinstalling is off in preview mode".into()));
             }
             Message::Apply => {
+                self.refresh_effect();
                 if self.can_apply() {
                     if self.colors_dirty() || self.accent_dirty() {
                         self.apply_colors(true);
@@ -2096,9 +2125,18 @@ impl WallpaperEditor {
                     }
                     self.settle_typed(true);
                     self.refresh_outline();
+                    if !self.dirty() {
+                        self.preview_open = false;
+                        self.steps.clear();
+                    }
                 }
             }
             Message::Discard => {
+                self.preview_open = false;
+                self.steps.clear();
+                self.gesture = None;
+                self.effect = None;
+                self.effect_conflict = false;
                 self.core.discard();
                 self.custom.clear();
                 self.fit_text.clear();
@@ -2116,6 +2154,7 @@ impl WallpaperEditor {
                 }
             }
             Message::Refresh => {
+                self.refresh_effect();
                 self.core.refresh();
                 self.recheck();
                 self.settle_typed(false);
@@ -2125,6 +2164,10 @@ impl WallpaperEditor {
             Message::UseCurrent => {
                 self.core.use_current(&[]);
                 self.refresh_accent(true);
+                self.settle_typed(true);
+            }
+            Message::KeepMine => {
+                self.core.keep_edits();
                 self.settle_typed(true);
             }
             Message::Recover => {

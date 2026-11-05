@@ -220,36 +220,37 @@ fn journey_reported_wallpaper_colors_and_outline() {
             profiles::Message::Select(profiles::Selection::Preset("theme-soft")),
         );
         capture_page(&app, size, &cosmic::Theme::dark(), "themes-soft", 3);
-        // The preview can be collapsed; each choice remains reachable by
+        // The preview is always shown; each choice remains reachable by
         // scrolling, and the styles themselves are one click away.
-        let mut native = Native::new(size);
-        click(&mut app, &mut native, "scene-toggle");
-        assert!(!app.scene_open());
+        // libcosmic reserves a 48 px native window header outside settings_view.
+        let mut native = Native::new(Size::new(size.width, size.height - 48.));
         for id in [
-            "theme-browse-styles",
+            "appearance-all-styles",
+            "preset-theme-soft",
             "theme-color-wallpaper",
             "theme-color-custom",
-            "theme-matching-wallpaper",
         ] {
             let bounds = super::tests::native_reveal(&app, &mut native, id);
             assert!(
-                bounds.y >= 0. && bounds.y + bounds.height <= size.height - 48.,
+                bounds.y >= 0. && bounds.y + bounds.height <= native.size.height,
                 "{id} is visible at {size:?}: {bounds:?}"
             );
         }
-        // Enter the actual style browser and keep the previewed look selected.
-        click(&mut app, &mut native, "theme-browse-styles");
-        assert!(app.style_browser);
-        for id in ["styles-back", "preset-theme-soft", "preset-theme-outline"] {
+        // The styles are tiles on the page itself (the separate style browser
+        // and its matching-wallpaper option are gone); Show all reveals every
+        // style and keeps the previewed look selected.
+        click(&mut app, &mut native, "appearance-all-styles");
+        assert!(app.open_sections.contains("appearance-all-styles"));
+        for id in ["preset-theme-soft", "preset-theme-outline"] {
             let bounds = super::tests::native_reveal(&app, &mut native, id);
             assert!(
-                bounds.y >= 0. && bounds.y + bounds.height <= size.height - 48.,
-                "{id} is visible in the browser at {size:?}: {bounds:?}"
+                bounds.y >= 0. && bounds.y + bounds.height <= native.size.height,
+                "{id} is visible with every style shown at {size:?}: {bounds:?}"
             );
         }
         capture_page(&app, size, &cosmic::Theme::dark(), "themes-styles", 2);
-        click(&mut app, &mut native, "styles-back");
-        assert!(!app.style_browser);
+        click(&mut app, &mut native, "appearance-all-styles");
+        assert!(!app.open_sections.contains("appearance-all-styles"));
         let style = |pointer: &str| {
             app.profiles
                 .profile()
@@ -407,8 +408,12 @@ fn material_native_chooser_adjust_reset_and_undo() {
             &cosmic::Theme::dark(),
             &format!("materials-before-{}", size.width),
         );
-        click(&mut native, &mut app, "scene-toggle");
-        assert!(!app.scene_open());
+        // Compare the four finish specimens directly, without a second scene.
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "scene-toggle")
+                .is_none()
+        );
         for kind in Kind::ALL {
             click(&mut native, &mut app, &format!("material-{}", kind.key()));
             assert_eq!(Config::load().materials.shared.unwrap().kind, kind);
@@ -420,9 +425,8 @@ fn material_native_chooser_adjust_reset_and_undo() {
         }
         assert_eq!(Config::load().appearance, original.appearance);
         assert_eq!(Config::load().glance, original.glance);
-        click(&mut native, &mut app, "material-adjust");
-        // Adjust is now an independent inspector. Reveal the real row through
-        // both scroll areas and compare against the actual content viewport.
+        // Fine-tune shows under the chooser once a finish is chosen. Reveal the
+        // real row through both scroll areas and compare against the viewport.
         let viewport = native.bounds(app.settings_view(), "settings-viewport");
         let motion = super::tests::native_reveal(&app, &mut native, "material-motion");
         assert!(
@@ -509,7 +513,7 @@ fn material_native_chooser_adjust_reset_and_undo() {
         assert!(Config::load().materials.shared.unwrap().opacity.is_some());
         // Real scope tabs, real chooser; a new shared choice keeps the Dock override.
         super::tests::native_reveal(&app, &mut native, "material-scope");
-        let bounds = native.text_bounds(app.settings_view(), "Dock");
+        let bounds = native.text_bounds(app.settings_view(), "Dock only");
         let p = bounds.center();
         let _ = native.event(
             app.settings_view(),

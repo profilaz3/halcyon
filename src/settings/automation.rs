@@ -55,7 +55,13 @@ pub enum DraftEdit {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Message {
     AdaptiveRoutine(crate::desktop::profiles::adaptive::Look, Source),
+    /// Stop a look's own shades from switching through the day.
+    AdaptiveOff,
+    /// Stop day and night widget styles from switching on their own.
+    MomentsOff,
     ManualCity(crate::config::Location),
+    /// Choose the look for one part of the day (`None`: don't change then).
+    Moment(Event, Option<ProfileRef>),
     Enable(bool),
     Rule(String, bool),
     Move(String, i32),
@@ -232,6 +238,8 @@ pub struct AutomationEditor {
     /// Built-in starting points, then saved profiles: what a rule can apply.
     pub profiles: Vec<(ProfileRef, String)>,
     pub profile_labels: Vec<String>,
+    /// "Don't change" followed by every look, for the time-of-day choices.
+    pub moment_labels: Vec<String>,
     profile_scopes: Vec<(ProfileRef, Vec<Domain>)>,
     pub displays: Vec<Display>,
     /// Display connectors with nothing connected.
@@ -311,7 +319,6 @@ impl AutomationEditor {
             None => Err(""),
         }
     }
-    #[cfg(test)]
     pub fn dirty(&self) -> bool {
         self.draft.as_ref().is_some_and(RuleDraft::dirty)
     }
@@ -400,6 +407,9 @@ impl AutomationEditor {
         self.settings = Some(settings);
         self.state = state;
         self.profile_labels = choices.iter().map(|(_, name)| name.clone()).collect();
+        self.moment_labels = std::iter::once("Keep current look".to_string())
+            .chain(self.profile_labels.iter().cloned())
+            .collect();
         self.profiles = choices;
         self.profile_scopes = scopes;
         self.displays = displays;
@@ -562,27 +572,121 @@ impl AutomationEditor {
         let store = self.store().cloned();
         match message {
             Message::AdaptiveRoutine(look, source) => {
+                // One look's own day, evening and night shades fill the
+                // three daily slots, replacing whatever was there.
                 self.change(|settings, now| {
                     let store=store.as_ref().ok_or("Desktop settings unavailable")?;
-                    Context::read(store,settings).city(source)?;
-                    if settings.rules.iter().any(|r| matches!(&r.profile,ProfileRef::Preset(id) if id.starts_with("adaptive-"))) {
-                        return Err("Adaptive rules already exist. Edit them in Automation.".into());
-                    }
-                    if settings.rules.len()+3 > automation::rules::MAX_RULES {
-                        return Err("Remove three rules before adding this daily cycle.".into());
-                    }
+                    Context::read(store,settings).city(source).map_err(|_| "Choose where you are first.".to_string())?;
                     for phase in crate::desktop::profiles::adaptive::Phase::ALL {
-                      let id=settings.next_id();
-                      settings.rules.push(Rule {
-                        id, enabled:true, since:now,
-                        profile:ProfileRef::Preset(look.id(phase).into()),
-                        name:format!("{} · {}",look.title(),phase.title()),
-                        when:Trigger::Solar { event:phase.event(),days:Days::EVERY,source },
-                      });
+                      let event = phase.event();
+                      let profile = ProfileRef::Preset(look.id(phase).into());
+                      let name = format!("{} · {}",look.title(),phase.title());
+                      let daily = |rule: &Rule| matches!(rule.when, Trigger::Solar { event: e, days, .. } if e == event && days == Days::EVERY);
+                      if let Some(rule) = settings.rules.iter_mut().find(|rule| daily(rule)) {
+                        rule.profile = profile;
+                        rule.name = name;
+                        rule.enabled = true;
+                        rule.since = now;
+                      } else {
+                        if settings.rules.len() >= automation::rules::MAX_RULES {
+                          return Err("Remove a rule under More rules first.".into());
+                        }
+                        let id=settings.next_id();
+                        settings.rules.push(Rule {
+                          id, enabled:true, since:now, profile, name,
+                          when:Trigger::Solar { event,days:Days::EVERY,source },
+                        });
+                      }
                     }
                     if !settings.enabled { settings.enabled=true;settings.since=now; }
                     Ok(())
                 }, Some("Daily cycle added. It starts at the next sun event.".into()));
+            }
+            Message::AdaptiveOff => {
+                self.change(
+                    |settings, _| {
+                        settings.rules.retain(|r| {
+                            !matches!(&r.profile, ProfileRef::Preset(id) if id.starts_with("adaptive-"))
+                        });
+                        Ok(())
+                    },
+                    Some("Daily cycle turned off".into()),
+                );
+            }
+            Message::MomentsOff => {
+                self.change(
+                    |settings, _| {
+                        settings
+                            .rules
+                            .retain(|r| !matches!(r.profile, ProfileRef::Moment(_)));
+                        Ok(())
+                    },
+                    Some("Day and night styles stay as they are now".into()),
+                );
+            }
+            Message::Moment(event, profile) => {
+                let name = profile
+                    .as_ref()
+                    .map(|profile| self.profile_name(profile, ""))
+                    .unwrap_or_default();
+                self.change(
+                    |settings, now| {
+                        let daily = |rule: &Rule| {
+                            matches!(rule.when, Trigger::Solar { event: e, days, .. }
+                                if e == event && days == Days::EVERY)
+                        };
+                        let Some(profile) = profile else {
+                            settings.rules.retain(|rule| !daily(rule));
+                            return Ok(());
+                        };
+                        let store = store.as_ref().ok_or("Desktop settings unavailable")?;
+                        let context = Context::read(store, settings);
+                        let source = settings
+                            .rules
+                            .iter()
+                            .find_map(|rule| match rule.when {
+                                Trigger::Solar { source, .. } => Some(source),
+                                _ => None,
+                            })
+                            .unwrap_or(if context.city(Source::Weather).is_ok() {
+                                Source::Weather
+                            } else {
+                                Source::Manual
+                            });
+                        context
+                            .city(source)
+                            .map_err(|_| "Choose where you are first.".to_string())?;
+                        if let Some(rule) = settings.rules.iter_mut().find(|rule| daily(rule)) {
+                            rule.profile = profile;
+                            rule.name = name;
+                            rule.enabled = true;
+                            rule.since = now;
+                        } else {
+                            if settings.rules.len() >= automation::rules::MAX_RULES {
+                                return Err("Remove a rule under More rules first.".into());
+                            }
+                            let id = settings.next_id();
+                            settings.rules.push(Rule {
+                                id,
+                                enabled: true,
+                                since: now,
+                                profile,
+                                name,
+                                when: Trigger::Solar {
+                                    event,
+                                    days: Days::EVERY,
+                                    source,
+                                },
+                            });
+                        }
+                        if !settings.enabled {
+                            settings.enabled = true;
+                            settings.since = now;
+                        }
+                        Ok(())
+                    },
+                    None,
+                );
             }
             Message::ManualCity(city) => {
                 self.change(

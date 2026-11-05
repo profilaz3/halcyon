@@ -2263,7 +2263,23 @@
 
                              applet_env.retain(|(k, _)| k.as_str() != "WAYLAND_SOCKET");
                              applet_env.push((
-@@ -1844,3 +1860,66 @@
+@@ -1427,8 +1443,13 @@
+         self.close_popups(|_| false);
+     }
+
+-    fn keyboard_enter(&mut self, _: &str, _: c_wl_surface::WlSurface) -> Option<s_WlSurface> {
+-        None
++    fn keyboard_enter(&mut self, _: &str, surface: c_wl_surface::WlSurface) -> Option<s_WlSurface> {
++        // Forward compositor focus to the applet that owns this exact popup.
++        // Clearing it here loses Tab/Escape after a popup takes a native grab.
++        self.popups.iter().find_map(|p| {
++            (p.popup.c_popup.wl_surface() == &surface)
++                .then(|| p.s_surface.wl_surface().clone())
++        })
+     }
+
+     fn pointer_leave(&mut self, seat_name: &str, _s: Option<c_wl_surface::WlSurface>) {
+@@ -1844,3 +1865,66 @@
          // TODO handle the preferred transform
      }
  }
@@ -2342,9 +2358,51 @@
          self.outputs.push((c_output.clone(), s_output.clone(), output_info.clone()));
 
          let cur = self.cur_theme();
+@@ -624,18 +627,8 @@
+         seat_name: &str,
+         surface: c_wl_surface::WlSurface,
+     ) -> Option<wl_surface::WlSurface> {
+-        if let Some((popup_space_i, popup_space)) =
+-            self.space_list.iter_mut().enumerate().find(|(_, s)| !s.popups.is_empty())
+-        {
+-            if let Some(p_ret) = popup_space.keyboard_enter(seat_name, surface.clone()) {
+-                drop(p_ret);
+-            }
+-            self.space_list.iter_mut().enumerate().find_map(|(i, s)| {
+-                if i != popup_space_i { s.keyboard_enter(seat_name, surface.clone()) } else { None }
+-            })
+-        } else {
+-            self.space_list.iter_mut().find_map(|s| s.keyboard_enter(seat_name, surface.clone()))
+-        }
++        // Only the space owning this client surface can select its server peer.
++        self.space_list.iter_mut().find_map(|s| s.keyboard_enter(seat_name, surface.clone()))
+     }
+
+     fn pointer_leave(&mut self, seat_name: &str, surface: Option<c_wl_surface::WlSurface>) {
 --- a/cosmic-panel-bin/src/xdg_shell_wrapper/client/handlers/keyboard.rs
 +++ b/cosmic-panel-bin/src/xdg_shell_wrapper/client/handlers/keyboard.rs
-@@ -115,6 +115,9 @@
+@@ -87,7 +87,7 @@
+
+         let kbd_focus = {
+             let mut c_focused_surface = self.client_state.focused_surface.borrow_mut();
+-            if let Some(i) = c_focused_surface.iter().position(|f| &f.0 == surface) {
++            if let Some(i) = c_focused_surface.iter().position(|f| &f.0 == surface && f.1 == name) {
+                 c_focused_surface[i].2 = FocusStatus::LastFocused(Instant::now());
+                 true
+             } else {
+@@ -104,7 +104,10 @@
+         if kbd_focus && !s_surface {
+             self.space.keyboard_leave(&name, Some(surface.clone()));
+         }
+-        kbd.set_focus(self, None, SERIAL_COUNTER.next_serial());
++        // A late leave for a retired popup cannot clear its replacement's focus.
++        if kbd_focus {
++            kbd.set_focus(self, None, SERIAL_COUNTER.next_serial());
++        }
+     }
+
+     fn press_key(
+@@ -115,6 +118,9 @@
          serial: u32,
          event: sctk::seat::keyboard::KeyEvent,
      ) {

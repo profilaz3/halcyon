@@ -272,6 +272,12 @@ fn window<'a>(
     .into()
 }
 
+/// Where a look's saved position puts `widget`, as the desktop places it.
+fn placed(config: &Config, widget: Widget, size: [f32; 2]) -> Option<[f32; 2]> {
+    let position = config.widget_positions.get(widget.key())?;
+    Some(crate::layout_state::decode_position(widget, *position, size, screen()))
+}
+
 fn rgb(c: [u8; 3]) -> Color {
     Color::from_rgb8(c[0], c[1], c[2])
 }
@@ -325,6 +331,15 @@ fn look_renders() {
         let (mut cards, _) = Cards::init(Core::default(), config.clone());
         cards.screen_size = screen();
         sample_data(&mut cards);
+        // Sample notes, never the notes saved on this machine.
+        cards.tools.note = Ok(crate::tools::notes::Note {
+            text: "- [x] Book train tickets\n- [ ] Call the dentist\n- [ ] Pick up the cake"
+                .into(),
+            updated_at: Some(Local::now().to_rfc3339()),
+        });
+        cards.tools.draft = None;
+        cards.sidebar.visible = true;
+        cards.sidebar.progress = 1.;
 
         let mut layers: Vec<Element<'_, Message>> = vec![
             cosmic::widget::image(picture)
@@ -354,6 +369,8 @@ fn look_renders() {
                 continue;
             }
             let height = cards.widget_size(widget)[1];
+            let at = placed(&config, widget, [360., height])
+                .unwrap_or([screen()[0] - 42. - 360., right_y]);
             let view = match widget {
                 Widget::Weather => cards.weather_card(),
                 Widget::Calendar => cards.calendar_card(),
@@ -363,24 +380,24 @@ fn look_renders() {
             };
             layers.push(
                 pin(container(view).width(360.).height(height))
-                    .position(Point::new(screen()[0] - 42. - 360., right_y))
+                    .position(Point::new(at[0], at[1]))
                     .into(),
             );
             right_y += height + 16.;
         }
-        for widget in [Widget::Glance, Widget::Music, Widget::Notes, Widget::Focus] {
+        // The left column stacks from the top, so nothing overlaps.
+        let mut left_y = 72.;
+        for widget in [Widget::Glance, Widget::Focus, Widget::Notes, Widget::Music] {
             if !cards.config.widget_visible(widget) {
                 continue;
             }
             let size = cards.widget_size(widget);
-            let at = if widget == Widget::Glance {
-                [48., 72.]
-            } else {
-                let index = [Widget::Music, Widget::Notes, Widget::Focus]
-                    .iter()
-                    .position(|w| *w == widget)
-                    .unwrap() as f32;
-                [48., screen()[1] - 120. - (index + 1.) * (size[1] + 16.)]
+            let at = match placed(&config, widget, size) {
+                Some(at) => at,
+                None => {
+                    left_y += size[1] + 16.;
+                    [48., left_y - size[1] - 16.]
+                }
             };
             let view = if widget == Widget::Glance {
                 cards.glance()
@@ -391,6 +408,19 @@ fn look_renders() {
                 pin(container(view).width(size[0]).height(size[1]))
                     .position(Point::new(at[0], at[1]))
                     .into(),
+            );
+        }
+        // The widget controls, open at the right edge, when the look asks.
+        if look["rail"].as_bool().unwrap_or(false) {
+            layers.push(
+                pin(container(cards.control_rail())
+                    .width(drawer::SIDEBAR_WIDTH as f32)
+                    .height(drawer::SIDEBAR_HEIGHT as f32))
+                .position(Point::new(
+                    screen()[0] - drawer::SIDEBAR_WIDTH as f32,
+                    (screen()[1] - drawer::SIDEBAR_HEIGHT as f32) / 2.,
+                ))
+                .into(),
             );
         }
         // Panel and dock: a dark tint of the wallpaper's color (like the
@@ -462,8 +492,10 @@ fn look_renders() {
             .align_y(Alignment::Center)
             .into()
         };
+        // The same moment the clock widget shows.
+        let now = Local::now().format("%a %b %-d  %H:%M").to_string();
         let clock = move || -> Element<'static, Message> {
-            text::body("Wed Oct 22  09:41")
+            text::body(now.clone())
                 .size(13)
                 .class(cosmic::theme::Text::Color(bar_ink))
                 .into()

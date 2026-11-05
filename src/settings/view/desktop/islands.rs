@@ -1,4 +1,4 @@
-//! Concise native controls for the existing Dock & panel page.
+//! Concise native controls for the existing Dock and panel page.
 use super::*;
 use crate::settings::desktop::islands::Edit as IslandEdit;
 use dock_islands_core::{Placement, Section};
@@ -42,7 +42,7 @@ impl Settings {
                 status,
                 WARN,
                 vec![
-                    button::text("Setup & updates")
+                    button::text("Setup and updates")
                         .on_press(Message::OpenIslandsGuide)
                         .into(),
                     button::text("Check again")

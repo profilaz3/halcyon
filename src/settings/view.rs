@@ -8,7 +8,6 @@ mod colors;
 mod design;
 mod desktop;
 mod desktop_icons;
-mod help;
 pub(super) mod home;
 mod layered;
 mod materials;
@@ -19,6 +18,7 @@ mod pages;
 mod preview;
 mod privacy;
 pub(super) mod profiles;
+mod rain;
 mod recipes;
 mod recovery;
 mod reveal;
@@ -35,7 +35,7 @@ mod themes;
 mod tools;
 mod updates;
 mod wallpaper;
-mod rain;
+mod widget_page;
 mod widget_text;
 mod window_rules;
 mod windows;
@@ -148,9 +148,9 @@ fn frame<'a>(
 }
 fn detail<'a>(title: impl Into<String>, description: impl Into<String>) -> Element<'a, Message> {
     let description = description.into();
-    let mut lines = vec![label(title, 15., FG)];
+    let mut lines = vec![label(title, 14., FG)];
     if !description.is_empty() {
-        lines.push(label(description, 13., MUTED));
+        lines.push(label(description, 12., MUTED));
     }
     column::with_children(lines)
         .spacing(3)
@@ -213,7 +213,14 @@ pub(super) fn group_row<'a>(
     description: impl Into<String>,
     control: Element<'a, Message>,
 ) -> Element<'a, Message> {
-    split(detail(title, description), control)
+    // A wrapping row keeps segmented controls sized to their labels.
+    split(
+        detail(title, description),
+        row::with_children(vec![control])
+            .align_y(Alignment::Center)
+            .wrap()
+            .into(),
+    )
 }
 fn pill<'a>(value: impl Into<String>, color: Color) -> Element<'a, Message> {
     container(label(value, 11., color))
@@ -255,7 +262,15 @@ pub(super) fn segmented<'a>(
                 )) => cosmic::widget::Id::new("native-islands-style"),
                 _ => cosmic::widget::Id::unique(),
             };
-            button::custom(label(title, 12., if selected { FG } else { MUTED }))
+            // An option that can't be picked right now is dimmed.
+            let ink = if selected {
+                FG
+            } else if message.is_none() {
+                Color { a: 0.35, ..MUTED }
+            } else {
+                MUTED
+            };
+            button::custom(label(title, 12., ink))
                 .id(id)
                 .class(nav_style(selected, accent))
                 .selected(selected)
@@ -339,22 +354,18 @@ pub(super) fn dot<'a>(color: Color, size: f32) -> Element<'a, Message> {
 }
 
 impl Settings {
-    /// Optional context stays next to its control, and can be opened with
-    /// a pointer or keyboard. Status, errors and setup never go in here.
+    /// A control's title. Controls explain themselves through their label
+    /// and, where needed, a one-line description; there are no help bubbles.
     fn help(
         &self,
-        key: &'static str,
+        _key: &'static str,
         title: &'static str,
-        explanation: &'static str,
+        _explanation: &'static str,
     ) -> Element<'_, Message> {
-        row::with_children(vec![
-            label(title, 14., FG),
-            help::explanation(key, title, explanation, self.help_open == Some(key)),
-        ])
-        .spacing(6)
-        .align_y(Alignment::Center)
-        .into()
+        label(title, 14., FG)
     }
+    /// The one way to fold extra content away: a full-width row with a
+    /// chevron; the content opens inside the same card.
     fn disclosure<'a>(
         &'a self,
         key: &'static str,
@@ -362,46 +373,62 @@ impl Settings {
         content: Element<'a, Message>,
     ) -> Element<'a, Message> {
         let open = self.open_sections.contains(key);
-        column::with_children(vec![
-            button::text(title)
-                .id(cosmic::widget::Id::new(key))
-                .trailing_icon(
-                    icon::from_name(if open {
-                        "go-up-symbolic"
-                    } else {
-                        "go-down-symbolic"
-                    })
-                    .size(16),
-                )
-                .on_press(Message::ToggleSection(key))
+        // One child, so the closed section adds no gap under its title.
+        pages::section(vec![column::with_children(vec![
+            button::custom(split(
+                label(title, 14., FG),
+                icon::from_name(if open {
+                    "go-up-symbolic"
+                } else {
+                    "go-down-symbolic"
+                })
+                .size(16)
+                .icon()
                 .into(),
+            ))
+            .id(cosmic::widget::Id::new(key))
+            .class(nav_style(false, self.settings_accent()))
+            .width(Length::Fill)
+            // Same inset as the rows inside cards, so labels line up.
+            .padding([4, 10])
+            .on_press(Message::ToggleSection(key))
+            .into(),
             reveal::reveal(
-                content,
+                container(content).padding([10, 0, 0, 0]).into(),
                 open,
                 self.config.settings_animations && self.system_animations,
             ),
         ])
-        .spacing(6)
-        .into()
+        .into()])
     }
-    fn sidebar_width(&self) -> f32 {
-        // Keep more working room at the supported compact window size.
-        (self.window.width * 0.2).clamp(164., 184.)
+    /// At the supported minimum the sidebar becomes an icon and label rail.
+    pub(super) fn rail(&self) -> bool {
+        self.window.width < 960.
+    }
+    pub(in crate::settings) fn sidebar_width(&self) -> f32 {
+        if self.rail() {
+            84.
+        } else {
+            (self.window.width * 0.2).clamp(176., 196.)
+        }
     }
     fn content_width(&self) -> f32 {
         (self.window.width - self.sidebar_width() - 40.).max(240.)
     }
     fn inspector_height(&self) -> f32 {
-        (self.window.height - 260.).max(260.)
+        (self.window.height - 200.).max(260.)
     }
     fn stage_width(&self) -> f32 {
         let width = self.content_width();
-        let scene = matches!(
-            self.page,
-            Page::Overview | Page::DesktopProfiles | Page::DesktopWallpaper
-        );
+        let scene = self.canvas_visible()
+            || matches!(
+                self.page,
+                Page::Overview | Page::DesktopProfiles | Page::DesktopWallpaper
+            );
         if scene && width >= 584. {
             width - (width * 0.40).clamp(248., 420.) - 16.
+        } else if matches!(self.page, Page::Themes | Page::DesktopDock) && width >= 576. {
+            (width - 16.) / 2.
         } else if !scene && width >= 600. {
             (width * 0.34).clamp(224., 340.)
         } else {
@@ -409,10 +436,12 @@ impl Settings {
         }
     }
     fn stage_height(&self) -> f32 {
-        if matches!(
-            self.page,
-            Page::Overview | Page::DesktopProfiles | Page::DesktopWallpaper
-        ) {
+        if self.canvas_visible()
+            || matches!(
+                self.page,
+                Page::Overview | Page::Themes | Page::DesktopProfiles | Page::DesktopWallpaper
+            )
+        {
             (self.stage_width() * 0.625).clamp(180., self.inspector_height() - 48.)
         } else {
             (self.stage_width() * 0.625).clamp(130., 210.)
@@ -425,28 +454,13 @@ impl Settings {
         id: &'static str,
     ) -> Element<'a, Message> {
         let pattern = match id {
+            "desktop" => adaptive::Pattern::Workspace,
+            "widget" | "calendar" | "dock" => adaptive::Pattern::Balanced,
             "setup" | "mix" | "package" | "canvas" | "wallpaper" => adaptive::Pattern::Scene,
             "content" | "notes" | "projects" => adaptive::Pattern::Form,
             _ => adaptive::Pattern::Controls,
         };
-        let controls = if matches!(pattern, adaptive::Pattern::Scene) {
-            container(
-                scrollable(
-                    container(controls)
-                        .padding([0, 8, 12, 0])
-                        .width(Length::Fill),
-                )
-                .id(cosmic::widget::Id::new(format!("{id}-scroll")))
-                .height(Length::Shrink),
-            )
-            .max_height(self.inspector_height())
-            .width(Length::Fill)
-            .into()
-        } else {
-            // Ordinary settings share the page's scroll. A second viewport
-            // traps the wheel and hides useful controls below a short preview.
-            controls
-        };
+        // The page is the only scroll owner; a composition pins its picture.
         adaptive::page(
             container(stage)
                 .id(cosmic::widget::Id::new(format!("{id}-stage")))
@@ -457,7 +471,9 @@ impl Settings {
                 .id(cosmic::widget::Id::new(format!("{id}-inspector")))
                 .into(),
             match pattern {
+                adaptive::Pattern::Balanced => [280., 280.],
                 adaptive::Pattern::Scene => [320., 248.],
+                adaptive::Pattern::Workspace => [360., 200.],
                 adaptive::Pattern::Form => [360., 224.],
                 _ => [
                     224.,
@@ -473,13 +489,6 @@ impl Settings {
             pattern,
         )
     }
-    fn setting_columns<'a>(
-        &'a self,
-        left: Element<'a, Message>,
-        right: Element<'a, Message>,
-    ) -> Element<'a, Message> {
-        adaptive::columns(left, right, [280., 280.], false)
-    }
     pub(super) fn settings_accent(&self) -> Color {
         cosmic::theme::active().cosmic().accent_text_color().into()
     }
@@ -492,13 +501,13 @@ impl Settings {
         }
         let accent = self.settings_accent();
         let sidebar = self.sidebar(accent);
-        let searching = !self.search_query.trim().is_empty();
+        let searching = !self.search_query.trim().is_empty() || self.search_open;
         let page = match self.page {
-            Page::Overview => self.overview_page(),
-            Page::WidgetLayout => self.overview_page(),
+            Page::Overview | Page::WidgetLayout | Page::Widgets | Page::Desktop => {
+                self.overview_page()
+            }
             Page::PendingChanges => self.pending_changes_page(),
             Page::Appearance => self.appearance_page(),
-            Page::Widgets => self.widgets_page(),
             Page::Glance => self.glance_page(),
             Page::Calendar => self.calendar_page(),
             Page::Weather => self.weather_page(),
@@ -509,7 +518,6 @@ impl Settings {
             Page::Notes => self.notes_page(),
             Page::Focus => self.focus_page(),
             Page::General => self.general_page(),
-            Page::Desktop => self.desktop_page(),
             Page::DesktopDock => {
                 column::with_children(vec![self.desktop_dock_header(), self.dock_workspace()])
                     .spacing(20)
@@ -519,10 +527,9 @@ impl Settings {
             // so the basic controls stay visible.
             Page::DesktopAppearance if !self.appearance_pinned() => column::with_children(vec![
                 self.system_appearance_header(),
-                separator(),
                 self.system_appearance_page(),
             ])
-            .spacing(14)
+            .spacing(20)
             .into(),
             Page::DesktopAppearance => self.system_appearance_page(),
             // Like System appearance: the header scrolls with the content
@@ -538,8 +545,24 @@ impl Settings {
                 self.windows_page(),
                 container(self.workspaces_section(true))
                     .id(cosmic::widget::Id::new("windows-workspaces"))
-                    .padding([12, 0, 0, 0])
                     .into(),
+                group(
+                    None,
+                    vec![
+                        self.subpage_row(
+                            "Apps that don’t tile",
+                            "They open as normal windows when tiling is on",
+                            Page::DesktopWindowRules,
+                            "windows-open-rules",
+                        ),
+                        self.subpage_row(
+                            "Keyboard shortcuts",
+                            "Keys for windows, workspaces and apps",
+                            Page::DesktopShortcuts,
+                            "windows-open-shortcuts",
+                        ),
+                    ],
+                ),
             ])
             .spacing(16)
             .into(),
@@ -576,11 +599,27 @@ impl Settings {
                 accent,
             ));
         }
+        if !searching
+            && matches!(
+                self.page,
+                Page::Themes | Page::DesktopProfiles | Page::AdaptiveLooks
+            )
+            && !self.profiles.conflicts().is_empty()
+        {
+            page_parts.push(self.preview_conflicts());
+        }
+        // libcosmic reuses widget state by name and position, and a named widget
+        // replaced by an unnamed one panics. A new name for each distinct screen
+        // state rebuilds its tree instead of mismatching it.
         page_parts.push(
-            container(page)
-                .id(cosmic::widget::Id::new("page-start"))
-                .width(Length::Fill)
-                .into(),
+            container(
+                container(page)
+                    .id(cosmic::widget::Id::new(self.screen_key()))
+                    .width(Length::Fill),
+            )
+            .id(cosmic::widget::Id::new("page-start"))
+            .width(Length::Fill)
+            .into(),
         );
         let page = if searching {
             self.search_results_page()
@@ -636,7 +675,7 @@ impl Settings {
         };
         let status: Element<'_, Message> = if searching || self.undo_review.is_some() {
             self.simple_status()
-        } else if self.page == Page::Overview && self.canvas.is_some() {
+        } else if self.canvas_visible() {
             self.canvas_actions()
         } else if self.page == Page::Builder {
             self.recipe_actions()
@@ -647,6 +686,10 @@ impl Settings {
         } else {
             self.simple_status()
         };
+        let status = container(status)
+            .id(cosmic::widget::Id::new(self.status_key()))
+            .width(Length::Fill)
+            .into();
         row::with_children(vec![
             sidebar,
             layered::layered(
@@ -677,81 +720,211 @@ impl Settings {
         .into()
     }
 
-    /// Six stable roots. Leaf editors stay within their owning destination.
+    /// Names the current screen's shape, so a change of shape starts a new tree.
+    fn screen_key(&self) -> String {
+        format!(
+            "screen-{}-{:?}-{:?}-{}-{}-{}-{}-{}-{}-{}-{}-{}-{}-{:?}",
+            self.page.key(),
+            self.object_tab,
+            self.app_settings_page,
+            self.arranging,
+            self.profiles.mix.is_some(),
+            self.profiles.package.is_some(),
+            self.profiles.review_open(),
+            self.setup_requested,
+            self.setup_followups
+                .pending(&self.config, self.calendar.connection.connected())
+                .len(),
+            self.profiles.name.is_some(),
+            self.profiles.conflicts().len(),
+            self.profiles.mix.as_ref().is_some_and(|mix| mix.choosing),
+            self.profiles.saved_collection,
+            self.desktop.selected,
+        )
+    }
+    fn status_key(&self) -> String {
+        format!(
+            "status-{}-{}-{}-{}-{}",
+            self.page.key(),
+            self.canvas_visible(),
+            self.native_busy,
+            self.undo_review.is_some(),
+            self.kept_note.is_some(),
+        )
+    }
+
+    /// Four stable roots. Everything else stays within its owning root.
     /// Entries come from the shared nav model so selection, search and Back
     /// keep one source of truth.
     fn sidebar(&self, _accent: Color) -> Element<'_, Message> {
+        let rail = self.rail();
+        let kept = self.kept_previews();
         let entry = |id: cosmic::widget::segmented_button::Entity| -> Element<'_, Message> {
             let active = self.nav_model.is_active(id);
             let page = self.nav_model.data::<Page>(id).copied();
-            let mut parts: Vec<Element<'_, Message>> = Vec::new();
-            if let Some(icon) = self.nav_model.icon(id) {
-                parts.push(icon.clone().into());
-            }
-            parts.push(
-                text::body(self.nav_model.text(id).unwrap_or_default().to_owned())
-                    .size(15)
-                    .class(if active {
-                        cosmic::theme::Text::Custom(|theme| cosmic::iced::widget::text::Style {
-                            color: Some(theme.cosmic().accent_text_color().into()),
-                            ..Default::default()
-                        })
-                    } else {
-                        cosmic::theme::Text::Default
+            let waiting = page.is_some_and(|page| kept.iter().any(|item| item.root == page));
+            let title = text::body(self.nav_model.text(id).unwrap_or_default().to_owned())
+                .size(if rail { 12 } else { 15 })
+                .class(if active {
+                    cosmic::theme::Text::Custom(|theme| cosmic::iced::widget::text::Style {
+                        color: Some(theme.cosmic().accent_text_color().into()),
+                        ..Default::default()
                     })
+                } else {
+                    cosmic::theme::Text::Default
+                });
+            let mark: Element<'_, Message> = if waiting {
+                dot(self.settings_accent(), 7.)
+            } else {
+                cosmic::iced::widget::space().width(0).into()
+            };
+            let icon: Element<'_, Message> = match self.nav_model.icon(id) {
+                Some(icon) => icon.clone().into(),
+                None => cosmic::iced::widget::space().width(0).into(),
+            };
+            let content: Element<'_, Message> = if rail {
+                column::with_children(vec![
+                    row::with_children(vec![icon, mark])
+                        .spacing(2)
+                        .align_y(Alignment::Start)
+                        .into(),
+                    title.into(),
+                ])
+                .spacing(4)
+                .width(Length::Fill)
+                .align_x(Alignment::Center)
+                .into()
+            } else {
+                row::with_children(vec![
+                    icon,
+                    container(title).width(Length::Fill).into(),
+                    mark,
+                ])
+                .spacing(12)
+                .align_y(Alignment::Center)
+                .into()
+            };
+            button::custom(content)
+                .id(cosmic::widget::Id::new(format!(
+                    "nav-{}",
+                    page.map(Page::key).unwrap_or_default()
+                )))
+                .class(nav_style(active, self.settings_accent()))
+                .selected(active)
+                .padding(if rail { [8, 2] } else { [11, 12] })
+                .width(Length::Fill)
+                .on_press(Message::NavSelected(id))
+                .into()
+        };
+        let mut groups: Vec<Element<'_, Message>> = if rail {
+            vec![
+                button::custom(
+                    column::with_children(vec![
+                        icon::from_name("system-search-symbolic")
+                            .size(18)
+                            .icon()
+                            .into(),
+                        text::body("Search").size(12).into(),
+                    ])
+                    .spacing(4)
+                    .width(Length::Fill)
+                    .align_x(Alignment::Center),
+                )
+                .id(cosmic::widget::Id::new("rail-search"))
+                .class(nav_style(self.search_open, self.settings_accent()))
+                .selected(self.search_open)
+                .padding([8, 2])
+                .width(Length::Fill)
+                .on_press(Message::FocusSearch)
+                .into(),
+            ]
+        } else {
+            let mut search = cosmic::widget::text_input::search_input("Search", &self.search_query)
+                .id(super::navigation::search_id())
+                .on_input(Message::SearchSettings)
+                .on_submit(|_| Message::SearchFirst)
+                .width(Length::Fill);
+            if !self.search_query.is_empty() {
+                search = search.on_clear(Message::SearchSettings(String::new()));
+            }
+            vec![
+                container(text::title3("Halcyon").size(22))
+                    .padding([14, 12, 6, 12])
+                    .into(),
+                container(search).padding([0, 2, 12, 2]).into(),
+            ]
+        };
+        for (_, pages) in Page::SIDEBAR {
+            let items: Vec<Element<'_, Message>> = pages
+                .iter()
+                .filter_map(|page| {
+                    self.nav_model
+                        .iter()
+                        .find(|&id| self.nav_model.data::<Page>(id) == Some(page))
+                        .map(&entry)
+                })
+                .collect();
+            groups.push(
+                column::with_children(items)
+                    .spacing(if rail { 4 } else { 6 })
                     .into(),
             );
-            button::custom(
-                row::with_children(parts)
-                    .spacing(12)
-                    .align_y(Alignment::Center),
-            )
-            .id(cosmic::widget::Id::new(format!(
-                "nav-{}",
-                page.map(Page::key).unwrap_or_default()
-            )))
-            .class(nav_style(active, self.settings_accent()))
-            .selected(active)
-            .padding([11, 12])
-            .width(Length::Fill)
-            .on_press(Message::NavSelected(id))
-            .into()
-        };
-        let mut search = cosmic::widget::text_input::search_input("Search", &self.search_query)
-            .id(super::navigation::search_id())
-            .on_input(Message::SearchSettings)
-            .on_submit(|_| Message::SearchFirst)
-            .width(Length::Fill);
-        if !self.search_query.is_empty() {
-            search = search.on_clear(Message::SearchSettings(String::new()));
         }
-        let mut groups = vec![
-            container(text::title3("Halcyon").size(22))
-                .padding([14, 12, 6, 12])
-                .into(),
-            container(search).padding([0, 2, 12, 2]).into(),
-        ];
-        for (title, pages) in Page::SIDEBAR {
-            let mut items: Vec<Element<'_, Message>> = Vec::new();
-            if let Some(title) = title {
-                items.push(
-                    container(label(title.to_uppercase(), 11., MUTED))
+        if !kept.is_empty() {
+            groups.push(if rail {
+                button::custom(
+                    column::with_children(vec![
+                        pill(kept.len().to_string(), self.settings_accent()),
+                        text::body("Not applied").size(10).into(),
+                    ])
+                    .spacing(2)
+                    .width(Length::Fill)
+                    .align_x(Alignment::Center),
+                )
+                .id(cosmic::widget::Id::new("rail-not-applied"))
+                .class(nav_style(false, self.settings_accent()))
+                .padding([6, 0])
+                .width(Length::Fill)
+                .on_press(Message::AppSettingsPage(AppSettingsPage::Restore))
+                .into()
+            } else {
+                let mut rows = vec![
+                    container(label("NOT APPLIED", 11., MUTED))
                         .padding([0, 14, 2, 14])
                         .into(),
-                );
-            }
-            items.extend(pages.iter().filter_map(|page| {
-                self.nav_model
-                    .iter()
-                    .find(|&id| self.nav_model.data::<Page>(id) == Some(page))
-                    .map(entry)
-            }));
-            groups.push(column::with_children(items).spacing(6).into());
+                ];
+                rows.extend(kept.iter().map(|item| {
+                    button::custom(
+                        row::with_children(vec![
+                            container(label(item.title.clone(), 13., FG))
+                                .width(Length::Fill)
+                                .into(),
+                            if item.conflict {
+                                icon::from_name("dialog-warning-symbolic")
+                                    .size(14)
+                                    .icon()
+                                    .into()
+                            } else {
+                                icon::from_name("go-next-symbolic").size(14).icon().into()
+                            },
+                        ])
+                        .spacing(6)
+                        .align_y(Alignment::Center),
+                    )
+                    .id(cosmic::widget::Id::new(format!("kept-{}", item.title)))
+                    .class(nav_style(false, self.settings_accent()))
+                    .padding([6, 12])
+                    .width(Length::Fill)
+                    .on_press(Message::ResumeKept(item.target.clone()))
+                    .into()
+                }));
+                column::with_children(rows).spacing(2).into()
+            });
         }
         let content = container(
             scrollable(
                 container(column::with_children(groups).spacing(14))
-                    .padding([12, 8, 12, 8])
+                    .padding(if rail { [10, 6, 10, 6] } else { [12, 8, 12, 8] })
                     .width(Length::Fill),
             )
             .height(Length::Fill),
@@ -781,160 +954,33 @@ impl Settings {
         false // Visual previews scroll with their controls at every window size.
     }
 
-    /// A fixed palette as a round accent swatch; its name is the tooltip.
-    fn theme_choice(&self, key: &'static str, title: &'static str) -> Element<'_, Message> {
-        let p = Palette::named(key);
-        let selected = self.wallpaper.selected_palette(&self.config) == Some(key);
-        let swatch = container(cosmic::iced::widget::space().width(24).height(24)).class(
-            cosmic::theme::Container::custom(move |theme| cosmic::iced::widget::container::Style {
-                background: Some(Background::Color(p.accent)),
-                border: Border {
-                    radius: 12.into(),
-                    color: if selected {
-                        theme.cosmic().on_bg_color().into()
-                    } else {
-                        Color::TRANSPARENT
-                    },
-                    width: if selected { 2. } else { 0. },
-                },
-                ..Default::default()
-            }),
-        );
-        cosmic::widget::tooltip(
-            button::custom(swatch)
-                .padding(4)
-                .class(nav_style(selected, p.accent))
-                .selected(selected)
-                .on_press_maybe((!self.busy).then(|| Message::Theme(key.into()))),
-            text::body(title),
-            cosmic::widget::tooltip::Position::Top,
-        )
-        .into()
-    }
-
+    /// Without glass, a widget card is a plain fill: how solid it is and
+    /// how strong its outline. Corners and fonts have their own homes.
     fn legacy_widget_style(&self) -> Element<'_, Message> {
         let appearance = &self.appearance_draft;
-        let p = self.config.palette();
-        // Finish presets; "Rounded" so it never reads as the Soft theme.
-        let presets = segmented(
-            [
-                ("Rounded", 92, 24, 20),
-                ("Solid", 100, 16, 30),
-                ("Minimal", 80, 12, 8),
-            ]
-            .into_iter()
-            .map(|(name, opacity, radius, border)| {
-                (
-                    name.to_string(),
-                    appearance.opacity == opacity
-                        && appearance.corner_radius == radius
-                        && appearance.border_opacity == border,
-                    Some(Message::AppearancePreset(opacity, radius, border)),
-                )
-            })
-            .collect(),
-            p.accent,
-        );
-        let changed = appearance.opacity != 92
-            || appearance.corner_radius != 24
-            || appearance.border_opacity != 20;
-        let controls = if self.config.materials.widgets().is_some() {
-            pages::section(vec![
-                if self
-                    .config
-                    .materials
-                    .widgets()
-                    .is_some_and(|f| f.kind == crate::materials::Kind::Liquid)
-                {
-                    label("Liquid uses softly rounded corners", 12., MUTED)
-                } else {
-                    self.style_slider(
-                        "Corners",
-                        format!("{} px", appearance.corner_radius),
-                        0..=32,
-                        appearance.corner_radius,
-                        AppearanceControl::Corners,
-                    )
-                },
-                self.style_slider(
-                    "Outline",
-                    format!("{}%", appearance.border_opacity),
-                    0..=50,
-                    appearance.border_opacity as u16,
-                    AppearanceControl::Border,
-                ),
-            ])
-        } else {
-            pages::section(vec![
-            split(label("Card finish", 14., FG), button::text("Reset")
-                .on_press_maybe(if appearance.family.is_some() {self.config.widget_custom().then_some(Message::ResetThemeSurface(crate::desktop::profiles::Domain::WidgetStyle))} else {changed.then_some(Message::AppearancePreset(92, 24, 20))}).into()),
-            presets,
-            self.style_slider("Opacity",format!("{}%",appearance.opacity),70..=100,
-                appearance.opacity as u16,AppearanceControl::Opacity),
-            self.style_slider("Corners",format!("{} px",appearance.corner_radius),0..=32,
-                appearance.corner_radius,AppearanceControl::Corners),
-            self.style_slider("Outline",format!("{}%",appearance.border_opacity),0..=50,
-                appearance.border_opacity as u16,AppearanceControl::Border),
+        pages::section(vec![
+            self.style_slider(
+                "Opacity",
+                format!("{}%", appearance.opacity),
+                crate::config::MIN_CARD_OPACITY as u16..=100,
+                appearance.opacity as u16,
+                AppearanceControl::Opacity,
+            ),
+            self.style_slider(
+                "Outline",
+                format!("{}%", appearance.border_opacity),
+                0..=50,
+                appearance.border_opacity as u16,
+                AppearanceControl::Border,
+            ),
             separator(),
-            split(self.help("contrast-assist", "Improve readability",
-                "Increases card background opacity to keep text readable over bright or busy wallpapers. Turning this off restores your chosen opacity."),
+            split(
+                detail("Easier to read", "Adds a little more background behind small text on busy wallpapers"),
                 container(toggler(appearance.contrast_assist).on_toggle(Message::ContrastAssist))
-                    .id(cosmic::widget::Id::new("contrast-assist")).into()),
+                    .id(cosmic::widget::Id::new("contrast-assist"))
+                    .into(),
+            ),
         ])
-        };
-        column::with_children(vec![
-            heading("Widget style", ""),
-            if let Some(f) = appearance.family {
-                pages::section(vec![
-                    split(
-                        detail(
-                            format!("{} theme", f.title()),
-                            if self.config.widget_custom() {
-                                "Widgets are customized"
-                            } else {
-                                "Widgets match the theme"
-                            },
-                        ),
-                        button::text("Colors & theme")
-                            .trailing_icon(icon::from_name("go-next-symbolic").size(14))
-                            .on_press(Message::Page(Page::Themes))
-                            .into(),
-                    ),
-                    segmented(
-                        vec![
-                            (
-                                "Theme surface".into(),
-                                appearance.surface.is_none(),
-                                Some(Message::WidgetSurface(None)),
-                            ),
-                            (
-                                "Filled".into(),
-                                appearance.surface == Some(crate::desktop_theme::Surface::Panel),
-                                Some(Message::WidgetSurface(Some(
-                                    crate::desktop_theme::Surface::Panel,
-                                ))),
-                            ),
-                            (
-                                "Transparent".into(),
-                                appearance.surface
-                                    == Some(crate::desktop_theme::Surface::Transparent),
-                                Some(Message::WidgetSurface(Some(
-                                    crate::desktop_theme::Surface::Transparent,
-                                ))),
-                            ),
-                        ],
-                        self.settings_accent(),
-                    ),
-                ])
-            } else {
-                container(cosmic::iced::widget::space()).into()
-            },
-            controls,
-            self.widget_text_section(),
-        ])
-        .spacing(16)
-        .width(Length::Fill)
-        .into()
     }
     fn style_slider(
         &self,
@@ -959,20 +1005,5 @@ impl Settings {
         ])
         .spacing(7)
         .into()
-    }
-    fn card_preview(&self) -> Element<'static, Message> {
-        let mut config = self.config.clone();
-        config.appearance = self.appearance_draft;
-        if let Some(finish) = self.material_draft {
-            config.materials.set(self.material_target, Some(finish));
-        }
-        config.desktop_palette = Some(self.wallpaper.preview_palette(&self.config));
-        config.appearance.color_source = crate::config::ColorSource::Desktop;
-        match self.appearance_preview {
-            Widget::Devbox => crate::app::settings_devbox_preview(&config),
-            Widget::Clock => crate::app::settings_clock_preview(&config, [320., 112.]),
-            _ => crate::app::settings_weather_preview(&config),
-        }
-        .map(|_| Message::Preview)
     }
 }

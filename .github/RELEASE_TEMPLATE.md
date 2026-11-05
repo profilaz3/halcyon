@@ -16,6 +16,6 @@ On Fedora:
 sudo dnf install ./cosmic-ext-halcyon-${VERSION}-1.fc*.x86_64.rpm
 ```
 
-Existing installations update through COSMIC Store, APT or DNF. Islands is included; enable it in **Desktop → Dock & panel**. Enabled panel updates take effect at the next login.
+Existing installations update through COSMIC Store, APT or DNF. Islands is included; enable it in **Dock and panel**. Enabled panel updates take effect at the next login.
 
 [Installation guide](https://github.com/${REPOSITORY}/blob/${TAG}/docs/DISTRIBUTION.md) · [Calendar setup](https://github.com/${REPOSITORY}/blob/${TAG}/docs/CALENDAR.md)

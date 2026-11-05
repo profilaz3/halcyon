@@ -9,7 +9,7 @@ compatible with distributing the combined program under the GPL version 3:
 |---|---|
 | MIT and/or Apache-2.0 (in their various spellings and combinations, incl. Zlib, ISC, BSD, 0BSD, Unlicense, CC0 alternatives) | the large majority |
 | Unicode-3.0 | 18 (ICU and Unicode data crates) |
-| GPL-3.0-only | `cosmic-client-toolkit`, `cosmic-protocols` (System76) |
+| GPL-3.0-only | `cosmic-client-toolkit`, `cosmic-protocols` (System76); `cosmic-panel-config`, `xdg-shell-wrapper-config` (System76 COSMIC Panel workspace, which declares GPL-3.0-only) |
 | MPL-2.0 | `option-ext` |
 | CDLA-Permissive-2.0 | `webpki-roots` (Mozilla's CA list) |
 | Apache-2.0 OR GPL-2.0-only | `self_cell` (used under Apache-2.0) |

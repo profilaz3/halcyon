@@ -23,7 +23,9 @@ fn bar_metrics(draft: &PanelDraft, scale: f32) -> (Anchor, f32, f32) {
     let anchor = draft.anchor().known().copied().unwrap_or(Anchor::Bottom);
     let size = draft.size().known().cloned().unwrap_or(PanelSize::M);
     let padding = draft.padding().known().copied().unwrap_or(4) as f32;
-    let zoom = (scale * 2.).max(0.2);
+    // Slightly thicker than true scale so bars read, without covering
+    // widgets placed just below them.
+    let zoom = (scale * 1.5).max(0.2);
     let thickness = ((size.thickness() as f32 + padding * 2.) * zoom).clamp(10., 36.);
     let margin = if draft.floating().known().copied().unwrap_or(false) {
         (f32::from(draft.margin().known().copied().unwrap_or(4)) * zoom).max(3.)
@@ -80,7 +82,9 @@ fn preview_bar<'a>(
     }
     let (anchor, thickness, margin) = bar_metrics(draft, scale);
     let horizontal = anchor.horizontal();
-    let zoom = (scale * 2.).max(0.2);
+    // Slightly thicker than true scale so bars read, without covering
+    // widgets placed just below them.
+    let zoom = (scale * 1.5).max(0.2);
     let extend = draft.extend().known().copied().unwrap_or(true);
     let hides = draft.autohide().known().copied();
     let opacity = draft.opacity().known().copied().unwrap_or(1.)

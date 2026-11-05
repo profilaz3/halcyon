@@ -15,7 +15,8 @@ struct Forecast {
     title: String,
     icon: &'static str,
     temperatures: String,
-    rain: String,
+    /// `None` without a reading: the line is left out, not filled in.
+    rain: Option<String>,
 }
 #[derive(Debug, Clone, PartialEq)]
 enum Content {
@@ -66,8 +67,14 @@ impl Presentation {
                         icon: data::weather_icon(*w.daily.weather_code.get(i).unwrap_or(&3), true),
                         temperatures: format!(
                             "{} / {}",
-                            forecast_temperature(w.daily.temperature_2m_max.get(i)),
-                            forecast_temperature(w.daily.temperature_2m_min.get(i))
+                            forecast_temperature_in(
+                                config.weather,
+                                w.daily.temperature_2m_max.get(i)
+                            ),
+                            forecast_temperature_in(
+                                config.weather,
+                                w.daily.temperature_2m_min.get(i)
+                            )
                         ),
                         rain: w
                             .daily
@@ -75,18 +82,28 @@ impl Presentation {
                             .get(i)
                             .and_then(|v| *v)
                             .filter(|v| v.is_finite())
-                            .map(|n| format!("Rain {n:.0}%"))
-                            .unwrap_or_else(|| "Rain —".into()),
+                            .map(|n| format!("Rain {n:.0}%")),
                     })
                     .collect();
-                let wind = format!("Wind\u{a0}{:.0}\u{a0}km/h", w.current.wind_speed_10m);
+                let wind = format!(
+                    "Wind\u{a0}{}",
+                    config.weather.wind(w.current.wind_speed_10m)
+                );
                 Content::Reading {
                     icon: data::weather_icon(w.current.weather_code, w.current.is_day != 0),
-                    temperature: forecast_temperature(Some(&w.current.temperature_2m)),
+                    temperature: forecast_temperature_in(
+                        config.weather,
+                        Some(&w.current.temperature_2m),
+                    ),
                     description: data::weather_description(w.current.weather_code),
+                    // Written like the large reading: degrees without a unit letter.
                     summary: format!(
-                        "Feels {:.0}°C · Humidity {:.0}%",
-                        w.current.apparent_temperature, w.current.relative_humidity_2m
+                        "Feels {} · Humidity {:.0}%",
+                        forecast_temperature_in(
+                            config.weather,
+                            Some(&w.current.apparent_temperature)
+                        ),
+                        w.current.relative_humidity_2m
                     ),
                     details: weather_dew_point(config, &w.current)
                         .map(|dew| format!("{dew} · {wind}"))
@@ -194,7 +211,7 @@ impl Presentation {
                 ..
             } => spread(
                 title,
-                container(self.label(status.clone(), 10., p.muted))
+                container(self.label(status.clone(), 11., p.muted))
                     .id(cosmic::widget::Id::new("weather-status"))
                     .into(),
             ),
@@ -217,10 +234,18 @@ impl Presentation {
                         container(
                             column::with_children(vec![
                                 self.label(*description, 12., p.foreground),
-                                self.label(summary.clone(), 10., p.muted),
-                                container(self.label(details.clone(), 10., p.muted))
-                                    .id(cosmic::widget::Id::new("weather-details"))
-                                    .into(),
+                                self.label(
+                                    summary.clone(),
+                                    crate::widget_style::SECONDARY,
+                                    p.muted,
+                                ),
+                                container(self.label(
+                                    details.clone(),
+                                    crate::widget_style::SECONDARY,
+                                    p.muted,
+                                ))
+                                .id(cosmic::widget::Id::new("weather-details"))
+                                .into(),
                             ])
                             .spacing(2),
                         )
@@ -232,7 +257,11 @@ impl Presentation {
                     .into(),
                 );
                 if forecast.is_empty() {
-                    rows.push(self.label("Forecast unavailable", 10., p.muted));
+                    rows.push(self.label(
+                        "Forecast unavailable",
+                        crate::widget_style::SECONDARY,
+                        p.muted,
+                    ));
                 } else {
                     rows.push(
                         row::with_children(
@@ -240,14 +269,37 @@ impl Presentation {
                                 .iter()
                                 .map(|day| {
                                     container(
-                                        column::with_children(vec![
-                                            spread(
-                                                self.label(day.title.clone(), 10., p.muted),
-                                                self.label(day.icon, 16., p.accent),
-                                            ),
-                                            self.label(day.temperatures.clone(), 13., p.foreground),
-                                            self.label(day.rain.clone(), 9., p.muted),
-                                        ])
+                                        column::with_children(
+                                            [
+                                                // The icon sits beside its own day,
+                                                // not at the column's far edge.
+                                                Some(
+                                                    row::with_children(vec![
+                                                        self.label(day.icon, 16., p.accent),
+                                                        self.label(
+                                                            day.title.clone(),
+                                                            crate::widget_style::SECONDARY,
+                                                            p.muted,
+                                                        ),
+                                                    ])
+                                                    .spacing(6)
+                                                    .align_y(Alignment::Center)
+                                                    .into(),
+                                                ),
+                                                Some(self.label(
+                                                    day.temperatures.clone(),
+                                                    13.,
+                                                    p.foreground,
+                                                )),
+                                                // 11px, not 12: a 12px line would
+                                                // overflow the 180px card by a pixel.
+                                                day.rain
+                                                    .clone()
+                                                    .map(|rain| self.label(rain, 11., p.muted)),
+                                            ]
+                                            .into_iter()
+                                            .flatten(),
+                                        )
                                         .spacing(2),
                                     )
                                     .width(Length::Fill)

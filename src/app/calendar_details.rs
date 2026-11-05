@@ -28,10 +28,10 @@ impl Cards {
             match (start, last) {
                 (Some(start), Some(last)) if last > start => format!(
                     "{} – {} · All day",
-                    start.format("%a %-d %b"),
-                    last.format("%a %-d %b")
+                    start.format("%a, %b %-d"),
+                    last.format("%a, %b %-d")
                 ),
-                (Some(start), _) => format!("{} · All day", start.format("%a %-d %b")),
+                (Some(start), _) => format!("{} · All day", start.format("%a, %b %-d")),
                 _ => "All day".into(),
             }
         } else {
@@ -39,7 +39,7 @@ impl Cards {
                 chrono::DateTime::parse_from_rfc3339(s)
                     .map(|t| {
                         t.with_timezone(&Local)
-                            .format("%a %-d %b, %H:%M")
+                            .format("%a, %b %-d, %H:%M")
                             .to_string()
                     })
                     .unwrap_or_default()

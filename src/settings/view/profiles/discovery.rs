@@ -1,47 +1,11 @@
 use super::*;
 impl Settings {
-    pub(super) fn discovery_gallery(&self) -> Element<'_, Message> {
-        let editor = &self.profiles;
-        let tiles = crate::desktop::profiles::discovery::CURATED
-            .into_iter()
-            .filter_map(|id| editor.presets().iter().find(|p| p.id == id))
-            .filter(|p| crate::desktop::profiles::discovery::matches(p, &editor.discovery_query))
-            .map(|p| self.preset_tile(p))
-            .collect::<Vec<_>>();
-        let mut items = vec![
-            row::with_children(vec![
-                text_input("Find a look", &editor.discovery_query)
-                    .id(cosmic::widget::Id::new("discovery-search"))
-                    .on_input(|s| edit(Edit::DiscoveryQuery(s)))
-                    .into(),
-                button::text("Open a shared setup…")
-                    .id(cosmic::widget::Id::new("discovery-import"))
-                    .on_press_maybe(
-                        (editor.writable() && !self.native_busy).then_some(edit(Edit::Import)),
-                    )
-                    .into(),
-            ])
-            .spacing(12)
-            .align_y(Alignment::Center)
-            .into(),
-        ];
-        if tiles.is_empty() {
-            items.push(label(
-                "No featured looks match. Try a name or description.",
-                14.,
-                MUTED,
-            ));
-        } else {
-            items.push(row::with_children(tiles).spacing(16).wrap().into());
-        }
-        column::with_children(items).spacing(12).into()
-    }
     pub(super) fn setup_sources(&self) -> Element<'_, Message> {
         let sources = self.profiles.discovery_sources();
         if sources.is_empty() {
             return cosmic::widget::space().height(0).into();
         }
-        let mut rows = vec![label("Sources & revisions", 16., FG)];
+        let mut rows = vec![label("Sources and revisions", 16., FG)];
         for source in sources {
             let credits = &source.attribution.credits;
             let name = if credits.author.is_empty() {
@@ -100,6 +64,6 @@ impl Settings {
             12.,
             MUTED,
         ));
-        self.disclosure("setup-sources", "Sources & revisions", section(rows))
+        self.disclosure("setup-sources", "Sources and revisions", section(rows))
     }
 }

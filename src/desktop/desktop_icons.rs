@@ -24,7 +24,7 @@ pub const SCALE_STEP: u16 = 25;
 /// cosmic-files redraws the desktop with an outside change only at its
 /// next desktop refresh (spec §4).
 pub const REFRESH_NOTE: &str =
-    "Changes take effect after the desktop refreshes — for example when you sign out and back in.";
+    "Icons update the next time the desktop refreshes, for example after you sign in again.";
 
 /// `DesktopConfig` at 0f15f44, member for member, with its defaults.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -315,6 +315,14 @@ impl DesktopIconsDraft {
         let mut base = snapshot;
         base.insert(key, old);
         self.base = base;
+    }
+    /// Keeps every edit over the outside changes: the current values of
+    /// the conflicting keys become the baseline, so Apply writes the edits
+    /// over them and still refuses anything changed after this.
+    pub fn keep_edits(&mut self, snapshot: Snapshot) {
+        let keys = std::mem::take(&mut self.conflicts);
+        self.base.adopt(&snapshot, &keys);
+        self.refresh(snapshot);
     }
     /// Drops the edits (they all depend on the one struct) and adopts the
     /// current value.

@@ -44,10 +44,26 @@ impl Settings {
     }
     fn begin_native(&mut self) {
         self.native_busy = true;
-        self.status = "Applying desktop settings…".into();
+        self.status = "Saving…".into();
         self.error = false;
     }
     pub(super) fn dispatch_native(&mut self, message: &Message) -> Option<Task<Message>> {
+        // Row hit-testing emits these even without a drag. They must not start
+        // a save worker (and disable the row's actions) just as a pointer enters.
+        if !self.native_busy
+            && !self.desktop.drag.active()
+            && matches!(
+                message,
+                Message::DesktopEditor(
+                    desktop::Message::DragOver(_)
+                        | desktop::Message::DragLeave(_)
+                        | desktop::Message::Drop
+                        | desktop::Message::DropAt(_)
+                )
+            )
+        {
+            return Some(Task::none());
+        }
         if self.native_busy
             && matches!(
                 message,
@@ -69,6 +85,9 @@ impl Settings {
                 | Message::ToggleSection(_)
                 | Message::ContentScrolled(_)
                 | Message::Moment(moments::Message::Preview(_) | moments::Message::BaseClock(_))
+                | Message::Tools(
+                    tools::Message::Note(_) | tools::Message::NoteUndo | tools::Message::NoteRedo
+                )
         ) {
             return None;
         }
@@ -173,7 +192,8 @@ impl Settings {
             }
             return Some(Task::none());
         }
-        if matches!(message, Message::Wizard(edit) if !matches!(edit.action(), wizard::Message::Next | wizard::Message::Look(_) | wizard::Message::Cancel | wizard::Message::Start))
+        // Only the steps that write the desktop, or read it slowly, use the worker.
+        if matches!(message, Message::Wizard(edit) if !matches!(edit.action(), wizard::Message::ApplyAll | wizard::Message::UndoSetup | wizard::Message::Cancel | wizard::Message::Start))
         {
             return None;
         }

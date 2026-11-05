@@ -23,10 +23,14 @@ fn choice_row<'a>(
     options: Vec<(String, bool, Option<Message>)>,
     accent: Color,
 ) -> Element<'a, Message> {
-    column::with_children(vec![label(title, 14., FG), segmented(options, accent)])
-        .spacing(6)
-        .width(Length::Fill)
-        .into()
+    // Label left, choice right, like every other row.
+    split(
+        label(title, 14., FG),
+        row::with_children(vec![segmented(options, accent)])
+            .align_y(Alignment::Center)
+            .wrap()
+            .into(),
+    )
 }
 
 impl Settings {
@@ -52,17 +56,33 @@ impl Settings {
         let accent = self.settings_accent();
         let tools = &self.tools;
         let player = tools.current(&self.config);
+        // Nothing playing: an example song, paused, so the options below
+        // have something to show.
+        static SAMPLE: std::sync::OnceLock<(crate::tools::music::Feed, crate::tools::music::Player)> =
+            std::sync::OnceLock::new();
+        let sample = SAMPLE.get_or_init(|| {
+            let mut player = cards::recipe::sample_player(std::time::Instant::now());
+            player.status = crate::tools::music::Playback::Paused;
+            (crate::tools::music::Feed::Players(vec![player.clone()]), player)
+        });
+        let example = player.is_none()
+            && !matches!(tools.feed, Some(crate::tools::music::Feed::Unavailable(_)));
         let preview = cards::music(
             cards::MusicView {
-                feed: tools.feed.as_ref(),
-                player,
-                art: tools.art(&self.config),
+                feed: if example { Some(&sample.0) } else { tools.feed.as_ref() },
+                player: if example { Some(&sample.1) } else { player },
+                art: if example {
+                    Some(cards::recipe::sample_art())
+                } else {
+                    tools.art(&self.config)
+                },
                 now: std::time::Instant::now(),
                 manually_selected: tools.pinned.is_some() || self.config.music.player.is_some(),
                 problem: tools.music_problem,
             },
             &self.config,
-            Some(on_preview),
+            // The example's buttons do nothing.
+            (!example).then_some(on_preview as fn(cards::Action) -> Message),
             Some(self.tool_preview_size(Widget::Music)),
         );
         // Follow names an app, so it survives the app's restarts.
@@ -116,30 +136,31 @@ impl Settings {
             Some(music::Feed::Unavailable(_)) => {
                 Some("Media controls need the desktop session bus, which isn’t reachable.")
             }
-            Some(music::Feed::Players(players)) if players.is_empty() => Some(
-                "Play a video or song in your browser to see it here. Your browser chooses which tab to share with desktop controls.",
-            ),
+            // The preview already says what to do when nothing is playing.
+            Some(music::Feed::Players(players)) if players.is_empty() => None,
             Some(_) => None,
         };
-        let mut follow = vec![
-            split(
-                label("Follow", 16., FG),
-                button::text("Refresh players")
-                    .on_press(edit(Edit::Refresh))
-                    .into(),
-            ),
-            column::with_children(rows).spacing(2).into(),
-        ];
+        // The player list follows apps starting and quitting on its own.
+        // With nothing else to pick, the one choice is a plain statement.
+        let mut follow = if rows.len() == 1 {
+            // Nothing to pick yet: a quiet note, not a row to click.
+            vec![label(
+                "Shows whichever app is playing. Open a music app to choose it here.",
+                13.,
+                MUTED,
+            )]
+        } else {
+            vec![
+                detail("Show music from", "Choose a player, or follow whichever is playing"),
+                column::with_children(rows).spacing(2).into(),
+            ]
+        };
         if let Some(hint) = hint {
             follow.push(label(hint, 12., MUTED));
         }
-        let mut items = vec![
+        let own = vec![
             group(Some("Player"), follow),
-            label(
-                "Live controls play, pause or seek in your selected desktop player.",
-                12.,
-                MUTED,
-            ),
+            self.search_target("music-visualizers", self.visualizer_controls()),
             if let Some(recipe) = &self.config.recipes.music {
                 group(
                     Some("Personal widget"),
@@ -152,36 +173,22 @@ impl Settings {
                 )
             } else {
                 group(
-                    Some("Music card"),
+                    Some("Card"),
                     vec![
-                        switch("Album art", "", self.config.music.show_artwork, |value| {
+                        switch("Album art", "Cover of the song or video", self.config.music.show_artwork, |value| {
                             option(Widget::Music, "show_artwork", value)
                         }),
                         switch(
-                            "Progress",
-                            "Click the bar to seek when the player supports it.",
+                            "Progress bar",
+                            "Click it to jump to another point",
                             self.config.music.show_progress,
                             |value| option(Widget::Music, "show_progress", value),
                         ),
-                        button::text("Design a Music widget…")
-                            .on_press(Message::OpenRecipe(crate::recipes::Kind::Music))
-                            .into(),
                     ],
                 )
             },
         ];
-        items.insert(0, self.visualizer_controls());
-        items.push(self.widget_style_and_layout(Widget::Music));
-        column::with_children(vec![
-            self.widget_heading(Widget::Music, "Music"),
-            self.editor_with_preview(
-                preview,
-                column::with_children(items).spacing(16).into(),
-                "Live controls",
-            ),
-        ])
-        .spacing(16)
-        .into()
+        self.widget_template(Widget::Music, "Music", Some(preview), own)
     }
 
     fn player_row(
@@ -219,8 +226,9 @@ impl Settings {
         let tools = &self.tools;
         let readable = tools.note.is_ok();
         let editor = text_editor(&tools.content)
+            .id(cosmic::widget::Id::new("note-editor-text"))
             .placeholder("Write anything. Start a line with [ ] for a checklist.")
-            .height(Length::Fixed((self.inspector_height() - 88.).max(180.)))
+            .height(Length::Fixed(((self.window.height - 560.) * 0.6 + 160.).clamp(160., 360.)))
             .padding(12)
             .size(15.)
             .class(cosmic::style::iced::TextEditor::Custom(Box::new(
@@ -264,6 +272,16 @@ impl Settings {
                     && matches!(&press.key, Key::Character(c) if c.as_str() == "s")
                 {
                     Some(text_editor::Binding::Custom(edit(Edit::NoteSave)))
+                } else if press.modifiers.control()
+                    && matches!(&press.key, Key::Character(c) if c.eq_ignore_ascii_case("z"))
+                {
+                    Some(text_editor::Binding::Custom(edit(
+                        if press.modifiers.shift() {
+                            Edit::NoteRedo
+                        } else {
+                            Edit::NoteUndo
+                        },
+                    )))
                 } else {
                     text_editor::Binding::from_key_press(press)
                 }
@@ -274,7 +292,7 @@ impl Settings {
         } else if !readable {
             "This note can’t be read; it is left as it is.".to_string()
         } else if dirty {
-            format!("Unsaved · {} characters", tools.note_chars())
+            "Saves as you type".to_string()
         } else {
             match tools
                 .note
@@ -286,43 +304,37 @@ impl Settings {
                     .map(|at| {
                         format!(
                             "Saved {}",
-                            at.with_timezone(&chrono::Local).format("%-d %b, %H:%M")
+                            at.with_timezone(&chrono::Local).format("%b %-d, %H:%M")
                         )
                     })
                     .unwrap_or_else(|_| "Saved".into()),
-                None => "Not written yet".into(),
+                None => String::new(),
             }
         };
         let mut note = vec![
-            split(label("Note", 16., FG), label("Ctrl+S saves", 11., MUTED)),
             container(editor)
                 .id(cosmic::widget::Id::new("note-editor"))
                 .width(Length::Fill)
                 .into(),
-            row::with_children(vec![
-                container(label(state, 12., if readable { MUTED } else { WARN }))
-                    .width(Length::Fill)
-                    .into(),
-                button::text("Revert")
-                    .id(cosmic::widget::Id::new("note-revert"))
-                    .on_press_maybe((dirty && !tools.saving()).then(|| edit(Edit::NoteRevert)))
-                    .into(),
-                button::suggested("Save note")
-                    .id(cosmic::widget::Id::new("note-save"))
-                    .on_press_maybe(
-                        (dirty && readable && !tools.saving()).then(|| edit(Edit::NoteSave)),
-                    )
-                    .into(),
-            ])
-            .spacing(10)
-            .align_y(Alignment::Center)
-            .into(),
         ];
+        // Undo for the note lives in the app's own Undo, like every other edit.
+        if !state.is_empty() {
+            note.push(label(state, 12., if readable { MUTED } else { WARN }));
+        }
         if tools.restored && dirty {
             note.push(banner(
-                "Your unsaved edits from last time are back. Save puts them on the desktop.",
+                "Your unsaved edits from last time are back.",
                 accent,
-                Vec::new(),
+                vec![
+                    button::standard("Save them")
+                        .id(cosmic::widget::Id::new("note-save"))
+                        .on_press_maybe((!tools.saving()).then(|| edit(Edit::NoteSave)))
+                        .into(),
+                    button::text("Throw away")
+                        .id(cosmic::widget::Id::new("note-revert"))
+                        .on_press_maybe((!tools.saving()).then(|| edit(Edit::NoteRevert)))
+                        .into(),
+                ],
             ));
         }
         if tools.conflict.is_some() {
@@ -342,90 +354,74 @@ impl Settings {
         if let Some(problem) = &tools.problem {
             note.push(label(format!("Not saved: {problem}"), 12., ERROR));
         }
+        // An empty note previews as a short example, so the card and the
+        // checklist tip make sense before anything is written.
+        static SAMPLE: std::sync::OnceLock<crate::tools::notes::Note> = std::sync::OnceLock::new();
+        let example = tools.note.as_ref().is_ok_and(|note| note.text.trim().is_empty());
+        let shown = if example {
+            Ok(SAMPLE.get_or_init(|| crate::tools::notes::Note {
+                text: "Weekend\n[x] Water the plants\n[ ] Call Sam\n[ ] Pick up the books".into(),
+                updated_at: None,
+            }))
+        } else {
+            tools.note.as_ref().map_err(String::as_str)
+        };
         let preview = cards::notes(
             cards::NotesView {
-                note: tools.note.as_ref().map_err(String::as_str),
+                note: shown,
                 editing: None,
                 paused: false,
                 problem: None,
             },
             &self.config,
-            (!dirty && !tools.saving()).then_some(on_preview as fn(cards::Action) -> Message),
+            (!dirty && !tools.saving() && !example)
+                .then_some(on_preview as fn(cards::Action) -> Message),
             Some(self.tool_preview_size(Widget::Notes)),
         );
-        let document = group(None, note);
-        let mut items = vec![
-            group(
-                Some("Note size"),
-                vec![
-                    choice_row(
-                        "Automatic size",
-                        NotesSize::ALL
-                            .into_iter()
-                            .map(|size| {
-                                (
-                                    size.title().to_string(),
-                                    self.config.notes.size == size,
-                                    (!self.config.widget_sizes.contains_key(Widget::Notes.key()))
-                                        .then(|| option(Widget::Notes, "size", size.key())),
-                                )
-                            })
-                            .collect(),
-                        accent,
-                    ),
-                    if self.config.widget_sizes.contains_key(Widget::Notes.key()) {
-                        split(
-                            detail(
-                                "Custom size is active",
-                                "Return to Automatic size in Layout to use these presets.",
-                            ),
-                            button::text("Edit size in Layout")
-                                .on_press(Message::Page(Page::Overview))
-                                .into(),
-                        )
+        let document = group(Some("Your note"), note);
+        let sizes = segmented(
+                    NotesSize::ALL
+                        .into_iter()
+                        .map(|size| {
+                            (
+                                size.title().to_string(),
+                                self.config.notes.size == size,
+                                (!self.config.widget_sizes.contains_key(Widget::Notes.key()))
+                                    .then(|| option(Widget::Notes, "size", size.key())),
+                            )
+                        })
+                        .collect(),
+                    accent,
+                );
+        let resized = self.config.widget_sizes.contains_key(Widget::Notes.key());
+        let items = group(
+            None,
+            vec![split(
+                detail(
+                    "Card size",
+                    if resized {
+                        "You resized it by hand. Use Move or resize to change it"
                     } else {
-                        label(
-                            "The card grows with its content within this size.",
-                            11.,
-                            MUTED,
-                        )
+                        "Grows with your note, up to this size"
                     },
-                ],
-            ),
-            label(
-                "Notes stay on this computer. Setups and exports never include them.",
-                12.,
-                MUTED,
-            ),
-        ];
-        items.push(self.widget_style_and_layout(Widget::Notes));
-        column::with_children(vec![
-            self.widget_heading(Widget::Notes, "Notes"),
-            self.inspector_layout(
-                document,
-                column::with_children(items).spacing(16).into(),
-                "notes",
-            ),
-            self.disclosure(
-                "notes-checklist",
-                "Saved checklist · live controls",
-                self.preview_stage(preview),
-            ),
-        ])
-        .spacing(16)
-        .into()
+                ),
+                sizes,
+            )],
+        );
+        // The card as it looks on the desktop leads, like every widget page;
+        // the editor for its text follows.
+        self.widget_template(Widget::Notes, "Notes", Some(preview), vec![document, items])
     }
 
     pub(super) fn focus_page(&self) -> Element<'_, Message> {
         let accent = self.settings_accent();
         let prefs = &self.config.focus;
-        let visible = self.config.widget_visible(Widget::Focus);
         let preview = cards::focus(
             &self.tools.focus,
             &self.config,
             focus::now_ms(),
             &focus::today(),
-            visible.then_some(on_preview as fn(cards::Action) -> Message),
+            Some(on_preview as fn(cards::Action) -> Message),
             Some(self.tool_preview_size(Widget::Focus)),
         );
         let minutes = |key: &'static str, choices: &[u16], current: u16| {
@@ -450,21 +446,9 @@ impl Settings {
             every.push(prefs.long_break_every);
             every.sort_unstable();
         }
-        let mut items = vec![
-            button::text("Design a Focus widget…")
-                .on_press(Message::OpenRecipe(crate::recipes::Kind::Focus))
-                .into(),
-            label(
-                if visible {
-                    "Live controls run your desktop timer."
-                } else {
-                    "Show Focus timer to use its controls. Hiding it does not stop a running session."
-                },
-                12.,
-                MUTED,
-            ),
+        let items = vec![
             group(
-                Some("Session lengths"),
+                Some("How long"),
                 vec![
                     choice_row(
                         "Focus",
@@ -514,31 +498,21 @@ impl Settings {
                 ],
             ),
             group(
-                Some("Timer behavior"),
+                Some("When time is up"),
                 vec![
                     switch(
-                        "Start breaks automatically",
+                        "Start the break automatically",
                         "",
                         prefs.auto_start_breaks,
                         |value| option(Widget::Focus, "auto_start_breaks", value),
                     ),
-                    switch("Notify when time is up", "", prefs.notify, |value| {
+                    switch("Send a notification", "", prefs.notify, |value| {
                         option(Widget::Focus, "notify", value)
                     }),
                 ],
             ),
         ];
-        items.push(self.widget_style_and_layout(Widget::Focus));
-        column::with_children(vec![
-            self.widget_heading(Widget::Focus, "Focus timer"),
-            self.editor_with_preview(
-                preview,
-                column::with_children(items).spacing(16).into(),
-                "Live controls",
-            ),
-        ])
-        .spacing(16)
-        .into()
+        self.widget_template(Widget::Focus, "Focus timer", Some(preview), items)
     }
 }
 
@@ -558,10 +532,13 @@ impl Settings {
                 serde_json::to_value(p).unwrap(),
             )
         };
-        let mut rows=vec![self.help("visualizer-help","Audio visualizers","Reacts to all sound on the default audio output while your selected player is playing. Never reads the microphone, saves audio or uploads it. Stops when Music is hidden or Reduce motion is enabled. Circular size and display use Music’s Layout controls.")];
-        rows.push(segmented(
+        let mut rows: Vec<Element<'_, Message>> = Vec::new();
+        rows.push(group_row(
+            "Around the cover",
+            "Moves with the sound. Nothing is recorded.",
+            segmented(
             [
-                (Circle::Off, "Card"),
+                (Circle::Off, "None"),
                 (Circle::Bars, "Radial bars"),
                 (Circle::Dots, "Orbit dots"),
                 (Circle::Rings, "Pulse rings"),
@@ -574,17 +551,21 @@ impl Settings {
             })
             .collect(),
             self.settings_accent(),
+            ),
         ));
         let next = p.clone();
-        rows.push(switch("Spectrum", "", p.spectrum, move |enabled| {
-            let mut p = next.clone();
-            p.spectrum = enabled;
-            option(
-                Widget::Music,
-                "visualizer",
-                serde_json::to_value(p).unwrap(),
-            )
-        }));
+        rows.push(self.search_target(
+            "music-spectrum",
+            switch("Bars along the bottom", "On the desktop, under your windows", p.spectrum, move |enabled| {
+                let mut p = next.clone();
+                p.spectrum = enabled;
+                option(
+                    Widget::Music,
+                    "visualizer",
+                    serde_json::to_value(p).unwrap(),
+                )
+            }),
+        ));
         if p.spectrum {
             let sample: Element<'_, Message> =
                 cosmic::widget::canvas(crate::tools::visualizer::drawing::Visual {
@@ -602,7 +583,7 @@ impl Settings {
                 .into();
             rows.push(
                 column::with_children(vec![
-                    label("Spectrum placement · sample audio", 12., MUTED),
+                    label("Where the bars appear", 12., MUTED),
                     self.preview_stage_padded(sample, 0),
                 ])
                 .spacing(6)
@@ -661,7 +642,7 @@ impl Settings {
             let next = p.clone();
             rows.push(switch(
                 "Allow behind dock",
-                "",
+                "The dock stays in front and clickable",
                 p.behind_dock,
                 move |enabled| {
                     let mut p = next.clone();
@@ -673,7 +654,6 @@ impl Settings {
                     )
                 },
             ));
-            rows.push(self.help("spectrum-dock-help","Dock overlap","The dock stays in front and remains clickable. Opaque dock surfaces cover bars underneath. Turn this off to respect the space reserved by panels and docks."));
         }
         if !self.config.material_motion {
             rows.push(label(
@@ -689,6 +669,6 @@ impl Settings {
                 WARN,
             ));
         }
-        group(Some("Visualizers"), rows)
+        group(Some("Animation"), rows)
     }
 }

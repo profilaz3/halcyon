@@ -2,7 +2,7 @@ use super::*;
 use crate::desktop::profiles::mix::{self, Component, Source, SourceKind};
 
 pub const PAGE_SIZE: usize = 12;
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Draft {
     desktop: Profile,
     pub sources: [Option<Source>; 3],
@@ -12,6 +12,13 @@ pub struct Draft {
     pub page: usize,
 }
 impl Draft {
+    pub(super) fn validate(&self) -> Result<(), String> {
+        self.desktop.validate().map_err(|e| e.to_string())?;
+        for source in self.sources.iter().flatten() {
+            source.profile.validate().map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
     pub fn source_name(&self, part: Component) -> Option<&str> {
         self.sources[part.index()]
             .as_ref()

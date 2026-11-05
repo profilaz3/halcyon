@@ -155,7 +155,7 @@ impl Cards {
             font,
         ) + 6.
             + super::clock::measure(
-                &format!("{:.0}°", weather.current.temperature_2m),
+                &forecast_temperature_in(self.config.weather, Some(&weather.current.temperature_2m)),
                 28.,
                 font,
             );
@@ -571,7 +571,7 @@ impl Cards {
                         p.accent,
                     ),
                     label(
-                        format!("{:.0}°", weather.current.temperature_2m),
+                        forecast_temperature_in(self.config.weather, Some(&weather.current.temperature_2m)),
                         temperature_size,
                         p.foreground,
                     ),
@@ -597,13 +597,13 @@ impl Cards {
                     let detail = if block {
                         data::weather_description(weather.current.weather_code).to_string()
                     } else {
-                        let high = forecast_temperature(
+                        let high = forecast_temperature_in(self.config.weather, 
                             weather
                                 .daily
                                 .temperature_2m_max
                                 .get(forecast.unwrap_or(usize::MAX)),
                         );
-                        let low = forecast_temperature(
+                        let low = forecast_temperature_in(self.config.weather, 
                             weather
                                 .daily
                                 .temperature_2m_min
@@ -634,13 +634,13 @@ impl Cards {
                             .into(),
                     );
                     if block {
-                        let high = forecast_temperature(
+                        let high = forecast_temperature_in(self.config.weather, 
                             weather
                                 .daily
                                 .temperature_2m_max
                                 .get(forecast.unwrap_or(usize::MAX)),
                         );
-                        let low = forecast_temperature(
+                        let low = forecast_temperature_in(self.config.weather, 
                             weather
                                 .daily
                                 .temperature_2m_min
@@ -700,7 +700,7 @@ impl Cards {
                 } else {
                     Local::now()
                 })
-                .format(if compact { "%a, %-d %b" } else { "%A, %B %-d" })
+                .format(if compact { "%a, %b %-d" } else { "%A, %B %-d" })
                 .to_string(),
                 if compact {
                     16.
@@ -842,8 +842,8 @@ impl Cards {
         if highlighted {
             detail.push(label(
                 match state {
-                    MeetingState::Soon(minutes) => format!("IN {minutes} MIN"),
-                    _ => "LIVE NOW".into(),
+                    MeetingState::Soon(minutes) => format!("In {minutes} min"),
+                    _ => "Live now".into(),
                 },
                 10.,
                 color,
@@ -984,9 +984,9 @@ impl Cards {
         let heading: Element<'_, Message> = if google_link {
             mouse_area(label(
                 if day == today {
-                    "TODAY ↗"
+                    "Today ↗"
                 } else {
-                    "TOMORROW ↗"
+                    "Tomorrow ↗"
                 },
                 10.,
                 p.accent,
@@ -996,7 +996,7 @@ impl Cards {
             .into()
         } else {
             label(
-                if day == today { "TODAY" } else { "TOMORROW" },
+                if day == today { "Today" } else { "Tomorrow" },
                 10.,
                 p.accent,
             )
@@ -1363,7 +1363,7 @@ mod tests {
                     &format!("glance-earlier-inline-{backend:?}-{style:?}"),
                 );
                 let earlier = native.bounds(cards.glance(), "calendar-earlier");
-                // On the TODAY line, not a row of its own below the day.
+                // On the Today line, not a row of its own below the day.
                 assert!(
                     earlier.y + earlier.height <= cards.glance_padding() + DAY_HEADING_HEIGHT + 1.,
                     "{style:?}: {earlier:?}"
@@ -1371,9 +1371,9 @@ mod tests {
                 let day = native.text_bounds(
                     cards.glance(),
                     if backend == crate::calendar::Backend::Google {
-                        "TODAY ↗"
+                        "Today ↗"
                     } else {
-                        "TODAY"
+                        "Today"
                     },
                 );
                 assert!(

@@ -416,6 +416,17 @@ impl Snapshot {
     pub fn insert(&mut self, key: ConfigKey, entry: KeyEntry) {
         self.entries.insert(key, entry);
     }
+    /// Takes `from`'s entries for `keys`; one absent there becomes absent.
+    /// Drafts use it to keep their edits over an outside change: the
+    /// current value becomes the baseline Apply checks and writes over.
+    pub fn adopt(&mut self, from: &Snapshot, keys: &[ConfigKey]) {
+        for key in keys {
+            match from.entries.get(key) {
+                Some(entry) => self.entries.insert(key.clone(), entry.clone()),
+                None => self.entries.remove(key),
+            };
+        }
+    }
 }
 
 /// The user-layer state a draft started from and the state it wants.

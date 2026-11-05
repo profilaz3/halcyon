@@ -22,9 +22,11 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+pub mod colors;
 pub mod discovery;
 pub mod mix;
 pub mod packages;
+pub mod previews;
 mod sharing;
 
 static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
@@ -62,6 +64,7 @@ pub struct NameEdit {
 
 #[derive(Clone, Debug)]
 pub enum Message {
+    Color(colors::Edit),
     DiscoveryQuery(String),
     RemixSelected,
     Package(packages::Edit),
@@ -113,6 +116,9 @@ pub enum Message {
     Undo,
     /// Plans again after the desktop changed under the preview.
     Replan,
+    /// `true` keeps this review's value; `false` keeps the newer desktop value.
+    ResolveConflict(Domain, bool),
+    ResolveValueConflict(String, bool),
     Recover,
     KeepRecovery,
     /// A backdrop picture finished: request ID and the picture, `None`
@@ -360,6 +366,19 @@ pub(super) struct SavedSelection {
 
 #[derive(Clone, Default)]
 pub struct ProfilesEditor {
+    /// The screen the live review belongs to.
+    owner: previews::PreviewKind,
+    /// The live review changed since it opened; leaving keeps it.
+    touched: bool,
+    steps: Vec<previews::PreviewStep>,
+    parked: Vec<previews::ParkedPreview>,
+    /// Parts where the desktop and this review changed differently.
+    conflicts: BTreeSet<Domain>,
+    conflict_values: Vec<profiles::PreviewConflict>,
+    preview_baseline: Option<profiles::PreviewBaseline>,
+    /// Last unfiltered plan: distinguishes a changed choice from a refresh.
+    preview_source: Option<profiles::PreviewBaseline>,
+    color_options: colors::Options,
     pub package: Option<packages::Draft>,
     pub mix: Option<mix::Draft>,
     share_pending: Option<(u64, String, bool)>,
@@ -523,7 +542,7 @@ impl ProfilesEditor {
         self.store().map(wallpaper::bundled_dir).unwrap_or_default()
     }
     #[cfg(test)]
-    fn with_store(store: DesktopStore) -> Self {
+    pub(super) fn with_store(store: DesktopStore) -> Self {
         let mut editor = Self {
             installed: Installed::discover(&store),
             store: Some(Ok(store)),
@@ -562,9 +581,7 @@ impl ProfilesEditor {
     pub(super) fn restore_session(&mut self, saved: SavedSelection) -> Result<(), String> {
         let selection = if saved.preset {
             let preset = self
-                .presets
-                .iter()
-                .find(|preset| preset.id == saved.id)
+                .preset_for(&saved.id)
                 .ok_or("The saved preset is no longer available")?;
             Selection::Preset(preset.id)
         } else {
@@ -610,6 +627,15 @@ impl ProfilesEditor {
         self.excluded = excluded?;
         self.queue_theme_colors();
         self.session_review = true;
+        self.touched = true;
+        self.owner = if self
+            .profile()
+            .is_some_and(|profile| profile.appearance_only)
+        {
+            previews::PreviewKind::Theme
+        } else {
+            previews::PreviewKind::Setup
+        };
         self.replan();
         self.notice = Some(Notice::Done("Recovered your preset selection. Review its current changes before applying; nothing has been applied.".into()));
         Ok(())
@@ -694,17 +720,22 @@ impl ProfilesEditor {
         &self.selection
     }
     /// The selected profile, if it can be read.
+    fn preset_for(&self, id: &str) -> Option<&Preset> {
+        self.presets
+            .iter()
+            .find(|preset| preset.id == id)
+            .or_else(|| {
+                let canonical = profiles::preset(id)?.id;
+                self.presets.iter().find(|preset| preset.id == canonical)
+            })
+    }
     pub fn profile(&self) -> Option<&Profile> {
         if let Some(profile) = &self.theme_override {
             return Some(profile);
         }
         match &self.selection {
             Selection::Current => None,
-            Selection::Preset(id) => self
-                .presets
-                .iter()
-                .find(|preset| preset.id == *id)
-                .map(|preset| &preset.profile),
+            Selection::Preset(id) => self.preset_for(id).map(|preset| &preset.profile),
             Selection::Saved(_) => self.loaded.as_ref().and_then(|loaded| loaded.as_ref().ok()),
         }
     }
@@ -848,6 +879,11 @@ impl ProfilesEditor {
             && self.pending.is_none()
             && self.theme_pending.is_none()
             && self.theme_error.is_none()
+            && self.conflicts.is_empty()
+            && self
+                .custom
+                .as_deref()
+                .is_none_or(|text| crate::settings::wallpaper::parse_rgb(text).is_some())
             && self.plan.as_ref().is_some_and(ProfilePlan::can_apply)
     }
     pub fn can_undo(&self) -> bool {
@@ -895,6 +931,10 @@ impl ProfilesEditor {
             .map_err(|error| error.to_string());
         self.library = Some(library);
         self.refresh_recovery();
+        let retained = self.keeps_intent(self.owner) || self.session_review;
+        if retained && self.theme_override.is_none() {
+            self.theme_override = self.profile().cloned();
+        }
         if let Selection::Saved(id) = &self.selection {
             let exists = self
                 .library()
@@ -908,7 +948,11 @@ impl ProfilesEditor {
                 self.loaded = None;
             }
         }
-        self.replan();
+        if !retained {
+            self.preview_baseline = None;
+            self.preview_source = None;
+        }
+        self.replan_retained();
         self.refresh_surface_status();
         if self.theme_source.is_none() {
             self.queue_current_colors();
@@ -982,15 +1026,44 @@ impl ProfilesEditor {
     /// Plans the selection against the current desktop and builds the
     /// preview from the same plan. Reads only.
     fn replan(&mut self) {
+        self.replan_with(false);
+    }
+    fn replan_retained(&mut self) {
+        self.replan_with(true);
+    }
+    fn replan_with(&mut self, retained: bool) {
         self.stale = self.session_review;
-        let Some(store) = self.store() else {
+        if self.store().is_none() {
             self.plan = None;
             self.preview = None;
             return;
+        }
+        let mut plan = self
+            .profile()
+            .map(|profile| self.plan_colors(profile, &self.selected_domains()));
+        self.conflict_values.clear();
+        if let Some(plan) = &mut plan {
+            let source = plan.preview_baseline();
+            match &mut self.preview_baseline {
+                None => self.preview_baseline = Some(source.clone()),
+                Some(baseline) if !retained => {
+                    if let Some(previous) = &self.preview_source {
+                        baseline.edited(previous, &source);
+                    }
+                }
+                _ => {}
+            }
+            self.conflict_values = plan.retain_preview(self.preview_baseline.as_ref().unwrap());
+            self.preview_source = Some(source);
+        }
+        self.conflicts = self
+            .conflict_values
+            .iter()
+            .map(|value| value.domain)
+            .collect();
+        let Some(store) = self.store() else {
+            return;
         };
-        let plan = self.profile().map(|profile| {
-            profiles::plan(store, &self.installed, profile, &self.selected_domains())
-        });
         let preview = preview(store, plan.as_ref());
         self.plan = plan;
         self.preview = Some(preview);
@@ -1104,15 +1177,17 @@ impl ProfilesEditor {
     }
 
     fn select(&mut self, selection: Selection) {
+        self.preview_baseline = None;
+        self.preview_source = None;
+        self.color_options = colors::Options::default();
+        self.conflict_values.clear();
+        self.conflicts.clear();
         self.package = None;
         self.cancel_share();
         // Style and color are separate choices: a pending look's color and
         // matching-wallpaper choice carry over to another built-in style,
         // otherwise the applied look's color does (see `preserve_custom`).
-        let pending = self
-            .profile()
-            .filter(|p| p.appearance_only && profiles::themes::family(p).is_some())
-            .cloned();
+        let pending = self.profile().filter(|p| p.appearance_only).cloned();
         self.mix = None;
         self.theme_override = None;
         self.theme_pending = None;
@@ -1295,10 +1370,9 @@ impl ProfilesEditor {
         self.theme_pending = None;
         self.theme_source = None;
         if self.resetting()
-            || !self.profile().is_some_and(|p| {
-                p.composition.is_some()
-                    || (p.appearance_only && profiles::themes::family(p).is_some())
-            })
+            || !self
+                .profile()
+                .is_some_and(|p| p.composition.is_some() || p.appearance_only)
         {
             // Nothing selected or a surface Reset: offer the applied
             // wallpaper's colors.
@@ -1372,7 +1446,7 @@ impl ProfilesEditor {
                         profiles::themes::family(&p),
                     )
                 {
-                    profiles::themes::recolor(&mut p, Some(rgb));
+                    self.recolor_preview(&mut p, Some(rgb));
                 }
                 self.theme_override = Some(p);
             }
@@ -1505,56 +1579,50 @@ impl ProfilesEditor {
         ) {
             self.cancel_share();
         }
+        let step = match &message {
+            Message::Select(_) if self.owner == previews::PreviewKind::Theme => Some("theme"),
+            Message::Color(_) => Some("colors"),
+            Message::Include(..) => Some("included part"),
+            Message::ThemeColors(_) => Some("color source"),
+            Message::ThemeAccent(_) => Some("accent"),
+            Message::ThemeWallpaper(_) => Some("matching wallpaper"),
+            Message::ThemeScope(_) => Some("color scope"),
+            Message::ResetSurface(_) => Some("surface"),
+            Message::MixPick(..) => Some("mix part"),
+            _ => None,
+        };
+        let before = step.map(|label| self.step_state(label));
+        let opened_review = matches!(message, Message::MixStart | Message::RemixSelected);
         match message {
             Message::ShareImage => self.share_image(),
             Message::CancelShare => self.cancel_share(),
             Message::ShareReady(id, result) => return self.share_ready(id, result),
-            Message::Select(selection) => self.select(selection),
+            Message::Select(selection) => {
+                if self.owner == previews::PreviewKind::Theme {
+                    if self.selection != selection || !self.review_open() {
+                        let colors = self.color_options.clone();
+                        self.select(selection);
+                        self.color_options = colors;
+                        self.replan();
+                    }
+                } else if self.selection != selection || !self.review_open() {
+                    let _ = self.park(self.owner);
+                    if !self.resume_selection(&selection) {
+                        self.select(selection);
+                    }
+                }
+            }
             Message::DiscoveryQuery(query) => {
                 self.discovery_query = query.chars().take(80).collect()
             }
             Message::RemixSelected => self.start_remix(),
             Message::Collection(saved) => self.saved_collection = saved,
             Message::Compare(current) => self.compare_current = current,
-            Message::ThemeColors(on) => {
-                self.select_applied();
-                if let Some(mut p) = self.profile().filter(|p| p.appearance_only).cloned() {
-                    let style = p.widget_style.get_or_insert(serde_json::json!({}));
-                    let _ = widget::put(style, "/appearance/wallpaper_colors", Some(on.into()));
-                    let _ = widget::put(
-                        style,
-                        "/appearance/color_policy",
-                        Some(serde_json::json!(if on { "wallpaper" } else { "theme" })),
-                    );
-                    if !on {
-                        profiles::themes::recolor(&mut p, None);
-                    }
-                    self.custom = None;
-                    self.theme_override = Some(p);
-                    self.queue_theme_colors();
-                    self.replan();
-                }
+            Message::Color(edit) => {
+                let _ = self.edit_colors(edit);
             }
-            Message::ThemeAccent(rgb) => {
-                self.select_applied();
-                if let Some(mut p) = self.profile().filter(|p| p.appearance_only).cloned()
-                    && profiles::themes::family(&p).is_some()
-                {
-                    let style = p.widget_style.get_or_insert(serde_json::json!({}));
-                    let _ = widget::put(style, "/appearance/wallpaper_colors", Some(false.into()));
-                    let _ = widget::put(
-                        style,
-                        "/appearance/color_policy",
-                        Some(serde_json::json!("custom")),
-                    );
-                    profiles::themes::recolor(&mut p, Some(rgb));
-                    // A fixed color needs no new analysis, and a wallpaper
-                    // that could not be read no longer holds Apply back.
-                    self.theme_error = None;
-                    self.theme_override = Some(p);
-                    self.replan();
-                }
-            }
+            Message::ThemeColors(on) => self.color_source(on),
+            Message::ThemeAccent(rgb) => self.color_accent(rgb),
             Message::ThemeCustom(text) => match text {
                 None => self.custom = None,
                 Some(text) => {
@@ -1580,14 +1648,7 @@ impl ProfilesEditor {
                     self.replan();
                 }
             }
-            Message::ThemeScope(sync) => {
-                if let Some(mut p) = self.profile().filter(|p| p.appearance_only).cloned() {
-                    let style = p.widget_style.get_or_insert(serde_json::json!({}));
-                    let _ = widget::put(style, "/appearance/sync_colors", Some(sync.into()));
-                    self.theme_override = Some(p);
-                    self.replan();
-                }
-            }
+            Message::ThemeScope(sync) => self.color_scope(sync),
             Message::ResetSurface(domain) => self.reset_surface(domain),
             Message::RepairThemeMatching => {
                 if let Some(store) = self.store() {
@@ -1608,6 +1669,7 @@ impl ProfilesEditor {
                     self.excluded.remove(&domain);
                 } else {
                     self.excluded.insert(domain);
+                    self.conflicts.remove(&domain);
                 }
                 self.notice = None;
                 if domain == Domain::Wallpaper {
@@ -1694,8 +1756,17 @@ impl ProfilesEditor {
             Message::Imported(id, result) => return self.imported(id, result),
             Message::Exported(id, result) => self.exported(id, result),
             Message::Apply => return self.apply(),
-            Message::Discard => self.select(Selection::Current),
+            Message::Discard => {
+                self.forget_review();
+                self.select(Selection::Current);
+            }
             Message::Undo => return self.undo(),
+            Message::ResolveConflict(domain, keep_preview) => {
+                self.resolve_conflict(domain, keep_preview)
+            }
+            Message::ResolveValueConflict(id, keep_preview) => {
+                self.resolve_value_conflict(&id, keep_preview)
+            }
             Message::Replan => {
                 self.queue_theme_colors();
                 self.session_review = false;
@@ -1705,6 +1776,13 @@ impl ProfilesEditor {
             Message::Recover => return self.recover(true),
             Message::KeepRecovery => return self.recover(false),
             Message::Backdrop(id, pixels) => self.backdrop_ready(id, pixels),
+        }
+        if let Some(before) = before {
+            self.record_step(before);
+            self.touched = true;
+        }
+        if opened_review {
+            self.touched = true;
         }
         Outcome::None
     }
@@ -2043,6 +2121,7 @@ impl ProfilesEditor {
                 }
                 self.refresh_surface_status();
                 self.reload_library();
+                self.forget_review();
                 self.select(Selection::Current);
                 if icons {
                     self.notes
@@ -2153,6 +2232,14 @@ fn carry_choices(from: &Profile, to: &mut Profile) {
     }
     if from.wallpaper.is_some() {
         to.wallpaper = profiles::themes::family(to).map(profiles::themes::matching);
+    }
+    if let Some(scope) = from
+        .widget_style
+        .as_ref()
+        .and_then(|style| style.pointer("/appearance/sync_colors"))
+    {
+        let style = to.widget_style.get_or_insert(serde_json::json!({}));
+        let _ = widget::put(style, "/appearance/sync_colors", Some(scope.clone()));
     }
 }
 

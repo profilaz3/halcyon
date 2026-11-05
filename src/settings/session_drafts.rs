@@ -34,6 +34,8 @@ pub(super) enum Kind {
     Canvas,
     Automation,
     Preset,
+    Previews,
+    Recipe,
 }
 impl Kind {
     pub(super) fn key(self) -> &'static str {
@@ -50,11 +52,13 @@ impl Kind {
             Self::Canvas => "canvas",
             Self::Automation => "automation",
             Self::Preset => "preset",
+            Self::Previews => "previews",
+            Self::Recipe => "recipe",
         }
     }
     pub(super) fn title(self) -> &'static str {
         match self {
-            Self::Dock => "Dock & panel",
+            Self::Dock => "Dock and panel",
             Self::Appearance => "Desktop appearance",
             Self::Windows => "Windows",
             Self::Workspaces => "Workspaces",
@@ -66,6 +70,8 @@ impl Kind {
             Self::Canvas => "Desktop canvas",
             Self::Automation => "Schedules",
             Self::Preset => "Presets",
+            Self::Previews => "Theme and setup previews",
+            Self::Recipe => "Widget design preview",
         }
     }
 }
@@ -210,8 +216,9 @@ fn read<T: DeserializeOwned>(
     if record.format != FORMAT || record.version != VERSION || record.kind != kind.key() {
         return Err("The saved draft belongs to a different version or page".into());
     }
-    let draft = ron::from_str(&record.draft)
-        .map_err(|_| "The saved draft cannot be decoded; the desktop is unchanged")?;
+    let draft = ron::from_str(&record.draft).map_err(|error| {
+        format!("The saved draft cannot be decoded ({error}); the desktop is unchanged")
+    })?;
     Ok(Some((draft, record.draft)))
 }
 
@@ -319,6 +326,20 @@ impl Settings {
         restore!(Preset, profiles, |this: &mut Self, saved| this
             .profiles
             .restore_session(saved));
+        match session.load::<Vec<super::profiles::previews::SavedPreview>>(&store, Kind::Previews) {
+            Ok(Some(saved)) => {
+                self.profiles.open();
+                match self.profiles.restore_previews(saved) {
+                    Ok(()) => session.recovered += 1,
+                    Err(error) => {
+                        session.unreadable.insert(Kind::Previews);
+                        errors.push(format!("{}: {error}", Kind::Previews.title()));
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(error) => errors.push(error),
+        }
         match session.load(&store, Kind::Layout) {
             Ok(Some(saved)) => match self.placement.restore_session(saved) {
                 Ok(()) => session.recovered += 1,
@@ -336,6 +357,17 @@ impl Settings {
                 Err(error) => {
                     session.unreadable.insert(Kind::Canvas);
                     errors.push(format!("Canvas draft: {error}"));
+                }
+            },
+            Ok(None) => {}
+            Err(error) => errors.push(error),
+        }
+        match session.load::<super::recipes::SavedDraft>(&store, Kind::Recipe) {
+            Ok(Some(saved)) => match self.recipe_editor.restore_draft(saved) {
+                Ok(()) => session.recovered += 1,
+                Err(error) => {
+                    session.unreadable.insert(Kind::Recipe);
+                    errors.push(format!("{}: {error}", Kind::Recipe.title()));
                 }
             },
             Ok(None) => {}
@@ -401,12 +433,7 @@ impl Settings {
         save!(
             Wallpaper,
             self.wallpaper.opened(),
-            self.wallpaper
-                .session_draft()
-                .as_ref()
-                .filter(|saved| saved.accent_text.is_some()
-                    || !saved.custom.is_empty()
-                    || !saved.fit_text.is_empty())
+            self.wallpaper.session_draft().as_ref()
         );
         save!(
             WindowRules,
@@ -428,11 +455,24 @@ impl Settings {
             !self.placement.dragging(),
             self.canvas_saved().as_ref()
         );
+        save!(Recipe, true, self.recipe_editor.saved_draft().as_ref());
         save!(
             Automation,
             self.automation.opened(),
             self.automation.draft.as_ref().filter(|draft| draft.dirty())
         );
+        // The older single-selection record is replaced by this list once read.
+        if self.profiles.store().is_some() {
+            let previews = self.profiles.saved_previews();
+            match self.session_drafts.checkpoint(
+                &store,
+                Kind::Previews,
+                Some(&previews).filter(|list| !list.is_empty()),
+            ) {
+                Ok(()) => save!(Preset, true, None::<&super::profiles::SavedSelection>),
+                Err(error) => errors.push(format!("{}: {error}", Kind::Previews.title())),
+            }
+        }
         if !errors.is_empty() {
             self.session_drafts.error = Some(format!(
                 "Could not keep unfinished work for next time: {}",
@@ -454,6 +494,60 @@ impl Settings {
 mod tests {
     use super::*;
     use crate::desktop::appearance::{AppearanceDraft, Control, SystemMode, Value};
+
+    #[test]
+    fn retained_preview_checkpoint_load_preserves_native_and_widget_baselines() {
+        use crate::desktop::profiles::{self, Domain, ProfileLibrary};
+        use crate::settings::profiles::{
+            Message, ProfilesEditor, Selection, previews::PreviewKind,
+        };
+        let fixture = Fixture::new("ux-preview-checkpoint");
+        let dock = "com.system76.CosmicPanel.Dock";
+        fixture.system("com.system76.CosmicPanel", "entries", "[\"Dock\"]");
+        fixture.system(dock, "anchor", "Bottom");
+        fixture.user(dock, "padding", "4");
+        let config = fixture.0.join("config.json");
+        fs::write(&config, r#"{"appearance":{"opacity":92}}"#).unwrap();
+        let store = fixture.store().with_app_config(config.clone());
+        let profile = profiles::import_local(
+            serde_json::json!({
+                "format": "desktop-cards-profile", "version": profiles::VERSION,
+                "name": "Checkpoint", "dock": {"padding": 8},
+                "widget_style": {"appearance": {"opacity": 70}}
+            })
+            .to_string()
+            .as_bytes(),
+        )
+        .unwrap();
+        let selection = Selection::Saved(ProfileLibrary::new(&store).create(&profile).unwrap());
+        let mut editor = ProfilesEditor::with_store(store.clone());
+        editor.enter(PreviewKind::Setup);
+        editor.update(Message::Select(selection));
+        editor.update(Message::Include(Domain::Dock, true));
+        let mut session = SessionDrafts::default();
+        session
+            .checkpoint(&store, Kind::Previews, Some(&editor.saved_previews()))
+            .unwrap();
+        let record: Record =
+            serde_json::from_slice(&fs::read(path(&store, Kind::Previews).unwrap()).unwrap())
+                .unwrap();
+        assert!(
+            !record.draft.is_empty(),
+            "outer JSON carries RON as a string"
+        );
+        fixture.user(dock, "padding", "6");
+        fs::write(config, r#"{"appearance":{"opacity":90}}"#).unwrap();
+        let saved = SessionDrafts::default()
+            .load(&store, Kind::Previews)
+            .unwrap()
+            .unwrap();
+        let mut reopened = ProfilesEditor::with_store(store.clone());
+        reopened.restore_previews(saved).unwrap();
+        reopened.enter(PreviewKind::Setup);
+        assert_eq!(reopened.conflict_values().len(), 2);
+        assert!(!reopened.can_apply());
+        assert!(store.latest_change().unwrap().is_none());
+    }
     use crate::desktop::desktop_icons::{DesktopIconsDraft, Show};
     use crate::desktop::panels::{PanelDraft, PanelKind, PanelSize};
     use crate::desktop::shortcuts::{Choice as ShortcutChoice, ShortcutsDraft, format::Binding};

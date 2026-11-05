@@ -2,6 +2,30 @@
 //! current gesture or form; every completed action finishes in its inspector.
 use super::*;
 
+/// Old routes and a color picker opened before navigation obey the same
+/// preview contract as the Colors screen's own controls.
+pub(super) fn theme_preview(message: &Message) -> Option<profiles::Message> {
+    use profiles::{Message as Preview, colors::Edit};
+    use wallpaper::Message as Paper;
+    Some(match message {
+        Message::SystemAppearance(system_appearance::Message::Mode(mode)) => {
+            Preview::Color(Edit::Mode(*mode))
+        }
+        Message::StyleBars(on) => Preview::Color(Edit::StyleBars(*on)),
+        Message::Theme(key) => Preview::Color(Edit::Palette(key.clone())),
+        Message::Wallpaper(Paper::Palette(key)) => Preview::Color(Edit::Palette(key.clone())),
+        Message::Wallpaper(Paper::Accent(rgb)) => Preview::ThemeAccent(*rgb),
+        Message::Wallpaper(Paper::AccentText(text)) => Preview::ThemeCustom(Some(text.clone())),
+        Message::Wallpaper(Paper::AutomaticColors(on)) => Preview::ThemeColors(*on),
+        Message::Wallpaper(Paper::SyncColors(on)) => Preview::ThemeScope(*on),
+        Message::Wallpaper(Paper::ThemeColor | Paper::ClearAccent) => Preview::ThemeColors(false),
+        Message::Wallpaper(Paper::LinkOutline(on)) => Preview::Color(Edit::Outline(*on)),
+        Message::Wallpaper(Paper::SuggestAccent) => Preview::Color(Edit::Recommended),
+        Message::Wallpaper(Paper::AccentSubmit | Paper::ApplyColors) => Preview::Color(Edit::Noop),
+        _ => return None,
+    })
+}
+
 pub(super) fn completion(message: &Message) -> Option<Message> {
     use desktop::Message as Dock;
     use system_appearance::Message as Appearance;
@@ -153,7 +177,7 @@ pub(super) fn label(message: &Message) -> String {
             | desktop::Message::PenumbraHeight(_)
             | desktop::Message::PenumbraMaximizedOpacity(_) => "Penumbra gradient",
             desktop::Message::Anchor(_) => "Dock position",
-            _ => "Dock & panel",
+            _ => "Dock and panel",
         },
         Message::SystemAppearance(edit) => match edit {
             system_appearance::Message::Mode(_) => "Mode",

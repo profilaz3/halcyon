@@ -977,6 +977,14 @@ impl ShortcutsDraft {
         }
         self.base = base;
     }
+    /// Keeps every edit over the outside changes: the current values of
+    /// the conflicting keys become the baseline, so Apply writes the edits
+    /// over them and still refuses anything changed after this.
+    pub fn keep_edits(&mut self, snapshot: Snapshot) {
+        let keys = std::mem::take(&mut self.conflicts);
+        self.base.adopt(&snapshot, &keys);
+        self.refresh(snapshot);
+    }
     /// Every edit depends on all three lists: adopt the current values.
     pub fn resolve_conflicts(&mut self, snapshot: Snapshot, _keys: &[ConfigKey]) {
         self.rebase(snapshot);

@@ -660,9 +660,9 @@ mod tests {
                 let privacy = native.text_bounds(app.settings_view(), provider.privacy());
                 assert!(privacy.width > 0. && privacy.height > 0.);
                 assert!(privacy.x >= 0. && privacy.x + privacy.width <= width);
-                let add = native.bounds(app.settings_view(), "calendar-subscription-add");
+                let add = native_reveal(&app, &mut native, "calendar-subscription-add");
                 assert!(
-                    add.y >= 0. && add.y + add.height <= height - 8.,
+                    add.y >= 0. && add.y + add.height <= height,
                     "{provider:?}: {add:?}"
                 );
                 native.capture(

@@ -6,6 +6,80 @@ use crate::settings::system_appearance::{self, AppearanceEditor};
 use cosmic::cosmic_theme::palette::Srgba;
 use std::fs;
 
+#[test]
+fn ux_native_wallpaper_and_effect_apply_and_undo_are_one_change() {
+    let fixture = seeded("ux-effect-transaction");
+    let store = fixture
+        .store()
+        .with_app_config(fixture.0.join("config.json"));
+    fs::write(
+        store.app_config().unwrap(),
+        r#"{"theme":"rose","future":73}"#,
+    )
+    .unwrap();
+    let before = fs::read(store.app_config().unwrap()).unwrap();
+    let background = fs::read(store.user_path(&shared_key())).unwrap();
+    let mut editor = WallpaperEditor::with_store(store.clone());
+    let mut effect = crate::rain::Preferences::default();
+    effect.enabled = true;
+    effect.effect = crate::rain::Effect::Snow;
+    editor.stage_effect(effect.clone()).unwrap();
+    editor.update(Message::Select(Pick::Color(blue())));
+    drive(&mut editor);
+    assert_eq!(fs::read(store.app_config().unwrap()).unwrap(), before);
+    assert_eq!(
+        fs::read(store.user_path(&shared_key())).unwrap(),
+        background
+    );
+    editor.update(Message::Apply);
+    assert!(!editor.dirty(), "{:?}", editor.notice());
+    assert_eq!(automatic::read_config(&store).unwrap().1.rain, effect);
+    assert!(editor.latest().unwrap().widget.is_some());
+    assert!(!editor.latest().unwrap().change.entries().is_empty());
+    editor.update(Message::Undo);
+    assert_eq!(fs::read(store.app_config().unwrap()).unwrap(), before);
+    assert_eq!(
+        fs::read(store.user_path(&shared_key())).unwrap(),
+        background
+    );
+}
+
+#[test]
+fn ux_native_effect_conflict_prevents_partial_wallpaper_apply() {
+    let fixture = seeded("ux-effect-conflict");
+    let store = fixture
+        .store()
+        .with_app_config(fixture.0.join("config.json"));
+    fs::write(store.app_config().unwrap(), "{}").unwrap();
+    let background = fs::read(store.user_path(&shared_key())).unwrap();
+    let mut editor = WallpaperEditor::with_store(store.clone());
+    let mut wanted = crate::rain::Preferences::default();
+    wanted.enabled = true;
+    editor.stage_effect(wanted.clone()).unwrap();
+    editor.update(Message::Select(Pick::Color(blue())));
+    drive(&mut editor);
+    let mut external = wanted.clone();
+    external.effect = crate::rain::Effect::Clouds;
+    fs::write(
+        store.app_config().unwrap(),
+        serde_json::to_vec(&serde_json::json!({"rain":external,"future":73})).unwrap(),
+    )
+    .unwrap();
+    editor.update(Message::Apply);
+    assert!(editor.effect_conflict());
+    assert!(editor.dirty());
+    assert_eq!(
+        fs::read(store.user_path(&shared_key())).unwrap(),
+        background
+    );
+    assert_eq!(automatic::read_config(&store).unwrap().1.rain, external);
+    editor.update(Message::ResolveEffect(true));
+    editor.update(Message::Apply);
+    assert!(!editor.dirty(), "{:?}", editor.notice());
+    assert_eq!(automatic::read_config(&store).unwrap().1.rain, wanted);
+    assert_eq!(automatic::read_config(&store).unwrap().0["future"], 73);
+}
+
 fn png(path: &Path, rgb: [u8; 3]) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     image::RgbImage::from_pixel(64, 36, image::Rgb(rgb))

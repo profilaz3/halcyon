@@ -1,63 +1,68 @@
 use super::*;
 use crate::settings::design::Message as Edit;
 impl Settings {
-    pub(super) fn design_section(&self) -> Element<'_, Message> {
+    /// Widget storage, in plain words: the one-time update before your own
+    /// designs can be used, or a private copy afterwards.
+    pub(super) fn design_section(&self, title: Option<&'static str>) -> Element<'_, Message> {
         let action = |edit| Message::Design(edit);
-        let mut rows = vec![detail(
-            "Widget design",
-            if self.design.managed {
-                "Widget identities, appearance and layout use the current storage format."
-            } else {
-                "Move existing widgets to the current storage format. Their appearance and layout stay the same."
-            },
-        )];
+        let mut rows = Vec::new();
         if self.design.review {
-            rows.push(label("All nine widget identities are retained, including hidden widgets. Notes, accounts and weather location stay in their existing stores. Existing Undo actions remain available.", 13., MUTED));
-            rows.push(label("Older Halcyon versions cannot edit the new design. Export legacy settings before switching back.", 13., MUTED));
+            rows.push(detail(
+                "Update your widgets?",
+                "Every widget comes along, hidden ones too. Notes, accounts and your weather city stay as they are, and Undo keeps working. Older Halcyon versions can't edit widgets afterwards, so save a copy first if you might go back.",
+            ));
             rows.push(
                 row::with_children(vec![
+                    button::text("Save a copy first…")
+                        .on_press(action(Edit::Export(true)))
+                        .into(),
+                    cosmic::widget::space().width(Length::Fill).into(),
                     button::text("Cancel")
                         .id("design-cancel".into())
                         .on_press(action(Edit::Cancel))
                         .into(),
-                    button::suggested("Migrate widgets")
+                    button::suggested("Update widgets")
                         .id("design-migrate".into())
                         .on_press_maybe((!self.native_busy).then_some(action(Edit::Migrate)))
                         .into(),
                 ])
                 .spacing(8)
+                .align_y(Alignment::Center)
                 .into(),
             );
         } else if !self.design.managed {
-            rows.push(
-                button::standard("Review migration…")
+            rows.push(group_row(
+                "Get ready for your own designs",
+                "A one-time update. Your widgets look and sit exactly the same.",
+                button::standard("Get ready…")
                     .id("design-review".into())
                     .on_press(action(Edit::Review))
                     .into(),
-            );
+            ));
         } else {
-            rows.push(
+            rows.push(group_row(
+                "Save a copy of your widgets",
+                "A private file you can keep as a backup",
                 row::with_children(vec![
-                    button::text("Export original…")
-                        .on_press(action(Edit::Export(false)))
-                        .into(),
-                    button::text("Export legacy settings…")
+                    button::text("For older versions…")
                         .on_press(action(Edit::Export(true)))
+                        .into(),
+                    button::standard("Save…")
+                        .on_press(action(Edit::Export(false)))
                         .into(),
                 ])
                 .spacing(8)
-                .wrap()
+                .align_y(Alignment::Center)
                 .into(),
-            );
-            rows.push(label("Exports are private backups and may contain local display names or settings. Choose a new file; exports never replace the applied design.", 12., MUTED));
+            ));
         }
         if let Some(notice) = &self.design.notice {
             rows.push(label(notice, 13., MUTED));
         }
         if self.native_busy {
-            rows.push(label("Updating widget storage…", 13., MUTED));
+            rows.push(label("Updating your widgets…", 13., MUTED));
         }
-        pages::section(rows)
+        group(title, rows)
     }
     pub(super) fn design_recovery_view(&self) -> Element<'_, Message> {
         let mut parts = vec![

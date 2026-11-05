@@ -1,12 +1,12 @@
-//! Native Themes: one look for widgets, dock, panel and windows, chosen with
-//! a local preview of your desktop, a style, a color and an optional
-//! matching wallpaper. The same profile editor owns the draft, conflict
-//! gates, file chooser, transaction and Undo on both related pages.
+//! Appearance: one page for the look of widgets, dock, panel and windows.
+//! Style, color and mode apply as soon as they are chosen (one recoverable
+//! desktop transaction each, undone from the footer); surfaces, fonts and
+//! icons open as detail subpages.
 use super::desktop::{ERROR, WARN, banner, line};
 use super::profiles::tile_style;
 use super::system_appearance::fill;
 use super::*;
-use crate::desktop::profiles::{Domain, themes};
+use crate::desktop::profiles::themes;
 use crate::desktop::wallpaper::automatic;
 use crate::desktop_theme::{Family, tone};
 use crate::settings::profiles::{Message as Edit, NameAction, Selection};
@@ -16,13 +16,21 @@ fn edit(message: Edit) -> Message {
     Message::Profiles(message)
 }
 
+/// A segmented choice as a row's trailing control. Without the wrapping
+/// row, a trailing segmented control lays out with no room for its labels.
+fn choice_row(control: Element<'_, Message>) -> Element<'_, Message> {
+    row::with_children(vec![control])
+        .align_y(Alignment::Center)
+        .wrap()
+        .into()
+}
+
 /// What the page shows: the selected look, otherwise the applied one.
 struct Look {
     family: Option<Family>,
     /// Colors follow the wallpaper.
     auto: bool,
     accent: Option<[u8; 3]>,
-    matching: bool,
     selected: bool,
 }
 
@@ -37,45 +45,12 @@ enum Choice {
 
 impl Settings {
     fn look(&self) -> Look {
-        // "Before Themes" and similar saved looks explicitly have no style.
-        if let Some(p) = self.profiles.profile().filter(|p| p.appearance_only)
-            && p.widget_style
-                .as_ref()
-                .and_then(|s| s.pointer("/appearance/family"))
-                .is_some_and(serde_json::Value::is_null)
-        {
+        if self.profiles.profile().is_some_and(|p| p.appearance_only) {
+            let appearance = self.profiles.color_preferences(&self.config);
             return Look {
-                family: None,
-                auto: false,
-                accent: None,
-                matching: false,
-                selected: true,
-            };
-        }
-        if let Some(p) = self.profiles.profile().filter(|p| p.appearance_only)
-            && let Some(family) = themes::family(p).or(self.config.appearance.family)
-        {
-            // A surface reset makes no color choice of its own: it previews
-            // the applied family's colors for that one surface.
-            if themes::family(p).is_none() || self.profiles.resetting() {
-                let a = &self.config.appearance;
-                return Look {
-                    family: Some(family),
-                    auto: a.wallpaper_colors,
-                    accent: a.accent,
-                    matching: false,
-                    selected: true,
-                };
-            }
-            let get = |pointer: &str| p.widget_style.as_ref().and_then(|s| s.pointer(pointer));
-            return Look {
-                family: Some(family),
-                auto: get("/appearance/wallpaper_colors").and_then(serde_json::Value::as_bool)
-                    == Some(true),
-                accent: get("/appearance/accent")
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-                    .flatten(),
-                matching: p.wallpaper.is_some(),
+                family: appearance.family,
+                auto: appearance.wallpaper_colors,
+                accent: appearance.accent,
                 selected: true,
             };
         }
@@ -94,7 +69,6 @@ impl Settings {
             family: a.family,
             auto: (a.family.is_some() && a.wallpaper_colors) || first,
             accent: a.accent,
-            matching: false,
             selected: false,
         }
     }
@@ -109,11 +83,7 @@ impl Settings {
         if look.auto {
             return Choice::Wallpaper;
         }
-        let choice = self
-            .profiles
-            .profile()
-            .and_then(themes::LookColor::of)
-            .unwrap_or_else(|| themes::LookColor::applied(&self.config.appearance));
+        let choice = themes::LookColor::applied(self.profiles.color_preferences(&self.config));
         match choice {
             themes::LookColor::Wallpaper => Choice::Wallpaper,
             themes::LookColor::Style => Choice::Style,
@@ -132,11 +102,7 @@ impl Settings {
                 .suggestion()
                 .and_then(|s| automatic::recommended_for(s, Some(family)))
         } else {
-            let policy = self
-                .profiles
-                .profile()
-                .and_then(themes::LookColor::of)
-                .unwrap_or_else(|| themes::LookColor::applied(&self.config.appearance));
+            let policy = themes::LookColor::applied(self.profiles.color_preferences(&self.config));
             match policy {
                 themes::LookColor::Fixed(rgb) => Some(rgb),
                 _ => None,
@@ -145,17 +111,11 @@ impl Settings {
     }
 
     pub(super) fn themes_page(&self) -> Element<'_, Message> {
-        if self.style_browser {
-            return self.styles_page();
-        }
         let editor = &self.profiles;
         let look = self.look();
-        let mut rows = vec![split(
-            heading("Theme & colors", ""),
-            button::standard("Choose theme…")
-                .id(cosmic::widget::Id::new("theme-browse-styles"))
-                .on_press(Message::StyleBrowser(true))
-                .into(),
+        let mut rows = vec![heading(
+            "Appearance",
+            "Style, colors and fonts for your desktop and apps.",
         )];
         if let Some(error) = editor.unavailable() {
             rows.push(banner(error.to_string(), ERROR, vec![]));
@@ -175,94 +135,23 @@ impl Settings {
                 ],
             ));
         }
-        if self.config.appearance.family.is_some()
-            && self.config.appearance.native_mode_palettes == 0
-        {
-            rows.push(banner(
-                "Native light and dark matching has not been applied. Review a repair to let the bars follow Mode.",
-                WARN,
-                vec![button::standard("Repair theme matching")
-                    .id("theme-matching-repair".into())
-                    .on_press(edit(Edit::RepairThemeMatching)).into()],
-            ));
-        }
-        let mut controls = Vec::new();
-        controls.push(pages::section(vec![group_row(
-            "Color applies to",
-            if look.selected {
-                "Part of this local theme preview"
-            } else {
-                "Shared color coordination"
-            },
-            self.colors_scope(),
-        )]));
-        if look.selected && look.family.is_some() {
-            controls.push(self.theme_colors(&look));
-        } else {
-            controls.push(self.color_choices());
-        }
-        controls.push(pages::section(vec![
-            split(
-                detail(
-                    "Desktop mode",
-                    "Applies directly, independently of the theme preview",
-                ),
-                segmented(
-                    crate::desktop::appearance::SystemMode::ALL
-                        .into_iter()
-                        .map(|mode| {
-                            (
-                                mode.title().into(),
-                                self.system_appearance
-                                    .draft()
-                                    .is_some_and(|d| d.mode().known() == Some(&mode)),
-                                Some(Message::SystemAppearance(
-                                    crate::settings::system_appearance::Message::Mode(mode),
-                                )),
-                            )
-                        })
-                        .collect(),
-                    self.settings_accent(),
-                ),
-            ),
-            separator(),
-            // The one detailed editor this page opens.
-            button::custom(
-                row::with_children(vec![
-                    detail(
-                        "Fonts & icons",
-                        "Typography, detailed mode colors and window appearance",
-                    ),
-                    icon::from_name("go-next-symbolic").size(16).icon().into(),
-                ])
-                .spacing(12)
-                .align_y(Alignment::Center),
-            )
-            .id(cosmic::widget::Id::new("themes-fonts-icons"))
-            .class(nav_style(false, self.settings_accent()))
-            .padding([4, 0])
-            .width(Length::Fill)
-            .on_press(Message::Page(Page::DesktopAppearance))
-            .into(),
-        ]));
-        rows.push(self.inspector_layout(
-            self.theme_stage(&look),
-            column::with_children(controls).spacing(16).into(),
-            "theme",
-        ));
+        rows.push(self.theme_stage(&look));
+        rows.push(self.appearance_styles(&look));
+        rows.push(self.appearance_color(&look));
+        rows.push(self.appearance_surfaces());
+        rows.push(self.appearance_windows());
         if let Some(p) = editor.profile().filter(|p| !p.appearance_only) {
             rows.push(banner(
-                format!("“{}” is a desktop setup. Review it in Setups.", p.name),
+                format!("“{}” is a whole-desktop look. Open it in Looks.", p.name),
                 WARN,
                 vec![
-                    button::text("Open Setups")
+                    button::text("Open Looks")
                         .on_press(Message::Page(Page::DesktopProfiles))
                         .into(),
                 ],
             ));
         }
         if look.family == Some(Family::Paper)
-            && look.selected
             && editor.installed.fonts.family(false, "Noto Serif").is_none()
         {
             rows.push(label(
@@ -285,128 +174,251 @@ impl Settings {
                 ],
             ));
         }
-        if look.selected {
-            let mut states = Vec::new();
-            if editor.plan().is_some_and(|plan| !plan.is_empty()) {
-                states.push(label(
-                    "Changes how widgets, dock, panel and windows look. Your layout, content and applets stay as they are.",
-                    12.,
-                    MUTED,
-                ));
-            }
-            states.extend(self.plan_states());
-            rows.push(column::with_children(states).spacing(8).into());
+        // Saving and sharing happen in Looks. Themes saved by earlier
+        // versions stay reachable here.
+        if editor.library().is_ok_and(|entries| {
+            entries
+                .iter()
+                .any(|entry| entry.profile.as_ref().is_ok_and(|p| p.appearance_only))
+        }) {
+            rows.push(self.library_section());
         }
-        if let Some(family) = self.config.appearance.family {
-            rows.push(self.theme_desktop_status(family));
-        }
-        rows.push(self.library_section());
-        if self.config.appearance.family.is_none() {
-            rows.push(label(
-                "Your current look is saved as “Before Themes” when you first use a theme.",
-                12.,
-                MUTED,
-            ));
-        }
-        column::with_children(rows).spacing(16).into()
+        column::with_children(rows).spacing(20).into()
     }
 
-    /// Only the scene is collapsible; the candidate identity and controls stay
-    /// visible. The existing profile preview has no live desktop side effects.
-    fn theme_stage(&self, look: &Look) -> Element<'_, Message> {
-        // Size the scene for its column, keeping the whole display visible
-        // inside a short window. Wide windows put routine controls beside it.
-        let height = self.stage_height();
-        let scene = if self.scene_open() {
-            self.profile_preview(height)
-        } else {
-            cosmic::widget::space().height(0).into()
-        };
-        let caption = if let Some(profile) = self.profiles.profile() {
-            if look.selected {
-                format!("Previewing {} · local until Apply theme", profile.name)
-            } else {
-                format!(
-                    "Previewing setup {} · review included changes in Setups",
-                    profile.name
-                )
+    /// Every style as a small specimen; choosing one applies it.
+    fn appearance_styles(&self, look: &Look) -> Element<'_, Message> {
+        // The same width as the rows below, so the right edges line up.
+        let content = (self.content_width() - 2.).max(320.);
+        let columns = (((content + 10.) / 178.).floor() as usize).clamp(2, 6);
+        let tile = ((content - 10. * (columns - 1) as f32) / columns as f32).floor();
+        // One row of styles, the chosen one included; the rest on request.
+        let all = self.open_sections.contains("appearance-all-styles");
+        let applied = self.config.appearance.family;
+        let mut families: Vec<Family> = Family::ALL.into_iter().collect();
+        if !all {
+            if let Some(index) = applied.and_then(|f| families.iter().position(|x| *x == f))
+                && index >= columns
+            {
+                let chosen = families.remove(index);
+                families.insert(columns - 1, chosen);
             }
-        } else {
-            format!(
-                "Current appearance · {}",
-                look.family.map_or("Your desktop", Family::title)
+            families.truncate(columns);
+        }
+        let tiles: Vec<Element<'_, Message>> = families
+            .into_iter()
+            .map(|family| self.style_tile(family, look, tile))
+            .collect();
+        column::with_children(vec![
+            split(
+                text::heading("Style").into(),
+                button::text(if all {
+                    "Show fewer".to_string()
+                } else {
+                    format!("Show all {}", Family::ALL.len())
+                })
+                .id(cosmic::widget::Id::new("appearance-all-styles"))
+                .on_press(Message::ToggleSection("appearance-all-styles"))
+                .into(),
+            ),
+            row::with_children(tiles)
+                .spacing(10)
+                .wrap()
+                .vertical_spacing(10)
+                .into(),
+        ])
+        .spacing(10)
+        .into()
+    }
+
+    /// One color, light or dark, and where the color is used.
+    fn appearance_color(&self, look: &Look) -> Element<'_, Message> {
+        let accent = self.settings_accent();
+        let mut rows = self.look_colors(look);
+        rows.push(group_row(
+            "Mode",
+            "Automatic turns dark after sunset",
+            container(choice_row(segmented(
+                crate::desktop::appearance::SystemMode::ALL
+                    .into_iter()
+                    .map(|mode| {
+                        (
+                            mode.title().into(),
+                            self.profiles.color_mode() == Some(mode),
+                            Some(edit(Edit::Color(
+                                crate::settings::profiles::colors::Edit::Mode(mode),
+                            ))),
+                        )
+                    })
+                    .collect(),
+                accent,
+            )))
+            .id(cosmic::widget::Id::new("appearance-mode"))
+            .into(),
+        ));
+        if self.config.appearance.family.is_some()
+            && self.config.appearance.native_mode_palettes == 0
+        {
+            rows.push(group_row(
+                "Dock and panel don’t follow light and dark yet",
+                "",
+                button::standard("Fix")
+                    .id("theme-matching-repair".into())
+                    .on_press(edit(Edit::RepairThemeMatching))
+                    .into(),
+            ));
+        }
+        let sync = self.profiles.color_preferences(&self.config).sync_colors;
+        rows.push(group_row(
+            "Use these colors in apps",
+            "Off keeps COSMIC’s own colors in apps",
+            container(toggler(sync).on_toggle(|on| edit(Edit::ThemeScope(on))))
+                .id(cosmic::widget::Id::new("colors-scope"))
+                .into(),
+        ));
+        rows.push(group_row(
+            "Style the dock and panel",
+            "Off keeps the standard COSMIC bars",
+            container(
+                toggler(self.profiles.color_style_bars(&self.config)).on_toggle(|on| {
+                    edit(Edit::Color(
+                        crate::settings::profiles::colors::Edit::StyleBars(on),
+                    ))
+                }),
             )
+            .id(cosmic::widget::Id::new("theme-style-bars"))
+            .into(),
+        ));
+        group(Some("Color"), rows)
+    }
+
+    /// The shared material and widget corners; details open on a subpage.
+    fn appearance_surfaces(&self) -> Element<'_, Message> {
+        use crate::materials::Target;
+        let accent = self.settings_accent();
+        let shared = self.config.materials.effective(Target::Shared);
+        let finish = self
+            .material_draft
+            .filter(|_| self.material_target == Target::Shared)
+            .or(shared);
+        let mut rows = vec![self.link_row(
+            "Glass and transparency",
+            match finish {
+                Some(finish) => format!(
+                    "{}, {}% see-through",
+                    finish.kind.title(),
+                    100 - finish.opacity()
+                ),
+                None => "No glass".to_string(),
+            },
+            Message::Page(Page::Appearance),
+            "appearance-surfaces".into(),
+        )];
+        let radius = self.config.appearance.corner_radius;
+        rows.push(group_row(
+            "Widget corners",
+            "",
+            container(choice_row(segmented(
+                [("Square", 0u16), ("Rounded", 8), ("Very round", 16)]
+                    .into_iter()
+                    .map(|(title, value)| {
+                        let on = match value {
+                            0 => radius < 4,
+                            8 => (4..12).contains(&radius),
+                            _ => radius >= 12,
+                        };
+                        (title.into(), on, Some(Message::WidgetCorners(value)))
+                    })
+                    .collect(),
+                accent,
+            )))
+            .id(cosmic::widget::Id::new("appearance-corners"))
+            .into(),
+        ));
+        rows.push(self.link_row(
+            "Day and night style",
+            match self.config.moments.active {
+                Some(phase) => format!("Showing the {} style", phase.title().to_lowercase()),
+                None => "Widget styles only. Wallpaper and colors stay".to_string(),
+            },
+            Message::Page(Page::Moments),
+            "appearance-moments".into(),
+        ));
+        group(Some("Widgets and bars"), rows)
+    }
+
+    /// Window outline and density; fonts and icons open on a subpage.
+    fn appearance_windows(&self) -> Element<'_, Message> {
+        let accent = self.settings_accent();
+        let mut rows = Vec::new();
+        if let Some(draft) = self.system_appearance.draft() {
+            rows.push(group_row(
+                "Density",
+                "Spacing in apps",
+                super::system_appearance::choice(
+                    &draft.density(),
+                    &[
+                        ("Compact", cosmic::cosmic_theme::Density::Compact),
+                        ("Standard", cosmic::cosmic_theme::Density::Standard),
+                        ("Spacious", cosmic::cosmic_theme::Density::Spacious),
+                    ],
+                    crate::settings::system_appearance::Message::Density,
+                    accent,
+                ),
+            ));
+        }
+        rows.push(self.subpage_row(
+            "Fonts and icons",
+            "Text fonts and icon theme",
+            Page::DesktopAppearance,
+            "themes-fonts-icons",
+        ));
+        group(Some("Text and icons"), rows)
+    }
+
+    /// A row that opens a detail page.
+    pub(super) fn subpage_row(
+        &self,
+        title: &'static str,
+        description: &'static str,
+        page: Page,
+        id: &'static str,
+    ) -> Element<'_, Message> {
+        button::custom(
+            row::with_children(vec![
+                detail(title, description),
+                icon::from_name("go-next-symbolic").size(16).icon().into(),
+            ])
+            .spacing(12)
+            .align_y(Alignment::Center),
+        )
+        .id(cosmic::widget::Id::new(id))
+        .class(nav_style(false, self.settings_accent()))
+        .padding([4, 0])
+        .width(Length::Fill)
+        .on_press(Message::Page(page))
+        .into()
+    }
+
+    /// The live preview of what the desktop looks like now. It has no live
+    /// desktop side effects.
+    fn theme_stage(&self, look: &Look) -> Element<'_, Message> {
+        // Always shown, without a header: the style tiles name the current
+        // style, and parts of the scene are clicked to edit them.
+        let height = self.stage_height();
+        let scene = match self.profiles.preview() {
+            Some(preview) => self.profile_scene(preview.clone(), height, false, true),
+            None => label("Reading your desktop…", 12., MUTED),
         };
-        let mut parts = vec![self.scene_frame(scene, &caption)];
-        // A selected candidate keeps its identity and library actions. The
-        // scene caption names the current family when there is no candidate.
-        if self.profiles.profile().is_some() {
+        let mut parts = vec![container(scene)
+            .id(cosmic::widget::Id::new("desktop-scene"))
+            .width(Length::Fill)
+            .into()];
+        // A saved theme keeps its name and library actions.
+        if matches!(self.profiles.selection(), Selection::Saved(_)) {
             parts.push(pages::section(vec![self.theme_caption(look)]));
         }
         column::with_children(parts).spacing(12).into()
-    }
-
-    /// Every style as a whole small desktop, filtered by kind; choosing one
-    /// previews it, and the footer uses it.
-    pub(super) fn styles_page(&self) -> Element<'_, Message> {
-        let look = self.look();
-        let accent = self.settings_accent();
-        let content = (self.window.width - 184. - 44. - 14.).max(320.);
-        let columns = if content >= 620. { 3 } else { 2 };
-        let tile = ((content - 12. * (columns - 1) as f32) / columns as f32).floor();
-        let chips = row::with_children(
-            crate::settings::StyleFilter::ALL
-                .into_iter()
-                .map(|filter| {
-                    let on = self.style_filter == filter;
-                    button::text(filter.title())
-                        .id(cosmic::widget::Id::new(format!(
-                            "styles-filter-{}",
-                            filter.title().to_lowercase()
-                        )))
-                        .class(chip_style(on, accent))
-                        .on_press_maybe((!on).then_some(Message::StyleFilter(filter)))
-                        .into()
-                })
-                .collect::<Vec<_>>(),
-        )
-        .spacing(6);
-        let tiles: Vec<Element<'_, Message>> = Family::ALL
-            .into_iter()
-            .filter(|family| self.style_filter.shows(*family))
-            .map(|family| self.style_tile(family, &look, tile))
-            .collect();
-        let mut rows = vec![
-            button::text("Theme & colors")
-                .leading_icon(icon::from_name("go-previous-symbolic").size(14))
-                .id(cosmic::widget::Id::new("styles-back"))
-                .on_press(Message::StyleBrowser(false))
-                .into(),
-            heading(
-                "Choose a theme",
-                "Browse locally. Apply theme confirms your choice; Cancel keeps your desktop.",
-            ),
-            label(
-                "How widgets, the dock and the panel look. Your color, layout and apps stay the same.",
-                13.,
-                MUTED,
-            ),
-            chips.into(),
-            row::with_children(tiles).spacing(12).wrap().into(),
-            pages::section(vec![split(
-                detail(
-                    "Style the dock and panel too",
-                    "They take the style's color and shape",
-                ),
-                container(toggler(self.config.appearance.style_bars).on_toggle(Message::StyleBars))
-                    .id(cosmic::widget::Id::new("theme-style-bars"))
-                    .into(),
-            )]),
-        ];
-        if look.selected {
-            rows.extend(self.plan_states());
-        }
-        column::with_children(rows).spacing(14).into()
     }
 
     /// The look's name and what can be done with it.
@@ -620,7 +632,7 @@ impl Settings {
         let main = container(
             column::with_children(vec![
                 text("09:41", 30., roles.clock, card.foreground),
-                text("Wed 21 · 18°", 10., roles.body, card.muted),
+                text("Wed · Sunny", 10., roles.body, card.muted),
                 event.into(),
             ])
             .spacing(4. * s),
@@ -733,10 +745,9 @@ impl Settings {
                 && look.family == Some(family)
                 && matches!(editor.selection(), Selection::Preset(_)));
         let applied = self.config.appearance.family == Some(family);
-        let marker: Element<'_, Message> = if selected {
-            label("Previewing", 11., self.settings_accent())
-        } else if applied {
-            label("Current", 11., MUTED)
+        let selected = selected || applied;
+        let marker: Element<'_, Message> = if applied {
+            label("Current", 11., self.settings_accent())
         } else {
             cosmic::iced::widget::space().into()
         };
@@ -774,8 +785,8 @@ impl Settings {
     /// One color choice: from the wallpaper (it follows changes), one of
     /// its other hues, the style's own color, or a custom one; then the
     /// optional matching wallpaper.
-    fn theme_colors(&self, look: &Look) -> Element<'_, Message> {
-        let family = look.family.expect("a look is shown");
+    fn look_colors(&self, look: &Look) -> Vec<Element<'_, Message>> {
+        let family = look.family;
         let accent = self.settings_accent();
         let choice = self.choice(look);
         let chip = |content: Element<'static, Message>,
@@ -807,7 +818,7 @@ impl Settings {
         let auto_rgb = self
             .profiles
             .suggestion()
-            .and_then(|s| automatic::recommended_for(s, Some(family)));
+            .and_then(|s| automatic::recommended_for(s, family));
         let mut chips = vec![chip(
             named(auto_rgb, "From wallpaper".into()),
             choice == Choice::Wallpaper,
@@ -834,7 +845,13 @@ impl Settings {
             );
         }
         chips.push(chip(
-            named(Some(family.accent()), family.title().into()),
+            named(
+                Some(family.map_or_else(
+                    || crate::desktop_theme::bytes(Palette::named(&self.config.theme).accent),
+                    Family::accent,
+                )),
+                family.map_or("Style color", Family::title).into(),
+            ),
             choice == Choice::Style,
             edit(Edit::ThemeColors(false)),
             "theme-color-style".into(),
@@ -842,7 +859,7 @@ impl Settings {
         let custom_rgb = (choice == Choice::Custom).then_some(look.accent).flatten();
         chips.push(chip(
             named(custom_rgb, "Custom".into()),
-            choice == Choice::Custom || self.profiles.custom.is_some(),
+            choice == Choice::Custom,
             edit(Edit::ThemeCustom(Some(
                 custom_rgb
                     .or(look.accent)
@@ -858,7 +875,7 @@ impl Settings {
         let description = match choice {
             Choice::Wallpaper if neutral => format!(
                 "This wallpaper has no strong color, so {}’s own is used until it changes",
-                family.title()
+                family.map_or("your palette", Family::title)
             ),
             Choice::Wallpaper if auto_rgb.is_some() => {
                 "Follows your wallpaper, including when it changes".to_string()
@@ -872,21 +889,21 @@ impl Settings {
                     str::to_string,
                 ),
             Choice::Hue(_) => "A color from your wallpaper. It stays as it is".to_string(),
-            Choice::Style => format!("{}’s own color", family.title()),
+            Choice::Style => match family {
+                Some(family) => format!("Highlights and buttons, from the {} style", family.title()),
+                None => "Highlights and buttons, from your style".to_string(),
+            },
             Choice::Custom => "Your color".to_string(),
         };
-        let mut rows = vec![
-            column::with_children(vec![
-                row::with_children(chips)
-                    .spacing(4)
-                    .wrap()
-                    .vertical_spacing(4)
-                    .into(),
-                label(description, 12., MUTED),
-            ])
-            .spacing(6)
-            .into(),
-        ];
+        // Labelled like every other row: the name left, the choices right.
+        let mut rows = vec![split(
+            detail("Accent color", description),
+            row::with_children(chips)
+                .spacing(4)
+                .wrap()
+                .vertical_spacing(4)
+                .into(),
+        )];
         if let Some(text) = &self.profiles.custom {
             let target = crate::settings::color_well::Target::ThemeCustom;
             rows.push(
@@ -909,93 +926,6 @@ impl Settings {
                 rows.push(panel);
             }
         }
-        rows.push(group_row(
-            "Wallpaper",
-            "",
-            container(segmented(
-                vec![
-                    (
-                        "Yours".into(),
-                        !look.matching,
-                        Some(edit(Edit::ThemeWallpaper(false))),
-                    ),
-                    (
-                        format!("{} gradient", family.title()),
-                        look.matching,
-                        Some(edit(Edit::ThemeWallpaper(true))),
-                    ),
-                ],
-                accent,
-            ))
-            .id(cosmic::widget::Id::new("theme-matching-wallpaper"))
-            .into(),
-        ));
-        group(Some("Preview color source"), rows)
-    }
-
-    /// Each themed surface after Apply: still the theme, or customized with
-    /// a way back. Windows are the COSMIC accent and active outline.
-    fn theme_desktop_status(&self, family: Family) -> Element<'_, Message> {
-        let editor = &self.profiles;
-        let mut rows = vec![label("On your desktop", 14., FG)];
-        for (domain, title, customize) in [
-            (
-                Domain::WidgetStyle,
-                "Widgets",
-                Message::Page(Page::Appearance),
-            ),
-            (
-                Domain::Dock,
-                "Dock",
-                Message::OpenBar(crate::desktop::panels::PanelKind::Dock),
-            ),
-            (
-                Domain::Panel,
-                "Panel",
-                Message::OpenBar(crate::desktop::panels::PanelKind::Panel),
-            ),
-            (
-                Domain::Appearance,
-                "Windows",
-                Message::Page(Page::DesktopAppearance),
-            ),
-        ] {
-            let custom = if domain == Domain::WidgetStyle {
-                self.config.widget_custom()
-            } else {
-                editor.custom_surfaces.contains(&domain)
-            };
-            let mut actions = vec![button::text("Customize").on_press(customize).into()];
-            if custom {
-                actions.push(
-                    button::text("Reset")
-                        .on_press(Message::ResetThemeSurface(domain))
-                        .into(),
-                );
-            }
-            rows.push(split(
-                row::with_children(vec![
-                    container(label(title, 13., FG)).width(84).into(),
-                    label(
-                        if custom {
-                            "Customized".to_string()
-                        } else {
-                            format!("Matches {}", family.title())
-                        },
-                        12.,
-                        if custom {
-                            self.settings_accent()
-                        } else {
-                            MUTED
-                        },
-                    ),
-                ])
-                .spacing(8)
-                .align_y(Alignment::Center)
-                .into(),
-                row::with_children(actions).spacing(4).into(),
-            ));
-        }
-        pages::section(rows)
+        rows
     }
 }

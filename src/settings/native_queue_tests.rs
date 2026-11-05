@@ -172,19 +172,24 @@ fn task2r2_style_toggle_defers_while_helper_holds_transaction_locks() {
         return;
     }
     let (store, mut app, mut native) = queue_fixture(Page::Themes);
-    send_settings(
-        &mut app,
-        Message::Profiles(profiles::Message::Select(profiles::Selection::Preset(
+    // Appearance applies a chosen style by itself. Choose one directly in
+    // its editor so the apply can be started while the helper holds both
+    // transaction locks, as a running Appearance change would.
+    let _ = app
+        .profiles
+        .update(profiles::Message::Select(profiles::Selection::Preset(
             "theme-soft",
-        ))),
-    );
-    send_settings(&mut app, Message::StyleBrowser(true));
+        )));
+    for job in app.profiles.take_theme_jobs() {
+        send_settings(&mut app, Message::Profiles(job.run()));
+    }
     native.size = Size::new(1024., 1800.);
     send_settings(&mut app, Message::Resized(native.size));
     let _ = native.render(app.settings_view(), &controls_theme(&app.config));
     let before = Config::load().appearance.style_bars;
+    assert!(app.profiles.can_apply(), "{:?}", app.profiles.notice);
     LockedNativeJob::arm(&store);
-    let task = queue_pointer(&mut app, &mut native, "profiles-confirm");
+    let task = app.update(Message::Profiles(profiles::Message::Apply));
     let job = LockedNativeJob::start(&store, task);
     let started = Instant::now();
     let toggle = queue_pointer(&mut app, &mut native, "theme-style-bars");
@@ -193,6 +198,15 @@ fn task2r2_style_toggle_defers_while_helper_holds_transaction_locks() {
     // Other save()/Config writers absent from the old classifier must take
     // the same admission path. Window resize/preview must stay read-only.
     let queued = app.native_deferred.len();
+    assert!(
+        app.native_deferred.iter().any(|message| matches!(
+            message,
+            Message::Profiles(profiles::Message::Color(profiles::colors::Edit::StyleBars(on)))
+                if *on != before
+        )),
+        "the actual pointer must queue the requested off value: {:?}",
+        app.native_deferred
+    );
     let _ = app.update(Message::Resized(native.size));
     let _ = app.update(Message::Preview);
     assert_eq!(app.native_deferred.len(), queued);
@@ -230,14 +244,75 @@ fn task2r2_style_toggle_defers_while_helper_holds_transaction_locks() {
     for message in messages {
         send_settings(&mut app, message);
     }
-    assert_eq!(Config::load().appearance.style_bars, !before);
     let raw = raw_preferences();
     assert_eq!(raw["setup_dismissed"], true);
     assert_eq!(raw["widgets_visible"], false);
     assert_eq!(raw["widget_font"], "Fira Sans");
+    // Dismissing setup navigates to Overview once the queue drains.
+    assert_eq!(app.page, Page::Overview);
+    assert!(!app.native_busy && app.native_deferred.is_empty());
+    // Dismissing setup left Appearance before the queued switch could
+    // apply, so it waits as a kept Appearance change and is not lost.
+    assert_eq!(Config::load().appearance.style_bars, before);
+    assert_eq!(app.profiles.parked().len(), 1);
+    // The queued switch is an Appearance choice, which applies by itself:
+    // back on Appearance it finishes without an Apply button.
+    send_settings(&mut app, Message::Page(Page::Themes));
+    assert!(native.try_bounds(app.settings_view(), "profiles-confirm").is_none());
+    assert_eq!(app.profiles.color_style_bars(&app.config), !before);
+    assert_eq!(Config::load().appearance.style_bars, !before);
+    let applied = raw_preferences();
+    assert_eq!(applied["setup_dismissed"], true);
+    assert_eq!(applied["widgets_visible"], false);
+    assert_eq!(applied["widget_font"], "Fira Sans");
     println!(
-        "Style pointer dispatch {elapsed:?}; both transaction locks held; deferred toggle persisted"
+        "Style pointer dispatch {elapsed:?}; both transaction locks held; deferred toggle waited in the queue"
     );
+}
+#[test]
+fn appearance_choice_applies_once_its_last_conflict_is_settled() {
+    if desktop_test_child(
+        "appearance_choice_applies_once_its_last_conflict_is_settled",
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let (_store, mut app, mut native) = queue_fixture(Page::Themes);
+    // Choose in the editor directly so nothing applies before the conflict.
+    let _ = app
+        .profiles
+        .update(profiles::Message::Select(profiles::Selection::Preset(
+            "theme-soft",
+        )));
+    let _ = app
+        .profiles
+        .update(profiles::Message::ThemeCustom(Some("#5E81AC".into())));
+    for job in app.profiles.take_theme_jobs() {
+        send_settings(&mut app, Message::Profiles(job.run()));
+    }
+    // Another program changes the accent while the choice waits.
+    Config::save_changes(serde_json::json!({"appearance":{"accent":[180,80,110]}})).unwrap();
+    app.config = Config::load();
+    app.profiles.refresh();
+    let conflict = app
+        .profiles
+        .conflict_values()
+        .iter()
+        .find(|value| value.id == "widget:/appearance/accent")
+        .expect("the newer accent conflicts with the choice")
+        .id
+        .clone();
+    assert!(!app.profiles.can_apply());
+    let _ = native.render(app.settings_view(), &controls_theme(&app.config));
+    // Appearance has no Apply button: settling the conflict finishes it.
+    native_click(&mut app, &mut native, &format!("conflict-preview-{conflict}"));
+    assert!(app.profiles.conflict_values().is_empty());
+    assert_eq!(Config::load().appearance.accent, Some([94, 129, 172]));
+    assert!(native.try_bounds(app.settings_view(), "profiles-confirm").is_none());
 }
 #[test]
 fn task2r2_rendered_undo_a_cannot_reverse_worker_b() {
@@ -370,7 +445,9 @@ fn task2r3_rendered_undo_refuses_unfinished_keyboard_gesture() {
     send_settings(&mut app, Message::ClockDate(!before.clock.show_date));
     let a = store.latest_change().unwrap().unwrap().id;
     assert!(!app.native_busy);
-    let bounds = native.text_bounds(app.settings_view(), "Corners");
+    // Widget corners are now a three-way choice on Appearance; the older
+    // card opacity slider is the held keyboard gesture under test.
+    let bounds = native.text_bounds(app.settings_view(), "Opacity");
     let point = cosmic::iced::Point::new(bounds.x + 100., bounds.y + bounds.height + 12.);
     assert!(point.y < native.size.height, "keyboard slider is visible");
     let messages = r2_native_event(
@@ -382,15 +459,15 @@ fn task2r3_rendered_undo_refuses_unfinished_keyboard_gesture() {
     assert!(
         messages
             .iter()
-            .any(|m| matches!(m, Message::AppearanceValue(AppearanceControl::Corners, _))),
-        "actual Corners slider receives held arrow: {messages:?}"
+            .any(|m| matches!(m, Message::AppearanceValue(AppearanceControl::Opacity, _))),
+        "actual widget opacity slider receives held arrow: {messages:?}"
     );
     assert!(app.appearance_editing && !app.appearance_pending.is_empty());
-    let draft = app.appearance_draft.corner_radius;
-    assert_ne!(draft, before.appearance.corner_radius);
+    let draft = app.appearance_draft.opacity;
+    assert_ne!(draft, before.appearance.opacity);
     assert_eq!(
-        Config::load().appearance.corner_radius,
-        before.appearance.corner_radius
+        Config::load().appearance.opacity,
+        before.appearance.opacity
     );
     assert_eq!(store.latest_change().unwrap().unwrap().id, a);
 
@@ -409,8 +486,8 @@ fn task2r3_rendered_undo_refuses_unfinished_keyboard_gesture() {
     );
     assert!(app.appearance_editing && !app.appearance_pending.is_empty());
     assert_eq!(
-        Config::load().appearance.corner_radius,
-        before.appearance.corner_radius
+        Config::load().appearance.opacity,
+        before.appearance.opacity
     );
 
     // Refusal did not claim to undo B. Releasing completes B normally; only
@@ -428,7 +505,7 @@ fn task2r3_rendered_undo_refuses_unfinished_keyboard_gesture() {
             .any(|m| matches!(m, Message::SaveAppearance))
     );
     assert!(!app.appearance_editing && app.appearance_pending.is_empty());
-    assert_eq!(Config::load().appearance.corner_radius, draft);
+    assert_eq!(Config::load().appearance.opacity, draft);
     assert_eq!(Config::load().clock.show_date, !before.clock.show_date);
     let b = store.latest_change().unwrap().unwrap().id;
     assert_ne!(a, b);
@@ -436,8 +513,8 @@ fn task2r3_rendered_undo_refuses_unfinished_keyboard_gesture() {
     settle_settings(&mut app, request);
     assert!(!app.error, "completed B Undo: {}", app.status);
     assert_eq!(
-        Config::load().appearance.corner_radius,
-        before.appearance.corner_radius
+        Config::load().appearance.opacity,
+        before.appearance.opacity
     );
     assert_eq!(Config::load().clock.show_date, !before.clock.show_date);
     let undone = raw_preferences();
@@ -460,6 +537,6 @@ fn task2r3_rendered_undo_refuses_unfinished_keyboard_gesture() {
     );
     assert_eq!(store.latest_change().unwrap().map(|c| c.id), history);
     println!(
-        "Actual held Corners gesture: Undo A={a} refused; release committed B={b}; rendered Undo B preserved Clock; late release saved nothing"
+        "Actual held opacity gesture: Undo A={a} refused; release committed B={b}; rendered Undo B preserved Clock; late release saved nothing"
     );
 }

@@ -2,7 +2,7 @@
 //! choices, the ordered rules (each row on/off, up/down, edit, delete; one
 //! row opens into its editor), and the recent switches.
 use super::desktop::{ERROR, WARN, banner, line};
-use super::pages::{group_label, section};
+use super::pages::section;
 use super::windows::store_pill;
 use super::*;
 use crate::automation::solar::{self, Event, Source};
@@ -14,6 +14,17 @@ use cosmic::widget::Space;
 
 fn edit(message: Edit) -> Message {
     Message::Automation(message)
+}
+
+/// The start of a part of the day, in everyday words.
+fn moment(event: Event) -> &'static str {
+    match event {
+        Event::GoldenHour => "about an hour before sunset",
+        Event::Dawn => "dawn",
+        Event::Sunrise => "sunrise",
+        Event::Noon => "midday",
+        Event::Sunset => "sunset",
+    }
 }
 
 fn rule_editor_title(draft: &RuleDraft) -> &'static str {
@@ -74,12 +85,10 @@ impl Settings {
             // the card pushes its primary action below compact viewports.
             heading(rule_editor_title(draft), "")
         } else {
-            column::with_children(vec![
-                heading("Automation", ""),
-                label("Choose a look and when it changes.", 12., MUTED),
-            ])
-            .spacing(4)
-            .into()
+            heading(
+                "Change with time of day",
+                "Your wallpaper, colors and widgets switch on their own through the day.",
+            )
         };
         let mut items = vec![split(title, store_pill(editor.store(), accent))];
         if let Some(problem) = editor.unavailable() {
@@ -106,30 +115,21 @@ impl Settings {
             }
             Err(_) => return label("Reading automation…", 12., MUTED),
         };
-        if editor.draft.is_none() {
-            items.push(self.automation_status(&settings));
-            items.push(group(
-                Some("Choose what changes"),
-                vec![
-                    group_row(
-                        "Daily cycle",
-                        "Wallpaper, colors and surfaces follow sunrise, golden hour and sunset.",
-                        button::text("Choose a look…")
-                            .on_press(Message::Page(Page::AdaptiveLooks))
-                            .into(),
-                    ),
-                    group_row(
-                        "Day & night widget styles",
-                        "Change widget appearance while keeping wallpaper and layout.",
-                        button::text("Customize…")
-                            .on_press(Message::Page(Page::Moments))
-                            .into(),
-                    ),
-                ],
-            ));
+        if editor.draft.is_some() {
+            items.push(self.automation_rules(&settings));
+            return column::with_children(items).spacing(16).into();
         }
-        items.push(self.automation_rules(&settings));
-        if editor.draft.is_none() && !editor.state.recent.is_empty() {
+        // The day slots come first; choosing a look is what turns this on.
+        items.push(self.automation_day(&settings));
+        if !settings.rules.is_empty() {
+            items.push(self.automation_status(&settings));
+        }
+        items.push(self.disclosure(
+            "automation-more",
+            "Set times and screens",
+            self.automation_rules(&settings),
+        ));
+        if !editor.state.recent.is_empty() {
             items.push(self.disclosure(
                 "automation-recent",
                 "Recent switches",
@@ -143,7 +143,7 @@ impl Settings {
     pub(super) fn automation_link_status(&self, id: &'static str) -> Element<'_, Message> {
         let text = match self.automation.settings() {
             Ok(settings) => {
-                let status = words::status_with_solar(
+                words::status_with_solar(
                     settings,
                     &self.automation.state,
                     &Local,
@@ -151,25 +151,194 @@ impl Settings {
                     self.automation.manual_at,
                     self.h24(),
                     &self.automation.solar,
-                );
-                match status.detail {
-                    Some(detail) => format!("{} · {detail}", status.headline),
-                    None => status.headline,
-                }
+                )
+                .headline
             }
-            Err(_) => "Review schedules and display rules.".into(),
+            Err(_) => "Needs a look".into(),
         };
         group(
             None,
-            vec![group_row(
-                "Automation",
+            vec![self.link_row(
+                "Change with time of day",
                 text,
-                button::text("Manage…")
-                    .id(cosmic::widget::Id::new(id))
-                    .on_press(Message::Page(Page::DesktopAutomation))
-                    .into(),
+                Message::Page(Page::DesktopAutomation),
+                id.into(),
             )],
         )
+    }
+
+    /// Day, evening and night as three sky tiles, each with its look
+    /// picker, then where you are (the times depend on it).
+    fn automation_day(&self, settings: &crate::automation::Automation) -> Element<'_, Message> {
+        use crate::desktop::profiles::adaptive::Phase;
+        let editor = &self.automation;
+        let context = &editor.solar;
+        let source = settings
+            .rules
+            .iter()
+            .find_map(|rule| match rule.when {
+                Trigger::Solar { source, .. } => Some(source),
+                _ => None,
+            })
+            .unwrap_or(if context.city(Source::Weather).is_ok() {
+                Source::Weather
+            } else {
+                Source::Manual
+            });
+        let now = chrono::Utc::now();
+        // Sun times need a city: until there is one, it comes first and the
+        // choices that depend on it wait.
+        let has_city = context.city(source).is_ok();
+        let mut tiles: Vec<Element<'_, Message>> = Vec::new();
+        for phase in Phase::ALL {
+            let event = phase.event();
+            let rule = settings.rules.iter().find(|rule| {
+                matches!(rule.when, Trigger::Solar { event: e, days, .. }
+                    if e == event && days == Days::EVERY)
+            });
+            let selected = match rule {
+                Some(rule) => editor
+                    .profiles
+                    .iter()
+                    .position(|(profile, _)| *profile == rule.profile)
+                    .map(|index| index + 1),
+                None => Some(0),
+            };
+            let starts = match solar::next(context, source, event, Days::EVERY, now) {
+                Some(at) => {
+                    let at = at.with_timezone(&Local);
+                    format!(
+                        "From {}, {}",
+                        moment(event),
+                        if self.h24() {
+                            at.format("%H:%M").to_string()
+                        } else {
+                            at.format("%-I:%M %p").to_string()
+                        }
+                    )
+                }
+                None => format!("From {}", moment(event)),
+            };
+            let targets: Vec<_> = editor
+                .profiles
+                .iter()
+                .map(|(profile, _)| profile.clone())
+                .collect();
+            let picker = cosmic::widget::dropdown(&editor.moment_labels, selected, move |index| {
+                edit(Edit::Moment(
+                    event,
+                    index.checked_sub(1).map(|index| targets[index].clone()),
+                ))
+            })
+            .placeholder("Look unavailable")
+            .width(Length::Fill);
+            let (top, bottom, ink) = match phase {
+                // Deep enough that white text and the picker stay readable.
+                Phase::Day => ((0.16, 0.45, 0.78), (0.38, 0.66, 0.90), Color::WHITE),
+                Phase::Evening => ((0.45, 0.33, 0.62), (0.96, 0.62, 0.42), Color::WHITE),
+                Phase::Night => ((0.05, 0.07, 0.16), (0.16, 0.18, 0.36), Color::WHITE),
+            };
+            // Faded until there is a city, since the looks can't be picked yet.
+            let fade = |(r, g, b): (f32, f32, f32)| {
+                if has_city {
+                    (r, g, b)
+                } else {
+                    (0.18 + (r - 0.18) * 0.45, 0.18 + (g - 0.18) * 0.45, 0.19 + (b - 0.19) * 0.45)
+                }
+            };
+            let (top, bottom) = (fade(top), fade(bottom));
+            let ink = if has_city { ink } else { Color { a: 0.7, ..ink } };
+            tiles.push(
+                container(
+                    column::with_children(vec![
+                        label(phase.title(), 17., ink),
+                        label(starts, 12., Color { a: 0.8, ..ink }),
+                        cosmic::iced::widget::space().height(Length::Fill).into(),
+                        if has_city {
+                            picker.into()
+                        } else {
+                            cosmic::iced::widget::space().height(0).into()
+                        },
+                    ])
+                    .spacing(2),
+                )
+                .padding([14, 14])
+                .width(Length::Fill)
+                .height(132)
+                .class(cosmic::theme::Container::custom(move |_| {
+                    cosmic::iced::widget::container::Style {
+                        background: Some(Background::Gradient(
+                            cosmic::iced::gradient::Linear::new(std::f32::consts::PI)
+                                .add_stop(0., Color::from_rgb(top.0, top.1, top.2))
+                                .add_stop(1., Color::from_rgb(bottom.0, bottom.1, bottom.2))
+                                .into(),
+                        )),
+                        border: Border {
+                            radius: 12.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
+                }))
+                .into(),
+            );
+        }
+        use crate::desktop::profiles::adaptive::Look;
+        let daily = |event| {
+            settings.rules.iter().find(|rule| {
+                matches!(rule.when, Trigger::Solar { event: e, days, .. }
+                    if e == event && days == Days::EVERY)
+            })
+        };
+        let shades = Look::ALL.into_iter().find(|look| {
+            Phase::ALL.into_iter().all(|phase| {
+                daily(phase.event()).is_some_and(|rule| {
+                    rule.profile == crate::automation::ProfileRef::Preset(look.id(phase).into())
+                })
+            })
+        });
+        let ready = has_city && editor.writable() && !self.native_busy;
+        let accent = self.settings_accent();
+        let mut city = Some(group(None, vec![self.schedule_city_controls(source)]));
+        let mut items = Vec::new();
+        if !has_city {
+            items.extend(city.take());
+        }
+        items.push(row::with_children(tiles).spacing(12).into());
+        items.push(
+            group(
+                None,
+                vec![group_row(
+                    "Or one look that shifts through the day",
+                    if has_city {
+                        "Its own lighter and darker shades fill all three"
+                    } else {
+                        "Ready once your city is added"
+                    },
+                    container(segmented(
+                        Look::ALL
+                            .into_iter()
+                            .map(|look| {
+                                (
+                                    look.title().into(),
+                                    shades == Some(look),
+                                    (ready && shades != Some(look)).then(|| {
+                                        edit(Edit::AdaptiveRoutine(look, source))
+                                    }),
+                                )
+                            })
+                            .collect(),
+                        accent,
+                    ))
+                    .id(cosmic::widget::Id::new("automation-shades"))
+                    .into(),
+                )],
+            ),
+        );
+        items.extend(city);
+        column::with_children(items)
+        .spacing(16)
+        .into()
     }
 
     fn automation_status(&self, settings: &crate::automation::Automation) -> Element<'_, Message> {
@@ -185,36 +354,30 @@ impl Settings {
             self.h24(),
             &editor.solar,
         );
-        let (symbol, tone) = match status.tone {
-            Tone::Quiet => ("media-playback-stop-symbolic", MUTED),
-            Tone::Active => ("emblem-synchronizing-symbolic", accent),
-            Tone::Paused => ("media-playback-pause-symbolic", WARN),
-            Tone::Attention => ("dialog-warning-symbolic", WARN),
+        let tone = match status.tone {
+            Tone::Attention => WARN,
+            _ => MUTED,
         };
-        let mut text = vec![label(status.headline, 15., FG)];
-        if let Some(detail) = status.detail {
-            text.push(label(detail, 12., MUTED));
-        }
-        let mut toggle = toggler(settings.enabled);
-        if editor.writable() {
-            toggle = toggle.on_toggle(|on| edit(Edit::Enable(on)));
-        }
+        // No master switch: a status line, with Turn off or Turn on beside it.
+        let text = if settings.enabled {
+            let mut lines = vec![label(status.headline.trim_end_matches('.').to_string(), 14., FG)];
+            if let Some(more) = status.detail {
+                lines.push(label(more, 12., tone));
+            }
+            column::with_children(lines).spacing(2).into()
+        } else {
+            detail("Switching is off", "Your choices above are kept for later")
+        };
         let head = split(
-            row::with_children(vec![
-                container(icon::from_name(symbol).size(20).icon())
-                    .class(cosmic::theme::Container::custom(move |_| {
-                        cosmic::iced::widget::container::Style {
-                            icon_color: Some(tone),
-                            ..Default::default()
-                        }
-                    }))
-                    .into(),
-                column::with_children(text).spacing(3).into(),
-            ])
-            .spacing(12)
-            .align_y(Alignment::Center)
-            .into(),
-            toggle.into(),
+            text,
+            button::text(if settings.enabled { "Turn off" } else { "Turn on" })
+                .id(cosmic::widget::Id::new("automation-enable"))
+                .on_press_maybe(
+                    editor
+                        .writable()
+                        .then_some(edit(Edit::Enable(!settings.enabled))),
+                )
+                .into(),
         );
         let mut rows = vec![head];
         if editor.undoable
@@ -226,13 +389,13 @@ impl Settings {
             rows.push(
                 row::with_children(vec![
                     container(label(
-                        "The last automatic setup switch is available to undo in Setups.",
+                        "The last automatic switch can be undone in Looks.",
                         12.,
                         MUTED,
                     ))
                     .width(Length::Fill)
                     .into(),
-                    button::text("Undo in Setups")
+                    button::text("Undo in Looks")
                         .leading_icon(icon::from_name("edit-undo-symbolic").size(14))
                         .on_press(Message::Page(Page::DesktopProfiles))
                         .into(),
@@ -293,15 +456,15 @@ impl Settings {
                     &editor.solar,
                 )
                 .is_some();
-                let mut choices = vec![label("Pause", 12., MUTED)];
+                let mut choices = vec![label("Pause for", 12., MUTED)];
                 let mut options = Vec::new();
                 if next {
                     options.push(("Skip next", PauseFor::Next));
                 }
                 options.extend([
                     ("1 hour", PauseFor::Hour),
-                    ("Until tomorrow", PauseFor::Today),
-                    ("Until I resume", PauseFor::Resume),
+                    ("The rest of today", PauseFor::Today),
+                    ("Until I turn it back on", PauseFor::Resume),
                 ]);
                 for (title, choice) in options {
                     choices.push(
@@ -322,7 +485,7 @@ impl Settings {
                 );
             }
         }
-        section(rows)
+        group(None, rows)
     }
 
     fn automation_rules(&self, settings: &crate::automation::Automation) -> Element<'_, Message> {
@@ -355,7 +518,7 @@ impl Settings {
                 if editor.draft.is_some() {
                     "No saved rules yet."
                 } else {
-                    "Add a sun event, fixed time or display rule."
+                    "No other rules yet."
                 },
                 12.,
                 MUTED,
@@ -366,26 +529,18 @@ impl Settings {
         if editor.draft.is_none() {
             rows.push(
                 row::with_children(vec![
-                    button::standard("Sun event")
+                    button::standard("At sunrise or sunset")
                         .id(cosmic::widget::Id::new("automation-add-solar"))
                         .on_press_maybe(adding.then_some(edit(Edit::New(Kind::Solar))))
                         .into(),
-                    button::standard("Fixed time")
+                    button::standard("At a set time")
                         .leading_icon(icon::from_name("list-add-symbolic").size(14))
                         .on_press_maybe(adding.then_some(edit(Edit::New(Kind::Schedule))))
                         .into(),
-                    button::standard("Add display rule")
+                    button::standard("When a display connects")
                         .leading_icon(icon::from_name("list-add-symbolic").size(14))
                         .on_press_maybe(adding.then_some(edit(Edit::New(Kind::Display))))
                         .into(),
-                    container(label(
-                        "Higher rules win when two happen at once",
-                        11.,
-                        MUTED,
-                    ))
-                    .width(Length::Fill)
-                    .align_x(cosmic::iced::alignment::Horizontal::Right)
-                    .into(),
                 ])
                 .spacing(8)
                 .align_y(Alignment::Center)
@@ -394,13 +549,12 @@ impl Settings {
             );
         }
         let list = column::with_children(vec![
-            group_label("Rules · highest priority first"),
-            section(rows),
             label(
-                "Your own changes stay until the next switch. Missed times catch up once, after sleep or a restart.",
-                11.,
+                "Add a fixed time or a display rule. Rules higher in the list win.",
+                12.,
                 MUTED,
             ),
+            section(rows),
         ])
         .spacing(8)
         .into();
@@ -540,17 +694,20 @@ impl Settings {
         let mut controls = Vec::new();
         let context = &self.automation.solar;
         let summary = match context.city(source) {
-            Ok(city) => label(
-                format!("{} · {}", city.name, city.timezone.as_deref().unwrap_or("")),
-                12.,
-                FG,
+            Ok(city) if source == Source::Weather => {
+                detail("Where you are", format!("{}, same as Weather", city.name))
+            }
+            Ok(city) => detail("Where you are", city.name.clone()),
+            Err(reason) if reason.starts_with("Choose a city") => detail(
+                "Where you are",
+                "Add your city to pick a look for each part of the day",
             ),
-            Err(reason) => label(reason, 12., WARN),
+            Err(reason) => detail("Where you are", reason),
         };
         if source == Source::Weather {
             controls.push(split(
                 summary,
-                button::text("Open Weather")
+                button::text("Change in Weather")
                     .on_press(Message::Page(Page::Weather))
                     .into(),
             ));
@@ -566,7 +723,7 @@ impl Settings {
             let state = &self.schedule_city_search;
             controls.push(
                 row::with_children(vec![
-                    text_input("Find a schedule city", &state.query)
+                    text_input("Search for your city", &state.query)
                         .id(cosmic::widget::Id::new("solar-city-search"))
                         .on_input(Message::ScheduleCityInput)
                         .on_submit(|_| Message::SearchScheduleCity)
@@ -622,12 +779,12 @@ impl Settings {
             cosmic::widget::dropdown(&editor.profile_labels, selected, move |index| {
                 edit(Edit::Draft(DraftEdit::Profile(targets[index].clone())))
             })
-            .placeholder("Choose a look or setup…")
+            .placeholder("Choose a look…")
             .width(Length::Fill)
             .into(),
         ));
         if draft.profile.is_some() && selected.is_none() {
-            items.push(label("The chosen setup is unavailable", 12., WARN));
+            items.push(label("The chosen look is unavailable", 12., WARN));
         }
         if let Some(profile) = &draft.profile {
             items.push(label(editor.profile_scope(profile, draft.kind), 12., MUTED));
@@ -824,7 +981,7 @@ impl Settings {
             .settings()
             .is_ok_and(|settings| draft.enables_automation(settings));
         let save_label = if enables_automation {
-            "Save & enable"
+            "Save and enable"
         } else {
             "Save rule"
         };

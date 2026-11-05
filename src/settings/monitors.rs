@@ -11,6 +11,12 @@ impl Settings {
         field: &str,
         value: serde_json::Value,
     ) {
+        if super::navigation::widget_of(self.page).is_some()
+            && self.object_tab == super::navigation::ObjectTab::Position
+        {
+            self.preview_widget_monitor(widget, field, value);
+            return;
+        }
         self.placement.leave();
         if self.placement.dirty() {
             let _ = self.update_placement(super::placement::Message::Save);
@@ -96,7 +102,7 @@ impl Settings {
                 button::text("Identify")
                     .on_press(Message::IdentifyDisplays)
                     .into(),
-                button::text("Dock & panel")
+                button::text("Dock and panel")
                     .on_press(Message::Page(Page::DesktopDock))
                     .into(),
             ])
@@ -135,15 +141,11 @@ impl Settings {
                     .into(),
             );
         }
-        row::with_children(controls)
-            .spacing(6)
-            .align_y(cosmic::iced::Alignment::Center)
-            .wrap()
-            .into()
+        row::with_children(controls).spacing(6).wrap().into()
     }
     pub(super) fn widget_display_controls(&self, widget: Widget) -> Element<'_, Message> {
         let choice = self
-            .config
+            .canvas_config()
             .widget_monitors
             .get(widget.key())
             .cloned()

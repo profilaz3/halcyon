@@ -19,7 +19,9 @@ fn fb19_catalog_identity_is_stable_unfitted_and_revision_tracks_content() {
         let origin = p.package.as_ref().unwrap();
         assert_eq!(origin, source(id).package.as_ref().unwrap());
         assert_eq!(origin.credits.author, "Halcyon");
-        assert_eq!(p.written_version(), 14);
+        // Weather setups carry a wallpaper effect, which needs version 19.
+        let expected = if matches!(id, "rain" | "snow" | "fog") { 19 } else { 14 };
+        assert_eq!(p.written_version(), expected, "{id}");
         let mut changed = p.clone();
         changed.package = None;
         changed.name.push_str(" revised");

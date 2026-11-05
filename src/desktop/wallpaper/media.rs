@@ -31,11 +31,11 @@ pub const PREVIEWED: [&str; 3] = ["png", "jpg", "jpeg"];
 pub const MAX_SYSTEM: usize = 200;
 
 pub const NO_PREVIEW: &str = "No preview";
-pub const MISSING: &str = "Missing";
+pub const MISSING: &str = "Picture not found";
 pub const TOO_LARGE: &str = "Too large to preview";
 
 /// The bundled wallpapers' compiled-in thumbnails (`assets/previews`).
-const BUNDLED: [(&str, &[u8]); 13] = [
+const BUNDLED: [(&str, &[u8]); 16] = [
     (
         "halcyon-night",
         include_bytes!("../../../assets/previews/halcyon-night-thumb.png"),
@@ -63,6 +63,18 @@ const BUNDLED: [(&str, &[u8]); 13] = [
     (
         "halcyon-rose",
         include_bytes!("../../../assets/previews/halcyon-rose-thumb.png"),
+    ),
+    (
+        "halcyon-rain",
+        include_bytes!("../../../assets/previews/halcyon-rain-thumb.png"),
+    ),
+    (
+        "halcyon-snow",
+        include_bytes!("../../../assets/previews/halcyon-snow-thumb.png"),
+    ),
+    (
+        "halcyon-fog",
+        include_bytes!("../../../assets/previews/halcyon-fog-thumb.png"),
     ),
     (
         "lavender",
@@ -295,6 +307,9 @@ pub(crate) fn bundled_scene(name: &str) -> Option<Pixels> {
         "halcyon-workbench",
         "halcyon-paper",
         "halcyon-rose",
+        "halcyon-rain",
+        "halcyon-snow",
+        "halcyon-fog",
         "lavender",
         "amber",
         "teal",

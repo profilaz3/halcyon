@@ -263,6 +263,11 @@ pub struct PanelLook {
     pub keep_style: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub applets: Option<Applets>,
+    /// Built-in setups only, never saved or shared: applets added to the
+    /// center of a top panel when missing and installed. Unlike `applets`,
+    /// nothing already there moves or goes.
+    #[serde(skip)]
+    pub include_applets: Vec<&'static str>,
 }
 
 impl PanelLook {

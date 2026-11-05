@@ -21,10 +21,12 @@ pub struct Preset {
 pub const CLEAN: &str = "presentation";
 
 /// Earlier releases' presets, kept for schedules that still name them.
-const RENAMED: [(&str, &str); 3] = [
+const RENAMED: [(&str, &str); 4] = [
     ("minimal", "focus"),
     ("glass", "evening"),
     ("workbench", "halcyon"),
+    // Moss became Tidal once both showed the time and weather together.
+    ("moss", "tidal"),
 ];
 
 /// A coordinated appearance paired with a useful desktop composition.
@@ -47,11 +49,11 @@ struct Look {
 /// Corner radius COSMIC rounds into a pill at any bar size.
 const PILL: u32 = crate::desktop::panels::MAX_RADIUS;
 
-const LOOKS: [Look; 10] = [
+const LOOKS: [Look; 12] = [
     Look {
         id: "halcyon",
         name: "Everyday",
-        description: "Your day at a glance, with system activity off to the side.",
+        description: "The time and weather together, with your system and music on the right.",
         family: Family::Frosted,
         wallpaper: "halcyon-night",
         palette: "ocean",
@@ -111,7 +113,7 @@ const LOOKS: [Look; 10] = [
     Look {
         id: "tidal",
         name: "Tidal",
-        description: "A large, open clock with weather and music along the edge.",
+        description: "The time and weather together, music along the edge, and open space.",
         family: Family::Soft,
         wallpaper: "halcyon-calm",
         palette: "teal",
@@ -129,16 +131,6 @@ const LOOKS: [Look; 10] = [
         light: true,
     },
     Look {
-        id: "moss",
-        name: "Moss",
-        description: "Soft green panels for the time, weather and your music.",
-        family: Family::Soft,
-        wallpaper: "teal",
-        palette: "teal",
-        seed: [0x9d, 0xcf, 0xbe],
-        light: false,
-    },
-    Look {
         id: "carbon",
         name: "Carbon",
         description: "A compact clock, system readings and projects with fine outlines.",
@@ -148,7 +140,58 @@ const LOOKS: [Look; 10] = [
         seed: [0xa4, 0xc1, 0xdf],
         light: false,
     },
+    Look {
+        id: "rain",
+        name: "Rainy evening",
+        description: "Rain on the glass, the time and weather, and music for staying in.",
+        family: Family::Glass,
+        wallpaper: "halcyon-rain",
+        palette: "ocean",
+        seed: [0xf0, 0xc0, 0x6a],
+        light: false,
+    },
+    Look {
+        id: "snow",
+        name: "First snow",
+        description: "Snow falling past the time, the weather and your day ahead.",
+        family: Family::Frosted,
+        wallpaper: "halcyon-snow",
+        palette: "lavender",
+        seed: [0x9f, 0xa8, 0xf0],
+        light: false,
+    },
+    Look {
+        id: "fog",
+        name: "Morning fog",
+        description: "Mist over the hills, the time and weather, and a notebook.",
+        family: Family::Soft,
+        wallpaper: "halcyon-fog",
+        palette: "amber",
+        seed: [0xe8, 0xc8, 0x8c],
+        light: false,
+    },
 ];
+
+/// The wallpaper effect a weather setup turns on. Every other built-in
+/// setup turns the effect off (see `fitted`), so switching away from rain
+/// does not leave it falling on another picture.
+fn atmosphere(id: &str) -> Option<Value> {
+    Some(match id {
+        "rain" => json!({"enabled": true, "effect": "rain", "intensity": 50, "trails": 45,
+            "size": 32, "speed": 45, "wind": -6, "mist": 22, "refraction": 60}),
+        "snow" => json!({"enabled": true, "effect": "snow",
+            "snow": {"density": 50, "size": 30, "speed": 25, "wind": 8, "opacity": 80}}),
+        "fog" => json!({"enabled": true, "effect": "fog",
+            "fog": {"opacity": 35, "height": 45, "speed": 15, "wind": 12, "color": "warm"}}),
+        _ => return None,
+    })
+}
+
+/// Setups that bring the Activity island onto a top panel when it is
+/// installed and missing. Nothing else on the panel moves.
+fn with_activity(id: &str) -> bool {
+    matches!(id, "halcyon" | "rain" | "snow" | "fog")
+}
 
 /// Deep-merges `patch` into `base`; objects merge, everything else replaces.
 fn merge(base: &mut Value, patch: Value) {
@@ -204,7 +247,7 @@ fn record(look: &Look) -> Value {
     merge(
         &mut value["dock"],
         json!({"autohide":
-        if matches!(look.id, "focus" | "evening") { "Always" } else { "Never" }}),
+        if matches!(look.id, "focus" | "evening" | "rain" | "snow" | "fog") { "Always" } else { "Never" }}),
     );
     // New looks state their Clock choices explicitly. Legacy IDs retain their
     // original records so saved schedules do not acquire a different face.
@@ -212,8 +255,6 @@ fn record(look: &Look) -> Value {
         "tidal" => Some(json!({"face":"digital","surface":"none","scale":150,
             "alignment":"left","center_vertically":true,"weight":"light","italic":false})),
         "paper-studio" => Some(json!({"face":"analog","surface":"panel","scale":100,
-            "alignment":"center","center_vertically":true,"weight":"normal","italic":false})),
-        "moss" => Some(json!({"face":"digital","surface":"panel","scale":120,
             "alignment":"center","center_vertically":true,"weight":"normal","italic":false})),
         "carbon" => Some(json!({"face":"digital","surface":"none","scale":90,
             "alignment":"left","center_vertically":true,"weight":"normal","italic":false})),
@@ -226,6 +267,23 @@ fn record(look: &Look) -> Value {
             json!({"clock":clock,"clock_font":null,"appearance":{"color_policy":"wallpaper"}}),
         );
     }
+    if let Some(rain) = atmosphere(look.id) {
+        value["version"] = super::format::VERSION.into();
+        value["widget_style"]["rain"] = rain;
+        if look.id == "rain" {
+            // Drops run behind every card and bar, so cards are nearly bare
+            // glass with a hint of the accent. Bars stop at the most
+            // see-through the panel accepts.
+            let glass = |opacity: u8| json!({"kind": "clear", "opacity": opacity, "tint": 20});
+            let bars = glass(dock_islands_core::material::BAR_MIN_OPACITY);
+            value["widget_style"]["materials"] =
+                json!({"widgets": glass(25), "dock": bars, "panel": bars});
+        }
+        merge(
+            &mut value["widget_style"],
+            json!({"appearance":{"color_policy":"wallpaper"}}),
+        );
+    }
     value
 }
 
@@ -235,7 +293,7 @@ fn record(look: &Look) -> Value {
 pub fn islands_composition(id: &str) -> Option<Settings> {
     use Section::{Center, End, Start};
     let (placement, gap, together, separate) = match id {
-        "halcyon" => (
+        "halcyon" | "snow" => (
             Placement::Separate,
             18,
             Together::default(),
@@ -244,7 +302,7 @@ pub fn islands_composition(id: &str) -> Option<Settings> {
                 ..Default::default()
             },
         ),
-        "focus" | "tidal" => (
+        "focus" | "tidal" | "rain" => (
             Placement::Together,
             10,
             Together {
@@ -271,7 +329,7 @@ pub fn islands_composition(id: &str) -> Option<Settings> {
                 ..Default::default()
             },
         ),
-        "calm" | "moss" => (
+        "calm" | "fog" => (
             Placement::Together,
             28,
             Together {
@@ -302,11 +360,11 @@ pub fn islands_composition(id: &str) -> Option<Settings> {
 
 pub fn islands_description(id: &str) -> Option<&'static str> {
     Some(match id {
-        "halcyon" => "Three islands, balanced across the panel",
-        "focus" | "tidal" => "A compact group in the center",
+        "halcyon" | "snow" => "Three islands, balanced across the panel",
+        "focus" | "tidal" | "rain" => "A compact group in the center",
         "paper" | "paper-studio" => "Three inset islands with soft square corners",
         "rose" | "carbon" => "Two islands to the left, one to the right",
-        "calm" | "moss" => "A relaxed center group with room between islands",
+        "calm" | "fog" => "A relaxed center group with room between islands",
         "evening" => "A small group tucked to the right",
         _ => return None,
     })
@@ -314,15 +372,43 @@ pub fn islands_description(id: &str) -> Option<&'static str> {
 
 /// No content or account fields: switching the visible tools never erases data.
 fn composition(id: &str) -> Value {
+    // The time and weather are always one At a glance card, never two.
     let (widgets, glance, weather, notes, music, focus, positions) = match id {
         "tidal" => (
-            json!(["clock", "weather"]),
-            false,
-            false,
+            json!([]),
+            true,
+            true,
             false,
             true,
             false,
-            json!({"clock":[0.04,0.09],"weather":[0.04,0.87],"music":[0.96,0.87]}),
+            json!({"glance":[0.04,0.09],"music":[0.96,0.87]}),
+        ),
+        "rain" => (
+            json!([]),
+            true,
+            true,
+            false,
+            true,
+            false,
+            json!({"glance":[0.035,0.09],"music":[0.97,0.88]}),
+        ),
+        "snow" => (
+            json!([]),
+            true,
+            true,
+            false,
+            true,
+            false,
+            json!({"glance":[0.035,0.09],"music":[0.97,0.88]}),
+        ),
+        "fog" => (
+            json!([]),
+            true,
+            true,
+            true,
+            false,
+            false,
+            json!({"glance":[0.035,0.09],"notes":[0.95,0.3]}),
         ),
         "paper-studio" => (
             json!(["clock"]),
@@ -332,15 +418,6 @@ fn composition(id: &str) -> Value {
             false,
             true,
             json!({"clock":[0.05,0.1],"notes":[0.93,0.18],"focus":[0.93,0.87]}),
-        ),
-        "moss" => (
-            json!(["clock", "weather"]),
-            false,
-            false,
-            false,
-            true,
-            false,
-            json!({"clock":[0.08,0.13],"weather":[0.08,0.84],"music":[0.92,0.84]}),
         ),
         "carbon" => (
             json!(["clock", "devbox", "projects"]),
@@ -356,9 +433,9 @@ fn composition(id: &str) -> Value {
             true,
             true,
             false,
+            true,
             false,
-            false,
-            json!({"glance":[0.035,0.09],"devbox":[0.97,0.58]}),
+            json!({"glance":[0.035,0.09],"devbox":[0.97,0.1],"music":[0.97,0.88]}),
         ),
         "calm" => (
             json!([]),
@@ -409,7 +486,7 @@ fn composition(id: &str) -> Value {
     };
     let mut value = json!({"enabled_widgets": widgets, "widget_positions": positions,
         "glance": {"enabled":glance,"initialized":true,"show_clock":true,
-            "show_weather":weather,"show_calendar":false},
+            "show_weather":weather,"show_calendar":id == "snow"},
         "notes":{"enabled":notes},"music":{"enabled":music},"focus":{"enabled":focus}});
     if id == "paper-studio" {
         value["widget_sizes"] = json!({"clock":[320,340]});
@@ -422,14 +499,19 @@ pub fn occasion(id: &str) -> &'static str {
     match id {
         "tidal" => "Open space",
         "paper-studio" => "A light workspace",
-        "moss" => "Music and weather",
+        "rain" => "Stay in while it rains",
+        "snow" => "A quiet winter evening",
+        "fog" => "A slow, misty start",
         "carbon" => "System at a glance",
+        "ridge" => "A big clock and a quiet view",
+        "spine" => "A panel down the side",
         "halcyon" => "A little of everything",
         "calm" => "Start gently",
         "focus" => "Make room to concentrate",
         "paper" => "Think on paper",
         "rose" => "Build something",
         "evening" => "Switch off from work",
+        CLEAN => "Just your wallpaper",
         _ => "Your desktop, your way",
     }
 }
@@ -448,11 +530,19 @@ const CLEAN_RECORD: &str = r##"{
 pub fn presets() -> Vec<Preset> {
     LOOKS
         .iter()
-        .map(|look| Preset {
-            id: look.id,
-            description: look.description,
-            profile: import(record(look).to_string().as_bytes())
-                .expect("built-in presets are valid"),
+        .map(|look| {
+            let mut profile =
+                import(record(look).to_string().as_bytes()).expect("built-in presets are valid");
+            if with_activity(look.id)
+                && let Some(panel) = profile.panel.as_mut()
+            {
+                panel.include_applets = vec![crate::activity_island::APPLET_ID];
+            }
+            Preset {
+                id: look.id,
+                description: look.description,
+                profile,
+            }
         })
         .chain(std::iter::once(Preset {
             id: CLEAN,
@@ -526,16 +616,17 @@ fn spine() -> Preset {
         .unwrap()
         .source = Some(super::SourceLook::Bundled("halcyon-workbench".into()));
     profile.widget_layout = Some(json!({
-        "enabled_widgets":["clock","weather","devbox"],
-        "widget_positions":{"clock":[0.32,0.10],"weather":[0.32,0.86],"devbox":[0.96,0.10]},
-        "widget_sizes":{}, "glance":{"enabled":false,"initialized":true},
+        "enabled_widgets":["devbox"],
+        "widget_positions":{"glance":[0.32,0.10],"devbox":[0.96,0.10]},
+        "widget_sizes":{}, "glance":{"enabled":true,"initialized":true,"show_clock":true,
+            "show_weather":true,"show_calendar":false},
         "notes":{"enabled":false},"music":{"enabled":false},"focus":{"enabled":false}
     }));
     profile.widget_style.as_mut().unwrap()["clock"]["scale"] = 125.into();
     profile.validate().expect("Spine is a valid portable setup");
     Preset {
         id: "spine",
-        description: "A standard vertical panel with time, weather and system readings.",
+        description: "A standard vertical panel with the time and weather together, and system readings.",
         profile,
     }
 }
@@ -594,6 +685,32 @@ fn keep_widget_content(preset: &mut Preset, config: &crate::config::Config) {
     }
 }
 
+/// A weather setup keeps the person's quality and battery choices; every
+/// other setup turns a running effect off, keeping its tuning for later.
+fn follow_atmosphere(preset: &mut Preset, config: &crate::config::Config) {
+    let Some(style) = preset.profile.widget_style.as_mut() else {
+        return;
+    };
+    let rain = match style.get("rain") {
+        Some(wanted) => {
+            let Ok(mut rain) = serde_json::from_value::<crate::rain::Preferences>(wanted.clone())
+            else {
+                return;
+            };
+            rain.quality = config.rain.quality;
+            rain.pause_on_battery = config.rain.pause_on_battery;
+            rain
+        }
+        None if config.rain.enabled => crate::rain::Preferences {
+            enabled: false,
+            ..config.rain.clone()
+        },
+        None => return,
+    };
+    style["rain"] = serde_json::to_value(rain).expect("rain serializes");
+    preset.profile.version = super::format::VERSION;
+}
+
 /// `preset` adapted to this person: Projects joins only when there are
 /// project folders to show, instead of an empty card; a look whose
 /// bundled wallpaper isn't installed (in `bundled_dir`) keeps the current
@@ -617,6 +734,7 @@ pub fn fitted(
     if preset.id != CLEAN {
         keep_widget_content(&mut preset, config);
     }
+    follow_atmosphere(&mut preset, config);
     if !installed(&preset, bundled_dir) {
         preset.profile.wallpaper = None;
         if let Some(style) = preset.profile.widget_style.as_mut() {
@@ -811,7 +929,6 @@ mod tests {
         for (id, face, surface) in [
             ("tidal", "digital", "none"),
             ("paper-studio", "analog", "panel"),
-            ("moss", "digital", "panel"),
             ("carbon", "digital", "none"),
         ] {
             let p = preset(id).unwrap();
@@ -842,6 +959,7 @@ mod tests {
         }
         assert_eq!(preset("paper").unwrap().profile.name, "Writing desk");
         assert_eq!(preset("minimal").unwrap(), preset("focus").unwrap());
+        assert_eq!(preset("moss").unwrap(), preset("tidal").unwrap());
     }
 
     #[test]
@@ -860,7 +978,6 @@ mod tests {
         for (id, face) in [
             ("tidal", "digital"),
             ("paper-studio", "analog"),
-            ("moss", "digital"),
             ("carbon", "digital"),
         ] {
             let config = crate::config::Config::from_bytes(&before).unwrap();
@@ -894,8 +1011,10 @@ mod tests {
             ("halcyon", false),
             ("tidal", false),
             ("paper-studio", true),
-            ("moss", false),
             ("carbon", false),
+            ("rain", false),
+            ("snow", false),
+            ("fog", false),
         ] {
             let config = crate::config::Config::from_bytes(
                 &std::fs::read(store.app_config().unwrap()).unwrap(),
@@ -937,8 +1056,10 @@ mod tests {
                 "rose",
                 "tidal",
                 "paper-studio",
-                "moss",
                 "carbon",
+                "rain",
+                "snow",
+                "fog",
                 CLEAN
             ]
         );
@@ -1013,7 +1134,7 @@ mod tests {
                     ));
                 }
                 let layout = profile.widget_layout.as_ref().unwrap();
-                assert_eq!(layout["glance"]["show_calendar"], false);
+                assert_eq!(layout["glance"]["show_calendar"], preset.id == "snow");
                 for widget in ["music", "notes", "focus"] {
                     assert!(layout[widget]["enabled"].is_boolean());
                     assert_eq!(
@@ -1389,8 +1510,10 @@ mod tests {
         for id in [
             "tidal",
             "paper-studio",
-            "moss",
             "carbon",
+            "rain",
+            "snow",
+            "fog",
             "halcyon",
             "calm",
             "evening",
@@ -1528,5 +1651,142 @@ mod tests {
             crate::desktop::profiles::apply(&store, &proposal).is_err(),
             "explicit enable must not erase a concurrent settings edit"
         );
+    }
+
+    #[test]
+    fn setups_keep_time_and_weather_together_and_weather_setups_bring_their_effect() {
+        let mut all = presets();
+        all.extend([spine(), ridge()]);
+        for p in &all {
+            let Some(layout) = &p.profile.widget_layout else { continue };
+            let widgets = layout["enabled_widgets"].as_array().unwrap();
+            let has = |w: &str| widgets.iter().any(|v| v == w);
+            assert!(!(has("clock") && has("weather")), "{}: clock and weather apart", p.id);
+            assert!(!(has("weather") && layout["glance"]["enabled"] == true), "{}", p.id);
+            let rain = p.profile.widget_style.as_ref().and_then(|s| s.get("rain"));
+            match p.id {
+                "rain" | "snow" | "fog" => {
+                    let rain: crate::rain::Preferences =
+                        serde_json::from_value(rain.unwrap().clone()).unwrap();
+                    rain.validate().unwrap();
+                    assert!(rain.enabled);
+                    assert_eq!(rain.effect.title().to_lowercase(), p.id);
+                    let style = p.profile.widget_style.as_ref().unwrap();
+                    let materials: crate::materials::Materials =
+                        serde_json::from_value(style.get("materials").cloned().unwrap_or_default())
+                            .unwrap_or_default();
+                    materials.validate().unwrap();
+                    // Rain is seen through everything; other effects keep the look's cards.
+                    let clear = materials.widgets().is_some_and(|f| f.opacity() == 25);
+                    assert_eq!(clear, p.id == "rain", "{}", p.id);
+                    if clear {
+                        for bar in [materials.dock, materials.panel] {
+                            let bar = dock_islands_core::material::BarMaterial::new(bar.unwrap());
+                            bar.validate().unwrap();
+                            assert_eq!(bar.finish.opacity, Some(45));
+                        }
+                    }
+                }
+                _ => assert!(rain.is_none(), "{}", p.id),
+            }
+            let activity = p
+                .profile
+                .panel
+                .as_ref()
+                .is_some_and(|panel| !panel.include_applets.is_empty());
+            assert_eq!(activity, with_activity(p.id), "{}", p.id);
+        }
+        // Everyday: the time and weather top left, system and music on the right.
+        let layout = preset("halcyon").unwrap().profile.widget_layout.unwrap();
+        assert_eq!(layout["enabled_widgets"], json!(["devbox"]));
+        assert_eq!(layout["glance"]["show_weather"], true);
+        assert_eq!(layout["music"]["enabled"], true);
+        for (widget, right) in [("glance", false), ("devbox", true), ("music", true)] {
+            assert_eq!(layout["widget_positions"][widget][0].as_f64().unwrap() > 0.5, right, "{widget}");
+        }
+    }
+
+    #[test]
+    fn switching_setups_starts_or_stops_the_wallpaper_effect_and_keeps_its_tuning() {
+        let (_fixture, store) = desk("setup-effects");
+        let dir = crate::desktop::wallpaper::bundled_dir(&store);
+        let mut config = crate::config::Config::default();
+        // Nothing running: a plain setup leaves the effect alone.
+        let p = fitted(preset("halcyon").unwrap(), &config, &dir, false);
+        assert!(p.profile.widget_style.as_ref().unwrap().get("rain").is_none());
+        // Running: a plain setup stops it, keeping the person's tuning.
+        config.rain.enabled = true;
+        config.rain.intensity = 90;
+        config.rain.quality = crate::rain::Quality::Eco;
+        let p = fitted(preset("halcyon").unwrap(), &config, &dir, false).profile;
+        p.validate().unwrap();
+        let rain: crate::rain::Preferences =
+            serde_json::from_value(p.widget_style.as_ref().unwrap()["rain"].clone()).unwrap();
+        assert!(!rain.enabled);
+        assert_eq!(rain.intensity, 90);
+        // A weather setup starts its own, at the person's quality.
+        let p = fitted(preset("snow").unwrap(), &config, &dir, false).profile;
+        let rain: crate::rain::Preferences =
+            serde_json::from_value(p.widget_style.as_ref().unwrap()["rain"].clone()).unwrap();
+        assert!(rain.enabled && rain.effect == crate::rain::Effect::Snow);
+        assert_eq!(rain.quality, crate::rain::Quality::Eco);
+        let installed = Installed::discover(&store);
+        let plan = plan(&store, &installed, &p, &p.domains().into_iter().collect());
+        assert!(plan.can_apply(), "{:?}", plan.blocking_reasons());
+        let change = apply(&store, &plan).unwrap();
+        let applied = crate::config::Config::from_bytes(
+            &std::fs::read(store.app_config().unwrap()).unwrap(),
+        )
+        .unwrap();
+        assert!(applied.rain.enabled && applied.rain.effect == crate::rain::Effect::Snow);
+        store.undo_latest(&change.id).unwrap();
+    }
+
+    #[test]
+    fn setups_add_the_activity_island_to_a_top_panel_and_move_nothing_else() {
+        use crate::desktop::panels::{PanelDraft, PanelKind};
+        let (fixture, store) = desk("setup-activity");
+        fixture.system(
+            PANEL,
+            "plugins_wings",
+            "Some(([\"custom.Start\"],[\"custom.End\"]))",
+        );
+        fixture.system(PANEL, "plugins_center", "Some([\"custom.Center\"])");
+        let mut installed = Installed::discover(&store);
+        let applications = fixture.0.join("applications");
+        std::fs::create_dir_all(&applications).unwrap();
+        std::fs::write(
+            applications.join(format!("{}.desktop", crate::activity_island::APPLET_ID)),
+            "[Desktop Entry]\nName=Activity\nX-CosmicApplet=true\n",
+        )
+        .unwrap();
+        // Not installed: nothing is added and nothing is said.
+        let p = preset("halcyon").unwrap().profile;
+        let selected: BTreeSet<_> = [Domain::Panel].into_iter().collect();
+        let proposal = plan(&store, &installed, &p, &selected);
+        assert!(proposal.patch().keys().all(|k| !k.key().starts_with("plugins_")));
+        installed.applets = crate::desktop::applets::AppletCatalog::discover(&[applications]);
+        // A setup without it leaves the applets alone.
+        let focus = preset("focus").unwrap().profile;
+        let proposal = plan(&store, &installed, &focus, &selected);
+        assert!(proposal.patch().keys().all(|k| !k.key().starts_with("plugins_")));
+        let before = PanelDraft::load(&store, PanelKind::Panel).unwrap().applets();
+        let proposal = plan(&store, &installed, &p, &selected);
+        assert!(proposal.can_apply(), "{:?}", proposal.blocking_reasons());
+        let change = apply(&store, &proposal).unwrap();
+        let after = PanelDraft::load(&store, PanelKind::Panel).unwrap().applets();
+        let crate::desktop::panels::Setting::Known(regions) = &after else { panic!() };
+        assert_eq!(regions.start, ["custom.Start"]);
+        assert_eq!(regions.end, ["custom.End"]);
+        assert_eq!(regions.center, ["custom.Center", crate::activity_island::APPLET_ID]);
+        // Already there: applying again changes no applets.
+        let again = plan(&store, &installed, &p, &selected);
+        assert!(again.patch().keys().all(|k| !k.key().starts_with("plugins_")));
+        store.undo_latest(&change.id).unwrap();
+        assert_eq!(PanelDraft::load(&store, PanelKind::Panel).unwrap().applets(), before);
+        // A panel on the side does not get it.
+        fixture.system(PANEL, "anchor", "Left");
+        let side = plan(&store, &installed, &p, &selected);
+        assert!(side.patch().keys().all(|k| !k.key().starts_with("plugins_")));
     }
 }

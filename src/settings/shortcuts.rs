@@ -211,6 +211,8 @@ pub enum Message {
     Undo,
     Refresh,
     UseCurrent,
+    /// Keeps the edits over a value changed outside this editor.
+    KeepMine,
     Recover,
     KeepRecovery,
 }
@@ -496,6 +498,10 @@ impl ShortcutsEditor {
             Message::UseCurrent => {
                 self.pending = None;
                 self.core.use_current(&[]);
+            }
+            Message::KeepMine => {
+                self.pending = None;
+                self.core.keep_edits();
             }
             Message::Recover => self.core.recover(true),
             Message::KeepRecovery => self.core.recover(false),

@@ -198,6 +198,13 @@ fn default_positions(mut state: Snapshot, config: &Config) -> Snapshot {
         right_y += g.size[1] + drawer::CARD_GAP;
     }
     let focus_height = size_for_tool(&state, Widget::Focus)[1];
+    // The calendar sits under the clock on the left; on short screens the
+    // centred spot would put it under the clock's date.
+    let below_clock = config
+        .widget_visible(Widget::Clock)
+        .then(|| state.widgets.iter().find(|g| g.key == "clock"))
+        .flatten()
+        .map_or(0., |clock| 88. + clock.size[1] + drawer::CARD_GAP);
     for g in &mut state.widgets {
         if let Some(tool) = Widget::parse(&g.key).filter(|widget| widget.is_tool()) {
             g.position = layout::tool_position(tool, g.size, focus_height, state.screen);
@@ -205,7 +212,7 @@ fn default_positions(mut state: Snapshot, config: &Config) -> Snapshot {
         }
         let point = match g.key.as_str() {
             "clock" | "glance" => [82., 88.],
-            "calendar" => [42., (state.screen[1] - g.size[1]) / 2.],
+            "calendar" => [42., ((state.screen[1] - g.size[1]) / 2.).max(below_clock)],
             _ => g.position,
         };
         if g.key == "glance" && !config.widget_sizes.contains_key("glance") {
@@ -362,6 +369,8 @@ pub fn effective_explicit_size(
 }
 
 /// Shared automatic geometry for built-in and personal system widgets.
+/// The System monitor's title slot, drawn by `app::devbox`.
+pub const DEVBOX_TITLE_HEIGHT: f32 = 23.;
 pub fn devbox_height(config: &crate::config::Config, gpu_count: usize) -> f32 {
     config.recipes.devbox.as_ref().map_or_else(
         || devbox_content_height(&config.devbox, gpu_count),
@@ -401,11 +410,14 @@ pub fn devbox_content_height(
             }
         })
         .collect();
-    36. + if heights.is_empty() {
-        20.
-    } else {
-        heights.iter().sum::<f32>() + heights.len().saturating_sub(1) as f32 * 8.
-    }
+    // Frame padding, then the "System" title and the card's gap below it.
+    36. + DEVBOX_TITLE_HEIGHT
+        + 8.
+        + if heights.is_empty() {
+            20.
+        } else {
+            heights.iter().sum::<f32>() + heights.len().saturating_sub(1) as f32 * 8.
+        }
 }
 
 /// Project a preview from cached geometry without reading the desktop again.
@@ -563,8 +575,8 @@ mod tests {
         config.widget_sizes.insert("devbox".into(), [360., 180.]);
         let snapshot = project(fallback(&config), &config);
         let system = snapshot.widgets.iter().find(|g| g.key == "devbox").unwrap();
-        assert_eq!(devbox_content_height(&config.devbox, 0), 226.);
-        assert_eq!(system.size[1], 226.);
+        assert_eq!(devbox_content_height(&config.devbox, 0), 257.);
+        assert_eq!(system.size[1], 257.);
         assert_eq!(config.widget_sizes["devbox"], [360., 180.]);
         for w in [Widget::Devbox, Widget::Projects, Widget::Calendar] {
             let mut snapshot = fallback(&config);

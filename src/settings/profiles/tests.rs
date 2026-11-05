@@ -1679,6 +1679,7 @@ fn style_value(editor: &ProfilesEditor, pointer: &str) -> Option<serde_json::Val
 fn themes_editor(desk: &Desk) -> ProfilesEditor {
     let mut editor = ProfilesEditor { ..desk.editor() };
     editor.open();
+    editor.enter(previews::PreviewKind::Theme);
     finish_theme(&mut editor);
     editor
 }
@@ -1833,7 +1834,10 @@ fn custom_colors_apply_only_complete_hex_and_color_choices_edit_the_applied_look
     assert_eq!(*editor.selection(), Selection::Current);
     editor.update(Message::ThemeColors(true));
     finish_theme(&mut editor);
-    assert_eq!(*editor.selection(), Selection::Preset("theme-soft"));
+    assert_eq!(
+        editor.profile().and_then(profiles::themes::family),
+        Some(crate::desktop_theme::Family::Soft)
+    );
     assert_eq!(
         style_value(&editor, "/appearance/wallpaper_colors"),
         Some(true.into())

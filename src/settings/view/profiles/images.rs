@@ -61,8 +61,10 @@ pub(super) fn look(id: &str, wallpaper: bool) -> Option<Handle> {
     };
     if wallpaper {
         if let Some(name) = match id {
-            "moss" => Some("teal"),
             "carbon" => Some("graphite"),
+            "rain" => Some("halcyon-rain"),
+            "snow" => Some("halcyon-snow"),
+            "fog" => Some("halcyon-fog"),
             "spine" => Some("halcyon-workbench"),
             "ridge" => Some("halcyon-ridge"),
             _ => None,
@@ -87,8 +89,10 @@ mod tests {
         for id in [
             "tidal",
             "paper-studio",
-            "moss",
             "carbon",
+            "rain",
+            "snow",
+            "fog",
             "halcyon",
             "calm",
             "evening",

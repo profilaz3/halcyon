@@ -124,7 +124,8 @@ fn monitor_pinning_native_selector_and_ambiguous_names() {
             button.x >= 0.
                 && button.y >= 0.
                 && button.x + button.width <= width
-                && button.y + button.height <= height
+                && button.y + button.height <= height,
+            "{button:?} in {width}x{height}"
         );
         full.capture(
             app.settings_view(),
@@ -351,6 +352,9 @@ fn multi_monitor_settings_assignment_preview_undo_and_layout() {
     // A hidden widget remains reachable from My widgets → Weather, even
     // though there is no card to click on the layout canvas.
     let _ = app.update(Message::Page(Page::Weather));
+    let _ = app.update(Message::ObjectTab(
+        crate::settings::navigation::ObjectTab::Position,
+    ));
     let bounds = native.bounds(app.settings_view(), "widget-monitor-weather-default");
     assert!(bounds.width > 0. && bounds.height > 0.);
     app.placement.select("weather");

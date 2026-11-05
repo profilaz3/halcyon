@@ -86,6 +86,58 @@ fn fb15_queued_clock_edit_cannot_retarget_and_explicit_inactive_edit_stays_local
     assert_eq!(app.config.clock.face, Some(ClockFace::Analog));
     assert_eq!(app.config.moments.night.clock.face, None);
 }
+/// Focuses the focusable widget under `point`, accounting for scrolling,
+/// and unfocuses every other one.
+struct FocusAt {
+    point: cosmic::iced::Point,
+    offset: cosmic::iced::Vector,
+    pending: cosmic::iced::Vector,
+    found: bool,
+}
+impl FocusAt {
+    fn new(point: cosmic::iced::Point) -> Self {
+        Self {
+            point,
+            offset: Default::default(),
+            pending: Default::default(),
+            found: false,
+        }
+    }
+}
+impl cosmic::iced::advanced::widget::Operation for FocusAt {
+    fn traverse(
+        &mut self,
+        f: &mut dyn FnMut(&mut dyn cosmic::iced::advanced::widget::Operation),
+    ) {
+        let previous = self.offset;
+        self.offset += std::mem::take(&mut self.pending);
+        f(self);
+        self.offset = previous;
+    }
+    fn scrollable(
+        &mut self,
+        _: Option<&cosmic::widget::Id>,
+        _: cosmic::iced::Rectangle,
+        _: cosmic::iced::Rectangle,
+        translation: cosmic::iced::Vector,
+        _: &mut dyn cosmic::iced::advanced::widget::operation::Scrollable,
+    ) {
+        self.pending = translation;
+    }
+    fn focusable(
+        &mut self,
+        _: Option<&cosmic::widget::Id>,
+        bounds: cosmic::iced::Rectangle,
+        state: &mut dyn cosmic::iced::advanced::widget::operation::Focusable,
+    ) {
+        if !self.found && (bounds - self.offset).contains(self.point) {
+            state.focus();
+            self.found = true;
+        } else {
+            state.unfocus();
+        }
+    }
+}
 #[test]
 fn fb15_native_moments_primary_controls_fit_and_keyboard_activation_is_scoped() {
     if isolated(
@@ -103,7 +155,8 @@ fn fb15_native_moments_primary_controls_fit_and_keyboard_activation_is_scoped() 
             super::super::Message::Resized(Size::new(width, height)),
         );
         let mut native = crate::native_test::Native::new(Size::new(width, height));
-        for id in ["moment-activate", "moment-base", "moment-schedule"] {
+        // The schedule buttons only show once switching is on; the switch is always there.
+        for id in ["moment-activate", "moment-auto"] {
             let b = native.bounds(app.settings_view(), id);
             assert!(
                 b.x >= 0. && b.y >= 0. && b.x + b.width <= width && b.y + b.height <= height,
@@ -127,12 +180,9 @@ fn fb15_native_moments_primary_controls_fit_and_keyboard_activation_is_scoped() 
         // remains reachable below the style controls through the actual scrollable.
         crate::settings::tests::native_reveal(&app, &mut native, "moments-schedules");
         crate::settings::tests::native_reveal(&app, &mut native, "moment-activate");
-        native.operate(
-            app.settings_view(),
-            Box::new(cosmic::iced::advanced::widget::operation::focusable::focus(
-                cosmic::widget::Id::new("moment-activate"),
-            )),
-        );
+        // "Right now" is a segmented choice; focus its "Night style" option.
+        let night = native.text_bounds(app.settings_view(), "Night style").center();
+        native.operate(app.settings_view(), Box::new(FocusAt::new(night)));
         let key = keyboard::Key::Named(keyboard::key::Named::Enter);
         let (messages, _) = native.event(
             app.settings_view(),

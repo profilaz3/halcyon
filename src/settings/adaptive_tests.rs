@@ -38,37 +38,38 @@ fn adaptive_native_preview_cycle_and_navigation_are_read_only_until_enabled() {
         &mut app,
         Message::Automation(automation::Message::ManualCity(city)),
     );
+    // Adaptive looks moved onto the time of day page: the old link lands
+    // there and the shifting look is chosen with its shades control.
+    assert_eq!(app.page, Page::DesktopAutomation);
     for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
         send_settings(&mut app, Message::Resized(size));
         let mut native = crate::native_test::Native::new(size);
+        // The separate preview cycle is gone; its stale messages stay
+        // read only and select nothing.
         for look in Look::ALL {
             for phase in Phase::ALL {
                 native_send(&mut app, &mut native, Message::AdaptivePreview(look, phase));
-                // Complete the real bounded backdrop work before inspecting pixels.
                 for job in app.profiles.take_jobs() {
                     app.profiles.update(job.run());
                 }
                 for job in app.profiles.take_theme_jobs() {
                     app.profiles.update(job.run());
                 }
-                native.capture(
-                    app.settings_view(),
-                    &cosmic::Theme::dark(),
-                    &format!("{}-{}", look.id(phase), size.width),
-                );
                 assert_eq!(std::fs::read(&path).unwrap(), before);
-                assert_eq!(
-                    app.profiles.profile().unwrap().name,
-                    format!("{} · {}", look.title(), phase.title())
-                );
+                assert_eq!(app.profiles.selection(), &profiles::Selection::Current);
             }
         }
-        native.capture(
-            app.settings_view(),
-            &cosmic::Theme::light(),
-            &format!("adaptive-light-{}", size.width),
-        );
-        let bounds = native.bounds(app.settings_view(), "adaptive-enable");
+        for (name, theme) in [
+            ("dark", cosmic::Theme::dark()),
+            ("light", cosmic::Theme::light()),
+        ] {
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("adaptive-{name}-{}", size.width),
+            );
+        }
+        let bounds = native_reveal(&app, &mut native, "automation-shades");
         assert!(
             bounds.width > 0.
                 && bounds.x >= 0.

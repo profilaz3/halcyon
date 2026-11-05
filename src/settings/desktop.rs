@@ -66,6 +66,8 @@ pub enum Message {
     /// Drop the edits that changed outside this editor and adopt the current
     /// values; every other edit stays.
     UseCurrent,
+    /// Keeps the edits over a value changed outside this editor.
+    KeepMine,
     Recover,
     KeepRecovery,
 }
@@ -91,6 +93,7 @@ impl Message {
 /// applet IDs keep distinct controls.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppletControl {
+    Drag,
     Select,
     Up,
     Down,
@@ -100,6 +103,7 @@ pub enum AppletControl {
 /// Stable widget id of an applet row's control.
 pub fn control_id(slot: Slot, control: AppletControl) -> cosmic::widget::Id {
     let name = match control {
+        AppletControl::Drag => "drag",
         AppletControl::Select => "select",
         AppletControl::Up => "up",
         AppletControl::Down => "down",
@@ -443,7 +447,14 @@ impl DesktopEditor {
         }
     }
     pub fn refresh(&mut self) {
+        let applets = self.current().map(PanelDraft::applets);
         self.reload(false);
+        if self.current().map(PanelDraft::applets) != applets {
+            // Slots describe this exact list. A refreshed list may put another
+            // occurrence at the old selection or drag source.
+            self.focus = None;
+            self.drag.cancel();
+        }
     }
 
     fn edit(&mut self, change: impl FnOnce(&mut PanelDraft)) {
@@ -671,6 +682,7 @@ impl DesktopEditor {
             Message::Undo => self.undo(),
             Message::Refresh => self.refresh(),
             Message::UseCurrent => self.use_current(),
+            Message::KeepMine => self.keep_mine(),
             Message::Recover => self.recover(true),
             Message::KeepRecovery => self.recover(false),
         }
@@ -740,9 +752,23 @@ impl DesktopEditor {
         match store.apply_owned(&patch, None, Owner::DockPanel, "Dock & Panel") {
             Ok(change) => {
                 self.undo = Some(change);
-                self.focus = None;
+                // Immediate saves must retain the selected occurrence and its
+                // keyboard controls. Clear it if reloading observes a different
+                // applet list; a slot alone is not an occurrence identity.
+                let selected = self.focus.and_then(|slot| {
+                    self.current()?
+                        .applets()
+                        .known()
+                        .cloned()
+                        .map(|regions| (slot, regions))
+                });
                 self.picker = None;
                 self.reload(true);
+                self.focus = selected.and_then(|(slot, regions)| {
+                    (self.current()?.applets().known() == Some(&regions)
+                        && slot.index < regions.list(slot.region).len())
+                    .then_some(slot)
+                });
                 self.notice = Some(Notice::Done("Applied to your desktop".into()));
                 if island_change
                     && self.islands.compatible
@@ -792,6 +818,27 @@ impl DesktopEditor {
                         draft.resolve_conflicts(&snapshot_of(fresh), &[]);
                     }
                     self.notice = Some(Notice::Done("Using the current values".into()));
+                }
+                Err(error) => self.notice = Some(Notice::Error(error.to_string())),
+            }
+        }
+    }
+
+    fn keep_mine(&mut self) {
+        for kind in PanelKind::ALL {
+            let conflicted = self
+                .drafts
+                .get(&kind)
+                .is_some_and(|draft| !draft.conflicts().is_empty());
+            if !conflicted {
+                continue;
+            }
+            match self.load(kind) {
+                Ok(fresh) => {
+                    if let Some(draft) = self.drafts.get_mut(&kind) {
+                        draft.keep_edits(&snapshot_of(fresh));
+                    }
+                    self.notice = Some(Notice::Done(super::drafts::KEEPING.into()));
                 }
                 Err(error) => self.notice = Some(Notice::Error(error.to_string())),
             }
@@ -1294,6 +1341,38 @@ mod tests {
     }
 
     #[test]
+    fn keep_my_change_writes_the_edit_over_the_outside_value() {
+        let fixture = Fixture::new("editor-keep-mine");
+        let mut editor = editor(&fixture);
+        editor.update(Message::Anchor(Anchor::Top));
+        editor.update(Message::Opacity(40));
+        fixture.user(DOCK, "anchor", "Right");
+        editor.update(Message::Refresh);
+        assert_eq!(
+            editor.draft(PanelKind::Dock).unwrap().conflicts(),
+            ["anchor"]
+        );
+        let before = fixture.tree();
+        editor.update(Message::KeepMine);
+        let dock = editor.draft(PanelKind::Dock).unwrap();
+        assert!(dock.conflicts().is_empty());
+        assert_eq!(dock.anchor(), Setting::Known(Anchor::Top));
+        assert_eq!(fixture.tree(), before, "resolving writes nothing");
+        assert!(!Message::KeepMine.writes());
+        // Kept over "Right" only: a newer outside value conflicts again.
+        fixture.user(DOCK, "anchor", "Left");
+        editor.update(Message::Refresh);
+        assert_eq!(
+            editor.draft(PanelKind::Dock).unwrap().conflicts(),
+            ["anchor"]
+        );
+        editor.update(Message::KeepMine);
+        editor.update(Message::Apply);
+        assert_eq!(fixture.read(DOCK, "anchor").as_deref(), Some("Top"));
+        assert_eq!(fixture.read(DOCK, "opacity").as_deref(), Some("0.4"));
+    }
+
+    #[test]
     fn use_current_value_resolves_only_the_conflicting_group() {
         let fixture = Fixture::new("editor-use-current");
         let mut editor = editor(&fixture);
@@ -1423,6 +1502,65 @@ mod tests {
             control_id(slot(Region::End, 3), AppletControl::Remove).to_string(),
             "applet-end-3-remove"
         );
+    }
+
+    #[test]
+    fn applet_refresh_cancels_stale_slots_but_preserves_unrelated_changes() {
+        for kind in PanelKind::ALL {
+            let fixture = Fixture::new("applet-refresh");
+            fixture.user(
+                &kind.namespace(),
+                "plugins_wings",
+                "Some(([\"a\", \"b\"], []))",
+            );
+            fixture.user(&kind.namespace(), "plugins_center", "Some([])");
+            let mut editor = editor(&fixture);
+            editor.update(Message::Select(kind));
+            let source = Slot {
+                region: Region::Start,
+                index: 1,
+            };
+            let target = Slot {
+                region: Region::End,
+                index: 0,
+            };
+            editor.update(Message::SelectApplet(Some(source)));
+            editor.update(Message::DragStart(source));
+            editor.update(Message::DragOver(target));
+            let other = if kind == PanelKind::Panel {
+                PanelKind::Dock
+            } else {
+                PanelKind::Panel
+            };
+            fixture.user(&other.namespace(), "plugins_center", "Some([\"external\"])");
+            fixture.user(&kind.namespace(), "opacity", "0.5");
+            editor.update(Message::Refresh);
+            assert_eq!(editor.focus, Some(source));
+            assert_eq!(editor.drag.source, Some(source));
+            assert_eq!(editor.drag.target, Some(target));
+
+            fixture.user(
+                &kind.namespace(),
+                "plugins_wings",
+                "Some(([\"a\", \"replacement\"], []))",
+            );
+            let before = fixture.tree();
+            editor.update(Message::Refresh);
+            assert_eq!(editor.focus, None);
+            assert!(!editor.drag.active());
+            editor.update(Message::DropAt(target));
+            editor.update(Message::Apply);
+            assert!(!editor.dirty());
+            assert_eq!(
+                fixture.tree(),
+                before,
+                "a stale drop must not move the replacement"
+            );
+            assert_eq!(
+                editor.current().unwrap().applets().known().unwrap().start,
+                ["a", "replacement"]
+            );
+        }
     }
 
     #[test]

@@ -84,7 +84,7 @@ pub fn apply_from(
         } // preserve unknown future records
         let desired = next
             .effective(bar)
-            .map(|finish| RawValue::encode(&BarMaterial { version: 1, finish }))
+            .map(|finish| RawValue::encode(&BarMaterial::new(finish)))
             .transpose()
             .map_err(|e| e.to_string())?;
         patch.set(key, base, desired);

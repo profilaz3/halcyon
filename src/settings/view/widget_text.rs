@@ -62,25 +62,6 @@ impl Settings {
         ordered
     }
 
-    pub(super) fn widget_text_section(&self) -> Element<'_, Message> {
-        section(vec![
-            label("Text", 14., FG),
-            self.widget_font_row(
-                FontTarget::Text,
-                "Font",
-                self.config.widget_font.as_deref(),
-                "Style default",
-            ),
-            separator(),
-            self.widget_font_row(
-                FontTarget::Clock,
-                "Clock font",
-                self.config.clock_font.as_deref(),
-                "Same as text",
-            ),
-        ])
-    }
-
     /// At a glance's own fonts; the defaults are the widget fonts.
     pub(super) fn glance_text_section(&self) -> Element<'_, Message> {
         let g = &self.config.glance;
@@ -123,9 +104,11 @@ impl Settings {
         };
         let mut rows = vec![split(
             label(title, 14., FG),
-            button::custom(
+            // The same chooser as the Fonts page: fixed width, value left,
+            // chevron at the right edge.
+            container(button::custom(
                 row::with_children(vec![
-                    shown,
+                    container(shown).width(Length::Fill).into(),
                     icon::from_name(if open {
                         "go-up-symbolic"
                     } else {
@@ -141,7 +124,9 @@ impl Settings {
             .id(cosmic::widget::Id::new(format!("font-{key}")))
             .class(chip_style(open, accent))
             .padding([6, 12])
-            .on_press(Message::FontMenu(Some(target)))
+            .width(Length::Fill)
+            .on_press(Message::FontMenu(Some(target))))
+            .width(Length::Fixed(260.))
             .into(),
         )];
         if !open {

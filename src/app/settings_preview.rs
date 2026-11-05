@@ -142,9 +142,20 @@ pub(crate) fn settings_projects_preview(config: &Config) -> Element<'static, Mes
 /// account lookup, note loading, file reads or compositor tasks are started.
 pub(crate) struct SettingsSamples {
     cards: Cards,
+    /// The whole Daily overview card (clock, weather and agenda), shown on
+    /// its page even before it is turned on.
+    overview: Box<Cards>,
 }
 impl SettingsSamples {
     pub fn new(config: &Config) -> Self {
+        let mut samples = Self {
+            cards: Self::build(config),
+            overview: Box::new(Self::build(config)),
+        };
+        samples.update(config);
+        samples
+    }
+    fn build(config: &Config) -> Cards {
         let core = Core::default();
         let ids = std::array::from_fn(|_| window::Id::unique());
         let sidebar = Sidebar::new();
@@ -156,6 +167,7 @@ impl SettingsSamples {
         let source = config;
         let config = config.clone();
         let cards = Cards {
+            activity: Default::default(),
             calendar_details: None,
             core,
             ids,
@@ -231,9 +243,8 @@ impl SettingsSamples {
             rain: Default::default(),
             wallpaper_color_generation: Default::default(),
         };
-        let mut samples = Self { cards };
-        samples.update(source);
-        samples
+        let _ = source;
+        cards
     }
     pub(in crate::app) fn calendar() -> CalendarData {
         let now = Local::now();
@@ -260,6 +271,7 @@ impl SettingsSamples {
         }
     }
     pub fn update(&mut self, config: &Config) {
+        self.update_overview(config);
         self.cards.config = config.clone();
         self.cards.config.widget_sizes.remove("calendar");
         self.cards.config.widget_sizes.remove("projects");
@@ -286,6 +298,34 @@ impl SettingsSamples {
             .config
             .widget_sizes
             .insert("glance".into(), [320., height]);
+    }
+    fn update_overview(&mut self, config: &Config) {
+        let overview = &mut self.overview;
+        overview.config = config.clone();
+        overview.config.widget_positions.clear();
+        overview.config.glance.enabled = true;
+        let today = Local::now().date_naive();
+        overview.weather = Some(weather_sample(today));
+        if today != overview.last_today {
+            overview.calendar = Some(Self::calendar());
+            overview.calendar_today = overview.calendar.clone();
+            overview.month = today.with_day(1).unwrap_or(today);
+            overview.last_today = today;
+            overview.selected_day = today;
+        }
+        overview
+            .config
+            .widget_sizes
+            .insert("glance".into(), [320., 640.]);
+        let height = overview.glance_natural_height().min(560.);
+        overview
+            .config
+            .widget_sizes
+            .insert("glance".into(), [320., height]);
+    }
+    /// The full Daily overview card with its current sections.
+    pub fn overview_view(&self) -> Element<'_, Message> {
+        self.overview.glance()
     }
     pub fn calendar_view(&self) -> Element<'_, Message> {
         if self.cards.config.glance.enabled {

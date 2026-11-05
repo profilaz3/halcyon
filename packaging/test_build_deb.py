@@ -43,7 +43,7 @@ class PackageTests(unittest.TestCase):
             "packaging/debian/copyright", "packaging/debian/changelog",
             "packaging/systemd/halcyon.service", "packaging/man/halcyon.1",
             "packaging/man/halcyon-ctl.1",
-            f"packaging/{builder.APP_ID}.desktop", f"packaging/{builder.APP_ID}.metainfo.xml",
+            f"packaging/{builder.APP_ID}.Activity.desktop", f"packaging/{builder.APP_ID}.desktop", f"packaging/{builder.APP_ID}.metainfo.xml",
             "packaging/licenses/THIRD_PARTY_LICENSES.txt", "assets/wallpapers-jpg/scene.jpg",
             "assets/wallpapers/halcyon-ridge.png",
         ]
@@ -82,6 +82,7 @@ class PackageTests(unittest.TestCase):
             for name, member in members.items():
                 self.assertEqual((member.uid, member.gid), (0, 0), name)
                 self.assertEqual(member.mode, 0o755 if member.isdir() or name in executables else 0o644, name)
+            self.assertIn(f"usr/share/applications/{builder.APP_ID}.Activity.desktop", members)
             client = members["usr/share/cosmic-ext-halcyon/google-calendar-client.json"]
             self.assertEqual(archive.extractfile(client).read(), self.client.read_bytes())
             self.assertIn("usr/lib/cosmic-ext-halcyon/islands-status.py", members)

@@ -4,28 +4,12 @@ use super::desktop::WARN;
 use super::*;
 use crate::settings::motion::Message as Edit;
 
-fn row_of<'a>(
-    title: &'static str,
-    note: &'static str,
-    control: Element<'a, Message>,
-) -> Element<'a, Message> {
-    split(
-        column::with_children(vec![label(title, 13., FG), label(note, 11., MUTED)])
-            .spacing(2)
-            .into(),
-        control,
-    )
-}
-
 impl Settings {
     pub(super) fn motion_page(&self) -> Element<'_, Message> {
         let editor = &self.motion;
-        let mode: Element<'_, Message> = match editor.read_only() {
-            Some(_) => pill("Preview · changes are off", WARN),
-            None => text::body("").into(),
-        };
+        let unavailable = matches!(editor.current(), Some(Err(_)));
         let apps: Element<'_, Message> = match (editor.current(), editor.shown()) {
-            (Some(Err(_)), _) => label("Unavailable", 12., MUTED),
+            (Some(Err(_)), _) => label("Not available", 13., MUTED),
             (_, Some(on)) => toggler(!on)
                 .on_toggle_maybe(
                     editor
@@ -33,53 +17,67 @@ impl Settings {
                         .then_some(|reduce: bool| Message::Motion(Edit::Animations(!reduce))),
                 )
                 .into(),
-            _ => label("Reading…", 12., MUTED),
+            _ => label("Reading…", 13., MUTED),
         };
-        let mut app_rows = vec![row_of(
+        let mut motion = vec![group_row(
             "Reduce motion",
-            "Reduces motion in Halcyon settings, GTK apps, Firefox and Chromium-based browsers.",
+            if unavailable {
+                "Your system doesn't offer this yet"
+            } else {
+                "Less animation in Halcyon, most apps and web browsers"
+            },
             apps,
         )];
-        if let Some(Err(reason)) = editor.current() {
-            app_rows.push(label(reason.clone(), 11., WARN));
+        if editor.read_only().is_some() {
+            motion.push(label("Changes are off in this preview", 12., WARN));
         }
+        motion.push(self.link_row(
+            "Dock and panel slide speed",
+            "How fast they slide in when hidden",
+            Message::Page(Page::DesktopDock),
+            "accessibility-dock".into(),
+        ));
         column::with_children(vec![
-            split(
-                column::with_children(vec![
-                    split(heading("Accessibility", ""), mode),
-                ])
-                .spacing(4)
-                .into(),
-                button::text("Open COSMIC Settings ↗")
+            heading("Accessibility", "Calmer motion and easier reading."),
+            group(Some("Motion"), motion),
+            group(
+                Some("Reading"),
+                vec![
+                    self.link_row(
+                        "Easier-to-read widgets",
+                        "Stronger text contrast on widget cards",
+                        Message::SearchResult(crate::settings::navigation::WIDGET_READABILITY),
+                        "accessibility-readability".into(),
+                    ),
+                    self.link_row(
+                        "Fonts and icons",
+                        "Text and icons across your desktop",
+                        Message::Page(Page::DesktopAppearance),
+                        "accessibility-fonts".into(),
+                    ),
+                ],
+            ),
+            group(
+                None,
+                vec![
+                    button::custom(
+                        row::with_children(vec![
+                            detail(
+                                "More in COSMIC Settings",
+                                "Screen reader, zoom, high contrast and more",
+                            ),
+                            label("↗", 16., MUTED),
+                        ])
+                        .spacing(12)
+                        .align_y(Alignment::Center),
+                    )
+                    .class(nav_style(false, self.settings_accent()))
+                    .padding([4, 0])
+                    .width(Length::Fill)
                     .on_press(Message::OpenDesktop("accessibility"))
                     .into(),
+                ],
             ),
-            group(Some("Motion"), app_rows),
-            group(Some("Desktop motion"), vec![
-                label(
-                    "COSMIC’s window, workspace and launcher animations are built in; this version has no setting for them.",
-                    11.,
-                    MUTED,
-                ),
-                split(
-                    label("Dock and panel slide speed", 13., FG),
-                    button::text("Dock & panel ›")
-                        .on_press(Message::Page(Page::DesktopDock))
-                        .into(),
-                ),
-            ]),
-            group(Some("Readability"), vec![
-                group_row("Widget readability", "Contrast assistance and surface finishes",
-                    button::text("Improve readability")
-                        .id(cosmic::widget::Id::new("accessibility-readability"))
-                        .on_press(Message::SearchResult(crate::settings::navigation::WIDGET_READABILITY)).into()),
-                group_row("Fonts & icons", "Desktop text and icon themes",
-                    button::text("Fonts & icons")
-                        .on_press(Message::Page(Page::DesktopAppearance)).into()),
-                group_row("Settings interface", "Settings and edge-menu animation preferences",
-                    button::text("Interface")
-                        .on_press(Message::AppSettingsPage(AppSettingsPage::Interface)).into()),
-            ]),
         ])
         .spacing(16)
         .into()

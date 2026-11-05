@@ -224,6 +224,9 @@ pub struct ProfilePlan {
     pub blocking: Vec<String>,
     patch: DesktopPatch,
     widget: WidgetPatch,
+    /// A logical choice can explicitly constrain an already-equal companion
+    /// key (Light/Dark also means automatic switching is off).
+    explicit_native: BTreeMap<ConfigKey, Option<RawValue>>,
     /// Wallpaper pictures and folders checked again before Apply.
     assets: Vec<Asset>,
     /// The planned shared background, or the effective display background
@@ -231,7 +234,331 @@ pub struct ProfilePlan {
     background: Option<BgEntry>,
 }
 
+/// The values a review originally saw and chose. Kept separately from the
+/// freshly validated apply plan, including when that plan is rebuilt on restart.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct PreviewBaseline {
+    native: BTreeMap<ConfigKey, PreviewValue<RawValue>>,
+    widgets: BTreeMap<String, PreviewValue<serde_json::Value>>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct PreviewValue<T> {
+    original: Option<T>,
+    desired: Option<T>,
+    #[serde(default)]
+    explicit: bool,
+}
+
+/// A single conflicting value. IDs remain stable across refresh and navigation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PreviewConflict {
+    pub id: String,
+    pub domain: Domain,
+    pub label: String,
+    pub current: String,
+    pub preview: String,
+}
+
+impl PreviewBaseline {
+    pub(crate) fn conflicts_with(&self, current: &Self) -> bool {
+        fn changed<K: Ord, T: PartialEq>(
+            intent: &BTreeMap<K, PreviewValue<T>>,
+            current: &BTreeMap<K, PreviewValue<T>>,
+        ) -> bool {
+            intent.iter().any(|(key, intent)| {
+                (intent.explicit || intent.original != intent.desired)
+                    && current.get(key).is_some_and(|value| {
+                        value.original != intent.original && value.original != intent.desired
+                    })
+            })
+        }
+        changed(&self.native, &current.native) || changed(&self.widgets, &current.widgets)
+    }
+    /// Only changed choices become new intent. A refresh of the same choice
+    /// must not reintroduce a value previously resolved with Keep current.
+    pub(crate) fn edited(&mut self, previous: &Self, next: &Self) {
+        fn update<K: Ord + Clone, T: Clone + PartialEq>(
+            baseline: &mut BTreeMap<K, PreviewValue<T>>,
+            previous: &BTreeMap<K, PreviewValue<T>>,
+            next: &BTreeMap<K, PreviewValue<T>>,
+        ) {
+            let explicit_changed = next.iter().any(|(key, value)| {
+                value.explicit
+                    && previous
+                        .get(key)
+                        .is_none_or(|old| !old.explicit || old.desired != value.desired)
+            });
+            for (key, value) in next {
+                if !previous.contains_key(key) {
+                    // Explicitly adding/re-enabling this part starts its newly
+                    // included values from the desktop the person sees now.
+                    baseline.insert(key.clone(), value.clone());
+                    continue;
+                }
+                let changed = (explicit_changed && value.explicit)
+                    || previous.get(key).is_none_or(|old| {
+                        old.desired != value.desired
+                            && (old.original != old.desired || value.original != value.desired)
+                    });
+                if changed {
+                    if let Some(intent) = baseline.get_mut(key) {
+                        intent.desired = value.desired.clone();
+                        intent.explicit = value.explicit;
+                    } else {
+                        baseline.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+        }
+        update(&mut self.native, &previous.native, &next.native);
+        update(&mut self.widgets, &previous.widgets, &next.widgets);
+    }
+
+    pub(crate) fn resolve(&mut self, id: &str, current: &Self, keep_preview: bool) {
+        if let Some((key, value)) = current.native.iter().find(|(key, _)| native_id(key) == id) {
+            if let Some(intent) = self.native.get_mut(key) {
+                intent.original = value.original.clone();
+                if !keep_preview {
+                    intent.desired = value.original.clone();
+                    intent.explicit = false;
+                }
+            }
+        } else if let Some(pointer) = id.strip_prefix("widget:") {
+            if let (Some(intent), Some(value)) =
+                (self.widgets.get_mut(pointer), current.widgets.get(pointer))
+            {
+                intent.original = value.original.clone();
+                if !keep_preview {
+                    intent.desired = value.original.clone();
+                    intent.explicit = false;
+                }
+            }
+        }
+    }
+}
+
+fn native_id(key: &ConfigKey) -> String {
+    format!("native:{key}")
+}
+
+fn native_domain(key: &ConfigKey) -> Domain {
+    if key.namespace() == PanelKind::Dock.namespace()
+        || *key == crate::desktop::islands::key(PanelKind::Dock)
+    {
+        Domain::Dock
+    } else if key.namespace() == PanelKind::Panel.namespace()
+        || *key == crate::desktop::islands::key(PanelKind::Panel)
+    {
+        Domain::Panel
+    } else if key.namespace() == wallpaper::NAMESPACE {
+        Domain::Wallpaper
+    } else if key.namespace() == desktop_icons::NAMESPACE {
+        Domain::DesktopIcons
+    } else if Behavior::of(key).is_some() {
+        Domain::Windows
+    } else if *key == crate::desktop::workspaces::key() {
+        Domain::Workspaces
+    } else {
+        Domain::Appearance
+    }
+}
+
+fn native_label(key: &ConfigKey) -> String {
+    match native_domain(key) {
+        Domain::Dock | Domain::Panel => format!(
+            "{} {}",
+            native_domain(key).title(),
+            panels::key_label(key.key())
+        ),
+        Domain::Windows => windows::key_label(key).unwrap_or_else(|| key.key().into()),
+        Domain::Workspaces => {
+            crate::desktop::workspaces::key_label(key).unwrap_or_else(|| key.key().into())
+        }
+        Domain::Appearance => capitalize(&appearance::key_label(key)),
+        domain => format!("{}: {}", domain.title(), key.key()),
+    }
+}
+
+fn short_value(value: Option<String>) -> String {
+    let text = value.unwrap_or_else(|| "Default".into());
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut result: String = text.chars().filter(|c| !c.is_control()).take(96).collect();
+    if text.chars().count() > 96 {
+        result.push('…');
+    }
+    result
+}
+
 impl ProfilePlan {
+    pub(crate) fn explicit_native(
+        &mut self,
+        key: ConfigKey,
+        original: Option<RawValue>,
+        desired: Option<RawValue>,
+    ) {
+        self.patch.guard(key.clone(), original);
+        self.explicit_native.insert(key, desired);
+    }
+    pub(crate) fn preview_baseline(&self) -> PreviewBaseline {
+        PreviewBaseline {
+            native: self
+                .patch
+                .guards()
+                .map(|(key, original)| {
+                    (
+                        key.clone(),
+                        PreviewValue {
+                            original: original.clone(),
+                            desired: self
+                                .explicit_native
+                                .get(key)
+                                .cloned()
+                                .unwrap_or_else(|| original.clone()),
+                            explicit: self.explicit_native.contains_key(key),
+                        },
+                    )
+                })
+                .chain(self.patch.iter().map(|(key, value)| {
+                    (
+                        key.clone(),
+                        PreviewValue {
+                            original: value.original.clone(),
+                            desired: value.desired.clone(),
+                            explicit: self.explicit_native.contains_key(key),
+                        },
+                    )
+                }))
+                .collect(),
+            widgets: self
+                .widget
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        key.to_owned(),
+                        PreviewValue {
+                            original: value.original.clone(),
+                            desired: value.desired.clone(),
+                            explicit: false,
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    /// Reconcile every value independently. Newly differing, untouched values
+    /// follow the desktop. Guarded stores still catch races after this review.
+    pub(crate) fn retain_preview(&mut self, baseline: &PreviewBaseline) -> Vec<PreviewConflict> {
+        let mut conflicts = Vec::new();
+        let mut filtered = false;
+        let native = self
+            .patch
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect::<Vec<_>>();
+        for (key, value) in native {
+            let intent = baseline.native.get(&key);
+            if intent.is_none_or(|intent| !intent.explicit && intent.original == intent.desired) {
+                filtered = true;
+                self.patch.set(key, value.original.clone(), value.original);
+            } else if let Some(intent) = intent {
+                if value.original != intent.original && value.original != intent.desired {
+                    conflicts.push(PreviewConflict {
+                        id: native_id(&key),
+                        domain: native_domain(&key),
+                        label: native_label(&key),
+                        current: short_value(
+                            value.original.as_ref().map(|v| v.as_str().to_owned()),
+                        ),
+                        preview: short_value(value.desired.as_ref().map(|v| v.as_str().to_owned())),
+                    });
+                }
+            }
+        }
+        let widgets = self
+            .widget
+            .iter()
+            .map(|(k, v)| (k, v.clone()))
+            .collect::<Vec<_>>();
+        for (pointer, value) in widgets {
+            if value.original == value.desired {
+                continue;
+            }
+            let intent = baseline.widgets.get(pointer);
+            if intent.is_none_or(|intent| !intent.explicit && intent.original == intent.desired) {
+                filtered = true;
+                // The unchanged original has already passed the patch's bounds check.
+                let _ = self
+                    .widget
+                    .set(pointer, value.original.clone(), value.original);
+            } else if let Some(intent) = intent {
+                if value.original != intent.original && value.original != intent.desired {
+                    conflicts.push(PreviewConflict {
+                        id: format!("widget:{pointer}"),
+                        domain: match widget::field(pointer).map(|f| f.group) {
+                            Some(widget::WidgetGroup::Layout) => Domain::WidgetLayout,
+                            _ => Domain::WidgetStyle,
+                        },
+                        label: widget::label(pointer),
+                        current: short_value(value.original.as_ref().map(ToString::to_string)),
+                        preview: short_value(value.desired.as_ref().map(ToString::to_string)),
+                    });
+                }
+            }
+        }
+        if !filtered {
+            return conflicts;
+        }
+        // The review must describe the filtered writes, not a discarded part
+        // of the fresh profile plan.
+        for part in &mut self.domains {
+            part.changes.clear();
+        }
+        let changes = self
+            .patch
+            .keys()
+            .map(|key| (native_domain(key), native_label(key)))
+            .chain(self.widget.changes().map(|(pointer, _)| {
+                let domain = match widget::field(pointer).map(|f| f.group) {
+                    Some(widget::WidgetGroup::Layout) => Domain::WidgetLayout,
+                    _ => Domain::WidgetStyle,
+                };
+                (domain, widget::label(pointer))
+            }))
+            .collect::<Vec<_>>();
+        for (domain, label) in changes {
+            if let Some(part) = self.domains.iter_mut().find(|part| part.domain == domain) {
+                if !part.changes.contains(&label) {
+                    part.changes.push(label);
+                }
+            }
+        }
+        conflicts
+    }
+
+    pub(crate) fn add_native_patch(
+        &mut self,
+        extra: DesktopPatch,
+        label: &str,
+    ) -> Result<(), String> {
+        let changed = !extra.is_empty();
+        self.patch.merge(extra).map_err(|e| e.to_string())?;
+        if changed {
+            if let Some(part) = self
+                .domains
+                .iter_mut()
+                .find(|part| part.domain == Domain::Appearance)
+            {
+                part.changes.push(label.into());
+            } else {
+                let mut part = DomainPlan::new(Domain::Appearance);
+                part.changes.push(label.into());
+                self.domains.push(part);
+            }
+        }
+        Ok(())
+    }
     pub(crate) fn guard_widgets(&mut self, guards: WidgetPatch) -> Result<(), String> {
         self.widget.merge(guards).map_err(|fields| {
             format!(
@@ -280,6 +607,20 @@ impl ProfilePlan {
     /// Whether nothing would be written.
     pub fn is_empty(&self) -> bool {
         self.patch.is_empty() && self.widget.is_empty()
+    }
+    /// Adds more widget preferences to this plan's one change.
+    pub fn add_widget_patch(
+        &mut self,
+        extra: crate::desktop::store::WidgetPatch,
+    ) -> Result<(), String> {
+        self.widget
+            .merge(extra)
+            .map_err(|keys| format!("Overlapping setup choices: {}", keys.join(", ")))
+    }
+    /// Whether two plans would write exactly the same values over the same
+    /// starting values. Notes and warnings may still differ.
+    pub fn same_writes(&self, other: &Self) -> bool {
+        self.patch == other.patch && self.widget == other.widget
     }
     /// Every reason Apply is refused, domain reasons first.
     pub fn blocking_reasons(&self) -> Vec<String> {
@@ -356,6 +697,7 @@ pub fn plan(
         blocking: Vec::new(),
         patch: DesktopPatch::new(),
         widget: WidgetPatch::new(),
+        explicit_native: BTreeMap::new(),
         assets: Vec::new(),
         background: None,
     };
@@ -650,10 +992,9 @@ pub fn plan(
                         .materials
                         .effective(target)
                         .map(|finish| {
-                            RawValue::encode(&dock_islands_core::material::BarMaterial {
-                                version: 1,
+                            RawValue::encode(&dock_islands_core::material::BarMaterial::new(
                                 finish,
-                            })
+                            ))
                         })
                         .transpose()
                         .map_err(|e| e.to_string())?;
@@ -793,6 +1134,26 @@ fn plan_panel(
                 kind.title(),
                 panels::key_label(name)
             ));
+        }
+    }
+    if look.applets.is_none()
+        && kind == PanelKind::Panel
+        && !look.include_applets.is_empty()
+        && draft.anchor().known() == Some(&panels::Anchor::Top)
+        && let Setting::Known(mut regions) = draft.applets()
+    {
+        let mut added = false;
+        for id in &look.include_applets {
+            let present = [&regions.start, &regions.center, &regions.end]
+                .iter()
+                .any(|list| list.iter().any(|known| known == id));
+            if !present && installed.applets.known(id) {
+                regions.center.push((*id).to_owned());
+                added = true;
+            }
+        }
+        if added {
+            draft.set_applets(&regions);
         }
     }
     if let Some(applets) = &look.applets {

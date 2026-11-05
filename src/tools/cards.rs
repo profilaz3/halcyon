@@ -108,6 +108,10 @@ fn light<'a, M: 'a>(value: impl Into<String>, size: f32, color: Color) -> Elemen
         )))
         .into()
 }
+/// A card title, the same size and ink as the Weather and Projects titles.
+fn card_title<'a, M: 'a>(value: impl Into<String>, p: Palette) -> Element<'a, M> {
+    line(value, crate::widget_style::TITLE, p.foreground)
+}
 fn fill<'a, M: 'a>() -> Element<'a, M> {
     container(cosmic::iced::widget::space())
         .width(Length::Fill)
@@ -208,7 +212,7 @@ fn control<'a, M: Clone + 'a>(
     } else if primary {
         p.accent
     } else {
-        p.foreground
+        p.muted
     };
     let background = if primary && enabled {
         Color {
@@ -219,30 +223,44 @@ fn control<'a, M: Clone + 'a>(
         Color::TRANSPARENT
     };
     let pad = if primary { 8 } else { 6 };
-    press(
-        tinted(
-            icon::from_name(name).size(size).icon().into(),
-            background,
-            color,
-            [pad, pad],
-            40.,
-        ),
-        message,
-    )
+    let glyph = || -> Element<'a, M> { icon::from_name(name).size(size).icon().into() };
+    let content = if enabled && !primary {
+        // Muted at rest; the same glyph in the accent is drawn over it only
+        // while the pointer is on the control.
+        let ink = move |color: Color, glyph: Element<'a, M>| -> Element<'a, M> {
+            container(glyph)
+                .class(cosmic::theme::Container::custom(move |_| {
+                    cosmic::iced::widget::container::Style {
+                        icon_color: Some(color),
+                        ..Default::default()
+                    }
+                }))
+                .into()
+        };
+        cosmic::iced::widget::hover(ink(color, glyph()), ink(p.accent, glyph()))
+    } else {
+        glyph()
+    };
+    press(tinted(content, background, color, [pad, pad], 40.), message)
 }
 
-/// A text control with an optional leading icon.
-fn chip<'a, M: Clone + 'a>(
+/// A text control with an optional leading icon. A strong chip is the
+/// card's main action: filled with the accent, drawn in the card colour.
+pub(crate) fn chip<'a, M: Clone + 'a>(
     name: Option<&'static str>,
     title: impl Into<String>,
     message: Option<M>,
     p: Palette,
     strong: bool,
 ) -> Element<'a, M> {
+    let filled = strong && message.is_some();
     let color = if message.is_none() {
         Color { a: 0.45, ..p.muted }
-    } else if strong {
-        p.accent
+    } else if filled {
+        Color {
+            a: 1.,
+            ..crate::widget_style::on_accent(p)
+        }
     } else {
         p.muted
     };
@@ -257,9 +275,13 @@ fn chip<'a, M: Clone + 'a>(
                 .spacing(6)
                 .align_y(Alignment::Center)
                 .into(),
-            Color {
-                a: if strong { 0.16 } else { 0.07 },
-                ..p.accent
+            if filled {
+                p.accent
+            } else {
+                Color {
+                    a: if strong { 0.16 } else { 0.07 },
+                    ..p.accent
+                }
             },
             color,
             [5, 11],
@@ -298,35 +320,49 @@ fn track<'a, M: 'a>(progress: f32, color: Color, p: Palette) -> Element<'a, M> {
     row::with_children(cells).height(Length::Fixed(4.)).into()
 }
 
-/// A quiet centered message for empty and unavailable states.
-fn empty<'a, M: Clone + 'a>(
-    name: &'static str,
+/// The player's artwork row with nothing in it: a placeholder square and a
+/// muted title and reason. The card keeps its size, so nothing moves when a
+/// player appears.
+fn idle_player<'a, M: Clone + 'a>(
     title: &'static str,
-    detail: impl Into<String>,
+    detail: &'static str,
+    config: &Config,
     p: Palette,
 ) -> Element<'a, M> {
-    row::with_children(vec![
-        tinted(
-            icon::from_name(name).size(22).icon().into(),
-            Color {
-                a: 0.10,
-                ..p.accent
-            },
-            p.muted,
-            [13, 13],
-            14.,
-        ),
-        column::with_children(vec![
-            label(title, crate::widget_style::BODY, p.foreground),
-            label(detail, 11., p.muted),
-        ])
-        .spacing(3)
-        .width(Length::Fill)
-        .into(),
-    ])
-    .spacing(14)
-    .align_y(Alignment::Center)
-    .into()
+    let mut top: Vec<Element<'a, M>> = Vec::new();
+    if config.music.show_artwork {
+        top.push(
+            container(tinted(
+                icon::from_name("audio-x-generic-symbolic")
+                    .size(20)
+                    .icon()
+                    .into(),
+                Color {
+                    a: 0.12,
+                    ..p.accent
+                },
+                p.muted,
+                [12, 12],
+                9.,
+            ))
+            .width(44.)
+            .height(44.)
+            .into(),
+        );
+    }
+    top.push(
+        column::with_children(vec![line(title, 15., p.muted), line(detail, 11., p.muted)])
+            .spacing(3)
+            .width(Length::Fill)
+            .into(),
+    );
+    // No controls or track until there is something to control: the row
+    // sits in the middle of the card, which keeps its size.
+    row::with_children(top)
+        .spacing(10)
+        .height(44.)
+        .align_y(Alignment::Center)
+        .into()
 }
 
 /// Everything the Music card shows.
@@ -377,22 +413,17 @@ pub fn music_visualized<'a, M: Clone + 'static>(
         _ => 0,
     };
     let content: Element<'a, M> = match (view.feed, view.player) {
-        (None, _) => empty(
-            "multimedia-audio-player-symbolic",
-            "Music",
-            "Looking for players…",
-            p,
-        ),
-        (Some(music::Feed::Unavailable(_)), _) => empty(
-            "multimedia-audio-player-symbolic",
+        (None, _) => idle_player("Nothing playing", "Start a music app", config, p),
+        (Some(music::Feed::Unavailable(_)), _) => idle_player(
             "Media controls unavailable",
             "The desktop session bus isn’t reachable.",
+            config,
             p,
         ),
-        (Some(music::Feed::Players(_)), None) => empty(
-            "multimedia-audio-player-symbolic",
+        (Some(music::Feed::Players(_)), None) => idle_player(
             "Nothing playing",
-            "Start YouTube, Spotify or another browser tab.",
+            "Play something in any music app or browser tab.",
+            config,
             p,
         ),
         (Some(music::Feed::Players(_)), Some(player)) => {
@@ -558,9 +589,10 @@ pub fn music_visualized<'a, M: Clone + 'static>(
                         .id(cosmic::widget::Id::new("music-auto"))
                         .into()
                 } else {
-                    container(label("Auto", 10., p.muted))
-                        .padding([4, 2])
-                        .into()
+                    // Following whichever player is active is the normal
+                    // case and needs no tag; only a pinned player offers
+                    // the way back.
+                    cosmic::iced::widget::space().width(0).into()
                 },
             ])
             .spacing(5)
@@ -610,7 +642,7 @@ pub fn music_visualized<'a, M: Clone + 'static>(
                             .id(cosmic::widget::Id::new("music-progress"))
                             .width(Length::Fill)
                             .into(),
-                        label(time, 10., p.muted),
+                        label(time, 11., p.muted),
                     ])
                     .spacing(10)
                     .align_y(Alignment::Center)
@@ -691,7 +723,7 @@ pub fn notes<'a, M: Clone + 'a>(
         };
         let header = row::with_children(if view.paused {
             vec![
-                label("PAUSED", 10., p.accent),
+                card_title("Paused", p),
                 fill(),
                 chip(None, "Cancel", act(Action::NoteCancel), p, false),
                 chip(
@@ -704,7 +736,7 @@ pub fn notes<'a, M: Clone + 'a>(
             ]
         } else {
             vec![
-                label("EDITING", 10., p.accent),
+                card_title("Editing", p),
                 fill(),
                 chip(None, "Cancel", act(Action::NoteCancel), p, false),
                 chip(None, "Save", act(Action::NoteSave), p, true),
@@ -718,7 +750,7 @@ pub fn notes<'a, M: Clone + 'a>(
             } else {
                 "Esc or Ctrl+S saves"
             }),
-            10.,
+            crate::widget_style::SECONDARY,
             if view.problem.is_some() {
                 WARN
             } else {
@@ -756,11 +788,15 @@ pub fn notes<'a, M: Clone + 'a>(
             (done + usize::from(checked), total + 1)
         });
     let header = row::with_children(vec![
-        label("NOTES", 10., p.accent),
+        card_title("Notes", p),
         if total == 0 {
             container(cosmic::iced::widget::space()).width(0.).into()
         } else {
-            label(format!("{done}/{total}"), 10., p.muted)
+            label(
+                format!("{done} of {total} done"),
+                crate::widget_style::SECONDARY,
+                p.muted,
+            )
         },
         fill(),
         container(control(
@@ -840,7 +876,7 @@ pub fn notes<'a, M: Clone + 'a>(
                     if at.date_naive() == chrono::Local::now().date_naive() {
                         format!("Saved {}", at.format("%H:%M"))
                     } else {
-                        format!("Saved {}", at.format("%-d %b"))
+                        format!("Saved {}", at.format("%b %-d"))
                     }
                 });
         }
@@ -860,9 +896,13 @@ pub fn notes<'a, M: Clone + 'a>(
         .into(),
     ];
     if let Some(problem) = view.problem {
-        parts.push(label(problem.to_string(), 10., WARN));
+        parts.push(label(
+            problem.to_string(),
+            crate::widget_style::SECONDARY,
+            WARN,
+        ));
     } else if let Some(footer) = footer {
-        parts.push(label(footer, 9., p.muted));
+        parts.push(label(footer, crate::widget_style::SECONDARY, p.muted));
     }
     frame(
         column::with_children(parts)
@@ -929,37 +969,24 @@ pub fn focus<'a, M: Clone + 'static>(
     } else {
         mix(p.accent, p.muted, 0.55)
     };
-    let mut heading = session.phase.title().to_uppercase();
+    let mut heading = session.phase.title().to_string();
     if matches!(session.status, focus::Status::Paused { .. }) {
-        heading.push_str(" · PAUSED");
+        heading.push_str(" · Paused");
     }
-    let mut header: Vec<Element<'a, M>> = vec![
-        container(line(heading, 10., phase_color))
-            .width(Length::Fill)
-            .into(),
-    ];
-    if rounds > 0 {
-        header.push(label(format!("{rounds} today"), 10., p.muted));
-    }
+    let mut header: Vec<Element<'a, M>> =
+        vec![container(card_title(heading, p)).width(Length::Fill).into()];
     if every > 0 {
-        let full = rounds > 0
-            && rounds % every == 0
-            && (session.phase == focus::Phase::LongBreak
-                || matches!(session.status, focus::Status::Done)
-                    && session.phase == focus::Phase::Focus);
-        let filled = if full { every } else { rounds % every };
-        header.push(if every > 6 {
-            // A long cycle remains readable on the smallest card.
-            label(format!("{filled}/{every}"), 10., phase_color)
-        } else {
-            row::with_children(
-                (0..every)
-                    .map(|index| dot(index < filled, p))
-                    .collect::<Vec<_>>(),
-            )
-            .spacing(4)
-            .into()
-        });
+        header.push(label(
+            round_text(session, rounds, every),
+            crate::widget_style::SECONDARY,
+            p.muted,
+        ));
+    } else if rounds > 0 {
+        header.push(label(
+            format!("{rounds} today"),
+            crate::widget_style::SECONDARY,
+            p.muted,
+        ));
     }
     let remaining = session.remaining(now_ms, prefs);
     let next = session.next_phase(prefs, today);
@@ -985,7 +1012,7 @@ pub fn focus<'a, M: Clone + 'static>(
     };
     let mut middle = vec![time];
     if let Some(detail) = detail {
-        middle.push(label(detail, 11., p.muted));
+        middle.push(label(detail, crate::widget_style::SECONDARY, p.muted));
     }
     let primary = match session.status {
         focus::Status::Ready if session.phase == focus::Phase::Focus => {
@@ -1038,16 +1065,12 @@ pub fn focus<'a, M: Clone + 'static>(
         }
     } else {
         controls.push(fill());
-        controls.push(control(
-            "media-skip-forward-symbolic",
-            14,
-            act(Action::FocusSkip),
-            p,
-            false,
-        ));
-        controls.push(control(
-            "media-playback-stop-symbolic",
-            14,
+        // Skip and Stop change the session, so both say so in words. At the
+        // 280px minimum the row still fits the primary chip with its icon.
+        controls.push(chip(None, "Skip", act(Action::FocusSkip), p, false));
+        controls.push(chip(
+            None,
+            "Stop",
             (!(idle && session.phase == focus::Phase::Focus))
                 .then(|| act(Action::FocusReset))
                 .flatten(),
@@ -1071,12 +1094,31 @@ pub fn focus<'a, M: Clone + 'static>(
                 .align_y(Alignment::Center)
                 .into(),
         ])
-        .spacing(10)
+        // Tighter gaps keep the countdown clear of the title-sized header.
+        .spacing(8)
         .height(Length::Fill)
         .into(),
         config,
         height,
     )
+}
+
+/// "Round N of M": the round in progress, or the one just finished during
+/// its break, within the cycle that ends in a long break.
+fn round_text(session: &focus::Session, rounds: u32, every: u32) -> String {
+    let full = rounds > 0
+        && rounds % every == 0
+        && (session.phase == focus::Phase::LongBreak
+            || matches!(session.status, focus::Status::Done)
+                && session.phase == focus::Phase::Focus);
+    let finished = if full { every } else { rounds % every };
+    let current =
+        if session.phase == focus::Phase::Focus && !matches!(session.status, focus::Status::Done) {
+            finished + 1
+        } else {
+            finished.max(1)
+        };
+    format!("Round {} of {every}", current.min(every))
 }
 
 fn dot<'a, M: 'a>(on: bool, p: Palette) -> Element<'a, M> {

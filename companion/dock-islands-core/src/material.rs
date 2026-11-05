@@ -1,6 +1,10 @@
 //! Color-independent finishes. Separate namespace leaves version-1 layouts readable.
 use serde::{Deserialize, Serialize};
 pub const NAMESPACE: &str = "io.github.profilaz3.Halcyon.Materials";
+/// How see-through a widget surface may be.
+pub const MIN_OPACITY: u8 = 10;
+/// Dock and panel records keep the floor the installed panel accepts.
+pub const BAR_MIN_OPACITY: u8 = 45;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
@@ -60,11 +64,15 @@ impl Finish {
         }
     }
     pub fn opacity(self) -> u8 {
-        self.opacity.unwrap_or(self.kind.opacity()).clamp(45, 100)
+        self.opacity
+            .unwrap_or(self.kind.opacity())
+            .clamp(MIN_OPACITY, 100)
     }
     pub fn validate(self) -> Result<(), String> {
-        if self.opacity.is_some_and(|v| !(45..=100).contains(&v)) || self.tint > 100 {
-            Err("Material opacity must be 45–100 and tint 0–100".into())
+        if self.opacity.is_some_and(|v| !(MIN_OPACITY..=100).contains(&v)) || self.tint > 100 {
+            Err(format!(
+                "Material opacity must be {MIN_OPACITY} to 100 and tint 0 to 100"
+            ))
         } else {
             Ok(())
         }
@@ -87,9 +95,21 @@ pub struct BarMaterial {
     pub finish: Finish,
 }
 impl BarMaterial {
+    /// A bar record for a finish, raised to the floor bars accept.
+    pub fn new(mut finish: Finish) -> Self {
+        if finish.opacity() < BAR_MIN_OPACITY {
+            finish.opacity = Some(BAR_MIN_OPACITY);
+        }
+        Self { version: 1, finish }
+    }
     pub fn validate(self) -> Result<(), String> {
         if self.version != 1 {
             return Err("Unsupported material version".into());
+        }
+        if self.finish.opacity.is_some_and(|v| v < BAR_MIN_OPACITY) {
+            return Err(format!(
+                "Dock and panel opacity must be {BAR_MIN_OPACITY} to 100"
+            ));
         }
         self.finish.validate()
     }
@@ -113,8 +133,8 @@ mod tests {
             assert_eq!(&neutral[..3], &base[..3]);
             assert!(!alphas.contains(&neutral[3]));
             alphas.push(neutral[3]);
-            f.opacity = Some(45);
-            assert_eq!(f.color(base, accent)[3], 0.45);
+            f.opacity = Some(10);
+            assert_eq!(f.color(base, accent)[3], 0.10);
         }
     }
     #[test]
@@ -131,5 +151,19 @@ mod tests {
         record.finish.tint = 35;
         record.finish.opacity = Some(44);
         assert!(record.validate().is_err());
+        // Widgets may go further; bars keep the floor the panel accepts.
+        let mut clear = Finish::new(Kind::Clear);
+        clear.opacity = Some(MIN_OPACITY);
+        assert!(clear.validate().is_ok());
+        clear.opacity = Some(MIN_OPACITY - 1);
+        assert!(clear.validate().is_err());
+        clear.opacity = Some(20);
+        let bar = BarMaterial::new(clear);
+        assert_eq!(bar.finish.opacity, Some(BAR_MIN_OPACITY));
+        assert!(bar.validate().is_ok());
+        clear.opacity = Some(70);
+        assert_eq!(BarMaterial::new(clear).finish.opacity, Some(70));
+        // An unset opacity keeps following its kind.
+        assert_eq!(BarMaterial::new(Finish::new(Kind::Smoked)).finish.opacity, None);
     }
 }

@@ -35,7 +35,6 @@ fn message_scope(config: &Config, message: &Message) -> Vec<String> {
     let mut fields = Vec::new();
     let mut add = |parts: &[&str]| fields.push(pointer(parts));
     match message {
-        Message::Rain(super::rain::Edit::Commit | super::rain::Edit::Set(_)) => add(&["rain"]),
         Message::Moment(edit) => {
             if let Some(path) = super::moments::scope(edit) {
                 fields.push(path);
@@ -92,6 +91,7 @@ fn message_scope(config: &Config, message: &Message) -> Vec<String> {
         Message::ClockFormat(_) => add(&["clock", "format_24h"]),
         Message::ClockDate(_) => add(&["clock", "show_date"]),
         Message::WeatherDewPoint(_) => add(&["weather", "show_dew_point"]),
+        Message::WeatherFahrenheit(_) => add(&["weather", "fahrenheit"]),
         Message::ClockAlignment(_) => add(&["clock", "alignment"]),
         Message::ClockScale(_) => add(&["clock", "scale"]),
         Message::ClockVertical(_) => add(&["clock", "center_vertically"]),
@@ -113,6 +113,8 @@ fn message_scope(config: &Config, message: &Message) -> Vec<String> {
             add(&["project_roots"]);
         }
         Message::SidebarSlide(_) => add(&["sidebar_slide"]),
+        Message::ActivityPreference(key, _) => add(&["activity_island", key]),
+        Message::ActivityLead(_) => add(&["activity_island", "lead_minutes"]),
         Message::SettingsAnimations(_) => add(&["settings_animations"]),
         Message::MaterialMotion(_) => add(&["material_motion"]),
         Message::Tools(tools::Message::Player(_))
@@ -161,9 +163,6 @@ impl Settings {
             _ => false,
         };
         if flushes {
-            if self.rain.draft.is_some() {
-                fields.push("/rain".into());
-            }
             fields.extend(self.appearance_pending.iter().map(|control| {
                 pointer(&[
                     "appearance",

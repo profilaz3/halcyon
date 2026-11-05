@@ -61,7 +61,7 @@ impl Settings {
         let mut items: Vec<Element<'_, Message>> = Vec::new();
         if let Some(error) = editor.unavailable() {
             items.push(split(
-                heading("Floating apps", ""),
+                heading("Apps that don’t tile", ""),
                 store_pill(editor.store(), accent),
             ));
             items.push(banner(
@@ -73,31 +73,66 @@ impl Settings {
         }
         let Some(draft) = editor.draft() else {
             items.push(split(
-                heading("Floating apps", ""),
+                heading("Apps that don’t tile", ""),
                 store_pill(editor.store(), accent),
             ));
             items.push(label("Reading floating-app rules…", 12., MUTED));
             return column::with_children(items).spacing(14).into();
         };
         let rows = draft.rows();
-        let on = rows.iter().filter(|row| row.enabled).count();
         items.push(
             column::with_children(vec![
-                split(heading("Floating apps", ""), store_pill(editor.store(), accent)),
-                label(
-                    format!("{on} on · {} off", rows.len() - on),
-                    12.,
-                    MUTED,
+                // The main action sits top right, beside the title.
+                split(
+                    heading("Apps that don’t tile", ""),
+                    row::with_children(vec![
+                        store_pill(editor.store(), accent),
+                        button::standard("Add app")
+                            .leading_icon(icon::from_name("list-add-symbolic").size(14))
+                            .on_press_maybe(
+                                (editor.form.is_none() && draft.editable())
+                                    .then_some(edit(Edit::Add)),
+                            )
+                            .into(),
+                    ])
+                    .spacing(10)
+                    .align_y(Alignment::Center)
+                    .into(),
                 ),
                 label(
-                    "While automatic tiling is on, matching windows open floating. Windows already open keep their place.",
-                    11.,
+                    "When tiling is on, these apps still open as normal windows you can move and resize.",
+                    13.,
                     MUTED,
                 ),
             ])
             .spacing(4)
             .into(),
         );
+        // The rules only matter with tiling on; say so, with the way there.
+        if self
+            .windows
+            .draft()
+            .is_some_and(|windows| {
+                windows
+                    .flag(crate::desktop::windows::Behavior::Autotile)
+                    .known()
+                    == Some(&false)
+            })
+        {
+            items.push(group(
+                None,
+                vec![group_row(
+                    "Tiling is off",
+                    "These rules start working when windows tile",
+                    button::standard("Turn on tiling")
+                        .id(cosmic::widget::Id::new("window-rules-tiling"))
+                        .on_press(Message::Windows(
+                            crate::settings::windows::Message::Autotile(true),
+                        ))
+                        .into(),
+                )],
+            ));
+        }
         if let Some(banner) = recovery_banner(
             editor.recovery(),
             editor.writable(),
@@ -110,6 +145,7 @@ impl Settings {
             items.push(conflict_banner(
                 crate::settings::system_appearance::describe(draft.conflicts()),
                 edit(Edit::UseCurrent),
+                edit(Edit::KeepMine),
             ));
         }
         match draft.custom_state() {
@@ -146,23 +182,14 @@ impl Settings {
                 vec![button::text("Discard").on_press(edit(Edit::Discard)).into()],
             ));
         }
-        items.push(
-            row::with_children(vec![
-                text_input("Search apps and titles", editor.search.clone())
+        if !rows.is_empty() || !editor.search.is_empty() {
+            items.push(
+                text_input("Search", editor.search.clone())
                     .on_input(|text| edit(Edit::Search(text)))
                     .width(Length::Fill)
                     .into(),
-                button::standard("Add app")
-                    .leading_icon(icon::from_name("list-add-symbolic").size(14))
-                    .on_press_maybe(
-                        (editor.form.is_none() && draft.editable()).then_some(edit(Edit::Add)),
-                    )
-                    .into(),
-            ])
-            .spacing(10)
-            .align_y(Alignment::Center)
-            .into(),
-        );
+            );
+        }
         if let Some(form) = &editor.form {
             items.push(self.inspector_layout(
                 self.rule_list(&rows, accent),
@@ -345,18 +372,13 @@ impl Settings {
             items.push(self.rule_row(row, name, app.map(|app| app.icon.clone()), editable, accent));
         }
         if items.is_empty() {
-            items.push(label(
-                if rows.is_empty() {
-                    "No floating-app rules yet. Add an app to keep its windows floating."
-                        .to_string()
-                } else {
-                    format!("No rules match “{}”.", editor.search)
-                },
-                12.,
-                MUTED,
-            ));
+            items.push(if rows.is_empty() {
+                detail("No apps yet", "Use Add app to pick one.")
+            } else {
+                label(format!("No apps match “{}”.", editor.search), 12., MUTED)
+            });
         }
-        group(Some("Floating-app rules"), items)
+        group(None, items)
     }
 
     fn rule_row<'a>(

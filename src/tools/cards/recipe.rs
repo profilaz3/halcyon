@@ -276,12 +276,13 @@ pub(super) fn music<'a, M: Clone + 'static>(
             }
             _ => ("Nothing playing", "Start music in your player or browser."),
         };
-        let content = column::with_children(vec![
-            label("MUSIC", 11., p.accent),
-            label(title, 24., p.foreground),
-            label(detail, 13., p.muted),
-        ])
-        .spacing(10);
+        let mut lines = Vec::new();
+        if title != "Music" {
+            lines.push(label("Music", 11., p.accent));
+        }
+        lines.push(label(title, 24., p.foreground));
+        lines.push(label(detail, 13., p.muted));
+        let content = column::with_children(lines).spacing(10);
         return surface(
             container(content)
                 .height(Length::Fill)
@@ -337,11 +338,11 @@ pub(super) fn music<'a, M: Clone + 'static>(
                 let state = if view.problem {
                     "Control failed · try again"
                 } else if playing {
-                    "NOW PLAYING"
+                    "Now playing"
                 } else if player.status == music::Playback::Paused {
-                    "PAUSED"
+                    "Paused"
                 } else {
-                    "STOPPED"
+                    "Stopped"
                 };
                 let author = if player.artists.is_empty() {
                     player.album.clone()
@@ -465,9 +466,9 @@ pub(super) fn music<'a, M: Clone + 'static>(
                         .align_y(Alignment::Center)
                         .into(),
                     row::with_children(vec![
-                        label(at, 10., p.muted),
+                        label(at, 11., p.muted),
                         fill(),
-                        label(length, 10., p.muted),
+                        label(length, 11., p.muted),
                     ])
                     .into(),
                 ])
@@ -556,12 +557,12 @@ pub(super) fn focus<'a, M: Clone + 'static>(
     let done = matches!(session.status, focus::Status::Done);
     let phase = if done {
         if session.phase == focus::Phase::Focus {
-            "ROUND COMPLETE"
+            "Round complete"
         } else {
-            "BREAK COMPLETE"
+            "Break complete"
         }
     } else if matches!(session.status, focus::Status::Paused { .. }) {
-        "PAUSED"
+        "Paused"
     } else {
         session.phase.title()
     };
@@ -577,7 +578,7 @@ pub(super) fn focus<'a, M: Clone + 'static>(
             next.title().to_lowercase()
         )
     } else {
-        phase.to_uppercase()
+        phase.to_string()
     };
     let remaining_height: f32 = visible
         .iter()
@@ -597,9 +598,9 @@ pub(super) fn focus<'a, M: Clone + 'static>(
     let ring = recipe.timer_face == Some(TimerFace::Ring) && diameter >= 120.;
     let timer_width = if split { width * 0.5 - 8. } else { width };
     let heading = if matches!(session.status, focus::Status::Paused { .. }) {
-        format!("{} · PAUSED", session.phase.title().to_uppercase())
+        format!("{} · Paused", session.phase.title())
     } else {
-        phase.to_uppercase()
+        phase.to_string()
     };
     let timer = column::with_children(vec![
         centered(line(heading, 11., p.accent)),
@@ -760,48 +761,17 @@ pub fn sample(
 ) -> Element<'static, Action> {
     if recipe.kind == Kind::Music {
         let now = Instant::now();
-        let player = music::Player {
-            bus: "sample".into(),
-            key: "sample".into(),
-            owner: None,
-            seeked: false,
-            identity: "Sample player".into(),
-            status: if state == PreviewState::Paused {
-                music::Playback::Paused
-            } else {
-                music::Playback::Playing
-            },
-            title: "Golden Hour".into(),
-            artists: vec!["Aura".into()],
-            album: "Solstice".into(),
-            art_url: None,
-            media_url: None,
-            track_id: None,
-            can_seek: state != PreviewState::NoSeeking,
-            length_us: Some(236_000_000),
-            position_us: Some(102_000_000),
-            rate: 1.,
-            sampled: now,
-            can_play: true,
-            can_pause: true,
-            can_next: true,
-            can_previous: true,
-            can_control: true,
-            can_raise: false,
-        };
+        let mut player = sample_player(now);
+        if state == PreviewState::Paused {
+            player.status = music::Playback::Paused;
+        }
+        player.can_seek = state != PreviewState::NoSeeking;
         let feed = if state == PreviewState::Unavailable {
             music::Feed::Unavailable("Sample".into())
         } else {
             music::Feed::Players(vec![player.clone()])
         };
-        static ART: std::sync::OnceLock<Handle> = std::sync::OnceLock::new();
-        let art = ART.get_or_init(|| {
-            let image = music::thumbnail(include_bytes!(
-                "../../../assets/looks/evening-wallpaper.jpg"
-            ))
-            .expect("bundled sample image");
-            Handle::from_rgba(image.width, image.height, image.rgba)
-        });
+        let art = sample_art();
         music(
             MusicView {
                 feed: Some(&feed),
@@ -900,11 +870,11 @@ pub(super) fn circular<'a, M: Clone + 'static>(
                 if view.problem {
                     "Control failed"
                 } else if playing {
-                    "NOW PLAYING"
+                    "Now playing"
                 } else {
-                    "PAUSED"
+                    "Paused"
                 },
-                10.,
+                11.,
                 p.accent,
             )));
         }
@@ -1008,4 +978,45 @@ pub(super) fn circular<'a, M: Clone + 'static>(
         .align_y(Alignment::Center)
         .clip(true)
         .into()
+}
+
+/// An example song for previews when nothing is playing.
+pub fn sample_player(now: Instant) -> music::Player {
+    music::Player {
+        bus: "sample".into(),
+        key: "sample".into(),
+        owner: None,
+        seeked: false,
+        identity: "Music".into(),
+        status: music::Playback::Playing,
+        title: "Golden Hour".into(),
+        artists: vec!["Aura".into()],
+        album: "Solstice".into(),
+        art_url: None,
+        media_url: None,
+        track_id: None,
+        can_seek: true,
+        length_us: Some(236_000_000),
+        position_us: Some(102_000_000),
+        rate: 1.,
+        sampled: now,
+        can_play: true,
+        can_pause: true,
+        can_next: true,
+        can_previous: true,
+        can_control: true,
+        can_raise: false,
+    }
+}
+
+/// The bundled cover used by the example song.
+pub fn sample_art() -> &'static Handle {
+    static ART: std::sync::OnceLock<Handle> = std::sync::OnceLock::new();
+    ART.get_or_init(|| {
+        let image = music::thumbnail(include_bytes!(
+            "../../../assets/looks/evening-wallpaper.jpg"
+        ))
+        .expect("bundled sample image");
+        Handle::from_rgba(image.width, image.height, image.rgba)
+    })
 }

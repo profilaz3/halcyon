@@ -307,7 +307,7 @@ mod tests {
 }
 
 fn badge<'a>(value: String, color: Color, p: Palette) -> Element<'a, Message> {
-    container(label(value, 9., color))
+    container(label(value, 11., color))
         .padding([3, 6])
         .class(cosmic::theme::Container::custom(move |_| {
             cosmic::iced::widget::container::Style {
@@ -321,6 +321,48 @@ fn badge<'a>(value: String, color: Color, p: Palette) -> Element<'a, Message> {
         }))
         .into()
 }
+
+/// Refresh as a quiet round icon, like the Notes card's copy and edit controls.
+fn refresh_button<'a>(p: Palette) -> Element<'a, Message> {
+    mouse_area(
+        container(
+            cosmic::widget::icon::from_name("view-refresh-symbolic")
+                .size(14)
+                .icon(),
+        )
+        // 22px tall, so the header keeps its fixed 44px.
+        .padding(4)
+        .id(cosmic::widget::Id::new("projects-refresh"))
+        .class(cosmic::theme::Container::custom(move |_| {
+            cosmic::iced::widget::container::Style {
+                icon_color: Some(p.muted),
+                border: Border {
+                    radius: 40.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        })),
+    )
+    .on_press(Message::RefreshProjects)
+    .interaction(mouse::Interaction::Pointer)
+    .into()
+}
+
+/// A text link that starts on the card's text edge, unlike `action`'s
+/// padded label.
+fn text_action<'a>(
+    value: impl Into<String>,
+    message: Message,
+    color: Color,
+) -> Element<'a, Message> {
+    mouse_area(container(label(value, 12., color)).padding([2, 0]))
+        .on_press(message)
+        .interaction(mouse::Interaction::Pointer)
+        .into()
+}
+
+const UNSET_MESSAGE: &str = "Your Git projects show up here.";
 
 fn without_generated_suffix(value: &str) -> &str {
     value
@@ -603,19 +645,19 @@ fn checkout_row(project: &data::Project, p: Palette) -> Element<'static, Message
                         11.,
                         p.foreground,
                     ),
-                    label("↗", 10., p.muted),
+                    label("↗", 11., p.muted),
                 ),
                 spread(
                     label(
                         status,
-                        9.,
+                        11.,
                         if project.error || project.conflicts > 0 {
                             Color::from_rgb8(245, 145, 130)
                         } else {
                             p.muted
                         },
                     ),
-                    label(sync, 9., p.muted),
+                    label(sync, 11., p.muted),
                 ),
             ])
             .spacing(2)
@@ -685,10 +727,14 @@ impl Presentation<'_> {
             .as_ref()
             .map(|data| project_groups(&data.projects))
             .unwrap_or_default();
+        if self.projects.is_some() && groups.is_empty() {
+            // Title, message, gaps, the Choose folders chip and the frame,
+            // as drawn by `unset_view`.
+            let content = estimated_text_lines(UNSET_MESSAGE, 13., width - 42.) * 16.25;
+            return (36. + 23. + 8. + content + 8. + 25.).ceil();
+        }
         if groups.is_empty() {
-            let message = if self.projects.is_some() {
-                "No repositories yet."
-            } else if self.projects_error {
+            let message = if self.projects_error {
                 "Status unavailable · retrying"
             } else {
                 "Reading your projects…"
@@ -721,7 +767,7 @@ impl Presentation<'_> {
                 11.,
                 width - 72. - upstream_width,
             );
-            height += 84. + (title_lines - 1.) * 21. + (branch_lines - 1.) * 13.75;
+            height += 87. + (title_lines - 1.) * 21. + (branch_lines - 1.) * 13.75;
             if self.expanded_projects.contains(&group.id) {
                 // Expanded rows replace the selected branch's summary line.
                 height -= 5. + branch_lines * 13.75;
@@ -729,7 +775,7 @@ impl Presentation<'_> {
                     .checkouts
                     .iter()
                     .map(|project| {
-                        35. + 7.
+                        37.5 + 7.
                             + (estimated_text_lines(
                                 &format!("↳ {}", short(&branch_label(&project.branch), 32)),
                                 11.,
@@ -741,28 +787,67 @@ impl Presentation<'_> {
             }
             height += ports.len().div_ceil(3) as f32 * 26.;
             if group.other_ports() > 0 {
-                height += 18.25;
+                height += 20.75;
             }
             if group.unavailable() > 0 && group.unavailable() < group.checkouts.len() {
-                height += 18.25;
+                height += 20.75;
             }
         }
         height.ceil().min(300.)
     }
 
+    /// No folders chosen yet: a title, one line of guidance and the way to
+    /// choose them. Nothing to refresh, and no room kept for a summary.
+    fn unset_view(&self, limit: f32, explicit: bool) -> Element<'static, Message> {
+        let p = self.config.palette();
+        card_frame(
+            column::with_children(vec![
+                container(label("Projects", crate::widget_style::TITLE, p.foreground))
+                    .height(Length::Fixed(23.))
+                    .align_y(Alignment::Center)
+                    .into(),
+                label(UNSET_MESSAGE, 13., p.muted),
+                crate::tools::cards::chip(
+                    None,
+                    "Choose folders",
+                    Some(Message::ProjectSettings),
+                    p,
+                    true,
+                ),
+            ])
+            .spacing(8)
+            .width(Length::Fill)
+            .into(),
+            p,
+            self.config.appearance,
+            if explicit {
+                Length::Fixed(limit)
+            } else {
+                Length::Shrink
+            },
+        )
+    }
+
     pub(super) fn view(&self, limit: f32, explicit: bool) -> Element<'static, Message> {
         let _style = crate::widget_style::scope(self.config);
+        if self
+            .projects
+            .as_ref()
+            .is_some_and(|data| project_groups(&data.projects).is_empty())
+        {
+            return self.unset_view(limit, explicit);
+        }
         let p = self.config.palette();
         let mut header = vec![spread(
             label("Projects", crate::widget_style::TITLE, p.foreground),
             if self.projects_fetching {
-                label("Syncing…", 10., p.muted)
+                label("Syncing…", crate::widget_style::SECONDARY, p.muted)
             } else {
-                action("Refresh", Message::RefreshProjects, p.muted)
+                refresh_button(p)
             },
         )];
         let mut entries = Vec::new();
-        let mut footer = label("Local project status", 9., p.muted);
+        let mut footer = label("Local project status", 11., p.muted);
         if let Some(data) = &self.projects {
             let groups = project_groups(&data.projects);
             let servers = groups
@@ -770,33 +855,34 @@ impl Presentation<'_> {
                 .flat_map(ProjectGroup::web_ports)
                 .collect::<BTreeSet<_>>()
                 .len();
-            header.push(spread(
-                label(
-                    format!(
-                        "{} {}",
-                        groups.len(),
-                        if groups.len() == 1 {
-                            "project"
-                        } else {
-                            "projects"
-                        }
-                    ),
-                    10.,
-                    p.muted,
+            let summary = label(
+                format!(
+                    "{} {}",
+                    groups.len(),
+                    if groups.len() == 1 {
+                        "project"
+                    } else {
+                        "projects"
+                    }
                 ),
-                label(
-                    if servers > 0 {
+                crate::widget_style::SECONDARY,
+                p.muted,
+            );
+            header.push(if servers > 0 {
+                spread(
+                    summary,
+                    label(
                         format!(
                             "● {servers} dev {}",
                             if servers == 1 { "server" } else { "servers" }
-                        )
-                    } else {
-                        "Local workspace".into()
-                    },
-                    10.,
-                    if servers > 0 { p.accent } else { p.muted },
-                ),
-            ));
+                        ),
+                        crate::widget_style::SECONDARY,
+                        p.accent,
+                    ),
+                )
+            } else {
+                summary
+            });
             let count = if self.all_projects { groups.len() } else { 3 };
             for group in groups.iter().take(count) {
                 let project = group.selected;
@@ -825,7 +911,7 @@ impl Presentation<'_> {
                         name,
                         label(
                             if live { "● Live" } else { "↗" },
-                            10.,
+                            11.,
                             if live { p.accent } else { p.muted },
                         ),
                     ),
@@ -845,7 +931,7 @@ impl Presentation<'_> {
                             } else {
                                 String::new()
                             },
-                            10.,
+                            11.,
                             p.muted,
                         ),
                     ),
@@ -870,7 +956,7 @@ impl Presentation<'_> {
                     mouse_area(
                         container(label(
                             format!("{count} {noun} {}", if expanded { "↑" } else { "↓" }),
-                            10.,
+                            11.,
                             p.accent,
                         ))
                         .padding([2, 4])
@@ -883,7 +969,7 @@ impl Presentation<'_> {
                     .interaction(mouse::Interaction::Pointer)
                     .into()
                 } else {
-                    label("", 9., p.muted)
+                    label("", 11., p.muted)
                 };
                 // The disclosure is a sibling of the folder link: expanding a
                 // repository must never open a checkout as a side effect.
@@ -916,7 +1002,7 @@ impl Presentation<'_> {
                             "{other} other listening {}",
                             if other == 1 { "port" } else { "ports" }
                         ),
-                        9.,
+                        11.,
                         p.muted,
                     ));
                 }
@@ -931,7 +1017,7 @@ impl Presentation<'_> {
                                 "branches"
                             }
                         ),
-                        9.,
+                        11.,
                         color,
                     ));
                 }
@@ -960,12 +1046,9 @@ impl Presentation<'_> {
                         .into(),
                 );
             }
-            if entries.is_empty() {
-                entries.push(label("No repositories yet.", 13., p.muted));
-            }
             footer = spread(
                 if groups.len() > 3 {
-                    action(
+                    text_action(
                         if self.all_projects {
                             "Show fewer ↑".into()
                         } else {
@@ -977,11 +1060,14 @@ impl Presentation<'_> {
                 } else {
                     label("", crate::widget_style::META, p.muted)
                 },
-                timestamp(
-                    Some(&data.updated_at),
-                    self.projects_error,
-                    "Local project status",
-                    p,
+                label(
+                    timestamp_text(Some(&data.updated_at), self.projects_error, Local::now()),
+                    11.,
+                    if self.projects_error {
+                        Color::from_rgb8(233, 192, 124)
+                    } else {
+                        p.muted
+                    },
                 ),
             );
         } else {
@@ -994,13 +1080,6 @@ impl Presentation<'_> {
                 13.,
                 p.muted,
             ));
-        }
-        if self
-            .projects
-            .as_ref()
-            .is_some_and(|data| data.projects.is_empty())
-        {
-            footer = action("Choose folders", Message::ProjectSettings, p.accent);
         }
         let header = container(column::with_children(header).spacing(5)).height(Length::Fixed(44.));
         let entries = column::with_children(entries)

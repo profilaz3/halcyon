@@ -44,6 +44,9 @@ fn solar_city_picker_keeps_weather_and_stale_searches_separate() {
         Message::ScheduleCities(current, Ok(vec![city.clone()])),
     );
     send_settings(&mut app, Message::ChooseScheduleCity(0));
+    // Weather adopts the schedule city only when it has none of its own;
+    // an existing weather city is never replaced.
+    let weather = weather.or_else(|| Some(city.location()));
     assert_eq!(app.config.location, weather);
     assert_eq!(
         app.automation.settings().unwrap().manual_city,

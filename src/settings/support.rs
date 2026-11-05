@@ -1,5 +1,5 @@
 //! Read-only local observations. Reports are an allowlisted projection, never config dumps.
-use super::{AppSettingsPage, Message as AppMessage, Settings, Task};
+use super::{AppSettingsPage, Message as AppMessage, Page, Settings, Task};
 use crate::desktop::islands::{CompatibilityStatus, Installation};
 use crate::desktop::store::activity::RecentChanges;
 
@@ -133,14 +133,14 @@ impl Settings {
         let (state, health) = if !self.service_known {
             ("Not checked", Unknown)
         } else if self.service.running {
-            ("Running", Healthy)
+            ("On", Healthy)
         } else if self.service.startup {
-            ("Stopped; startup is enabled", Attention)
+            ("Off, but set to start at sign-in", Attention)
         } else {
-            ("Stopped", Neutral)
+            ("Off", Neutral)
         };
         components.push(Component {
-            name: "Widget background service",
+            name: "Running in the background",
             state,
             health,
             action: Background,
@@ -160,11 +160,11 @@ impl Settings {
             Installation::Installed {
                 status: Some(CompatibilityStatus::Checking),
                 ..
-            } => ("Checking compatibility", Unknown),
-            Installation::Installed { .. } => ("Enabled; review compatibility", Attention),
+            } => ("Checking…", Unknown),
+            Installation::Installed { .. } => ("On, but may not suit this COSMIC version", Attention),
         };
         components.push(Component {
-            name: "Islands",
+            name: "Panel islands",
             state,
             health,
             action: Islands,
@@ -175,7 +175,7 @@ impl Settings {
             } else if self.calendar.connection.connected()
                 || !self.calendar.connection.subscriptions.is_empty()
             {
-                ("Configured; connectivity not checked", Neutral)
+                ("Connected", Neutral)
             } else {
                 ("No calendar connected", Neutral)
             };
@@ -195,9 +195,9 @@ impl Settings {
             .as_ref()
             .is_some_and(|i| i.can_check())
         {
-            ("System updates enabled", Healthy)
+            ("Your system keeps it up to date", Healthy)
         } else {
-            ("Review installation", Neutral)
+            ("Comes from your system", Neutral)
         };
         components.push(Component {
             name: "Updates",
@@ -208,25 +208,25 @@ impl Settings {
         let (state, health) =
             match self.support.local.automation_enabled {
                 None => ("Not checked", Unknown),
-                Some(false) => ("Automatic switching off", Neutral),
+                Some(false) => ("Off", Neutral),
                 Some(true) => {
                     if self.support.local.paused {
-                        ("Automatic switching paused", Neutral)
+                        ("Paused", Neutral)
                     } else if self.support.local.skipping {
-                        ("Skipping the next scheduled switch", Neutral)
+                        ("Skipping the next switch", Neutral)
                     } else if self.support.local.automation.pending.is_some() {
-                        ("Waiting for pending edits", Attention)
+                        ("Waiting for unsaved changes", Attention)
                     } else if self.support.local.automation.last().is_some_and(|o| {
                         matches!(o.effect, crate::automation::Effect::Failed { .. })
                     }) {
                         ("Last switch failed", Attention)
                     } else {
-                        ("Automatic switching configured", Neutral)
+                        ("On", Neutral)
                     }
                 }
             };
         components.push(Component {
-            name: "Schedules & display rules",
+            name: "Schedules",
             state,
             health,
             action: Automation,
@@ -246,11 +246,11 @@ impl Settings {
             })
             .collect::<Vec<_>>();
         components.push(Component {
-            name: "Display layout",
+            name: "Displays",
             state: if displays.is_empty() {
-                "Not observed"
+                "None found"
             } else {
-                "Connected displays observed"
+                "Connected"
             },
             health: if displays.is_empty() {
                 Unknown
@@ -262,7 +262,7 @@ impl Settings {
         if self.support.local.problem {
             components.push(Component {
                 name: "Recent changes",
-                state: "Local history unavailable",
+                state: "History can't be read",
                 health: Attention,
                 action: Recovery,
             });
@@ -351,17 +351,26 @@ impl Settings {
                 self.support.observed = Some(chrono::Local::now());
             }
             Message::Recent(open) => {
-                self.support.recent_open = open;
+                if open
+                    && !self.support.recent_open
+                    && self.page == Page::General
+                    && self.app_settings_page == AppSettingsPage::Restore
+                {
+                    self.remember_route();
+                }
                 self.support.expanded = None;
                 let nav = self.handle(AppMessage::AppSettingsPage(AppSettingsPage::Restore));
+                self.support.recent_open = open;
                 if open {
-                    self.support.recent_open = true;
                     return Task::batch([nav, self.load_support()]);
                 }
                 return nav;
             }
             Message::Details(id) => self.support.expanded = id,
             Message::Preview(open) => {
+                if open && self.support.report.is_none() {
+                    self.remember_route();
+                }
                 self.support.report = open.then(|| self.help_snapshot().report());
                 self.support.notice = None;
             }

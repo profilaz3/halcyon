@@ -78,20 +78,6 @@ pub(super) fn look_image(id: &str, wallpaper: bool) -> Option<cosmic::widget::im
 fn bundled_handle(name: &str) -> Option<cosmic::widget::image::Handle> {
     images::bundled(name)
 }
-fn swatch<'a>(color: Color) -> Element<'a, Message> {
-    container(cosmic::iced::widget::space().width(12).height(12))
-        .class(cosmic::theme::Container::custom(move |_| {
-            cosmic::iced::widget::container::Style {
-                background: Some(Background::Color(color)),
-                border: Border {
-                    radius: 6.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
-        }))
-        .into()
-}
 
 /// Pure preset projection for the chooser. Sparse records retain unmentioned settings.
 fn preset_config(config: &Config, preset: &Preset) -> Config {
@@ -334,12 +320,19 @@ pub(in crate::settings) fn card_at<'a>(
     let radius = (f32::from(style.corner_radius) * scale)
         .max(0.)
         .min((size[1] / 3.).max(0.));
+    // The same example events as the Calendar page, at the same times.
+    let soon = now.unwrap_or_else(chrono::Local::now);
+    let at = |minutes: i64| (soon + chrono::Duration::minutes(minutes)).format("%H:%M").to_string();
+    let first_event = format!("{}  Design review", at(9));
+    let second_event = format!("{}  Project planning", at(80));
+    let temperature = format!("{:.0}°", config.weather.degrees(21.).round());
+    let temperature_line = format!("{temperature} · Partly cloudy");
     let (title, detail) = match widget {
-        Widget::Clock => ("09:41", "Monday, 19 October"),
+        Widget::Clock => ("09:41", "Monday, October 19"),
         Widget::Glance if config.glance.show_clock => (
             "09:41",
             if config.glance.show_weather {
-                "21° · Partly cloudy"
+                temperature_line.as_str()
             } else if config.glance.show_calendar {
                 "10:00 Design review"
             } else if config.clock.show_date {
@@ -348,11 +341,11 @@ pub(in crate::settings) fn card_at<'a>(
                 ""
             },
         ),
-        Widget::Glance if config.glance.show_weather => ("21°", "Partly cloudy"),
+        Widget::Glance if config.glance.show_weather => (temperature.as_str(), "Partly cloudy"),
         Widget::Glance => ("Today", "10:00 Design review"),
-        Widget::Weather => ("21°", "Partly cloudy"),
-        Widget::Calendar => ("Today", "10:00  Design review"),
-        Widget::Devbox => ("CPU 26%", "RAM 8.2 / 32 GiB"),
+        Widget::Weather => (temperature.as_str(), "Partly cloudy"),
+        Widget::Calendar => ("Today", first_event.as_str()),
+        Widget::Devbox => ("CPU 26%", "Memory 8.2 / 32 GB"),
         Widget::Projects => ("Atlas", "main · 2 changes"),
         Widget::Music => ("Now playing", "Artist · Album"),
         Widget::Focus => ("25:00", "Focus"),
@@ -378,7 +371,7 @@ pub(in crate::settings) fn card_at<'a>(
     let mut used = main_size * 1.25;
     let available = (size[1] - pad * 2.).max(0.);
     let mut content = vec![
-        text::body(title)
+        text::body(title.to_string())
             .size(main_size)
             .line_height(1.25)
             .font(font)
@@ -386,16 +379,16 @@ pub(in crate::settings) fn card_at<'a>(
             .into(),
     ];
     if available >= used + gap + secondary_size * 1.25 {
-        content.push(line(detail, secondary_size, palette.muted));
+        content.push(line(detail.to_string(), secondary_size, palette.muted));
         used += gap + secondary_size * 1.25;
     }
     // The large scene should read like a desktop, not a collection of empty
     // blocks. Keep illustrative content bounded and omit it from small tiles.
     if size[0] >= 130. && size[1] >= 110. {
         let extra: &[&str] = match widget {
-            Widget::Calendar => &["14:30  Project planning", "16:00  Focus time"],
+            Widget::Calendar => &[],
             Widget::Devbox => &[
-                "Disk       166 / 512 GiB",
+                "Disk       166 / 512 GB",
                 "Network    2.4 MB/s",
                 "Uptime     3h 21m",
             ],
@@ -403,13 +396,19 @@ pub(in crate::settings) fn card_at<'a>(
             Widget::Notes => &["[ ] Review the details", "[ ] Make something good"],
             _ => &[],
         };
-        let separator = (12. * scale).max(3.);
+        let extra: Vec<String> = if widget == Widget::Calendar {
+            vec![second_event.clone(), "Tomorrow  Team check-in".into()]
+        } else {
+            extra.iter().map(|line| (*line).to_string()).collect()
+        };
+        // Calendar lines are one list, so no break after the first.
+        let separator = if widget == Widget::Calendar { 0. } else { (12. * scale).max(3.) };
         let room = (available - used - gap - separator).max(0.);
         let count = (room / (gap + secondary_size * 1.25)).floor() as usize;
         if count > 0 && !extra.is_empty() {
             content.push(cosmic::widget::space().height(separator).into());
-            for value in extra.iter().take(count) {
-                content.push(line(*value, secondary_size, palette.muted));
+            for value in extra.into_iter().take(count) {
+                content.push(line(value, secondary_size, palette.muted));
             }
         }
     }
@@ -602,7 +601,8 @@ impl Settings {
     /// padding, scrollbar allowance and gaps: four styles on Colors & theme,
     /// two spacious desktop compositions on Setups.
     fn tile_width(&self) -> f32 {
-        let available = self.content_width() - 14.;
+        // Rows are two pixels narrower than the content area.
+        let available = self.content_width() - 2.;
         let minimum = if self.page == Page::Themes {
             168.
         } else {
@@ -631,7 +631,7 @@ impl Settings {
         )
     }
 
-    fn profile_scene(
+    pub(super) fn profile_scene(
         &self,
         preview: crate::settings::profiles::Preview,
         height: f32,
@@ -656,7 +656,7 @@ impl Settings {
         }
         let accent = config.palette().accent;
         let mut bars = preview.bars.clone();
-        if self.page == Page::DesktopProfiles {
+        if matches!(self.page, Page::DesktopProfiles | Page::Overview) {
             bars.retain(|bar| {
                 bar.autohide().known() != Some(&crate::desktop::panels::AutoHide::Always)
             });
@@ -678,7 +678,7 @@ impl Settings {
         let screen_size = layout.screen;
         // An active COSMIC window shows the planned window colors and its
         // outline, which a theme now coordinates too.
-        let show_window = self.page != Page::DesktopProfiles;
+        let show_window = !matches!(self.page, Page::DesktopProfiles | Page::Overview);
         let mut objects: Vec<Element<'_, Message>> = Vec::new();
         if interactive {
             objects.push(
@@ -868,7 +868,11 @@ impl Settings {
         })
         .width(Length::Fill)
         .height(height);
-        if interactive {
+        if interactive && matches!(self.page, Page::Overview | Page::Themes) {
+            // The list beside the picture names every object on the landing;
+            // Appearance edits by clicking the preview itself.
+            scene.into()
+        } else if interactive {
             let mut content = vec![scene.into()];
             content.push(
                 button::text(if self.scene_objects_open {
@@ -890,10 +894,6 @@ impl Settings {
         }
     }
 
-    /// A starter look's or style's accent, as its tile shows it.
-    pub(super) fn preset_color(&self, preset: &Preset) -> Color {
-        self.tile_config(preset).palette().accent
-    }
     fn tile_config(&self, preset: &Preset) -> Config {
         let mut config = preset_config(&self.config, preset);
         // A catalogue specimen describes the recipe even when the live desktop is hidden.
@@ -985,15 +985,25 @@ impl Settings {
                         .height(screen[1])
                         .into()
                 }
-                None => fill(
-                    cosmic::iced::widget::space().into(),
-                    Color::from_rgb(0.12, 0.13, 0.15),
-                    Color::TRANSPARENT,
-                    0.,
-                    6.,
-                )
-                .width(screen[0])
-                .height(screen[1])
+                // No picture: the same soft wash the desktop previews use.
+                None => container(cosmic::iced::widget::space())
+                    .class(cosmic::theme::Container::custom(|_| {
+                        cosmic::iced::widget::container::Style {
+                            background: Some(Background::Gradient(
+                                cosmic::iced::gradient::Linear::new(2.4)
+                                    .add_stop(0., Color::from_rgb(0.20, 0.23, 0.29))
+                                    .add_stop(1., Color::from_rgb(0.08, 0.09, 0.12))
+                                    .into(),
+                            )),
+                            border: Border {
+                                radius: 6.into(),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        }
+                    }))
+                    .width(screen[0])
+                    .height(screen[1])
                 .into(),
             };
             let mut layers = vec![background];
@@ -1022,7 +1032,10 @@ impl Settings {
                     );
                     layers.push(
                         container(stack(rendered).width(screen[0]).height(screen[1]))
-                            .id(cosmic::widget::Id::new("starter-islands-panel"))
+                            .id(cosmic::widget::Id::new(format!(
+                                "starter-islands-panel-{}",
+                                preset.id
+                            )))
                             .into(),
                     );
                 } else {
@@ -1038,7 +1051,10 @@ impl Settings {
                             .width(screen[0])
                             .height(bar_height),
                         )
-                        .id(cosmic::widget::Id::new("starter-standard-panel")))
+                        .id(cosmic::widget::Id::new(format!(
+                            "starter-standard-panel-{}",
+                            preset.id
+                        ))))
                         .position(Point::ORIGIN)
                         .into(),
                     );
@@ -1095,7 +1111,6 @@ impl Settings {
 
     pub(super) fn preset_tile<'a>(&'a self, preset: &'a Preset) -> Element<'a, Message> {
         let selected = *self.profiles.selection() == Selection::Preset(preset.id);
-        let color = self.preset_color(preset);
         let thumbnail = self.preset_thumbnail(
             preset,
             if self.page == Page::Themes {
@@ -1115,7 +1130,6 @@ impl Settings {
                 .width(Length::Fill)
                 .into(),
                 label(if selected { "✓" } else { "" }, 12., self.settings_accent()),
-                swatch(color),
             ])
             .spacing(6)
             .align_y(Alignment::Center)
@@ -1127,21 +1141,8 @@ impl Settings {
                 13.,
                 MUTED,
             ));
-            parts.push(label(self.setup_tools(preset), 12., MUTED));
-            parts.push(
-                row::with_children(vec![
-                    container(cosmic::widget::space())
-                        .width(Length::Fill)
-                        .into(),
-                    label("Explore setup", 12., self.settings_accent()),
-                    icon::from_name("go-next-symbolic").size(14).into(),
-                ])
-                .spacing(6)
-                .align_y(Alignment::Center)
-                .into(),
-            );
         }
-        button::custom(column::with_children(parts).spacing(10))
+        button::custom(column::with_children(parts).spacing(8))
             .id(cosmic::widget::Id::new(format!("preset-{}", preset.id)))
             .class(tile_style(selected, self.settings_accent()))
             .selected(selected)
@@ -1149,18 +1150,6 @@ impl Settings {
             .width(self.tile_width())
             .on_press(edit(Edit::Select(Selection::Preset(preset.id))))
             .into()
-    }
-
-    /// Describes the fitted composition, including unavailable Projects.
-    fn setup_tools(&self, preset: &Preset) -> String {
-        let mut config = self.tile_config(preset);
-        config.widgets_visible = true;
-        Widget::ALL
-            .into_iter()
-            .filter(|w| config.widget_visible(*w))
-            .map(|w| w.title())
-            .collect::<Vec<_>>()
-            .join(" · ")
     }
 
     pub(super) fn name_field(&self, save: &'static str) -> Element<'_, Message> {
@@ -1175,7 +1164,7 @@ impl Settings {
                 if self.page == Page::Themes {
                     "Theme name"
                 } else {
-                    "Setup name"
+                    "Look name"
                 },
                 text,
             )
@@ -1211,7 +1200,7 @@ impl Settings {
                 if self.page == Page::Themes {
                     "Your themes"
                 } else {
-                    "Your setups"
+                    "Your looks"
                 },
                 15.,
                 FG,
@@ -1230,7 +1219,7 @@ impl Settings {
                 button::text(if self.page == Page::Themes {
                     "Save theme…"
                 } else {
-                    "Save setup…"
+                    "Save look…"
                 })
                 .leading_icon(icon::from_name("list-add-symbolic").size(14))
                 .on_press_maybe(writable.then_some(edit(Edit::Name(Some(
@@ -1247,7 +1236,7 @@ impl Settings {
         )];
         if empty_setup {
             items.clear();
-            items.push(label("Your setups", 15., FG));
+            items.push(label("Your looks", 15., FG));
         }
         if editor.name.as_ref().is_some_and(|name| {
             matches!(name.action, NameAction::Capture | NameAction::CaptureTheme)
@@ -1256,7 +1245,7 @@ impl Settings {
         }
         match editor.library() {
             Err(error) => items.push(banner(
-                format!("Saved setups can’t be read. {error}"),
+                format!("Saved looks can’t be read. {error}"),
                 ERROR,
                 Vec::new(),
             )),
@@ -1279,9 +1268,9 @@ impl Settings {
                             container(
                                 column::with_children(vec![
                                     label("Save your current desktop", 20., FG),
-                                    label("Keep a setup you can apply again.", 14., MUTED),
+                                    label("Keep a look you can use again.", 14., MUTED),
                                     row::with_children(vec![
-                                        button::suggested("Save setup…")
+                                        button::suggested("Save look…")
                                             .id(cosmic::widget::Id::new("setup-save-current"))
                                             .on_press_maybe((writable && !editor.busy()).then_some(
                                                 edit(Edit::Name(Some(NameAction::Capture))),
@@ -1330,7 +1319,7 @@ impl Settings {
                     let selected = *editor.selection() == Selection::Saved(entry.id.clone());
                     let (name, tone) = match &entry.profile {
                         Ok(profile) => (profile.name.clone(), if selected { FG } else { MUTED }),
-                        Err(_) => ("Unreadable setup".to_string(), WARN),
+                        Err(_) => ("Look that can’t be read".to_string(), WARN),
                     };
                     let mut parts = vec![
                         container(
@@ -1385,7 +1374,11 @@ impl Settings {
     fn selection_scene(&self) -> Element<'_, Message> {
         let editor = &self.profiles;
         let accent = self.settings_accent();
-        let height = self.stage_height();
+        // Leave room for navigation, the setup title, comparison controls,
+        // caption and fixed actions in the minimum-height native window.
+        let height = self
+            .stage_height()
+            .min((self.window.height - 390.).max(160.));
         let mut content = Vec::new();
         let choices = row::with_children(vec![
             button::custom(label("Preview", 13., FG))
@@ -1405,17 +1398,7 @@ impl Settings {
         ])
         .spacing(6)
         .into();
-        content.push(split(
-            choices,
-            button::text(if self.scene_open() {
-                "Hide preview"
-            } else {
-                "Show preview"
-            })
-            .id(cosmic::widget::Id::new("scene-toggle"))
-            .on_press(Message::ToggleScene)
-            .into(),
-        ));
+        content.push(choices);
         let scene = if editor.compare_current {
             editor
                 .preview()
@@ -1450,15 +1433,9 @@ impl Settings {
         if let Some(profile) = self.profiles.profile() {
             let title = label(&profile.name, 26., FG);
             content.push(if let Some(description) = self.profiles.description() {
-                split(
-                    title,
-                    super::help::explanation(
-                        "setup-about",
-                        "About this setup",
-                        description,
-                        self.help_open == Some("setup-about"),
-                    ),
-                )
+                column::with_children(vec![title, label(description, 13., MUTED)])
+                    .spacing(4)
+                    .into()
             } else {
                 title
             });
@@ -1476,9 +1453,9 @@ impl Settings {
         let selection = editor.selection();
         let mut items: Vec<Element<'_, Message>> = Vec::new();
         if let Some(error) = editor.load_error() {
-            items.push(label("Unreadable setup", 18., WARN));
+            items.push(label("Look that can’t be read", 18., WARN));
             items.push(banner(
-                format!("This setup can’t be read: {error}"),
+                format!("This look can’t be read: {error}"),
                 ERROR,
                 vec![
                     button::text("Delete")
@@ -1487,14 +1464,14 @@ impl Settings {
                 ],
             ));
             if editor.confirm_delete {
-                items.push(self.delete_confirm("this unreadable setup".into()));
+                items.push(self.delete_confirm("this unreadable look".into()));
             }
             return section(items);
         }
         let Some(profile) = editor.profile() else {
             items.push(detail(
                 "Current desktop",
-                "Choose a setup to compare its changes.",
+                "Choose a look to compare its changes.",
             ));
             return section(items);
         };
@@ -1559,7 +1536,7 @@ impl Settings {
             button::text(if profile.appearance_only {
                 "Theme file (.json)…"
             } else {
-                "Setup file (.json)…"
+                "Look file (.json)…"
             })
             .id(cosmic::widget::Id::new("setup-export-file"))
             .leading_icon(icon::from_name("document-save-as-symbolic").size(14))
@@ -1612,7 +1589,7 @@ impl Settings {
         }
         items.push(self.disclosure(
             "setup-library-actions",
-            "Save & export",
+            "Save and export",
             column::with_children(more).spacing(8).into(),
         ));
         if let Some(origin) = &profile.package {
@@ -1676,7 +1653,7 @@ impl Settings {
             } else if !self.desktop.islands.installation.installed() {
                 "The standard panel is used until Islands is installed and enabled."
             } else if preview_panel.and_then(|p| p.islands().known().cloned()).is_some_and(|s| !s.enabled) {
-                "This saves the arrangement for when you turn Islands on in Dock & panel."
+                "This saves the arrangement for when you turn Islands on in Dock and panel."
             } else {
                 "Applies with Panel below. Your applets and display-specific arrangements are kept."
             }, 12., MUTED));
@@ -1903,46 +1880,46 @@ impl Settings {
             || editor.selection() != &Selection::Current
             || editor.load_error().is_some();
         let mut items: Vec<Element<'_, Message>> = if reviewing {
-            vec![split(
-                if editor.mix.is_some() {
-                    row::with_children(vec![
-                        button::text("Setups")
-                            .leading_icon(icon::from_name("go-previous-symbolic").size(16))
-                            .id(cosmic::widget::Id::new("setups-back"))
-                            .on_press(edit(Edit::Discard))
-                            .into(),
-                        label("/ Remix", 18., FG),
-                    ])
-                    .spacing(8)
-                    .align_y(Alignment::Center)
-                    .into()
-                } else {
-                    button::text("Back to setups")
-                        .leading_icon(icon::from_name("go-previous-symbolic").size(16))
-                        .id(cosmic::widget::Id::new("setups-back"))
-                        .on_press(edit(Edit::Discard))
-                        .into()
-                },
-                super::windows::store_pill(editor.store(), accent),
-            )]
+            // The header's link returns to Looks; the selection names itself.
+            let mut head = Vec::new();
+            if editor.mix.is_some() {
+                head.push(heading(
+                    "Mix looks",
+                    "Pick which look each part comes from.",
+                ));
+            }
+            head.push(super::windows::store_pill(editor.store(), accent));
+            head
         } else {
-            vec![
-                split(
-                    heading("Setups", ""),
-                    super::windows::store_pill(editor.store(), accent),
+            vec![split(
+                heading(
+                    "Looks",
+                    "A look sets your wallpaper, style, widgets, dock and panel together.",
                 ),
-                container(label(
-                    if editor.saved_collection {
-                        self.setup_islands_status().to_owned()
-                    } else {
-                        format!("Built-in looks · {}", self.setup_islands_status())
-                    },
-                    14.,
-                    MUTED,
-                ))
-                .id(cosmic::widget::Id::new("setups-welcome"))
+                // Everything you can do with looks, in one place at the top.
+                row::with_children(vec![
+                    button::text("Mix looks…")
+                        .id(cosmic::widget::Id::new("mix-start"))
+                        .on_press(edit(Edit::MixStart))
+                        .into(),
+                    button::text("Import a look…")
+                        .id(cosmic::widget::Id::new("discovery-import"))
+                        .on_press_maybe(
+                            (editor.writable() && !self.native_busy).then_some(edit(Edit::Import)),
+                        )
+                        .into(),
+                    button::text("Save current look…")
+                        .id(cosmic::widget::Id::new("setup-save-current"))
+                        .on_press_maybe(
+                            (editor.writable() && !editor.busy())
+                                .then_some(edit(Edit::Name(Some(NameAction::Capture)))),
+                        )
+                        .into(),
+                ])
+                .spacing(6)
+                .align_y(Alignment::Center)
                 .into(),
-            ]
+            )]
         };
         if let Some(error) = editor.unavailable() {
             items.push(banner(
@@ -1994,133 +1971,106 @@ impl Settings {
         } else if reviewing {
             items.push(self.selection_section());
         } else {
-            items.push(
-                row::with_children(vec![
-                    button::text("Remix…")
-                        .id(cosmic::widget::Id::new("mix-start"))
-                        .on_press_maybe((!self.native_busy).then_some(edit(Edit::MixStart)))
-                        .into(),
-                    button::custom(label("Discover", 14., FG))
-                        .class(nav_style(!editor.saved_collection, accent))
-                        .selected(!editor.saved_collection)
-                        .padding([9, 16])
-                        .id(cosmic::widget::Id::new("setups-explore"))
-                        .on_press(edit(Edit::Collection(false)))
-                        .into(),
-                    button::custom(label("Your setups", 14., FG))
-                        .class(nav_style(editor.saved_collection, accent))
-                        .selected(editor.saved_collection)
-                        .padding([9, 16])
-                        .id(cosmic::widget::Id::new("setups-saved"))
-                        .on_press(edit(Edit::Collection(true)))
-                        .into(),
-                ])
-                .spacing(6)
-                .into(),
-            );
-            if editor.saved_collection {
-                items.push(self.library_section());
-                items.push(self.schedules_summary());
-            } else {
-                items.push(self.discovery_gallery());
-                // Pair calm and active compositions; the IDs remain stable for schedules.
-                let looks = ["halcyon", "focus", "paper", "rose", "calm", "evening"]
-                    .into_iter()
-                    .filter_map(|id| editor.presets().iter().find(|p| p.id == id))
-                    .filter(|p| {
-                        crate::desktop::profiles::discovery::matches(p, &editor.discovery_query)
-                    })
-                    .map(|preset| self.preset_tile(preset))
-                    .collect::<Vec<_>>();
-                items.push(row::with_children(looks).spacing(16).wrap().into());
-                items.push(label(
-                    "Illustrative layouts · your content stays yours",
-                    12.,
-                    MUTED,
-                ));
-                items.push(self.quick_switches());
+            if editor
+                .name
+                .as_ref()
+                .is_some_and(|name| name.action == NameAction::Capture)
+            {
+                items.push(self.name_field("Save"));
             }
+            // The looks themselves first; switching by time of day after.
+            items.push(self.looks_gallery());
+            items.extend(self.your_looks());
+            items.push(self.looks_schedule());
         }
         column::with_children(items)
             .spacing(if reviewing { 20 } else { 16 })
             .into()
     }
 
-    /// One-tap states that are not looks, such as hiding everything.
-    fn quick_switches(&self) -> Element<'_, Message> {
-        let id = crate::desktop::profiles::CLEAN;
-        let selected = *self.profiles.selection() == Selection::Preset(id);
-        let rows = self
-            .profiles
-            .presets()
+    /// Saved whole-desktop looks, newest first, when there are any.
+    fn your_looks(&self) -> Option<Element<'_, Message>> {
+        let entries = self.profiles.library().ok()?;
+        let rows: Vec<Element<'_, Message>> = entries
             .iter()
-            .filter(|preset| preset.id == id)
-            .map(|preset| {
-                split(
-                    detail(preset.profile.name.clone(), preset.description),
-                    button::text(if selected { "Chosen" } else { "Choose" })
-                        .id(cosmic::widget::Id::new(format!("preset-{}", preset.id)))
-                        .on_press_maybe(
-                            (!selected).then_some(edit(Edit::Select(Selection::Preset(id)))),
-                        )
-                        .into(),
+            .filter(|entry| entry.profile.as_ref().map_or(true, |p| !p.appearance_only))
+            .map(|entry| {
+                let (name, description) = match &entry.profile {
+                    Ok(profile) => (profile.name.clone(), "Saved look"),
+                    Err(_) => ("Look that can’t be read".to_string(), "Open it to remove it"),
+                };
+                button::custom(
+                    row::with_children(vec![
+                        detail(name, description),
+                        icon::from_name("go-next-symbolic").size(16).icon().into(),
+                    ])
+                    .spacing(12)
+                    .align_y(Alignment::Center),
                 )
+                .id(cosmic::widget::Id::new(format!("saved-look-{}", entry.id.as_str())))
+                .class(nav_style(false, self.settings_accent()))
+                .padding([4, 0])
+                .width(Length::Fill)
+                .on_press(edit(Edit::Select(Selection::Saved(entry.id.clone()))))
+                .into()
             })
             .collect();
-        column::with_children(vec![label("Quick switches", 14., FG), section(rows)])
-            .spacing(8)
-            .into()
+        (!rows.is_empty()).then(|| group(Some("Your looks"), rows))
     }
 
-    /// The schedule rules at a glance; editing stays on its own page.
-    fn schedules_summary(&self) -> Element<'_, Message> {
-        let h24 = self.config.clock.format_24h;
-        let mut rows: Vec<Element<'_, Message>> = Vec::new();
-        match self.automation.settings() {
-            Ok(settings) if !settings.rules.is_empty() => {
-                for rule in settings.rules.iter().take(4) {
-                    let name = self.automation.profile_name(&rule.profile, &rule.name);
-                    rows.push(split(
-                        detail(
-                            format!("{} → {name}", rule.when.summary(h24)),
-                            if !settings.enabled {
-                                "Automatic switching is off"
-                            } else if rule.enabled {
-                                "On"
-                            } else {
-                                "Off"
-                            },
-                        ),
-                        cosmic::widget::Space::new().width(0).into(),
-                    ));
-                }
-                if settings.rules.len() > 4 {
-                    rows.push(label(
-                        format!("{} more", settings.rules.len() - 4),
-                        12.,
-                        MUTED,
-                    ));
-                }
+    /// Every built-in look as a picture; choosing one opens its preview.
+    fn looks_gallery(&self) -> Element<'_, Message> {
+        let editor = &self.profiles;
+        let mut ids: Vec<&str> = crate::desktop::profiles::discovery::CURATED.to_vec();
+        for id in ["halcyon", "focus", "paper", "rose", "calm", "evening"] {
+            if !ids.contains(&id) {
+                ids.push(id);
             }
-            _ => rows.push(label(
-                "Use a setup at a time of day, or when a display connects.",
-                12.,
-                MUTED,
-            )),
         }
+        ids.push(crate::desktop::profiles::CLEAN);
+        let tiles = ids
+            .into_iter()
+            .filter_map(|id| editor.presets().iter().find(|p| p.id == id))
+            .map(|preset| self.preset_tile(preset))
+            .collect::<Vec<_>>();
         column::with_children(vec![
-            split(
-                label("Automatic switching", 14., FG),
-                button::text("Manage automation")
-                    .trailing_icon(icon::from_name("go-next-symbolic").size(14))
-                    .id(cosmic::widget::Id::new("presets-schedules"))
-                    .on_press(Message::Page(Page::DesktopAutomation))
-                    .into(),
-            ),
-            section(rows),
+            text::heading("Built-in looks").into(),
+            row::with_children(tiles).spacing(16).wrap().into(),
         ])
         .spacing(8)
         .into()
+    }
+
+    /// Less frequent ways to use looks, as plain rows.
+    /// The time-of-day row, shown first on Looks.
+    fn looks_schedule(&self) -> Element<'_, Message> {
+        let schedule = match self.automation.settings() {
+            Ok(settings) if settings.enabled && !settings.rules.is_empty() => "On",
+            _ => "Off",
+        };
+        group(
+            None,
+            vec![
+                button::custom(
+                    row::with_children(vec![
+                        detail(
+                            "Change with time of day",
+                            "Use a different look in the morning, evening and night",
+                        ),
+                        label(schedule, 13., MUTED),
+                        icon::from_name("go-next-symbolic").size(16).icon().into(),
+                    ])
+                    .spacing(12)
+                    .align_y(Alignment::Center),
+                )
+                .id(cosmic::widget::Id::new("presets-schedules"))
+                .class(nav_style(false, self.settings_accent()))
+                .padding([4, 0])
+                .width(Length::Fill)
+                .on_press(Message::Page(Page::DesktopAutomation))
+                .into(),
+            ],
+        )
     }
 
     pub(super) fn profiles_actions(&self) -> Element<'_, Message> {
@@ -2131,30 +2081,53 @@ impl Settings {
         }
         // Repair/reset previews can be based on Current without selecting a
         // preset. Their active profile still needs an explicit confirmation.
-        if *editor.selection() == Selection::Current
-            && editor.profile().is_none()
-            && editor.mix.is_none()
+        if !editor.review_open() {
+            return self.simple_status();
+        }
+        // Appearance applies as you choose; the footer only asks for a
+        // decision when the change cannot apply on its own.
+        if self.page == Page::Themes
+            && editor.conflicts().is_empty()
+            && editor.theme_problem().is_none()
+            && editor
+                .custom
+                .as_deref()
+                .is_none_or(|text| crate::settings::wallpaper::parse_rgb(text).is_some())
         {
             return self.simple_status();
         }
         let problem = self.page_error().unwrap_or_else(|| {
-            editor.theme_problem().unwrap_or(if editor.theme_loading() {
+            editor.theme_problem().unwrap_or(if self.native_busy {
+                "Saving…"
+            } else if editor.theme_loading() {
                 "Finding wallpaper colors…"
+            } else if !editor.conflicts().is_empty() {
+                "Choose which values to keep"
+            } else if editor
+                .custom
+                .as_deref()
+                .is_some_and(|text| crate::settings::wallpaper::parse_rgb(text).is_none())
+            {
+                "Enter a complete color or discard the preview"
             } else {
-                "Local preview"
+                "Your desktop hasn’t changed yet"
             })
         });
-        let mut actions: Vec<Element<'_, Message>> = vec![
-            container(label(problem, 12., MUTED))
-                .width(Length::Fill)
-                .into(),
-        ];
+        let mut extra: Vec<Element<'_, Message>> = Vec::new();
+        if !editor.conflicts().is_empty() {
+            extra.push(
+                button::text("Review conflicts")
+                    .id("review-preview-conflicts".into())
+                    .on_press(Message::ReviewPreviewConflicts)
+                    .into(),
+            );
+        }
         if editor.mix.is_some() && editor.profile().is_some() {
-            actions.push(
+            extra.push(
                 button::text(if editor.name.is_some() {
-                    "Save setup"
+                    "Save look"
                 } else {
-                    "Save setup…"
+                    "Save look…"
                 })
                 .id(cosmic::widget::Id::new("mix-save"))
                 .on_press_maybe(
@@ -2171,27 +2144,65 @@ impl Settings {
                 .into(),
             );
         }
-        actions.push(
-            button::text("Cancel")
-                .on_press_maybe((!self.native_busy).then_some(edit(Edit::Discard)))
-                .into(),
+        let apply = button::suggested(if self.page == Page::Themes {
+            "Apply appearance"
+        } else {
+            "Use this look"
+        })
+        .id("profiles-confirm".into())
+        .on_press_maybe((editor.can_apply() && !self.native_busy).then_some(edit(Edit::Apply)))
+        .into();
+        let bar = self.preview_bar(
+            label(problem, 12., MUTED),
+            editor.can_undo_step(),
+            extra,
+            edit(Edit::Discard),
+            "profiles-discard",
+            apply,
         );
-        actions.push(
-            button::suggested(if self.page == Page::Themes {
-                "Apply theme"
-            } else {
-                "Apply setup"
-            })
-            .id("profiles-confirm".into())
-            .on_press_maybe((editor.can_apply() && !self.native_busy).then_some(edit(Edit::Apply)))
-            .into(),
-        );
+        bar
+    }
+
+    pub(super) fn preview_conflicts(&self) -> Element<'_, Message> {
+        let rows = self.profiles.conflict_values().iter().map(|conflict| {
+            let choices = row::with_children(vec![
+                button::text("Keep current")
+                    .id(cosmic::widget::Id::new(format!(
+                        "conflict-current-{}",
+                        conflict.id
+                    )))
+                    .on_press(edit(Edit::ResolveValueConflict(conflict.id.clone(), false)))
+                    .into(),
+                button::standard("Use my preview")
+                    .id(cosmic::widget::Id::new(format!(
+                        "conflict-preview-{}",
+                        conflict.id
+                    )))
+                    .on_press(edit(Edit::ResolveValueConflict(conflict.id.clone(), true)))
+                    .into(),
+            ])
+            .spacing(8)
+            .wrap()
+            .into();
+            pages::section(vec![
+                detail(conflict.label.clone(), conflict.domain.title()),
+                label(format!("Current: {}", conflict.current), 12., MUTED),
+                label(format!("Preview: {}", conflict.preview), 12., FG),
+                choices,
+            ])
+        });
         container(
-            row::with_children(actions)
-                .spacing(10)
-                .align_y(Alignment::Center),
+            column::with_children(
+                std::iter::once(heading(
+                    "Changed elsewhere",
+                    "Choose which value to keep. Other changes stay intact.",
+                ))
+                .chain(rows)
+                .collect::<Vec<_>>(),
+            )
+            .spacing(10),
         )
-        .padding([8, 22])
+        .id("preview-conflicts")
         .width(Length::Fill)
         .into()
     }

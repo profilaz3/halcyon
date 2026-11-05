@@ -23,6 +23,14 @@ pub enum Message {
     Apply,
     UseBuiltin,
     Reload,
+    Discard,
+}
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) struct SavedDraft {
+    draft: Recipe,
+    origin: Recipe,
+    expected: Option<Recipe>,
+    baseline: Option<serde_json::Value>,
 }
 #[derive(Clone, Debug)]
 pub struct Editor {
@@ -37,6 +45,11 @@ pub struct Editor {
     pub delete_review: bool,
     pub notice: Option<String>,
     pub error: bool,
+    origin: Option<Recipe>,
+    steps: Vec<Recipe>,
+    baseline: Option<serde_json::Value>,
+    typing: bool,
+    baseline_captured: bool,
 }
 impl Default for Editor {
     fn default() -> Self {
@@ -52,10 +65,66 @@ impl Default for Editor {
             delete_review: false,
             notice: None,
             error: false,
+            origin: None,
+            steps: Vec::new(),
+            baseline: None,
+            typing: false,
+            baseline_captured: false,
         }
     }
 }
 impl Editor {
+    pub fn dirty(&self) -> bool {
+        self.origin
+            .as_ref()
+            .is_some_and(|origin| origin != &self.draft)
+    }
+    pub fn can_undo_step(&self) -> bool {
+        !self.steps.is_empty()
+    }
+    pub fn undo_step(&mut self) -> bool {
+        let Some(previous) = self.steps.pop() else {
+            return false;
+        };
+        self.draft = previous;
+        self.typing = false;
+        self.notice = Some("Undid a widget design edit".into());
+        self.error = false;
+        true
+    }
+    pub(crate) fn saved_draft(&self) -> Option<SavedDraft> {
+        self.dirty().then(|| SavedDraft {
+            draft: self.draft.clone(),
+            origin: self.origin.clone().unwrap(),
+            expected: self.expected.clone(),
+            baseline: self.baseline.clone(),
+        })
+    }
+    pub(crate) fn restore_draft(&mut self, saved: SavedDraft) -> Result<(), String> {
+        // An unfinished name is legal in the editor; structural limits still apply.
+        let mut check = saved.draft.clone();
+        if check.name.trim().is_empty() {
+            check.name = "Untitled".into();
+        }
+        check.seal();
+        check.validate()?;
+        saved.origin.validate()?;
+        if let Some(expected) = &saved.expected {
+            expected.validate()?;
+        }
+        if saved.origin.kind != saved.draft.kind {
+            return Err("The saved widget design has a different widget type".into());
+        }
+        self.draft = saved.draft;
+        self.steps = vec![saved.origin.clone()];
+        self.origin = Some(saved.origin);
+        self.expected = saved.expected;
+        self.baseline = saved.baseline;
+        self.baseline_captured = true;
+        self.typing = false;
+        self.notice = Some("Widget design preview restored · not applied".into());
+        Ok(())
+    }
     pub fn loaded() -> Self {
         let mut editor = Self::default();
         editor.load_library();
@@ -84,6 +153,19 @@ impl Editor {
         }
     }
     pub fn update(&mut self, edit: Message) {
+        let before = self.draft.clone();
+        let typing = matches!(edit, Message::Name(_) | Message::Caption(_));
+        let reset = matches!(edit, Message::New(_) | Message::Load(_));
+        if matches!(edit, Message::Discard) {
+            if let Some(origin) = self.origin.take() {
+                self.draft = origin;
+            }
+            self.steps.clear();
+            self.typing = false;
+            self.notice = None;
+            self.error = false;
+            return;
+        }
         self.delete_review = matches!(edit, Message::Delete);
         match edit {
             Message::New(kind) => {
@@ -161,6 +243,19 @@ impl Editor {
             _ => {}
         }
         self.draft.seal();
+        if reset {
+            self.origin = None;
+            self.steps.clear();
+        } else if self.draft != before {
+            self.origin.get_or_insert_with(|| before.clone());
+            if !typing || !self.typing {
+                self.steps.push(before);
+                if self.steps.len() > 32 {
+                    self.steps.remove(0);
+                }
+            }
+        }
+        self.typing = typing;
     }
     /// All blocking library/store work is admitted through the existing native queue.
     pub fn work(
@@ -219,6 +314,11 @@ impl Editor {
                     crate::config::read_config_text(&path)?.as_deref(),
                 )?;
                 let original = crate::desktop::store::widget::get(&raw, self.draft.kind.pointer());
+                let baseline = if self.origin.is_some() && self.baseline_captured {
+                    self.baseline.clone()
+                } else {
+                    baseline
+                };
                 if original.clone().filter(|v| !v.is_null()) != baseline {
                     return Err(
                         "The applied widget changed. Check the current widget before applying."
@@ -236,7 +336,14 @@ impl Editor {
                     crate::desktop::store::Source::Manual,
                 )
                 .map_err(|e| e.to_string())?;
-                self.notice = Some("Widget applied · Undo is available".into());
+                self.origin = None;
+                self.steps.clear();
+                self.typing = false;
+                self.notice = Some(if matches!(edit, Message::UseBuiltin) {
+                    "Built-in widget restored · Undo in Settings → Recovery".into()
+                } else {
+                    "Widget applied · Undo in Settings → Recovery".into()
+                });
                 return Config::try_load().map(Some);
             }
             _ => {}
@@ -246,6 +353,14 @@ impl Editor {
 }
 impl Settings {
     pub(super) fn update_recipe(&mut self, edit: Message) {
+        if self.recipe_editor.origin.is_none() {
+            self.recipe_editor.baseline = self
+                .config
+                .recipes
+                .get(self.recipe_editor.draft.kind)
+                .and_then(|recipe| serde_json::to_value(recipe).ok());
+            self.recipe_editor.baseline_captured = true;
+        }
         self.recipe_editor.update(edit);
     }
 }

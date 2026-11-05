@@ -26,10 +26,13 @@ impl Cards {
     /// visibility remains the demand boundary even when its own output is gone.
     pub(super) fn calendar_demand(&self) -> bool {
         self.config.data_visible(Widget::Calendar)
+            || (self.activity.clients > 0 && self.config.activity_island.calendar)
     }
     /// Keep watching an available empty Music widget so a new player is found.
     pub(super) fn music_demand(&self) -> bool {
-        self.provider_visible(Widget::Music) && !self.layout_editor.active
+        (self.provider_visible(Widget::Music)
+            || (self.activity.clients > 0 && self.config.activity_island.media))
+            && !self.layout_editor.active
     }
 
     pub(super) fn reconcile_weather(&mut self, now: Instant) {

@@ -9,6 +9,9 @@ use crate::settings::desktop::Notice;
 use crate::settings::system_appearance::describe;
 use std::path::PathBuf;
 
+/// Shown once a conflict is settled in favour of the draft's edits.
+pub const KEEPING: &str = "Keeping your changes. Apply writes them over the outside change";
+
 /// A page draft over a fixed set of COSMIC keys.
 pub trait PageDraft: Sized {
     fn keys() -> Vec<ConfigKey>;
@@ -18,6 +21,8 @@ pub trait PageDraft: Sized {
     fn refresh(&mut self, snapshot: Snapshot);
     fn into_snapshot(self) -> Snapshot;
     fn resolve_conflicts(&mut self, snapshot: Snapshot, keys: &[ConfigKey]);
+    /// Keeps the edits over outside changes; Apply then writes them.
+    fn keep_edits(&mut self, snapshot: Snapshot);
     fn conflicts(&self) -> Vec<ConfigKey>;
     fn plan(&self) -> Plan;
     /// Inputs whose effective value in `fresh` differs from the draft's
@@ -69,6 +74,9 @@ impl PageDraft for crate::desktop::windows::WindowsDraft {
     fn resolve_conflicts(&mut self, snapshot: Snapshot, keys: &[ConfigKey]) {
         self.resolve_conflicts(snapshot, keys);
     }
+    fn keep_edits(&mut self, snapshot: Snapshot) {
+        self.keep_edits(snapshot);
+    }
     fn conflicts(&self) -> Vec<ConfigKey> {
         self.conflicts()
     }
@@ -98,6 +106,9 @@ impl PageDraft for crate::desktop::workspaces::WorkspacesDraft {
     }
     fn resolve_conflicts(&mut self, snapshot: Snapshot, keys: &[ConfigKey]) {
         self.resolve_conflicts(snapshot, keys);
+    }
+    fn keep_edits(&mut self, snapshot: Snapshot) {
+        self.keep_edits(snapshot);
     }
     fn conflicts(&self) -> Vec<ConfigKey> {
         self.conflicts().to_vec()
@@ -135,6 +146,9 @@ impl PageDraft for crate::desktop::window_rules::WindowRulesDraft {
     fn resolve_conflicts(&mut self, snapshot: Snapshot, keys: &[ConfigKey]) {
         self.resolve_conflicts(snapshot, keys);
     }
+    fn keep_edits(&mut self, snapshot: Snapshot) {
+        self.keep_edits(snapshot);
+    }
     fn conflicts(&self) -> Vec<ConfigKey> {
         self.conflicts().to_vec()
     }
@@ -171,6 +185,9 @@ impl PageDraft for crate::desktop::shortcuts::ShortcutsDraft {
     fn resolve_conflicts(&mut self, snapshot: Snapshot, keys: &[ConfigKey]) {
         self.resolve_conflicts(snapshot, keys);
     }
+    fn keep_edits(&mut self, snapshot: Snapshot) {
+        self.keep_edits(snapshot);
+    }
     fn conflicts(&self) -> Vec<ConfigKey> {
         self.conflicts().to_vec()
     }
@@ -206,6 +223,9 @@ impl PageDraft for crate::desktop::wallpaper::WallpaperDraft {
     }
     fn resolve_conflicts(&mut self, snapshot: Snapshot, keys: &[ConfigKey]) {
         self.resolve_conflicts(snapshot, keys);
+    }
+    fn keep_edits(&mut self, snapshot: Snapshot) {
+        self.keep_edits(snapshot);
     }
     fn conflicts(&self) -> Vec<ConfigKey> {
         self.conflicts().to_vec()
@@ -251,6 +271,9 @@ impl PageDraft for crate::desktop::desktop_icons::DesktopIconsDraft {
     }
     fn resolve_conflicts(&mut self, snapshot: Snapshot, keys: &[ConfigKey]) {
         self.resolve_conflicts(snapshot, keys);
+    }
+    fn keep_edits(&mut self, snapshot: Snapshot) {
+        self.keep_edits(snapshot);
     }
     fn conflicts(&self) -> Vec<ConfigKey> {
         self.conflicts().to_vec()
@@ -473,6 +496,19 @@ impl<D: PageDraft> DraftEditor<D> {
                 if keys.is_empty() {
                     self.notice = Some(Notice::Done("Using the current values".into()));
                 }
+            }
+            Err(error) => self.notice = Some(Notice::Error(error.to_string())),
+        }
+    }
+    /// Keeps every edit over the outside changes; Apply then writes them.
+    pub fn keep_edits(&mut self) {
+        match self.load() {
+            Ok(fresh) => {
+                if let Some(Ok(draft)) = &mut self.draft {
+                    draft.sync_metadata(&fresh);
+                    draft.keep_edits(fresh.into_snapshot());
+                }
+                self.notice = Some(Notice::Done(KEEPING.into()));
             }
             Err(error) => self.notice = Some(Notice::Error(error.to_string())),
         }
@@ -767,6 +803,9 @@ mod tests {
         }
         fn resolve_conflicts(&mut self, snapshot: Snapshot, keys: &[ConfigKey]) {
             self.0.resolve_conflicts(snapshot, keys);
+        }
+        fn keep_edits(&mut self, snapshot: Snapshot) {
+            self.0.keep_edits(snapshot);
         }
         fn conflicts(&self) -> Vec<ConfigKey> {
             self.0.conflicts().to_vec()

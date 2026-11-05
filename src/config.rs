@@ -76,6 +76,7 @@ pub struct Config {
     /// once (Pop!_OS › Motion).
     pub sidebar_slide: bool,
     pub settings_animations: bool,
+    pub activity_island: crate::activity_island::preferences::Preferences,
     pub setup_dismissed: bool,
     /// First-run setup was finished, skipped or cancelled.
     pub onboarded: bool,
@@ -127,6 +128,7 @@ impl Default for Config {
             focus: FocusPreferences::default(),
             sidebar_slide: true,
             settings_animations: true,
+            activity_island: Default::default(),
             setup_dismissed: false,
             onboarded: false,
         }
@@ -239,8 +241,10 @@ impl Config {
         if !(1..=60).contains(&self.meeting_notice_minutes) {
             return Err("Meeting highlights must be between 1 and 60 minutes".into());
         }
-        if !(70..=100).contains(&self.appearance.opacity) {
-            return Err("Card opacity must be between 70 and 100 percent".into());
+        if !(MIN_CARD_OPACITY..=100).contains(&self.appearance.opacity) {
+            return Err(format!(
+                "Card opacity must be between {MIN_CARD_OPACITY} and 100 percent"
+            ));
         }
         if self.appearance.corner_radius > 32 {
             return Err("Card corners must be between 0 and 32 pixels".into());
@@ -298,7 +302,7 @@ impl Config {
                 .accent
                 .map_or_else(|| Palette::named(&self.theme), Palette::from_accent),
         };
-        palette.background.a = f32::from(self.appearance.opacity.clamp(70, 100)) / 100.;
+        palette.background.a = f32::from(self.appearance.opacity.clamp(MIN_CARD_OPACITY, 100)) / 100.;
         if self.appearance.contrast_assist {
             palette = crate::widget_style::readable(palette);
         }
@@ -398,7 +402,10 @@ impl Config {
         let value = patch_config(&path, |value| {
             let current: Self = serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
             if &current.rain != expected && &current.rain != next {
-                return Err("Wallpaper effects changed elsewhere. Reopen Wallpaper before trying again.".into());
+                return Err(
+                    "Wallpaper effects changed elsewhere. Reopen Wallpaper before trying again."
+                        .into(),
+                );
             }
             value["rain"] = serde_json::to_value(next).map_err(|e| e.to_string())?;
             Ok(())
@@ -418,6 +425,10 @@ impl Config {
     pub fn save_refresh(widget: Widget, seconds: u64) -> Result<Self, String> {
         let path = Self::path().ok_or("Configuration directory unavailable")?;
         Self::save_refresh_at(&path, widget, seconds)
+    }
+    pub fn save_activity_preferences(changes: serde_json::Value) -> Result<Self, String> {
+        let path = Self::path().ok_or("Configuration directory unavailable")?;
+        Self::save_section_at(&path, "activity_island", changes)
     }
     pub fn save_appearance(changes: serde_json::Value) -> Result<Self, String> {
         let path = Self::path().ok_or("Configuration directory unavailable")?;
@@ -1060,11 +1071,49 @@ pub enum ColorPolicy {
     Custom,
 }
 
-#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct WeatherPreferences {
     /// Shared by the standalone weather card and Daily overview.
     pub show_dew_point: bool,
+    /// Show °F and mph. Readings are kept in °C and km/h and converted
+    /// only for display, so a change needs no new forecast.
+    pub fahrenheit: bool,
+}
+impl Default for WeatherPreferences {
+    fn default() -> Self {
+        Self {
+            show_dew_point: false,
+            fahrenheit: fahrenheit_region(),
+        }
+    }
+}
+/// The few regions that use Fahrenheit, read from the measurement locale.
+fn fahrenheit_region() -> bool {
+    if cfg!(test) {
+        return false;
+    }
+    ["LC_ALL", "LC_MEASUREMENT", "LANG"]
+        .into_iter()
+        .find_map(|key| std::env::var(key).ok().filter(|value| !value.is_empty()))
+        .is_some_and(|locale| {
+            let region = locale.split(['.', '@']).next().unwrap_or("");
+            ["_US", "_LR", "_MM", "_BS", "_BZ", "_KY", "_PW"]
+                .iter()
+                .any(|suffix| region.ends_with(suffix))
+        })
+}
+impl WeatherPreferences {
+    pub fn degrees(self, celsius: f64) -> f64 {
+        if self.fahrenheit { celsius * 9. / 5. + 32. } else { celsius }
+    }
+    pub fn wind(self, kmh: f64) -> String {
+        if self.fahrenheit {
+            format!("{:.0}\u{a0}mph", kmh / 1.609_344)
+        } else {
+            format!("{kmh:.0}\u{a0}km/h")
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -1226,13 +1275,13 @@ impl DevboxSection {
 
     pub fn title(self) -> &'static str {
         match self {
-            Self::Cpu => "CPU",
+            Self::Cpu => "Processor (CPU)",
             Self::Memory => "Memory",
             Self::Disk => "Disk",
             Self::Network => "Network",
-            Self::Gpu => "GPU",
-            Self::Uptime => "Uptime",
-            Self::Services => "Services",
+            Self::Gpu => "Graphics (GPU)",
+            Self::Uptime => "Time since start",
+            Self::Services => "Background services",
         }
     }
 
@@ -1300,8 +1349,9 @@ impl Default for DevboxPreferences {
         Self {
             cpu: true,
             memory: true,
-            memory_cache: true,
-            swap: true,
+            // Plain memory use by default; cache and swap are opt-in details.
+            memory_cache: false,
+            swap: false,
             disk: true,
             network: true,
             gpu: true,
@@ -1533,6 +1583,8 @@ impl RefreshIntervals {
 
 /// The largest configuration file the shared writer reads or writes.
 pub const MAX_CONFIG_BYTES: usize = 1024 * 1024;
+/// The most see-through a widget card may be.
+pub const MIN_CARD_OPACITY: u8 = 10;
 
 /// An exclusive hold on `config.json.lock`, released on drop.
 pub struct ConfigLock {
@@ -1994,7 +2046,12 @@ mod tests {
                 "uptime",
                 "services",
             ] {
-                assert_eq!(saved["devbox"][key], key != "services", "{key}");
+                // Services are personal; cache and swap are opt-in memory details.
+                assert_eq!(
+                    saved["devbox"][key],
+                    !matches!(key, "services" | "memory_cache" | "swap"),
+                    "{key}"
+                );
             }
             assert_eq!(
                 saved["devbox"]["gpu"],
@@ -2570,7 +2627,7 @@ mod tests {
         assert_eq!(raw["clock"]["future_style"], "minimal");
         assert_eq!(raw["future_setting"], 42);
         for (section, invalid) in [
-            ("appearance", serde_json::json!({"opacity":69})),
+            ("appearance", serde_json::json!({"opacity":9})),
             ("appearance", serde_json::json!({"opacity":101})),
             ("appearance", serde_json::json!({"corner_radius":33})),
             ("appearance", serde_json::json!({"border_opacity":51})),

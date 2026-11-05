@@ -859,6 +859,20 @@ impl PanelDraft {
         }
         self.base = base;
     }
+    /// Keeps every edit over the outside changes: the current values of
+    /// the conflicting keys become the baseline, so Apply writes the edits
+    /// over them and still refuses anything changed after this.
+    pub fn keep_edits(&mut self, snapshot: &Snapshot) {
+        let mut names = std::mem::take(&mut self.conflicts);
+        for group in GROUPS {
+            if names.iter().any(|name| group.contains(name)) {
+                names.extend(group.iter().copied());
+            }
+        }
+        let keys: Vec<ConfigKey> = names.into_iter().map(|name| key(self.kind, name)).collect();
+        self.base.adopt(snapshot, &keys);
+        self.refresh(snapshot.clone());
+    }
     /// Drops edits of conflicting key groups and adopts their current values,
     /// keeping every other edit.
     pub fn resolve_conflicts(&mut self, snapshot: &Snapshot, keys: &[ConfigKey]) {

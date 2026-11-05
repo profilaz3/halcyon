@@ -56,7 +56,7 @@ impl Target {
     pub const ALL: [Self; 4] = [Self::Shared, Self::Widgets, Self::Dock, Self::Panel];
     pub fn title(self) -> &'static str {
         match self {
-            Self::Shared => "All surfaces",
+            Self::Shared => "Everything",
             Self::Widgets => "Widgets",
             Self::Dock => "Dock",
             Self::Panel => "Panel",

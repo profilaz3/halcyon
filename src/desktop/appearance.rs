@@ -219,7 +219,7 @@ impl FontRole {
     pub fn title(self) -> &'static str {
         match self {
             Self::Interface => "Interface font",
-            Self::Monospace => "Monospace font",
+            Self::Monospace => "Fixed-width font",
         }
     }
     pub fn monospace(self) -> bool {
@@ -1168,6 +1168,14 @@ impl AppearanceDraft {
         }
         self.conflicts.sort();
         self.base = base;
+    }
+    /// Keeps every edit over the outside changes: the current values of
+    /// the conflicting keys become the baseline, so Apply writes the edits
+    /// over them and still refuses anything changed after this.
+    pub fn keep_edits(&mut self, snapshot: Snapshot) {
+        let keys = std::mem::take(&mut self.conflicts);
+        self.base.adopt(&snapshot, &keys);
+        self.refresh(snapshot);
     }
     /// Drops every edit that depends on a conflicting key (and so the whole
     /// coupled set), adopts the current values and keeps the other edits.

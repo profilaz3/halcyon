@@ -114,15 +114,15 @@ fn fb19_native_discovery_and_keyboard_remix_fit_compact_and_wide() {
     let (mut app, _) = Settings::init(Core::default(), Page::DesktopProfiles);
     for (w, h) in [(820., 600.), (1280., 800.)] {
         app.profiles.update(Message::Discard);
-        app.profiles.update(Message::DiscoveryQuery("paper".into()));
         crate::settings::tests::send_settings(
             &mut app,
             crate::settings::Message::Resized(Size::new(w, h)),
         );
         app.open_sections.remove("setup-library-actions");
         let mut native = crate::native_test::Native::new(Size::new(w, h));
-        let search = native.bounds(app.settings_view(), "discovery-search");
-        assert!(search.y + search.height <= h);
+        // Looks has no search field now; its actions sit at the top instead.
+        let mix = native.bounds(app.settings_view(), "mix-start");
+        assert!(mix.y >= 0. && mix.y + mix.height <= h && mix.x + mix.width <= w);
         native.capture(
             app.settings_view(),
             &cosmic::Theme::dark(),

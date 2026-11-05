@@ -3,17 +3,33 @@ use crate::drawer::Widget;
 use cosmic::iced::widget::pin;
 use cosmic::widget::{dropdown, responsive};
 
+/// The Weather city row, its title in line with the widget titles above.
+fn split_row<'a>(
+    title: &'static str,
+    description: &'static str,
+    control: Element<'a, Message>,
+) -> Element<'a, Message> {
+    row::with_children(vec![
+        icon::from_name("mark-location-symbolic").size(16).into(),
+        container(detail(title, description)).width(Length::Fill).into(),
+        control,
+    ])
+    .spacing(12)
+    .align_y(Alignment::Center)
+    .into()
+}
+
 fn description(widget: Widget) -> &'static str {
     match widget {
-        Widget::Clock => "Time & date",
+        Widget::Clock => "Time and date",
         Widget::Weather => "Your local forecast",
-        Widget::Calendar => "Connect later",
-        Widget::Devbox => "CPU, memory & more",
+        Widget::Calendar => "Today's events",
+        Widget::Devbox => "CPU, memory and more",
         Widget::Notes => "A space for ideas",
         Widget::Focus => "Time to concentrate",
         Widget::Music => "Your music player",
-        Widget::Projects => "Choose folders later",
-        Widget::Glance => "Clock, weather & calendar",
+        Widget::Projects => "Your recent folders",
+        Widget::Glance => "Clock, weather and calendar",
     }
 }
 impl Settings {
@@ -25,63 +41,105 @@ impl Settings {
         let plan = wizard.widget_plan(&self.config);
         let compact = self.wizard_inner_width() < 900.;
         let available = (self.window.height - 330.).clamp(200., 400.);
-        let mut controls = Vec::new();
+        let mut controls = vec![self.wizard_widget_tabs(wizard.step)];
         if arrange {
-            controls.push(words(
-                format!("Your desktop order · {} widgets", plan.visible.len()),
-                13.,
-                INK,
-            ));
             let mut list = Vec::new();
             for (index, widget) in plan.visible.iter().copied().enumerate() {
                 let key = widget.key();
                 let selected = wizard.widgets.focused.as_deref() == Some(key);
-                let mut up = button::icon(icon::from_name("go-up-symbolic").size(16))
-                    .id(cosmic::widget::Id::new(format!("wizard-up-{key}")))
-                    .on_press_maybe((index > 0).then(|| go(Step::MoveWidget(key.into(), -1))));
-                up = up.tooltip("Move up");
-                let down = button::icon(icon::from_name("go-down-symbolic").size(16))
-                    .id(cosmic::widget::Id::new(format!("wizard-down-{key}")))
-                    .tooltip("Move down")
-                    .on_press_maybe(
-                        (index + 1 < plan.visible.len())
-                            .then(|| go(Step::MoveWidget(key.into(), 1))),
-                    );
+                // An arrow that can't move the row is dimmed, not hidden.
+                let arrow = |name: &'static str, id: String, tip: &'static str, message: Option<Message>| -> Element<'a, Message> {
+                    match message {
+                        Some(message) => button::icon(icon::from_name(name).size(16))
+                            .id(cosmic::widget::Id::new(id))
+                            .tooltip(tip)
+                            .on_press(message)
+                            .into(),
+                        None => container(
+                            icon::from_name(name).size(16).icon().class(cosmic::theme::Svg::custom(|_| {
+                                cosmic::iced::widget::svg::Style {
+                                    color: Some(Color::from_rgb(0.36, 0.36, 0.38)),
+                                }
+                            })),
+                        )
+                        .id(cosmic::widget::Id::new(id))
+                        .padding(8)
+                        .into(),
+                    }
+                };
+                let up = arrow(
+                    "go-up-symbolic",
+                    format!("wizard-up-{key}"),
+                    "Move up",
+                    (index > 0).then(|| go(Step::MoveWidget(key.into(), -1))),
+                );
+                let down = arrow(
+                    "go-down-symbolic",
+                    format!("wizard-down-{key}"),
+                    "Move down",
+                    (index + 1 < plan.visible.len()).then(|| go(Step::MoveWidget(key.into(), 1))),
+                );
                 let grip = mouse_area(
-                    container(icon::from_name("view-list-symbolic").size(18))
+                    container(icon::from_name("grip-lines-symbolic").size(16).icon().class(
+                        cosmic::theme::Svg::custom(|_| cosmic::iced::widget::svg::Style {
+                            color: Some(Color::from_rgb(0.5, 0.5, 0.54)),
+                        }),
+                    ))
                         .id(cosmic::widget::Id::new(format!("wizard-grip-{key}")))
                         .padding([8, 2]),
                 )
                 .on_press(go(Step::DragWidget(key.into())))
                 .interaction(cosmic::iced::mouse::Interaction::Grab);
                 let select = button::custom(
-                    column::with_children(vec![
-                        words(format!("{}  {}", index + 1, widget.title()), 13., INK),
-                        words(description(widget), 11., SOFT),
+                    row::with_children(vec![
+                        fill_box(
+                            container(words(
+                                (index + 1).to_string(),
+                                11.,
+                                Color::from_rgb(0.04, 0.05, 0.1),
+                            ))
+                            .center_x(20.)
+                            .center_y(18.)
+                            .into(),
+                            PRIMARY,
+                            Color::TRANSPARENT,
+                            9.,
+                        )
+                        .width(20.)
+                        .height(18.)
+                        .into(),
+                        icon::from_name(widget.icon()).size(16).into(),
+                        detail(widget.title(), description(widget)),
                     ])
-                    .spacing(3),
+                    .spacing(10)
+                    .align_y(Alignment::Center),
                 )
                 .id(cosmic::widget::Id::new(format!("wizard-order-{key}")))
-                .class(cosmic::theme::Button::Text) // native focus and keyboard activation
-                .padding([6, 4])
+                .class(nav_style(false, self.settings_accent())) // native focus and keyboard activation
+                .padding([2, 4])
                 .width(Length::Fill)
                 .on_press(go(Step::SelectWidget(key.into())));
                 let content =
-                    row::with_children(vec![grip.into(), select.into(), up.into(), down.into()])
+                    row::with_children(vec![grip.into(), select.into(), up, down])
                         .spacing(4)
                         .align_y(Alignment::Center);
-                let row = fill_box(
-                    content.into(),
-                    TILE,
-                    if selected || wizard.widgets.over.as_deref() == Some(key) {
-                        LAVENDER
-                    } else {
-                        Color::TRANSPARENT
-                    },
-                    10.,
-                )
-                .padding([4, 6])
-                .width(Length::Fill);
+                let lit = selected || wizard.widgets.over.as_deref() == Some(key);
+                let row = container(content)
+                    .class(cosmic::theme::Container::custom(move |theme| {
+                        cosmic::iced::widget::container::Style {
+                            background: lit.then(|| {
+                                let accent: Color = theme.cosmic().accent.base.into();
+                                Background::Color(Color { a: 0.14, ..accent })
+                            }),
+                            border: Border {
+                                radius: 8.0.into(),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        }
+                    }))
+                    .padding([0, 2])
+                    .width(Length::Fill);
                 list.push(
                     mouse_area(row)
                         .on_enter(go(Step::OverWidget(key.into())))
@@ -100,105 +158,94 @@ impl Settings {
                     SOFT,
                 ));
             }
+            let _ = available;
             controls.push(
-                scrollable(column::with_children(list).spacing(8))
+                container(group(None, list))
                     .id(cosmic::widget::Id::new("wizard-widget-list"))
-                    .height(available.min(288.))
                     .into(),
             );
             if !plan.visible.is_empty() {
                 controls.push(
                     row::with_children(vec![
-                        button::text("Use setup order")
-                            .on_press(go(Step::SetupWidgetOrder))
-                            .into(),
-                        button::text("Undo move")
-                            .id(cosmic::widget::Id::new("wizard-widget-undo"))
-                            .on_press_maybe(
-                                wizard
-                                    .widgets
-                                    .can_undo()
-                                    .then_some(go(Step::UndoWidgetMove)),
-                            )
-                            .into(),
-                    ])
-                    .spacing(6)
-                    .into(),
-                );
-                controls.push(words(
-                    "Top to bottom, then the next column.\nSelect a row · Alt + ↑ / ↓ to move it",
-                    11.,
-                    SOFT,
-                ));
-            }
-        } else {
-            // One compact list keeps all eight choices visible at the normal
-            // window size. Section membership is shown before readiness.
-            let pick = |widget: Widget| -> Element<'a, Message> {
-                let on = wizard.widgets.selected(widget);
-                let grouped = wizard.widgets.grouped
-                    && matches!(widget, Widget::Clock | Widget::Weather | Widget::Calendar);
-                button::custom(
-                    row::with_children(vec![
-                        icon::from_name(widget.icon()).size(16).into(),
-                        container(words(widget.title(), 13., INK))
+                        container(words(
+                            "Drag or use the arrows. Numbers match the preview.",
+                            12.,
+                            SOFT,
+                        ))
                             .width(Length::Fill)
                             .into(),
-                        words(
-                            if on { "✓" } else { "○" },
-                            14.,
-                            if on { LAVENDER } else { SOFT },
-                        ),
+                        button::text("Reset order")
+                            .on_press(go(Step::SetupWidgetOrder))
+                            .into(),
                     ])
-                    .spacing(8)
-                    .align_y(Alignment::Center),
-                )
-                .id(cosmic::widget::Id::new(format!(
-                    "wizard-widget-{}",
-                    widget.key()
-                )))
-                .class(button_style(
-                    TILE,
-                    TILE,
-                    if on { LAVENDER } else { EDGE },
-                    8.,
-                ))
-                .padding([4, 8, 4, if grouped { 20 } else { 8 }])
-                .width(Length::Fill)
-                .on_press(go(Step::Widget(widget)))
-                .into()
-            };
-            let mut choices = vec![
+                    .align_y(Alignment::Center)
+                    .into(),
+                );
+            }
+        } else {
+            // The same rows as Settings: icon, name and a switch.
+            let pick = |widget: Widget| -> Element<'a, Message> {
+                let on = wizard.widgets.selected(widget);
                 row::with_children(vec![
-                    container(words("Daily overview", 13., INK))
+                    icon::from_name(widget.icon()).size(16).into(),
+                    container(detail(widget.title(), description(widget)))
                         .width(Length::Fill)
                         .into(),
+                    container(toggler(on).on_toggle(move |_| go(Step::Widget(widget))))
+                        .id(cosmic::widget::Id::new(format!("wizard-widget-{}", widget.key())))
+                        .into(),
+                ])
+                .spacing(12)
+                .align_y(Alignment::Center)
+                .into()
+            };
+            let mut main = vec![pick(Widget::Clock), pick(Widget::Weather)];
+            // The city sits under Weather, only while it matters.
+            if wizard.widgets.selected(Widget::Weather) {
+                if self.config.location.is_none() && wizard.city.is_none() {
+                    main.push(split_row(
+                        "Weather city",
+                        "Used for your forecast",
+                        container(
+                            text_input("City name", &self.city_search.query)
+                                .id(cosmic::widget::Id::new("wizard-city"))
+                                .on_input(Message::CityInput)
+                                .on_submit(|_| Message::SearchCity),
+                        )
+                        .width(190.)
+                        .into(),
+                    ));
+                    if let Some(results) = self.wizard_city_results() {
+                        main.push(results);
+                    }
+                } else if let Some(city) = &wizard.city {
+                    main.push(detail("Weather city", city.name.clone()));
+                }
+            }
+            main.push(pick(Widget::Calendar));
+            main.push(
+                row::with_children(vec![
+                    icon::from_name(Widget::Glance.icon()).size(16).into(),
+                    container(detail(
+                        "Combine into one card",
+                        "Clock, weather and calendar in a single card",
+                    ))
+                    .width(Length::Fill)
+                    .into(),
                     container(
-                        toggler(wizard.widgets.grouped).on_toggle(|on| go(Step::GroupWidgets(on))),
+                        toggler(wizard.widgets.grouped)
+                            .on_toggle(|on| go(Step::GroupWidgets(on))),
                     )
                     .id(cosmic::widget::Id::new("wizard-widget-group"))
                     .into(),
                 ])
-                .spacing(8)
+                .spacing(12)
                 .align_y(Alignment::Center)
                 .into(),
-                words(
-                    if wizard.widgets.grouped {
-                        "Clock, weather & calendar share one widget"
-                    } else {
-                        "Clock, weather & calendar are separate"
-                    },
-                    11.,
-                    SOFT,
-                ),
-            ];
-            choices.extend(
-                [Widget::Clock, Widget::Weather, Widget::Calendar]
-                    .into_iter()
-                    .map(pick),
             );
-            choices.push(words("More widgets", 11., SOFT));
-            choices.extend(
+            controls.push(group(Some("Everyday"), main));
+            controls.push(group(
+                Some("More widgets"),
                 [
                     Widget::Devbox,
                     Widget::Notes,
@@ -207,9 +254,9 @@ impl Settings {
                     Widget::Projects,
                 ]
                 .into_iter()
-                .map(pick),
-            );
-            controls.push(column::with_children(choices).spacing(4).into());
+                .map(pick)
+                .collect(),
+            ));
         }
         if !arrange && wizard.widgets.customized && wizard.look.is_some() {
             controls.push(
@@ -219,17 +266,11 @@ impl Settings {
             );
         }
         let mut preview = vec![
-            words("Desktop preview · Sample content", 12., SOFT),
-            self.wizard_widget_preview(wizard, if compact { 180. } else { 270. }),
-            words(
-                format!(
-                    "{} selected · {} desktop widgets",
-                    wizard.widgets.selected.len(),
-                    wizard.widgets.active().len()
-                ),
-                12.,
-                SOFT,
-            ),
+            self.wizard_widget_preview(wizard, if compact { 180. } else { self.wizard_preview_height() }),
+            container(words(CAPTION, 12., SOFT))
+                .width(Length::Fill)
+                .center_x(Length::Fill)
+                .into(),
         ];
         if self.displays.outputs().len() > 1 || !plan.elsewhere.is_empty() {
             preview.push(words("Preview display", 12., INK));
@@ -267,18 +308,12 @@ impl Settings {
             if !arrange {
                 preview.push(words(error, 13., DANGER));
             }
-        } else if !plan.visible.is_empty() {
-            preview.push(words(
-                format!("{} widgets on this display", plan.visible.len()),
-                12.,
-                SOFT,
-            ));
         }
         super::super::adaptive::columns(
             container(column::with_children(preview).spacing(10))
                 .width(Length::Fill)
                 .into(),
-            container(column::with_children(controls).spacing(10))
+            container(column::with_children(controls).spacing(12))
                 .width(Length::Fill)
                 .into(),
             [300., 340.],
@@ -351,12 +386,17 @@ impl Settings {
                 if numbered {
                     layers.push(
                         pin(
-                            fill_box(words((index + 1).to_string(), 9., INK), TILE, EDGE, 4.)
-                                .padding([1, 3]),
+                            fill_box(
+                                words((index + 1).to_string(), 11., Color::from_rgb(0.04, 0.05, 0.1)),
+                                PRIMARY,
+                                Color::TRANSPARENT,
+                                9.,
+                            )
+                            .padding([1, 6]),
                         )
                         .position(cosmic::iced::Point::new(
                             g.position[0] * scale,
-                            (g.position[1] * scale - 12.).max(0.),
+                            (g.position[1] * scale - 16.).max(0.),
                         ))
                         .into(),
                     );
@@ -386,7 +426,7 @@ impl Settings {
                 .width(Length::Fill)
                 .height(height)
                 .align_x(Alignment::Center)
-                .align_y(Alignment::Center)
+                .align_y(Alignment::Start)
                 .into()
         });
         container(scene).height(height).width(Length::Fill).into()

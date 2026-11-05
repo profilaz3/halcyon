@@ -39,6 +39,7 @@ mod profiles;
 mod rain;
 mod recipes;
 mod recovery;
+mod release_notes;
 mod reorder;
 pub(crate) mod session_drafts;
 pub(crate) mod sharing;
@@ -111,15 +112,17 @@ pub enum Page {
     Builder,
 }
 impl Page {
-    /// Six stable roots; leaf routes keep their existing command keys.
+    /// Seven roots, each named for what it changes; leaf routes keep their
+    /// existing command keys.
     const SIDEBAR: [(Option<&'static str>, &'static [Self]); 1] = [(
         None,
         &[
-            Self::Themes,
-            Self::DesktopDock,
-            Self::Widgets,
             Self::DesktopProfiles,
-            Self::DesktopMotion,
+            Self::Themes,
+            Self::DesktopWallpaper,
+            Self::Overview,
+            Self::DesktopDock,
+            Self::DesktopWindows,
             Self::General,
         ],
     )];
@@ -156,108 +159,74 @@ impl Page {
         Self::AdaptiveLooks,
         Self::Builder,
     ];
+    /// The flat destination a page is reached through; used for search context.
     fn nav(self) -> Self {
         match self {
-            Self::DesktopWallpaper => Self::DesktopWallpaper,
-            Self::Themes | Self::DesktopAppearance => Self::Themes,
-            Self::Desktop | Self::DesktopDock => Self::DesktopDock,
-            Self::DesktopWindows | Self::DesktopWorkspaces | Self::DesktopWindowRules => {
-                Self::DesktopWindows
+            Self::Themes | Self::Appearance | Self::DesktopAppearance => self,
+            Self::DesktopWindows
+            | Self::DesktopWorkspaces
+            | Self::DesktopWindowRules
+            | Self::DesktopShortcuts => Self::DesktopWindows,
+            Self::DesktopProfiles => Self::DesktopProfiles,
+            Self::DesktopAutomation | Self::Moments | Self::AdaptiveLooks => {
+                Self::DesktopAutomation
             }
-            Self::DesktopIcons => Self::DesktopIcons,
-            Self::DesktopShortcuts => Self::DesktopShortcuts,
-            Self::Overview | Self::WidgetLayout => Self::Overview,
-            Self::Builder => Self::Builder,
-            Self::Appearance => Self::Appearance,
-            Self::DesktopProfiles
-            | Self::DesktopAutomation
-            | Self::Moments
-            | Self::AdaptiveLooks => Self::DesktopProfiles,
-            Self::DesktopMotion => Self::DesktopMotion,
-            Self::General | Self::PendingChanges => Self::General,
-            _ => Self::Widgets,
+            Self::General | Self::PendingChanges | Self::DesktopMotion => Self::General,
+            Self::Widgets | Self::Overview | Self::WidgetLayout | Self::Desktop => Self::Overview,
+            page => page,
         }
     }
-    /// Subpages keep their task selected in the native navigation bar.
+    /// The sidebar root a page belongs to.
     fn sidebar(self) -> Self {
         match self.canonical() {
-            Self::Themes | Self::Appearance | Self::DesktopAppearance | Self::DesktopWallpaper => {
+            Self::Themes | Self::Appearance | Self::DesktopAppearance | Self::Moments => {
                 Self::Themes
             }
-            Self::DesktopDock
-            | Self::DesktopWindows
-            | Self::DesktopWindowRules
-            | Self::DesktopIcons
-            | Self::DesktopShortcuts => Self::DesktopDock,
-            Self::DesktopProfiles
-            | Self::DesktopAutomation
-            | Self::Moments
-            | Self::AdaptiveLooks => Self::DesktopProfiles,
-            Self::DesktopMotion => Self::DesktopMotion,
-            Self::General | Self::PendingChanges => Self::General,
-            _ => Self::Widgets,
-        }
-    }
-    fn root_index(self) -> usize {
-        match self.sidebar() {
-            Self::Themes => 0,
-            Self::DesktopDock => 1,
-            Self::Widgets => 2,
-            Self::DesktopProfiles => 3,
-            Self::DesktopMotion => 4,
-            _ => 5,
+            Self::DesktopProfiles | Self::DesktopAutomation | Self::AdaptiveLooks => {
+                Self::DesktopProfiles
+            }
+            Self::DesktopWallpaper | Self::DesktopIcons => Self::DesktopWallpaper,
+            Self::DesktopDock => Self::DesktopDock,
+            Self::DesktopWindows | Self::DesktopWindowRules | Self::DesktopShortcuts => {
+                Self::DesktopWindows
+            }
+            Self::DesktopMotion | Self::General | Self::PendingChanges => Self::General,
+            _ => Self::Overview,
         }
     }
     fn root_title(self) -> &'static str {
-        match self.sidebar() {
-            Self::Themes => "Appearance",
-            Self::DesktopDock => "Desktop",
-            Self::Widgets => "Widgets",
-            Self::DesktopProfiles => "Setups",
-            Self::DesktopMotion => "Accessibility",
-            _ => "App settings",
-        }
+        self.sidebar().nav_title()
     }
+    /// Flat tabs at the top of a root. A switch here adds no Back history.
     fn destinations(self) -> &'static [Self] {
         match self.sidebar() {
-            Self::Themes => &[
-                Self::Themes,
-                Self::DesktopWallpaper,
-                Self::Appearance,
-                Self::DesktopAppearance,
-            ],
-            Self::DesktopDock => &[
-                Self::DesktopDock,
-                Self::DesktopWindows,
-                Self::DesktopIcons,
-                Self::DesktopShortcuts,
-            ],
-            Self::Widgets => &[Self::Widgets, Self::Overview, Self::Builder],
-            Self::DesktopProfiles => &[Self::DesktopProfiles, Self::DesktopAutomation],
-            Self::DesktopMotion => &[Self::DesktopMotion],
-            _ => &[Self::General],
+            // One Appearance page; its detail editors are subpages, not tabs.
+            Self::Themes => &[],
+            _ => &[],
         }
     }
     /// The short sidebar name.
     fn nav_title(self) -> &'static str {
         match self {
-            Self::DesktopAutomation => "Automation",
-            Self::Overview => "Layout & displays",
-            Self::Widgets => "My widgets",
+            Self::DesktopAutomation => "Change with time of day",
+            Self::Overview => "Widgets",
+            Self::Widgets => "Widgets",
             Self::WidgetLayout => "Layout",
-            Self::Appearance => "Surface finishes",
-            Self::DesktopAppearance => "Fonts & icons",
+            Self::Appearance => "Surfaces and transparency",
+            Self::DesktopAppearance => "Fonts and icons",
             Self::DesktopWallpaper => "Wallpaper",
-            Self::Themes => "Theme & colors",
-            Self::DesktopWindows => "Windows & workspaces",
+            Self::Themes => "Appearance",
+            Self::DesktopProfiles => "Looks",
+            Self::DesktopWindows => "Windows",
             Self::DesktopIcons => "Desktop icons",
             Self::DesktopMotion => "Accessibility",
+            Self::General => "General",
             page => page.title(),
         }
     }
     fn nav_icon(self) -> &'static str {
         match self {
-            Self::Overview => "object-move-symbolic",
+            Self::Overview => "view-grid-symbolic",
             Self::Widgets => "view-grid-symbolic",
             Self::Appearance => "applications-graphics-symbolic",
             Self::DesktopAppearance => "preferences-desktop-appearance-symbolic",
@@ -268,7 +237,8 @@ impl Page {
             Self::DesktopIcons => "user-desktop-symbolic",
             Self::DesktopShortcuts => "input-keyboard-symbolic",
             Self::DesktopMotion => "preferences-desktop-accessibility-symbolic",
-            Self::DesktopProfiles => "starred-symbolic",
+            // Present in both COSMIC and Adwaita, so it is never a color fallback.
+            Self::DesktopProfiles => "applications-graphics-symbolic",
             Self::DesktopAutomation => "alarm-symbolic",
             Self::General => "emblem-system-symbolic",
             page => page.icon(),
@@ -320,11 +290,11 @@ impl Page {
     }
     fn title(self) -> &'static str {
         match self {
-            Self::Overview => "Layout & displays",
+            Self::Overview => "Widgets",
             Self::WidgetLayout => "Arrange widgets",
             Self::PendingChanges => "Recover unfinished work",
-            Self::Appearance => "Surface finishes",
-            Self::Widgets => "My widgets",
+            Self::Appearance => "Surfaces and transparency",
+            Self::Widgets => "Widgets",
             Self::Glance => "Daily overview",
             Self::Calendar => "Calendar",
             Self::Weather => "Weather",
@@ -334,21 +304,21 @@ impl Page {
             Self::Music => "Music",
             Self::Notes => "Notes",
             Self::Focus => "Focus timer",
-            Self::General => "App settings",
+            Self::General => "General",
             Self::Desktop => "Desktop",
-            Self::DesktopDock => "Dock & panel",
-            Self::DesktopAppearance => "Fonts & icons",
+            Self::DesktopDock => "Dock and panel",
+            Self::DesktopAppearance => "Fonts and icons",
             Self::DesktopWallpaper => "Wallpaper",
-            Self::DesktopIcons => "Desktop icons",
-            Self::DesktopProfiles => "Setups",
-            Self::Themes => "Theme & colors",
-            Self::DesktopWindows => "Windows & workspaces",
+            Self::DesktopIcons => "Icons on the desktop",
+            Self::DesktopProfiles => "Looks",
+            Self::Themes => "Appearance",
+            Self::DesktopWindows => "Windows",
             Self::DesktopWorkspaces => "Workspaces",
             Self::DesktopMotion => "Accessibility",
-            Self::DesktopWindowRules => "Floating apps",
+            Self::DesktopWindowRules => "Apps that don’t tile",
             Self::DesktopShortcuts => "Shortcuts",
-            Self::DesktopAutomation => "Schedules & display rules",
-            Self::Moments => "Moments",
+            Self::DesktopAutomation => "Change with time of day",
+            Self::Moments => "Day and night style",
             Self::AdaptiveLooks => "Adaptive looks",
             Self::Builder => "Widget builder",
         }
@@ -356,8 +326,14 @@ impl Page {
     fn parse(value: &str) -> Self {
         // Stable command keys and descriptive aliases all reach the same editors.
         let value = match value {
-            "home" => "overview",
-            "setups" => "desktop-profiles",
+            "home" | "widgets" | "desktop" => "overview",
+            "setups" | "looks" => "desktop-profiles",
+            "dock" | "panel" => "desktop-dock",
+            "wallpaper" => "desktop-wallpaper",
+            "settings" => "general",
+            "accessibility" => "desktop-motion",
+            "shortcuts" => "desktop-shortcuts",
+            "windows" => "desktop-windows",
             "look" => "themes",
             "widget-style" => "appearance",
             "system-monitor" => "devbox",
@@ -371,16 +347,17 @@ impl Page {
         Self::ALL
             .into_iter()
             .find(|page| page.key() == value)
-            .unwrap_or(Self::Themes)
+            .unwrap_or(Self::Overview)
             .canonical()
     }
     /// Keep legacy layout links and recovered drafts, but use one editor.
     fn canonical(self) -> Self {
         match self {
-            Self::WidgetLayout => Self::Overview,
-            Self::Desktop => Self::DesktopDock,
+            Self::WidgetLayout | Self::Widgets | Self::Desktop => Self::Overview,
             // Workspaces is a section of Windows.
             Self::DesktopWorkspaces => Self::DesktopWindows,
+            // The shifting looks are chosen on the time of day page.
+            Self::AdaptiveLooks => Self::DesktopAutomation,
             other => other,
         }
     }
@@ -397,7 +374,7 @@ impl Page {
             Self::Devbox => "utilities-system-monitor-symbolic",
             Self::Clock => "preferences-system-time-symbolic",
             Self::Projects => "folder-symbolic",
-            Self::Music => "multimedia-audio-player-symbolic",
+            Self::Music => "audio-x-generic-symbolic",
             Self::Notes => "accessories-text-editor-symbolic",
             Self::Focus => "alarm-symbolic",
             Self::General => "preferences-system-symbolic",
@@ -465,34 +442,6 @@ pub enum AppearanceControl {
     Corners,
     Border,
 }
-/// Which styles the browser lists.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StyleFilter {
-    All,
-    Dark,
-    Light,
-    SeeThrough,
-}
-impl StyleFilter {
-    pub const ALL: [Self; 4] = [Self::All, Self::Dark, Self::Light, Self::SeeThrough];
-    pub fn title(self) -> &'static str {
-        match self {
-            Self::All => "All",
-            Self::Dark => "Dark",
-            Self::Light => "Light",
-            Self::SeeThrough => "See-through",
-        }
-    }
-    pub fn shows(self, family: crate::desktop_theme::Family) -> bool {
-        let spec = family.spec();
-        match self {
-            Self::All => true,
-            Self::Dark => !spec.light,
-            Self::Light => spec.light,
-            Self::SeeThrough => spec.transparent || spec.frosted || spec.geometry.0 < 90,
-        }
-    }
-}
 /// Title bar actions; Settings draws the bar itself (see `view`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowControl {
@@ -549,30 +498,43 @@ pub enum Message {
     GlanceMatchWidgets,
     /// Whether choosing a widget style also styles the dock and panel.
     StyleBars(bool),
-    /// Opens (or leaves) the styles browser on Colors & theme.
-    StyleBrowser(bool),
-    StyleFilter(StyleFilter),
     /// Read-only sample cards never perform desktop actions.
     Preview,
     Tick,
     RefreshService,
     Page(Page),
+    /// A flat tab: same place, no Back history.
+    FlatPage(Page),
+    /// Browse or Saved of the Setups root; both are one list.
+    SetupsTab(bool),
+    /// Leaves a setup review for its library without discarding the preview.
+    BrowseSetups,
+    /// Content, Design or Position of the object on screen.
+    ObjectTab(navigation::ObjectTab),
+    /// Returns to a retained preview.
+    ResumeKept(navigation::KeptTarget),
+    /// Undoes one step of the preview on this screen, and nothing else.
+    UndoPreviewStep,
+    /// Reveals the unresolved values inside the page's preview review.
+    ReviewPreviewConflicts,
     NavSelected(cosmic::widget::nav_bar::Id),
     SearchSettings(String),
     SearchFirst,
     SearchResult(navigation::SearchHit),
     RevealSearch(navigation::SearchHit),
     FocusSearch,
-    /// Up one level: a subpage's parent, else Layout (Alt+Left).
+    /// Returns to the named history destination (Alt+Left).
     Back,
     /// Home: preview a built-in look on the Presets page. Nothing applies.
     TryPreset(&'static str),
-    /// Home: open Dock & panel with this bar selected.
+    /// Home: open Dock and panel with this bar selected.
     OpenBar(crate::desktop::panels::PanelKind),
+    OpenWidgetFinish,
     ToggleAdvanced(Page),
     ToggleHelp(&'static str),
     ToggleSection(&'static str),
     UndoDesktop,
+    KeyboardUndo(bool),
     UndoDesktopShown(Option<String>),
     ResolveUndoShown(crate::desktop::store::UndoReview, bool),
     RecoverySelect(usize, bool),
@@ -595,6 +557,8 @@ pub enum Message {
     /// The edge sidebar slides (`true`) or appears at once.
     SidebarSlide(bool),
     SettingsAnimations(bool),
+    ActivityPreference(&'static str, bool),
+    ActivityLead(usize),
     ReadSystemMotion,
     SystemMotion(u64, bool),
     WindowRules(window_rules::Message),
@@ -648,6 +612,8 @@ pub enum Message {
     MaterialAdjust(bool),
     MaterialValue(bool, u8),
     MaterialSave,
+    /// Widget corner radius, chosen on Appearance; applies directly.
+    WidgetCorners(u16),
     MaterialMotion(bool),
     ContrastAssist(bool),
     WidgetSurface(Option<crate::desktop_theme::Surface>),
@@ -678,7 +644,10 @@ pub enum Message {
     ClockItalic(Option<bool>),
     ClockSurface(Option<crate::widget_style::resolver::ClockSurface>),
     WeatherDewPoint(bool),
+    WeatherFahrenheit(bool),
     CityInput(String),
+    /// Weather takes the city already chosen for time of day.
+    UseScheduleCity,
     EditCity(bool),
     SearchCity,
     SearchCityAfter(u64),
@@ -706,6 +675,8 @@ pub enum Message {
     SetupDismissed(bool),
     SetupOpen(bool),
     DismissSetupTask(wizard::follow_up::Task),
+    /// Close the finished setup and open a page for a follow-up task.
+    FinishSetupTo(Page),
     OpenWeatherSource,
     UndoDesktopRestore(String),
     DesktopRestorePreview,
@@ -755,7 +726,19 @@ pub struct Settings {
     core: Core,
     page: Page,
     app_settings_page: AppSettingsPage,
-    root_destinations: [Page; 6],
+    /// Where Back goes: real history, newest last.
+    history: Vec<navigation::Route>,
+    object_tab: navigation::ObjectTab,
+    /// The landing shows the arrangement editor instead of its picture.
+    arranging: bool,
+    /// The rail's Search shows the search screen before anything is typed.
+    search_open: bool,
+    /// Set while Back restores a route, or a flat tab changes.
+    quiet_navigation: bool,
+    /// What leaving just kept, and how to return to it.
+    kept_note: Option<(String, navigation::KeptTarget)>,
+    /// Setup choices wait to be resumed from Recovery.
+    setup_kept: bool,
     collapsed_scenes: Vec<Page>,
     scene_objects_open: bool,
     page_scroll: std::collections::BTreeMap<String, f32>,
@@ -779,9 +762,11 @@ pub struct Settings {
     font_search: String,
     font_page: usize,
     font_loading: bool,
-    /// Colors & theme shows the styles browser instead of its main view.
-    style_browser: bool,
-    style_filter: StyleFilter,
+    /// A style or color choice on Appearance waits to be applied: it is
+    /// committed as soon as its plan is ready (instant apply, Undo after).
+    theme_instant: bool,
+    /// A wallpaper choice waiting to apply itself, like `theme_instant`.
+    wallpaper_instant: bool,
     /// Families the renderer can draw, read when a font list first opens.
     font_catalog: Option<crate::desktop::appearance::catalog::FontCatalog>,
     #[cfg(test)]
@@ -843,6 +828,8 @@ pub struct Settings {
     calendar: calendar::Editor,
     folder_input: String,
     folder_pending: bool,
+    /// The folder chooser failed, so a typed path is offered instead.
+    folder_typing: bool,
     service: ServiceState,
     service_known: bool,
     busy: bool,
@@ -897,6 +884,7 @@ fn startup_enabled() -> bool {
         .is_ok_and(|status| status.success())
 }
 /// Set by `run` for first-run setup (`setup`), read once by `init`.
+static OPEN_PANEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static OPEN_WIZARD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 pub fn run(page: &str) -> cosmic::iced::Result {
     let remembered = if page.is_empty() {
@@ -925,7 +913,7 @@ pub fn run(page: &str) -> cosmic::iced::Result {
     } else {
         page
     };
-    // `styles` opens the styles browser on Colors & theme.
+    // `styles` opens Appearance with every style shown.
     let page = if page == "styles" {
         OPEN_STYLES.store(true, std::sync::atomic::Ordering::Relaxed);
         "themes"
@@ -951,6 +939,7 @@ pub fn run(page: &str) -> cosmic::iced::Result {
         .theme(controls_theme(&Config::load()))
         .transparent(false)
         .exit_on_close(true);
+    OPEN_PANEL.store(page == "panel", std::sync::atomic::Ordering::Relaxed);
     cosmic::app::run::<Settings>(settings, Page::parse(page))
 }
 
@@ -1005,7 +994,14 @@ impl cosmic::Application for Settings {
             search_selected: None,
             advanced_pages: Vec::new(),
             help_open: None,
-            open_sections: Default::default(),
+            // `--settings styles` opens Appearance with every style shown.
+            open_sections: if page == Page::Themes
+                && OPEN_STYLES.swap(false, std::sync::atomic::Ordering::Relaxed)
+            {
+                ["appearance-all-styles"].into()
+            } else {
+                Default::default()
+            },
             last_desktop_change: navigation::latest_desktop_change(),
             undo_baseline: navigation::latest_desktop_change().map(|(_, _, id)| id),
             color_well: None,
@@ -1013,9 +1009,8 @@ impl cosmic::Application for Settings {
             font_search: String::new(),
             font_page: 0,
             font_loading: false,
-            style_browser: page == Page::Themes
-                && OPEN_STYLES.swap(false, std::sync::atomic::Ordering::Relaxed),
-            style_filter: StyleFilter::All,
+            theme_instant: false,
+            wallpaper_instant: false,
             font_catalog: None,
             #[cfg(test)]
             preference_undo: None,
@@ -1041,7 +1036,13 @@ impl cosmic::Application for Settings {
             appearance_draft: config.appearance.clone(),
             appearance_preview: Widget::Weather,
             app_settings_page: navigation::app_destination(),
-            root_destinations: navigation::root_destinations(page),
+            history: Vec::new(),
+            object_tab: Default::default(),
+            arranging: false,
+            search_open: false,
+            quiet_navigation: false,
+            kept_note: None,
+            setup_kept: false,
             collapsed_scenes: Vec::new(),
             scene_objects_open: false,
             page_scroll: Default::default(),
@@ -1082,6 +1083,7 @@ impl cosmic::Application for Settings {
             calendar: calendar::Editor::default(),
             folder_input: String::new(),
             folder_pending: false,
+            folder_typing: false,
             service: ServiceState::default(),
             service_known: false,
             busy: false,
@@ -1118,7 +1120,8 @@ impl cosmic::Application for Settings {
             app.material_native = crate::desktop::actions::history_store()
                 .is_ok_and(|s| crate::desktop::materials::native_support(&s));
         }
-        if page == Page::DesktopAppearance {
+        // Windows shows window corners and outline from the same draft.
+        if matches!(page, Page::DesktopAppearance | Page::DesktopWindows) {
             app.system_appearance.open();
         }
         if matches!(
@@ -1152,7 +1155,14 @@ impl cosmic::Application for Settings {
                     app.adaptive_look.id(app.adaptive_phase),
                 )));
         }
+        app.setup_kept = app.wizard.is_none()
+            && crate::desktop::DesktopStore::from_env()
+                .is_ok_and(|store| wizard::Wizard::pending(&store));
         app.restore_session_drafts();
+        if let Some(kind) = navigation::preview_kind(page) {
+            let _ = app.profiles.enter(kind);
+        }
+        app.arranging = app.canvas.is_some() && page == Page::Overview;
         app.open_page_editor(page);
         if matches!(
             page,
@@ -1164,7 +1174,7 @@ impl cosmic::Application for Settings {
                 | Page::DesktopIcons
                 | Page::DesktopWindows
                 | Page::DesktopAppearance
-        ) || page.nav() == Page::Widgets
+        ) || navigation::widget_of(page).is_some()
         {
             app.profiles.open_home();
         }
@@ -1188,6 +1198,11 @@ impl cosmic::Application for Settings {
         } else {
             Task::none()
         };
+        let panel = if OPEN_PANEL.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            app.handle(Message::OpenBar(crate::desktop::panels::PanelKind::Panel))
+        } else {
+            Task::none()
+        };
         let motion = app.handle(Message::ReadSystemMotion);
         app.desktop_recovery.refresh();
         let installation = app.handle(Message::RefreshInstallation);
@@ -1204,6 +1219,7 @@ impl cosmic::Application for Settings {
             app,
             Task::batch([
                 title,
+                panel,
                 service,
                 media,
                 gallery,
@@ -1242,7 +1258,9 @@ impl cosmic::Application for Settings {
                 .color_subscription()
                 .map(|_| Message::DesktopPaletteChanged),
         ];
-        if self.page == Page::DesktopWallpaper && (self.config.rain.enabled || self.rain.preview) {
+        if self.page == Page::DesktopWallpaper
+            && (self.wallpaper.effect().unwrap_or(&self.config.rain).enabled || self.rain.preview)
+        {
             subscriptions.push(
                 crate::rain::lifecycle::watch().map(|s| Message::Rain(rain::Edit::Lifecycle(s))),
             );
@@ -1293,7 +1311,7 @@ impl cosmic::Application for Settings {
                         && key.eq_ignore_ascii_case("z")
                         && status == cosmic::iced::event::Status::Ignored =>
                     {
-                        Some(Message::UndoDesktop)
+                        Some(Message::KeyboardUndo(modifiers.shift()))
                     }
                     Event::Keyboard(keyboard::Event::KeyPressed {
                         key: keyboard::Key::Character(key),
@@ -1544,6 +1562,12 @@ impl cosmic::Application for Settings {
                     .map(|_| Message::Tools(tools::Message::Redraw)),
             );
         }
+        if self.page == Page::Notes && self.tools.autosave_pending() {
+            subscriptions.push(
+                cosmic::iced::time::every(Duration::from_millis(500))
+                    .map(|_| Message::Tools(tools::Message::NoteAutosave)),
+            );
+        }
         if capture_dir().is_some() {
             subscriptions
                 .push(cosmic::iced::time::every(Duration::from_secs(1)).map(|_| Message::Tick));
@@ -1650,8 +1674,13 @@ impl cosmic::Application for Settings {
         Some(Message::FlushEdits)
     }
     fn update(&mut self, message: Message) -> Task<Message> {
+        if let Message::FinishSetupTo(page) = message {
+            let finish = self.update(Message::Wizard(wizard::Message::Finish));
+            let open = self.update(Message::Page(page));
+            return Task::batch([finish, open]);
+        }
         if self.page == Page::Overview
-            && self.canvas.is_none()
+            && !self.canvas_visible()
             && matches!(&message, Message::Placement(edit) if !matches!(edit,
                 placement::Message::Select(_) | placement::Message::ClearSelection
                 | placement::Message::Cancel | placement::Message::Undo | placement::Message::Escape
@@ -1674,6 +1703,21 @@ impl cosmic::Application for Settings {
                 _ => return Task::none(),
             }
         }
+        let message = if self.page == Page::Themes {
+            direct::theme_preview(&message)
+                .map(Message::Profiles)
+                .unwrap_or(message)
+        } else {
+            message
+        };
+        if self.page == Page::Themes
+            && matches!(&message, Message::Profiles(edit) if instant_theme_edit(edit))
+        {
+            self.theme_instant = true;
+        }
+        if self.page == Page::DesktopWallpaper && instant_wallpaper_edit(&message) {
+            self.wallpaper_instant = true;
+        }
         if matches!(message, Message::Window(WindowControl::Close)) {
             self.updates.cancel();
             if self.tools.saving() {
@@ -1686,6 +1730,30 @@ impl cosmic::Application for Settings {
         }
         if let Message::Updates(message) = message {
             return self.update_updates(message);
+        }
+        if let Message::KeyboardUndo(redo) = message {
+            return match (self.undo_target(), redo) {
+                (navigation::UndoTarget::Note, true) => self.update_tools(tools::Message::NoteRedo),
+                (navigation::UndoTarget::Note, false) => {
+                    self.update_tools(tools::Message::NoteUndo)
+                }
+                (_, true) => Task::none(),
+                (navigation::UndoTarget::Preview(_), false) => self.undo_preview_step(),
+                (_, false) => self.update(Message::UndoDesktop),
+            };
+        }
+        // Ctrl+Z and the visible Undo agree: the note's text on the Notes
+        // screen, then this screen's preview, and only then the desktop. An
+        // empty local history stops there.
+        if matches!(message, Message::UndoDesktop) {
+            match self.undo_target() {
+                navigation::UndoTarget::Note => return self.update_tools(tools::Message::NoteUndo),
+                navigation::UndoTarget::Preview(_) => return self.undo_preview_step(),
+                _ => {}
+            }
+        }
+        if matches!(message, Message::UndoPreviewStep) {
+            return self.undo_preview_step();
         }
         // Both Check again controls use the generation-ordered observation
         // pipeline. A desktop worker completion keeps the display snapshot and
@@ -1887,20 +1955,111 @@ impl cosmic::Application for Settings {
             self.automation.sync_hold(parts);
         }
         let depth = self.depth_preview_sync();
+        let instant = self.instant_theme_apply();
+        let wallpaper = self.instant_wallpaper_apply();
         Task::batch(
-            [task, depth]
+            [task, depth, instant, wallpaper]
                 .into_iter()
                 .chain(std::mem::take(&mut self.native_tasks)),
         )
     }
 }
 
+/// Choices on Appearance that apply immediately. A custom color applies when
+/// its editor is closed, not on every step of the picker.
+/// Wallpaper choices made by clicking, which apply without a button.
+fn instant_wallpaper_edit(message: &Message) -> bool {
+    use wallpaper::Message as Edit;
+    matches!(
+        message,
+        Message::Wallpaper(
+            Edit::Select(_)
+                | Edit::Fit(_)
+                | Edit::Same(_)
+                | Edit::Every(_)
+                | Edit::Order(_)
+                | Edit::Stops(_)
+                | Edit::Direction(_)
+                | Edit::Picked(..)
+        ) | Message::Rain(rain::Edit::Set(_) | rain::Edit::Commit)
+    )
+}
+fn instant_theme_edit(edit: &profiles::Message) -> bool {
+    use profiles::Message as Edit;
+    matches!(
+        edit,
+        Edit::Select(_)
+            | Edit::ThemeColors(_)
+            | Edit::ThemeAccent(_)
+            | Edit::ThemeCustom(None)
+            | Edit::Color(_)
+            | Edit::ThemeScope(_)
+            | Edit::ThemeWallpaper(_)
+            | Edit::RepairThemeMatching
+            // Settling the last conflict lets the waiting choice apply;
+            // there is no Apply button on Appearance to finish it.
+            | Edit::ResolveConflict(..)
+            | Edit::ResolveValueConflict(..)
+    )
+}
+
 impl Settings {
+    /// Appearance applies a style or color choice as soon as its plan is
+    /// ready: the change is one recoverable desktop transaction, and the
+    /// footer offers its Undo. Waits for wallpaper colors and a busy worker;
+    /// a conflict or problem keeps the choice visible instead.
+    fn instant_theme_apply(&mut self) -> Task<Message> {
+        if !self.theme_instant {
+            return Task::none();
+        }
+        if self.page != Page::Themes {
+            self.theme_instant = false;
+            return Task::none();
+        }
+        if self.native_busy || self.profiles.theme_loading() {
+            return Task::none();
+        }
+        self.theme_instant = false;
+        // A whole desktop setup is still reviewed in Setups; only an
+        // appearance change applies on its own.
+        if self.profiles.review_open()
+            && self.profiles.can_apply()
+            && self.profiles.profile().is_some_and(|p| p.appearance_only)
+        {
+            Task::done(cosmic::Action::App(Message::Profiles(profiles::Message::Apply)))
+        } else {
+            Task::none()
+        }
+    }
+
+    /// Applies a wallpaper choice once it can be: one recoverable change,
+    /// undone from the footer. Typed values wait for the Apply button.
+    fn instant_wallpaper_apply(&mut self) -> Task<Message> {
+        if !self.wallpaper_instant {
+            return Task::none();
+        }
+        if self.page != Page::DesktopWallpaper {
+            self.wallpaper_instant = false;
+            return Task::none();
+        }
+        if self.native_busy || !self.wallpaper.colors_ready() {
+            return Task::none();
+        }
+        self.wallpaper_instant = false;
+        if self.wallpaper.can_apply() {
+            Task::done(cosmic::Action::App(Message::Wallpaper(wallpaper::Message::Apply)))
+        } else {
+            Task::none()
+        }
+    }
+
     fn handle(&mut self, message: Message) -> Task<Message> {
         if let Some(task) = self.dispatch_native(&message) {
             return task;
         }
         match message {
+            Message::KeyboardUndo(redo) => return self.update(Message::KeyboardUndo(redo)),
+            Message::FinishSetupTo(page) => return self.update(Message::FinishSetupTo(page)),
             Message::Updates(message) => return self.update_updates(message),
             Message::Support(message) => return self.update_support(message),
             Message::KeyboardFocus(backwards) => return navigation::keyboard_focus(backwards),
@@ -2004,9 +2163,13 @@ impl Settings {
             Message::Calendar(message) => return self.update_calendar(message),
             Message::Wizard(message) => return self.update_wizard(message),
             Message::OpenWizard => {
+                self.setup_kept = false;
                 self.wizard = Some(open_wizard());
             }
             Message::SetupOpen(open) => {
+                if open && !self.setup_requested && self.page == Page::Overview {
+                    self.remember_route();
+                }
                 let navigate = self.handle(Message::Page(Page::Overview));
                 self.setup_requested = open;
                 return navigate;
@@ -2029,6 +2192,9 @@ impl Settings {
                     self.devbox_reorder.cancel();
                     self.desktop.drag.cancel();
                 }
+                if query.trim().is_empty() {
+                    self.search_open = false;
+                }
                 self.search_query = query;
                 self.search_selected = None;
             }
@@ -2038,7 +2204,14 @@ impl Settings {
                 }
             }
             Message::SearchResult(hit) => {
+                self.remember_route();
+                self.quiet_navigation = true;
                 let navigation = self.handle(Message::Page(hit.page));
+                self.quiet_navigation = false;
+                self.object_tab = hit.object_tab();
+                if let Some(bar) = hit.bar {
+                    self.desktop.update(desktop::Message::Select(bar));
+                }
                 if hit.page == Page::General {
                     self.app_settings_page = hit.app_destination();
                     navigation::remember_app_destination(self.app_settings_page);
@@ -2056,8 +2229,9 @@ impl Settings {
                 }
                 if hit.advanced {
                     match hit.page {
-                        Page::DesktopAppearance if hit.open == navigation::SearchOpen::Effects => {
-                            self.system_appearance.effects = true
+                        Page::DesktopWindows if hit.open == navigation::SearchOpen::Effects => {
+                            self.system_appearance.effects = true;
+                            self.open_sections.insert("appearance-window-details");
                         }
                         Page::DesktopAppearance => self.system_appearance.advanced_colors = true,
                         Page::DesktopDock => self.desktop.advanced = true,
@@ -2087,53 +2261,59 @@ impl Settings {
                 ]);
             }
             Message::RevealSearch(hit) => {
-                if self.search_selected == Some(hit) && self.search_query.is_empty() {
+                if self.search_selected == Some(hit) && self.search_query.trim().is_empty() {
                     return navigation::reveal(hit.anchor());
                 }
             }
             Message::FocusSearch => {
+                if self.rail() {
+                    self.search_open = true;
+                }
                 return cosmic::widget::text_input::focus(navigation::search_id());
             }
             Message::NavSelected(id) => {
                 if let Some(page) = self.nav_model.data::<Page>(id).copied() {
-                    return self.handle(Message::Page(self.root_destinations[page.root_index()]));
+                    return self.open_root(page);
                 }
             }
             Message::Back => {
                 if self.wizard.is_some() {
                     return self.update_wizard(wizard::Message::Back);
                 }
-                if self.page == Page::General && self.support.recent_open {
+                if self.history.is_empty() && self.page == Page::General && self.support.recent_open
+                {
                     return self.update_support(support::Message::Recent(false));
                 }
-                if self.page == Page::General && self.support.report.is_some() {
+                if self.history.is_empty()
+                    && self.page == Page::General
+                    && self.support.report.is_some()
+                {
                     return self.update_support(support::Message::Preview(false));
                 }
-                if !self.search_query.trim().is_empty() {
+                if !self.search_query.trim().is_empty() || self.search_open {
                     return self.handle(Message::SearchSettings(String::new()));
                 }
-                if self.page == Page::DesktopProfiles && self.profiles.package.is_some() {
+                if self.history.is_empty()
+                    && self.page == Page::DesktopProfiles
+                    && self.profiles.package.is_some()
+                {
                     return self.handle(Message::Profiles(profiles::Message::Package(
                         profiles::packages::Edit::Close,
                     )));
                 }
-                if self.page == Page::DesktopProfiles
+                if self.history.is_empty()
+                    && self.page == Page::DesktopProfiles
                     && (self.profiles.mix.is_some()
                         || self.profiles.profile().is_some()
                         || self.profiles.selection() != &profiles::Selection::Current)
                 {
-                    return self.handle(Message::Profiles(profiles::Message::Discard));
+                    // Leaving a review keeps it if it was changed.
+                    return self.leave_review_to_browse();
                 }
-                if self.page == Page::Overview && self.setup_requested {
+                if self.history.is_empty() && self.page == Page::Overview && self.setup_requested {
                     return self.handle(Message::SetupOpen(false));
                 }
-                if self.page == Page::Themes && self.style_browser {
-                    return self.handle(Message::StyleBrowser(false));
-                }
-                let target = self.page.parent().unwrap_or(Page::Overview);
-                if target != self.page {
-                    return self.handle(Message::Page(target));
-                }
+                return self.go_back();
             }
             Message::TryPreset(id) => {
                 let navigate = self.handle(Message::Page(Page::DesktopProfiles));
@@ -2146,6 +2326,10 @@ impl Settings {
                 return Task::batch([navigate, select]);
             }
             Message::OpenBar(kind) => {
+                if self.page == Page::DesktopDock && self.desktop.selected != kind {
+                    self.remember_route();
+                    self.object_tab = Default::default();
+                }
                 let navigate = self.handle(Message::Page(Page::DesktopDock));
                 let select = self.handle(Message::DesktopEditor(desktop::Message::Select(kind)));
                 return Task::batch([navigate, select]);
@@ -2157,7 +2341,7 @@ impl Settings {
                     self.advanced_pages.push(page);
                 }
             }
-            Message::UndoDesktop if self.canvas.is_some() && self.page == Page::Overview => {
+            Message::UndoDesktop if self.canvas_visible() => {
                 return self.update_canvas(canvas::Message::Undo);
             }
             Message::Canvas(event) => return self.update_canvas(event),
@@ -2257,23 +2441,39 @@ impl Settings {
                 }
             }
             Message::EditWidgetLayout(widget) => {
-                let widget = if self.config.glance.enabled
+                // Position is a tab of the object's own editor. Combined widgets
+                // move as the Daily overview card.
+                let selected = if self.config.glance.enabled
                     && matches!(widget, Widget::Clock | Widget::Weather | Widget::Calendar)
                 {
                     Widget::Glance
                 } else {
                     widget
                 };
-                let navigation = self.handle(Message::Page(Page::Overview));
-                let selection =
-                    self.update_placement(placement::Message::Select(widget.key().into()));
-                let editor = if self.legacy_layout_recovery() {
-                    Task::none()
-                } else {
-                    self.update_canvas(canvas::Message::Start)
-                };
-                return Task::batch([navigation, selection, editor]);
+                let navigation = self.handle(Message::Page(navigation::widget_page(widget)));
+                let editor = self.open_position(selected);
+                return Task::batch([navigation, editor]);
             }
+            Message::FlatPage(page) => {
+                self.quiet_navigation = true;
+                let task = self.handle(Message::Page(page));
+                self.quiet_navigation = false;
+                return task;
+            }
+            Message::SetupsTab(saved) => {
+                self.quiet_navigation = true;
+                let task = self.handle(Message::Page(Page::DesktopProfiles));
+                self.quiet_navigation = false;
+                // A review or mix on screen waits for the list.
+                let leave = self.leave_review_to_browse();
+                self.profiles.update(profiles::Message::Collection(saved));
+                return Task::batch([task, leave]);
+            }
+            Message::BrowseSetups => return self.leave_review_to_browse(),
+            Message::ObjectTab(tab) => return self.select_object_tab(tab),
+            Message::ResumeKept(target) => return self.resume_kept(target),
+            Message::UndoPreviewStep => return self.undo_preview_step(),
+            Message::ReviewPreviewConflicts => return navigation::reveal("preview-conflicts"),
             Message::Placement(message) => {
                 // The widget list and the miniature share one pointer; a
                 // column reorder in progress owns it until drop or cancel.
@@ -2299,15 +2499,22 @@ impl Settings {
                 return task;
             }
             Message::DesktopEditor(message) => {
-                if self.page == Page::DesktopDock
+                let bar = matches!(message, desktop::Message::Select(_));
+                let was = self.page;
+                if (self.page == Page::DesktopDock || bar)
                     && let Some(id) = self.desktop.update(message)
                 {
+                    let _ = was;
                     // Keyboard focus follows the moved applet.
                     return cosmic::widget::button::focus(id);
                 }
             }
             Message::Windows(message) => {
-                if self.page == Page::DesktopWindows {
+                // "Turn on tiling" on the floating-apps page edits Windows too.
+                if self.page == Page::DesktopWindows
+                    || (self.page == Page::DesktopWindowRules
+                        && matches!(message, windows::Message::Autotile(true)))
+                {
                     self.update_windows(message);
                 }
             }
@@ -2318,6 +2525,10 @@ impl Settings {
             }
             Message::Motion(message) => return self.update_motion(message),
             Message::SidebarSlide(on) => self.save(json!({"sidebar_slide": on})),
+            Message::ActivityPreference(key, on) => self.save_activity(json!({key:on})),
+            Message::ActivityLead(index) => {
+                self.save_activity(json!({"lead_minutes":([5,10,15][index.min(2)])}))
+            }
             Message::SettingsAnimations(on) => self.save(json!({"settings_animations": on})),
             Message::ReadSystemMotion => {
                 self.motion_generation = self.motion_generation.wrapping_add(1);
@@ -2439,6 +2650,13 @@ impl Settings {
                 }
             }
             Message::Profiles(message) => return self.update_profiles(message),
+            // The note card's "Write a note" puts the cursor in the editor
+            // below it.
+            Message::Tools(tools::Message::Card(crate::tools::cards::Action::NoteEdit)) => {
+                return cosmic::widget::text_input::focus(cosmic::widget::Id::new(
+                    "note-editor-text",
+                ));
+            }
             Message::Tools(message) => return self.update_tools(message),
             Message::AdaptivePreview(look, phase) => {
                 if self.page != Page::AdaptiveLooks {
@@ -2455,6 +2673,10 @@ impl Settings {
             }
             Message::Automation(message) => return self.update_automation(message),
             Message::AppSettingsPage(page) => {
+                // Opening a Settings section is a real step: Back returns here.
+                if self.page == Page::General && self.app_settings_page != page {
+                    self.remember_route();
+                }
                 let navigate = if self.page != Page::General {
                     self.handle(Message::Page(Page::General))
                 } else {
@@ -2537,7 +2759,11 @@ impl Settings {
                         let _ = std::fs::remove_file(path);
                         if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) {
                             if let Some(page) = value["page"].as_str() {
-                                tasks.push(self.update(Message::Page(Page::parse(page))));
+                                tasks.push(self.update(if page == "panel" {
+                                    Message::OpenBar(crate::desktop::panels::PanelKind::Panel)
+                                } else {
+                                    Message::Page(Page::parse(page))
+                                }));
                             }
                             // Capture audits drive the editor through its own
                             // messages instead of synthesizing desktop pointer input.
@@ -2576,6 +2802,21 @@ impl Settings {
                                 // keyboard, confined to isolated capture mode.
                                 if value["back"] == true {
                                     tasks.push(self.update(Message::Back));
+                                }
+                                // Walks the setup wizard step by step for audits.
+                                if let Some(action) = value["wizard"].as_str() {
+                                    let message = match action {
+                                        "open" => Some(Message::OpenWizard),
+                                        "start" => Some(Message::Wizard(wizard::Message::Start)),
+                                        "next" => Some(Message::Wizard(wizard::Message::Next)),
+                                        "back" => Some(Message::Wizard(wizard::Message::Back)),
+                "change" => Some(Message::Wizard(wizard::Message::KeepBars(false))),
+                "order" => Some(Message::Wizard(wizard::Message::Show(wizard::Step::Arrange))),
+                                        _ => None,
+                                    };
+                                    if let Some(message) = message {
+                                        tasks.push(self.update(message));
+                                    }
                                 }
                                 if let Some(preset) = value["try_preset"]
                                     .as_str()
@@ -2920,29 +3161,29 @@ impl Settings {
                 return Task::batch(tasks);
             }
             Message::Page(page) => {
+                let reveal_widgets = page == Page::Widgets;
+                let legacy_layout = page == Page::WidgetLayout;
                 let page = page.canonical();
                 if self.page != page {
                     // A previous page's change stays available in Recent
                     // changes and keyboard Undo, not as this task's footer.
                     self.undo_baseline = navigation::latest_desktop_change().map(|(_, _, id)| id);
-                }
-                if self.page != page
-                    && matches!(
-                        self.page,
-                        Page::Themes | Page::DesktopProfiles | Page::AdaptiveLooks
-                    )
-                {
-                    self.profiles.update(profiles::Message::Discard);
+                    if !self.quiet_navigation {
+                        self.remember_route();
+                    }
+                    self.object_tab = Default::default();
+                    self.arranging = false;
+                    self.note_leaving(page);
                 }
                 if self.page != page && self.page == Page::DesktopWallpaper {
-                    self.wallpaper.cancel_preview();
-                    self.rain.clear();
+                    // Keep values and transaction baselines; only stop rendering.
+                    self.rain.preview = false;
+                    self.rain.release_image();
                 }
                 self.devbox_reordering = false;
                 self.devbox_reorder.cancel();
                 self.help_open = None;
                 self.color_well = None;
-                self.style_browser = false;
                 self.setup_requested = false;
                 self.shortcuts.cancel_recording();
                 self.flush_edits();
@@ -2952,7 +3193,7 @@ impl Settings {
                 self.placement.refresh(&self.config);
                 self.refresh_canvas();
                 self.page = page;
-                self.root_destinations[page.root_index()] = page;
+                self.search_open = false;
                 if !(capture_dir().is_some() && !preview())
                     && let Ok(store) = crate::desktop::DesktopStore::from_env()
                 {
@@ -2970,14 +3211,20 @@ impl Settings {
                 if page == Page::DesktopDock {
                     self.desktop.open();
                 }
-                if page == Page::DesktopAppearance {
+                if matches!(page, Page::DesktopAppearance | Page::DesktopWindows) {
                     self.system_appearance.open();
                 }
-                if matches!(
-                    page,
-                    Page::DesktopProfiles | Page::Themes | Page::AdaptiveLooks
-                ) {
+                let mut resumed = false;
+                if let Some(kind) = navigation::preview_kind(page) {
                     self.profiles.open();
+                    if self.profiles.owner() != kind || !self.profiles.review_open() {
+                        resumed = self.profiles.enter(kind);
+                    }
+                    // An Appearance choice left before it could apply (the
+                    // worker was busy) has no Apply button; finish it now.
+                    if resumed && page == Page::Themes {
+                        self.theme_instant = true;
+                    }
                 }
                 if matches!(
                     page,
@@ -2989,7 +3236,8 @@ impl Settings {
                         | Page::DesktopIcons
                         | Page::DesktopWindows
                         | Page::DesktopAppearance
-                ) || page.nav() == Page::Widgets
+                        | Page::DesktopWallpaper
+                ) || navigation::widget_of(page).is_some()
                 {
                     self.profiles.open_home();
                 }
@@ -3006,6 +3254,9 @@ impl Settings {
                 if page == Page::Themes {
                     self.wallpaper.open();
                     self.system_appearance.open();
+                    // Appearance's surface controls edit the shared material.
+                    self.save_material_draft();
+                    self.material_target = crate::materials::Target::Shared;
                 }
                 if page == Page::AdaptiveLooks {
                     self.adaptive_source = if self.automation.solar.weather_enabled {
@@ -3013,10 +3264,11 @@ impl Settings {
                     } else {
                         crate::automation::solar::Source::Manual
                     };
-                    self.profiles
-                        .update(profiles::Message::Select(profiles::Selection::Preset(
-                            self.adaptive_look.id(self.adaptive_phase),
-                        )));
+                    if !resumed {
+                        self.profiles.update(profiles::Message::Select(
+                            profiles::Selection::Preset(self.adaptive_look.id(self.adaptive_phase)),
+                        ));
+                    }
                 }
                 self.open_page_editor(page);
                 if !self.error {
@@ -3043,8 +3295,17 @@ impl Settings {
                         y: Some(self.page_scroll.get(page.key()).copied().unwrap_or(0.)),
                     },
                 );
+                if legacy_layout {
+                    self.arranging = self.canvas.is_some();
+                }
+                let reveal = if reveal_widgets {
+                    navigation::reveal("desktop-widgets")
+                } else {
+                    Task::none()
+                };
                 return Task::batch([
                     scroll,
+                    reveal,
                     if matches!(page, Page::General | Page::Overview) {
                         service_task()
                     } else {
@@ -3197,17 +3458,6 @@ impl Settings {
                 "own_background": self.config.appearance.family.is_some(),
             })),
             Message::GlanceMatchWidgets => self.save_glance(json!({"own_background": false})),
-            Message::StyleBrowser(open) => {
-                self.style_browser = open && self.page == Page::Themes;
-                return cosmic::iced::widget::scrollable::snap_to(
-                    cosmic::widget::Id::new("settings-content"),
-                    cosmic::iced::widget::scrollable::RelativeOffset {
-                        x: None,
-                        y: Some(0.),
-                    },
-                );
-            }
-            Message::StyleFilter(filter) => self.style_filter = filter,
             Message::StyleBars(on) => {
                 self.save(json!({"appearance": {"style_bars": on}}));
                 self.profiles
@@ -3272,6 +3522,15 @@ impl Settings {
             Message::CalendarPrivacy(value) => self.save(json!({"calendar_private": value})),
             Message::Today(value) => self.save(json!({"calendar_show_today": value})),
             Message::Tomorrow(value) => self.save(json!({"calendar_show_tomorrow": value})),
+            Message::WeatherFahrenheit(value) => {
+                match Config::save_weather(json!({"fahrenheit": value})) {
+                    Ok(config) => {
+                        self.config = config;
+                        self.saved();
+                    }
+                    Err(error) => self.failed(error),
+                }
+            }
             Message::WeatherDewPoint(value) => {
                 match Config::save_weather(json!({"show_dew_point": value})) {
                     Ok(config) => {
@@ -3298,6 +3557,10 @@ impl Settings {
                     return Task::none();
                 }
                 self.material_target = target;
+            }
+            Message::OpenWidgetFinish => {
+                self.material_target = crate::materials::Target::Widgets;
+                return self.handle(Message::Page(Page::Appearance));
             }
             Message::MaterialChoose(kind) => {
                 self.flush_edits();
@@ -3333,28 +3596,29 @@ impl Settings {
                 }
             }
             Message::MaterialSave => self.save_material_draft(),
+            Message::WidgetCorners(radius) => {
+                self.flush_edits();
+                self.save_appearance(json!({"corner_radius": radius}));
+            }
             Message::Rain(edit) => match edit {
                 rain::Edit::Lifecycle(state) => self.rain.lifecycle = state,
-                rain::Edit::Draft(p) => {
-                    if p.validate().is_ok() {
-                        self.rain
-                            .base
-                            .get_or_insert_with(|| self.config.rain.clone());
-                        self.rain.draft = Some(p);
+                rain::Edit::Draft(p) if self.page == Page::DesktopWallpaper => {
+                    self.wallpaper.begin_gesture();
+                    if let Err(error) = self.wallpaper.stage_effect(p) {
+                        self.failed(error);
                     }
+                }
+                rain::Edit::Set(p) if self.page == Page::DesktopWallpaper => {
+                    let before = self.wallpaper.snapshot();
+                    if let Err(error) = self.wallpaper.stage_effect(p) {
+                        self.failed(error);
+                    }
+                    self.wallpaper.record_step(before);
                 }
                 rain::Edit::Preview(on) => self.rain.preview = on,
-                rain::Edit::Commit => {
-                    if let Some(p) = self.rain.draft.take() {
-                        self.save_rain(p);
-                    }
-                }
-                rain::Edit::Set(p) => {
-                    if p.validate().is_ok() {
-                        self.rain.draft = None;
-                        self.save_rain(p);
-                    }
-                }
+                // Finishes a preview gesture; Apply owns the write.
+                rain::Edit::Commit => self.wallpaper.finish_gesture(),
+                _ => {}
             },
             Message::MaterialMotion(on) => self.save(json!({"material_motion":on})),
             Message::AppearancePreview(widget) => self.appearance_preview = widget,
@@ -3453,6 +3717,17 @@ impl Settings {
             Message::Moment(edit) => self.update_moment(edit),
             Message::OpenRecipe(kind) => {
                 let task = self.update(Message::Page(Page::Builder));
+                if self.recipe_editor.dirty() {
+                    if self.recipe_editor.draft.kind != kind {
+                        self.recipe_editor.notice = Some(format!(
+                            "Your {} preview is kept. Apply or discard it before opening {}.",
+                            self.recipe_editor.draft.kind.title(),
+                            kind.title(),
+                        ));
+                        self.recipe_editor.error = false;
+                    }
+                    return task;
+                }
                 if let Some(recipe) = self.config.recipes.get(kind).cloned() {
                     self.recipe_editor.expected =
                         self.recipe_editor.library.entries.get(&recipe.id).cloned();
@@ -3529,9 +3804,27 @@ impl Settings {
                         self.schedule_city_editing = false;
                         self.schedule_city_search.select(city.name.clone());
                         self.schedule_cities.clear();
+                        // One place for "where you are": Weather picks it up too
+                        // when it has no city yet.
+                        if self.config.location.is_none() {
+                            self.save(json!({"location": location.clone()}));
+                        }
                         return self.update(Message::Automation(automation::Message::ManualCity(
                             location,
                         )));
+                    }
+                }
+            }
+            Message::UseScheduleCity => {
+                if let Ok(city) = self
+                    .automation
+                    .solar
+                    .city(crate::automation::solar::Source::Manual)
+                {
+                    let city = city.clone();
+                    self.save(json!({"location": city}));
+                    if !self.error {
+                        self.city_editing = false;
                     }
                 }
             }
@@ -3569,6 +3862,16 @@ impl Settings {
                 if let Some(city) = self.cities.get(index) {
                     let location = city.location();
                     let name = city.name.clone();
+                    // Setup stages its city with its other choices.
+                    if let Some(wizard) = self.wizard.as_mut() {
+                        wizard.city = Some(location);
+                        self.city_search.select(name);
+                        self.cities.clear();
+                        if let Ok(store) = crate::desktop::DesktopStore::from_env() {
+                            wizard.remember(&store);
+                        }
+                        return Task::none();
+                    }
                     self.save(json!({"location": location}));
                     if !self.error {
                         self.city_search.select(name);
@@ -3607,7 +3910,10 @@ impl Settings {
                 match result {
                     Ok(Some(path)) => self.add_folder(path.to_string_lossy().into_owned()),
                     Ok(None) => (),
-                    Err(error) => self.failed(error),
+                    Err(error) => {
+                        self.folder_typing = true;
+                        self.failed(error);
+                    }
                 }
             }
             Message::RemoveFolder(path) => {
@@ -3951,6 +4257,7 @@ fn checkpoint_message(message: &Message) -> bool {
     !matches!(
         message,
         Message::Tick
+            | Message::Rain(rain::Edit::Draft(_) | rain::Edit::Lifecycle(_))
             | Message::Support(..)
             | Message::KeyboardFocus(..)
             | Message::Fullscreen
@@ -3977,6 +4284,7 @@ fn checkpoint_message(message: &Message) -> bool {
             | Message::SearchSettings(..)
             | Message::FocusSearch
             | Message::RevealSearch(..)
+            | Message::ReviewPreviewConflicts
             | Message::RefreshService
             | Message::Service(..)
             | Message::DesktopPaletteChanged
@@ -3995,10 +4303,7 @@ impl Settings {
     /// The miniature editor lives on the Widgets page; pointer and arrow-key
     /// listeners run only while it is on screen.
     fn placement_active(&self) -> bool {
-        matches!(self.page, Page::Overview | Page::WidgetLayout)
-            && (self.page != Page::Overview || self.canvas.is_some())
-            && !self.setup_requested
-            && self.search_query.trim().is_empty()
+        self.canvas_visible() && !self.setup_requested && self.search_query.trim().is_empty()
     }
     /// The Motion page: the app-animation toggle writes off the UI thread
     /// and reports in the status line.
@@ -4048,6 +4353,13 @@ impl Settings {
                 | Edit::ThemeReady(..)
                 | Edit::ShareReady(..)
         );
+        // Mix is a tab of Setups, wherever in Setups it was chosen.
+        if matches!(message, Edit::MixStart) && self.page != Page::DesktopProfiles {
+            self.quiet_navigation = true;
+            let navigate = self.handle(Message::Page(Page::DesktopProfiles));
+            self.quiet_navigation = false;
+            return Task::batch([navigate, self.update_profiles(message)]);
+        }
         if !result
             && !matches!(
                 self.page,
@@ -4198,7 +4510,20 @@ impl Settings {
         match outcome {
             wizard::Outcome::None => Task::none(),
             wizard::Outcome::Changed => self.after_desktop_change(),
+            wizard::Outcome::Left => {
+                // Kept for later: nothing is written and it resumes from Recovery.
+                self.wizard = None;
+                self.setup_kept = true;
+                self.save(json!({"onboarded": true}));
+                let page = self.handle(Message::Page(Page::Overview));
+                self.kept_note = Some((
+                    "Setup choices kept. Your desktop stays as it is.".into(),
+                    navigation::KeptTarget::SetupChoices,
+                ));
+                page
+            }
             wizard::Outcome::Done { finish, startup } => {
+                self.setup_kept = false;
                 self.wizard = None;
                 if let Some(store) = &store {
                     wizard::Wizard::forget(store);
@@ -4519,9 +4844,6 @@ impl Settings {
     }
     fn flush_edits(&mut self) {
         self.save_material_draft();
-        if let Some(p) = self.rain.draft.take() {
-            self.save_rain(p);
-        }
         self.save_at = None;
         self.edit_generation = self.edit_generation.wrapping_add(1);
         let pending = std::mem::take(&mut self.appearance_pending);
@@ -4666,28 +4988,22 @@ impl Settings {
             task
         }
     }
-    fn save_rain(&mut self, p: crate::rain::Preferences) {
-        match Config::save_rain(self.rain.base.as_ref().unwrap_or(&self.config.rain), &p) {
-            Ok(config) => {
-                self.rain.base = None;
-                if self.config.rain.enabled && !config.rain.enabled {
-                    self.rain.clear();
-                }
-                self.config = config;
-                self.saved();
-            }
-            Err(error) => {
-                self.rain.draft = Some(p);
-                self.failed(error);
-            }
-        }
-    }
+
     fn save_glance(&mut self, changes: serde_json::Value) {
         match Config::save_glance(changes) {
             Ok(config) => {
                 self.config = config;
                 self.placement.refresh(&self.config);
                 self.refresh_canvas();
+                self.saved();
+            }
+            Err(error) => self.failed(error),
+        }
+    }
+    fn save_activity(&mut self, changes: serde_json::Value) {
+        match Config::save_activity_preferences(changes) {
+            Ok(config) => {
+                self.config = config;
                 self.saved();
             }
             Err(error) => self.failed(error),
@@ -4820,6 +5136,7 @@ impl Settings {
                     | Edit::Undo
                     | Edit::Refresh
                     | Edit::UseCurrent
+                    | Edit::KeepMine
                     | Edit::Recover
                     | Edit::KeepRecovery
             );
@@ -4837,7 +5154,42 @@ impl Settings {
             message,
             Edit::Apply | Edit::ApplyColors | Edit::Undo | Edit::Recover | Edit::KeepRecovery
         );
+        if matches!(message, Edit::Discard) {
+            self.rain.clear();
+        }
+        // Each choice is one local step; analysis results and refreshes are not.
+        let before = (self.page == Page::DesktopWallpaper
+            && matches!(
+                message,
+                Edit::Select(_)
+                    | Edit::Fit(_)
+                    | Edit::FitColor(_)
+                    | Edit::Same(_)
+                    | Edit::Display(_)
+                    | Edit::Every(_)
+                    | Edit::Order(_)
+                    | Edit::UseShared
+                    | Edit::Stop(..)
+                    | Edit::Stops(_)
+                    | Edit::Direction(_)
+                    | Edit::Accent(_)
+                    | Edit::ClearAccent
+                    | Edit::Palette(_)
+                    | Edit::SyncColors(_)
+                    | Edit::AutomaticColors(_)
+                    | Edit::ThemeColor
+                    | Edit::LinkOutline(_)
+                    | Edit::AccentSubmit
+                    | Edit::SuggestAccent
+                    | Edit::ResolveEffect(_)
+                    | Edit::UseCurrent
+                    | Edit::KeepMine
+            ))
+        .then(|| self.wallpaper.snapshot());
         let outcome = self.wallpaper.update(message);
+        if let Some(before) = before {
+            self.wallpaper.record_step(before);
+        }
         let mut tasks = vec![self.media_tasks()];
         match outcome {
             Outcome::None => {}
@@ -5028,6 +5380,7 @@ fn capture_desktop(event: &serde_json::Value) -> Option<desktop::Message> {
             "cancel" => Edit::DragCancel,
             "refresh" => Edit::Refresh,
             "use_current" => Edit::UseCurrent,
+            "keep_mine" => Edit::KeepMine,
             "recover" => Edit::Recover,
             "keep" => Edit::KeepRecovery,
             _ => return None,
@@ -5130,6 +5483,7 @@ fn capture_appearance(event: &serde_json::Value) -> Option<system_appearance::Me
             "undo" => Edit::Undo,
             "refresh" => Edit::Refresh,
             "use_current" => Edit::UseCurrent,
+            "keep_mine" => Edit::KeepMine,
             "recover" => Edit::Recover,
             "keep" => Edit::KeepRecovery,
             _ => return None,
@@ -5304,6 +5658,7 @@ fn capture_windows(event: &serde_json::Value) -> Option<windows::Message> {
             "undo" => Edit::Undo,
             "refresh" => Edit::Refresh,
             "use_current" => Edit::UseCurrent,
+            "keep_mine" => Edit::KeepMine,
             "recover" => Edit::Recover,
             "keep" => Edit::KeepRecovery,
             _ => return None,
@@ -5360,6 +5715,7 @@ fn capture_workspaces(event: &serde_json::Value) -> Option<workspaces::Message> 
             "undo" => Edit::Undo,
             "refresh" => Edit::Refresh,
             "use_current" => Edit::UseCurrent,
+            "keep_mine" => Edit::KeepMine,
             "recover" => Edit::Recover,
             "keep" => Edit::KeepRecovery,
             _ => return None,
@@ -5405,6 +5761,7 @@ fn capture_window_rules(event: &serde_json::Value) -> Option<window_rules::Messa
             "undo" => Edit::Undo,
             "refresh" => Edit::Refresh,
             "use_current" => Edit::UseCurrent,
+            "keep_mine" => Edit::KeepMine,
             "recover" => Edit::Recover,
             "keep" => Edit::KeepRecovery,
             _ => return None,
@@ -5470,6 +5827,7 @@ fn capture_shortcuts(event: &serde_json::Value) -> Option<shortcuts::Message> {
             "undo" => Edit::Undo,
             "refresh" => Edit::Refresh,
             "use_current" => Edit::UseCurrent,
+            "keep_mine" => Edit::KeepMine,
             "recover" => Edit::Recover,
             "keep" => Edit::KeepRecovery,
             _ => return None,
@@ -5535,6 +5893,7 @@ fn capture_wallpaper(event: &serde_json::Value) -> Option<wallpaper::Message> {
             "undo" => Edit::Undo,
             "refresh" => Edit::Refresh,
             "use_current" => Edit::UseCurrent,
+            "keep_mine" => Edit::KeepMine,
             "recover" => Edit::Recover,
             "keep" => Edit::KeepRecovery,
             _ => return None,
@@ -5623,6 +5982,7 @@ fn capture_desktop_icons(event: &serde_json::Value) -> Option<desktop_icons::Mes
             "undo" => Edit::Undo,
             "refresh" => Edit::Refresh,
             "use_current" => Edit::UseCurrent,
+            "keep_mine" => Edit::KeepMine,
             "recover" => Edit::Recover,
             "keep" => Edit::KeepRecovery,
             _ => return None,
@@ -6205,7 +6565,40 @@ mod tests {
                 let (mut app, _) = Settings::init(Core::default(), Page::Clock);
                 let _ = app.update(Message::Resized(size));
                 let mut native = Native::new(size);
-                click(&mut app, &mut native, "clock-scale-up");
+                let _ = app.update(Message::ObjectTab(navigation::ObjectTab::Design));
+                // Size is a slider now: one keyboard step up from 100%.
+                {
+                    use cosmic::iced::keyboard::{self, key};
+                    let bounds = native_reveal(&app, &mut native, "clock-scale");
+                    assert!(
+                        bounds.y >= 0. && bounds.y + bounds.height <= native.size.height,
+                        "Control must be visible: clock-scale {bounds:?}"
+                    );
+                    let point = bounds.center();
+                    let _ = native.event(
+                        app.settings_view(),
+                        Event::Mouse(mouse::Event::CursorMoved { position: point }),
+                        point,
+                    );
+                    for message in native
+                        .event(
+                            app.settings_view(),
+                            Event::Keyboard(keyboard::Event::KeyPressed {
+                                key: keyboard::Key::Named(key::Named::ArrowUp),
+                                modified_key: keyboard::Key::Named(key::Named::ArrowUp),
+                                physical_key: key::Physical::Code(key::Code::ArrowUp),
+                                location: keyboard::Location::Standard,
+                                modifiers: keyboard::Modifiers::empty(),
+                                text: None,
+                                repeat: false,
+                            }),
+                            point,
+                        )
+                        .0
+                    {
+                        let _ = app.update(message);
+                    }
+                }
                 assert_eq!(Config::load().clock.scale, 110);
                 native.capture(
                     app.settings_view(),
@@ -6213,8 +6606,19 @@ mod tests {
                     &format!("clock-settings-{}-{combined}", size.width),
                 );
                 let saved_layout = raw_preferences();
-                click(&mut app, &mut native, "clock-edit-layout");
-                assert_eq!(app.page, Page::Overview);
+                // The Position tab is gone: "Move or resize" opens the
+                // arranging canvas; a combined clock moves as the Daily
+                // overview card, reached from its own page.
+                if combined {
+                    click(&mut app, &mut native, "clock-open-glance");
+                    assert_eq!(app.page, Page::Glance);
+                    click(&mut app, &mut native, "glance-arrange");
+                    assert_eq!(app.page, Page::Glance);
+                } else {
+                    click(&mut app, &mut native, "clock-arrange");
+                    assert_eq!(app.page, Page::Clock);
+                }
+                assert!(app.canvas_visible(), "Move or resize shows the arranging canvas");
                 assert_eq!(
                     app.placement.selected(),
                     Some(if combined {
@@ -6494,9 +6898,10 @@ mod tests {
                 Page::DesktopAppearance,
                 "appearance-colors",
             ),
+            // Window corners, outline and shadows now live on Windows.
             (
                 "desktop effects",
-                Page::DesktopAppearance,
+                Page::DesktopWindows,
                 "appearance-effects",
             ),
             ("dock timing", Page::DesktopDock, "dock-advanced"),
@@ -6544,17 +6949,18 @@ mod tests {
         let _ = app.update(Message::Back);
         assert_eq!(
             app.page,
-            Page::Widgets,
-            "Back from Layout returns to the Widgets root"
+            Page::Overview,
+            "the Desktop root has nothing behind it"
         );
         assert!(app.placement.dirty(), "navigation never cancels the layout");
         let _ = app.update(Message::Page(Page::Weather));
         let _ = app.update(Message::Back);
-        assert_eq!(app.page, Page::Widgets);
-        // Workspaces is a sibling tab; Floating apps opens from Windows.
+        assert_eq!(app.page, Page::Overview);
+        // Back is history; the breadcrumb names the parent.
         let _ = app.update(Message::Page(Page::DesktopWindowRules));
+        assert_eq!(app.page.parent(), Some(Page::DesktopWindows));
         let _ = app.update(Message::Back);
-        assert_eq!(app.page, Page::DesktopWindows);
+        assert_eq!(app.page, Page::Overview);
         assert!(app.canvas_dirty());
         assert_eq!(
             raw_preferences(),
@@ -6597,6 +7003,18 @@ mod tests {
         assert!(!app.profiles.included(Domain::Dock));
         send_settings(&mut app, Message::Page(Page::Overview));
         assert_eq!(app.profiles.selection(), &Selection::Current);
+        assert_eq!(
+            app.kept_previews().len(),
+            1,
+            "a changed review stays listed"
+        );
+        send_settings(&mut app, Message::TryPreset("glass"));
+        assert!(
+            !app.profiles.included(Domain::Dock),
+            "returning restores the kept review"
+        );
+        send_settings(&mut app, Message::Profiles(Edit::Discard));
+        assert!(app.kept_previews().is_empty());
         send_settings(&mut app, Message::TryPreset("glass"));
         assert!(
             app.profiles.included(Domain::Dock),
@@ -6799,10 +7217,31 @@ mod tests {
         use cosmic::iced::{Event, Point, Rectangle, keyboard, mouse};
 
         #[derive(Default)]
-        struct Focused(Option<(cosmic::widget::Id, Rectangle)>);
+        struct Focused {
+            target: Option<(cosmic::widget::Id, Rectangle, Option<Rectangle>)>,
+            offset: cosmic::iced::Vector,
+            clip: Option<Rectangle>,
+            pending_scroll: Option<(Rectangle, cosmic::iced::Vector)>,
+        }
         impl Operation for Focused {
             fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+                let previous = (self.offset, self.clip);
+                if let Some((viewport, translation)) = self.pending_scroll.take() {
+                    self.clip = Some(viewport - self.offset);
+                    self.offset += translation;
+                }
                 operate(self);
+                (self.offset, self.clip) = previous;
+            }
+            fn scrollable(
+                &mut self,
+                _: Option<&cosmic::widget::Id>,
+                viewport: Rectangle,
+                _: Rectangle,
+                translation: cosmic::iced::Vector,
+                _: &mut dyn cosmic::iced::advanced::widget::operation::Scrollable,
+            ) {
+                self.pending_scroll = Some((viewport, translation));
             }
             fn focusable(
                 &mut self,
@@ -6811,7 +7250,7 @@ mod tests {
                 state: &mut dyn Focusable,
             ) {
                 if state.is_focused() {
-                    self.0 = id.cloned().map(|id| (id, bounds));
+                    self.target = id.cloned().map(|id| (id, bounds - self.offset, self.clip));
                 }
             }
         }
@@ -6859,19 +7298,29 @@ mod tests {
                     Cache::default(),
                     &mut renderer,
                 );
-                // Use the same focus-next operation as libcosmic's Tab handler.
+                // Execute the production Tab task, including its ordered reveal.
                 // Probe Enter's actual widget message to identify each target,
                 // without applying any unrelated action along the way.
                 let mut activated = None;
                 for _ in 0..100 {
-                    let mut operation: Box<dyn Operation> = Box::new(focusable::focus_next());
-                    loop {
-                        ui.operate(&renderer, operation.as_mut());
-                        match operation.finish() {
-                            Outcome::Chain(next) => operation = next,
-                            _ => break,
+                    cosmic::iced::futures::executor::block_on(async {
+                        use cosmic::iced::futures::StreamExt;
+                        let mut stream = cosmic::iced::runtime::task::into_stream(
+                            navigation::keyboard_focus(false),
+                        )
+                        .expect("Tab emits focus and reveal operations");
+                        while let Some(action) = stream.next().await {
+                            if let cosmic::iced::runtime::Action::Widget(mut operation) = action {
+                                loop {
+                                    ui.operate(&renderer, operation.as_mut());
+                                    match operation.finish() {
+                                        Outcome::Chain(next) => operation = next,
+                                        _ => break,
+                                    }
+                                }
+                            }
                         }
-                    }
+                    });
                     let mut messages = Vec::new();
                     ui.update(
                         &[enter.clone()],
@@ -6899,15 +7348,15 @@ mod tests {
                     {
                         let mut focused = Focused::default();
                         ui.operate(&renderer, &mut focused);
-                        let (id, bounds) = focused.0.expect("focused button");
+                        let (id, bounds, viewport) = focused.target.expect("focused button");
                         // Desktop sidebar links can share the same destination.
-                        if bounds.x >= 184. {
-                            activated = Some((messages.pop().unwrap(), id, bounds));
+                        if bounds.x >= app.sidebar_width() {
+                            activated = Some((messages.pop().unwrap(), id, bounds, viewport));
                             break;
                         }
                     }
                 }
-                let (message, id, bounds) = activated
+                let (message, id, bounds, viewport) = activated
                     .unwrap_or_else(|| panic!("{name} at {size:?}: editor reachable by keyboard"));
                 assert!(
                     bounds.x >= 0.
@@ -6916,6 +7365,13 @@ mod tests {
                         && bounds.y + bounds.height <= size.height,
                     "{name} {size:?}: {bounds:?}"
                 );
+                if let Some(viewport) = viewport {
+                    assert!(
+                        bounds.y >= viewport.y - 0.5
+                            && bounds.y + bounds.height <= viewport.y + viewport.height + 0.5,
+                        "{name} {size:?}: Tab must reveal {bounds:?} in {viewport:?}"
+                    );
+                }
                 for (state, cursor, event) in [
                     ("active", away, Event::Mouse(mouse::Event::CursorLeft)),
                     (
@@ -7172,6 +7628,10 @@ mod tests {
         let _ = app.update(Message::Page(Page::DesktopProfiles));
         let _ = app.update(Message::Profiles(Look::Select(Selection::Preset("focus"))));
         assert!(app.profile_waits().is_empty());
+        // An open review owns Undo; closing it returns Undo to the desktop.
+        let _ = app.update(Message::UndoDesktop);
+        assert!(app.last_desktop_change.is_some(), "nothing was undone");
+        let _ = app.update(Message::Profiles(Look::Discard));
         let _ = app.update(Message::UndoDesktop);
         assert!(!app.error, "{}", app.status);
         assert_eq!(Config::load().theme, "lavender");
@@ -7253,7 +7713,8 @@ mod tests {
             return;
         }
         use crate::desktop::panels::{Anchor, PanelKind};
-        assert_eq!(Page::parse("desktop"), Page::DesktopDock);
+        assert_eq!(Page::parse("desktop"), Page::Overview);
+        assert_eq!(Page::parse("desktop-dock"), Page::DesktopDock);
         let root = isolated_root();
         let live = live_tree(&root);
         let fixture = root.join("cosmic-root");
@@ -7575,7 +8036,11 @@ mod tests {
         use tools::Message as Edit;
         let (mut app, _) = Settings::init(Core::default(), Page::parse("focus"));
         assert_eq!(app.page, Page::Focus);
-        assert_eq!(app.page.nav(), Page::Widgets, "all tools belong to Widgets");
+        assert_eq!(
+            app.page.sidebar(),
+            Page::Overview,
+            "all tools belong to Desktop"
+        );
         // Options save into the tool's own section; everything else stays.
         let _ = app.update(Message::Widget(Widget::Focus, true));
         let _ = app.update(Message::Tools(Edit::Option(
@@ -8965,55 +9430,10 @@ mod tests {
                     );
                 }
                 if page == Page::Glance {
-                    let bounds = native_reveal(&app, &mut native, "help-glance-sections");
-                    let closed = native.render(app.settings_view(), &controls_theme(&app.config));
-                    let messages = native
-                        .event(
-                            app.settings_view(),
-                            Event::Mouse(mouse::Event::CursorMoved {
-                                position: bounds.center(),
-                            }),
-                            bounds.center(),
-                        )
-                        .0;
-                    assert!(messages.is_empty(), "Hovering help is read-only");
-                    assert!(
-                        native.render_hover(
-                            app.settings_view(),
-                            &controls_theme(&app.config),
-                            bounds.center()
-                        ) != closed,
-                        "Hover reveals contextual help"
-                    );
-                    native.capture_hover(
-                        app.settings_view(),
-                        &controls_theme(&app.config),
-                        bounds.center(),
-                        &format!("refined-help-hover-{}", size.width),
-                    );
-                    for input in [
-                        mouse::Event::CursorMoved {
-                            position: bounds.center(),
-                        },
-                        mouse::Event::ButtonPressed(mouse::Button::Left),
-                        mouse::Event::ButtonReleased(mouse::Button::Left),
-                    ] {
-                        for message in native
-                            .event(app.settings_view(), Event::Mouse(input), bounds.center())
-                            .0
-                        {
-                            let _ = app.update(message);
-                        }
-                    }
-                    let explanation =
-                        native.bounds(app.settings_view(), "help-text-glance-sections");
-                    assert!(explanation.width > 100. && explanation.height > 10.);
-                    assert!(explanation.x + explanation.width <= size.width);
-                    native.capture(
-                        app.settings_view(),
-                        &controls_theme(&app.config),
-                        &format!("refined-help-{}", size.width),
-                    );
+                    // Hover help tips were removed in the redesign; the open
+                    // explanation (calendar account) still closes on leaving.
+                    let _ = app.update(Message::ToggleHelp("calendar-account"));
+                    assert!(app.help_open.is_some());
                     let _ = app.update(Message::Page(Page::Widgets));
                     assert!(app.help_open.is_none(), "Help closes when leaving its page");
                 }
@@ -9149,7 +9569,8 @@ mod tests {
             Page::DesktopWindowRules
         );
         assert_eq!(Page::parse("desktop-shortcuts"), Page::DesktopShortcuts);
-        assert_eq!(Page::DesktopShortcuts.nav(), Page::DesktopShortcuts);
+        // Shortcuts is reached through Windows.
+        assert_eq!(Page::DesktopShortcuts.nav(), Page::DesktopWindows);
 
         // An unrelated Workspaces draft stays through everything below.
         let _ = app.update(Message::Page(Page::DesktopWorkspaces));
@@ -9360,13 +9781,15 @@ mod tests {
                 ..Default::default()
             };
             let mut native = crate::native_test::Native::with_backend(size, "wgpu");
-            native_click(&mut app, &mut native, "rain-try");
-            assert!(app.rain.preview);
+            // There is no separate Try button: choosing an effect applies it
+            // as one recoverable wallpaper change.
             assert!(!Config::load().rain.enabled);
+            native_reveal(&mut app, &mut native, "rain-controls");
             let mut p = app.config.rain.clone();
             p.enabled = true;
             p.mode = crate::rain::Mode::Hybrid;
             send_settings(&mut app, Message::Rain(rain::Edit::Set(p.clone())));
+            drive_wallpaper(&mut app);
             assert_eq!(Config::load().rain, p);
             native.scroll(app.settings_view(), "settings-content", -10000.);
             native.capture(
@@ -9397,9 +9820,11 @@ mod tests {
             p.intensity = 82;
             p.trails = 0;
             send_settings(&mut app, Message::Rain(rain::Edit::Draft(p.clone())));
+            // A slider in motion is not saved; finishing it applies.
             assert_ne!(Config::load().rain.intensity, 82);
             assert_ne!(Config::load().rain.trails, 0);
             send_settings(&mut app, Message::Rain(rain::Edit::Commit));
+            drive_wallpaper(&mut app);
             assert_eq!(Config::load().rain.intensity, 82);
             assert_eq!(Config::load().rain.trails, 0);
             send_settings(&mut app, Message::UndoDesktop);
@@ -9426,6 +9851,9 @@ mod tests {
                 next.enabled = true;
                 next.effect = effect;
                 send_settings(&mut app, Message::Rain(rain::Edit::Set(next.clone())));
+                drive_wallpaper(&mut app);
+                // Choosing an effect applies it at once.
+                assert_eq!(Config::load().rain, next);
                 app.rain.lifecycle = crate::rain::lifecycle::State {
                     ready: true,
                     ..Default::default()
@@ -9453,6 +9881,8 @@ mod tests {
                         "rain-size"
                     },
                 );
+                drive_wallpaper(&mut app);
+                // Each finished slider is one applied step, undone one at a time.
                 assert_ne!(Config::load().rain, next);
                 assert_eq!(
                     Config::load().rain.intensity,
@@ -9519,7 +9949,8 @@ mod tests {
             settle_settings(&mut app, initial);
             let _ = app.update(Message::Resized(size));
             let mut native = Native::new(size);
-            native_click(&mut app, &mut native, "colors-automatic");
+            // Colors apply as soon as they are chosen, one undoable change each.
+            native_click(&mut app, &mut native, "theme-color-wallpaper");
             assert!(Config::load().appearance.wallpaper_colors);
             assert_eq!(
                 Config::load().appearance.accent,
@@ -9533,33 +9964,49 @@ mod tests {
                 "typing complete prefixes is local"
             );
             native_hex(&mut app, &mut native, "#D34762", true);
+            assert_eq!(
+                raw_preferences(),
+                applied,
+                "Use color updates only the preview"
+            );
+            // A custom color applies when its editor is closed with Done.
+            send_settings(
+                &mut app,
+                Message::Profiles(profiles::Message::ThemeCustom(None)),
+            );
             assert_eq!(Config::load().appearance.accent, Some([211, 71, 98]));
             assert!(!Config::load().appearance.wallpaper_colors);
-            native_click(&mut app, &mut native, "wallpaper-best-color");
+            send_settings(&mut app, Message::Wallpaper(Paper::SuggestAccent));
             assert_eq!(
                 Config::load().appearance.accent,
                 Some(recommended_color([0.2, 0.4, 0.6]))
             );
-            native_click(&mut app, &mut native, "colors-automatic");
+            native_click(&mut app, &mut native, "theme-color-wallpaper");
+            assert!(Config::load().appearance.wallpaper_colors);
             let before = raw_preferences();
             let background = store.load(&WallpaperDraft::keys()).unwrap();
             send_settings(&mut app, Message::Page(Page::DesktopWallpaper));
+            // Choosing a wallpaper applies it; its colors follow.
             send_settings(
                 &mut app,
                 Message::Wallpaper(Paper::Select(Pick::Color(BgColor::Single([0.1, 0.7, 0.4])))),
             );
-            assert_eq!(raw_preferences(), before);
-            assert_eq!(store.load(&WallpaperDraft::keys()).unwrap(), background);
+            drive_wallpaper(&mut app);
+            {
+                let window = app.window;
+                send_settings(&mut app, Message::Resized(window));
+            }
+            drive_wallpaper(&mut app);
             native.capture(
                 app.settings_view(),
                 &controls_theme(&app.config),
                 &format!("automatic-preview-{}", size.width),
             );
-            native_click(&mut app, &mut native, "wallpaper-apply");
             assert_eq!(
                 Config::load().appearance.accent,
                 Some(recommended_color([0.1, 0.7, 0.4]))
             );
+            assert_ne!(store.load(&WallpaperDraft::keys()).unwrap(), background);
             native_click(&mut app, &mut native, "settings-undo");
             assert_eq!(raw_preferences(), before);
             assert_eq!(store.load(&WallpaperDraft::keys()).unwrap(), background);
@@ -9594,8 +10041,10 @@ mod tests {
                 "com.system76.CosmicBackground",
                 "all",
             );
-            native_click(&mut app, &mut native, "colors-palettes");
-            native_click(&mut app, &mut native, "colors-palette-rose");
+            // The palette list is gone from Appearance; a palette (kept for
+            // older links) applies at once, like every color choice there.
+            native_reveal(&app, &mut native, "theme-color-style");
+            send_settings(&mut app, Message::Theme("rose".into()));
             assert_eq!(Config::load().theme, "rose");
             assert!(!app.wallpaper.dirty());
             assert!(app.profile_waits().is_empty());
@@ -9696,7 +10145,7 @@ mod tests {
                 native
                     .try_bounds(app.settings_view(), "colors-palettes")
                     .is_none(),
-                "colors live on Colors & theme, not beside the wallpapers"
+                "colors live on Colors and theme, not beside the wallpapers"
             );
             native.capture(
                 app.settings_view(),
@@ -9788,15 +10237,22 @@ mod tests {
             Some(&orange)
         );
         let applied = store.load(&WallpaperDraft::keys()).unwrap();
+        // Choosing another wallpaper applies it at once; nothing is left
+        // pending when leaving.
         send_settings(
             &mut app,
             Message::Wallpaper(Paper::Select(Pick::Color(BgColor::Single([0.6, 0.3, 0.5])))),
         );
+        drive_wallpaper(&mut app);
+        {
+            let window = app.window;
+            send_settings(&mut app, Message::Resized(window));
+        }
+        let first = applied;
+        let applied = store.load(&WallpaperDraft::keys()).unwrap();
+        assert_ne!(applied, first);
         send_settings(&mut app, Message::Page(Page::DesktopAppearance));
-        assert!(
-            !app.wallpaper.background_dirty(),
-            "leaving cancels a local preview"
-        );
+        assert!(!app.wallpaper.background_dirty());
         let green = parse_hex("#12AB88", false);
         send_settings(
             &mut app,
@@ -9966,7 +10422,10 @@ mod tests {
         drive_wallpaper(&mut app);
         assert!(app.wallpaper.dirty());
         let _ = app.update(Message::Page(Page::DesktopIcons));
-        assert!(!app.wallpaper.dirty(), "leaving cancels the local chooser");
+        assert!(app.wallpaper.dirty(), "leaving keeps the local preview");
+        let _ = app.update(Message::Page(Page::DesktopWallpaper));
+        let _ = app.update(Message::Wallpaper(wallpaper::Message::Discard));
+        let _ = app.update(Message::Page(Page::DesktopIcons));
         assert_eq!(
             store
                 .load(&crate::desktop::wallpaper::WallpaperDraft::keys())
@@ -10227,7 +10686,7 @@ mod tests {
         use cosmic::iced::advanced::renderer::Headless;
         use cosmic::iced::runtime::user_interface::{Cache, UserInterface};
         assert_eq!(Page::parse("desktop-motion"), Page::DesktopMotion);
-        assert_eq!(Page::DesktopMotion.nav(), Page::DesktopMotion);
+        assert_eq!(Page::DesktopMotion.sidebar(), Page::General);
         let _isolated = isolated_root();
         let root = PathBuf::from(std::env::var_os(crate::desktop::store::FIXTURE_ENV).unwrap());
         let mut renderer =
@@ -10312,7 +10771,7 @@ mod tests {
         use cosmic::iced::advanced::renderer::Headless;
         use cosmic::iced::runtime::user_interface::{Cache, UserInterface};
         assert_eq!(Page::parse("desktop-automation"), Page::DesktopAutomation);
-        assert_eq!(Page::DesktopAutomation.nav(), Page::DesktopProfiles);
+        assert_eq!(Page::DesktopAutomation.sidebar(), Page::DesktopProfiles);
         let isolated = isolated_root();
         let live = live_tree(&isolated);
         let root = PathBuf::from(std::env::var_os(crate::desktop::store::FIXTURE_ENV).unwrap());
@@ -10487,8 +10946,10 @@ mod tests {
                 (preview.width / preview.height - 16. / 9.).abs() < 0.05,
                 "{preview:?}"
             );
+            // The redesign keeps the preview compact (40% of the content,
+            // at least 220 px) so the gallery stays in view.
             assert!(
-                preview.width >= 320.,
+                preview.width >= 220.,
                 "readable wallpaper preview at {size:?}"
             );
             for id in [
@@ -10505,7 +10966,8 @@ mod tests {
                     &format!("redesign-wallpaper-{name}-{}", size.width),
                 );
             }
-            // A staged wallpaper is previewed exactly; nothing is written.
+            // Choosing a wallpaper shows and applies it at once; Undo puts
+            // the previous one back, so the fixture ends unchanged.
             let task = app.update(Message::Wallpaper(wallpaper::Message::Select(
                 wallpaper::Pick::Bundled("ocean".into()),
             )));
@@ -10515,7 +10977,6 @@ mod tests {
                 app.wallpaper.shown().image.as_deref(),
                 Some(bundled_path(&bundled, "ocean").as_path())
             );
-            assert!(app.wallpaper.dirty());
             for (name, theme) in &themes {
                 native.capture(
                     app.settings_view(),
@@ -10523,7 +10984,11 @@ mod tests {
                     &format!("redesign-wallpaper-draft-{name}-{}", size.width),
                 );
             }
-            let _ = app.update(Message::Wallpaper(wallpaper::Message::Discard));
+            assert!(!app.wallpaper.dirty());
+            send_settings(&mut app, Message::UndoDesktop);
+            drive_wallpaper(&mut app);
+            assert!(!app.error, "{}", app.status);
+            assert_eq!(app.wallpaper.shown().image.as_deref(), Some(teal.as_path()));
             assert!(!app.wallpaper.dirty());
 
             // Calendar with the sample account; no private data.
@@ -10556,7 +11021,11 @@ mod tests {
             }
         }
         assert_eq!(raw_preferences(), preferences, "rendering saves nothing");
-        assert_eq!(fixture_files(&fixture), before, "no desktop file changed");
+        // The applied and undone wallpaper records the one-time recovery
+        // baseline; every desktop file itself is back as it was.
+        let mut after = fixture_files(&fixture);
+        after.retain(|path, _| !path.starts_with(fixture.join("state/desktop-recovery")));
+        assert_eq!(after, before, "no desktop file changed");
     }
     pub(super) fn settle_settings(app: &mut Settings, task: Task<Message>) {
         use cosmic::iced::futures::StreamExt;
@@ -10591,9 +11060,27 @@ mod tests {
         id: &str,
     ) -> cosmic::iced::Rectangle {
         let fixed = id.starts_with("nav-")
+            || id.starts_with("rail-")
+            || id.starts_with("canvas-")
             || matches!(
                 id,
-                "settings-search" | "settings-back" | "settings-undo" | "wallpaper-apply"
+                "settings-search"
+                    | "settings-back"
+                    | "settings-undo"
+                    | "wallpaper-apply"
+                    | "review-preview-conflicts"
+                    | "profiles-confirm"
+                    | "profiles-discard"
+                    | "preview-undo"
+                    | "mix-save"
+                    | "recipe-apply"
+                    | "recipe-save"
+                    | "recipe-discard"
+                    | "wallpaper-discard"
+                    | "setups-saved"
+                    | "setups-explore"
+                    | "mix-start"
+                    | "destination-desktop-automation"
             );
         let viewport = if fixed {
             cosmic::iced::Rectangle::with_size(native.size)
@@ -10617,7 +11104,11 @@ mod tests {
         bounds
     }
 
-    fn native_click(app: &mut Settings, native: &mut crate::native_test::Native, id: &str) {
+    pub(super) fn native_click(
+        app: &mut Settings,
+        native: &mut crate::native_test::Native,
+        id: &str,
+    ) {
         use cosmic::iced::{Event, mouse};
         let rect = native_reveal(app, native, id);
         assert!(
@@ -10652,13 +11143,25 @@ mod tests {
         submit: bool,
     ) {
         use cosmic::widget::color_picker::ColorPickerUpdate;
+        let target = if app.page == Page::Themes {
+            color_well::Target::ThemeCustom
+        } else {
+            color_well::Target::Accent
+        };
         let open = |app: &Settings| {
             app.color_well
                 .as_ref()
-                .is_some_and(|well| well.target == color_well::Target::Accent)
+                .is_some_and(|well| well.target == target)
         };
         if !open(app) {
-            native_click(app, native, "colors-hex");
+            if app.page == Page::Themes {
+                if app.profiles.custom.is_none() {
+                    native_click(app, native, "theme-color-custom");
+                }
+                native_click(app, native, "theme-color-hex");
+            } else {
+                native_click(app, native, "colors-hex");
+            }
         }
         assert!(open(app), "the accent's control opens the color picker");
         send_settings(
@@ -10775,19 +11278,18 @@ mod tests {
         let store = crate::desktop::DesktopStore::from_env().unwrap();
         let before = raw_preferences();
         let native = store.load(&WallpaperDraft::keys()).unwrap();
+        // There is no Use step any more: a plain color wallpaper applies at
+        // once, and so does each color choice after it, each one undoable.
         send_settings(
             &mut app,
             Message::Wallpaper(Paper::Select(Pick::Color(BgColor::Single([0.2, 0.6, 0.8])))),
         );
-        send_settings(&mut app, Message::Wallpaper(Paper::SyncColors(false)));
-        send_settings(&mut app, Message::Wallpaper(Paper::AutomaticColors(true)));
         drive_wallpaper(&mut app);
-        assert_eq!(raw_preferences(), before);
-        assert_eq!(store.load(&WallpaperDraft::keys()).unwrap(), native);
-        send_settings(&mut app, Message::Wallpaper(Paper::Apply));
+        {
+            let window = app.window;
+            send_settings(&mut app, Message::Resized(window));
+        }
         drive_wallpaper(&mut app);
-        assert!(Config::load().appearance.wallpaper_colors);
-        assert!(!Config::load().appearance.sync_colors);
         assert_ne!(store.load(&WallpaperDraft::keys()).unwrap(), native);
         assert!(
             store
@@ -10797,8 +11299,24 @@ mod tests {
                 .label
                 .contains("Wallpaper")
         );
-        send_settings(&mut app, Message::UndoDesktop);
-        assert!(!app.error, "{}", app.status);
+        send_settings(&mut app, Message::Wallpaper(Paper::SyncColors(false)));
+        send_settings(&mut app, Message::Wallpaper(Paper::AutomaticColors(true)));
+        drive_wallpaper(&mut app);
+        assert!(Config::load().appearance.wallpaper_colors);
+        assert!(!Config::load().appearance.sync_colors);
+        // The footer's Undo walks back every applied change (Ctrl+Z on this
+        // page undoes preview steps first).
+        for _ in 0..4 {
+            if raw_preferences() == before
+                && store.load(&WallpaperDraft::keys()).unwrap() == native
+            {
+                break;
+            }
+            let shown = app.last_desktop_change.as_ref().map(|(_, _, id)| id.clone());
+            send_settings(&mut app, Message::UndoDesktopShown(shown));
+            drive_wallpaper(&mut app);
+            assert!(!app.error, "{}", app.status);
+        }
         assert_eq!(raw_preferences(), before);
         assert_eq!(store.load(&WallpaperDraft::keys()).unwrap(), native);
     }
@@ -10821,6 +11339,13 @@ mod tests {
             .load(&crate::desktop::appearance::AppearanceDraft::keys())
             .unwrap();
         let before = raw_preferences();
+        // The scope and a style each apply as soon as they are chosen; the
+        // scope comes first so the style never reaches the system.
+        send_settings(&mut app, Message::Profiles(Look::ThemeScope(false)));
+        for job in app.profiles.take_theme_jobs() {
+            send_settings(&mut app, Message::Profiles(job.run()));
+        }
+        assert!(!Config::load().appearance.sync_colors);
         send_settings(
             &mut app,
             Message::Profiles(Look::Select(Selection::Preset("theme-outline"))),
@@ -10828,20 +11353,15 @@ mod tests {
         for job in app.profiles.take_theme_jobs() {
             send_settings(&mut app, Message::Profiles(job.run()));
         }
-        send_settings(&mut app, Message::Profiles(Look::ThemeScope(false)));
-        assert_eq!(raw_preferences(), before);
-        assert_eq!(
-            store
-                .load(&crate::desktop::appearance::AppearanceDraft::keys())
-                .unwrap(),
-            native
-        );
-        send_settings(&mut app, Message::Profiles(Look::Apply));
+        if app.profiles.review_open() && app.profiles.can_apply() {
+            send_settings(&mut app, Message::Profiles(Look::Apply));
+        }
         assert_eq!(
             Config::load().appearance.family,
             Some(crate::desktop_theme::Family::Outline)
         );
         assert!(!Config::load().appearance.sync_colors);
+        // Widgets only: the system appearance is never touched.
         assert_eq!(
             store
                 .load(&crate::desktop::appearance::AppearanceDraft::keys())
@@ -10849,6 +11369,16 @@ mod tests {
             native
         );
         assert!(matches!(app.profiles.selection(), Selection::Current));
+        // Undo restores the preferences from before both choices.
+        while raw_preferences() != before && app.last_desktop_change.is_some() {
+            let previous = raw_preferences();
+            send_settings(&mut app, Message::UndoDesktop);
+            assert!(!app.error, "{}", app.status);
+            if raw_preferences() == previous {
+                break;
+            }
+        }
+        assert_eq!(raw_preferences(), before);
     }
     #[test]
     fn architecture_hiding_widgets_keeps_applied_background_policy_running() {
@@ -10936,24 +11466,29 @@ mod tests {
             &mut app,
             Message::Wallpaper(wallpaper::Message::AccentText("#336699".into())),
         );
-        assert!(app.wallpaper.valid_accent_input());
+        assert_eq!(app.profiles.custom.as_deref(), Some("#336699"));
+        let before = raw_preferences();
         send_settings(
             &mut app,
             Message::Wallpaper(wallpaper::Message::SyncColors(false)),
         );
-        assert!(
-            !Config::load().appearance.sync_colors,
-            "scope action should finish immediately"
-        );
-        assert!(
-            app.wallpaper.valid_accent_input(),
-            "unsubmitted text should survive the independent action"
-        );
+        assert!(!app.profiles.color_preferences(&app.config).sync_colors);
+        // The scope applies at once and takes the typed color with it.
+        assert_ne!(raw_preferences(), before, "scope applies immediately");
+        assert_eq!(Config::load().appearance.accent, Some([51, 102, 153]));
+        assert!(!Config::load().appearance.sync_colors);
+        let applied = raw_preferences();
         send_settings(
             &mut app,
             Message::Wallpaper(wallpaper::Message::AccentSubmit),
         );
+        assert_eq!(
+            raw_preferences(),
+            applied,
+            "obsolete completion cannot apply Colors again"
+        );
         assert_eq!(Config::load().appearance.accent, Some([51, 102, 153]));
+        assert!(!Config::load().appearance.sync_colors);
     }
 
     #[test]
@@ -11302,7 +11837,15 @@ mod tests {
             before - 3,
             "release completes even after the pointer left"
         );
-        assert_eq!(app.wallpaper.color_text(&Config::load()), "#12");
+        let after_gesture = raw_preferences();
+        send_settings(&mut app, Message::Page(Page::Themes));
+        assert_eq!(app.profiles.custom.as_deref(), Some("#12"));
+        assert_eq!(
+            raw_preferences(),
+            after_gesture,
+            "returning to text does not submit it"
+        );
+        send_settings(&mut app, Message::OpenBar(PanelKind::Dock));
         send_settings(&mut app, Message::UndoDesktop);
         assert_eq!(opacity(), before, "one Undo reverses all repeats");
         // A later external value during another held key is never overwritten.
@@ -11371,7 +11914,15 @@ mod tests {
             send_settings(&mut app, message);
         }
         assert_eq!(Config::load().appearance.opacity, before - 1);
-        assert_eq!(app.wallpaper.color_text(&Config::load()), "#12");
+        let after_gesture = raw_preferences();
+        send_settings(&mut app, Message::Page(Page::Themes));
+        assert_eq!(app.profiles.custom.as_deref(), Some("#12"));
+        assert_eq!(
+            raw_preferences(),
+            after_gesture,
+            "unrelated edits do not submit text"
+        );
+        send_settings(&mut app, Message::Page(Page::Appearance));
         send_settings(&mut app, Message::UndoDesktop);
         assert_eq!(Config::load().appearance.opacity, before);
     }
@@ -11416,6 +11967,9 @@ mod tests {
         };
         for kind in PanelKind::ALL {
             send_settings(&mut app, Message::OpenBar(kind));
+            let _ = app.update(Message::ObjectTab(
+                crate::settings::navigation::ObjectTab::Design,
+            ));
             let mut native = crate::native_test::Native::new(Size::new(1024., 1400.));
             for (label, radius) in
                 [("Square", 0), ("Rounded", 12), ("Pill", MAX_RADIUS)].into_iter()
@@ -11451,7 +12005,7 @@ mod tests {
                     .latest_change()
                     .unwrap()
                     .expect("completed choice has Undo");
-                let undo_label = format!("Undo {}", action.label.to_lowercase());
+                let undo_label = format!("Undo {}", action.label);
                 let point = native
                     .text_bounds(app.settings_view(), &undo_label)
                     .center();
@@ -11498,9 +12052,11 @@ mod tests {
                 arrow(false, false),
                 Point::new(-20., -20.),
             );
+            // The slider shows how see-through the bar is, so a step down
+            // makes it more opaque.
             assert_eq!(
                 opacity(kind),
-                before - 3,
+                before + 3,
                 "matching release completes outside slider"
             );
             send_settings(&mut app, Message::UndoDesktop);
@@ -11518,7 +12074,7 @@ mod tests {
             );
             assert_eq!(
                 opacity(kind),
-                before - 1,
+                before + 1,
                 "focus loss completes changed key gesture"
             );
             r2_native_event(&mut app, &mut native, arrow(false, false), point);
@@ -11544,7 +12100,7 @@ mod tests {
             );
             assert_eq!(
                 opacity(kind),
-                before - 1,
+                before + 1,
                 "Ctrl+wheel completes without pointer release"
             );
             send_settings(&mut app, Message::UndoDesktop);
@@ -11627,13 +12183,16 @@ mod tests {
         let (mut app, initial) = Settings::init(Core::default(), Page::Themes);
         settle_settings(&mut app, initial);
         let mut native = crate::native_test::Native::new(Size::new(1024., 1000.));
+        send_settings(&mut app, Message::Resized(native.size));
         native_hex(&mut app, &mut native, "#336699", false);
         send_settings(
             &mut app,
             Message::Wallpaper(wallpaper::Message::SyncColors(false)),
         );
-        // The typed code waits in the picker until "Use color".
-        assert_ne!(app.wallpaper.color_text(&Config::load()), "#336699");
+        // The typed code waits in the picker until "Use color"; the scope
+        // applies at once on its own.
+        assert_ne!(app.profiles.custom.as_deref(), Some("#336699"));
+        assert!(!Config::load().appearance.sync_colors);
         let path = Config::path().unwrap();
         let mut outside: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
@@ -11641,10 +12200,15 @@ mod tests {
         outside["appearance"]["accent"] = serde_json::json!([71, 82, 93]);
         std::fs::write(&path, outside.to_string()).unwrap();
         native_hex(&mut app, &mut native, "#336699", true);
+        assert_eq!(raw_preferences(), outside, "Use color still writes nothing");
+        // The submission is planned from the fresh preferences, so Apply
+        // writes the color and keeps the outside fields.
+        send_settings(&mut app, Message::Profiles(profiles::Message::Apply));
         assert_eq!(Config::load().appearance.accent, Some([51, 102, 153]));
         assert!(!Config::load().appearance.sync_colors);
         assert!(!Config::load().clock.show_date);
-        send_settings(&mut app, Message::UndoDesktop);
+        let shown = app.last_desktop_change.as_ref().map(|(_, _, id)| id.clone());
+        send_settings(&mut app, Message::UndoDesktopShown(shown));
         assert_eq!(
             Config::load().appearance.accent,
             Some([71, 82, 93]),
@@ -11671,6 +12235,9 @@ mod tests {
         settle_settings(&mut app, initial);
         send_settings(&mut app, Message::OpenBar(PanelKind::Panel));
         let store = crate::desktop::DesktopStore::from_env().unwrap();
+        let _ = app.update(Message::ObjectTab(
+            crate::settings::navigation::ObjectTab::Design,
+        ));
         let mut native = crate::native_test::Native::new(Size::new(1024., 1400.));
         let old = PanelDraft::load(&store, PanelKind::Panel)
             .unwrap()
@@ -11761,6 +12328,8 @@ mod tests {
             // Use the full window view, including its real header and pinned
             // footer. Only pointer-generated messages may select or apply Repair.
             let click = |app: &mut Settings, native: &mut crate::native_test::Native, id: &str| {
+                // The row sits below the styles; scroll it into view first.
+                native.operate(app.view(), Box::new(navigation::Reveal::target(id)));
                 let rect = native.bounds(app.view(), id);
                 assert!(
                     rect.x >= 0.
@@ -11787,31 +12356,13 @@ mod tests {
                 }
                 assert!(emitted, "rendered {id} must emit a real pointer action");
             };
+            // On Appearance, Fix applies at once as one undoable change.
             click(&mut app, &mut native, "theme-matching-repair");
             assert_eq!(app.page, Page::Themes);
             assert_eq!(
-                app.profiles.profile().unwrap().name,
-                "Repair theme matching"
-            );
-            assert!(app.profiles.can_apply(), "{:?}", app.profiles.notice);
-            assert_eq!(
-                std::fs::read_to_string(&path).unwrap(),
-                "Color((0.1,0.2,0.3))",
-                "Repair opens a read-only review"
-            );
-            native.capture(
-                app.view(),
-                &controls_theme(&app.config),
-                &format!(
-                    "n1-repair-preview-{}x{}-max{}",
-                    size.width, size.height, maximized
-                ),
-            );
-            click(&mut app, &mut native, "profiles-confirm");
-            assert_eq!(
                 Config::load().appearance.native_mode_palettes,
                 1,
-                "the pointer confirmation must commit Repair"
+                "the pointer action must commit Repair"
             );
             assert_eq!(std::fs::read_to_string(&path).unwrap(), "ThemeDefault");
             native.capture(
@@ -12190,7 +12741,7 @@ if not presence:
         );
         native.bounds(
             app.preset_thumbnail(&preset, 180.),
-            "starter-standard-panel",
+            &format!("starter-standard-panel-{}", preset.id),
         );
         app.desktop.islands.installation = crate::desktop::islands::Installation::Pending;
         let pending = native.render(
@@ -12238,7 +12789,7 @@ if not presence:
         )
         .unwrap();
         let mut native = crate::native_test::Native::new(Size::new(1024., 1800.));
-        let rect = native_reveal(&app, &mut native, "manage-islands");
+        let rect = native_reveal(&app, &mut native, "updates-open-panel");
         let _ = native.event(
             app.settings_view(),
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
@@ -12265,6 +12816,7 @@ if not presence:
             settle_settings(&mut app, task);
         }
         assert_eq!(app.page, Page::DesktopDock);
+        let _ = app.update(Message::ObjectTab(navigation::ObjectTab::Design));
         let rect = native_reveal(&app, &mut native, "native-islands-style");
         assert!(rect.y + rect.height <= native.size.height);
         let _ = native.event(

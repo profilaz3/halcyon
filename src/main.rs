@@ -1,3 +1,4 @@
+mod activity_island;
 mod app;
 mod automation;
 mod calendar;
@@ -33,6 +34,9 @@ mod widget_presentation;
 mod widget_style;
 
 fn main() -> cosmic::iced::Result {
+    if std::env::args().nth(1).as_deref() == Some("--activity-island") {
+        return cosmic::applet::run::<activity_island::Applet>(());
+    }
     if std::env::args().nth(1).as_deref() == Some("--package-image-worker") {
         desktop::profiles::packages::assets::main();
     }

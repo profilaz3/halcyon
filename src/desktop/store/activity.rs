@@ -49,7 +49,7 @@ pub struct Summary {
 const AREAS: &[&str] = &[
     "Appearance",
     "Wallpaper",
-    "Dock & panel",
+    "Dock and panel",
     "Widgets",
     "Windows",
     "Workspaces",
@@ -109,7 +109,7 @@ impl Summary {
         let title = match owner {
             Some(Owner::Profile) => "Applied a theme or setup",
             Some(Owner::Recovery) => "Restored desktop settings",
-            Some(Owner::DockPanel) => "Changed Dock & panel",
+            Some(Owner::DockPanel) => "Changed Dock and panel",
             Some(Owner::Appearance) => "Changed appearance",
             Some(Owner::Wallpaper) => "Changed wallpaper",
             Some(Owner::Windows) => "Changed window settings",
@@ -194,7 +194,7 @@ pub(super) fn summarize(file: &UndoFile, display: bool) -> Summary {
     for e in &file.entries {
         let area =
             if e.namespace.contains("CosmicPanel") || e.namespace == dock_islands_core::NAMESPACE {
-                "Dock & panel"
+                "Dock and panel"
             } else if e.namespace.contains("Theme") || e.namespace.contains("Tk") {
                 "Appearance"
             } else if e.namespace.contains("Background") {
@@ -362,15 +362,15 @@ mod tests {
         let mut entry = f.store().recent_changes().unwrap().entries.pop().unwrap();
         assert_eq!(entry.title(), "Bar spacing: Default → 7 px");
         entry.details.clear();
-        assert_eq!(entry.title(), "Changed Dock & panel");
+        assert_eq!(entry.title(), "Changed Dock and panel");
         entry.details.push(Detail {
             setting: "Note text".into(),
             before: "PRIVATE_SENTINEL".into(),
             after: "SECRET".into(),
         });
-        assert_eq!(entry.title(), "Changed Dock & panel");
+        assert_eq!(entry.title(), "Changed Dock and panel");
         entry.details[0].setting = "Bar spacing".into();
-        assert_eq!(entry.title(), "Changed Dock & panel");
+        assert_eq!(entry.title(), "Changed Dock and panel");
         entry.action = Action::Undone;
         assert_eq!(entry.title(), "Undid a desktop change");
     }

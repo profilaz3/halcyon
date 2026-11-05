@@ -3,7 +3,16 @@ use super::{
     Preset, Profile,
     packages::{Attribution, Credits, Origin, Package, Revision, digest},
 };
-pub const CURATED: [&str; 6] = ["tidal", "paper-studio", "moss", "carbon", "ridge", "spine"];
+pub const CURATED: [&str; 8] = [
+    "tidal",
+    "paper-studio",
+    "carbon",
+    "ridge",
+    "spine",
+    "rain",
+    "snow",
+    "fog",
+];
 pub fn credited(mut preset: Preset) -> Preset {
     if CURATED.contains(&preset.id) {
         let source = Package::curated(

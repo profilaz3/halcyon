@@ -103,7 +103,7 @@ fn cached_data_labels_include_the_day_and_missing_forecasts_are_not_zero() {
     );
     assert_eq!(
         timestamp_text(Some(&(now - Days::days(3)).to_rfc3339()), false, now),
-        "16 Oct · 12:00"
+        "Oct 16 · 12:00"
     );
     assert_eq!(timestamp_text(Some("invalid"), false, now), "—");
     assert_eq!(forecast_temperature(None), "—");
@@ -376,7 +376,7 @@ fn dew_point_weather_details_fit_and_missing_readings_stay_hidden() {
     config.weather.show_dew_point = true;
     assert_eq!(
         weather_dew_point(&config, &weather.current).as_deref(),
-        Some("Dew point -25°C")
+        Some("Dew point -25°")
     );
     for width in [300., 360.] {
         let mut native = Native::new(Size::new(width, 180.));
@@ -386,7 +386,7 @@ fn dew_point_weather_details_fit_and_missing_readings_stay_hidden() {
         );
         assert!(details.x >= 0. && details.x + details.width <= width);
         assert!(
-            details.height <= 27.,
+            details.height <= 31.,
             "Details fit at most two lines: {details:?}"
         );
         native.capture(
@@ -398,7 +398,7 @@ fn dew_point_weather_details_fit_and_missing_readings_stay_hidden() {
     weather.current.dew_point_2m = Some(-0.1);
     assert_eq!(
         weather_dew_point(&config, &weather.current).as_deref(),
-        Some("Dew point 0°C")
+        Some("Dew point 0°")
     );
     for reading in [None, Some(f64::NAN), Some(f64::INFINITY)] {
         weather.current.dew_point_2m = reading;

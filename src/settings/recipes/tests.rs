@@ -51,13 +51,20 @@ fn fb17_native_builder_save_apply_reset_undo_and_library_delete_are_independent(
     );
     send(&mut app, Message::UseBuiltin);
     assert!(app.config.recipes.clock.is_none());
+    // Desktop Undo lives in Recovery while this preview owns local Undo.
+    send_settings(&mut app, super::super::Message::Page(Page::General));
     send_settings(&mut app, super::super::Message::UndoDesktop);
     assert_eq!(app.config.recipes.clock, Some(saved));
-    for (w, h) in [(820., 600.), (1280., 800.)] {
+    send_settings(&mut app, super::super::Message::Page(Page::Builder));
+    for (w, h) in [(656., 480.), (820., 600.), (1280., 800.)] {
         send_settings(&mut app, super::super::Message::Resized(Size::new(w, h)));
         let mut native = crate::native_test::Native::new(Size::new(w, h));
         let bounds = native.bounds(app.settings_view(), "recipe-apply");
         assert!(bounds.y >= 0. && bounds.y + bounds.height <= h);
+        // The button reads the same for every kind now.
+        let text = native.text_bounds(app.settings_view(), "Use this design");
+        assert!(text.x >= bounds.x && text.x + text.width <= bounds.x + bounds.width);
+        assert!(text.y >= bounds.y && text.y + text.height <= bounds.y + bounds.height);
         native.capture(
             app.settings_view(),
             &cosmic::Theme::dark(),
@@ -245,6 +252,7 @@ fn system_recipe_native_builder_apply_edit_reset_and_undo() {
     assert_eq!(app.recipe_editor.draft, applied.recipes.devbox.unwrap());
     send_settings(&mut app, super::super::Message::Recipe(Message::UseBuiltin));
     assert!(app.config.recipes.devbox.is_none());
+    send_settings(&mut app, super::super::Message::Page(Page::General));
     send_settings(&mut app, super::super::Message::UndoDesktop);
     assert!(app.config.recipes.devbox.is_some());
     assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), frozen);
@@ -342,8 +350,10 @@ fn tool_recipe_library_apply_undo_preserves_live_session_and_preferences() {
             );
             send_settings(&mut app, super::super::Message::Page(Page::Builder));
         }
+        send_settings(&mut app, super::super::Message::Page(Page::General));
         send_settings(&mut app, super::super::Message::UndoDesktop);
         assert!(app.config.recipes.get(kind).is_none());
+        send_settings(&mut app, super::super::Message::Page(Page::Builder));
         assert_eq!(
             std::fs::read(crate::tools::focus::Session::path().unwrap()).unwrap(),
             session_bytes
@@ -460,4 +470,61 @@ fn visualizer_settings_save_reload_undo_and_native_controls() {
         Config::try_load().unwrap().music.visualizer,
         Preferences::default()
     );
+}
+
+#[test]
+fn ux_native_builder_undo_and_restart_keep_desktop_untouched() {
+    if crate::displays::test_support::isolated(
+        "settings::recipes::tests::ux_native_builder_undo_and_restart_keep_desktop_untouched",
+    ) {
+        return;
+    }
+    use crate::settings::tests::send_settings;
+    std::fs::write(
+        Config::path().unwrap(),
+        br#"{"onboarded":true,"setup_dismissed":true}"#,
+    )
+    .unwrap();
+    let (mut app, _) = Settings::init(Core::default(), Page::Builder);
+    send_settings(
+        &mut app,
+        super::super::Message::Widget(crate::drawer::Widget::Notes, true),
+    );
+    let before = std::fs::read(Config::path().unwrap()).unwrap();
+    send_settings(
+        &mut app,
+        super::super::Message::Recipe(Message::Name("My evening clock".into())),
+    );
+    send_settings(
+        &mut app,
+        super::super::Message::Recipe(Message::Add(Part::Caption)),
+    );
+    send_settings(&mut app, super::super::Message::KeyboardUndo(false));
+    assert!(!app.recipe_editor.draft.parts.contains(&Part::Caption));
+    assert_eq!(app.recipe_editor.draft.name, "My evening clock");
+    assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
+    send_settings(&mut app, super::super::Message::Page(Page::General));
+    let (mut restarted, _) = Settings::init(Core::default(), Page::Builder);
+    assert_eq!(restarted.recipe_editor.draft.name, "My evening clock");
+    assert!(restarted.recipe_editor.dirty());
+    send_settings(&mut restarted, super::super::Message::KeyboardUndo(false));
+    send_settings(&mut restarted, super::super::Message::KeyboardUndo(false));
+    assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
+}
+
+#[test]
+fn ux_builder_history_is_bounded_and_typed_name_coalesces() {
+    let mut editor = Editor::default();
+    let initial = editor.draft.clone();
+    for name in ["M", "My", "My clock"] {
+        editor.update(Message::Name(name.into()));
+    }
+    assert!(editor.undo_step());
+    assert_eq!(editor.draft, initial);
+    assert!(!editor.undo_step());
+    for _ in 0..80 {
+        editor.update(Message::Add(Part::Caption));
+        editor.update(Message::Remove(2));
+    }
+    assert!(editor.steps.len() <= 32);
 }

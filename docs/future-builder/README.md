@@ -1,6 +1,8 @@
 # Halcyon future builder
 
-Design the foundations for expressive desktops, reusable widgets and visual editing before building the full editor. The published application is [version 0.5.0](https://github.com/profilaz3/halcyon/releases/tag/v0.5.0).
+[App-wide UX audit and proposed structure](APP-UX-REDESIGN.md) · [Interactive proposal](concepts/app-ux-proposal.html). Three independent reviews completed on 2026-11-01; this is a proposal, not implemented native work or a release commitment.
+
+Design the foundations for expressive desktops, reusable widgets and visual editing before building the full editor. The current source baseline is 0.6.0, which ships the Activity island as a beta. [Next work](NEXT-WORK.md) records the six features accepted on 2026-11-01; their target release is unassigned. The foundation and 0.5.0 delivery records below retain their original scope.
 
 Direction accepted on 2026-10-26: shared styling, varied desktop compositions, visual editing, personal widgets and portable setups. FB05–FB19 are implemented and locally validated: shared styling, Clock choices, shared Clock/Weather presentation and measurement, keyed provider demand, and layout/input integration. The original feature implementations are complete in their documented bounded scope. See the [0.5.0 package verification](../releases/0.5.0-acceptance.md) for release evidence. FB21 adds sun-based appearance schedules, following the enabled Weather city or a separate chosen city. Version 0.5 also ships adaptive Tidal, Paper and Moss looks, bundled Islands and Penumbra, Calendar/System recipes and Settings polish. [The delivery tracker](DELIVERY-050.md) records implementation checks and publication.
 
@@ -8,6 +10,9 @@ Direction accepted on 2026-10-26: shared styling, varied desktop compositions, v
 
 | File | Purpose |
 | --- | --- |
+| [Next work](NEXT-WORK.md) | Six accepted features, proposed sequence, boundaries and acceptance checks |
+| [Activity island implementation](ACTIVITY-ISLAND-IMPLEMENTATION.md) | First native applet, shared providers, installation and remaining scope |
+| [Activity island design](ACTIVITY-ISLAND.md) | In-bar, hover and activity-reveal states; panel capability gate and interactive concept |
 | [Current delivery](DELIVERY-050.md) | 0.5.0 publication and validation |
 | [Product polish](PRODUCT-POLISH-050.md) | Screenshot-review fixes, onboarding, shared layouts and acceptance |
 | [Adaptive looks](ADAPTIVE-LOOKS.md) | Tidal, Paper and Moss daily appearance cycles |

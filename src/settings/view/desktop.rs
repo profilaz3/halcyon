@@ -11,9 +11,7 @@ use crate::settings::desktop::Message as Edit;
 use cosmic::iced::advanced::text as advanced_text;
 
 mod applets;
-pub(super) mod inspector;
 mod islands;
-pub(super) use inspector::paired;
 mod panel;
 mod penumbra;
 pub(super) mod preview;
@@ -38,12 +36,15 @@ pub(super) fn line<'a>(value: impl Into<String>, size: f32, color: Color) -> Ele
         .into()
 }
 
-/// A labelled control with room for native choices at compact widths.
+/// Label left, control right; the control wraps under at compact widths.
 fn field<'a>(title: &'static str, control: Element<'a, Message>) -> Element<'a, Message> {
-    column::with_children(vec![label(title, 12., MUTED), control])
-        .spacing(6)
-        .width(Length::Fill)
-        .into()
+    split(
+        label(title, 14., FG),
+        row::with_children(vec![control])
+            .align_y(Alignment::Center)
+            .wrap()
+            .into(),
+    )
 }
 
 pub(super) fn banner<'a>(
@@ -79,9 +80,14 @@ pub(super) fn banner<'a>(
 }
 
 /// Shared by every desktop editor: something outside this editor changed a
-/// value the draft also edits. One action adopts the current value and keeps
-/// every other edit; Apply would otherwise report the conflict.
-pub(super) fn conflict_banner<'a>(names: String, use_current: Message) -> Element<'a, Message> {
+/// value the draft also edits. Either action settles it and keeps every
+/// other edit: take the current value, or keep the edit and write it over
+/// the outside change at Apply. Until then Apply reports the conflict.
+pub(super) fn conflict_banner<'a>(
+    names: String,
+    use_current: Message,
+    keep_mine: Message,
+) -> Element<'a, Message> {
     banner(
         format!("Changed outside this editor: {names}."),
         WARN,
@@ -89,6 +95,7 @@ pub(super) fn conflict_banner<'a>(names: String, use_current: Message) -> Elemen
             button::standard("Use current value")
                 .on_press(use_current)
                 .into(),
+            button::standard("Keep my change").on_press(keep_mine).into(),
         ],
     )
 }
@@ -141,7 +148,7 @@ fn value_slider<'a>(
     message: impl Fn(u32) -> Edit + 'a,
 ) -> Element<'a, Message> {
     column::with_children(vec![
-        split(label(title, 12., FG), label(value_label, 11., accent)),
+        split(label(title, 14., FG), label(value_label, 13., accent)),
         slider(range, value, move |value| edit(message(value)))
             .on_release(edit(Edit::Apply))
             .step(step)
@@ -159,84 +166,45 @@ impl Settings {
         let accent = self.settings_accent();
         let editor = &self.desktop;
         let title = split(
-            heading("Dock & panel", ""),
+            heading("Dock and panel", "The bars along the edges of your screen."),
             super::windows::store_pill(editor.store(), accent),
         );
         if editor.store().is_none() {
             return title;
         }
-        let selector = segmented(
-            PanelKind::ALL
-                .into_iter()
-                .map(|kind| {
-                    let dirty = editor.draft(kind).is_some_and(PanelDraft::dirty);
-                    (
-                        if dirty {
-                            format!(
-                                "{} •",
-                                (if kind == PanelKind::Panel {
-                                    "Panel"
-                                } else {
-                                    "Dock"
-                                })
-                            )
-                        } else {
-                            (if kind == PanelKind::Panel {
-                                "Panel"
-                            } else {
-                                "Dock"
-                            })
-                            .to_string()
-                        },
-                        editor.selected == kind,
-                        Some(edit(Edit::Select(kind))),
-                    )
-                })
-                .collect(),
-            accent,
-        );
-        let system = button::text("System settings ↗")
-            .on_press(Message::OpenDesktop(editor.selected.system_page()));
-        let mut parts = vec![title];
-        parts.push(
-            row::with_children(vec![label("Editing", 12., MUTED), selector, system.into()])
-                .spacing(12)
-                .align_y(Alignment::Center)
-                .wrap()
-                .into(),
-        );
-        column::with_children(parts)
-            .spacing(12)
-            .width(Length::Fill)
-            .into()
+        // The two bars are independent halves of this page.
+        column::with_children(vec![
+            title,
+            segmented(
+                [("Dock", PanelKind::Dock), ("Panel", PanelKind::Panel)]
+                    .into_iter()
+                    .map(|(name, kind)| {
+                        (
+                            name.to_string(),
+                            editor.selected == kind,
+                            (editor.selected != kind).then_some(Message::OpenBar(kind)),
+                        )
+                    })
+                    .collect(),
+                accent,
+            ),
+        ])
+        .spacing(12)
+        .width(Length::Fill)
+        .into()
     }
 
     pub(super) fn dock_workspace(&self) -> Element<'_, Message> {
         let editor = &self.desktop;
         let mut parts = Vec::new();
-        if let Some(draft) = editor.current().filter(|draft| draft.installed()) {
-            let scene = if self.scene_open() {
-                self.desktop_preview(self.dock_preview_height())
-            } else {
-                cosmic::widget::space().height(0).into()
-            };
-            let caption = if draft.dirty() {
-                "Current adjustment · schematic bar appearance"
-            } else {
-                "Current desktop · schematic bar appearance"
-            };
-            parts.push(self.scene_frame(scene, caption));
+        if editor.current().is_some_and(|draft| draft.installed()) {
+            parts.push(self.scene_frame(
+                self.desktop_preview((self.content_width() * 0.22).clamp(130., 180.)),
+                "",
+            ));
         }
-        if !self.scene_open() {
-            // Collapsing the preview gives its width back to the controls.
-            parts.push(self.desktop_dock_page());
-            return column::with_children(parts).spacing(12).into();
-        }
-        self.inspector_layout(
-            column::with_children(parts).spacing(12).into(),
-            self.desktop_dock_page(),
-            "dock",
-        )
+        parts.push(self.desktop_dock_page());
+        column::with_children(parts).spacing(20).into()
     }
     /// Scrolling part of the Dock & Panel page: states, then the controls.
     pub(super) fn desktop_dock_page(&self) -> Element<'_, Message> {
@@ -319,58 +287,46 @@ impl Settings {
                 .collect();
             let mut names = names;
             names.dedup();
-            items.push(conflict_banner(names.join(", "), edit(Edit::UseCurrent)));
+            items.push(conflict_banner(
+                names.join(", "),
+                edit(Edit::UseCurrent),
+                edit(Edit::KeepMine),
+            ));
         }
-        // Activation is separate from each bar's saved visual style.
-        if !matches!(
-            self.desktop.islands.installation,
-            crate::desktop::islands::Installation::Pending
-        ) {
+        // One page, no tabs: how the bar looks, where it sits, what it holds.
+        items.push(self.bar_style(draft));
+        items.push(self.bar_position(draft));
+        if draft.kind() == PanelKind::Panel
+            && (self.desktop.islands.installation.installed() || self.updates.islands.busy())
+        {
             items.push(self.addons_section());
         }
-        items.push(self.layout_section(draft));
-        // A missing/unhealthy host must not hide the saved Islands intent or
-        // its recovery controls. Availability is reported next to placement.
-        if self.desktop.islands.installation.installed()
-            || draft.islands().known().is_some_and(|s| s.enabled)
+        // A missing or unhealthy host must not hide the saved Islands intent
+        // or its recovery controls.
+        if (self.desktop.islands.installation.installed()
+            || draft.islands().known().is_some_and(|s| s.enabled))
+            && (draft.kind() == PanelKind::Dock
+                || draft.islands().known().is_some_and(|s| s.enabled))
         {
-            if draft.kind() == PanelKind::Dock || draft.islands().known().is_some_and(|s| s.enabled)
-            {
-                items.push(self.islands_section(draft));
-            }
+            items.push(self.islands_section(draft));
         }
         if draft.kind() == PanelKind::Panel {
             items.push(self.panel_contents(draft));
         } else {
+            // Each region's Add already lists every installed item.
             items.push(self.applets_section(draft));
-            items.push(self.installed_applets(draft));
         }
         items.push(self.advanced_section(draft));
+        items.push(group(None, vec![self.cosmic_link(editor.selected.system_page())]));
         column::with_children(items).spacing(16).into()
     }
 
-    /// Full-width scene, with controls still near at compact window sizes.
-    fn dock_preview_height(&self) -> f32 {
-        self.stage_height()
-    }
-
-    fn layout_section(&self, draft: &PanelDraft) -> Element<'_, Message> {
+    fn bar_position(&self, draft: &PanelDraft) -> Element<'_, Message> {
         let accent = self.settings_accent();
-        let horizontal = draft
-            .anchor()
-            .known()
-            .is_none_or(|anchor| anchor.horizontal());
         let anchors = Anchor::ALL
             .into_iter()
             .map(|anchor| (anchor.title().to_string(), anchor))
             .collect();
-        let mut sizes: Vec<(String, PanelSize)> = PanelSize::CHOICES
-            .into_iter()
-            .map(|size| (size.title(), size))
-            .collect();
-        if let Setting::Known(custom @ PanelSize::Custom(_)) = draft.size() {
-            sizes.push((custom.title(), custom));
-        }
         let mut outputs: Vec<(String, Output)> = vec![("All displays".into(), Output::All)];
         outputs.extend(
             self.desktop
@@ -387,11 +343,52 @@ impl Settings {
             }
             _ => {}
         }
+        let mut rows = Vec::new();
+        // With one display and the default choice there is nothing to pick.
+        if self.desktop.outputs.len() > 1 || draft.output().known() != Some(&Output::All) {
+            rows.push(field(
+                "Show on display",
+                choice(&draft.output(), outputs, Edit::Output, accent),
+            ));
+        }
+        rows.extend([
+            field(
+                "Screen edge",
+                choice(&draft.anchor(), anchors, Edit::Anchor, accent),
+            ),
+            field(
+                "Visibility",
+                choice(
+                    &draft.autohide(),
+                    AutoHide::ALL
+                        .into_iter()
+                        .map(|mode| (mode.title().to_string(), mode))
+                        .collect(),
+                    Edit::AutoHide,
+                    accent,
+                ),
+            ),
+        ]);
+        group(Some("Position"), rows)
+    }
+
+    fn bar_style(&self, draft: &PanelDraft) -> Element<'_, Message> {
+        let accent = self.settings_accent();
+        let horizontal = draft
+            .anchor()
+            .known()
+            .is_none_or(|anchor| anchor.horizontal());
+        let mut sizes: Vec<(String, PanelSize)> = PanelSize::CHOICES
+            .into_iter()
+            .map(|size| (size.title(), size))
+            .collect();
+        if let Setting::Known(custom @ PanelSize::Custom(_)) = draft.size() {
+            sizes.push((custom.title(), custom));
+        }
         let opacity = draft.opacity();
         let opacity_percent = opacity
             .known()
             .map(|value| (value * 100.).round().clamp(0., 100.) as u32);
-        let radius = draft.radius().known().copied();
         let mut toggle_items: Vec<Element<'_, Message>> = vec![
             container(self.desktop_switch(
                 "Floating",
@@ -418,8 +415,7 @@ impl Settings {
                 .into(),
             );
         }
-        let toggles = column::with_children(toggle_items).spacing(12);
-        let mut style: Vec<Element<'_, Message>> = vec![label("Style", 16., FG)];
+        let mut style: Vec<Element<'_, Message>> = Vec::new();
         if draft.kind() == PanelKind::Panel {
             style.push(self.panel_style(draft));
         }
@@ -428,53 +424,58 @@ impl Settings {
             choice(&draft.size(), sizes, Edit::Size, accent),
         ));
         style.push(match opacity_percent {
+            // Shown as how see-through it is, the opposite of the stored opacity.
             Some(percent) => container(value_slider(
-                "Background opacity",
-                format!("{percent}%"),
+                "See-through",
+                format!("{}%", 100 - percent),
                 0..=100,
-                percent,
+                100 - percent,
                 1,
                 accent,
-                |value| Edit::Opacity(value as u8),
+                |value| Edit::Opacity(100 - value.min(100) as u8),
             ))
             .id("native-bar-opacity")
             .into(),
             None => field(
-                "Background opacity",
+                "See-through",
                 kept(match &opacity {
                     Setting::Unsupported(raw) => raw,
                     Setting::Known(_) => "",
                 }),
             ),
         });
-        style.push(toggles.into());
-        style.push(field(
-            "Corners",
+        style.extend(toggle_items);
+        style.push(split(
+            detail("Corners", "Only the dock. Window corners are in Windows"),
             choice(
-                &draft.radius(),
+                // The same words as Appearance; a size set elsewhere shows
+                // as the nearest of them.
+                &match draft.radius() {
+                    Setting::Known(value) => Setting::Known(
+                        [0, 12, 24, MAX_RADIUS]
+                            .into_iter()
+                            .min_by_key(|choice: &u32| choice.abs_diff(value))
+                            .unwrap_or(value),
+                    ),
+                    other => other,
+                },
                 vec![
                     ("Square".into(), 0),
                     ("Rounded".into(), 12),
+                    ("Very round".into(), 24),
                     ("Pill".into(), MAX_RADIUS),
                 ],
                 Edit::RadiusChoice,
                 accent,
             ),
         ));
-        if let Some(radius) = radius.filter(|radius| ![0, 12, MAX_RADIUS].contains(radius)) {
-            style.push(label(
-                format!("Custom radius {radius} px · adjust it in Advanced"),
-                11.,
-                MUTED,
-            ));
-        }
         style.push(field(
             "Background",
             choice(
                 &draft.background(),
                 {
                     let mut options = vec![
-                        ("Theme".into(), PanelBackground::ThemeDefault),
+                        ("Match style".into(), PanelBackground::ThemeDefault),
                         ("Dark".into(), PanelBackground::Dark),
                         ("Light".into(), PanelBackground::Light),
                     ];
@@ -487,35 +488,8 @@ impl Settings {
                 accent,
             ),
         ));
-        style.push(separator());
         style.push(self.penumbra_controls(draft));
-        paired(
-            self.window.width >= 1120.,
-            section(vec![
-                label("Position & behavior", 16., FG),
-                field(
-                    "Show on display",
-                    choice(&draft.output(), outputs, Edit::Output, accent),
-                ),
-                field(
-                    "Screen edge",
-                    choice(&draft.anchor(), anchors, Edit::Anchor, accent),
-                ),
-                field(
-                    "Visibility",
-                    choice(
-                        &draft.autohide(),
-                        AutoHide::ALL
-                            .into_iter()
-                            .map(|mode| (mode.title().to_string(), mode))
-                            .collect(),
-                        Edit::AutoHide,
-                        accent,
-                    ),
-                ),
-            ]),
-            section(style),
-        )
+        group(Some("Style"), style)
     }
 
     fn desktop_switch(
@@ -541,9 +515,8 @@ impl Settings {
         let open = self.desktop.advanced;
         let toggle = button::custom(
             row::with_children(vec![
-                label("Advanced", 16., FG),
+                label("Spacing and timing", 14., FG),
                 container(text::body("")).width(Length::Fill).into(),
-                label("Timing, spacing and corners", 11., MUTED),
                 icon::from_name(if open {
                     "go-up-symbolic"
                 } else {
@@ -557,7 +530,7 @@ impl Settings {
             .align_y(Alignment::Center),
         )
         .class(nav_style(false, accent))
-        .padding([4, 4])
+        .padding([4, 10])
         .width(Length::Fill)
         .on_press(edit(Edit::Advanced(!open)));
         if !open {
@@ -638,7 +611,7 @@ impl Settings {
             row::with_children(vec![
                 number(
                     draft.spacing(),
-                    "Between applets",
+                    "Between items",
                     MAX_SPACING,
                     Edit::Spacing,
                 ),

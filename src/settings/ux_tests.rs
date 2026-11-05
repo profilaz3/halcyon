@@ -2,6 +2,146 @@ use super::*;
 use crate::native_test::Native;
 use cosmic::iced::{Event, Point, mouse};
 
+#[test]
+fn ux_native_effect_preview_survives_navigation_and_restart_without_applying() {
+    if child("ux_native_effect_preview_survives_navigation_and_restart_without_applying") {
+        return;
+    }
+    let before = std::fs::read(Config::path().unwrap()).unwrap();
+    let (mut app, _) = Settings::init(Core::default(), Page::DesktopWallpaper);
+    let mut effect = app.config.rain.clone();
+    effect.enabled = true;
+    let _ = app.update(Message::Rain(rain::Edit::Set(effect.clone())));
+    let _ = app.update(Message::Page(Page::General));
+    assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
+    let _ = app.update(Message::Page(Page::DesktopWallpaper));
+    assert_eq!(app.wallpaper.effect(), Some(&effect));
+    drop(app);
+    let (mut app, _) = Settings::init(Core::default(), Page::DesktopWallpaper);
+    assert_eq!(app.wallpaper.effect(), Some(&effect));
+    assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
+    let _ = app.update(Message::Wallpaper(wallpaper::Message::Discard));
+    assert!(app.wallpaper.effect().is_none());
+    assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
+}
+
+#[test]
+fn ux_native_hidden_focus_has_live_controls() {
+    if child("ux_native_hidden_focus_has_live_controls") {
+        return;
+    }
+    let (mut app, _) = Settings::init(Core::default(), Page::Focus);
+    assert!(!app.config.widget_visible(Widget::Focus));
+    let size = Size::new(820., 600.);
+    let _ = app.update(Message::Resized(size));
+    let mut native = Native::new(size);
+    let target = native.text_bounds(app.settings_view(), "Start").center();
+    let mut messages = Vec::new();
+    for event in [
+        mouse::Event::CursorMoved { position: target },
+        mouse::Event::ButtonPressed(mouse::Button::Left),
+        mouse::Event::ButtonReleased(mouse::Button::Left),
+    ] {
+        messages.extend(
+            native
+                .event(app.settings_view(), Event::Mouse(event), target)
+                .0,
+        );
+    }
+    assert!(messages.iter().any(|m| matches!(
+        m,
+        Message::Tools(tools::Message::Card(
+            crate::tools::cards::Action::FocusToggle
+        ))
+    )));
+    native.capture(
+        app.settings_view(),
+        &cosmic::theme::active(),
+        "hidden-focus-controls",
+    );
+}
+
+#[test]
+fn ux_native_notes_undo_is_document_local_and_controls_fit() {
+    if child("ux_native_notes_undo_is_document_local_and_controls_fit") {
+        return;
+    }
+    use cosmic::iced::keyboard;
+    use cosmic::widget::text_editor;
+    let before = std::fs::read(Config::path().unwrap()).unwrap();
+    let (mut app, _) = Settings::init(Core::default(), Page::Notes);
+    let _ = app.update(Message::Tools(tools::Message::Note(
+        text_editor::Action::Edit(text_editor::Edit::Paste(std::sync::Arc::new(
+            "A local note 🌙".into(),
+        ))),
+    )));
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        let _ = app.update(Message::Resized(size));
+        let mut native = Native::new(size);
+        reveal(&app, &mut native, "note-editor");
+        let editor = native.bounds(app.settings_view(), "note-editor");
+        click_at(&mut app, &mut native, editor.center());
+        let event = Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Character("z".into()),
+            modified_key: keyboard::Key::Character("z".into()),
+            physical_key: keyboard::key::Physical::Unidentified(
+                keyboard::key::NativeCode::Unidentified,
+            ),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::CTRL,
+            text: None,
+            repeat: false,
+        });
+        let (messages, status) = native.event(app.settings_view(), event, editor.center());
+        assert_eq!(status, cosmic::iced::event::Status::Captured);
+        assert!(
+            messages
+                .iter()
+                .any(|m| matches!(m, Message::Tools(tools::Message::NoteUndo)))
+        );
+        for message in messages {
+            let _ = app.update(message);
+        }
+        assert!(app.tools.content.text().trim().is_empty());
+        let _ = app.update(Message::Tools(tools::Message::NoteRedo));
+        assert_eq!(app.tools.content.text().trim(), "A local note 🌙");
+        reveal(&app, &mut native, "note-editor");
+        native.capture(
+            app.settings_view(),
+            &cosmic::theme::active(),
+            &format!("notes-undo-{}", size.width),
+        );
+        // The note has no buttons of its own now: it saves as you type and
+        // Undo is the app's own (Ctrl+Z above, global Undo below).
+        let b = native.bounds(app.settings_view(), "note-editor");
+        assert!(b.x >= 0. && b.x + b.width <= size.width, "note-editor: {b:?}");
+    }
+    // Global Undo after the editor loses focus still belongs to this note.
+    let _ = app.update(Message::UndoDesktop);
+    let _ = app.update(Message::UndoDesktop);
+    assert!(app.tools.content.text().trim().is_empty());
+    assert_eq!(before, std::fs::read(Config::path().unwrap()).unwrap());
+}
+
+#[test]
+fn ux_native_shared_finish_sets_scope_and_busy_status_is_visible() {
+    if child("ux_native_shared_finish_sets_scope_and_busy_status_is_visible") {
+        return;
+    }
+    let (mut app, _) = Settings::init(Core::default(), Page::Clock);
+    app.material_target = crate::materials::Target::Panel;
+    let _ = app.update(Message::OpenWidgetFinish);
+    assert_eq!(app.page, Page::Appearance);
+    assert_eq!(app.material_target, crate::materials::Target::Widgets);
+    app.native_busy = true;
+    let mut native = Native::new(Size::new(820., 600.));
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "settings-saving")
+            .is_some()
+    );
+}
+
 fn child(name: &str) -> bool {
     if std::env::var("DESKTOP_CARDS_UX_TEST").as_deref() == Ok(name) {
         return false;
@@ -49,7 +189,7 @@ fn click_at(app: &mut Settings, native: &mut Native, point: Point) {
     }
 }
 fn click(app: &mut Settings, native: &mut Native, id: &str) {
-    let bounds = native.bounds(app.settings_view(), id);
+    let bounds = crate::settings::tests::native_reveal(app, native, id);
     assert!(
         bounds.x >= 0.
             && bounds.y >= 0.
@@ -58,6 +198,37 @@ fn click(app: &mut Settings, native: &mut Native, id: &str) {
         "{id}: {bounds:?}"
     );
     click_at(app, native, bounds.center());
+}
+
+#[test]
+fn ux_native_incomplete_color_has_discard_and_never_applies() {
+    if child("ux_native_incomplete_color_has_discard_and_never_applies") {
+        return;
+    }
+    use crate::settings::tests::{native_click, send_settings, settle_settings};
+    let (mut app, initial) = Settings::init(Core::default(), Page::Themes);
+    settle_settings(&mut app, initial);
+    send_settings(&mut app, Message::Resized(Size::new(820., 600.)));
+    let before = std::fs::read(Config::path().unwrap()).unwrap();
+    send_settings(
+        &mut app,
+        Message::Profiles(profiles::Message::ThemeCustom(Some("#12".into()))),
+    );
+    assert!(app.profiles.profile().is_none());
+    assert!(!app.profiles.can_apply());
+    let mut native = Native::new(Size::new(820., 552.));
+    native_click(&mut app, &mut native, "profiles-confirm");
+    assert_eq!(app.profiles.custom.as_deref(), Some("#12"));
+    assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
+    native.capture(
+        app.settings_view(),
+        &cosmic::Theme::dark(),
+        "ux-color-incomplete-820",
+    );
+    native_click(&mut app, &mut native, "profiles-discard");
+    assert!(!app.profiles.review_open());
+    assert!(app.kept_previews().is_empty());
+    assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
 }
 
 /// Reveal a control through the page's real scrollable before checking its
@@ -241,6 +412,8 @@ fn dew_point_switch_saves_and_undoes_without_touching_other_preferences() {
         assert!(!app.config.weather.show_dew_point, "Existing users opt in");
         Config::save_weather(serde_json::json!({"future_reading":37})).unwrap();
         let mut native = Native::new(size);
+        // Dew point sits in the folded section that names it.
+        let _ = app.update(Message::ToggleAdvanced(Page::Weather));
         reveal_click(&mut app, &mut native, "weather-dew-point-toggle");
         assert!(app.config.weather.show_dew_point);
         assert!(Config::try_load().unwrap().weather.show_dew_point);
@@ -266,7 +439,7 @@ fn dew_point_switch_saves_and_undoes_without_touching_other_preferences() {
         let hit = navigation::search("dewpoint")[0];
         assert_eq!(hit.page, Page::Weather);
         assert_eq!(hit.anchor(), "weather-dew-point");
-        assert!(!hit.advanced);
+        assert!(hit.advanced, "search opens the folded section");
     }
 }
 
@@ -290,36 +463,43 @@ fn native_task_navigation_and_widget_switches_keep_layout_drafts() {
         let widgets = app
             .nav_model
             .iter()
-            .find(|&id| app.nav_model.data::<Page>(id) == Some(&Page::Widgets))
+            .find(|&id| app.nav_model.data::<Page>(id) == Some(&Page::Overview))
             .unwrap();
         let _ = app.update(Message::NavSelected(widgets));
         assert_eq!(
             app.page,
             Page::Overview,
-            "the root restores its last destination"
+            "the root opens its stable landing"
         );
-        click(&mut app, &mut native, "destination-widgets");
-        assert_eq!(app.page, Page::Widgets);
-        assert_eq!(app.nav_model.active_data::<Page>(), Some(&Page::Widgets));
+        assert_eq!(app.nav_model.active_data::<Page>(), Some(&Page::Overview));
         let before = app.config.data_visible(Widget::Clock);
         // The switch has its own hit target, outside the button that opens settings.
-        click(&mut app, &mut native, "widget-toggle-clock");
-        assert_eq!(app.page, Page::Widgets);
+        let toggle =
+            crate::settings::tests::native_reveal(&app, &mut native, "widget-toggle-clock")
+                .center();
+        for event in [
+            mouse::Event::CursorMoved { position: toggle },
+            mouse::Event::ButtonPressed(mouse::Button::Left),
+            mouse::Event::ButtonReleased(mouse::Button::Left),
+        ] {
+            let (messages, _) = native.event(app.settings_view(), Event::Mouse(event), toggle);
+            for message in messages {
+                let _ = app.update(message);
+            }
+        }
+        assert_eq!(app.page, Page::Overview);
         assert_eq!(app.config.data_visible(Widget::Clock), !before);
         let _ = app.update(Message::UndoPreferences);
         click(&mut app, &mut native, "widget-open-weather");
         assert_eq!(app.page, Page::Weather);
         click(&mut app, &mut native, "settings-back");
-        assert_eq!(app.page, Page::Widgets);
-        click(&mut app, &mut native, "nav-desktop-dock");
-        click(&mut app, &mut native, "destination-desktop-windows");
+        assert_eq!(app.page, Page::Overview);
+        // Windows, Dock and Looks are sidebar roots of their own now.
+        click(&mut app, &mut native, "nav-desktop-windows");
         assert_eq!(app.page, Page::DesktopWindows);
-        assert!(native.try_bounds(app.view(), "settings-back").is_none());
-        assert!(
-            native
-                .try_bounds(app.view(), "destination-desktop-dock")
-                .is_some(),
-            "sibling pages use their destination tabs"
+        assert_eq!(
+            app.nav_model.active_data::<Page>(),
+            Some(&Page::DesktopWindows)
         );
         let _ = app.update(Message::Page(Page::DesktopWorkspaces));
         assert_eq!(
@@ -329,24 +509,31 @@ fn native_task_navigation_and_widget_switches_keep_layout_drafts() {
         );
         assert_eq!(
             app.nav_model.active_data::<Page>(),
-            Some(&Page::DesktopDock)
+            Some(&Page::DesktopWindows)
         );
-        click(&mut app, &mut native, "nav-desktop-dock");
+        click(&mut app, &mut native, "nav-overview");
         assert_eq!(
             app.page,
-            Page::DesktopWindows,
-            "the root keeps its Windows destination"
+            Page::Overview,
+            "the root returns to the stable Widgets landing"
         );
-        click(&mut app, &mut native, "destination-desktop-dock");
+        click(&mut app, &mut native, "nav-desktop-dock");
         assert_eq!(app.page, Page::DesktopDock);
         click(&mut app, &mut native, "nav-desktop-profiles");
-        click(&mut app, &mut native, "destination-desktop-automation");
+        click(&mut app, &mut native, "presets-schedules");
         assert_eq!(app.page, Page::DesktopAutomation);
         assert_eq!(
             app.nav_model.active_data::<Page>(),
             Some(&Page::DesktopProfiles)
         );
-        click(&mut app, &mut native, "destination-desktop-profiles");
+        assert_eq!(app.back_title().as_deref(), Some("Looks"));
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "settings-back")
+                .is_some(),
+            "Back names the landing that opened this editor"
+        );
+        click(&mut app, &mut native, "settings-back");
         assert_eq!(app.page, Page::DesktopProfiles);
         let _ = app.update(Message::Resized(size));
         let _ = app.update(Message::Page(Page::Overview));
@@ -382,7 +569,7 @@ fn split_sidebar_keyboard_navigation_keeps_focus_and_drafts() {
     let _ = app.update(Message::Placement(placement::Message::Nudge([1, 0], false)));
     let draft = serde_json::to_value(app.placement.session_draft()).unwrap();
     let mut native = Native::new(Size::new(820., 600.));
-    click(&mut app, &mut native, "nav-widgets");
+    click(&mut app, &mut native, "nav-overview");
     let key = |name| {
         Event::Keyboard(keyboard::Event::KeyPressed {
             key: keyboard::Key::Named(name),
@@ -396,14 +583,15 @@ fn split_sidebar_keyboard_navigation_keeps_focus_and_drafts() {
             repeat: false,
         })
     };
-    // Arrows walk the six root destinations and retain focus across changes.
+    // Arrows walk the seven root destinations and retain focus across changes.
     for (name, page) in [
-        (Named::ArrowDown, Page::DesktopProfiles),
-        (Named::ArrowDown, Page::DesktopMotion),
+        (Named::ArrowDown, Page::DesktopDock),
+        (Named::ArrowDown, Page::DesktopWindows),
         (Named::ArrowDown, Page::General),
-        (Named::ArrowUp, Page::DesktopMotion),
-        (Named::Home, Page::Themes),
-        (Named::ArrowUp, Page::Themes),
+        (Named::ArrowUp, Page::DesktopWindows),
+        (Named::Home, Page::DesktopProfiles),
+        (Named::ArrowUp, Page::DesktopProfiles),
+        (Named::ArrowDown, Page::Themes),
         (Named::End, Page::General),
         (Named::ArrowDown, Page::General),
     ] {
@@ -420,6 +608,7 @@ fn split_sidebar_keyboard_navigation_keeps_focus_and_drafts() {
         draft
     );
     // An arrow in Search must edit the field, never select a sidebar destination.
+    click(&mut app, &mut native, "rail-search");
     click(&mut app, &mut native, "settings-search");
     let (messages, _) = native.event(app.settings_view(), key(Named::ArrowDown), Point::ORIGIN);
     assert!(
@@ -445,8 +634,7 @@ fn calendar_account_options_keep_disconnect_deliberate() {
         app.calendar.loading = false;
         let mut native = Native::new(size);
         assert!(app.help_open.is_none());
-        click(&mut app, &mut native, "scene-toggle");
-        assert!(!app.scene_open());
+        // The preview is always shown; account options are reached by scrolling.
         click(&mut app, &mut native, "calendar-account-options");
         assert_eq!(app.help_open, Some("calendar-account"));
         click(&mut app, &mut native, "calendar-disconnect");
@@ -580,14 +768,14 @@ fn visual_preview_selection_reorder_and_readability_have_separate_effects() {
         for widget in [Widget::Weather, Widget::Devbox, Widget::Clock] {
             let _ = app.update(Message::AppearancePreview(widget));
             assert_eq!(app.appearance_preview, widget);
-            reveal(&app, &mut native, "widget-preview-stage");
+            reveal(&app, &mut native, "material-frosted");
             native.capture(
                 app.settings_view(),
                 &cosmic::Theme::dark(),
                 &format!("polish-style-{}-{}", widget.key(), size.width),
             );
             if size.width >= 990. {
-                let stage = native.bounds(app.settings_view(), "widget-preview-stage");
+                let stage = native.bounds(app.settings_view(), "material-frosted");
                 assert!(
                     stage.x >= 5. && stage.center_y() >= 0. && stage.center_y() < size.height,
                     "Visible wallpaper clipping probe: {stage:?}"
@@ -778,6 +966,11 @@ fn review_r1_gallery_keyboard_actions_are_reachable() {
     for size in [Size::new(820., 600.), Size::new(1024., 720.)] {
         for matching in [false, true] {
             let (mut app, _) = Settings::init(Core::default(), Page::Themes);
+            // Each size/option is an independent keyboard case. The preceding
+            // case deliberately edits its preview, so a new Settings session
+            // correctly restores that work awaiting Review. Start this case
+            // with an explicit discard before selecting its fresh preview.
+            let _ = app.update(Message::Profiles(profiles::Message::Discard));
             let _ = app.update(Message::Resized(size));
             app.profiles
                 .update(profiles::Message::Select(profiles::Selection::Preset(
@@ -854,12 +1047,12 @@ fn review_r1_gallery_keyboard_actions_are_reachable() {
                         let label = format!("{message:?}");
                         if matches!(
                             message,
-                            Message::Profiles(profiles::Message::ThemeWallpaper(_))
+                            Message::Profiles(profiles::Message::ThemeColors(true))
                         ) && !reached.contains(&label)
                         {
                             let target = bounds
                                 .bounds
-                                .expect("matching wallpaper has keyboard focus");
+                                .expect("From wallpaper has keyboard focus");
                             assert!(
                                 target.x >= 0.
                                     && target.y >= 0.
@@ -907,21 +1100,16 @@ fn review_r1_gallery_keyboard_actions_are_reachable() {
                     }
                 }
             }
+            // Styles are tiles on the page itself, and every choice applies on
+            // its own, so there is no browser or Apply. Saving, sharing and the
+            // matching wallpaper moved to Looks.
             for expected in [
-                // Styles are chosen in the browser this row opens.
-                "StyleBrowser(true)",
+                r#"Profiles(Select(Preset("theme-outline")))"#,
+                r#"ToggleSection("appearance-all-styles")"#,
                 "Profiles(ThemeColors(true))",
                 "Profiles(ThemeColors(false))",
-                if matching {
-                    "Profiles(ThemeWallpaper(false))"
-                } else {
-                    "Profiles(ThemeWallpaper(true))"
-                },
-                "Profiles(Name(Some(CaptureTheme)))",
-                "Profiles(ImportTheme)",
-                "Profiles(Name(Some(Duplicate)))",
-                "Profiles(Export)",
-                "Profiles(Apply)",
+                "Profiles(Color(Mode(Dark)))",
+                "WidgetCorners(16)",
             ] {
                 if !reached.contains(expected) {
                     missing.push(format!("{size:?}: keyboard cannot activate {expected}"));
@@ -976,6 +1164,7 @@ fn color_control_offers_suggestions_and_the_picker_and_applies_a_choice() {
         return;
     }
     let size = Size::new(1020., 1300.);
+    let before = std::fs::read(Config::path().unwrap()).unwrap();
     let (mut app, _) = Settings::init(Core::default(), Page::Themes);
     let _ = app.update(Message::Resized(size));
     let mut native = Native::new(size);
@@ -985,7 +1174,8 @@ fn color_control_offers_suggestions_and_the_picker_and_applies_a_choice() {
             .is_none(),
         "closed until asked"
     );
-    click(&mut app, &mut native, "colors-hex");
+    click(&mut app, &mut native, "theme-color-custom");
+    click(&mut app, &mut native, "theme-color-hex");
     assert!(
         native
             .try_bounds(app.settings_view(), "color-panel")
@@ -998,7 +1188,15 @@ fn color_control_offers_suggestions_and_the_picker_and_applies_a_choice() {
     );
     click(&mut app, &mut native, "color-quick-2");
     let chosen = crate::settings::color_well::QUICK[2];
-    assert_eq!(Config::load().appearance.accent, Some(chosen));
+    assert_eq!(
+        app.profiles.color_preferences(&app.config).accent,
+        Some(chosen)
+    );
+    assert_eq!(
+        std::fs::read(Config::path().unwrap()).unwrap(),
+        before,
+        "choosing a suggestion updates only the preview"
+    );
     assert!(
         native
             .try_bounds(app.settings_view(), "color-panel")
@@ -1009,6 +1207,25 @@ fn color_control_offers_suggestions_and_the_picker_and_applies_a_choice() {
         app.settings_view(),
         &cosmic::Theme::dark(),
         "color-control-chosen",
+    );
+    // Appearance has no Apply button: "Done" closes the custom color and the
+    // choice applies on its own, with one Undo in the footer.
+    let done = native.text_bounds(app.settings_view(), "Done").center();
+    for event in [
+        mouse::Event::CursorMoved { position: done },
+        mouse::Event::ButtonPressed(mouse::Button::Left),
+        mouse::Event::ButtonReleased(mouse::Button::Left),
+    ] {
+        for message in native.event(app.settings_view(), Event::Mouse(event), done).0 {
+            crate::settings::tests::send_settings(&mut app, message);
+        }
+    }
+    assert_eq!(Config::load().appearance.accent, Some(chosen));
+    crate::settings::tests::native_click(&mut app, &mut native, "settings-undo");
+    assert_eq!(
+        std::fs::read(Config::path().unwrap()).unwrap(),
+        before,
+        "one Undo reverses the applied choice"
     );
 }
 
@@ -1028,6 +1245,7 @@ fn fb10_type_wall_pages_are_bounded_and_browsing_keeps_preferences() {
     let _ = app.update(Message::FontCatalogReady(
         crate::desktop::appearance::catalog::FontCatalog::from_manifest(&manifest),
     ));
+    let _ = app.update(Message::ObjectTab(navigation::ObjectTab::Design));
     for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
         let _ = app.update(Message::Resized(size));
         let _ = app.update(Message::FontPage(0));
@@ -1089,6 +1307,7 @@ fn fb10_type_choice_click_and_undo_preserve_face_and_other_fonts() {
     ));
     let size = Size::new(820., 600.);
     let _ = app.update(Message::Resized(size));
+    let _ = app.update(Message::ObjectTab(navigation::ObjectTab::Design));
     let mut native = Native::new(size);
     reveal_click(&mut app, &mut native, "font-choice-clock-Noto Serif");
     let chosen = Config::load();
@@ -1107,7 +1326,9 @@ fn widget_fonts_list_installed_families_and_save_a_choice() {
         return;
     }
     let size = Size::new(1020., 720.);
-    let (mut app, _) = Settings::init(Core::default(), Page::Appearance);
+    // The widget font lives with the other fonts, on Fonts and icons.
+    let (mut app, initial) = Settings::init(Core::default(), Page::DesktopAppearance);
+    crate::settings::tests::settle_settings(&mut app, initial);
     let _ = app.update(Message::Resized(size));
     let mut native = Native::new(size);
     assert!(
@@ -1116,7 +1337,6 @@ fn widget_fonts_list_installed_families_and_save_a_choice() {
             .is_none()
     );
     app.system_animations = false;
-    reveal_click(&mut app, &mut native, "settings-advanced");
     reveal_click(&mut app, &mut native, "font-text");
     assert!(
         native
@@ -1155,29 +1375,26 @@ fn widget_fonts_list_installed_families_and_save_a_choice() {
 }
 
 #[test]
-fn styles_browser_filters_previews_and_returns_to_colors_and_theme() {
+fn appearance_shows_one_row_of_styles_and_every_style_on_request() {
     let size = Size::new(1024., 720.);
     let (mut app, _) = Settings::init(Core::default(), Page::Themes);
     let _ = app.update(Message::Resized(size));
-    let _ = app.update(Message::StyleBrowser(true));
-    assert!(app.style_browser);
-    // Each filter shows exactly its styles.
-    for filter in StyleFilter::ALL {
-        let _ = app.update(Message::StyleFilter(filter));
+    let shown = |app: &Settings| {
         let mut native = crate::native_test::Native::new(size);
-        for family in crate::desktop_theme::Family::ALL {
-            let shown = native
-                .try_bounds(app.settings_view(), &format!("preset-{}", family.preset()))
-                .is_some();
-            assert_eq!(shown, filter.shows(family), "{filter:?} {family:?}");
-        }
-    }
-    assert!(StyleFilter::Light.shows(crate::desktop_theme::Family::Paper));
-    assert!(!StyleFilter::Light.shows(crate::desktop_theme::Family::Neon));
-    assert!(StyleFilter::SeeThrough.shows(crate::desktop_theme::Family::Frosted));
-    // Choosing a tile previews that style; Back keeps the preview; leaving
-    // the page closes the browser.
-    let _ = app.update(Message::StyleFilter(StyleFilter::All));
+        crate::desktop_theme::Family::ALL
+            .into_iter()
+            .filter(|family| {
+                native
+                    .try_bounds(app.settings_view(), &format!("preset-{}", family.preset()))
+                    .is_some()
+            })
+            .count()
+    };
+    let row = shown(&app);
+    assert!(row >= 2 && row < crate::desktop_theme::Family::ALL.len());
+    let _ = app.update(Message::ToggleSection("appearance-all-styles"));
+    assert_eq!(shown(&app), crate::desktop_theme::Family::ALL.len());
+    // Choosing a tile previews that style in place.
     let _ = app.update(Message::Profiles(profiles::Message::Select(
         profiles::Selection::Preset("theme-neon"),
     )));
@@ -1185,16 +1402,9 @@ fn styles_browser_filters_previews_and_returns_to_colors_and_theme() {
         *app.profiles.selection(),
         profiles::Selection::Preset("theme-neon")
     );
-    let _ = app.update(Message::StyleBrowser(false));
-    assert!(!app.style_browser);
-    assert_eq!(
-        *app.profiles.selection(),
-        profiles::Selection::Preset("theme-neon")
-    );
-    let _ = app.update(Message::StyleBrowser(true));
-    let _ = app.update(Message::Page(Page::Widgets));
-    let _ = app.update(Message::Page(Page::Themes));
-    assert!(!app.style_browser, "the browser is a view of one visit");
+    // The dock and panel switch the old browser carried lives here too.
+    let mut native = crate::native_test::Native::new(size);
+    assert!(native.try_bounds(app.settings_view(), "theme-style-bars").is_some());
 }
 
 #[test]
@@ -1208,10 +1418,8 @@ fn calendar_subscription_form_and_selection_use_real_controls() {
         let _ = app.update(Message::Resized(size));
         let mut native = Native::new(size);
         app.calendar.subscription_form = false;
-        if app.scene_open() {
-            reveal_click(&mut app, &mut native, "scene-toggle");
-            native.scroll(app.settings_view(), "settings-content", 0.);
-        }
+        // The preview is always shown; the link button is reached by scrolling.
+        native.scroll(app.settings_view(), "settings-content", 0.);
         click(&mut app, &mut native, "calendar-subscription-open");
         assert!(app.calendar.subscription_form);
         native.capture(
@@ -1323,7 +1531,11 @@ fn fb11_native_canvas_selection_style_and_apply_at_both_sizes() {
         } else {
             panic!("arrow did not route");
         }
-        reveal_click(&mut app, &mut native, "canvas-Face-analog");
+        // Clock's look moved to its Design tab; a draft keeps this path for saved work.
+        let _ = app.update(Message::Canvas(canvas::Message::Style(
+            "/clock/face",
+            serde_json::json!("analog"),
+        )));
         assert_eq!(
             app.canvas_config().clock.face,
             Some(crate::widget_style::resolver::ClockFace::Analog)
@@ -1389,12 +1601,15 @@ fn fb11_native_canvas_drag_resize_cancel_and_inheritance() {
     );
     reveal_click(&mut app, &mut native, "layout-resize-mode");
     let _ = app.update(Message::Placement(placement::Message::Nudge([0, 1], false)));
-    reveal_click(&mut app, &mut native, "canvas-Surface-none");
+    let _ = app.update(Message::Canvas(canvas::Message::Style(
+        "/clock/surface",
+        serde_json::json!("none"),
+    )));
     assert_eq!(
         app.canvas_config().clock.surface,
         Some(crate::widget_style::resolver::ClockSurface::None)
     );
-    reveal_click(&mut app, &mut native, "canvas-reset-Surface");
+    let _ = app.update(Message::Canvas(canvas::Message::Reset("/clock/surface")));
     assert_eq!(app.canvas_config().clock.surface, None);
     assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
     click(&mut app, &mut native, "canvas-cancel");
@@ -1651,4 +1866,749 @@ fn fb13_native_share_actions_fit_compact_and_wide_setup_review() {
         app.profiles.update(profiles::Message::CancelShare);
         assert!(!app.profiles.sharing());
     }
+}
+
+/// Renders the real views for visual review. Writes nothing outside the fixture
+/// and the evidence folder, and does nothing without an evidence folder.
+#[test]
+fn ux_native_tour() {
+    if std::env::var_os("DESKTOP_CARDS_LAYOUT_EVIDENCE").is_none() {
+        return;
+    }
+    if child("ux_native_tour") {
+        return;
+    }
+    use crate::desktop::wallpaper::{BgEntry, BgSource, bundled_dir, bundled_path};
+    use crate::settings::navigation::ObjectTab;
+    use crate::settings::tests::{native_send, settle_settings};
+    let (probe, _) = Settings::init(Core::default(), Page::DesktopWallpaper);
+    let bundled = bundled_dir(probe.wallpaper.store().unwrap());
+    drop(probe);
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/wallpapers");
+    for (name, _) in crate::desktop::wallpaper::BUNDLED {
+        let target = bundled_path(&bundled, name);
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::copy(bundled_path(&assets, name), &target).unwrap();
+    }
+    let root = std::path::PathBuf::from(std::env::var_os("DESKTOP_CARDS_DESKTOP_ROOT").unwrap());
+    // A complete, isolated applet catalog keeps the scene representative of an
+    // installed desktop. Missing metadata otherwise draws fallback puzzle icons.
+    let applications = root.join("applications");
+    std::fs::create_dir_all(&applications).unwrap();
+    for (id, name, icon) in [
+        (
+            "CosmicPanelWorkspacesButton",
+            "Workspaces",
+            "view-grid-symbolic",
+        ),
+        (
+            "CosmicPanelAppButton",
+            "Applications",
+            "view-app-grid-symbolic",
+        ),
+        (
+            "CosmicPanelLauncherButton",
+            "Launcher",
+            "system-search-symbolic",
+        ),
+        (
+            "CosmicAppList",
+            "Open applications",
+            "preferences-system-windows-symbolic",
+        ),
+        (
+            "CosmicAppletMinimize",
+            "Show desktop",
+            "user-desktop-symbolic",
+        ),
+        (
+            "CosmicAppletTime",
+            "Time and date",
+            "preferences-system-time-symbolic",
+        ),
+        ("CosmicAppletAudio", "Sound", "audio-volume-high-symbolic"),
+        (
+            "CosmicAppletNetwork",
+            "Network",
+            "network-wireless-signal-excellent-symbolic",
+        ),
+        (
+            "CosmicAppletBattery",
+            "Battery",
+            "battery-level-80-symbolic",
+        ),
+        ("CosmicAppletPower", "Power", "system-shutdown-symbolic"),
+    ] {
+        std::fs::write(
+            applications.join(format!("com.system76.{id}.desktop")),
+            format!("[Desktop Entry]\nName={name}\nIcon={icon}\nX-CosmicApplet=true\n"),
+        )
+        .unwrap();
+    }
+    for (namespace, key, value) in [
+        (
+            "com.system76.CosmicPanel",
+            "entries",
+            r#"["Panel", "Dock"]"#,
+        ),
+        ("com.system76.CosmicPanel.Panel", "anchor", "Top"),
+        ("com.system76.CosmicPanel.Panel", "size", "XS"),
+        ("com.system76.CosmicPanel.Panel", "padding", "0"),
+        (
+            "com.system76.CosmicPanel.Panel",
+            "plugins_center",
+            r#"Some(["com.system76.CosmicAppletTime"])"#,
+        ),
+        (
+            "com.system76.CosmicPanel.Panel",
+            "plugins_wings",
+            r#"Some((["com.system76.CosmicPanelWorkspacesButton", "com.system76.CosmicPanelAppButton"], ["com.system76.CosmicAppletAudio", "com.system76.CosmicAppletNetwork", "com.system76.CosmicAppletBattery", "com.system76.CosmicAppletPower"]))"#,
+        ),
+        ("com.system76.CosmicPanel.Dock", "anchor", "Bottom"),
+        ("com.system76.CosmicPanel.Dock", "size", "S"),
+        ("com.system76.CosmicPanel.Dock", "expand_to_edges", "false"),
+        ("com.system76.CosmicPanel.Dock", "border_radius", "20"),
+        (
+            "com.system76.CosmicPanel.Dock",
+            "plugins_center",
+            r#"Some(["com.system76.CosmicPanelLauncherButton", "com.system76.CosmicPanelWorkspacesButton", "com.system76.CosmicPanelAppButton", "com.system76.CosmicAppList", "com.system76.CosmicAppletMinimize"])"#,
+        ),
+        ("com.system76.CosmicPanel.Dock", "plugins_wings", "None"),
+    ] {
+        let file = root
+            .join("system/cosmic")
+            .join(namespace)
+            .join("v1")
+            .join(key);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, value).unwrap();
+    }
+    let dir = root.join("config/cosmic/com.system76.CosmicBackground/v1");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("all"),
+        ron::to_string(&BgEntry::new(
+            "all",
+            BgSource::Path(bundled_path(&bundled, "halcyon-calm")),
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    let filter = std::env::var("UX_TOUR_ONLY").unwrap_or_default();
+    let pages: Vec<(&str, Page, ObjectTab)> = vec![
+        ("desktop", Page::Overview, ObjectTab::Content),
+        ("arrange", Page::Overview, ObjectTab::Content),
+        ("clock-content", Page::Clock, ObjectTab::Content),
+        ("clock-design", Page::Clock, ObjectTab::Design),
+        ("clock-position", Page::Clock, ObjectTab::Position),
+        ("weather-content", Page::Weather, ObjectTab::Content),
+        ("weather-design", Page::Weather, ObjectTab::Design),
+        ("calendar-content", Page::Calendar, ObjectTab::Content),
+        ("glance-content", Page::Glance, ObjectTab::Content),
+        ("glance-design", Page::Glance, ObjectTab::Design),
+        ("system-content", Page::Devbox, ObjectTab::Content),
+        ("projects-content", Page::Projects, ObjectTab::Content),
+        ("music-content", Page::Music, ObjectTab::Content),
+        ("music-design", Page::Music, ObjectTab::Design),
+        ("notes-content", Page::Notes, ObjectTab::Content),
+        ("notes-design", Page::Notes, ObjectTab::Design),
+        ("focus-content", Page::Focus, ObjectTab::Content),
+        ("wallpaper", Page::DesktopWallpaper, ObjectTab::Content),
+        ("dock", Page::DesktopDock, ObjectTab::Content),
+        ("icons", Page::DesktopIcons, ObjectTab::Content),
+        ("windows", Page::DesktopWindows, ObjectTab::Content),
+        ("rules", Page::DesktopWindowRules, ObjectTab::Content),
+        ("shortcuts", Page::DesktopShortcuts, ObjectTab::Content),
+        ("builder", Page::Builder, ObjectTab::Content),
+        ("colors", Page::Themes, ObjectTab::Content),
+        ("surfaces", Page::Appearance, ObjectTab::Content),
+        ("fonts", Page::DesktopAppearance, ObjectTab::Content),
+        ("setups", Page::DesktopProfiles, ObjectTab::Content),
+        ("schedules", Page::DesktopAutomation, ObjectTab::Content),
+        ("moments", Page::Moments, ObjectTab::Content),
+        ("adaptive", Page::AdaptiveLooks, ObjectTab::Content),
+        ("settings", Page::General, ObjectTab::Content),
+        ("accessibility", Page::DesktopMotion, ObjectTab::Content),
+    ];
+    let wanted = |name: &str| filter.is_empty() || filter.split(',').any(|f| name.contains(f));
+    if wanted("wizard") {
+        use crate::settings::wizard::{Message as Step, Step as Screen};
+        for (size, label) in [
+            (Size::new(820., 600.), "820"),
+            (Size::new(1280., 800.), "1280"),
+        ] {
+            let (mut app, initial) = Settings::init(Core::default(), Page::Overview);
+            settle_settings(&mut app, initial);
+            let _ = app.update(Message::Resized(size));
+            let task = app.update(Message::OpenWizard);
+            settle_settings(&mut app, task);
+            let task = app.update(Message::LookImagesReady);
+            settle_settings(&mut app, task);
+            let steps: Vec<(&str, Option<Step>)> = vec![
+                ("wizard-welcome", None),
+                ("wizard-start", Some(Step::Start)),
+                ("wizard-look", Some(Step::Look("halcyon"))),
+                ("wizard-bars-keep", Some(Step::Next)),
+                ("wizard-bars-custom", Some(Step::KeepBars(false))),
+                ("wizard-widgets", Some(Step::Next)),
+                ("wizard-order", Some(Step::Show(Screen::Arrange))),
+                ("wizard-review", Some(Step::Next)),
+                ("wizard-leave", Some(Step::AskLeave(true))),
+                ("wizard-apply-stay", Some(Step::AskLeave(false))),
+                ("wizard-done", Some(Step::ApplyAll)),
+            ];
+            for (name, step) in steps {
+                if let Some(step) = step {
+                    let task = app.update(Message::Wizard(step));
+                    settle_settings(&mut app, task);
+                }
+                let mut native = Native::new(size);
+                assert_eq!(
+                    native.duplicate_ids(app.settings_view()),
+                    Vec::<String>::new(),
+                    "{name} at {size:?}"
+                );
+                native.capture(
+                    app.settings_view(),
+                    &cosmic::Theme::dark(),
+                    &format!("{name}-{label}-dark"),
+                );
+            }
+        }
+    }
+    for (size, label) in [
+        (Size::new(820., 600.), "820"),
+        (Size::new(1280., 800.), "1280"),
+        // The same physical window with text at 125%.
+        (Size::new(656., 480.), "text125"),
+    ] {
+        let (mut app, initial) = Settings::init(Core::default(), Page::Overview);
+        settle_settings(&mut app, initial);
+        let _ = app.update(Message::Resized(size));
+        // Reserve the titlebar and retain the widget/renderer cache through
+        // navigation, including its scroll operations, as the native app does.
+        let mut native = Native::new(Size::new(size.width, size.height - 48.));
+        for (name, page, tab) in &pages {
+            if !wanted(name) {
+                continue;
+            }
+            native_send(&mut app, &mut native, Message::Page(*page));
+            native_send(&mut app, &mut native, Message::ObjectTab(*tab));
+            if *name == "arrange" {
+                let task = app.update(Message::Canvas(canvas::Message::Start));
+                settle_settings(&mut app, task);
+            }
+            let task = app.update(Message::LookImagesReady);
+            settle_settings(&mut app, task);
+            native.scroll(app.settings_view(), "settings-content", 0.);
+            assert_eq!(
+                native.duplicate_ids(app.settings_view()),
+                Vec::<String>::new(),
+                "{name} at {size:?}"
+            );
+            let themes: &[(&str, cosmic::Theme)] = if label == "820" {
+                &[
+                    ("dark", cosmic::Theme::dark()),
+                    ("light", cosmic::Theme::light()),
+                ]
+            } else {
+                &[("dark", cosmic::Theme::dark())]
+            };
+            for (mode, theme) in themes {
+                // Keep first-frame evidence separately and capture another
+                // frame before the presented image. This exposes transient
+                // software renderer differences instead of overwriting them.
+                native.capture(
+                    app.settings_view(),
+                    theme,
+                    &format!("{name}-{label}-{mode}-first-frame"),
+                );
+                native.capture(
+                    app.settings_view(),
+                    theme,
+                    &format!("{name}-{label}-{mode}-second-frame"),
+                );
+                native.capture(
+                    app.settings_view(),
+                    theme,
+                    &format!("{name}-{label}-{mode}"),
+                );
+                if let Some(title) = app.back_title() {
+                    let bounds =
+                        native.text_bounds(app.settings_view(), &format!("Back to {title}"));
+                    let path = std::path::PathBuf::from(
+                        std::env::var_os("DESKTOP_CARDS_LAYOUT_EVIDENCE").unwrap(),
+                    )
+                    .join(format!("{name}-{label}-{mode}.png"));
+                    let pixels = image::open(path).unwrap().to_rgba8();
+                    let base: cosmic::iced::Color =
+                        theme.cosmic().background(theme.transparent).base.into();
+                    let rgb = [base.r * 255., base.g * 255., base.b * 255.];
+                    let mut ink = 0;
+                    // The first 40 px contain "Back to". A clipped prefix can
+                    // leave the destination visible and still pass bounds tests.
+                    for y in bounds.y.max(0.).ceil() as u32
+                        ..(bounds.y + bounds.height)
+                            .min(pixels.height() as f32)
+                            .floor() as u32
+                    {
+                        for x in bounds.x.max(0.).ceil() as u32
+                            ..(bounds.x + 40.).min(pixels.width() as f32).floor() as u32
+                        {
+                            let pixel = pixels.get_pixel(x, y);
+                            if (0..3).any(|c| (pixel[c] as f32 - rgb[c]).abs() > 45.) {
+                                ink += 1;
+                            }
+                        }
+                    }
+                    assert!(
+                        ink > 25,
+                        "complete Back label: {name} {label} {mode}: {bounds:?}, {ink} visible pixels"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Every screen, tab and old route renders twice with no repeated widget names.
+/// A repeated name loses its state and panics on the next frame.
+#[test]
+fn ux_native_every_route_and_tab_renders_without_repeated_names() {
+    if child("ux_native_every_route_and_tab_renders_without_repeated_names") {
+        return;
+    }
+    use crate::settings::navigation::ObjectTab;
+    let (mut app, _) = Settings::init(Core::default(), Page::Overview);
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        let _ = app.update(Message::Resized(size));
+        // The installed app retains its widget cache across navigation, too.
+        let mut native = Native::new(size);
+        for page in Page::ALL {
+            let _ = app.update(Message::Page(page));
+            assert_eq!(app.page, page.canonical());
+            for tab in ObjectTab::ALL {
+                let _ = app.update(Message::ObjectTab(tab));
+                assert_eq!(
+                    native.duplicate_ids(app.settings_view()),
+                    Vec::<String>::new(),
+                    "{page:?} {tab:?} {size:?}"
+                );
+                let _ = native.render(app.settings_view(), &cosmic::Theme::dark());
+            }
+            let _ = app.update(Message::Canvas(canvas::Message::Cancel));
+        }
+    }
+}
+
+#[test]
+fn ux_native_seven_roots_and_every_old_route_resolves() {
+    assert_eq!(
+        Page::SIDEBAR[0].1,
+        &[
+            Page::DesktopProfiles,
+            Page::Themes,
+            Page::DesktopWallpaper,
+            Page::Overview,
+            Page::DesktopDock,
+            Page::DesktopWindows,
+            Page::General
+        ]
+    );
+    for (page, root) in [
+        (Page::Overview, Page::Overview),
+        (Page::WidgetLayout, Page::Overview),
+        (Page::Desktop, Page::Overview),
+        (Page::Widgets, Page::Overview),
+        (Page::Glance, Page::Overview),
+        (Page::Clock, Page::Overview),
+        (Page::Weather, Page::Overview),
+        (Page::Calendar, Page::Overview),
+        (Page::Devbox, Page::Overview),
+        (Page::Projects, Page::Overview),
+        (Page::Music, Page::Overview),
+        (Page::Notes, Page::Overview),
+        (Page::Focus, Page::Overview),
+        (Page::Builder, Page::Overview),
+        (Page::DesktopWallpaper, Page::DesktopWallpaper),
+        (Page::DesktopIcons, Page::DesktopWallpaper),
+        (Page::DesktopDock, Page::DesktopDock),
+        (Page::DesktopWindows, Page::DesktopWindows),
+        (Page::DesktopWorkspaces, Page::DesktopWindows),
+        (Page::DesktopWindowRules, Page::DesktopWindows),
+        (Page::DesktopShortcuts, Page::DesktopWindows),
+        (Page::Themes, Page::Themes),
+        (Page::Appearance, Page::Themes),
+        (Page::DesktopAppearance, Page::Themes),
+        (Page::Moments, Page::Themes),
+        (Page::DesktopProfiles, Page::DesktopProfiles),
+        (Page::DesktopAutomation, Page::DesktopProfiles),
+        (Page::AdaptiveLooks, Page::DesktopProfiles),
+        (Page::General, Page::General),
+        (Page::DesktopMotion, Page::General),
+        (Page::PendingChanges, Page::General),
+    ] {
+        assert_eq!(page.sidebar(), root, "{page:?}");
+        assert_eq!(Page::parse(page.key()).sidebar(), root, "{page:?}");
+    }
+    assert_eq!(Page::ALL.len(), 31, "a new route must be mapped here too");
+    for (alias, page) in [
+        ("home", Page::Overview),
+        ("layout", Page::Overview),
+        ("setups", Page::DesktopProfiles),
+        ("presets", Page::DesktopProfiles),
+        ("look", Page::Themes),
+        ("widget-style", Page::Appearance),
+        ("system-monitor", Page::Devbox),
+        ("daily-overview", Page::Glance),
+        ("focus-timer", Page::Focus),
+        ("app-settings", Page::General),
+        ("schedules", Page::DesktopAutomation),
+        ("desktop", Page::Overview),
+        ("widgets", Page::Overview),
+    ] {
+        assert_eq!(Page::parse(alias), page, "{alias}");
+    }
+}
+
+#[test]
+fn ux_native_back_restores_tab_query_display_and_flat_tabs_add_no_history() {
+    if child("ux_native_back_restores_tab_query_display_and_flat_tabs_add_no_history") {
+        return;
+    }
+    use crate::displays::{
+        OutputEvent,
+        test_support::{Wire, info},
+    };
+    use crate::settings::navigation::ObjectTab;
+    let before = std::fs::read(Config::path().unwrap()).unwrap();
+    let (mut app, _) = Settings::init(Core::default(), Page::Overview);
+    let wire = Wire::new();
+    for (id, name, geometry) in [(1, "eDP-1", (1280, 720)), (2, "DP-2", (1920, 1080))] {
+        let _ = app.update(Message::DisplayOutput(
+            OutputEvent::Created(Some(info(Some(name), geometry))),
+            wire.output(id),
+        ));
+    }
+    let mut snapshot = crate::layout_state::read(&app.config);
+    snapshot.monitors = [
+        ("eDP-1".into(), [1280., 720.]),
+        ("DP-2".into(), [1920., 1080.]),
+    ]
+    .into();
+    snapshot.display = Some(crate::layout_state::DisplayState {
+        output: Some("eDP-1".into()),
+        ready: true,
+        epoch: 1,
+    });
+    crate::layout_state::publish(&snapshot, crate::layout_state::next_generation());
+    let _ = app.update(Message::Page(Page::Clock));
+    let _ = app.update(Message::MonitorPreview("eDP-1".into()));
+    assert_eq!(app.placement.display.as_deref(), Some("eDP-1"));
+    assert_eq!(app.placement.screen(), [1280., 720.]);
+    assert_eq!(app.back_title().as_deref(), Some("Widgets"));
+    let _ = app.update(Message::ObjectTab(ObjectTab::Design));
+    let _ = app.update(Message::ContentScrolled(120.));
+    // A flat tab adds nothing to Back.
+    let depth = app.history.len();
+    let _ = app.update(Message::ObjectTab(ObjectTab::Content));
+    let _ = app.update(Message::ObjectTab(ObjectTab::Design));
+    assert_eq!(app.history.len(), depth);
+    // The breadcrumb's parent and Back's destination can differ.
+    let _ = app.update(Message::OpenWidgetFinish);
+    assert_eq!(app.page, Page::Appearance);
+    assert_eq!(app.material_target, crate::materials::Target::Widgets);
+    assert_eq!(app.back_title().as_deref(), Some("Clock"));
+    let _ = app.update(Message::MonitorPreview("DP-2".into()));
+    assert_eq!(app.placement.display.as_deref(), Some("DP-2"));
+    assert_eq!(app.placement.screen(), [1920., 1080.]);
+    let _ = app.update(Message::FlatPage(Page::Themes));
+    assert_eq!(app.back_title().as_deref(), Some("Clock"), "tabs are flat");
+    let _ = app.update(Message::Back);
+    assert_eq!(app.page, Page::Clock);
+    assert_eq!(app.object_tab, ObjectTab::Design, "the tab comes back");
+    assert_eq!(app.page_scroll.get(Page::Clock.key()), Some(&120.));
+    assert_eq!(app.placement.display.as_deref(), Some("eDP-1"));
+    assert_eq!(
+        app.placement.screen(),
+        [1280., 720.],
+        "Back restores the viewed display"
+    );
+    // Search: the result lands on its control and Back returns to the results.
+    let _ = app.update(Message::SearchSettings("spectrum".into()));
+    let _ = app.update(Message::SearchFirst);
+    assert_eq!(app.page, Page::Music);
+    assert_eq!(app.object_tab, ObjectTab::Design);
+    assert_eq!(app.search_query, "");
+    assert_eq!(app.back_title().as_deref(), Some("Search results"));
+    let _ = app.update(Message::Back);
+    assert_eq!(app.search_query, "spectrum");
+    assert_eq!(app.page, Page::Clock);
+    let _ = app.update(Message::Back);
+    assert_eq!(app.search_query, "");
+    assert_eq!(app.page, Page::Clock);
+    // A root always opens its landing.
+    let _ = app.update(Message::AppSettingsPage(AppSettingsPage::Updates));
+    let root = app
+        .nav_model
+        .iter()
+        .find(|&id| app.nav_model.data::<Page>(id) == Some(&Page::General))
+        .unwrap();
+    let _ = app.update(Message::NavSelected(root));
+    assert_eq!(app.app_settings_page, AppSettingsPage::Home);
+    assert!(!app.page_scroll.contains_key(Page::General.key()));
+    assert_eq!(
+        std::fs::read(Config::path().unwrap()).unwrap(),
+        before,
+        "viewing another display and navigating never changes widget assignments"
+    );
+}
+
+#[test]
+fn ux_native_position_tab_hosts_the_canvas_and_keeps_its_draft() {
+    if child("ux_native_position_tab_hosts_the_canvas_and_keeps_its_draft") {
+        return;
+    }
+    use crate::settings::navigation::{KeptTarget, ObjectTab};
+    let before = std::fs::read(Config::path().unwrap()).unwrap();
+    let (mut app, _) = Settings::init(Core::default(), Page::Clock);
+    let _ = app.update(Message::Resized(Size::new(820., 600.)));
+    let _ = app.update(Message::ObjectTab(ObjectTab::Position));
+    assert!(app.canvas_visible());
+    assert_eq!(app.placement.selected(), Some(Widget::Clock));
+    let _ = app.update(Message::Placement(placement::Message::Nudge([1, 0], false)));
+    assert!(app.canvas_dirty());
+    let mut native = Native::new(Size::new(820., 600.));
+    let _ = native.bounds(app.settings_view(), "canvas-apply");
+    // Leaving keeps it and says so; nothing is written.
+    let _ = app.update(Message::ObjectTab(ObjectTab::Content));
+    assert!(!app.canvas_visible());
+    assert!(app.canvas_dirty());
+    assert!(
+        app.kept_previews()
+            .iter()
+            .any(|i| i.target == KeptTarget::Canvas)
+    );
+    let _ = app.update(Message::Page(Page::General));
+    assert!(app.canvas_dirty());
+    assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
+    let _ = app.update(Message::ResumeKept(KeptTarget::Canvas));
+    assert!(app.canvas_visible());
+    let _ = app.update(Message::Canvas(canvas::Message::Cancel));
+    assert!(app.kept_previews().is_empty());
+    assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
+}
+
+#[test]
+fn ux_native_undo_target_is_one_thing_for_button_and_keyboard() {
+    if child("ux_native_undo_target_is_one_thing_for_button_and_keyboard") {
+        return;
+    }
+    use crate::settings::navigation::UndoTarget;
+    let (mut app, _) = Settings::init(Core::default(), Page::Clock);
+    let before = app.config.clock.format_24h;
+    let _ = app.update(Message::ClockFormat(!before));
+    assert!(matches!(app.undo_target(), UndoTarget::Desktop(..)));
+    // The note owns Undo on its screen, even with nothing to undo.
+    let _ = app.update(Message::Page(Page::Notes));
+    assert_eq!(app.undo_target(), UndoTarget::Note);
+    let _ = app.update(Message::KeyboardUndo(false));
+    assert_eq!(Config::load().clock.format_24h, !before);
+    // A preview owns Undo on its screen; an empty history stops there.
+    let _ = app.update(Message::Page(Page::DesktopWallpaper));
+    let mut effect = app.config.rain.clone();
+    effect.enabled = !effect.enabled;
+    let _ = app.update(Message::Rain(rain::Edit::Set(effect.clone())));
+    assert_eq!(
+        app.undo_target(),
+        UndoTarget::Preview(Some("wallpaper edit"))
+    );
+    let _ = app.update(Message::KeyboardUndo(false));
+    assert_eq!(app.wallpaper.effect(), None);
+    assert_eq!(Config::load().clock.format_24h, !before);
+    // Exhausting local history cannot undo an unrelated desktop action.
+    assert_eq!(app.undo_target(), UndoTarget::Preview(None));
+    let _ = app.update(Message::KeyboardUndo(false));
+    assert_eq!(Config::load().clock.format_24h, !before);
+    // Explicitly closing the preview restores the named desktop Undo.
+    let _ = app.update(Message::Wallpaper(wallpaper::Message::Discard));
+    assert!(matches!(app.undo_target(), UndoTarget::Desktop(..)));
+    let _ = app.update(Message::KeyboardUndo(false));
+    assert_eq!(Config::load().clock.format_24h, before);
+}
+
+#[test]
+fn ux_native_setup_and_theme_previews_are_isolated_retained_and_conflict_safe() {
+    if child("ux_native_setup_and_theme_previews_are_isolated_retained_and_conflict_safe") {
+        return;
+    }
+    use crate::desktop::profiles::Domain;
+    use crate::settings::navigation::KeptTarget;
+    use crate::settings::profiles::{Message as Edit, Selection};
+    let before = std::fs::read(Config::path().unwrap()).unwrap();
+    let (mut app, _) = Settings::init(Core::default(), Page::DesktopProfiles);
+    // Looking at a setup leaves nothing behind.
+    let _ = app.update(Message::Profiles(Edit::Select(Selection::Preset("glass"))));
+    let _ = app.update(Message::Page(Page::General));
+    assert!(app.kept_previews().is_empty());
+    assert_eq!(app.profiles.selection(), &Selection::Current);
+    // Changing one waits, listed, and does not leak into Colors.
+    let _ = app.update(Message::Page(Page::DesktopProfiles));
+    let _ = app.update(Message::Profiles(Edit::Select(Selection::Preset("glass"))));
+    let _ = app.update(Message::Profiles(Edit::Include(Domain::Dock, false)));
+    let _ = app.update(Message::Page(Page::Themes));
+    assert_eq!(app.profiles.selection(), &Selection::Current, "isolated");
+    assert!(app.kept_note.is_some(), "leaving says what it kept");
+    assert!(
+        app.kept_previews()
+            .iter()
+            .any(|i| matches!(&i.target, KeptTarget::Setup(_)))
+    );
+    // A theme is its own preview, with its own local steps.
+    let _ = app.update(Message::Profiles(Edit::Select(Selection::Preset(
+        "theme-soft",
+    ))));
+    let _ = app.update(Message::Profiles(Edit::Select(Selection::Preset(
+        "theme-paper",
+    ))));
+    let _ = app.update(Message::KeyboardUndo(false));
+    assert_eq!(app.profiles.selection(), &Selection::Preset("theme-soft"));
+    let _ = app.update(Message::Page(Page::General));
+    assert_eq!(app.kept_previews().len(), 2);
+    let _ = app.update(Message::Page(Page::Themes));
+    assert_eq!(app.profiles.selection(), &Selection::Preset("theme-soft"));
+    let _ = app.update(Message::Profiles(Edit::Discard));
+    // The setup comes back exactly, and nothing was ever written.
+    let _ = app.update(Message::ResumeKept(KeptTarget::Setup(Selection::Preset(
+        "glass",
+    ))));
+    assert_eq!(app.page, Page::DesktopProfiles);
+    assert_eq!(app.profiles.selection(), &Selection::Preset("glass"));
+    assert!(!app.profiles.included(Domain::Dock));
+    assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
+    // It survives a restart as an intention that needs review.
+    let _ = app.update(Message::Page(Page::General));
+    drop(app);
+    let (mut app, _) = Settings::init(Core::default(), Page::General);
+    assert!(
+        app.kept_previews()
+            .iter()
+            .any(|i| matches!(&i.target, KeptTarget::Setup(_))),
+        "kept across a restart: {}; {:?}",
+        app.status,
+        app.session_drafts.error
+    );
+    let _ = app.update(Message::ResumeKept(KeptTarget::Setup(Selection::Preset(
+        "glass",
+    ))));
+    assert!(!app.profiles.included(Domain::Dock));
+    assert!(app.profiles.stale(), "a restart always asks for review");
+    assert!(!app.profiles.can_apply());
+    assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
+}
+
+#[test]
+fn ux_three_screens_keep_primary_actions_reachable_and_state_local() {
+    if child("ux_three_screens_keep_primary_actions_reachable_and_state_local") {
+        return;
+    }
+    use crate::settings::navigation::ObjectTab;
+    use crate::settings::tests::{native_click, send_settings, settle_settings};
+    let before = std::fs::read(Config::path().unwrap()).unwrap();
+    let (mut app, initial) = Settings::init(Core::default(), Page::Overview);
+    settle_settings(&mut app, initial);
+    for window in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        send_settings(&mut app, Message::Resized(window));
+        send_settings(&mut app, Message::Page(Page::Overview));
+        let size = Size::new(window.width, window.height - 48.);
+        let mut native = Native::new(size);
+        // The Widgets landing is the picture with the widget list under it;
+        // wallpaper, panel and dock are sidebar roots of their own.
+        for id in ["canvas-start", "desktop-scene"] {
+            let b = native.bounds(app.settings_view(), id);
+            assert!(
+                b.x >= app.sidebar_width()
+                    && b.x + b.width <= size.width
+                    && b.y >= 0.
+                    && b.y + b.height <= size.height,
+                "{id}: {b:?}"
+            );
+        }
+        let scene = native.bounds(app.settings_view(), "desktop-scene");
+        assert!(
+            scene.width > (size.width - app.sidebar_width()) * 0.8,
+            "the desktop picture gets the space: {scene:?}"
+        );
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "desktop-widgets")
+                .is_some(),
+            "the widget list is part of the landing"
+        );
+        native_click(&mut app, &mut native, "widget-open-clock");
+        assert_eq!(app.page, Page::Clock);
+        native_click(&mut app, &mut native, "settings-back");
+        assert_eq!(app.page, Page::Overview);
+        send_settings(&mut app, Message::Page(Page::Clock));
+        send_settings(&mut app, Message::ObjectTab(ObjectTab::Design));
+        // One column of groups under the preview; the face choices are
+        // reached through the page's own scrolling.
+        let face = crate::settings::tests::native_reveal(&app, &mut native, "clock-face");
+        assert!(
+            face.y >= 0. && face.y + face.height <= size.height,
+            "face choices visible: {face:?}"
+        );
+        send_settings(&mut app, Message::Page(Page::Appearance));
+        // Glass is a detail page of Appearance; Back names it.
+        let back = native.bounds(app.settings_view(), "settings-back");
+        assert!(back.width > 70. && back.x >= app.sidebar_width());
+        assert_eq!(app.up_link().map(|(title, _)| title).as_deref(), Some("Appearance"));
+        native.capture(
+            app.settings_view(),
+            &cosmic::Theme::dark(),
+            &format!("transition-surfaces-{}", window.width),
+        );
+        for id in [
+            "material-none",
+            "material-frosted",
+            "material-clear",
+            "material-smoked",
+            "material-liquid",
+        ] {
+            let b = crate::settings::tests::native_reveal(&app, &mut native, id);
+            assert!(
+                b.width >= 150. && b.height >= 120.,
+                "large finish samples: {id}: {b:?}"
+            );
+            assert!(
+                b.y >= 0. && b.y + b.height <= size.height,
+                "every choice can be shown: {id}: {b:?}"
+            );
+        }
+        assert!(native.duplicate_ids(app.settings_view()).is_empty());
+        let _ = native.render(app.settings_view(), &cosmic::Theme::dark());
+        let _ = native.render(app.settings_view(), &cosmic::Theme::light());
+    }
+    assert_eq!(
+        std::fs::read(Config::path().unwrap()).unwrap(),
+        before,
+        "navigation and samples never write preferences"
+    );
+    // A real tile click still commits exactly its finish, and the visible Undo
+    // retains the guarded action boundary rather than changing another setting.
+    send_settings(&mut app, Message::Resized(Size::new(820., 600.)));
+    let mut native = Native::new(Size::new(820., 552.));
+    native_click(&mut app, &mut native, "material-clear");
+    assert_eq!(
+        app.config.materials.shared.unwrap().kind,
+        crate::materials::Kind::Clear
+    );
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(Config::path().unwrap()).unwrap()).unwrap();
+    assert_eq!(saved["future_preference"], 37);
+    native_click(&mut app, &mut native, "settings-undo");
+    assert!(app.config.materials.shared.is_none());
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(Config::path().unwrap()).unwrap()).unwrap();
+    assert_eq!(saved["future_preference"], 37);
 }

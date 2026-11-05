@@ -39,13 +39,15 @@ fn minimum(part: Part) -> f32 {
         _ => 18.,
     }
 }
+/// Space between a built widget's card edge and its parts.
+const INSET: f32 = 14.;
 pub(super) fn plan(recipe: &Recipe, size: [f32; 2], status: bool) -> Plan {
     let size = crate::widget_presentation::viewport(size, [360., 180.]);
-    let width = (size[0] - 16.).max(1.);
-    let height = (size[1] - 16. - if status { 36. } else { 0. }).max(1.);
+    let width = (size[0] - 2. * INSET).max(1.);
+    let height = (size[1] - 2. * INSET - if status { 36. } else { 0. }).max(1.);
     let mut parts = recipe.parts.clone();
     let mut split =
-        recipe.arrangement(width + 16.) == Arrangement::Split && width >= 280. && parts.len() > 1;
+        recipe.arrangement(width + 2. * INSET) == Arrangement::Split && width >= 280. && parts.len() > 1;
     let required = |parts: &[Part], split: bool| {
         let main = minimum(recipe.primary());
         let rest: f32 = parts
@@ -111,14 +113,14 @@ pub(super) fn action_rect(recipe: &Recipe, size: [f32; 2]) -> Option<[u32; 4]> {
             .map(|(_, h)| *h + 4.)
             .sum::<f32>();
         (
-            8. + frame.width * 0.55 + 6.,
-            8. + (frame.height - detail_height).max(0.) / 2. + before,
+            INSET + frame.width * 0.55 + 6.,
+            INSET + (frame.height - detail_height).max(0.) / 2. + before,
             frame.width * 0.45 - 6.,
         )
     } else {
         (
-            8.,
-            8. + frame.heights[..i].iter().map(|h| *h + 4.).sum::<f32>(),
+            INSET,
+            INSET + frame.heights[..i].iter().map(|h| *h + 4.).sum::<f32>(),
             frame.width,
         )
     };
@@ -141,6 +143,9 @@ pub(super) fn view(
     let style = crate::widget_style::presentation(config, palette, recipe.kind == Kind::Clock);
     let p = style.palette();
     let font = style.body.value;
+    let frame = plan(recipe, size, reading.status.is_some());
+    // A stacked clock reads as one centered block, like the desktop clock.
+    let centered = recipe.kind == Kind::Clock && !frame.split;
     let label =
         |value: String, height: f32, width: f32, large: bool| -> Element<'static, Message> {
             let wanted: f32 = if large { 36. } else { 14. };
@@ -160,16 +165,23 @@ pub(super) fn view(
                     cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
                 ))
                 .width(width)
+                .align_x(if centered {
+                    cosmic::iced::alignment::Horizontal::Center
+                } else {
+                    cosmic::iced::alignment::Horizontal::Left
+                })
                 .class(cosmic::theme::Text::Color(p.foreground))
                 .into()
         };
-    let frame = plan(recipe, size, reading.status.is_some());
     let mut clock_config = config.clone();
     clock_config.recipes.clock = None;
     clock_config.clock.show_date = false;
     clock_config.clock.surface = Some(crate::widget_style::resolver::ClockSurface::None);
     clock_config.clock.depth = false;
     clock_config.clock.center_vertically = true;
+    if centered {
+        clock_config.clock.alignment = crate::config::ClockAlignment::Center;
+    }
     clock_config.moments.day.clock.surface =
         Some(crate::widget_style::resolver::ClockSurface::None);
     clock_config.moments.night.clock.surface =
@@ -257,9 +269,12 @@ pub(super) fn view(
         .map(|(p, h)| {
             (
                 *p,
+                // A part given extra room sits in the middle of it, so a
+                // short widget never looks pulled apart.
                 container(make(*p, *h))
                     .width(part_width(*p))
                     .height(*h)
+                    .align_y(Alignment::Center)
                     .into(),
             )
         })
@@ -311,7 +326,7 @@ pub(super) fn view(
     container(column::with_children(rows).spacing(4))
         .width(size[0])
         .height(size[1])
-        .padding(8)
+        .padding(INSET as u16)
         .clip(true)
         .class(cosmic::theme::Container::custom(move |_| {
             cosmic::iced::widget::container::Style {
