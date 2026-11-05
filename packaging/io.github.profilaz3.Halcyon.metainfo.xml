@@ -43,6 +43,13 @@
   </provides>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.6.1" date="2026-11-05">
+      <description><ul>
+        <li>Send usage reports directly to the new Halcyon collector.</li>
+        <li>Include which main features are switched on in the daily usage report.</li>
+        <li>Publish aggregate usage statistics.</li>
+      </ul></description>
+    </release>
     <release version="0.6.0" date="2026-11-05">
       <description><ul>
         <li>Add the Activity island (beta) for music, meetings, notifications and camera or microphone use.</li>

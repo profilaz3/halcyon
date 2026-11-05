@@ -15,41 +15,63 @@ pub(super) struct Release {
     pub notes: &'static [Note],
 }
 
-pub(super) const RELEASES: &[Release] = &[Release {
-    version: "0.6.0",
-    notes: &[
-        Note {
-            title: "Activity island (beta)",
-            body: "Music, meetings, notifications and camera or mic use, in the top panel. Needs Islands.",
-            place: Some(navigation::ACTIVITY_ISLAND),
-        },
-        Note {
-            title: "Rain, snow and fog setups",
-            body: "Three new setups, each with its own wallpaper, colors and weather effect.",
-            place: Some(navigation::LOOKS),
-        },
-        Note {
-            title: "Tidier built-in setups",
-            body: "Time and weather together top left; system monitor and music on the right.",
-            place: Some(navigation::LOOKS),
-        },
-        Note {
-            title: "Much more see-through",
-            body: "Widgets can now be up to 90% see-through.",
-            place: Some(navigation::SEE_THROUGH),
-        },
-        Note {
-            title: "Settings, rearranged",
-            body: "Organized by what you change, and Back returns where you came from.",
-            place: None,
-        },
-        Note {
-            title: "Set up again, step by step",
-            body: "Pick a look, bars, widgets and city, then review once before applying.",
-            place: Some(navigation::STARTUP),
-        },
-    ],
-}];
+pub(super) const RELEASES: &[Release] = &[
+    Release {
+        version: "0.6.1",
+        notes: &[
+            Note {
+                title: "Usage reports go straight to Halcyon",
+                body: "If you share usage data, reports now go directly to Halcyon's own collector.",
+                place: Some(navigation::PRIVACY),
+            },
+            Note {
+                title: "Which features are on",
+                body: "The daily report also says which main features are switched on. Never what's in your widgets.",
+                place: Some(navigation::PRIVACY),
+            },
+            Note {
+                title: "Public statistics",
+                body: "Totals from all reports are public at halcyon-reports.profilaz3.workers.dev.",
+                place: None,
+            },
+        ],
+    },
+    Release {
+        version: "0.6.0",
+        notes: &[
+            Note {
+                title: "Activity island (beta)",
+                body: "Music, meetings, notifications and camera or mic use, in the top panel. Needs Islands.",
+                place: Some(navigation::ACTIVITY_ISLAND),
+            },
+            Note {
+                title: "Rain, snow and fog setups",
+                body: "Three new setups, each with its own wallpaper, colors and weather effect.",
+                place: Some(navigation::LOOKS),
+            },
+            Note {
+                title: "Tidier built-in setups",
+                body: "Time and weather together top left; system monitor and music on the right.",
+                place: Some(navigation::LOOKS),
+            },
+            Note {
+                title: "Much more see-through",
+                body: "Widgets can now be up to 90% see-through.",
+                place: Some(navigation::SEE_THROUGH),
+            },
+            Note {
+                title: "Settings, rearranged",
+                body: "Organized by what you change, and Back returns where you came from.",
+                place: None,
+            },
+            Note {
+                title: "Set up again, step by step",
+                body: "Pick a look, bars, widgets and city, then review once before applying.",
+                place: Some(navigation::STARTUP),
+            },
+        ],
+    },
+];
 
 /// The notes for the version that is running, if it has any.
 pub(super) fn current() -> Option<&'static Release> {
