@@ -4,7 +4,7 @@ impl Settings {
         let mut controls = vec![split(
             detail(
                 "Share usage data",
-                "The app version, your country and which days you use it. Never what's in your widgets.",
+                "The app version, your country, which days you use it and which main features are on. Never what's in your widgets.",
             ),
             container(
                 toggler(self.usage_enabled)

@@ -3,13 +3,16 @@
 Halcyon **0.2.5** introduced a reporting checkbox. Halcyon 0.2.0 reports automatically;
 older 0.1.0/0.1.1 releases do not report.
 
-**Collector status:** upgraded on 2026-10-26. Live checks verified activity and
-preference updates from current and older clients, including opt-out, replay and
-explicit re-enable. Current counts exclude retained opted-out installations.
-Turning reporting off works locally without server acknowledgement. Preference
-updates retry for up to seven days, then expire without changing the saved
-choice; expired updates are not sent later. Reports rejected before the upgrade
-are not reconstructed, so historical counts remain incomplete.
+**Collector status:** in November 2026 the collector moved from a Google Apps
+Script web app and private Google Sheet to a Cloudflare Worker with a private
+Cloudflare D1 database. Halcyon 0.2.0 to 0.6.0 keep posting to the old Google
+address, which now only forwards each report unchanged to the new collector and
+stores nothing. Later versions send reports to the new collector directly. The
+existing records were copied across, keeping every reporting choice. Turning
+reporting off works locally without server acknowledgement. Preference updates
+retry for up to seven days, then expire without changing the saved choice;
+expired updates are not sent later. Reports rejected before the 2026-10-26
+upgrade are not reconstructed, so historical counts remain incomplete.
 
 ## Your reporting choice
 
@@ -64,6 +67,27 @@ package release suffixes are not sent. The running app version remains separate:
 an update can be installed while an older process is still open. These fields
 are absent from preference/opt-out messages and create no extra requests.
 
+Halcyon 0.6.1 and later use schema 6 and add one `features` object to the same
+daily request: which headline features are switched on in your saved settings
+at that moment. It has exactly these fields, each `null` when the setting could
+not be read:
+
+- `wallpaper_effect`: `off`, `rain`, `snow`, `fog` or `clouds`
+- `activity_island`, `penumbra`, `islands`: whether the Activity island applet,
+  the Penumbra bar gradient or Islands is on for a listed panel or dock
+- `widgets`: which of the built-in widgets are shown (`calendar`, `projects`,
+  `devbox`, `weather`, `clock`, `glance`, `music`, `notes`, `focus`)
+- `visualizer`, `wallpaper_depth`, `automation`: whether the audio visualizer,
+  wallpaper depth or setup automation is on
+- `theme_style`: the built-in theme style name, or `default`
+
+These are read from local settings files only, once per daily report. They are
+switch positions, not usage: no clicks, counts, durations or times of use are
+recorded or sent. Weather locations, calendar or player names, custom theme or
+font names, automation rules, display names, widget positions and widget
+contents are never included. The feature snapshot is covered by the same
+**Share usage data** choice and is absent from preference/opt-out messages.
+
 The installation token is randomly generated locally with 256 bits of entropy.
 It is not a Google identity, machine ID, username, email or hardware identifier.
 It stays the same across restarts and upgrades. Copying or deleting local state
@@ -72,7 +96,8 @@ downloads. A token is pseudonymous, **not anonymous**.
 
 Reports contain no calendar events, music, notes, project names or paths,
 weather locations, hardware details, crash logs or screenshots. There is no
-tracking of clicks or feature use.
+tracking of clicks, time spent or how often a feature is used; schema 6 only
+says which headline features are switched on.
 
 ### Approximate country
 
@@ -103,19 +128,41 @@ scheduled work and reporting-preference file changes; there is no routine
 Failed file watching/timer setup or a busy state file can cause a one-minute
 recovery check, without bypassing daily limits or six-hour network retry spacing.
 
-Reports go over HTTPS to the maintainer's Google Apps Script web app. It hashes
-the token with SHA-256 before storing it in a **private Google Sheet**. The
-public endpoint accepts reports but exposes no stored-record read API. The
-collector does not store IP addresses or log bodies. Google receives the
-connection's IP and may process infrastructure metadata under its own
-[privacy policy](https://policies.google.com/privacy).
+Reports go over HTTPS to the maintainer's collector at
+`halcyon-reports.profilaz3.workers.dev`, a Cloudflare Worker. It hashes the
+token with SHA-256 before storing it in a **private Cloudflare D1 database**.
+The collector does not store IP addresses and does not log request bodies;
+Worker request logging is turned off. Cloudflare receives the connection's IP
+and processes infrastructure metadata under its own
+[privacy policy](https://www.cloudflare.com/privacypolicy/). Reports from
+Halcyon 0.2.0 to 0.6.0 first pass through the old Google Apps Script address,
+which forwards them without storing anything; Google receives the connection's
+IP there under its own [privacy policy](https://policies.google.com/privacy).
+
+### Public statistics
+
+The totals are published at
+[halcyon-reports.profilaz3.workers.dev](https://halcyon-reports.profilaz3.workers.dev/),
+together with the same numbers as JSON. Only aggregates are published: daily
+active and new installation counts, version shares, how Halcyon was installed,
+update channel shares, how many days installations were active, first-country
+counts, weekly return rates, the share of installations that turned
+reporting off and, from 0.6.1, the share of installations with each headline
+feature, widget, theme style and wallpaper effect switched on. No
+installation token, hash or per-installation record is published. Any
+country, version, install method, theme style or wallpaper effect with fewer
+than five installations is counted in Other, a feature or widget count below
+five is shown only as "fewer than 5", nothing about features is shown until
+five installations report them, and a weekly group with fewer than five new
+installations is hidden.
 
 ## Status, counts and retention after the collector upgrade
 
-The collector is live. The private dashboard uses the existing daily reports;
-the reporting upgrade does not collect feature use or add client requests.
+The statistics use the existing daily reports; the move to Cloudflare added no
+fields or client requests. The schema 6 feature snapshot travels inside the
+same daily request and adds no requests.
 
-Each installation has one current row. The row keeps
+Each installation has one current record. The row keeps
 its latest activity date, version, first country, current reporting status,
 latest opt-out action time, latest choice time, collector receipt time and
 preference revision. The 0.3.0 collector also keeps first and latest activity receipt times,
@@ -135,7 +182,13 @@ clock skew cannot change receipt dates, retention or preference ordering.
 Schema 5 keeps at most one package/channel observation per UTC day for 90 days,
 alongside the running and installed product versions reported that day. Earlier
 clients and days without these fields remain unknown. A channel change is an
-observation, not a package-manager transaction log.
+observation, not a package-manager transaction log. Schema 6 keeps the feature
+snapshot on the same daily row, so at most one per UTC day for 90 days, and it
+is deleted with the rest of the daily activity when reporting is turned off.
+
+Turning reporting off deletes that installation's stored daily activity at once.
+Its record keeps only what is needed to honor the choice (status, revision,
+choice times and the earlier first-use facts) until it expires.
 
 Duplicate delivery does not refresh status receipt or retention. Older status
 revisions and mismatched activity revisions cannot replace the current choice.
@@ -144,18 +197,22 @@ Legacy schema 1/2 activity cannot re-enable a retained opted-out record.
 Current active counts (today / seven / 30 days) and first-country counts exclude
 opted-out installations. Status-only installations are never counted as active.
 The separately labelled opt-out metric means **currently opted out, with status
-received in the last 90 days**, not lifetime opt-outs or unique people. Snapshot
-dates are displayed; already saved historical aggregates are not rewritten.
+received in the last 90 days**, not lifetime opt-outs or unique people. Each
+completed UTC day is summarized once into anonymous daily totals, which are kept
+after the identifiable records expire and are not rewritten later.
 
 Opted-out identifiable rows expire within 90 days of collector receipt, even
 if old clients replay activity. Enabled rows expire after 90 days without
 activity or a new choice; old identifiable choice timestamps are removed after
 90 days while ongoing activity may keep that installation row current. Daily
-maintenance and ingestion apply retention. Anonymous aggregate totals may be
+maintenance, run every hour, applies retention. Anonymous aggregate totals are
 retained. After an identifiable record expires, the collector no longer has its
 revision/status tombstone; ordering guarantees apply to retained records.
-The local off preference continues to prevent reporting. Google file history,
-backups and infrastructure logs follow Google's own retention practices.
+The local off preference continues to prevent reporting. Cloudflare's D1
+point-in-time recovery keeps database history for up to 30 days, and
+infrastructure logs follow Cloudflare's own retention practices. The former
+Google Sheet is no longer written to and will be deleted once the copy is
+verified.
 
 ## Local state
 
@@ -166,7 +223,7 @@ from exported looks and setups. Older 0.2.0 clients reject this extended state
 rather than ignoring the off preference. Uninstalling preserves it normally;
 stopping the desktop and Settings processes stops future transmissions.
 
-The [client](../src/usage.rs) and [collector](../scripts/usage/collector.gs) are
+The [client](../src/usage.rs), [collector and public statistics](../scripts/usage/worker/) and [forwarding script](../scripts/usage/relay/Code.gs) are
 open source. Questions can go to the [issue tracker](https://github.com/profilaz3/halcyon/issues).
 Do not post installation tokens, credentials or private widget contents there.
 

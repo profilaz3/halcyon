@@ -1,3 +1,11 @@
+cosmic-ext-halcyon (0.6.1) unstable; urgency=medium
+
+  * Send usage reports directly to the new Halcyon collector.
+  * Include which main features are switched on in the daily usage report.
+  * Publish aggregate usage statistics.
+
+ -- profilaz3 <261673162+profilaz3@users.noreply.github.com>  Thu, 05 Nov 2026 18:00:00 +0000
+
 cosmic-ext-halcyon (0.6.0) unstable; urgency=medium
 
   * Add the Activity island (beta): music, meetings, notifications and

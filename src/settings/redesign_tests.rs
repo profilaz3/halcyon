@@ -620,7 +620,7 @@ fn polish_privacy_discloses_activity_and_opt_out_status_in_view() {
     send_settings(&mut app, Message::AppSettingsPage(AppSettingsPage::Privacy));
     let mut native = crate::native_test::Native::new(size);
     for label in [
-        "The app version, your country and which days you use it. Never what's in your widgets.",
+        "The app version, your country, which days you use it and which main features are on. Never what's in your widgets.",
         "Never sent anywhere, even with usage data on",
     ] {
         let bounds = native.text_bounds(app.settings_view(), label);

@@ -270,6 +270,14 @@ pub(super) const SEE_THROUGH: SearchHit = hit(
 .at("material-scope")
 .open(SearchOpen::Transparency);
 
+pub(super) const PRIVACY: SearchHit = hit(
+    Page::General,
+    "Privacy and usage reporting",
+    "privacy usage reporting anonymous telemetry",
+    false,
+)
+.destination(AppSettingsPage::Privacy);
+
 const SEARCH: &[SearchHit] = &[
     hit(
         Page::General,
@@ -615,13 +623,7 @@ const SEARCH: &[SearchHit] = &[
         false,
     )
     .destination(AppSettingsPage::Interface),
-    hit(
-        Page::General,
-        "Privacy and usage reporting",
-        "privacy usage reporting anonymous telemetry",
-        false,
-    )
-    .destination(AppSettingsPage::Privacy),
+    PRIVACY,
     hit(
         Page::General,
         "Updates and installation",

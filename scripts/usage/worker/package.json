@@ -1,0 +1,9 @@
+{
+  "name": "halcyon-reports",
+  "private": true,
+  "type": "module",
+  "description": "Halcyon activity collector and public usage dashboard on Cloudflare Workers + D1",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}
