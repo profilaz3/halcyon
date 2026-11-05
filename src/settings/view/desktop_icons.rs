@@ -6,99 +6,82 @@ use super::*;
 use crate::desktop::desktop_icons::{DesktopIcons, SCALE_MAX, SCALE_MIN, SCALE_STEP, Show};
 use crate::desktop::panels::Setting;
 use crate::settings::desktop_icons::{Message as Edit, REFRESH_NOTE, UNAVAILABLE};
-use cosmic::iced::{Point, Rectangle, Size, mouse};
-use cosmic::widget::canvas;
 
 fn edit(message: Edit) -> Message {
     Message::DesktopIcons(message)
 }
 
-/// Preview size (16:9).
-const PREVIEW: (f32, f32) = (288., 162.);
+/// The preview's height; the width follows the page.
+const PREVIEW_HEIGHT: f32 = 176.;
 
-/// What the miniature desktop draws, in desktop (1920×1080) units.
-struct Miniature {
-    icons: DesktopIcons,
-    accent: Color,
-}
-
-impl Miniature {
-    /// One entry per item the desktop shows: (kind, colour).
-    fn items(&self) -> Vec<Color> {
-        let mut items = Vec::new();
-        if self.icons.show_content {
-            items.extend([self.accent; 4]);
-        }
-        if self.icons.show_mounted_drives {
-            items.push(Color::from_rgb(0.62, 0.66, 0.74));
-        }
-        if self.icons.show_trash {
-            items.push(MUTED);
-        }
-        items
+/// What the desktop shows, as real icons with names, laid out in columns
+/// from the top left like the desktop does. Size and spacing scale it.
+fn miniature<'a>(icons: DesktopIcons) -> Element<'a, Message> {
+    let mut items: Vec<(&'static str, &'static str)> = Vec::new();
+    if icons.show_content {
+        items.extend([
+            ("folder-documents", "Documents"),
+            ("folder-pictures", "Photos"),
+            ("text-x-generic", "Notes.txt"),
+            ("application-pdf", "Report.pdf"),
+        ]);
     }
-}
-
-impl<Message> canvas::Program<Message, cosmic::Theme> for Miniature {
-    type State = ();
-
-    fn draw(
-        &self,
-        _: &(),
-        renderer: &cosmic::Renderer,
-        _: &cosmic::Theme,
-        bounds: Rectangle,
-        _: mouse::Cursor,
-    ) -> Vec<canvas::Geometry> {
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
-        // cosmic-files lays items out in columns from the top left; a cell
-        // grows with the icon size and the spacing scales it. The miniature
-        // shows that corner (a quarter of a 1920×1080 desktop) at twice the
-        // scale, so size and spacing changes stay visible.
-        let (desk_w, desk_h) = (960f32, 540f32);
-        let size = f32::from(self.icons.icon_size.get()) / 100.;
-        let spacing = f32::from(self.icons.grid_spacing.get()) / 100.;
-        let icon = 64. * size;
-        let cell = Size::new((icon * 1.5).max(96.) * spacing, (icon + 40.) * spacing);
-        let margin = 24.;
-        let items = self.items();
-        let rows = (((desk_h - 2. * margin) / cell.height).floor() as usize).max(1);
-        let columns = items.len().div_ceil(rows).max(1);
-        // Very large icons are drawn smaller so every item stays in view.
-        let need_w = margin * 2. + columns as f32 * cell.width;
-        let need_h = margin * 2. + rows.min(items.len().max(1)) as f32 * cell.height;
-        let scale = (bounds.width / desk_w)
-            .min(bounds.width / need_w)
-            .min(bounds.height / need_h);
-        for (index, color) in items.iter().enumerate() {
-            let (column, row) = (index / rows, index % rows);
-            let x = (margin + column as f32 * cell.width) * scale;
-            let y = (margin + row as f32 * cell.height) * scale;
-            let cell_w = cell.width * scale;
-            let side = icon * scale;
-            let left = x + (cell_w - side) / 2.;
-            frame.fill(
-                &canvas::Path::rounded_rectangle(
-                    Point::new(left, y),
-                    Size::new(side, side),
-                    (side * 0.2).into(),
-                ),
-                Color { a: 0.85, ..*color },
-            );
-            // The label, as a bar under the icon.
-            let bar_w = (cell_w * 0.8).min(side * 1.4);
-            let bar_h = (10. * size * scale).max(2.);
-            frame.fill(
-                &canvas::Path::rounded_rectangle(
-                    Point::new(x + (cell_w - bar_w) / 2., y + side + 6. * scale),
-                    Size::new(bar_w, bar_h),
-                    (bar_h / 2.).into(),
-                ),
-                Color { a: 0.55, ..FG },
-            );
-        }
-        vec![frame.into_geometry()]
+    if icons.show_mounted_drives {
+        items.push(("drive-removable-media", "USB drive"));
     }
+    if icons.show_trash {
+        items.push(("user-trash", "Trash"));
+    }
+    if items.is_empty() {
+        return container(label("Nothing is shown on the desktop", 12., Color { a: 0.85, ..Color::WHITE }))
+            .width(Length::Fill)
+            .height(PREVIEW_HEIGHT)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+            .into();
+    }
+    let size = f32::from(icons.icon_size.get()) / 100.;
+    let spacing = f32::from(icons.grid_spacing.get()) / 100.;
+    // Half of the desktop's own size, so changes stay visible.
+    let side = (32. * size).clamp(16., 64.);
+    let cell_w = (side * 1.9).max(64.) * spacing;
+    let cell_h = (side + 24.) * spacing;
+    let margin = 12.;
+    let rows = (((PREVIEW_HEIGHT - 2. * margin) / cell_h).floor() as usize).max(1);
+    let columns = items
+        .chunks(rows)
+        .map(|chunk| {
+            column::with_children(
+                chunk
+                    .iter()
+                    .map(|(name, title)| {
+                        container(
+                            column::with_children(vec![
+                                icon::from_name(*name).size(side as u16).icon().into(),
+                                text::body(*title)
+                                    .size(11)
+                                    .class(cosmic::theme::Text::Color(Color::WHITE))
+                                    .into(),
+                            ])
+                            .spacing(3)
+                            .align_x(Alignment::Center),
+                        )
+                        .width(cell_w)
+                        .height(cell_h)
+                        .center_x(cell_w)
+                        .into()
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .into()
+        })
+        .collect::<Vec<_>>();
+    container(row::with_children(columns))
+        .padding(margin)
+        .width(Length::Fill)
+        .height(PREVIEW_HEIGHT)
+        .clip(true)
+        .into()
 }
 
 impl Settings {
@@ -108,7 +91,7 @@ impl Settings {
         let mut items: Vec<Element<'_, Message>> = Vec::new();
         let heading = || {
             column::with_children(vec![split(
-                heading("Desktop icons", ""),
+                heading("Icons on the desktop", "Files, folders and drives on top of the wallpaper."),
                 store_pill(editor.store(), accent),
             )])
             .spacing(4)
@@ -136,15 +119,12 @@ impl Settings {
         let config = draft.config();
         let known = config.known().copied();
         items.push(heading().into());
-        let scene = self.scene_frame(
-            canvas(Miniature {
-                icons: known.unwrap_or_default(),
-                accent,
-            })
-            .width(PREVIEW.0)
-            .height(PREVIEW.1)
+        items.push(
+            // Drawn on the same desktop backdrop as every other preview.
+            container(self.preview_stage(miniature(known.unwrap_or_default())))
+            .id(cosmic::widget::Id::new("desktop-scene"))
+            .width(Length::Fill)
             .into(),
-            "Schematic · desktop items, icon size and spacing",
         );
         if let Some(banner) = recovery_banner(
             editor.recovery(),
@@ -158,6 +138,7 @@ impl Settings {
             items.push(conflict_banner(
                 crate::settings::system_appearance::describe(draft.conflicts()),
                 edit(Edit::UseCurrent),
+                edit(Edit::KeepMine),
             ));
         }
         if let Setting::Unsupported(raw) = &config {
@@ -175,7 +156,7 @@ impl Settings {
             split(label(title, 13., FG), toggle.into())
         };
         items.push(group(
-            Some("Desktop items"),
+            Some("Show on the desktop"),
             vec![
                 show(
                     "Desktop folder",
@@ -195,9 +176,9 @@ impl Settings {
                 Some(value)
                     if value % SCALE_STEP != 0 || !(SCALE_MIN..=SCALE_MAX).contains(&value) =>
                 {
-                    pill(format!("{value} % · kept"), WARN)
+                    pill(format!("{value}%, kept"), WARN)
                 }
-                Some(value) => label(format!("{value} %"), 12., accent),
+                Some(value) => label(format!("{value}%"), 12., accent),
                 None => label("—", 12., MUTED),
             };
             let mut parts = vec![split(label(title, 13., FG), value_label)];
@@ -218,7 +199,7 @@ impl Settings {
             column::with_children(parts).spacing(6).into()
         };
         items.push(group(
-            Some("Size & spacing"),
+            Some("Size"),
             vec![
                 scale(
                     "Icon size",
@@ -233,16 +214,6 @@ impl Settings {
             ],
         ));
         items.push(label(REFRESH_NOTE, 12., MUTED));
-        let header = items.remove(0);
-        column::with_children(vec![
-            header,
-            self.inspector_layout(
-                scene,
-                column::with_children(items).spacing(16).into(),
-                "icons",
-            ),
-        ])
-        .spacing(16)
-        .into()
+        column::with_children(items).spacing(16).into()
     }
 }

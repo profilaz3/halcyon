@@ -109,6 +109,17 @@ fn user(namespace: &str, key: &str) -> Option<String> {
     .ok()
 }
 
+/// Scrolls the step body from the top so `id` sits above the footer.
+fn reveal(app: &mut Settings, native: &mut Native, id: &str) {
+    native.scroll(app.settings_view(), "wizard-body", 0.);
+    let footer = native.bounds(app.settings_view(), "wizard-next");
+    let bounds = native.bounds(app.settings_view(), id);
+    let overflow = bounds.y + bounds.height - (footer.y - 60.);
+    if overflow > 0. {
+        native.scroll(app.settings_view(), "wizard-body", overflow);
+    }
+}
+
 fn click(app: &mut Settings, native: &mut Native, id: &str) {
     let bounds = native.bounds(app.settings_view(), id);
     assert!(
@@ -144,6 +155,27 @@ fn open(size: Size) -> (Settings, Native) {
     (app, Native::new(size))
 }
 
+/// A click whose message runs on the native worker, finished before returning.
+fn click_worker(app: &mut Settings, native: &mut Native, id: &str) {
+    let point = native.bounds(app.settings_view(), id).center();
+    let mut messages = Vec::new();
+    for event in [
+        mouse::Event::CursorMoved { position: point },
+        mouse::Event::ButtonPressed(mouse::Button::Left),
+        mouse::Event::ButtonReleased(mouse::Button::Left),
+    ] {
+        messages.extend(
+            native
+                .event(app.settings_view(), Event::Mouse(event), point)
+                .0,
+        );
+    }
+    for message in messages {
+        let task = app.update(message);
+        super::tests::settle_settings(app, task);
+    }
+}
+
 fn step(app: &Settings) -> wizard::Step {
     app.wizard.as_ref().unwrap().step
 }
@@ -174,9 +206,8 @@ fn onboarding_full_display_explains_and_recovers_without_discarding_choices() {
         let _ = app.update(Message::Wizard(wizard::Message::Show(
             wizard::Step::Widgets,
         )));
+        reveal(&mut app, &mut native, "wizard-widget-notes");
         click(&mut app, &mut native, "wizard-widget-notes");
-        click(&mut app, &mut native, "wizard-next");
-        assert_eq!(step(&app), wizard::Step::Arrange);
         assert!(
             app.wizard
                 .as_ref()
@@ -201,19 +232,14 @@ fn onboarding_full_display_explains_and_recovers_without_discarding_choices() {
             &controls_theme(&app.config),
             &format!("wizard-full-display-{}", size.width),
         );
-        // A direct request also cannot write the invalid layout.
+        // A direct request cannot move on or write the invalid layout.
         let _ = app.update(Message::Wizard(wizard::Message::Next));
-        assert_eq!(step(&app), wizard::Step::Arrange);
-        assert_eq!(wizard::widgets::raw().unwrap(), baseline);
-        // The primary pointer action now offers correction, not a disabled end.
-        click(&mut app, &mut native, "wizard-next");
         assert_eq!(step(&app), wizard::Step::Widgets);
+        assert_eq!(wizard::widgets::raw().unwrap(), baseline);
         let draft = &app.wizard.as_ref().unwrap().widgets;
         assert!(draft.selected(Widget::Clock) && draft.selected(Widget::Notes));
-        assert_eq!(wizard::widgets::raw().unwrap(), baseline);
         native.scroll(app.settings_view(), "wizard-body", 0.);
         click(&mut app, &mut native, "wizard-widget-clock");
-        click(&mut app, &mut native, "wizard-next");
         assert!(
             app.wizard
                 .as_ref()
@@ -224,12 +250,17 @@ fn onboarding_full_display_explains_and_recovers_without_discarding_choices() {
         );
         click(&mut app, &mut native, "wizard-next");
         assert_eq!(step(&app), wizard::Step::Ready);
+        assert_eq!(wizard::widgets::raw().unwrap(), baseline, "still staged");
+        click(&mut app, &mut native, "wizard-apply");
+        assert_eq!(step(&app), wizard::Step::Done);
         assert!(Config::load().notes.enabled);
         assert!(!Config::load().widget_visible(Widget::Clock));
-        click(&mut app, &mut native, "wizard-cancel");
-        assert!(app.wizard.is_none());
+        click(&mut app, &mut native, "wizard-undo");
+        assert_eq!(step(&app), wizard::Step::Ready);
         assert_eq!(Config::load().widget_sizes["clock"], [730., 430.]);
         assert!(!Config::load().notes.enabled);
+        let _ = app.update(Message::Wizard(wizard::Message::Cancel));
+        assert!(app.wizard.is_none());
     }
 }
 
@@ -385,7 +416,8 @@ fn every_screen_fits_and_cancel_puts_the_desktop_back() {
         assert_eq!(wizard.look, Some("calm"));
         assert_eq!(
             Config::load().appearance.family,
-            Some(crate::desktop_theme::Family::Soft)
+            None,
+            "choosing only stages"
         );
         shot(&app, &mut native, "2-look");
         // Trying another look replaces the first.
@@ -393,6 +425,7 @@ fn every_screen_fits_and_cancel_puts_the_desktop_back() {
         assert_eq!(app.wizard.as_ref().unwrap().look, Some("evening"));
         click(&mut app, &mut native, "wizard-next");
         assert_eq!(step(&app), wizard::Step::Bars);
+        let _ = app.update(Message::Wizard(wizard::Message::KeepBars(false)));
         let footer = native.bounds(app.settings_view(), "wizard-next");
         for id in [
             "wizard-panel-bar",
@@ -423,6 +456,7 @@ fn every_screen_fits_and_cancel_puts_the_desktop_back() {
         click(&mut app, &mut native, "wizard-next");
         assert_eq!(app.wizard.as_ref().unwrap().error, None);
         assert_eq!(step(&app), wizard::Step::Widgets);
+        assert_eq!(user(DOCK, "border_radius"), None, "bars wait for Apply");
         shot(&app, &mut native, "4-widgets");
         if !app
             .wizard
@@ -434,37 +468,47 @@ fn every_screen_fits_and_cancel_puts_the_desktop_back() {
             click(&mut app, &mut native, "wizard-widget-weather");
         }
         click(&mut app, &mut native, "wizard-next");
-        assert_eq!(step(&app), wizard::Step::Arrange);
-        shot(&app, &mut native, "5-arrange");
-        click(&mut app, &mut native, "wizard-next");
-        assert_eq!(step(&app), wizard::Step::Weather);
+        assert_eq!(step(&app), wizard::Step::Ready);
+        shot(&app, &mut native, "5-ready");
+        let startup = native.bounds(app.settings_view(), "wizard-startup");
+        let apply = native.bounds(app.settings_view(), "wizard-apply");
+        assert!(
+            startup.y + startup.height < apply.y,
+            "startup stays above footer: {startup:?}"
+        );
+        assert_eq!(user(DOCK, "autohide"), None);
+        click_worker(&mut app, &mut native, "wizard-apply");
+        assert_eq!(
+            step(&app),
+            wizard::Step::Done,
+            "{:?}",
+            app.wizard.as_ref().unwrap().error
+        );
+        assert!(Config::load().appearance.family.is_some());
         assert_eq!(user(DOCK, "autohide").as_deref(), Some("OnOverlap"));
         assert_eq!(user(DOCK, "border_radius").as_deref(), Some("12"));
         // Applets and their order are never part of a look.
         assert_eq!(user(DOCK, "plugins_center"), None);
         assert_eq!(user(PANEL, "plugins_wings"), None);
-        shot(&app, &mut native, "4-weather");
-        click(&mut app, &mut native, "wizard-next");
+        shot(&app, &mut native, "6-done");
+        click_worker(&mut app, &mut native, "wizard-undo");
         assert_eq!(step(&app), wizard::Step::Ready);
-        shot(&app, &mut native, "5-ready");
-        let startup = native.bounds(app.settings_view(), "wizard-startup");
-        let finish = native.bounds(app.settings_view(), "wizard-finish");
-        assert!(
-            startup.y + startup.height < finish.y,
-            "startup stays above footer: {startup:?}"
+        let config = Config::load();
+        assert_eq!(
+            config.appearance.family, None,
+            "one Undo reverses the whole setup"
         );
-        click(&mut app, &mut native, "wizard-cancel");
+        for key in ["autohide", "border_radius"] {
+            assert!(user(DOCK, key).is_none(), "{key}: {:?}", user(DOCK, key));
+        }
+        let task = app.update(Message::Wizard(wizard::Message::Cancel));
+        super::tests::settle_settings(&mut app, task);
         assert!(
             app.wizard.is_none(),
             "{:?}",
             app.wizard.as_ref().and_then(|w| w.error.clone())
         );
-        let config = Config::load();
-        assert!(config.onboarded);
-        assert_eq!(config.appearance.family, None, "the look is undone");
-        for key in ["autohide", "border_radius"] {
-            assert!(user(DOCK, key).is_none(), "{key}: {:?}", user(DOCK, key));
-        }
+        assert!(Config::load().onboarded);
         // The next size starts from a fresh first run.
         Config::save_changes(serde_json::json!({"onboarded": false})).unwrap();
     }
@@ -482,15 +526,17 @@ fn finishing_keeps_the_look_and_skip_leaves_the_desktop_alone() {
     assert!(app.wizard.is_none());
     assert!(Config::load().onboarded);
     assert_eq!(Config::load().appearance.family, None);
-    assert_eq!(user(DOCK, "border_radius"), None, "Skip changes nothing");
+    assert_eq!(user(DOCK, "border_radius"), None, "Not now changes nothing");
 
     let (mut app, mut native) = open(size);
     click(&mut app, &mut native, "wizard-start");
     click(&mut app, &mut native, "wizard-look-focus");
-    for _ in 0..4 {
+    for _ in 0..3 {
         click(&mut app, &mut native, "wizard-next");
     }
     assert_eq!(step(&app), wizard::Step::Ready);
+    click(&mut app, &mut native, "wizard-apply");
+    assert_eq!(step(&app), wizard::Step::Done);
     click(&mut app, &mut native, "wizard-finish");
     assert!(app.wizard.is_none());
     assert_eq!(app.page, Page::Overview);
@@ -530,7 +576,7 @@ fn an_untouched_dock_and_panel_step_keeps_the_persons_own_setup() {
     assert!(bars.hides, "the step shows their dock as it is");
     assert_eq!(bars.dock_shape, wizard::Shape::Square);
     click(&mut app, &mut native, "wizard-start");
-    click(&mut app, &mut native, "wizard-skip");
+    click(&mut app, &mut native, "wizard-next");
     assert_eq!(step(&app), wizard::Step::Bars);
     click(&mut app, &mut native, "wizard-next");
     assert_eq!(step(&app), wizard::Step::Widgets);
@@ -538,10 +584,14 @@ fn an_untouched_dock_and_panel_step_keeps_the_persons_own_setup() {
     assert_eq!(user(DOCK, "border_radius").as_deref(), Some("0"));
     assert_eq!(user(DOCK, "anchor_gap"), None);
     assert_eq!(user(PANEL, "border_radius"), None);
-    // Changing one thing writes only that.
+    // Changing one thing writes only that, and only on Apply.
     click(&mut app, &mut native, "wizard-back");
+    let _ = app.update(Message::Wizard(wizard::Message::KeepBars(false)));
     click(&mut app, &mut native, "wizard-dock-pill");
     click(&mut app, &mut native, "wizard-next");
+    assert_eq!(user(DOCK, "border_radius").as_deref(), Some("0"));
+    let _ = app.update(Message::Wizard(wizard::Message::Show(wizard::Step::Ready)));
+    let _ = app.update(Message::Wizard(wizard::Message::ApplyAll));
     assert_eq!(user(DOCK, "autohide").as_deref(), Some("Always"));
     assert_eq!(user(DOCK, "border_radius").as_deref(), Some("160"));
     assert_eq!(user(PANEL, "border_radius"), None);
@@ -557,21 +607,18 @@ fn cancel_undoes_setup_after_a_city_and_after_reopening() {
     let (mut app, mut native) = open(size);
     click(&mut app, &mut native, "wizard-start");
     click(&mut app, &mut native, "wizard-look-calm");
-    assert!(Config::load().appearance.family.is_some());
-    // Close Settings halfway: setup resumes, with its changes.
+    assert_eq!(Config::load().appearance.family, None);
+    // Close Settings halfway: setup resumes with its choices.
     drop(app);
     let (mut app, mut native) = open(size);
     let wizard = app.wizard.as_ref().unwrap();
     assert_eq!(wizard.step, wizard::Step::Look);
     assert_eq!(wizard.look, Some("calm"));
-    assert!(wizard.has_changes());
-    // A newer, unrelated change: choosing a city.
+    assert!(!wizard.has_changes(), "choices are not desktop changes");
     click(&mut app, &mut native, "wizard-next");
     click(&mut app, &mut native, "wizard-next");
     assert_eq!(step(&app), wizard::Step::Widgets);
-    click(&mut app, &mut native, "wizard-next");
-    click(&mut app, &mut native, "wizard-next");
-    assert_eq!(step(&app), wizard::Step::Weather);
+    // The city is part of this draft, so leaving cannot leave it behind.
     app.cities = vec![City {
         name: "Belgrade".into(),
         latitude: 44.8,
@@ -581,19 +628,39 @@ fn cancel_undoes_setup_after_a_city_and_after_reopening() {
         timezone: None,
     }];
     let _ = app.update(Message::ChooseCity(0));
-    assert!(Config::load().location.is_some());
+    assert!(Config::load().location.is_none());
+    assert_eq!(
+        app.wizard.as_ref().unwrap().city.as_ref().unwrap().name,
+        "Belgrade"
+    );
+    // Keep: nothing is written and it waits in Recovery.
+    let _ = app.update(Message::Wizard(wizard::Message::AskLeave(true)));
+    click(&mut app, &mut native, "wizard-keep");
+    assert!(app.wizard.is_none());
+    assert!(Config::load().location.is_none());
+    assert_eq!(Config::load().appearance.family, None);
+    assert!(
+        app.kept_previews()
+            .iter()
+            .any(|item| item.title == "Setup choices")
+    );
+    let _ = app.update(Message::ResumeKept(
+        super::navigation::KeptTarget::SetupChoices,
+    ));
+    let wizard = app.wizard.as_ref().unwrap();
+    assert_eq!(wizard.city.as_ref().unwrap().name, "Belgrade");
+    assert_eq!(wizard.look, Some("calm"));
+    // Forget: the same desktop, and no city left behind.
+    let _ = app.update(Message::Wizard(wizard::Message::AskLeave(true)));
     click(&mut app, &mut native, "wizard-cancel");
     assert!(
         app.wizard.is_none(),
         "{:?}",
         app.wizard.as_ref().and_then(|wizard| wizard.error.clone())
     );
-    let config = Config::load();
-    assert_eq!(config.appearance.family, None, "the look is undone");
-    assert!(config.location.is_some(), "the city stays");
-    // Nothing left to resume.
-    let store = crate::desktop::DesktopStore::from_env().unwrap();
-    assert!(!wizard::Wizard::pending(&store));
+    assert!(Config::load().location.is_none());
+    assert_eq!(Config::load().appearance.family, None);
+    assert!(app.kept_previews().is_empty());
 }
 
 #[test]
@@ -604,16 +671,17 @@ fn skipping_dock_and_panel_keeps_them_and_ready_says_so() {
     seed_desktop();
     let (mut app, mut native) = open(Size::new(1020., 760.));
     click(&mut app, &mut native, "wizard-start");
-    click(&mut app, &mut native, "wizard-skip");
+    click(&mut app, &mut native, "wizard-next");
     let before = app.wizard.as_ref().unwrap().bars;
+    let _ = app.update(Message::Wizard(wizard::Message::KeepBars(false)));
     click(&mut app, &mut native, "wizard-dock-square");
     assert_ne!(app.wizard.as_ref().unwrap().bars, before);
-    click(&mut app, &mut native, "wizard-skip");
+    let _ = app.update(Message::Wizard(wizard::Message::Skip));
     assert_eq!(step(&app), wizard::Step::Widgets);
     assert_eq!(
         app.wizard.as_ref().unwrap().bars,
         before,
-        "the summary shows what's applied"
+        "the summary shows what stays"
     );
     assert_eq!(user(DOCK, "border_radius"), None, "nothing was written");
 }
@@ -733,6 +801,7 @@ fn onboarding_widgets_stage_resume_apply_once_and_cancel_without_losing_content(
     let _ = app.update(Message::Wizard(wizard::Message::Show(
         wizard::Step::Widgets,
     )));
+    reveal(&mut app, &mut native, "wizard-widget-notes");
     click(&mut app, &mut native, "wizard-widget-notes");
     let _ = app.update(Message::Wizard(wizard::Message::GroupWidgets(true)));
     assert_eq!(
@@ -740,17 +809,17 @@ fn onboarding_widgets_stage_resume_apply_once_and_cancel_without_losing_content(
         baseline,
         "preview is staged"
     );
-    click(&mut app, &mut native, "wizard-next");
+    let _ = app.update(Message::Wizard(wizard::Message::Show(
+        wizard::Step::Arrange,
+    )));
     click(&mut app, &mut native, "wizard-down-glance");
     assert_eq!(
         app.wizard.as_ref().unwrap().widgets.active()[0],
         Widget::Notes
     );
-    click(&mut app, &mut native, "wizard-back");
-    assert!(app.wizard.as_ref().unwrap().widgets.selected(Widget::Notes));
     drop(app);
     let (mut app, mut native) = open(size);
-    assert_eq!(step(&app), wizard::Step::Widgets);
+    assert_eq!(step(&app), wizard::Step::Arrange);
     assert_eq!(
         app.wizard.as_ref().unwrap().widgets.active()[0],
         Widget::Notes
@@ -758,7 +827,6 @@ fn onboarding_widgets_stage_resume_apply_once_and_cancel_without_losing_content(
     let store = crate::desktop::DesktopStore::from_env().unwrap();
     let state = std::fs::read_to_string(store.state_file("setup-wizard.json").unwrap()).unwrap();
     assert!(!state.contains("/private/projects") && !state.contains("Zagreb"));
-    click(&mut app, &mut native, "wizard-next");
     let expected = app.wizard.as_ref().unwrap().widget_plan(&app.config);
     assert!(expected.error.is_none(), "{:?}", expected.error);
     native.capture(
@@ -767,11 +835,14 @@ fn onboarding_widgets_stage_resume_apply_once_and_cancel_without_losing_content(
         "widgets-arranged-820",
     );
     click(&mut app, &mut native, "wizard-next");
+    assert_eq!(step(&app), wizard::Step::Ready);
     assert_eq!(
-        step(&app),
-        wizard::Step::Ready,
-        "existing city skips Weather"
+        wizard::widgets::raw().unwrap(),
+        baseline,
+        "Review writes nothing"
     );
+    click(&mut app, &mut native, "wizard-apply");
+    assert_eq!(step(&app), wizard::Step::Done);
     let saved = Config::load();
     assert!(saved.glance.enabled && saved.notes.enabled);
     assert!(!saved.widget_visible(Widget::Clock));
@@ -780,16 +851,7 @@ fn onboarding_widgets_stage_resume_apply_once_and_cancel_without_losing_content(
     for (key, position) in expected.positions {
         assert_eq!(saved.widget_positions[&key], position);
     }
-    let receipt = store.latest_change().unwrap().unwrap().id;
-    click(&mut app, &mut native, "wizard-back");
-    assert_eq!(step(&app), wizard::Step::Arrange);
-    click(&mut app, &mut native, "wizard-next");
-    assert_eq!(
-        store.latest_change().unwrap().unwrap().id,
-        receipt,
-        "Next does not reapply"
-    );
-    click(&mut app, &mut native, "wizard-cancel");
+    click(&mut app, &mut native, "wizard-undo");
     let mut after = wizard::widgets::raw().unwrap();
     after.as_object_mut().unwrap().remove("onboarded");
     assert_eq!(
@@ -810,10 +872,10 @@ fn onboarding_widgets_conflict_and_failed_write_keep_draft_for_retry() {
         wizard::Step::Widgets,
     )));
     let _ = app.update(Message::Wizard(wizard::Message::Widget(Widget::Notes)));
-    let _ = app.update(Message::Wizard(wizard::Message::Next));
+    let _ = app.update(Message::Wizard(wizard::Message::Show(wizard::Step::Ready)));
     Config::save_changes(json!({"enabled_widgets":["clock","calendar"]})).unwrap();
-    let _ = app.update(Message::Wizard(wizard::Message::Next));
-    assert_eq!(step(&app), wizard::Step::Arrange);
+    let _ = app.update(Message::Wizard(wizard::Message::ApplyAll));
+    assert_eq!(step(&app), wizard::Step::Ready);
     assert!(app.wizard.as_ref().unwrap().error.is_some());
     assert!(!Config::load().notes.enabled);
     assert!(app.wizard.as_ref().unwrap().widgets.pending);
@@ -821,17 +883,18 @@ fn onboarding_widgets_conflict_and_failed_write_keep_draft_for_retry() {
     let store = crate::desktop::DesktopStore::from_env().unwrap();
     let before = wizard::widgets::raw().unwrap();
     store.inject(Some(crate::desktop::store::Fault::FailWidget));
-    let outcome =
-        app.wizard
-            .as_mut()
-            .unwrap()
-            .update(wizard::Message::Next, Some(&store), &Config::load());
-    assert_eq!(outcome, wizard::Outcome::Changed);
+    let outcome = app.wizard.as_mut().unwrap().update(
+        wizard::Message::ApplyAll,
+        Some(&store),
+        &Config::load(),
+    );
+    assert_eq!(outcome, wizard::Outcome::None);
     assert!(app.wizard.as_ref().unwrap().error.is_some());
+    assert_eq!(step(&app), wizard::Step::Ready);
     assert_eq!(wizard::widgets::raw().unwrap(), before);
     store.inject(None);
-    let _ = app.update(Message::Wizard(wizard::Message::Next));
-    assert_eq!(step(&app), wizard::Step::Ready);
+    let _ = app.update(Message::Wizard(wizard::Message::ApplyAll));
+    assert_eq!(step(&app), wizard::Step::Done);
     assert!(Config::load().notes.enabled);
 }
 
@@ -856,23 +919,6 @@ fn onboarding_widgets_empty_and_customized_choices_survive_setup_changes() {
         app.wizard.as_ref().unwrap().widgets.active().is_empty(),
         "a later setup does not replace customized choices"
     );
-    let _ = app.update(Message::Wizard(wizard::Message::Show(
-        wizard::Step::Arrange,
-    )));
-    let _ = app.update(Message::Wizard(wizard::Message::Next));
-    assert_eq!(step(&app), wizard::Step::Ready);
-    assert!(!Config::load().widgets_visible);
-    assert!(
-        Widget::ALL
-            .into_iter()
-            .all(|w| !Config::load().widget_visible(w))
-    );
-    let _ = app.update(Message::Wizard(wizard::Message::Back));
-    assert_eq!(
-        step(&app),
-        wizard::Step::Arrange,
-        "Back skips unvisited Weather"
-    );
     let _ = app.update(Message::Wizard(wizard::Message::UseSetupWidgets));
     assert!(
         app.wizard.as_ref().unwrap().error.is_none(),
@@ -881,9 +927,20 @@ fn onboarding_widgets_empty_and_customized_choices_survive_setup_changes() {
     );
     assert!(!app.wizard.as_ref().unwrap().widgets.active().is_empty());
     assert!(app.wizard.as_ref().unwrap().widgets.pending);
+    assert!(Config::load().widgets_visible || !Config::load().widget_visible(Widget::Notes));
+    for w in wizard::widgets::CHOICES {
+        if app.wizard.as_ref().unwrap().widgets.selected(w) {
+            let _ = app.update(Message::Wizard(wizard::Message::Widget(w)));
+        }
+    }
+    let _ = app.update(Message::Wizard(wizard::Message::Show(wizard::Step::Ready)));
+    let _ = app.update(Message::Wizard(wizard::Message::ApplyAll));
+    assert_eq!(step(&app), wizard::Step::Done);
+    assert!(!Config::load().widgets_visible);
     assert!(
-        !Config::load().widgets_visible,
-        "resetting a setup is still a draft"
+        Widget::ALL
+            .into_iter()
+            .all(|w| !Config::load().widget_visible(w))
     );
 }
 
@@ -1052,7 +1109,7 @@ fn onboarding_widgets_worker_serializes_apply_and_queued_back() {
         wizard::Step::Widgets,
     )));
     let _ = app.update(Message::Wizard(wizard::Message::Widget(Widget::Notes)));
-    let _ = app.update(Message::Wizard(wizard::Message::Next));
+    let _ = app.update(Message::Wizard(wizard::Message::Show(wizard::Step::Ready)));
     // The same worker admission as the installed app, on the private desktop.
     crate::test_env::native_worker(&desktop_root(), true);
     std::fs::write(
@@ -1060,7 +1117,7 @@ fn onboarding_widgets_worker_serializes_apply_and_queued_back() {
         "print('{}')\n",
     )
     .unwrap();
-    let task = app.update(Message::Wizard(wizard::Message::Next));
+    let task = app.update(Message::Wizard(wizard::Message::ApplyAll));
     assert!(app.native_busy);
     let _ = app.update(Message::Wizard(wizard::Message::Back));
     assert_eq!(app.native_deferred.len(), 1);
@@ -1087,7 +1144,11 @@ fn onboarding_widgets_worker_serializes_apply_and_queued_back() {
     }
     assert!(!app.native_busy);
     assert!(app.native_deferred.is_empty());
-    assert_eq!(step(&app), wizard::Step::Arrange);
+    assert_eq!(
+        step(&app),
+        wizard::Step::Ready,
+        "the queued Back ran after Apply"
+    );
     assert!(Config::load().notes.enabled);
     assert!(!app.wizard.as_ref().unwrap().widgets.pending);
 }
@@ -1124,7 +1185,7 @@ fn onboarding_widgets_reorders_multiple_displays_in_one_transaction() {
     let plan = app.wizard.as_ref().unwrap().widget_plan(&app.config);
     assert!(plan.error.is_none(), "{:?}", plan.error);
     assert_eq!(plan.positions.len(), 4);
-    let _ = app.update(Message::Wizard(wizard::Message::Next));
+    let _ = app.update(Message::Wizard(wizard::Message::ApplyAll));
     assert!(app.wizard.as_ref().unwrap().error.is_none());
     let saved = Config::load();
     for (key, display) in [
@@ -1191,15 +1252,17 @@ fn onboarding_widgets_ready_requires_review_of_unapplied_choices() {
         wizard::Step::Widgets,
     )));
     let _ = app.update(Message::Wizard(wizard::Message::Widget(Widget::Notes)));
-    let _ = app.update(Message::Wizard(wizard::Message::Back));
+    // Change from Review goes straight back to Review, with the choice staged.
+    let _ = app.update(Message::Wizard(wizard::Message::Next));
     assert_eq!(step(&app), wizard::Step::Ready);
-    let _ = app.update(Message::Wizard(wizard::Message::Finish));
-    assert_eq!(step(&app), wizard::Step::Arrange);
     assert_eq!(
         wizard::widgets::raw().unwrap(),
         before,
-        "Finish cannot discard a staged edit"
+        "Review holds the staged edit"
     );
+    let _ = app.update(Message::Wizard(wizard::Message::Show(
+        wizard::Step::Arrange,
+    )));
     let order = app.wizard.as_ref().unwrap().widgets.active();
     let _ = app.update(Message::Wizard(wizard::Message::SetupWidgetOrder));
     let _ = app.update(Message::UndoDesktop);
@@ -1341,18 +1404,17 @@ fn auditfix_ob05_undo_then_cancel(worker: bool) {
     let (mut app, _) = open(Size::new(820., 600.));
     let _ = app.update(Message::Wizard(wizard::Message::Start));
     let _ = app.update(Message::Wizard(wizard::Message::Look("calm")));
-    assert!(Config::load().appearance.family.is_some());
     let before_notes = Config::load().notes.enabled;
     let _ = app.update(Message::Wizard(wizard::Message::Show(
         wizard::Step::Arrange,
     )));
     let _ = app.update(Message::Wizard(wizard::Message::Widget(Widget::Notes)));
-    let _ = app.update(Message::Wizard(wizard::Message::Next));
-    assert!(app.wizard.as_ref().unwrap().error.is_none());
     let _ = app.update(Message::Wizard(wizard::Message::Show(wizard::Step::Ready)));
+    let _ = app.update(Message::Wizard(wizard::Message::ApplyAll));
+    assert!(app.wizard.as_ref().unwrap().error.is_none());
+    assert!(Config::load().appearance.family.is_some());
     let store = crate::desktop::DesktopStore::from_env().unwrap();
     let id = store.latest_change().unwrap().unwrap().id;
-    assert_ne!(Config::load().notes.enabled, before_notes);
     if worker {
         crate::test_env::native_worker(&desktop_root(), true);
         std::fs::write(
@@ -1432,40 +1494,34 @@ fn auditfix_ob06_rendered_next_cannot_apply_after_worker_navigation() {
                 .0,
         );
     }
-    let next = emitted.into_iter().find(|m| matches!(m, Message::Wizard(edit) if matches!(edit.action(), wizard::Message::Next))).expect("Next emitted");
+    let next = emitted
+        .into_iter()
+        .find(|m| matches!(m, Message::Wizard(edit) if matches!(edit.action(), wizard::Message::Next)))
+        .unwrap();
     assert!(matches!(
         &next,
         Message::Wizard(wizard::Message::Rendered(wizard::Step::Widgets, _, _))
     ));
     let before = wizard::widgets::raw().unwrap();
-    crate::test_env::native_worker(&desktop_root(), true);
-    std::fs::write(
-        desktop_root().join("status-islands-probe.py"),
-        "print('{}')\n",
-    )
-    .unwrap();
-    let task = app.update(next.clone());
-    assert!(app.native_busy);
     let _ = app.update(next.clone());
-    assert_eq!(app.native_deferred.len(), 1);
-    auditfix_complete_native(&mut app, task);
-    assert!(!app.native_busy);
-    assert!(app.native_deferred.is_empty());
-    assert_eq!(step(&app), wizard::Step::Arrange);
+    assert_eq!(step(&app), wizard::Step::Ready);
+    // The old rendered identity cannot act on the next screen.
+    let _ = app.update(next.clone());
+    assert_eq!(step(&app), wizard::Step::Ready);
     assert_eq!(wizard::widgets::raw().unwrap(), before);
-    assert!(app.wizard.as_ref().unwrap().widgets.pending);
-    // Returning to the same step does not make the old rendered identity current.
+    // Returning to the same step does not make it current again.
     let _ = app.update(Message::Wizard(wizard::Message::Back));
     assert_eq!(step(&app), wizard::Step::Widgets);
     let _ = app.update(next);
-    assert!(!app.native_busy);
     assert_eq!(step(&app), wizard::Step::Widgets);
-    // A newly rendered Apply commits once; a duplicate cannot skip Weather.
-    std::fs::remove_file(desktop_root().join("status-islands-probe.py")).unwrap();
-    crate::test_env::native_worker(&desktop_root(), false);
-    let _ = app.update(Message::Wizard(wizard::Message::Widget(Widget::Weather)));
     let _ = app.update(Message::Wizard(wizard::Message::Next));
-    let apply = Message::Wizard(app.wizard.as_ref().unwrap().rendered(wizard::Message::Next));
+    // A rendered Apply commits once, even when a second click queues behind it.
+    let apply = Message::Wizard(
+        app.wizard
+            .as_ref()
+            .unwrap()
+            .rendered(wizard::Message::ApplyAll),
+    );
     crate::test_env::native_worker(&desktop_root(), true);
     std::fs::write(
         desktop_root().join("status-islands-probe.py"),
@@ -1473,10 +1529,13 @@ fn auditfix_ob06_rendered_next_cannot_apply_after_worker_navigation() {
     )
     .unwrap();
     let task = app.update(apply.clone());
+    assert!(app.native_busy);
     let _ = app.update(apply);
+    assert_eq!(app.native_deferred.len(), 1);
     auditfix_complete_native(&mut app, task);
     assert!(!app.native_busy);
-    assert_eq!(step(&app), wizard::Step::Weather);
+    assert!(app.native_deferred.is_empty());
+    assert_eq!(step(&app), wizard::Step::Done);
     assert!(Config::load().notes.enabled);
 }
 
@@ -1495,8 +1554,8 @@ fn auditfix_ob05_failed_global_undo_keeps_receipt_for_conflict_review() {
         wizard::Step::Arrange,
     )));
     let _ = app.update(Message::Wizard(wizard::Message::Widget(Widget::Notes)));
-    let _ = app.update(Message::Wizard(wizard::Message::Next));
     let _ = app.update(Message::Wizard(wizard::Message::Show(wizard::Step::Ready)));
+    let _ = app.update(Message::Wizard(wizard::Message::ApplyAll));
     let store = crate::desktop::DesktopStore::from_env().unwrap();
     let id = store.latest_change().unwrap().unwrap().id;
     let state_path = store.state_file("setup-wizard.json").unwrap();
@@ -1522,16 +1581,20 @@ fn auditfix_state02_unfinished_setup() -> (crate::desktop::DesktopStore, String,
     let (mut app, _) = Settings::init(Core::default(), Page::Overview);
     let _ = app.update(Message::Wizard(wizard::Message::Start));
     let _ = app.update(Message::Wizard(wizard::Message::Look("focus")));
+    let _ = app.update(Message::Wizard(wizard::Message::Show(wizard::Step::Ready)));
+    let _ = app.update(Message::Wizard(wizard::Message::ApplyAll));
     assert!(app.wizard.as_ref().unwrap().error.is_none());
     assert!(Config::load().appearance.family.is_some());
     assert!(!Config::load().notes.enabled);
     let store = crate::desktop::DesktopStore::from_env().unwrap();
     let look_id = store.latest_change().unwrap().unwrap().id;
+    // Applying again after a further change is a second, separate receipt.
     let _ = app.update(Message::Wizard(wizard::Message::Show(
         wizard::Step::Arrange,
     )));
     let _ = app.update(Message::Wizard(wizard::Message::Widget(Widget::Notes)));
-    let _ = app.update(Message::Wizard(wizard::Message::Next));
+    let _ = app.update(Message::Wizard(wizard::Message::Show(wizard::Step::Ready)));
+    let _ = app.update(Message::Wizard(wizard::Message::ApplyAll));
     assert!(app.wizard.as_ref().unwrap().error.is_none());
     assert!(Config::load().notes.enabled);
     let widget_id = store.latest_change().unwrap().unwrap().id;
@@ -1756,7 +1819,8 @@ fn polish050_compact_choices_and_seven_step_progress_keep_default_bar_navigation
         click(&mut app, &mut native, "wizard-look-calm");
         click(&mut app, &mut native, "wizard-next");
         assert_eq!(step(&app), wizard::Step::Bars);
-        native.text_bounds(app.settings_view(), "Step 3 of 7 · Dock & panel");
+        native.text_bounds(app.settings_view(), "Step 2 of 4");
+        let _ = app.update(Message::Wizard(wizard::Message::KeepBars(false)));
         let baseline = wizard::widgets::raw().unwrap();
         let dock = user(DOCK, "border_radius");
         let footer = native.bounds(app.settings_view(), "wizard-next");
@@ -1787,19 +1851,19 @@ fn polish050_compact_choices_and_seven_step_progress_keep_default_bar_navigation
         );
         assert_eq!(wizard::widgets::raw().unwrap(), baseline);
         assert_eq!(user(DOCK, "border_radius"), dock);
-        native.text_bounds(app.settings_view(), "Step 4 of 7 · Your widgets");
+        native.text_bounds(app.settings_view(), "Step 3 of 4");
         let footer = native.bounds(app.settings_view(), "wizard-next");
         for widget in wizard::widgets::CHOICES {
-            let bounds = native.bounds(
-                app.settings_view(),
-                &format!("wizard-widget-{}", widget.key()),
-            );
+            let id = format!("wizard-widget-{}", widget.key());
+            reveal(&mut app, &mut native, &id);
+            let bounds = native.bounds(app.settings_view(), &id);
             assert!(
                 bounds.y >= 0. && bounds.y + bounds.height < footer.y,
-                "{} must be visible without inner scrolling: {bounds:?}, {footer:?}",
+                "{} must be reachable above the footer: {bounds:?}, {footer:?}",
                 widget.key()
             );
         }
+        reveal(&mut app, &mut native, "wizard-widget-group");
         let grouping = native.bounds(app.settings_view(), "wizard-widget-group");
         assert!(grouping.y >= 0. && grouping.y + grouping.height < footer.y);
         let selected = app.wizard.as_ref().unwrap().widgets.selected.clone();
@@ -1819,17 +1883,14 @@ fn polish050_compact_choices_and_seven_step_progress_keep_default_bar_navigation
             &controls_theme(&app.config),
             &format!("polish050-widget-choices-{}", size.width),
         );
-        for current in [
-            wizard::Step::Arrange,
-            wizard::Step::Weather,
-            wizard::Step::Ready,
+        for (current, title) in [
+            (wizard::Step::Arrange, "Step 3 of 4"),
+            (wizard::Step::Ready, "Step 4 of 4"),
         ] {
             let _ = app.update(Message::Wizard(wizard::Message::Show(current)));
-            native.text_bounds(
-                app.settings_view(),
-                &format!("Step {} of 7 · {}", current.index() + 1, current.title()),
-            );
+            native.text_bounds(app.settings_view(), title);
         }
+        let _ = app.update(Message::Wizard(wizard::Message::AskLeave(true)));
         click(&mut app, &mut native, "wizard-cancel");
         assert!(app.wizard.is_none());
     }

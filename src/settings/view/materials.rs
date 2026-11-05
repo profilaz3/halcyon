@@ -1,61 +1,62 @@
 //! One material chooser, the same wallpaper and colors in every specimen.
 use super::*;
 use crate::materials::{Finish, Kind, Target};
+/// Widgets may become nearly bare glass; the dock and panel stop where
+/// the installed panel does.
+fn see_through_limit(target: Target) -> u8 {
+    use dock_islands_core::material::{BAR_MIN_OPACITY, MIN_OPACITY};
+    100 - match target {
+        Target::Dock | Target::Panel => BAR_MIN_OPACITY,
+        Target::Shared | Target::Widgets => MIN_OPACITY,
+    }
+}
 impl Settings {
     pub(super) fn appearance_page(&self) -> Element<'_, Message> {
         let target = self.material_target;
         let selected = self
             .material_draft
             .or(self.config.materials.effective(target));
-        let tiles = Kind::ALL
-            .into_iter()
-            .map(|kind| {
-                let chosen = selected.is_some_and(|f| f.kind == kind);
-                container(
-                    button::custom(
-                        column::with_children(vec![
-                            super::sample::fit(
-                                self.material_specimen(
-                                    selected
-                                        .filter(|f| f.kind == kind)
-                                        .unwrap_or_else(|| Finish::new(kind)),
-                                ),
-                                52.,
-                            ),
-                            split(
-                                label(kind.title(), 14., FG),
-                                label(if chosen { "✓" } else { "" }, 14., self.settings_accent()),
-                            ),
-                        ])
-                        .spacing(5),
-                    )
-                    .class(profiles::tile_style(chosen, self.settings_accent()))
-                    .selected(chosen)
-                    .padding(7)
-                    .width(Length::Fill)
-                    .on_press(Message::MaterialChoose(Some(kind))),
-                )
-                .id(cosmic::widget::Id::new(format!("material-{}", kind.key())))
-                .width(Length::Fill)
-                .into()
-            })
-            .collect::<Vec<_>>();
-        let mut tiles = tiles.into_iter();
-        let chooser = column::with_children(vec![
-            adaptive::columns(
-                tiles.next().unwrap(),
-                tiles.next().unwrap(),
-                [132., 132.],
-                false,
-            ),
-            adaptive::columns(
-                tiles.next().unwrap(),
-                tiles.next().unwrap(),
-                [132., 132.],
-                false,
-            ),
-        ])
-        .spacing(12);
+        let accent = self.settings_accent();
+        let tile = |specimen, title, chosen, id, message| {
+            material_tile(specimen, title, chosen, id, message, accent)
+        };
+        // "No glass" is a choice like the others, so the current state is
+        // always one marked tile. For one part, it means "follow the rest".
+        let own = self.material_draft.or(self.config.materials.get(target));
+        let mut tiles: Vec<Element<'_, Message>> = vec![tile(
+            self.material_specimen(None),
+            if target == Target::Shared { "No glass" } else { "Same as the rest" },
+            own.is_none(),
+            "material-none".to_owned(),
+            Message::MaterialChoose(None),
+        )];
+        tiles.extend(Kind::ALL.into_iter().map(|kind| {
+            let chosen = own.is_some_and(|f| f.kind == kind);
+            tile(
+                self.material_specimen(Some(
+                    selected
+                        .filter(|f| f.kind == kind)
+                        .unwrap_or_else(|| Finish::new(kind)),
+                )),
+                kind.title(),
+                chosen,
+                format!("material-{}", kind.key()),
+                Message::MaterialChoose(Some(kind)),
+            )
+        }));
+        // Five across when there is room, otherwise rows of three with
+        // equal widths.
+        let per_row = if self.content_width() >= 900. { 5 } else { 3 };
+        let mut lines = Vec::new();
+        let mut tiles = tiles.into_iter().peekable();
+        while tiles.peek().is_some() {
+            let mut line: Vec<Element<'_, Message>> = tiles.by_ref().take(per_row).collect();
+            while line.len() < per_row {
+                line.push(cosmic::iced::widget::space().width(Length::Fill).into());
+            }
+            lines.push(row::with_children(line).spacing(12).width(Length::Fill).into());
+        }
+        let chooser = column::with_children(lines).spacing(12);
         let scopes = segmented(
             Target::ALL
                 .into_iter()
@@ -67,7 +68,13 @@ impl Settings {
                 })
                 .map(|t| {
                     (
-                        t.title().to_owned(),
+                        match t {
+                            Target::Shared => "Widgets, dock and panel",
+                            Target::Widgets => "Widgets only",
+                            Target::Dock => "Dock only",
+                            Target::Panel => "Panel only",
+                        }
+                        .to_owned(),
                         target == t,
                         Some(Message::MaterialTarget(t)),
                     )
@@ -85,142 +92,72 @@ impl Settings {
                 .into_iter()
                 .any(|f| f.is_some())
                 {
-                    "Shared material · some surfaces use their own"
+                    "Some parts have their own choice"
                 } else {
-                    "Shared by widgets, dock and panel"
+                    "Widgets, dock and panel look the same"
                 }
             } else {
-                "Uses its own material"
+                "Has its own choice"
             }
         } else if target == Target::Shared {
-            "Your existing style is kept"
+            ""
         } else {
-            "Follows the shared material"
+            "Same as everything else"
         };
-        let scene = if self.scene_open() {
-            self.preview_stage(
-                container(
-                    container(super::sample::fit(
-                        self.card_preview(),
-                        if self.window.height < 760. {
-                            110.
-                        } else {
-                            180.
-                        },
-                    ))
-                    .width(Length::Fill)
-                    .max_width(360),
-                )
-                .width(Length::Fill)
-                .align_x(Alignment::Center)
-                .into(),
-            )
-        } else {
-            cosmic::widget::space().height(0).into()
-        };
-        let preview_choice = row::with_children(vec![
-            label("Preview widget", 12., MUTED),
-            segmented(
-                [Widget::Weather, Widget::Devbox, Widget::Clock]
-                    .into_iter()
-                    .map(|w| {
-                        (
-                            w.title().into(),
-                            self.appearance_preview == w,
-                            Some(Message::AppearancePreview(w)),
-                        )
-                    })
-                    .collect(),
-                self.settings_accent(),
-            ),
-        ])
-        .spacing(12)
-        .align_y(Alignment::Center)
-        .wrap()
-        .into();
-        let mut rows = vec![
-            column::with_children(vec![
-                container(split(label("Applies to", 14., FG), scopes))
+        // Without the panel add-on, glass reaches the widgets only, so a
+        // choice of where to use it would offer nothing real.
+        let scoped = self.desktop.islands.installation.installed()
+            || target != Target::Shared
+            || self.config.materials.dock.is_some()
+            || self.config.materials.panel.is_some()
+            || self.config.materials.widgets.is_some();
+        let mut rows = Vec::new();
+        if scoped {
+            rows.push(
+                container(group(None, vec![group_row("Use on", state, scopes)]))
                     .id(cosmic::widget::Id::new("material-scope"))
                     .width(Length::Fill)
                     .into(),
-                label(state, 13., MUTED),
-            ])
-            .spacing(8)
-            .into(),
-            // Choosing a finish is the primary control, not part of the
-            // specimen. Keep its two-column grid in the wider control area.
-            chooser.into(),
-            split(
-                label(
-                    if self.material_draft.is_some() {
-                        "Adjusting selected surface"
-                    } else {
-                        "Customize the selected surface"
-                    },
-                    12.,
-                    MUTED,
-                ),
-                row::with_children(vec![
-                    container(
-                        button::text(if self.material_adjust {
-                            "Done"
-                        } else {
-                            "Adjust"
-                        })
-                        .on_press_maybe(
-                            selected.map(|_| Message::MaterialAdjust(!self.material_adjust)),
-                        ),
-                    )
-                    .id(cosmic::widget::Id::new("material-adjust"))
-                    .into(),
-                    container(
-                        button::text(if target == Target::Shared {
-                            "Reset"
-                        } else {
-                            "Use shared"
-                        })
-                        .on_press_maybe(
-                            self.config
-                                .materials
-                                .get(target)
-                                .map(|_| Message::MaterialChoose(None)),
-                        ),
-                    )
-                    .id(cosmic::widget::Id::new("material-reset"))
-                    .into(),
-                ])
-                .spacing(4)
-                .into(),
-            ),
-        ];
-        if self.material_adjust
-            && let Some(finish) = selected
-        {
-            rows.push(pages::section(vec![
-                self.material_slider("Transparency", format!("{}%", 100 - finish.opacity()), 0..=55, 100 - finish.opacity(), true),
-                self.material_slider("Color tint", format!("{}%", finish.tint), 0..=100, finish.tint, false),
-                container(split(label("Liquid widget motion", 12., FG), toggler(self.config.material_motion).on_toggle(Message::MaterialMotion).into()))
+            );
+        }
+        // Each choice is one large material sample. No miniature desktop
+        // or separate preview column competes with the comparison.
+        rows.push(chooser.into());
+        if let Some(finish) = selected {
+            rows.push(group(
+                Some("Fine-tune"),
+                vec![
+                    self.material_slider("See-through", format!("{}%", 100 - finish.opacity()), 0..=see_through_limit(target), 100 - finish.opacity(), true),
+                    self.material_slider("Color tint", format!("{}%", finish.tint), 0..=100, finish.tint, false),
+                    self.search_target("contrast-assist", split(
+                        detail("Easier to read", "Adds a little more background behind small text on busy wallpapers"),
+                        container(toggler(self.config.appearance.contrast_assist).on_toggle(Message::ContrastAssist)).id(cosmic::widget::Id::new("material-readability")).into(),
+                    )),
+                    container(split(
+                        detail("Liquid motion", "Liquid glass moves gently"),
+                        toggler(self.config.material_motion).on_toggle(Message::MaterialMotion).into(),
+                    ))
                     .id(cosmic::widget::Id::new("material-motion"))
                     .width(Length::Fill)
                     .into(),
-                self.search_target("contrast-assist", split(self.help("material-readability", "Widget readability", "Adds enough opacity for small text on bright or busy wallpaper. Your transparency setting is kept."),
-                    container(toggler(self.config.appearance.contrast_assist).on_toggle(Message::ContrastAssist)).id(cosmic::widget::Id::new("material-readability")).into())),
-            ]));
+                    group_row(
+                        if target == Target::Shared { "Start over" } else { "Same as everything else" },
+                        if target == Target::Shared { "Go back to your style’s own look" } else { "Drop this part’s own choice" },
+                        container(
+                            button::text(if target == Target::Shared { "Reset" } else { "Use shared" })
+                                .on_press_maybe(
+                                    self.config
+                                        .materials
+                                        .get(target)
+                                        .map(|_| Message::MaterialChoose(None)),
+                                ),
+                        )
+                        .id(cosmic::widget::Id::new("material-reset"))
+                        .into(),
+                    ),
+                ],
+            ));
         }
-        rows.push(label(
-            if self.material_native {
-                "Decorative widget glass · bar rendering follows the running companion."
-            } else {
-                if self.desktop.islands.installation.installed() {
-                    "Decorative widget glass. Dock & panel finishes need a running capable host."
-                } else {
-                    "Decorative widget glass. Stock dock & panel follow COSMIC appearance."
-                }
-            },
-            11.,
-            MUTED,
-        ));
         if matches!(target, Target::Dock | Target::Panel)
             && let Some(status) = self.desktop.islands.availability_message()
         {
@@ -228,7 +165,7 @@ impl Settings {
                 status,
                 desktop::WARN,
                 vec![
-                    button::text("Setup & updates")
+                    button::text("Set up")
                         .on_press(Message::OpenIslandsGuide)
                         .into(),
                     button::text("Check again")
@@ -241,26 +178,30 @@ impl Settings {
                 ],
             ));
         }
-        rows.push(self.page_settings_advanced(Page::Appearance, vec![self.legacy_widget_style()]));
+        // The older widget finish only matters until a glass style is chosen.
+        if self.config.materials.effective(Target::Widgets).is_none() {
+            rows.push(
+                self.page_settings_advanced(Page::Appearance, vec![self.legacy_widget_style()]),
+            );
+        }
         let controls = column::with_children(rows).spacing(12).into();
         column::with_children(vec![
-            heading("Surface finishes", ""),
-            self.inspector_layout(
-                column::with_children(vec![
-                    self.scene_frame(scene, "Decorative finish"),
-                    preview_choice,
-                ])
-                .spacing(16)
-                .into(),
-                controls,
-                "finish",
+            heading(
+                "Glass and transparency",
+                // Without the panel add-on, glass reaches the widgets only.
+                if self.desktop.islands.installation.installed() {
+                    "How see-through widgets, the dock and the panel are."
+                } else {
+                    "How see-through your widgets are."
+                },
             ),
+            controls,
         ])
         .spacing(16)
         .width(Length::Fill)
         .into()
     }
-    fn material_slider(
+    pub(super) fn material_slider(
         &self,
         title: &'static str,
         value: String,
@@ -291,65 +232,161 @@ impl Settings {
         .spacing(5)
         .into()
     }
-    fn material_specimen(&self, finish: Finish) -> Element<'_, Message> {
+    fn material_specimen(&self, finish: Option<Finish>) -> Element<'_, Message> {
         let mut config = self.config.clone();
-        config.materials.shared = Some(finish);
+        config.materials.shared = finish;
         config.materials.widgets = None;
         let p = config.palette();
         let p = if p.background.a == 0. {
-            crate::materials::palette(config.surface_palette(), Some(finish), false)
+            crate::materials::palette(config.surface_palette(), finish, false)
         } else {
             p
         };
-        let bg = crate::materials::background(p.background, Some(finish));
+        // The desktop blurs what is behind glass; a sample can't, so a haze
+        // stands in for the blur and makes each finish recognizable.
+        // Each finish is drawn a little stronger than life so the five
+        // read apart at a glance; the sliders still move them.
+        let mut tone = p.background;
+        let (toward, amount, alpha) = match finish.map(|f| f.kind) {
+            Some(Kind::Frosted) => (1., 0.32, 1.),
+            Some(Kind::Clear) => (1., 0.04, 0.55),
+            Some(Kind::Smoked) => (0., 0.55, 0.95),
+            Some(Kind::Liquid) => (1., 0.10, 0.75),
+            // No glass is a solid card.
+            None => (0., 0., 1.),
+        };
+        tone.r += (toward - tone.r) * amount;
+        tone.g += (toward - tone.g) * amount;
+        tone.b += (toward - tone.b) * amount;
+        tone.a = if finish.is_some() { (tone.a * alpha).clamp(0.25, 1.) } else { 1. };
+        let bg = crate::materials::background(tone, finish);
+        // Clear and Liquid catch the light at the edge; Liquid most.
+        let (rim, rim_width) = match finish.map(|f| f.kind) {
+            Some(Kind::Liquid) => (0.65, 1.5),
+            Some(Kind::Clear) => (0.4, 1.),
+            _ => (0.15, 1.),
+        };
         let surface = move |_: &cosmic::Theme| cosmic::iced::widget::container::Style {
             background: Some(bg),
             border: Border {
-                color: Color::from_rgba(
-                    1.,
-                    1.,
-                    1.,
-                    if finish.kind == Kind::Liquid {
-                        0.35
-                    } else {
-                        0.15
-                    },
-                ),
-                width: 1.,
+                color: Color::from_rgba(1., 1., 1., rim),
+                width: rim_width,
                 radius: 9.into(),
             },
             ..Default::default()
         };
-        let bar = |width| {
-            container(cosmic::iced::widget::space().width(width).height(5))
-                .padding([2, 5])
-                .class(cosmic::theme::Container::custom(surface))
+        // The sample weather follows the chosen units, like every preview.
+        let units = self.config.weather;
+        let deg = |c: f64| format!("{:.0}°", units.degrees(c).round());
+        let (value, subtitle) = match self.appearance_preview {
+            Widget::Clock => ("09:41".to_string(), "Wednesday, October 21".to_string()),
+            Widget::Devbox => ("26%".to_string(), "Processor · Memory 8.2 / 32 GB".to_string()),
+            _ => (deg(21.), format!("Partly cloudy · High {}", deg(23.))),
         };
         let card = container(
             column::with_children(vec![
-                label("09:41", 19., p.foreground),
-                label("Wed 21 · 18°", 9., p.foreground),
+                label(value, 32., p.foreground),
+                label(subtitle, 11., p.foreground),
             ])
-            .spacing(3),
+            .spacing(4),
         )
-        .padding([6, 9])
+        .width(Length::Fill)
+        .height(96)
+        .align_y(Alignment::Center)
+        .padding([8, 16])
         .class(cosmic::theme::Container::custom(surface));
-        if self.material_adjust {
-            let compact = container(label("09:41", 19., p.foreground))
-                .padding([6, 9])
-                .class(cosmic::theme::Container::custom(surface));
-            return self.preview_stage_padded(compact.into(), 6);
-        }
-        let contents = column::with_children(vec![
-            bar(Length::Fill).into(),
-            card.into(),
-            container(bar(Length::Fixed(28.)))
-                .width(Length::Fill)
-                .align_x(Alignment::Center)
-                .into(),
-        ])
-        .spacing(5);
-        // Every sample uses the same cached wallpaper, never the style's bundled one.
-        self.preview_stage_padded(contents.into(), 6)
+        // Bold stripes run behind every sample, so how much shows through
+        // each finish is plain to see; a smooth picture would hide it.
+        let stripes = [
+            Color::from_rgb(0.96, 0.62, 0.40),
+            Color::from_rgb(0.16, 0.22, 0.48),
+            Color::from_rgb(0.99, 0.86, 0.55),
+            Color::from_rgb(0.46, 0.30, 0.62),
+            Color::from_rgb(0.30, 0.68, 0.82),
+            Color::from_rgb(0.10, 0.12, 0.22),
+            Color::from_rgb(0.92, 0.45, 0.52),
+        ];
+        let last = stripes.len() - 1;
+        let backdrop = row::with_children(
+            stripes
+                .into_iter()
+                .enumerate()
+                .map(|(index, color)| {
+                    // Round the outer stripes, since children aren't clipped
+                    // to the frame's corners.
+                    let radius = match index {
+                        0 => cosmic::iced::border::Radius::from(10.).right(0.),
+                        i if i == last => cosmic::iced::border::Radius::from(10.).left(0.),
+                        _ => 0.into(),
+                    };
+                    container(cosmic::iced::widget::space())
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .class(cosmic::theme::Container::custom(move |_| {
+                            cosmic::iced::widget::container::Style {
+                                background: Some(Background::Color(color)),
+                                border: Border {
+                                    radius,
+                                    ..Default::default()
+                                },
+                                ..Default::default()
+                            }
+                        }))
+                        .into()
+                })
+                .collect::<Vec<_>>(),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill);
+        container(
+            cosmic::iced::widget::Stack::new()
+                .push(container(backdrop).width(Length::Fill).height(Length::Fill))
+                .push(container(card).padding(12).width(Length::Fill)),
+        )
+        .width(Length::Fill)
+        .height(120)
+        .clip(true)
+        .class(cosmic::theme::Container::custom(|_| {
+            cosmic::iced::widget::container::Style {
+                border: Border {
+                    radius: 10.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        }))
+        .into()
     }
+}
+
+fn material_tile<'a>(
+    specimen: Element<'a, Message>,
+    title: &'static str,
+    chosen: bool,
+    id: String,
+    message: Message,
+    accent: Color,
+) -> Element<'a, Message> {
+    container(
+        button::custom(
+            column::with_children(vec![
+                specimen,
+                container(split(
+                    label(title, 14., FG),
+                    label(if chosen { "✓" } else { "" }, 14., accent),
+                ))
+                .padding([2, 6])
+                .into(),
+            ])
+            .spacing(5),
+        )
+        .class(profiles::tile_style(chosen, accent))
+        .selected(chosen)
+        .padding(7)
+        .width(Length::Fill)
+        .on_press(message),
+    )
+    .id(cosmic::widget::Id::new(id))
+    .width(Length::Fill)
+    .into()
 }

@@ -49,7 +49,10 @@ class InstallTests(unittest.TestCase):
             self.assertEqual(path.stat().st_mode & 0o777, 0o755, path)
         wallpapers = sorted(p.name for p in (local / 'share/backgrounds/halcyon').iterdir())
         self.assertIn('halcyon-night.jpg', wallpapers)
-        self.assertEqual(len(wallpapers), 14)
+        self.assertEqual(len(wallpapers), 17)
+        self.assertTrue({"halcyon-rain.jpg", "halcyon-snow.jpg", "halcyon-fog.jpg"} <= set(wallpapers))
+        activity = local / f'share/applications/{APP_ID}.Activity.desktop'
+        self.assertIn('--activity-island', activity.read_text())
         ridge = local / 'share/backgrounds/halcyon/halcyon-ridge.png'
         self.assertEqual(ridge.read_bytes(), (installer.SOURCE / 'assets/wallpapers/halcyon-ridge.png').read_bytes())
         for size in (48, 64, 128, 256, 512):

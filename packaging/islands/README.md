@@ -10,7 +10,7 @@ configured applets and startup readiness are checked, with stock-panel fallback
 on failure. The recorded complete-session test used COSMIC 1.11 with software
 rendering; physical GPUs and a complete 1.10 session are not validated.
 
-From 0.5, install the Halcyon package and open **Settings → Desktop → Dock & panel**.
+From 0.5, install the Halcyon package and open **Settings → Dock and panel**.
 Choose **Enable for next login**, then log out and back in when convenient.
 No additional package download is needed. **Turn off for next login** restores
 standard startup without changing your saved bar styles or layouts.

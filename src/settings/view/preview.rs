@@ -24,15 +24,15 @@ impl Settings {
             None => container(cosmic::iced::widget::space())
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .class(cosmic::theme::Container::custom(|theme| {
+                // Without a picture, a dusk sky: glass and tints need
+                // something colorful behind them to look like anything.
+                .class(cosmic::theme::Container::custom(|_| {
                     cosmic::iced::widget::container::Style {
                         background: Some(Background::Gradient(
                             cosmic::iced::gradient::Linear::new(2.4)
-                                .add_stop(0., theme.cosmic().primary(theme.transparent).base.into())
-                                .add_stop(
-                                    1.,
-                                    theme.cosmic().background(theme.transparent).base.into(),
-                                )
+                                .add_stop(0., Color::from_rgb(0.16, 0.24, 0.50))
+                                .add_stop(0.55, Color::from_rgb(0.50, 0.32, 0.60))
+                                .add_stop(1., Color::from_rgb(0.93, 0.55, 0.40))
                                 .into(),
                         )),
                         border: Border {
@@ -46,7 +46,12 @@ impl Settings {
         };
         container(
             cosmic::iced::widget::Stack::new()
-                .push(container(card).padding(padding).width(Length::Fill))
+                .push(
+                    container(card)
+                        .padding(padding)
+                        .width(Length::Fill)
+                        .align_x(Alignment::Center),
+                )
                 .push_under(background)
                 // Iced's first stack layer draws directly. Keep the image in a
                 // later layer so Cover is clipped by a real renderer layer.
@@ -60,57 +65,5 @@ impl Settings {
         )
         .width(Length::Fill)
         .into()
-    }
-
-    pub(super) fn widget_settings_body<'a>(
-        &'a self,
-        card: Element<'a, Message>,
-        controls: Element<'a, Message>,
-    ) -> Element<'a, Message> {
-        self.editor_with_preview(card, controls, "Sample data")
-    }
-
-    pub(super) fn editor_with_preview<'a>(
-        &'a self,
-        card: Element<'a, Message>,
-        controls: Element<'a, Message>,
-        caption: &'static str,
-    ) -> Element<'a, Message> {
-        self.editor_with_preview_header(card, controls, caption, None)
-    }
-
-    pub(super) fn editor_with_preview_header<'a>(
-        &'a self,
-        card: Element<'a, Message>,
-        controls: Element<'a, Message>,
-        caption: &'static str,
-        header: Option<Element<'a, Message>>,
-    ) -> Element<'a, Message> {
-        let mut parts = Vec::new();
-        if let Some(header) = header {
-            parts.push(header);
-        }
-        if self.scene_open() {
-            let card = if !caption.starts_with("Live controls") {
-                super::sample::fit(card, self.stage_height())
-            } else {
-                card
-            };
-            parts.push(self.preview_stage(card));
-        }
-        let preview = self.scene_frame(column::with_children(parts).spacing(10).into(), caption);
-        {
-            // Empty widgets need content before a sample. Notes always keeps
-            // its editor and Save/Revert ahead of the live checklist.
-            let needs_content = self.page == Page::Notes
-                || (self.page == Page::Calendar && !self.calendar.connection.connected())
-                || (self.page == Page::Weather && self.config.location.is_none())
-                || (self.page == Page::Projects && self.config.project_roots.is_empty());
-            if needs_content {
-                self.inspector_layout(controls, preview, "content")
-            } else {
-                self.inspector_layout(preview, controls, "widget")
-            }
-        }
     }
 }

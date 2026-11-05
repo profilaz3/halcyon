@@ -356,13 +356,24 @@ impl Cards {
             })
         })
     }
-    fn rail_button(&self, widget: Widget, draggable: bool) -> Element<'_, Message> {
+    /// One rail row: handle (where dragging works), icon, name and a
+    /// switch. Rows sit in a rounded group; `corners` rounds the group's ends.
+    fn rail_button(
+        &self,
+        widget: Widget,
+        draggable: bool,
+        corners: [f32; 4],
+    ) -> Element<'_, Message> {
         let draggable = draggable
             && !self.custom_layout()
             && !(self.config.glance.enabled
                 && matches!(widget, Widget::Clock | Widget::Weather | Widget::Calendar));
         let p = self.config.surface_palette();
-        let selected = self.config.data_visible(widget);
+        let selected = if widget.is_tool() {
+            self.config.widget_visible(widget)
+        } else {
+            self.config.data_visible(widget)
+        };
         let dragged = self
             .sidebar
             .drag
@@ -370,58 +381,60 @@ impl Cards {
             .is_some_and(|d| d.widget == widget && d.moved);
         let alert = widget == Widget::Calendar && self.meeting_alert();
         let color = if alert {
-            Color::from_rgb8(245, 190, 107)
+            mix(Color::from_rgb8(245, 190, 107), p.accent, 0.8)
         } else {
             p.accent
         };
-        let content = row::with_children(vec![
-            label(if draggable { "⠿" } else { " " }, 13., p.muted),
-            cosmic::widget::icon::from_name(widget.icon())
-                .size(18)
+        let handle: Element<'_, Message> = if draggable {
+            cosmic::widget::icon::from_name("grip-lines-symbolic")
+                .size(12)
                 .icon()
+                .class(cosmic::theme::Svg::custom(move |_| {
+                    cosmic::iced::widget::svg::Style {
+                        color: Some(p.muted),
+                    }
+                }))
+                .into()
+        } else {
+            cosmic::iced::widget::space().width(12.).into()
+        };
+        let content = row::with_children(vec![
+            handle,
+            // The name stays readable when off; only the icon rests.
+            cosmic::widget::icon::from_name(widget.icon())
+                .size(16)
+                .icon()
+                .class(cosmic::theme::Svg::custom(move |_| {
+                    cosmic::iced::widget::svg::Style {
+                        color: Some(if selected { p.foreground } else { p.muted }),
+                    }
+                }))
                 .into(),
-            container(label(
-                widget.title(),
-                14.,
-                if selected { p.foreground } else { p.muted },
-            ))
+            container(label(widget.title(), 13., p.foreground))
             .width(Length::Fill)
             .into(),
-            label(
-                if selected { "✓" } else { "+" },
-                13.,
-                if selected { color } else { p.muted },
-            ),
+            switch(selected, color, p),
         ])
-        .spacing(7)
+        .spacing(8)
         .align_y(Alignment::Center);
         mouse_area(
             container(content)
-                .padding([0, 8])
+                .padding([0, 10, 0, 6])
                 .width(Length::Fill)
                 .height(Length::Fixed(drawer::ROW_HEIGHT))
                 .align_y(Alignment::Center)
                 .class(cosmic::theme::Container::custom(move |_| {
                     cosmic::iced::widget::container::Style {
-                        icon_color: Some(if selected { color } else { p.muted }),
-                        background: (selected || dragged).then_some(Background::Color(mix(
-                            color,
-                            p.background,
-                            if dragged { 0.24 } else { 0.10 },
-                        ))),
+                        icon_color: Some(if selected { p.foreground } else { p.muted }),
+                        background: Some(Background::Color(if dragged {
+                            mix(color, p.background, 0.24)
+                        } else {
+                            mix(p.foreground, p.background, 0.07)
+                        })),
                         border: Border {
-                            color: Color {
-                                a: if dragged { 0.95 } else { 0.30 },
-                                ..color
-                            },
-                            width: if dragged {
-                                2.
-                            } else if selected {
-                                1.
-                            } else {
-                                0.
-                            },
-                            radius: 12.into(),
+                            color,
+                            width: if dragged { 2. } else { 0. },
+                            radius: corners.into(),
                         },
                         ..Default::default()
                     }
@@ -441,58 +454,6 @@ impl Cards {
         })
         .into()
     }
-    /// Music, Notes and Focus side by side: click to show or hide.
-    fn tool_toggles(&self) -> Element<'_, Message> {
-        let p = self.config.surface_palette();
-        row::with_children(Widget::TOOLS.map(|tool| {
-            let selected = self.config.widget_visible(tool);
-            mouse_area(
-                container(
-                    column::with_children(vec![
-                        cosmic::widget::icon::from_name(tool.icon())
-                            .size(16)
-                            .icon()
-                            .into(),
-                        label(
-                            tool.title(),
-                            10.,
-                            if selected { p.foreground } else { p.muted },
-                        ),
-                    ])
-                    .spacing(3)
-                    .align_x(Alignment::Center),
-                )
-                .width(Length::Fill)
-                .height(Length::Fixed(drawer::ROW_HEIGHT))
-                .align_x(Alignment::Center)
-                .align_y(Alignment::Center)
-                .class(cosmic::theme::Container::custom(move |_| {
-                    cosmic::iced::widget::container::Style {
-                        icon_color: Some(if selected { p.accent } else { p.muted }),
-                        background: selected.then_some(Background::Color(mix(
-                            p.accent,
-                            p.background,
-                            0.10,
-                        ))),
-                        border: Border {
-                            color: Color {
-                                a: 0.30,
-                                ..p.accent
-                            },
-                            width: if selected { 1. } else { 0. },
-                            radius: 12.into(),
-                        },
-                        ..Default::default()
-                    }
-                })),
-            )
-            .on_press(Message::ToggleWidget(tool))
-            .interaction(mouse::Interaction::Pointer)
-            .into()
-        }))
-        .spacing(6)
-        .into()
-    }
     pub(super) fn control_rail(&self) -> Element<'_, Message> {
         if !self.sidebar.visible && self.sidebar.progress == 0. {
             return text::body("").into();
@@ -501,38 +462,90 @@ impl Cards {
             return recovery;
         }
         let p = self.config.surface_palette();
+        // Rounded ends for the first and last row of a group.
+        let corners = |index: usize, count: usize| -> [f32; 4] {
+            let top = if index == 0 { 12. } else { 0. };
+            let bottom = if index + 1 == count { 12. } else { 0. };
+            [top, top, bottom, bottom]
+        };
+        let right = self.config.ordered_right_cards();
+        let count = right.len();
         let rows = keyed_column(
-            self.config
-                .ordered_right_cards()
+            right
                 .into_iter()
-                .map(|widget| (widget, self.rail_button(widget, true))),
+                .enumerate()
+                .map(|(index, widget)| (widget, self.rail_button(widget, true, corners(index, count)))),
         )
-        .spacing(6)
-        .height(Length::Fixed(144.));
+        .spacing(drawer::ROW_STEP - drawer::ROW_HEIGHT);
+        let elsewhere = [
+            Widget::Calendar,
+            Widget::Clock,
+            Widget::Glance,
+            Widget::Music,
+            Widget::Notes,
+            Widget::Focus,
+        ];
+        let others = column::with_children(
+            elsewhere
+                .into_iter()
+                .enumerate()
+                .map(|(index, widget)| {
+                    self.rail_button(widget, false, corners(index, elsewhere.len()))
+                })
+                .collect::<Vec<_>>(),
+        )
+        .spacing(drawer::ROW_STEP - drawer::ROW_HEIGHT);
+        let heading = |title: &'static str| -> Element<'_, Message> {
+            container(
+                text::body(title)
+                    .size(12.)
+                    .font(cosmic::font::semibold())
+                    .class(cosmic::theme::Text::Color(mix(p.foreground, p.muted, 0.5))),
+            )
+                .padding([0, 4])
+                .height(Length::Fixed(drawer::SECTION_LABEL))
+                .align_y(Alignment::End)
+                .into()
+        };
+        let gap = |height: f32| -> Element<'_, Message> {
+            cosmic::iced::widget::space().height(height).into()
+        };
         let header = container(
             column::with_children(vec![
-                label("DESKTOP", 12., p.accent),
-                label("Drag the right-side cards", 10., p.muted),
+                label("Widgets", 15., p.foreground),
+                label("Show or hide each widget", 12., p.muted),
             ])
-            .spacing(4),
+            .spacing(2),
         )
-        .height(Length::Fixed(42.));
+        .padding([0, 4])
+        .height(Length::Fixed(drawer::HEADER));
         let settings = mouse_area(
             container(
                 row::with_children(vec![
                     cosmic::widget::icon::from_name("preferences-system-symbolic")
-                        .size(17)
+                        .size(16)
                         .icon()
                         .into(),
-                    label("Settings", 12., p.muted),
+                    label("Open settings", 13., p.foreground),
                 ])
                 .spacing(9)
                 .align_y(Alignment::Center),
             )
             .width(Length::Fill)
-            .height(Length::Fixed(32.))
-            .padding([0, 10])
-            .align_y(Alignment::Center),
+            .height(Length::Fixed(34.))
+            .padding([0, 12])
+            .align_y(Alignment::Center)
+            .class(cosmic::theme::Container::custom(move |_| {
+                cosmic::iced::widget::container::Style {
+                    icon_color: Some(p.foreground),
+                    border: Border {
+                        color: mix(p.foreground, p.background, 0.16),
+                        width: 1.,
+                        radius: 12.into(),
+                    },
+                    ..Default::default()
+                }
+            })),
         )
         .on_press(Message::Settings)
         .interaction(mouse::Interaction::Pointer);
@@ -540,36 +553,44 @@ impl Cards {
             container(
                 column::with_children(vec![
                     header.into(),
+                    gap(drawer::HEADER_GAP),
+                    heading("Right column"),
+                    gap(drawer::LABEL_GAP),
                     rows.into(),
-                    self.rail_button(Widget::Calendar, false),
-                    self.rail_button(Widget::Clock, false),
-                    self.rail_button(Widget::Glance, false),
-                    self.tool_toggles(),
-                    settings.into(),
-                    label(
+                    gap(6.),
+                    container(label(
                         if self.custom_layout() {
-                            "Custom layout · click to show"
+                            "Your own layout. Move widgets in Settings."
                         } else {
-                            "Click to show · drag to move"
+                            "Drag to reorder"
                         },
-                        9.,
+                        12.,
                         p.muted,
-                    ),
-                ])
-                .spacing(10),
+                    ))
+                    .padding([0, 4])
+                    .into(),
+                    gap(14.),
+                    heading("Other widgets"),
+                    gap(drawer::LABEL_GAP),
+                    others.into(),
+                    gap(12.),
+                    settings.into(),
+                ]),
             )
-            .padding(12)
+            .padding(drawer::RAIL_PADDING)
             .width(Length::Fill)
             .height(Length::Fill)
             .class(cosmic::theme::Container::custom(move |_| {
                 cosmic::iced::widget::container::Style {
+                    // A shade apart from the cards, so the open rail reads
+                    // as its own layer where it covers them.
                     background: Some(Background::Color(Color {
-                        a: 0.98,
-                        ..p.background
+                        a: 0.99,
+                        ..mix(p.foreground, p.background, 0.05)
                     })),
                     icon_color: Some(p.muted),
                     border: Border {
-                        color: Color { a: 0.4, ..p.accent },
+                        color: mix(p.foreground, p.background, 0.22),
                         width: 1.,
                         radius: [20., 0., 0., 20.].into(),
                     },
@@ -708,4 +729,44 @@ impl Cards {
         }
         Task::none()
     }
+}
+
+/// A small on or off switch, drawn to match the system switches.
+fn switch<'a>(on: bool, color: Color, p: crate::config::Palette) -> Element<'a, Message> {
+    let knob = container(cosmic::iced::widget::space().width(10.).height(10.)).class(
+        cosmic::theme::Container::custom(move |_| cosmic::iced::widget::container::Style {
+            background: Some(Background::Color(if on {
+                p.background
+            } else {
+                mix(p.foreground, p.background, 0.8)
+            })),
+            border: Border {
+                radius: 5.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }),
+    );
+    container(knob)
+        .width(26.)
+        .height(16.)
+        .padding(3)
+        .align_x(if on { Alignment::End } else { Alignment::Start })
+        .align_y(Alignment::Center)
+        .class(cosmic::theme::Container::custom(move |_| {
+            cosmic::iced::widget::container::Style {
+                background: Some(Background::Color(if on {
+                    color
+                } else {
+                    mix(p.foreground, p.background, 0.14)
+                })),
+                border: Border {
+                    radius: 8.0.into(),
+                    width: if on { 0. } else { 1. },
+                    color: mix(p.foreground, p.background, 0.55),
+                },
+                ..Default::default()
+            }
+        }))
+        .into()
 }

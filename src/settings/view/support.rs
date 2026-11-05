@@ -10,7 +10,7 @@ impl Settings {
     pub(super) fn help_page(&self) -> Element<'_, Message> {
         if let Some(report) = &self.support.report {
             return column::with_children(vec![
-                action("‹ Help & diagnostics", Edit::Preview(false)),
+                action("‹ Help and diagnostics", Edit::Preview(false)),
                 label("Support report", 20., FG),
                 label(
                     "Review what you share. Nothing is sent automatically.",
@@ -26,6 +26,9 @@ impl Settings {
                     button::standard("Save report…")
                         .on_press(Message::Support(Edit::Save))
                         .into(),
+                    button::text("Open the issue page ↗")
+                        .on_press(Message::Support(Edit::ReportProblem))
+                        .into(),
                 ])
                 .spacing(8)
                 .into(),
@@ -37,69 +40,65 @@ impl Settings {
         let snapshot = self.help_snapshot();
         let mut items = vec![group(
             None,
-            vec![group_row(
-                "Need a hand?",
-                "Check what needs attention, or prepare a report to share.",
-                button::suggested("Preview report")
-                    .id(cosmic::widget::Id::new("help-preview-report"))
-                    .on_press(Message::Support(Edit::Preview(true)))
-                    .into(),
-            )],
+            vec![
+                group_row(
+                    "Report a problem",
+                    "You'll see exactly what's included before anything is sent",
+                    button::standard("Start")
+                        .id(cosmic::widget::Id::new("help-preview-report"))
+                        .on_press(Message::Support(Edit::Preview(true)))
+                        .into(),
+                ),
+            ],
         )];
-        let mut groups = Vec::new();
-        for (heading, problem) in [("Needs attention", true), ("Local status", false)] {
-            let rows = snapshot
-                .components
-                .iter()
-                .filter(|c| (c.health == Health::Attention) == problem)
-                .map(|c| {
-                    let title = match c.action {
-                        Destination::Updates => "Open Updates",
-                        Destination::Background => "Widget controls",
-                        Destination::Islands => "Review Islands",
-                        Destination::Calendar => "Open Calendar",
-                        Destination::Displays => "Layout & displays",
-                        Destination::Automation => "Review rules",
-                        Destination::Recovery => "Open Recovery",
-                    };
-                    group_row(c.name, c.state, action(title, Edit::Open(c.action)))
-                })
-                .collect::<Vec<_>>();
-            if !rows.is_empty() {
-                groups.push(group(Some(heading), rows));
+        let accent = self.settings_accent();
+        let mut rows = Vec::new();
+        for c in &snapshot.components {
+            let color = match c.health {
+                Health::Healthy => Color::from_rgb(0.45, 0.80, 0.55),
+                Health::Attention => super::desktop::WARN,
+                _ => MUTED,
+            };
+            let mut parts = vec![dot(color, 8.), detail(c.name, c.state)];
+            if c.health == Health::Healthy {
+                rows.push(
+                    container(
+                        row::with_children(parts)
+                            .spacing(12)
+                            .align_y(Alignment::Center),
+                    )
+                    .padding([4, 0])
+                    .into(),
+                );
+            } else {
+                parts.push(icon::from_name("go-next-symbolic").size(16).icon().into());
+                rows.push(
+                    button::custom(
+                        row::with_children(parts)
+                            .spacing(12)
+                            .align_y(Alignment::Center),
+                    )
+                    .class(nav_style(false, accent))
+                    .padding([4, 0])
+                    .width(Length::Fill)
+                    .on_press(Message::Support(Edit::Open(c.action)))
+                    .into(),
+                );
             }
         }
-        if groups.len() == 2 {
-            let right = groups.pop().unwrap();
-            let left = groups.pop().unwrap();
-            items.push(self.setting_columns(left, right));
-        } else {
-            items.extend(groups);
-        }
-        items.push(
-            row::with_children(vec![
-                button::standard(if self.support.loading {
-                    "Refreshing…"
-                } else {
-                    "Refresh status"
-                })
-                .on_press_maybe((!self.support.loading).then_some(Message::Support(Edit::Refresh)))
-                .into(),
-                action("Report a problem ↗", Edit::ReportProblem),
-            ])
-            .spacing(8)
+        items.push(group(Some("How things are running"), rows));
+        items.push(group(None, vec![group_row(
+            "Check again",
+            "Look at everything once more",
+            button::standard(if self.support.loading {
+                "Checking…"
+            } else {
+                "Check"
+            })
+            .on_press_maybe((!self.support.loading).then_some(Message::Support(Edit::Refresh)))
             .into(),
-        );
-        items.push(label("These are local observations. Calendar and update servers are contacted only from their own controls.",12.,MUTED));
-        items.push(group(
-            Some("Understand a desktop change"),
-            vec![group_row(
-                "Recent changes",
-                "See what changed and why, including automatic switches.",
-                action("View changes", Edit::Recent(true)),
-            )],
-        ));
-        column::with_children(items).spacing(20).into()
+        )]));
+        column::with_children(items).spacing(16).into()
     }
     pub(super) fn recent_changes_page(&self) -> Element<'_, Message> {
         use crate::desktop::store::activity::{Action, Cause};
@@ -136,7 +135,7 @@ impl Settings {
                 Some("Automatic switching is waiting"),
                 vec![
                     label(
-                        "Finish or discard pending edits before a setup can switch.",
+                        "Finish or discard pending edits before a look can switch.",
                         14.,
                         MUTED,
                     ),

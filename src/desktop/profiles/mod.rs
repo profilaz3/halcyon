@@ -52,4 +52,6 @@ mod desktop_tests;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use plan::PreviewBaseline;
+pub use plan::PreviewConflict;
 pub(crate) use plan::preview_panel_style;

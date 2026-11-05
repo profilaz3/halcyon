@@ -6,7 +6,6 @@ pub mod resolver;
 
 pub const PADDING: u16 = 18;
 pub const TITLE: f32 = 18.;
-pub const BODY: f32 = 14.;
 pub const SECONDARY: f32 = 12.;
 pub const META: f32 = 10.;
 /// Font families chosen in Settings › Widget style, over the theme's.

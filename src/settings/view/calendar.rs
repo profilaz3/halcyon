@@ -47,12 +47,22 @@ impl Settings {
                     .into(),
             );
         }
-        let mut rows = vec![
-            row::with_children(header)
-                .spacing(12)
-                .align_y(Alignment::Center)
-                .into(),
-        ];
+        // Not connected and nothing in progress: the single "Connect a
+        // calendar" row below says it all, so the header is left out.
+        let invite = !editor.connection.connected()
+            && !editor.busy
+            && !editor.confirm_disconnect
+            && !editor.subscription_form
+            && !editor.connection.cleanup_pending();
+        let mut rows = Vec::new();
+        if !invite {
+            rows.push(
+                row::with_children(header)
+                    .spacing(12)
+                    .align_y(Alignment::Center)
+                    .into(),
+            );
+        }
         if let Some(error) = &editor.error {
             rows.push(label(error, 12., Color::from_rgb8(245, 190, 107)));
         }
@@ -186,15 +196,13 @@ impl Settings {
                     .on_press(message(Account::Disconnect))
                     .into(),
             );
-        } else if editor.client_ready {
-            rows.push(
-                button::suggested("Connect Google Calendar")
-                    .id(cosmic::widget::Id::new("calendar-connect"))
-                    .on_press(message(Account::Connect))
-                    .into(),
-            );
+        } else if editor.subscription_form {
             rows.push(label(
-                "Sign in through your browser. Calendar access is read-only.",
+                if editor.client_ready {
+                    "Halcyon only reads your events. Sign in to Google, or paste a link from any calendar app."
+                } else {
+                    "Halcyon only reads your events. Paste the private link from your calendar app."
+                },
                 12.,
                 MUTED,
             ));
@@ -244,7 +252,7 @@ impl Settings {
                 }
                 rows.push(
                     row::with_children(vec![
-                        button::suggested("Add calendar")
+                        button::standard("Add calendar")
                             .id(cosmic::widget::Id::new("calendar-subscription-add"))
                             .on_press_maybe(
                                 (!editor.subscription_url.0.trim().is_empty())
@@ -262,19 +270,47 @@ impl Settings {
                     .into(),
                 );
             } else {
-                rows.push(
-                    (if editor.client_ready || connected {
-                        button::standard("Add calendar link")
+                // Both ways to connect sit together in one row.
+                let mut actions: Vec<Element<'_, Message>> = Vec::new();
+                if editor.client_ready && !editor.connection.connected() {
+                    actions.push(
+                        button::suggested("Connect Google Calendar")
+                            .id(cosmic::widget::Id::new("calendar-connect"))
+                            .on_press(message(Account::Connect))
+                            .into(),
+                    );
+                }
+                actions.push(
+                    button::standard(if editor.connection.connected() {
+                        "Add calendar link"
                     } else {
-                        button::suggested("Add calendar link")
+                        "Paste link…"
                     })
                     .id(cosmic::widget::Id::new("calendar-subscription-open"))
                     .on_press(message(Account::SubscriptionForm(true)))
                     .into(),
                 );
+                let actions = row::with_children(actions).spacing(8).wrap();
+                if editor.connection.connected() {
+                    rows.push(actions.into());
+                } else {
+                    // Not connected yet: one row that says what to do, with
+                    // the ways to do it on the right.
+                    rows.push(split(
+                        detail(
+                            "Add a calendar",
+                            if editor.client_ready {
+                                "Sign in to Google, or paste the sharing link from Outlook or Apple Calendar"
+                            } else {
+                                "Paste the sharing link from Google, Outlook or Apple Calendar"
+                            },
+                        ),
+                        actions.into(),
+                    ));
+                }
             }
         }
-        group(Some("Calendars & connection"), rows)
+        group(Some("Calendars"), rows)
     }
     fn calendar_subscription_guide(&self) -> Element<'_, Message> {
         let provider = self.calendar.subscription_provider;

@@ -65,7 +65,16 @@ impl Palette {
             accent: readable(source, background),
             background,
             foreground: Color::from_rgb8(242, 245, 249),
-            muted: Color::from_rgb8(174, 185, 199),
+            // Secondary ink leans slightly toward the source, so it reads
+            // warm on a warm card and cool on a cool one.
+            muted: readable(
+                Color::from_rgb(
+                    0.64 + source.r * 0.12,
+                    0.64 + source.g * 0.12,
+                    0.66 + source.b * 0.12,
+                ),
+                background,
+            ),
         }
     }
 

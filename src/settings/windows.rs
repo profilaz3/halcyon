@@ -34,6 +34,8 @@ pub enum Message {
     Undo,
     Refresh,
     UseCurrent,
+    /// Keeps the edits over a value changed outside this editor.
+    KeepMine,
     Recover,
     KeepRecovery,
 }
@@ -83,9 +85,9 @@ impl Default for WindowsEditor {
 
 impl WindowsEditor {
     pub fn open(&mut self) {
-        let first = !self.core.opened();
         self.core.open();
-        if first && let Some(draft) = self.core.draft() {
+        // Gaps are edited for the mode in use; there is no mode picker.
+        if let Some(draft) = self.core.draft() {
             self.variant = draft.active_variant();
         }
     }
@@ -306,6 +308,7 @@ impl WindowsEditor {
             }
             Message::Refresh => self.core.refresh(),
             Message::UseCurrent => self.core.use_current(&[]),
+            Message::KeepMine => self.core.keep_edits(),
             Message::Recover => self.core.recover(true),
             Message::KeepRecovery => self.core.recover(false),
         }
@@ -461,6 +464,39 @@ mod tests {
             editor.notice()
         );
         assert_eq!(editor.latest(), Some(&earlier), "the earlier Undo is kept");
+    }
+
+    /// Keep my change writes the edits over the outside values, the gap
+    /// included, and writes nothing until Apply.
+    #[test]
+    fn keep_my_change_writes_edits_over_outside_values() {
+        let fixture = Fixture::new("windows-editor-keep-mine");
+        let mut editor = WindowsEditor::with_store(fixture.store());
+        editor.update(Message::Flag(Behavior::FocusFollowsCursor, true));
+        editor.update(Message::Gap(Gap::Outer, 12));
+        fixture.user(COMP, "focus_follows_cursor", "false");
+        std::fs::create_dir_all(dark_gaps(&fixture).parent().unwrap()).unwrap();
+        std::fs::write(dark_gaps(&fixture), "(5, 9)").unwrap();
+        editor.update(Message::Refresh);
+        let conflicts = editor.draft().unwrap().conflicts();
+        assert!(
+            conflicts.contains(&Behavior::FocusFollowsCursor.key()) && conflicts.len() >= 2,
+            "{conflicts:?}"
+        );
+        let files = fixture.tree();
+        editor.update(Message::KeepMine);
+        let draft = editor.draft().unwrap();
+        assert!(draft.conflicts().is_empty());
+        assert!(draft.edited(Behavior::FocusFollowsCursor));
+        assert!(draft.gap_edited(ThemeVariant::Dark));
+        assert_eq!(fixture.tree(), files, "keeping writes nothing");
+        editor.update(Message::Apply);
+        assert_eq!(
+            fixture.read(COMP, "focus_follows_cursor").as_deref(),
+            Some("true")
+        );
+        let gaps = std::fs::read_to_string(dark_gaps(&fixture)).unwrap();
+        assert!(gaps.contains("12"), "the kept gap is written: {gaps}");
     }
 
     /// The first step keeps every other edit with its original baseline,

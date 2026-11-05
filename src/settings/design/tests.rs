@@ -5,7 +5,8 @@ use serde_json::json;
 fn fixture() -> Settings {
     std::fs::write(Config::path().unwrap(), br#"{"onboarded":true,"setup_dismissed":true,"theme":"teal","clock":{"face":"digital","format_24h":false},"location":{"name":"PRIVATE","latitude":1.0,"longitude":2.0}}"#.as_slice()).unwrap();
     let (mut app, _) = Settings::init(Core::default(), Page::General);
-    app.app_settings_page = AppSettingsPage::Restore;
+    // Before the one-time update, how widgets are saved lives under Updates.
+    app.app_settings_page = AppSettingsPage::Updates;
     app
 }
 fn raw() -> serde_json::Value {

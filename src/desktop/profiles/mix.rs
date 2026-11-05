@@ -94,7 +94,7 @@ impl Provenance {
         stripped
     }
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Source {
     pub origin: Origin,
     pub profile: Profile,

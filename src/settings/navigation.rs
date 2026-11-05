@@ -4,26 +4,32 @@ pub(super) use super::preference_undo::PreferenceUndo;
 use super::{AppSettingsPage, Message, Page, Settings};
 use cosmic::app::Task;
 
+#[cfg(test)]
+#[path = "navigation_ux_tests.rs"]
+mod ux_regressions;
+
 /// What a page changes, used by navigation and search-result context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Area {
+    Looks,
     Appearance,
+    Wallpaper,
     Widgets,
-    Desktop,
-    Setups,
-    Accessibility,
+    Bars,
+    Windows,
     App,
 }
 
 impl Area {
     pub fn label(self) -> &'static str {
         match self {
+            Self::Looks => "Looks",
             Self::Appearance => "Appearance",
-            Self::Setups => "Setups",
-            Self::Accessibility => "Accessibility",
+            Self::Wallpaper => "Wallpaper",
             Self::Widgets => "Widgets",
-            Self::Desktop => "Desktop",
-            Self::App => "App settings",
+            Self::Bars => "Dock and panel",
+            Self::Windows => "Windows",
+            Self::App => "Settings",
         }
     }
 }
@@ -36,6 +42,8 @@ pub(super) enum SearchOpen {
     Effects,
     Recent,
     Readability,
+    /// The widget material's see-through control.
+    Transparency,
     Metric(crate::config::DevboxSection),
 }
 
@@ -47,12 +55,22 @@ pub struct SearchHit {
     pub advanced: bool,
     anchor: &'static str,
     destination: AppSettingsPage,
+    pub(super) bar: Option<crate::desktop::panels::PanelKind>,
     pub(super) open: SearchOpen,
 }
 
 impl SearchHit {
     pub(super) fn app_destination(self) -> AppSettingsPage {
         self.destination
+    }
+    /// Which object tab holds this control.
+    pub(super) fn object_tab(self) -> ObjectTab {
+        match self.anchor {
+            "widget-design" | "dock-advanced" | "music-visualizers" | "music-spectrum" => {
+                ObjectTab::Design
+            }
+            _ => ObjectTab::Content,
+        }
     }
     pub fn anchor(self) -> &'static str {
         self.anchor
@@ -69,11 +87,15 @@ impl SearchHit {
         self.open = open;
         self
     }
+    const fn bar(mut self, bar: crate::desktop::panels::PanelKind) -> Self {
+        self.bar = Some(bar);
+        self
+    }
 }
 
 impl Settings {
     pub(super) fn prepare_search_control(&mut self, hit: SearchHit) {
-        if hit.open == SearchOpen::Readability {
+        if matches!(hit.open, SearchOpen::Readability | SearchOpen::Transparency) {
             self.material_target = crate::materials::Target::Widgets;
             self.material_adjust = true;
         }
@@ -219,10 +241,39 @@ pub(super) const WIDGET_READABILITY: SearchHit = hit(
 .at("contrast-assist")
 .open(SearchOpen::Readability);
 
+pub(super) const LOOKS: SearchHit = hit(
+    Page::DesktopProfiles,
+    "Looks",
+    "setups profiles presets starter looks saved calm evening focus workbench paper rose clean desktop presentation welcome rain snow fog weather",
+    false,
+);
+pub(super) const STARTUP: SearchHit = hit(
+    Page::General,
+    "Startup and background",
+    "general app settings startup login widgets background service setup again",
+    false,
+);
+pub(super) const ACTIVITY_ISLAND: SearchHit = hit(
+    Page::DesktopDock,
+    "Activity island",
+    "activity island notifications do not disturb dnd camera microphone privacy bluetooth meetings music media",
+    false,
+)
+.at("panel-items")
+.bar(crate::desktop::panels::PanelKind::Panel);
+pub(super) const SEE_THROUGH: SearchHit = hit(
+    Page::Appearance,
+    "See-through widgets",
+    "transparent transparency see-through see through opacity clear glass",
+    false,
+)
+.at("material-scope")
+.open(SearchOpen::Transparency);
+
 const SEARCH: &[SearchHit] = &[
     hit(
         Page::General,
-        "Help & diagnostics",
+        "Help and diagnostics",
         "help diagnostics support problem report status troubleshoot",
         false,
     )
@@ -259,7 +310,7 @@ const SEARCH: &[SearchHit] = &[
     .at("devbox-reorder-anchor"),
     hit(
         Page::Weather,
-        "City & forecast",
+        "City and forecast",
         "weather location city forecast belgrade",
         false,
     )
@@ -268,7 +319,9 @@ const SEARCH: &[SearchHit] = &[
         Page::Weather,
         "Dew point",
         "weather dew point dewpoint humidity moisture temperature daily overview",
-        false,
+        // The switch sits in the Weather page's folded "Dew point and how
+        // often it updates" section; search opens it.
+        true,
     )
     .at("weather-dew-point"),
     hit(
@@ -279,7 +332,7 @@ const SEARCH: &[SearchHit] = &[
     ),
     hit(
         Page::Devbox,
-        "CPU & temperature",
+        "CPU and temperature",
         "system monitor devbox cpu temperature readings history graph sparkline",
         false,
     )
@@ -323,6 +376,8 @@ const SEARCH: &[SearchHit] = &[
         "system monitor devbox refresh update interval",
         true,
     ),
+    // Before the card finish: transparency is what someone searching it wants.
+    SEE_THROUGH,
     hit(
         Page::Appearance,
         "Widget card finish",
@@ -334,10 +389,11 @@ const SEARCH: &[SearchHit] = &[
         "Arrange widgets",
         "layout drag drop move resize size width height placement position grid snap guides arrange",
         false,
-    ),
+    )
+    .at("canvas-start"),
     hit(
         Page::Calendar,
-        "Today, tomorrow & meetings",
+        "Today, tomorrow and meetings",
         "calendar today tomorrow meetings join highlights",
         false,
     ),
@@ -349,19 +405,33 @@ const SEARCH: &[SearchHit] = &[
     ),
     hit(
         Page::Clock,
-        "Time & date",
-        "clock time date hour format 12 24 size scale alignment center position resize analog digital face typography weight italic surface",
+        "Time and date",
+        "clock time date hour format 12 24",
+        false,
+    ),
+    hit(
+        Page::Clock,
+        "Face and typography",
+        "clock size scale alignment center analog digital face typography weight italic surface design font depth landscape",
+        false,
+    )
+    .at("widget-design"),
+    hit(
+        Page::Glance,
+        "Daily overview",
+        "at a glance daily overview combined separate cards clock weather calendar",
         false,
     ),
     hit(
         Page::Glance,
-        "Daily overview",
-        "at a glance daily overview combined separate cards clock weather calendar font background",
+        "Overview design",
+        "at a glance daily overview font background surface layout density opacity design",
         false,
-    ),
+    )
+    .at("widget-design"),
     hit(
         Page::Projects,
-        "Project folders & servers",
+        "Project folders and servers",
         "projects branches repositories worktrees folders servers",
         false,
     ),
@@ -372,8 +442,29 @@ const SEARCH: &[SearchHit] = &[
         false,
     ),
     hit(
+        Page::Music,
+        "Audio visualizers",
+        "music audio visualizer visualiser radial bars orbit dots pulse rings",
+        false,
+    )
+    .at("music-visualizers"),
+    hit(
+        Page::Music,
+        "Spectrum",
+        "music audio spectrum analyzer bars sound visualizer",
+        false,
+    )
+    .at("music-spectrum"),
+    hit(
+        Page::Widgets,
+        "Widgets",
+        "widgets show hide turn on off cards my widgets",
+        false,
+    )
+    .at("desktop-widgets"),
+    hit(
         Page::Notes,
-        "Notes & checklists",
+        "Notes and checklists",
         "notes notebook text checklist",
         false,
     ),
@@ -384,14 +475,14 @@ const SEARCH: &[SearchHit] = &[
         false,
     ),
     hit(
-        Page::DesktopAppearance,
+        Page::Themes,
         "Desktop theme",
         "system appearance desktop theme dark light automatic",
         false,
     ),
     hit(
         Page::DesktopAppearance,
-        "Fonts & icon theme",
+        "Fonts and icon theme",
         "desktop font typeface typography icons icon theme",
         false,
     )
@@ -404,9 +495,9 @@ const SEARCH: &[SearchHit] = &[
     )
     .at("appearance-colors"),
     hit(
-        Page::DesktopAppearance,
-        "Desktop effects",
-        "desktop effects blur frosted glass",
+        Page::DesktopWindows,
+        "Window corners, outline and shadows",
+        "desktop effects blur frosted glass window corners outline shadows roundness",
         true,
     )
     .at("appearance-effects")
@@ -425,11 +516,20 @@ const SEARCH: &[SearchHit] = &[
     ),
     hit(
         Page::DesktopDock,
-        "Dock timing & spacing",
-        "dock panel timing padding spacing corners hide delay slide speed",
+        "Dock timing and spacing",
+        "dock timing padding spacing corners hide delay slide speed",
         true,
     )
-    .at("dock-advanced"),
+    .at("dock-advanced")
+    .bar(crate::desktop::panels::PanelKind::Dock),
+    hit(
+        Page::DesktopDock,
+        "Panel timing and spacing",
+        "panel timing padding spacing corners hide delay slide speed",
+        true,
+    )
+    .at("dock-advanced")
+    .bar(crate::desktop::panels::PanelKind::Panel),
     hit(
         Page::DesktopWallpaper,
         "Wallpaper effects",
@@ -439,25 +539,34 @@ const SEARCH: &[SearchHit] = &[
     .at("rain-controls"),
     hit(
         Page::DesktopWallpaper,
-        "Wallpaper & colors",
+        "Wallpaper and colors",
         "wallpaper background pictures slideshow gradient widget color colors palette accent sync automatic follow desktop pop os",
         false,
     ),
     hit(
         Page::DesktopIcons,
-        "Desktop files & icons",
+        "Icons on the desktop",
         "desktop files icons trash home mounted drives size spacing",
         false,
     ),
     hit(
         Page::DesktopDock,
-        "Dock & panel",
-        "dock top bar panel applets position size autohide penumbra gradient",
+        "Dock",
+        "dock applets position size autohide penumbra gradient",
         false,
-    ),
+    )
+    .bar(crate::desktop::panels::PanelKind::Dock),
+    hit(
+        Page::DesktopDock,
+        "Panel and Islands",
+        "top bar panel islands applets position size autohide",
+        false,
+    )
+    .bar(crate::desktop::panels::PanelKind::Panel),
+    ACTIVITY_ISLAND,
     hit(
         Page::DesktopWindows,
-        "Windows & tiling",
+        "Windows and tiling",
         "windows tiling gaps focus controls snapping",
         false,
     ),
@@ -469,7 +578,7 @@ const SEARCH: &[SearchHit] = &[
     ),
     hit(
         Page::DesktopWindowRules,
-        "Floating-app rules",
+        "Apps that don’t tile",
         "floating apps exceptions window rules tiling",
         false,
     ),
@@ -485,42 +594,20 @@ const SEARCH: &[SearchHit] = &[
         "accessibility motion animations gtk reduced",
         false,
     ),
-    hit(
-        Page::DesktopProfiles,
-        "Starter looks & saved setups",
-        "setups profiles presets starter looks saved calm evening focus workbench paper rose clean desktop presentation welcome",
-        false,
-    ),
+    LOOKS,
     hit(
         Page::Builder,
-        "Personal widget builder",
+        "Make your own widget",
         "recipe custom clock weather calendar agenda cpu memory disk network gpu uptime system readings native parts compose widget builder",
         false,
     ),
     hit(
-        Page::AdaptiveLooks,
-        "Adaptive looks",
-        "adaptive tidal paper moss day evening night solar daily cycle appearance",
-        false,
-    ),
-    hit(
-        Page::Moments,
-        "Day & Night moments",
-        "moments day night widget clock style scheduled",
-        false,
-    ),
-    hit(
         Page::DesktopAutomation,
-        "Schedules & display rules",
-        "automation schedule automatic time displays monitors rules preset sun solar dawn sunrise noon golden hour sunset city timezone",
+        "Change with time of day",
+        "adaptive daily cycle day evening night moments automation schedule automatic time displays monitors rules preset sun solar dawn sunrise noon golden hour sunset city timezone",
         false,
     ),
-    hit(
-        Page::General,
-        "Startup & background",
-        "general app settings startup login widgets background service",
-        false,
-    ),
+    STARTUP,
     hit(
         Page::General,
         "Edge menu",
@@ -530,18 +617,25 @@ const SEARCH: &[SearchHit] = &[
     .destination(AppSettingsPage::Interface),
     hit(
         Page::General,
-        "Privacy & usage reporting",
+        "Privacy and usage reporting",
         "privacy usage reporting anonymous telemetry",
         false,
     )
     .destination(AppSettingsPage::Privacy),
     hit(
         Page::General,
-        "Updates & installation",
+        "Updates and installation",
         "update version installation islands addon add-on diagnostics check",
         false,
     )
     .destination(AppSettingsPage::Updates),
+    hit(
+        Page::General,
+        "What’s new",
+        "release notes new features changes changelog version whats",
+        false,
+    )
+    .destination(AppSettingsPage::WhatsNew),
     hit(
         Page::General,
         "Restore previous desktop",
@@ -564,6 +658,7 @@ const fn hit(page: Page, label: &'static str, terms: &'static str, advanced: boo
         },
         destination: AppSettingsPage::Operation,
         open: SearchOpen::None,
+        bar: None,
     }
 }
 
@@ -715,19 +810,23 @@ impl Page {
     /// Only the few detailed editors that open from a menu page go Back;
     /// every other page is in the menu itself.
     pub(super) fn parent(self) -> Option<Self> {
-        match self {
-            Self::DesktopAppearance | Self::Appearance | Self::DesktopWallpaper => {
-                Some(Self::Themes)
-            }
+        match self.canonical() {
+            // Flat tabs and root landings have no parent.
+            Self::Overview
+            | Self::Themes
+            | Self::DesktopProfiles
+            | Self::DesktopWallpaper
+            | Self::DesktopDock
+            | Self::DesktopWindows
+            | Self::General => None,
+            // Detail editors that open from rows on Appearance.
+            Self::Appearance | Self::DesktopAppearance | Self::Moments => Some(Self::Themes),
             Self::DesktopAutomation => Some(Self::DesktopProfiles),
-            Self::Moments | Self::AdaptiveLooks => Some(Self::DesktopAutomation),
-            Self::PendingChanges => Some(Self::General),
-            Self::DesktopWindowRules | Self::DesktopWorkspaces => Some(Self::DesktopWindows),
-            Self::DesktopWindows | Self::DesktopIcons | Self::DesktopShortcuts => {
-                Some(Self::DesktopDock)
-            }
-            page if page.sidebar() == Self::Widgets && page != Self::Widgets => Some(Self::Widgets),
-            _ => None,
+            Self::AdaptiveLooks => Some(Self::DesktopAutomation),
+            Self::PendingChanges | Self::DesktopMotion => Some(Self::General),
+            Self::DesktopWindowRules | Self::DesktopShortcuts => Some(Self::DesktopWindows),
+            Self::DesktopIcons => Some(Self::DesktopWallpaper),
+            _ => Some(Self::Overview),
         }
     }
     /// The sidebar group a page belongs to, which also says what it changes.
@@ -735,11 +834,12 @@ impl Page {
         // The menu group a page sits in.
         match self.sidebar() {
             Self::Themes => Area::Appearance,
-            Self::DesktopProfiles => Area::Setups,
-            Self::DesktopMotion => Area::Accessibility,
+            Self::DesktopProfiles => Area::Looks,
+            Self::DesktopWallpaper => Area::Wallpaper,
+            Self::DesktopDock => Area::Bars,
+            Self::DesktopWindows => Area::Windows,
             Self::General => Area::App,
-            Self::Widgets => Area::Widgets,
-            _ => Area::Desktop,
+            _ => Area::Widgets,
         }
     }
     pub(super) fn save_hint(self) -> &'static str {
@@ -772,7 +872,7 @@ impl Settings {
             (Page::WidgetLayout, self.placement.dirty()),
             (
                 Page::DesktopProfiles,
-                self.profiles.session_draft().is_some(),
+                self.profiles.session_draft().is_some() || !self.profiles.parked().is_empty(),
             ),
             (Page::Notes, self.tools.dirty()),
             (Page::DesktopDock, self.desktop.dirty()),
@@ -906,7 +1006,10 @@ mod tests {
                 SearchOpen::City => assert!(app.city_editing),
                 SearchOpen::Effects => assert!(app.system_appearance.effects),
                 SearchOpen::Recent => assert!(app.support.recent_open),
-                SearchOpen::Readability => assert!(app.material_adjust),
+                SearchOpen::Readability | SearchOpen::Transparency => {
+                    assert!(app.material_adjust);
+                    assert_eq!(app.material_target, crate::materials::Target::Widgets);
+                }
                 SearchOpen::Metric(metric) => assert!(app.devbox_details.contains(&metric)),
                 SearchOpen::None => {}
             }
@@ -923,9 +1026,10 @@ mod tests {
             // Every page lights exactly one menu entry.
             assert!(entries.contains(&page.sidebar()), "{page:?}");
             let destination = match page {
-                Page::WidgetLayout => Page::Overview,
-                Page::Desktop => Page::DesktopDock,
+                Page::WidgetLayout | Page::Widgets | Page::Desktop => Page::Overview,
                 Page::DesktopWorkspaces => Page::DesktopWindows,
+                // Adaptive looks are chosen on the time of day page.
+                Page::AdaptiveLooks => Page::DesktopAutomation,
                 page => page,
             };
             assert_eq!(Page::parse(page.key()), destination);
@@ -938,16 +1042,37 @@ mod tests {
         assert_eq!(Page::parse("devbox"), Page::Devbox);
         assert_eq!(Page::parse("presets"), Page::DesktopProfiles);
         assert_eq!(Page::parse("home"), Page::Overview);
-        assert_eq!(Page::parse("desktop"), Page::DesktopDock);
-        assert_eq!(Page::Calendar.parent(), Some(Page::Widgets));
+        assert_eq!(Page::parse("desktop"), Page::Overview);
+        assert_eq!(Page::parse("widgets"), Page::Overview);
+        assert_eq!(Page::parse("dock"), Page::DesktopDock);
+        assert_eq!(Page::parse("panel"), Page::DesktopDock);
+        assert_eq!(Page::parse("settings"), Page::General);
+        assert_eq!(Page::parse("adaptive"), Page::DesktopAutomation);
+        assert_eq!(Page::Calendar.parent(), Some(Page::Overview));
         assert_eq!(Page::DesktopDock.parent(), None);
-        assert_eq!(Page::DesktopWorkspaces.sidebar(), Page::DesktopDock);
-        // Every menu entry is its own destination; only detailed editors go Back.
+        assert_eq!(Page::DesktopWorkspaces.sidebar(), Page::DesktopWindows);
+        assert_eq!(Page::Moments.sidebar(), Page::Themes);
+        assert_eq!(
+            entries,
+            [
+                Page::DesktopProfiles,
+                Page::Themes,
+                Page::DesktopWallpaper,
+                Page::Overview,
+                Page::DesktopDock,
+                Page::DesktopWindows,
+                Page::General
+            ]
+        );
+        // Every root is its own destination and has no parent.
         for page in entries {
             assert_eq!(page.sidebar(), page, "{page:?}");
             assert_eq!(page.parent(), None, "{page:?}");
         }
+        // Roots have no parent; detailed editors go Back to their root.
         assert_eq!(Page::DesktopAppearance.parent(), Some(Page::Themes));
+        assert_eq!(Page::Moments.parent(), Some(Page::Themes));
+        assert_eq!(Page::DesktopMotion.parent(), Some(Page::General));
         assert_eq!(
             Page::DesktopWindowRules.parent(),
             Some(Page::DesktopWindows)
@@ -966,10 +1091,10 @@ mod tests {
     #[test]
     fn search_ranks_specific_controls_and_common_page_options_first() {
         assert_eq!(search("memory usage")[0].label, "Memory usage");
-        assert_eq!(search("calendar")[0].label, "Today, tomorrow & meetings");
-        assert_eq!(search("weather")[0].label, "City & forecast");
-        assert_eq!(search("clock")[0].label, "Time & date");
-        assert_eq!(search("time")[0].label, "Time & date");
+        assert_eq!(search("calendar")[0].label, "Today, tomorrow and meetings");
+        assert_eq!(search("weather")[0].label, "City and forecast");
+        assert_eq!(search("clock")[0].label, "Time and date");
+        assert_eq!(search("time")[0].label, "Time and date");
         assert_eq!(
             search("calendar update")[0].label,
             "Calendar update interval"
@@ -989,7 +1114,7 @@ mod tests {
         for query in ["calender", "calndar", "calendarr", "clalendar", "claendar"] {
             assert_eq!(
                 search(query)[0].label,
-                "Today, tomorrow & meetings",
+                "Today, tomorrow and meetings",
                 "{query}"
             );
         }
@@ -1017,7 +1142,8 @@ mod tests {
             let hit = search(query)[0];
             assert_eq!(hit.page, Page::Appearance, "{query}");
             assert!(!hit.advanced);
-            assert_eq!(hit.anchor(), "page-start");
+            // Straight to the widget material's see-through control.
+            assert_eq!(hit, SEE_THROUGH, "{query}");
         }
         for query in [
             "colours",
@@ -1027,10 +1153,13 @@ mod tests {
             "widget colors",
         ] {
             let hit = search(query)[0];
-            assert_eq!(hit.page, Page::DesktopWallpaper, "{query}");
+            assert!(
+                matches!(hit.page, Page::DesktopWallpaper | Page::Themes),
+                "{query}"
+            );
             assert!(!hit.advanced);
         }
-        assert_eq!(search("autostart")[0].label, "Startup & background");
+        assert_eq!(search("autostart")[0].label, "Startup and background");
         assert_eq!(search("hotkeys")[0].page, Page::DesktopShortcuts);
         let hit = search("memory cache")[0];
         assert_eq!(hit.anchor(), "devbox-memory");
@@ -1064,7 +1193,7 @@ mod tests {
         for query in ["layout", "arrange widgets", "resize widgets", "grid snap"] {
             let hit = search(query)[0];
             assert_eq!(hit.page, Page::Overview, "{query}");
-            assert_eq!(hit.anchor(), "page-start");
+            assert_eq!(hit.anchor(), "canvas-start", "{query}");
             assert!(!hit.advanced);
         }
     }
@@ -1125,21 +1254,6 @@ pub(super) fn select(model: &mut cosmic::widget::nav_bar::Model, page: Page) {
     }
 }
 
-/// Each root remembers its last leaf for this window; reopening still uses the
-/// existing durable last-destination key, without changing app configuration.
-pub(super) fn root_destinations(page: Page) -> [Page; 6] {
-    let mut pages = [
-        Page::Themes,
-        Page::DesktopDock,
-        Page::Widgets,
-        Page::DesktopProfiles,
-        Page::DesktopMotion,
-        Page::General,
-    ];
-    pages[page.root_index()] = page.canonical();
-    pages
-}
-
 pub(super) fn app_destination() -> AppSettingsPage {
     crate::desktop::DesktopStore::from_env()
         .ok()
@@ -1178,3 +1292,699 @@ pub(super) fn keyboard_focus(backwards: bool) -> Task<Message> {
     ))
 }
 pub(super) type FocusReveal = Reveal;
+
+/// Each object has one editor with these three tabs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ObjectTab {
+    #[default]
+    Content,
+    Design,
+    Position,
+}
+impl ObjectTab {
+    pub(super) const ALL: [Self; 3] = [Self::Content, Self::Design, Self::Position];
+    pub(super) fn title(self) -> &'static str {
+        match self {
+            Self::Content => "Content",
+            Self::Design => "Design",
+            Self::Position => "Position",
+        }
+    }
+}
+
+/// One place Back can return to, with what made it that place.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Route {
+    page: Page,
+    app: AppSettingsPage,
+    tab: ObjectTab,
+    query: String,
+    search_open: bool,
+    scroll: f32,
+    display: Option<String>,
+    bar: crate::desktop::panels::PanelKind,
+    arranging: bool,
+    saved_collection: bool,
+    setup_review: Option<super::profiles::Selection>,
+    setup_requested: bool,
+    recent_open: bool,
+    report: Option<String>,
+}
+const MAX_HISTORY: usize = 40;
+
+/// A retained preview; resuming returns to the screen that owns it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum KeptTarget {
+    Wallpaper,
+    Colors,
+    Setup(super::profiles::Selection),
+    Adaptive,
+    Placement,
+    Canvas,
+    Note,
+    Page(Page),
+    SetupChoices,
+}
+
+/// One row of the “Not applied” list.
+#[derive(Clone, Debug)]
+pub(super) struct Kept {
+    pub title: String,
+    pub root: Page,
+    pub conflict: bool,
+    pub target: KeptTarget,
+}
+
+/// What Undo and Ctrl+Z act on here. They never disagree.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum UndoTarget {
+    Note,
+    Preview(Option<&'static str>),
+    Canvas,
+    Desktop(String, String),
+    None,
+}
+
+pub(super) fn preview_kind(page: Page) -> Option<super::profiles::previews::PreviewKind> {
+    use super::profiles::previews::PreviewKind;
+    match page {
+        Page::Themes => Some(PreviewKind::Theme),
+        Page::DesktopProfiles => Some(PreviewKind::Setup),
+        Page::AdaptiveLooks => Some(PreviewKind::Adaptive),
+        _ => None,
+    }
+}
+
+pub(super) fn widget_of(page: Page) -> Option<crate::drawer::Widget> {
+    use crate::drawer::Widget;
+    Some(match page {
+        Page::Glance => Widget::Glance,
+        Page::Clock => Widget::Clock,
+        Page::Weather => Widget::Weather,
+        Page::Calendar => Widget::Calendar,
+        Page::Devbox => Widget::Devbox,
+        Page::Projects => Widget::Projects,
+        Page::Music => Widget::Music,
+        Page::Notes => Widget::Notes,
+        Page::Focus => Widget::Focus,
+        _ => return None,
+    })
+}
+pub(super) fn widget_page(widget: crate::drawer::Widget) -> Page {
+    use crate::drawer::Widget;
+    match widget {
+        Widget::Glance => Page::Glance,
+        Widget::Clock => Page::Clock,
+        Widget::Weather => Page::Weather,
+        Widget::Calendar => Page::Calendar,
+        Widget::Devbox => Page::Devbox,
+        Widget::Projects => Page::Projects,
+        Widget::Music => Page::Music,
+        Widget::Notes => Page::Notes,
+        Widget::Focus => Page::Focus,
+    }
+}
+
+impl Settings {
+    pub(super) fn canvas_visible(&self) -> bool {
+        self.canvas.is_some()
+            && ((self.page == Page::Overview && self.arranging)
+                || (widget_of(self.page).is_some() && self.object_tab == ObjectTab::Position))
+    }
+    fn route(&self) -> Route {
+        Route {
+            page: self.page,
+            app: self.app_settings_page,
+            tab: self.object_tab,
+            query: self.search_query.clone(),
+            search_open: self.search_open,
+            scroll: self.page_scroll.get(self.page.key()).copied().unwrap_or(0.),
+            display: self.placement.display.clone(),
+            bar: self.desktop.selected,
+            arranging: self.arranging,
+            saved_collection: self.profiles.saved_collection,
+            setup_review: (self.page == Page::DesktopProfiles && self.profiles.review_open())
+                .then(|| self.profiles.selection().clone()),
+            setup_requested: self.setup_requested,
+            recent_open: self.support.recent_open,
+            report: self.support.report.clone(),
+        }
+    }
+    pub(super) fn remember_route(&mut self) {
+        let route = self.route();
+        if self.history.last() != Some(&route) {
+            self.history.push(route);
+            if self.history.len() > MAX_HISTORY {
+                self.history.remove(0);
+            }
+        }
+    }
+    /// The header's one way up: from search results back to them, from a
+    /// view opened inside a page back to that page, and from a subpage to
+    /// its parent. Sidebar pages have none. It never names an unrelated page.
+    pub(super) fn up_link(&self) -> Option<(String, Message)> {
+        if !self.search_query.trim().is_empty() {
+            return None;
+        }
+        let last = self.history.last();
+        if last.is_some_and(|route| route.search_open || !route.query.trim().is_empty()) {
+            return Some(("Search results".into(), Message::Back));
+        }
+        if self.page == Page::PendingChanges && !self.history.last().is_some_and(|r| r.page != Page::General) {
+            return Some((
+                AppSettingsPage::Restore.tab_title().into(),
+                Message::AppSettingsPage(AppSettingsPage::Restore),
+            ));
+        }
+        if self.page == Page::Overview && self.canvas_visible() {
+            // The link stays while a drag or save is running (doing nothing
+            // then), so the canvas never shifts under the pointer.
+            return Some((
+                Page::Overview.nav_title().into(),
+                self.canvas_done().unwrap_or(Message::Preview),
+            ));
+        }
+        // Release notes belong to Updates, where they are opened.
+        if self.page == Page::General && self.app_settings_page == AppSettingsPage::WhatsNew {
+            let updates = AppSettingsPage::Updates;
+            let back = last.is_some_and(|r| r.page == Page::General && r.app == updates);
+            return Some((
+                updates.tab_title().into(),
+                if back {
+                    Message::Back
+                } else {
+                    Message::AppSettingsPage(updates)
+                },
+            ));
+        }
+        let inside = match self.page {
+            Page::General
+                if self.support.recent_open
+                    || self.support.report.is_some()
+                    || self.app_settings_page != AppSettingsPage::Home =>
+            {
+                Some(Page::General)
+            }
+            Page::DesktopProfiles
+                if self.profiles.package.is_some()
+                    || self.profiles.mix.is_some()
+                    || self.profiles.review_open() =>
+            {
+                Some(Page::DesktopProfiles)
+            }
+            Page::Overview if self.setup_requested => Some(Page::Overview),
+            _ => None,
+        };
+        if let Some(page) = inside {
+            let back = self.history.is_empty() || last.is_some_and(|route| route.page == page);
+            return back.then(|| (page.nav_title().into(), Message::Back));
+        }
+        let parent = self.page.parent()?;
+        let back = last.is_some_and(|route| route.page == parent);
+        Some((
+            parent.nav_title().into(),
+            if back {
+                Message::Back
+            } else {
+                Message::Page(parent)
+            },
+        ))
+    }
+    /// The destination Back names, or the parent when nothing came before.
+    pub(super) fn back_title(&self) -> Option<String> {
+        if !self.search_query.trim().is_empty() {
+            return None;
+        }
+        match self.history.last() {
+            Some(route) if route.search_open || !route.query.trim().is_empty() => {
+                Some("Search results".into())
+            }
+            Some(route) => Some(self.route_title(route)),
+            None if self.page == Page::DesktopProfiles && self.profiles.review_open() => {
+                Some("Setups".into())
+            }
+            None => self.page.parent().map(|parent| parent.nav_title().into()),
+        }
+    }
+    fn route_title(&self, route: &Route) -> String {
+        match route.page {
+            Page::General if route.recent_open => "Recent changes".into(),
+            Page::General if route.report.is_some() => "Support report".into(),
+            Page::General => match route.app {
+                AppSettingsPage::Home => "Settings".into(),
+                page => page.tab_title().into(),
+            },
+            Page::DesktopDock => match route.bar {
+                crate::desktop::panels::PanelKind::Dock => "Dock".into(),
+                crate::desktop::panels::PanelKind::Panel => "Panel".into(),
+            },
+            page => page.nav_title().into(),
+        }
+    }
+    pub(super) fn go_back(&mut self) -> Task<Message> {
+        // Back completes a gesture just like leaving does.
+        self.flush_edits();
+        let Some(route) = self.history.pop() else {
+            return match self.page.parent() {
+                Some(parent) => {
+                    self.quiet_navigation = true;
+                    let task = self.handle(Message::Page(parent));
+                    self.quiet_navigation = false;
+                    task
+                }
+                None if self.page == Page::General
+                    && self.app_settings_page != AppSettingsPage::Home =>
+                {
+                    self.app_settings_page = AppSettingsPage::Home;
+                    self.support.recent_open = false;
+                    self.support.report = None;
+                    Task::none()
+                }
+                None => Task::none(),
+            };
+        };
+        // Page also schedules a scroll restoration. Give both operations the
+        // same saved offset so unordered task completion cannot restore a newer one.
+        self.page_scroll
+            .insert(route.page.key().into(), route.scroll);
+        self.quiet_navigation = true;
+        let task = self.handle(Message::Page(route.page));
+        self.quiet_navigation = false;
+        self.app_settings_page = route.app;
+        self.object_tab = route.tab;
+        self.arranging = route.arranging && self.canvas.is_some();
+        self.setup_requested = route.setup_requested;
+        self.support.recent_open = route.recent_open;
+        self.support.report = route.report;
+        if route.page == Page::DesktopProfiles {
+            if let Some(selection) = route.setup_review {
+                if self.profiles.selection() != &selection || !self.profiles.review_open() {
+                    self.profiles
+                        .update(super::profiles::Message::Select(selection));
+                }
+            } else {
+                let _ = self.leave_review_to_browse();
+            }
+        }
+        if route.display != self.placement.display
+            && let Some(display) = route.display
+        {
+            self.select_monitor_preview(display);
+        }
+        if route.page == Page::DesktopDock && route.bar != self.desktop.selected {
+            let _ = self
+                .desktop
+                .update(super::desktop::Message::Select(route.bar));
+        }
+        self.search_query = route.query;
+        self.search_open = route.search_open;
+        self.profiles.saved_collection = route.saved_collection;
+        self.page_scroll
+            .insert(route.page.key().into(), route.scroll);
+        Task::batch([
+            task,
+            cosmic::iced::widget::scrollable::scroll_to(
+                cosmic::widget::Id::new("settings-content"),
+                cosmic::iced::widget::scrollable::AbsoluteOffset {
+                    x: None,
+                    y: Some(route.scroll),
+                },
+            ),
+        ])
+    }
+    /// A root click always opens that root's stable landing, from the top.
+    pub(super) fn open_root(&mut self, root: Page) -> Task<Message> {
+        let same = self.page == root && !self.arranging;
+        if root == Page::DesktopProfiles && self.page == root {
+            let _ = self.leave_review_to_browse();
+        }
+        if root == Page::General
+            && self.page == root
+            && self.app_settings_page != AppSettingsPage::Home
+        {
+            self.remember_route();
+        }
+        if !same {
+            self.page_scroll.remove(root.key());
+        }
+        let task = self.handle(Message::Page(root));
+        self.arranging = false;
+        self.search_selected = None;
+        if root == Page::General {
+            self.app_settings_page = AppSettingsPage::Home;
+            self.support.recent_open = false;
+            self.support.report = None;
+        }
+        if root == Page::DesktopProfiles {
+            let _ = self.leave_review_to_browse();
+            self.profiles.saved_collection = false;
+        }
+        self.page_scroll.remove(root.key());
+        Task::batch([
+            task,
+            cosmic::iced::widget::scrollable::snap_to(
+                cosmic::widget::Id::new("settings-content"),
+                cosmic::iced::widget::scrollable::RelativeOffset {
+                    x: None,
+                    y: Some(0.),
+                },
+            ),
+        ])
+    }
+    /// Says what leaving keeps, and parks the shared review engine.
+    pub(super) fn note_leaving(&mut self, next: Page) {
+        self.kept_note = None;
+        if let Some(kind) = preview_kind(self.page)
+            && preview_kind(next) != Some(kind)
+        {
+            let selection = self.profiles.selection().clone();
+            if let Some(title) = self.profiles.park(kind) {
+                use super::profiles::previews::PreviewKind;
+                let target = match kind {
+                    PreviewKind::Theme => KeptTarget::Colors,
+                    PreviewKind::Setup => KeptTarget::Setup(selection),
+                    PreviewKind::Adaptive => KeptTarget::Adaptive,
+                };
+                self.kept_note = Some((format!("{title} kept. Not applied."), target));
+            }
+        }
+        if self.page == Page::DesktopWallpaper && self.wallpaper.dirty() {
+            self.kept_note = Some((
+                "Wallpaper preview kept. Not applied.".into(),
+                KeptTarget::Wallpaper,
+            ));
+        }
+        if self.canvas_visible() && self.canvas_dirty() {
+            self.kept_note = Some((
+                "Widget placement preview kept. Not applied.".into(),
+                KeptTarget::Canvas,
+            ));
+        }
+        if self.page == Page::Notes && self.tools.dirty() {
+            self.kept_note = Some(("Note kept. Not saved yet.".into(), KeptTarget::Note));
+        }
+        if self.page == Page::Builder && self.recipe_editor.dirty() {
+            self.kept_note = Some((
+                "Widget design preview kept. Not applied.".into(),
+                KeptTarget::Page(Page::Builder),
+            ));
+        }
+    }
+    /// Leaves a setup review for the list. Back stays on the Setups screen.
+    pub(super) fn leave_review_to_browse(&mut self) -> Task<Message> {
+        use super::profiles::previews::PreviewKind;
+        let selection = self.profiles.selection().clone();
+        self.kept_note = self.profiles.park(PreviewKind::Setup).map(|title| {
+            (
+                format!("{title} kept. Not applied."),
+                KeptTarget::Setup(selection),
+            )
+        });
+        Task::none()
+    }
+    pub(super) fn resume_kept(&mut self, target: KeptTarget) -> Task<Message> {
+        self.kept_note = None;
+        match target {
+            KeptTarget::Wallpaper => self.handle(Message::Page(Page::DesktopWallpaper)),
+            KeptTarget::Colors => self.handle(Message::Page(Page::Themes)),
+            KeptTarget::Adaptive => self.handle(Message::Page(Page::AdaptiveLooks)),
+            KeptTarget::Setup(selection) => {
+                if self.page == Page::DesktopProfiles && self.profiles.selection() != &selection {
+                    let _ = self.leave_review_to_browse();
+                }
+                let task = self.handle(Message::Page(Page::DesktopProfiles));
+                if self.profiles.selection() != &selection {
+                    self.profiles.resume_kept_selection(&selection);
+                }
+                task
+            }
+            KeptTarget::Canvas | KeptTarget::Placement => {
+                let task = self.handle(Message::Page(Page::Overview));
+                self.arranging = self.canvas.is_some();
+                task
+            }
+            KeptTarget::Note => self.handle(Message::Page(Page::Notes)),
+            KeptTarget::Page(page) => self.handle(Message::Page(page)),
+            KeptTarget::SetupChoices => {
+                self.setup_kept = false;
+                self.wizard = Some(super::open_wizard());
+                Task::none()
+            }
+        }
+    }
+    /// Everything that is waiting. Leaving never applies or discards these.
+    pub(super) fn kept_previews(&self) -> Vec<Kept> {
+        use super::profiles::previews::PreviewKind;
+        let mut items = Vec::new();
+        let mut push = |title: &str, root, conflict, target| {
+            items.push(Kept {
+                title: title.into(),
+                root,
+                conflict,
+                target,
+            });
+        };
+        if self.wallpaper.dirty() {
+            push(
+                "Wallpaper",
+                Page::Overview,
+                self.wallpaper.effect_conflict(),
+                KeptTarget::Wallpaper,
+            );
+        }
+        if self.canvas_dirty() {
+            push(
+                "Widget placement",
+                Page::Overview,
+                false,
+                KeptTarget::Canvas,
+            );
+        } else if self.placement.dirty() {
+            push(
+                "Widget placement",
+                Page::Overview,
+                false,
+                KeptTarget::Placement,
+            );
+        }
+        if self.tools.dirty() {
+            push("Unsaved note", Page::Overview, false, KeptTarget::Note);
+        }
+        if self.recipe_editor.dirty() {
+            push(
+                "Widget design",
+                Page::Overview,
+                false,
+                KeptTarget::Page(Page::Builder),
+            );
+        }
+        // The review on screen counts too, so the list does not jump on leaving.
+        if preview_kind(self.page).is_some() && self.profiles.keeps_intent(self.profiles.owner()) {
+            let (title, root, target) = match self.profiles.owner() {
+                PreviewKind::Theme => ("Appearance", Page::Themes, KeptTarget::Colors),
+                PreviewKind::Setup => (
+                    self.profiles.profile().map_or("Setup", |p| p.name.as_str()),
+                    Page::DesktopProfiles,
+                    KeptTarget::Setup(self.profiles.selection().clone()),
+                ),
+                PreviewKind::Adaptive => {
+                    ("Adaptive look", Page::DesktopProfiles, KeptTarget::Adaptive)
+                }
+            };
+            push(title, root, !self.profiles.conflicts().is_empty(), target);
+        }
+        for parked in self.profiles.parked() {
+            let (title, root, target) = match parked.kind {
+                PreviewKind::Theme => ("Appearance", Page::Themes, KeptTarget::Colors),
+                PreviewKind::Setup => (
+                    parked.title.as_str(),
+                    Page::DesktopProfiles,
+                    KeptTarget::Setup(parked.selection().clone()),
+                ),
+                PreviewKind::Adaptive => {
+                    ("Adaptive look", Page::DesktopProfiles, KeptTarget::Adaptive)
+                }
+            };
+            push(title, root, parked.conflicted(), target);
+        }
+        if self.setup_kept {
+            push(
+                "Setup choices",
+                Page::General,
+                false,
+                KeptTarget::SetupChoices,
+            );
+        }
+        if self.system_appearance.dirty() {
+            push(
+                "Fonts and icons",
+                Page::Themes,
+                false,
+                KeptTarget::Page(Page::DesktopAppearance),
+            );
+        }
+        if self.automation.dirty() {
+            push(
+                "Schedule",
+                Page::DesktopProfiles,
+                false,
+                KeptTarget::Page(Page::DesktopAutomation),
+            );
+        }
+        if self.window_rules.dirty() {
+            push(
+                "Floating apps",
+                Page::Overview,
+                false,
+                KeptTarget::Page(Page::DesktopWindowRules),
+            );
+        }
+        if self.shortcuts.dirty() {
+            push(
+                "Shortcuts",
+                Page::Overview,
+                false,
+                KeptTarget::Page(Page::DesktopShortcuts),
+            );
+        }
+        if self.desktop.dirty() {
+            push(
+                "Dock and panel",
+                Page::Overview,
+                false,
+                KeptTarget::Page(Page::DesktopDock),
+            );
+        }
+        if self.desktop_icons.dirty() {
+            push(
+                "Desktop icons",
+                Page::Overview,
+                false,
+                KeptTarget::Page(Page::DesktopIcons),
+            );
+        }
+        if self.windows.dirty() || self.workspaces.dirty() {
+            push(
+                "Windows and workspaces",
+                Page::Overview,
+                false,
+                KeptTarget::Page(Page::DesktopWindows),
+            );
+        }
+        items
+    }
+    /// The one Undo this screen offers. Ctrl+Z and the button both use it.
+    pub(super) fn undo_target(&self) -> UndoTarget {
+        if self.page == Page::Notes && self.object_tab == ObjectTab::Content {
+            return UndoTarget::Note;
+        }
+        if self.page == Page::Builder {
+            return UndoTarget::Preview(
+                self.recipe_editor
+                    .can_undo_step()
+                    .then_some("widget design edit"),
+            );
+        }
+        if self.page == Page::DesktopWallpaper && self.wallpaper.preview_open() {
+            return UndoTarget::Preview(self.wallpaper.can_undo_step().then_some("wallpaper edit"));
+        }
+        if preview_kind(self.page).is_some() && self.profiles.review_open() {
+            return UndoTarget::Preview(self.profiles.step_label());
+        }
+        if self.canvas_visible() {
+            return UndoTarget::Canvas;
+        }
+        match &self.last_desktop_change {
+            Some((_, label, id)) => UndoTarget::Desktop(id.clone(), label.clone()),
+            None => UndoTarget::None,
+        }
+    }
+    pub(super) fn undo_preview_step(&mut self) -> Task<Message> {
+        if self.page == Page::Builder {
+            self.status = if self.recipe_editor.undo_step() {
+                "Widget design edit undone"
+            } else {
+                "Nothing to undo in this widget design"
+            }
+            .into();
+            self.error = false;
+            self.checkpoint_session_drafts();
+            return Task::none();
+        }
+        if self.page == Page::DesktopWallpaper {
+            match self.wallpaper.undo_step() {
+                Ok(true) => {
+                    self.rain.clear();
+                    self.status = "Undid a preview change".into();
+                    self.error = false;
+                }
+                Ok(false) => {
+                    self.status = "Nothing to undo in this preview".into();
+                    self.error = false;
+                }
+                Err(error) => self.failed(error),
+            }
+            self.checkpoint_session_drafts();
+            return self.media_tasks();
+        }
+        if preview_kind(self.page).is_some() {
+            self.status = if self.profiles.undo_step() {
+                "Undid a preview change"
+            } else {
+                "Nothing to undo in this preview"
+            }
+            .into();
+            self.error = false;
+            self.checkpoint_session_drafts();
+            return self.media_tasks();
+        }
+        Task::none()
+    }
+    /// Position shares the landing's placement editor, right here in this tab.
+    pub(super) fn open_position(&mut self, widget: crate::drawer::Widget) -> Task<Message> {
+        self.object_tab = ObjectTab::Position;
+        let start = if self.legacy_layout_recovery() {
+            Task::none()
+        } else {
+            self.update_canvas(super::canvas::Message::Start)
+        };
+        // Selecting comes after the editor opens; the listener is admitted then.
+        let selection =
+            self.update_placement(super::placement::Message::Select(widget.key().into()));
+        Task::batch([start, selection])
+    }
+    pub(super) fn select_object_tab(&mut self, tab: ObjectTab) -> Task<Message> {
+        let Some(widget) = widget_of(self.page) else {
+            self.object_tab = tab;
+            return Task::none();
+        };
+        if self.object_tab == tab {
+            return Task::none();
+        }
+        if tab == ObjectTab::Position {
+            let combined = self.config.glance.enabled
+                && matches!(
+                    widget,
+                    crate::drawer::Widget::Clock
+                        | crate::drawer::Widget::Weather
+                        | crate::drawer::Widget::Calendar
+                );
+            let selected = if combined {
+                crate::drawer::Widget::Glance
+            } else {
+                widget
+            };
+            return self.open_position(selected);
+        }
+        // Leaving the tab keeps the placement draft; only a gesture stops.
+        self.placement.leave();
+        self.object_tab = tab;
+        cosmic::iced::widget::scrollable::snap_to(
+            cosmic::widget::Id::new("settings-content"),
+            cosmic::iced::widget::scrollable::RelativeOffset {
+                x: None,
+                y: Some(0.),
+            },
+        )
+    }
+}

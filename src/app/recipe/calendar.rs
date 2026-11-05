@@ -22,7 +22,7 @@ pub(in crate::app) fn reading(
             days.first()
                 .copied()
                 .unwrap_or(now.date_naive())
-                .format("%A, %-d %B")
+                .format("%A, %B %-d")
                 .to_string(),
         ),
         agenda_empty: if data.is_some() {

@@ -31,7 +31,7 @@ The widget builder customizes Clock, Weather, Calendar, System monitor, Music an
 
 ## 3. Dock and panel customization
 
-Applet arrangement, spacing, size, opacity, corners and auto-hide. **Islands** separates applets into floating groups; **Penumbra** fades bar backgrounds into the wallpaper. Both are optional and included in the package.
+Applet arrangement, spacing, size, opacity, corners and auto-hide. **Islands** separates applets into floating groups; **Penumbra** fades bar backgrounds into the wallpaper. Both are optional and included in the package. The **Activity island** (beta) shows music, meetings, notifications and camera or microphone use in the middle of an Islands panel.
 
 [![Illustrated close-up of Islands panel groups and dock beside Penumbra bar fades](docs/presentation/055-readme/panel-elements-dark.png)](docs/presentation/055-readme/panel-elements-dark.png)
 
@@ -91,7 +91,7 @@ sudo dnf install ./cosmic-ext-halcyon-*.x86_64.rpm
 
 Fresh installations configure the signed update source. Future updates arrive through **COSMIC Store → Updates**, APT or DNF. Automatic installation follows your OS settings; disabled or modified sources stay that way.
 
-To activate the optional panel component, open **Desktop → Dock & panel → Enable for next login**, then log out and back in when convenient. Halcyon and the panel component update together.
+To activate the optional panel component, open **Dock and panel → Enable for next login**, then log out and back in when convenient. Halcyon and the panel component update together.
 
 [Installation & updates](docs/DISTRIBUTION.md) · [Fedora package details](docs/FEDORA-PACKAGING.md)
 

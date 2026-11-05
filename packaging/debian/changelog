@@ -1,3 +1,13 @@
+cosmic-ext-halcyon (0.6.0) unstable; urgency=medium
+
+  * Add the Activity island (beta): music, meetings, notifications and
+    camera or microphone use in the top panel.
+  * Add Rainy evening, First snow and Morning fog setups with new wallpapers.
+  * Rearrange built-in setups; allow much more see-through widgets.
+  * Rearrange Settings by what you change; add release notes in Updates.
+
+ -- profilaz3 <261673162+profilaz3@users.noreply.github.com>  Thu, 05 Nov 2026 12:00:00 +0000
+
 cosmic-ext-halcyon (0.5.6) unstable; urgency=medium
 
   * Add native Fedora 44 packages and signed DNF updates.

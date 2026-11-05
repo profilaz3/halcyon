@@ -1,6 +1,6 @@
 //! A local composition of existing widget style and placement fields. Config
 //! remains authoritative; one guarded store commit owns Apply and its Undo.
-use super::{Config, Message as AppMessage, Page, Settings, placement};
+use super::{Config, Message as AppMessage, Settings, placement};
 use crate::desktop::{actions, store::widget};
 use cosmic::app::Task;
 use serde_json::{Value, json};
@@ -144,7 +144,14 @@ impl Draft {
     fn restore_style(&mut self, pointer: &str, value: Value) -> Result<(), String> {
         // Saved pointers already name their layer. Never reinterpret them using
         // the active moment when this draft is reopened.
-        if !STYLES.iter().any(|p| self.target(p) == pointer)
+        let monitor = pointer
+            .strip_prefix("/widget_monitors/")
+            .and_then(|p| p.split_once('/'))
+            .is_some_and(|(key, field)| {
+                crate::drawer::Widget::parse(key).is_some()
+                    && matches!(field, "display" | "hide_disconnected")
+            });
+        if (!STYLES.iter().any(|p| self.target(p) == pointer) && !monitor)
             || !widget::field(pointer).is_some_and(|field| field.accepts(&value))
         {
             return Err("Unsupported canvas style".into());
@@ -207,6 +214,37 @@ pub(super) fn capture_style(value: &Value) -> Option<Message> {
     Some(Message::Style(pointer, value.get("value")?.clone()))
 }
 impl Settings {
+    /// Widget location belongs to the same placement preview as its geometry.
+    /// Existing monitor assignments outside Position keep their live contract.
+    pub(super) fn preview_widget_monitor(
+        &mut self,
+        widget: crate::drawer::Widget,
+        field: &str,
+        value: Value,
+    ) {
+        if self.canvas.is_none() {
+            let _ = self.update_canvas(Message::Start);
+        }
+        self.placement.canvas_stop_gesture();
+        let geometry = self.placement.state();
+        let Some(draft) = self.canvas.as_mut() else {
+            return;
+        };
+        let before = draft.styles.clone();
+        match draft.restore_style(&format!("/widget_monitors/{}/{field}", widget.key()), value) {
+            Ok(()) => {
+                if draft.styles != before {
+                    let next = std::mem::replace(&mut draft.styles, before);
+                    draft.remember(geometry);
+                    draft.styles = next;
+                }
+                self.refresh_canvas();
+                self.status = "Previewing widget location · Apply when ready".into();
+                self.error = false;
+            }
+            Err(error) => self.failed(error),
+        }
+    }
     pub(super) fn canvas_retarget(&mut self) {
         if !self.canvas_dirty()
             && let Some(draft) = self.canvas.as_mut()
@@ -215,7 +253,7 @@ impl Settings {
         }
     }
     pub(super) fn canvas_config(&self) -> &Config {
-        if self.page == Page::Overview {
+        if self.canvas_visible() {
             self.canvas
                 .as_ref()
                 .map_or(&self.config, |draft| &draft.projected)
@@ -264,6 +302,7 @@ impl Settings {
                     Ok(draft) => {
                         self.placement.canvas_end(&self.config);
                         self.canvas = Some(draft);
+                        self.arranging = true;
                         self.status.clear();
                         self.error = false;
                     }
@@ -311,6 +350,7 @@ impl Settings {
                 if self.canvas.take().is_some() {
                     self.placement.canvas_end(&self.config);
                     self.font_menu = None;
+                    self.arranging = false;
                     self.status = "Canvas discarded".into();
                     self.error = false;
                 }
@@ -345,6 +385,19 @@ impl Settings {
         }
         Task::none()
     }
+    /// Leaving the arranging view keeps what you did: changes are saved
+    /// (and Undo can take them back); with none, it just closes.
+    pub(super) fn canvas_done(&self) -> Option<AppMessage> {
+        let draft = self.canvas.as_ref()?;
+        if self.native_busy || self.placement.dragging() {
+            return None;
+        }
+        Some(AppMessage::Canvas(if self.canvas_dirty() {
+            Message::Apply(draft.id)
+        } else {
+            Message::Cancel
+        }))
+    }
     pub(super) fn finish_canvas(
         &mut self,
         id: u64,
@@ -357,6 +410,7 @@ impl Settings {
             Ok(config) => {
                 self.config = config;
                 self.canvas = None;
+                self.arranging = false;
                 self.placement.canvas_end(&self.config);
                 self.font_menu = None;
                 let task = self.after_desktop_change();
@@ -424,6 +478,7 @@ impl Settings {
         placement.restore_session(saved.layout)?;
         self.placement = placement;
         self.canvas = Some(draft);
+        self.arranging = true;
         self.refresh_canvas();
         Ok(())
     }

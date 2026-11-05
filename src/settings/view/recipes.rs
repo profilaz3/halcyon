@@ -6,11 +6,20 @@ fn edit(message: Edit) -> Message {
     Message::Recipe(message)
 }
 impl Settings {
+    /// Make your own version of a widget: the sample on top, then what it
+    /// is, its parts in order, and housekeeping last.
     pub(super) fn recipe_page(&self) -> Element<'_, Message> {
         let editor = &self.recipe_editor;
         let recipe = &editor.draft;
         let busy = self.native_busy;
-        let mut content = vec![heading("Widget builder", "")];
+        let accent = self.settings_accent();
+        let mut content = vec![heading(
+            "Widget builder",
+            "Make your own version of a widget from parts.",
+        )];
+        if !self.design.managed {
+            content.push(self.design_section(None));
+        }
         if let Some(notice) = &editor.notice {
             content.push(label(
                 notice,
@@ -22,68 +31,17 @@ impl Settings {
                 },
             ));
         }
-        if !self.design.managed {
-            content.push(self.design_section());
-        }
-        let mut library = vec![
-            row::with_children(
-                std::iter::once(label("New", 12., MUTED))
-                    .chain(Kind::ALL.into_iter().map(|kind| {
-                        button::text(if kind == Kind::System {
-                            "System"
-                        } else {
-                            kind.title()
-                        })
-                        .on_press_maybe((!busy).then(|| edit(Edit::New(kind))))
-                        .into()
-                    }))
-                    .collect::<Vec<_>>(),
-            )
-            .spacing(8)
-            .wrap()
-            .into(),
-        ];
-        if !editor.library_labels.is_empty() {
-            let ids = editor.library_ids.clone();
-            library.push(
-                cosmic::widget::dropdown(
-                    &editor.library_labels,
-                    editor.library_ids.iter().position(|id| id == &recipe.id),
-                    move |i| edit(Edit::Load(ids.get(i).cloned().unwrap_or_default())),
-                )
-                .into(),
-            );
-        }
-        content.push(column::with_children(library).spacing(8).into());
-        if recipe.kind == Kind::Calendar && self.config.glance.enabled {
-            content.push(split(
-                label("Calendar is currently part of Daily overview.", 12., MUTED),
-                button::text("Widget visibility…")
-                    .on_press(Message::Page(Page::Widgets))
-                    .into(),
-            ));
-        }
-        let name_editor: Element<'_, Message> = text_input("Widget name", &recipe.name)
-            .id(cosmic::widget::Id::new("recipe-name"))
-            .on_input(|value| edit(Edit::Name(value)))
-            .into();
-        let controls = segmented(
-            vec![
-                (
-                    "Compact".into(),
-                    !editor.wide,
-                    Some(edit(Edit::Wide(false))),
-                ),
-                ("Wide".into(), editor.wide, Some(edit(Edit::Wide(true)))),
-            ],
-            self.settings_accent(),
-        );
         let sample_size = if recipe.tool() && !editor.wide {
             recipe.tool_size()
         } else if editor.wide {
-            [520., 220.]
+            [520., 200.]
         } else {
-            [320., 220.]
+            // About the size each widget really has on the desktop.
+            match recipe.kind {
+                Kind::Clock => [320., 150.],
+                Kind::Weather => [360., 180.],
+                _ => [320., 200.],
+            }
         };
         let sample = if recipe.tool() {
             crate::tools::cards::recipe::sample(
@@ -94,170 +52,124 @@ impl Settings {
             )
             .map(|_| Message::Preview)
         } else {
-            crate::app::settings_recipe_preview(&self.config, recipe, editor.missing, sample_size)
+            crate::app::settings_recipe_preview(&self.config, recipe, false, sample_size)
                 .map(|_| Message::Preview)
         };
-        let preview_width = if recipe.tool() {
-            (self.content_width() - 16.) * 0.5 - 48.
+        // Tall widgets (a sleeve with artwork, a ring timer) get a taller
+        // stage so their text stays readable.
+        let stage_height = if sample_size[1] > 240. {
+            (sample_size[1] * 0.85 + 28.).min(300.)
         } else {
-            self.stage_width().max(240.) - 28.
+            self.stage_height().min(260.).max(180.)
         };
-        let preview_height = if recipe.tool() {
-            (sample_size[1] * ((preview_width - 28.) / sample_size[0]).min(1.)).min(300.)
-        } else {
-            self.stage_height().min(260.)
-        };
-        let sample = self.preview_stage(super::sample::thumbnail(
-            sample,
-            sample_size,
-            [preview_width.max(180.) - 28., preview_height],
-        ));
-        let preview = group(
-            None,
-            vec![
-                self.preview_header("Sample preview", false),
-                controls,
+        content.push(
+            container(self.preview_stage(super::sample::thumbnail(
                 sample,
-                if recipe.tool() {
-                    let states = PreviewState::choices(recipe.kind);
-                    let labels: Vec<_> = states
-                        .iter()
-                        .map(|s| {
-                            if *s == PreviewState::Active {
-                                if recipe.kind == Kind::Music {
-                                    "Playing"
-                                } else {
-                                    "Running"
-                                }
-                            } else {
-                                s.title()
-                            }
-                        })
-                        .collect();
-                    row::with_children(vec![
-                        label("Preview state", 13., MUTED),
-                        cosmic::widget::dropdown(
-                            labels,
-                            states.iter().position(|s| *s == editor.preview_state),
-                            move |i| edit(Edit::PreviewState(states[i])),
-                        )
-                        .into(),
-                    ])
-                    .spacing(12)
-                    .align_y(Alignment::Center)
-                    .into()
-                } else if matches!(recipe.kind, Kind::Weather | Kind::Calendar | Kind::System) {
-                    segmented(
-                        vec![
-                            (
-                                if recipe.kind == Kind::Calendar {
-                                    "Sample agenda"
-                                } else if recipe.kind == Kind::System {
-                                    "Sample readings"
-                                } else {
-                                    "Sample weather"
-                                }
-                                .into(),
-                                !editor.missing,
-                                Some(edit(Edit::Missing(false))),
-                            ),
-                            (
-                                if recipe.kind == Kind::Calendar {
-                                    "Not connected"
-                                } else if recipe.kind == Kind::System {
-                                    "Unavailable"
-                                } else {
-                                    "Missing location"
-                                }
-                                .into(),
-                                editor.missing,
-                                Some(edit(Edit::Missing(true))),
-                            ),
-                        ],
-                        self.settings_accent(),
-                    )
-                } else {
-                    label("Uses your current style and font.", 12., MUTED)
-                },
-            ],
+                sample_size,
+                [(self.content_width() - 60.).max(180.), stage_height - 28.],
+            )))
+            .id(cosmic::widget::Id::new("recipe-stage"))
+            .width(Length::Fill)
+            .into(),
         );
-        let wide = editor.wide;
-        let arrangement = if wide { recipe.wide } else { recipe.compact };
-        let mut parts = vec![split(
-            label(
-                if wide {
-                    "Wide layout"
-                } else {
-                    "Compact layout"
-                },
-                14.,
-                FG,
-            ),
+        let mut widget_rows = vec![group_row(
+            "Type",
+            "",
             segmented(
-                Arrangement::ALL
+                Kind::ALL
                     .into_iter()
-                    .map(|value| {
+                    .map(|kind| {
                         (
-                            value.title().into(),
-                            value == arrangement,
-                            Some(edit(Edit::Arrangement(wide, value))),
+                            if kind == Kind::System {
+                                "System".into()
+                            } else {
+                                kind.title().into()
+                            },
+                            kind == recipe.kind,
+                            (!busy && kind != recipe.kind).then(|| edit(Edit::New(kind))),
                         )
                     })
                     .collect(),
-                self.settings_accent(),
+                accent,
             ),
         )];
-        for (i, part) in recipe.parts.iter().enumerate() {
-            parts.push(split(
-                label(part.title(), 14., FG),
-                row::with_children(vec![
-                    button::text("Up")
-                        .on_press_maybe((!busy && i > 0).then(|| edit(Edit::Move(i, true))))
-                        .into(),
-                    button::text("Down")
-                        .on_press_maybe(
-                            (!busy && i + 1 < recipe.parts.len())
-                                .then(|| edit(Edit::Move(i, false))),
-                        )
-                        .into(),
-                    button::text("Remove")
-                        .on_press_maybe(
-                            (!busy && recipe.can_remove(i)).then(|| edit(Edit::Remove(i))),
-                        )
-                        .into(),
-                ])
-                .spacing(4)
-                .wrap()
+        if !editor.library_labels.is_empty() {
+            let ids = editor.library_ids.clone();
+            widget_rows.push(group_row(
+                "Saved designs",
+                "",
+                cosmic::widget::dropdown(
+                    &editor.library_labels,
+                    editor.library_ids.iter().position(|id| id == &recipe.id),
+                    move |i| edit(Edit::Load(ids.get(i).cloned().unwrap_or_default())),
+                )
                 .into(),
             ));
         }
-        let available = recipe
-            .kind
-            .parts()
-            .iter()
-            .filter(|p| !recipe.parts.contains(p))
-            .map(|p| {
-                button::text(format!("+ {}", p.title()))
-                    .on_press_maybe((!busy && recipe.parts.len() < 8).then(|| edit(Edit::Add(*p))))
-                    .into()
-            })
-            .collect::<Vec<_>>();
-        if !available.is_empty() {
-            parts.push(row::with_children(available).spacing(4).wrap().into());
-        }
-        if recipe.parts.contains(&Part::Caption) {
-            parts.push(
-                text_input("Caption", &recipe.caption)
-                    .on_input(|value| edit(Edit::Caption(value)))
-                    .into(),
-            );
-        }
-        parts.push(self.help("recipe-parts", "Parts", "Small widgets keep the main reading and controls. Optional details collapse when space runs out. Music without artwork uses the full width. Previews use sample data and never control your player or timer."));
-        let mut details = vec![name_editor];
+        widget_rows.push(group_row(
+            "Name",
+            "",
+            container(
+                text_input("My widget", &recipe.name)
+                    .id(cosmic::widget::Id::new("recipe-name"))
+                    .on_input(|value| edit(Edit::Name(value))),
+            )
+            .width(240)
+            .into(),
+        ));
+        widget_rows.push(group_row(
+            "Size",
+            "",
+            segmented(
+                vec![
+                    ("Small".into(), !editor.wide, Some(edit(Edit::Wide(false)))),
+                    ("Wide".into(), editor.wide, Some(edit(Edit::Wide(true)))),
+                ],
+                accent,
+            ),
+        ));
         if recipe.tool() {
-            details.push(group(
-                Some("Design"),
-                vec![segmented(
+            let states = PreviewState::choices(recipe.kind);
+            let labels: Vec<_> = states
+                .iter()
+                .map(|s| {
+                    if *s == PreviewState::Active {
+                        if recipe.kind == Kind::Music {
+                            "Playing"
+                        } else {
+                            "Running"
+                        }
+                    } else {
+                        s.title()
+                    }
+                })
+                .collect();
+            widget_rows.push(group_row(
+                "Show it while",
+                "",
+                cosmic::widget::dropdown(
+                    labels,
+                    states.iter().position(|s| *s == editor.preview_state),
+                    move |i| edit(Edit::PreviewState(states[i])),
+                )
+                .into(),
+            ));
+        }
+        if recipe.kind == Kind::Calendar && self.config.glance.enabled {
+            widget_rows.push(group_row(
+                "Calendar is part of Daily overview now",
+                "Your design shows when Calendar has its own card",
+                button::text("Widgets")
+                    .on_press(Message::Page(Page::Widgets))
+                    .into(),
+            ));
+        }
+        content.push(group(Some("Basics"), widget_rows));
+        if recipe.tool() {
+            let mut look = vec![group_row(
+                "Start from",
+                "",
+                segmented(
                     Recipe::template_names(recipe.kind)
                         .iter()
                         .enumerate()
@@ -269,11 +181,11 @@ impl Settings {
                             )
                         })
                         .collect(),
-                    self.settings_accent(),
-                )],
-            ));
+                    accent,
+                ),
+            )];
             let mut finishes = vec![(
-                "Desktop".into(),
+                "Same as others".into(),
                 recipe.finish.is_none(),
                 Some(edit(Edit::Finish(None))),
             )];
@@ -284,86 +196,185 @@ impl Settings {
                     Some(edit(Edit::Finish(Some(finish)))),
                 )
             }));
-            details.push(group(
-                Some("Finish"),
-                vec![segmented(finishes, self.settings_accent())],
+            look.push(group_row(
+                "Card style",
+                "Pick a finish, or keep the one your other widgets use",
+                segmented(finishes, accent),
             ));
             if recipe.kind == Kind::Focus {
-                details.push(segmented(
-                    vec![
-                        (
-                            "Ring".into(),
-                            recipe.timer_face == Some(TimerFace::Ring),
-                            Some(edit(Edit::TimerFace(TimerFace::Ring))),
-                        ),
-                        (
-                            "Digits".into(),
-                            recipe.timer_face != Some(TimerFace::Ring),
-                            Some(edit(Edit::TimerFace(TimerFace::Digits))),
-                        ),
-                    ],
-                    self.settings_accent(),
+                look.push(group_row(
+                    "Timer",
+                    "",
+                    segmented(
+                        vec![
+                            (
+                                "Ring".into(),
+                                recipe.timer_face == Some(TimerFace::Ring),
+                                Some(edit(Edit::TimerFace(TimerFace::Ring))),
+                            ),
+                            (
+                                "Digits".into(),
+                                recipe.timer_face != Some(TimerFace::Ring),
+                                Some(edit(Edit::TimerFace(TimerFace::Digits))),
+                            ),
+                        ],
+                        accent,
+                    ),
                 ));
             }
-            details.push(
-                button::text(if recipe.kind == Kind::Music {
-                    "Player settings…"
-                } else {
-                    "Timer settings…"
-                })
-                .on_press(Message::Page(if recipe.kind == Kind::Music {
-                    Page::Music
-                } else {
-                    Page::Focus
-                }))
+            content.push(group(Some("Look"), look));
+        }
+        let wide = editor.wide;
+        let arrangement = if wide { recipe.wide } else { recipe.compact };
+        let mut parts = vec![group_row(
+            "Layout",
+            if wide {
+                "When the widget is wide"
+            } else {
+                "When the widget is small"
+            },
+            segmented(
+                Arrangement::ALL
+                    .into_iter()
+                    .map(|value| {
+                        (
+                            value.title().into(),
+                            value == arrangement,
+                            Some(edit(Edit::Arrangement(wide, value))),
+                        )
+                    })
+                    .collect(),
+                accent,
+            ),
+        )];
+        // Every row has the same three buttons in the same place; a move
+        // that can't happen is dimmed.
+        let tool = |name: &'static str, tip: &'static str, message: Option<Message>| {
+            let control: Element<'_, Message> = match message {
+                Some(message) => cosmic::widget::tooltip(
+                    button::icon(icon::from_name(name).size(16)).on_press(message),
+                    text::body(tip),
+                    cosmic::widget::tooltip::Position::Top,
+                )
+                .into(),
+                None => container(
+                    icon::from_name(name)
+                        .size(16)
+                        .icon()
+                        // Symbolic tints ignore alpha, so dim with a solid grey.
+                        .class(cosmic::theme::Svg::custom(|_| {
+                            cosmic::iced::widget::svg::Style {
+                                color: Some(Color::from_rgb(0.36, 0.36, 0.38)),
+                            }
+                        })),
+                )
+                .padding(8)
+                .into(),
+            };
+            container(control)
+                .width(36)
+                .align_x(Alignment::Center)
+                .into()
+        };
+        for (i, part) in recipe.parts.iter().enumerate() {
+            parts.push(split(
+                label(part.title(), 14., FG),
+                row::with_children(vec![
+                    tool(
+                        "go-up-symbolic",
+                        "Move up",
+                        (!busy && i > 0).then(|| edit(Edit::Move(i, true))),
+                    ),
+                    tool(
+                        "go-down-symbolic",
+                        "Move down",
+                        (!busy && i + 1 < recipe.parts.len()).then(|| edit(Edit::Move(i, false))),
+                    ),
+                    tool(
+                        "edit-delete-symbolic",
+                        "Remove",
+                        (!busy && recipe.can_remove(i)).then(|| edit(Edit::Remove(i))),
+                    ),
+                ])
+                .spacing(2)
+                .into(),
+            ));
+            if *part == Part::Caption {
+                parts.push(
+                    text_input("Caption text", &recipe.caption)
+                        .on_input(|value| edit(Edit::Caption(value)))
+                        .into(),
+                );
+            }
+        }
+        let available = recipe
+            .kind
+            .parts()
+            .iter()
+            .filter(|p| !recipe.parts.contains(p))
+            .map(|p| {
+                button::standard(p.title())
+                    .leading_icon(icon::from_name("list-add-symbolic").size(14))
+                    .on_press_maybe((!busy && recipe.parts.len() < 8).then(|| edit(Edit::Add(*p))))
+                    .into()
+            })
+            .collect::<Vec<_>>();
+        if !available.is_empty() {
+            parts.push(
+                column::with_children(vec![
+                    label("Add a part", 14., FG),
+                    row::with_children(available).spacing(6).wrap().into(),
+                ])
+                .spacing(8)
                 .into(),
             );
         }
-        details.push(group(Some("Parts"), parts));
-        let inspector: Element<'_, Message> = column::with_children(details).spacing(16).into();
-        content.push(if recipe.tool() && self.content_width() >= 560. {
-            row::with_children(vec![
-                container(preview).width(Length::FillPortion(1)).into(),
-                container(inspector).width(Length::FillPortion(1)).into(),
-            ])
-            .spacing(16)
-            .into()
-        } else {
-            self.inspector_layout(preview, inspector, "recipe")
-        });
-        content.push(
-            row::with_children(vec![
-                button::text("Make a copy")
+        content.push(group(Some("Parts, top to bottom"), parts));
+        let mut more = vec![
+            group_row(
+                "Save without using it",
+                "It waits under Saved designs",
+                button::standard("Save")
+                    .id(cosmic::widget::Id::new("recipe-save"))
+                    .on_press_maybe((!busy).then(|| edit(Edit::Save)))
+                    .into(),
+            ),
+            group_row(
+                "Make a copy",
+                "Start a new design from this one",
+                button::standard("Copy")
                     .on_press_maybe((!busy).then(|| edit(Edit::Duplicate)))
                     .into(),
-                button::text("Reload library")
-                    .on_press_maybe((!busy).then(|| edit(Edit::Reload)))
+            ),
+            group_row(
+                format!("Go back to the built-in {}", recipe.kind.title().to_lowercase()),
+                "Your designs stay saved",
+                button::standard("Use built-in")
+                    .on_press_maybe((!busy && self.design.managed).then(|| edit(Edit::UseBuiltin)))
                     .into(),
-                button::text("Delete saved widget…")
-                    .on_press_maybe(
-                        (!busy && editor.expected.is_some()).then(|| edit(Edit::Delete)),
-                    )
+            ),
+        ];
+        if editor.expected.is_some() {
+            more.push(group_row(
+                "Delete this design",
+                "",
+                button::standard("Delete…")
+                    .on_press_maybe((!busy).then(|| edit(Edit::Delete)))
                     .into(),
-            ])
-            .spacing(8)
-            .wrap()
-            .into(),
-        );
-        if editor.delete_review {
-            content.push(group(
-                Some("Delete this library copy?"),
-                vec![
-                    label(
-                        "Applied widgets and saved setups keep their own copy.",
-                        13.,
-                        MUTED,
-                    ),
-                    button::destructive("Delete saved widget")
-                        .on_press_maybe((!busy).then(|| edit(Edit::ConfirmDelete)))
-                        .into(),
-                ],
             ));
         }
+        if editor.delete_review {
+            more.push(split(
+                detail(
+                    "Delete this design?",
+                    "Widgets already using it keep their own copy.",
+                ),
+                button::destructive("Delete")
+                    .on_press_maybe((!busy).then(|| edit(Edit::ConfirmDelete)))
+                    .into(),
+            ));
+        }
+        content.push(group(Some("More"), more));
         column::with_children(content).spacing(16).into()
     }
 }
@@ -372,40 +383,41 @@ impl Settings {
     pub(super) fn recipe_actions(&self) -> Element<'_, Message> {
         let recipe = &self.recipe_editor.draft;
         let busy = self.native_busy;
-        let save = button::standard("Save to library").id(cosmic::widget::Id::new("recipe-save"));
-        let apply = button::suggested(format!("Apply to {}", recipe.kind.title()))
+        let apply = button::suggested("Use this design")
             .id(cosmic::widget::Id::new("recipe-apply"));
-        let mut actions = vec![
-            if busy {
-                save.into()
-            } else {
-                save.on_press(edit(Edit::Save)).into()
-            },
-            button::text("Use built-in")
-                .on_press_maybe((!busy && self.design.managed).then(|| edit(Edit::UseBuiltin)))
-                .into(),
-        ];
-        if let Some(undo) = self.page_undo_button() {
-            actions.push(undo);
-        }
-        actions.push(cosmic::widget::space().width(Length::Fill).into());
-        actions.push(
+        let applied = self.config.recipes.get(recipe.kind) == Some(recipe);
+        let actions = self.preview_bar(
+            label(
+                if applied {
+                    format!("Your {} uses this design", recipe.kind.title())
+                } else if !self.design.managed {
+                    "Press Get ready… above to use this design".into()
+                } else {
+                    format!("Not on your {} yet", recipe.kind.title())
+                },
+                12.,
+                MUTED,
+            ),
+            self.recipe_editor.can_undo_step(),
+            vec![
+            ],
+            edit(Edit::Discard),
+            "recipe-discard",
             apply
-                .on_press_maybe((!busy && self.design.managed).then(|| edit(Edit::Apply)))
+                .on_press_maybe((!busy && self.design.managed && !applied).then(|| edit(Edit::Apply)))
                 .into(),
         );
-        let actions: Element<'_, Message> = row::with_children(actions)
-            .spacing(8)
-            .align_y(Alignment::Center)
-            .into();
         let mut content = Vec::new();
-        if let Some(error) = self.page_error() {
+        if let Some(error) = self
+            .recipe_editor
+            .error
+            .then_some(self.recipe_editor.notice.as_deref())
+            .flatten()
+            .or_else(|| self.page_error())
+        {
             content.push(label(error, 12., desktop::ERROR));
         }
         content.push(actions);
-        container(column::with_children(content).spacing(6))
-            .padding([8, 20])
-            .width(Length::Fill)
-            .into()
+        column::with_children(content).spacing(6).into()
     }
 }

@@ -2,8 +2,8 @@
 
 [Penumbra Panel](https://github.com/motixo/penumbra-panel) gives COSMIC bars a
 theme-aware background that fades into the wallpaper. In Halcyon it is an
-independent optional mod, with its own **Penumbra** control inside **Style** on
-**Desktop → Dock & panel**. Choose Dock or Panel and switch **Penumbra** on or off. Each bar
+independent optional mod, with its own **Penumbra** control on
+**Desktop → Panel or Dock → Design**. Switch **Penumbra** on or off. Each bar
 has a separate preference. The switch follows the editor's normal action and
 persistent Undo path; another program's newer edits are protected.
 
@@ -33,11 +33,37 @@ styling continues to respect **Keep style on maximize**.
 
 ## Enable the included panel host
 
-Halcyon 0.5 includes both mods in its single package. In **Desktop → Dock & panel**,
-choose **Enable for next login**, then log out and back in when convenient.
-The running desktop stays in place until then. Use **Style → Penumbra** on each
-bar; its layout can remain **Standard**. System updates replace the app and panel
+Halcyon 0.5 includes both mods in its single package. When the package is installed
+but its panel is disabled, **Penumbra → Enable for next login** prepares it.
+Log out and back in when convenient, then turn **Penumbra** on for each bar.
+The running desktop stays in place until then; its layout can remain **Standard**.
+System updates replace the app and panel
 component together.
+
+## If the switch is unavailable
+
+Penumbra needs a COSMIC session and a running Halcyon panel that reports Penumbra
+support. Installing the app alone does not replace an already-running panel.
+Islands layout is optional; it does not need to be turned on.
+
+- **Older manual panel:** early Islands builds do not contain Penumbra. Use
+  **Setup & updates** beside the switch to install the current Halcyon package,
+  then activate its included panel. Do not layer the standalone Penumbra installer
+  over an existing Halcyon selector.
+  If an older per-user launcher still opens the local build, run
+  `/usr/bin/halcyon --settings` after installing the package. Panel activation
+  requires the verified packaged app.
+- **Installed but disabled:** use **Enable for next login** beside the switch.
+- **Ready for the next login:** save your work and sign out/back in when convenient.
+  Halcyon does not sign you out or restart the panel automatically.
+- **Panel unavailable or incompatible:** check setup and diagnostics. A saved
+  Islands preference is not proof that its panel is running. **Check again**
+  refreshes the installation and live capabilities.
+
+If the switch works but the fade is invisible, check **Background opacity** and
+whether the selected bar is visible. Zero background opacity makes the ordinary
+fade transparent. **Keep style on maximize** overrides **Maximized opacity**.
+Enabling Penumbra disables Floating for that bar in the same undoable change.
 
 ## Build the shared panel host
 

@@ -94,7 +94,7 @@ impl Settings {
             ),
             step(
                 "1",
-                "Widgets · My widgets",
+                "Desktop · Widgets",
                 if self.service.running {
                     "Running".into()
                 } else {
@@ -117,10 +117,7 @@ impl Settings {
             ),
             separator(),
             split(
-                detail(
-                    "App settings · Start at sign-in",
-                    "Run Halcyon when you sign in.",
-                ),
+                detail("Settings · Startup", "Run Halcyon when you sign in."),
                 startup.into(),
             ),
             separator(),

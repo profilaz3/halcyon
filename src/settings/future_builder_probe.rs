@@ -31,7 +31,7 @@ fn measure_curated_presets() {
     let (mut app, _) = Settings::init(Core::default(), Page::DesktopProfiles);
     app.wizard = None;
     let mut rows = Vec::new();
-    for name in ["tidal", "paper-studio", "moss", "carbon"] {
+    for name in ["tidal", "paper-studio", "carbon", "rain"] {
         app.profiles
             .update(profiles::Message::Select(profiles::Selection::Preset(name)));
         for _ in 0..4 {

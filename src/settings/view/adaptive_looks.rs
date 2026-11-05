@@ -3,66 +3,129 @@ use crate::automation::solar::Source;
 use crate::desktop::profiles::adaptive::{Look, Phase};
 
 impl Settings {
+    /// One look that follows the sun: pick it, see it at each time of day,
+    /// then let it change on its own.
     pub(super) fn adaptive_looks_page(&self) -> Element<'_, Message> {
         let look = self.adaptive_look;
         let phase = self.adaptive_phase;
         let accent = self.settings_accent();
-        let compact = self.content_width() < 800.;
-        let preview = column::with_children(vec![
-            segmented(
-                Phase::ALL
-                    .into_iter()
-                    .map(|p| {
-                        (
-                            p.title().into(),
-                            p == phase,
-                            Some(Message::AdaptivePreview(look, p)),
-                        )
-                    })
-                    .collect(),
-                accent,
-            ),
-            self.profile_preview(if compact { 170. } else { 350. }),
-            label("Local preview · sample content", 11., MUTED),
-        ])
-        .spacing(8)
-        .into();
         let has_rules=self.automation.settings().is_ok_and(|s| s.rules.iter().any(|r| matches!(&r.profile,crate::automation::ProfileRef::Preset(id) if id.starts_with("adaptive-"))));
-        let available = self.automation.solar.city(self.adaptive_source).is_ok()
-            && self.automation.writable()
-            && !self.native_busy
-            && !has_rules;
-        let mut controls=vec![
-            split(label("Daily cycle",16.,FG),self.help("adaptive-cycle","", "Adds three ordinary rules: Day at sunrise, Evening at golden hour, Night at sunset. Each switch applies once and respects manual edits and pauses. Missing sun events are skipped. Edit times, priority or disable individual rules in Automation.")),
-            label("Sunrise → Day · Golden hour → Evening · Sunset → Night",12.,MUTED),
-            segmented([(Source::Weather,"Weather city"),(Source::Manual,"Schedule city")].into_iter().map(|(s,title)|(title.into(),self.adaptive_source==s,Some(Message::AdaptiveSource(s)))).collect(),accent),
-            self.schedule_city_controls(self.adaptive_source),
-        ];
-        if let Some(notice) = &self.automation.notice {
-            if let crate::settings::desktop::Notice::Done(text) = notice
-                && text.starts_with("Daily cycle")
-            {
-                controls.push(label(text, 12., MUTED));
-            }
-        }
-        controls.push(if has_rules {
-            button::standard("Edit daily cycle…")
-                .id(cosmic::widget::Id::new("adaptive-rules"))
-                .on_press(Message::Page(Page::DesktopAutomation))
-                .into()
+        // Without a Weather city, the city is chosen right here.
+        let weather_city = self.automation.solar.city(Source::Weather).is_ok();
+        let source = if weather_city {
+            self.adaptive_source
         } else {
-            button::suggested("Enable daily cycle")
-                .id(cosmic::widget::Id::new("adaptive-enable"))
-                .on_press_maybe(available.then_some(Message::Automation(
-                    crate::settings::automation::Message::AdaptiveRoutine(
-                        look,
-                        self.adaptive_source,
+            Source::Manual
+        };
+        let city = self.automation.solar.city(source).is_ok();
+        let mut items = vec![
+            heading(
+                "Adaptive looks",
+                "Wallpaper and colors that follow the time of day. Your widgets stay where they are.",
+            ),
+            container(self.profile_preview(self.stage_height().clamp(260., 320.)))
+                .id(cosmic::widget::Id::new("adaptive-preview"))
+                .into(),
+            group(
+                Some("Look"),
+                vec![
+                    group_row(
+                        "Style",
+                        "",
+                        segmented(
+                            Look::ALL
+                                .into_iter()
+                                .map(|l| {
+                                    (
+                                        l.title().into(),
+                                        look == l,
+                                        Some(Message::AdaptivePreview(l, phase)),
+                                    )
+                                })
+                                .collect(),
+                            accent,
+                        ),
                     ),
-                )))
-                .into()
-        });
-        controls.push(
-            button::text("Schedule this look…")
+                    group_row(
+                        "Show it at",
+                        "Only the preview changes",
+                        segmented(
+                            Phase::ALL
+                                .into_iter()
+                                .map(|p| {
+                                    (
+                                        p.title().into(),
+                                        p == phase,
+                                        Some(Message::AdaptivePreview(look, p)),
+                                    )
+                                })
+                                .collect(),
+                            accent,
+                        ),
+                    ),
+                ],
+            ),
+        ];
+        let cycle_detail = "Day after sunrise, evening at golden hour, night after sunset";
+        let can_toggle = (has_rules || city) && self.automation.writable() && !self.native_busy;
+        let mut cycle = vec![group_row(
+            "Change through the day",
+            if has_rules || city {
+                cycle_detail
+            } else {
+                "Needs your city, just below"
+            },
+            container(toggler(has_rules).on_toggle_maybe(can_toggle.then_some(
+                move |on: bool| {
+                    Message::Automation(if on {
+                        crate::settings::automation::Message::AdaptiveRoutine(look, source)
+                    } else {
+                        crate::settings::automation::Message::AdaptiveOff
+                    })
+                },
+            )))
+            .id(cosmic::widget::Id::new("adaptive-enable"))
+            .into(),
+        )];
+        if has_rules {
+            cycle.push(self.link_row(
+                "Adjust the times",
+                "",
+                Message::Page(Page::DesktopAutomation),
+                "adaptive-rules".into(),
+            ));
+        }
+        if let Some(crate::settings::desktop::Notice::Done(text)) = &self.automation.notice
+            && text.starts_with("Daily cycle")
+        {
+            cycle.push(label(text, 12., MUTED));
+        }
+        if !has_rules && weather_city {
+            cycle.push(group_row(
+                "Sun times from",
+                "",
+                segmented(
+                    [(Source::Weather, "Weather city"), (Source::Manual, "Another city")]
+                        .into_iter()
+                        .map(|(s, title)| {
+                            (
+                                title.into(),
+                                self.adaptive_source == s,
+                                Some(Message::AdaptiveSource(s)),
+                            )
+                        })
+                        .collect(),
+                    accent,
+                ),
+            ));
+        }
+        if !has_rules {
+            cycle.push(self.schedule_city_controls(source));
+        }
+        cycle.push(group_row(
+            "Use this look at a set time",
+            format!("{} {}", look.title(), phase.title().to_lowercase()),
+            button::standard("Schedule…")
                 .id(cosmic::widget::Id::new("adaptive-schedule"))
                 .on_press(Message::Automation(
                     crate::settings::automation::Message::Schedule(
@@ -70,13 +133,7 @@ impl Settings {
                     ),
                 ))
                 .into(),
-        );
-        controls.push(label(
-            "Wallpaper, colors and surfaces · layout and content stay.",
-            12.,
-            MUTED,
         ));
-        controls.push(self.automation_link_status("adaptive-automation"));
         if self
             .config
             .moments
@@ -84,42 +141,16 @@ impl Settings {
             .and_then(|m| m.family)
             .is_some()
         {
-            controls.push(split(
-                label("Your active Moment overrides widget style.", 12., MUTED),
-                button::text("Moments…")
+            cycle.push(group_row(
+                "Your Moment keeps its own widget style",
+                "",
+                button::text("Moments")
                     .on_press(Message::Page(Page::Moments))
                     .into(),
             ));
         }
-        controls.push(self.help("adaptive-scope", "What changes", "The wallpaper, colors and surface style change together. Widget positions, sizes, content, applets and Islands enablement stay as they are. COSMIC still controls light/dark mode. Existing Moment and per-widget overrides remain active."));
-        column::with_children(vec![
-            split(
-                heading("Adaptive looks", ""),
-                segmented(
-                    Look::ALL
-                        .into_iter()
-                        .map(|l| {
-                            (
-                                l.title().into(),
-                                look == l,
-                                Some(Message::AdaptivePreview(l, phase)),
-                            )
-                        })
-                        .collect(),
-                    accent,
-                ),
-            ),
-            super::adaptive::columns(
-                preview,
-                group(
-                    None,
-                    vec![column::with_children(controls).spacing(12).into()],
-                ),
-                [270., 280.],
-                true,
-            ),
-        ])
-        .spacing(16)
-        .into()
+        items.push(group(Some("Through the day"), cycle));
+        items.push(self.automation_link_status("adaptive-automation"));
+        column::with_children(items).spacing(16).into()
     }
 }

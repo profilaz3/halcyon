@@ -123,7 +123,7 @@ impl Settings {
         let mut items: Vec<Element<'_, Message>> = Vec::new();
         if let Some(error) = editor.unavailable() {
             items.push(split(
-                heading("Shortcuts", ""),
+                heading("Keyboard shortcuts", ""),
                 store_pill(editor.store(), accent),
             ));
             items.push(banner(
@@ -135,22 +135,33 @@ impl Settings {
         }
         let Some(draft) = editor.draft() else {
             items.push(split(
-                heading("Shortcuts", ""),
+                heading("Keyboard shortcuts", ""),
                 store_pill(editor.store(), accent),
             ));
             items.push(label("Reading shortcuts…", 12., MUTED));
             return column::with_children(items).spacing(14).into();
         };
         let rows = draft.rows();
-        let custom = rows.iter().filter(|row| !row.builtin()).count();
         items.push(
             column::with_children(vec![
-                split(heading("Shortcuts", ""), store_pill(editor.store(), accent)),
-                label(
-                    format!("{custom} custom · {} built-in", rows.len() - custom),
-                    12.,
-                    MUTED,
+                // The main action sits top right, beside the title.
+                split(
+                    heading("Keyboard shortcuts", ""),
+                    row::with_children(vec![
+                        store_pill(editor.store(), accent),
+                        button::standard("Add shortcut")
+                            .leading_icon(icon::from_name("list-add-symbolic").size(14))
+                            .on_press_maybe(
+                                (!editor.busy() && draft.custom_problem().is_none())
+                                    .then_some(edit(Edit::Add)),
+                            )
+                            .into(),
+                    ])
+                    .spacing(10)
+                    .align_y(Alignment::Center)
+                    .into(),
                 ),
+                label("Keys for windows, workspaces and your favorite apps.", 13., MUTED),
             ])
             .spacing(4)
             .into(),
@@ -167,6 +178,7 @@ impl Settings {
             items.push(conflict_banner(
                 crate::settings::system_appearance::describe(draft.conflicts()),
                 edit(Edit::UseCurrent),
+                edit(Edit::KeepMine),
             ));
         }
         if let Some(problem) = draft.custom_problem() {
@@ -200,7 +212,7 @@ impl Settings {
         }
         items.push(
             row::with_children(vec![
-                text_input("Search all shortcuts", editor.search.clone())
+                cosmic::widget::search_input("Search all shortcuts", editor.search.clone())
                     .on_input(|text| edit(Edit::Search(text)))
                     .width(Length::Fill)
                     .into(),
@@ -220,13 +232,6 @@ impl Settings {
                     .collect(),
                     accent,
                 ),
-                button::standard("Add shortcut")
-                    .leading_icon(icon::from_name("list-add-symbolic").size(14))
-                    .on_press_maybe(
-                        (!editor.busy() && draft.custom_problem().is_none())
-                            .then_some(edit(Edit::Add)),
-                    )
-                    .into(),
             ])
             .spacing(10)
             .align_y(Alignment::Center)
@@ -250,10 +255,14 @@ impl Settings {
         let query = editor.search.trim().to_lowercase();
         // Search is global within shortcuts, even when the custom tab is
         // selected; built-ins should remain easy to find from the default view.
-        let filter = if query.is_empty() {
-            editor.filter
-        } else {
+        // With none of your own yet, the built-in ones show under the empty
+        // note, so the page never opens on nothing.
+        let filter = if !query.is_empty()
+            || (editor.filter == Filter::Custom && rows.iter().all(|row| row.builtin()))
+        {
             Filter::All
+        } else {
+            editor.filter
         };
         let mut items: Vec<Element<'a, Message>> = Vec::new();
         let matching: Vec<&Row> = rows
@@ -316,20 +325,23 @@ impl Settings {
             items.push(group(None, group_items));
         }
         if matching.is_empty() {
-            items.push(group(Some("Commands"), vec![
-                label(if query.is_empty() && filter == Filter::Custom {
-                    "Make a shortcut for something you do often.".to_string()
+            // One empty state: what is missing and what to do about it.
+            items.push(group(None, vec![detail(
+                if query.is_empty() && editor.filter == Filter::Custom {
+                    "No shortcuts of your own yet".to_string()
                 } else if query.is_empty() {
-                    "No built-in shortcuts were found.".to_string()
+                    "COSMIC’s shortcuts couldn’t be read".to_string()
                 } else {
-                    format!("No shortcuts match “{}”.", editor.search.trim())
-                }, 14., FG),
-                label(if query.is_empty() && filter == Filter::Custom {
-                    "Add a command, then record or type its keys. Built-in shortcuts have their own tab."
+                    format!("No shortcuts match “{}”", editor.search.trim())
+                },
+                if query.is_empty() && editor.filter == Filter::Custom {
+                    "Use Add shortcut to open an app or run a command with keys you choose."
+                } else if query.is_empty() {
+                    "They still work; they just can’t be listed here."
                 } else {
                     "Try an action name, command or key combination."
-                }, 12., MUTED),
-            ]));
+                },
+            )]));
         }
         column::with_children(items).spacing(10).into()
     }

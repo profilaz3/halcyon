@@ -122,6 +122,8 @@ def stage_application(root, binary, wallpapers, google_client, package):
     for suffix, directory in (("desktop", "applications"), ("metainfo.xml", "metainfo")):
         name = f"{APP_ID}.{suffix}"
         install(REPO / "packaging" / name, usr / "share" / directory / name)
+    install(REPO / "packaging" / f"{APP_ID}.Activity.desktop",
+            usr / "share/applications" / f"{APP_ID}.Activity.desktop")
     for size in ICON_SIZES:
         name = f"{APP_ID}.png"
         install(REPO / "packaging/icons" / str(size) / name,

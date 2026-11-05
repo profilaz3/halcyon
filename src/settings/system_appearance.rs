@@ -60,6 +60,8 @@ pub enum Message {
     Undo,
     Refresh,
     UseCurrent,
+    /// Keeps the edits over a value changed outside this editor.
+    KeepMine,
     Recover,
     KeepRecovery,
 }
@@ -481,6 +483,7 @@ impl AppearanceEditor {
                 | Message::Undo
                 | Message::Refresh
                 | Message::UseCurrent
+                | Message::KeepMine
                 | Message::Recover
                 | Message::KeepRecovery
         );
@@ -613,6 +616,18 @@ impl AppearanceEditor {
             }
             Message::UseCurrent => {
                 self.use_current(&[]);
+                self.settle_hex(false, false);
+            }
+            Message::KeepMine => {
+                match self.load() {
+                    Ok(fresh) => {
+                        if let Some(Ok(draft)) = &mut self.draft {
+                            draft.keep_edits(fresh.into_snapshot());
+                        }
+                        self.notice = Some(Notice::Done(super::drafts::KEEPING.into()));
+                    }
+                    Err(error) => self.notice = Some(Notice::Error(error.to_string())),
+                }
                 self.settle_hex(false, false);
             }
             Message::Recover => self.recover(true),

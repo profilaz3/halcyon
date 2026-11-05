@@ -12,6 +12,7 @@ use cosmic::{Renderer, Theme};
 pub(super) enum Pattern {
     Balanced,
     Scene,
+    Workspace,
     Controls,
     Form,
 }
@@ -27,6 +28,7 @@ pub(super) fn page<'a>(
         minimum,
         pattern,
         field: false,
+        stage_layout: None,
     })
 }
 
@@ -56,6 +58,7 @@ pub(super) fn field<'a>(
         minimum: [100., 0.],
         pattern: Pattern::Balanced,
         field: true,
+        stage_layout: None,
     })
 }
 struct Columns<'a> {
@@ -63,8 +66,37 @@ struct Columns<'a> {
     minimum: [f32; 2],
     pattern: Pattern,
     field: bool,
+    stage_layout: Option<layout::Node>,
+}
+#[derive(Default)]
+struct State {
+    viewport_origin: std::cell::Cell<Option<f32>>,
+}
+impl Columns<'_> {
+    /// In a composition the picture stays in view while its inspector scrolls
+    /// with the page, without a second scroll area. Stacked, it just scrolls.
+    fn pin(&self, layout: Layout<'_>, viewport: &Rectangle) -> f32 {
+        if self.field || !matches!(self.pattern, Pattern::Scene | Pattern::Workspace) {
+            return 0.;
+        }
+        let mut children = layout.children();
+        let (Some(left), Some(right)) = (children.next(), children.next()) else {
+            return 0.;
+        };
+        if right.bounds().x <= left.bounds().x {
+            return 0.;
+        }
+        let room = (layout.bounds().height - left.bounds().height).max(0.);
+        (viewport.y - layout.bounds().y).clamp(0., room)
+    }
 }
 impl Widget<Message, Theme, Renderer> for Columns<'_> {
+    fn tag(&self) -> cosmic::iced::advanced::widget::tree::Tag {
+        cosmic::iced::advanced::widget::tree::Tag::of::<State>()
+    }
+    fn state(&self) -> cosmic::iced::advanced::widget::tree::State {
+        cosmic::iced::advanced::widget::tree::State::new(State::default())
+    }
     fn children(&self) -> Vec<Tree> {
         self.children.iter().map(Tree::new).collect()
     }
@@ -109,9 +141,12 @@ impl Widget<Message, Theme, Renderer> for Columns<'_> {
         };
         let mut nodes = Vec::new();
         for (i, (child, state)) in self.children.iter_mut().zip(&mut tree.children).enumerate() {
-            let child_limits = layout::Limits::new(
+            // Keep the scroll area's compression, so a fill-height child inside
+            // a scrolling page takes its natural height instead of infinity.
+            let child_limits = layout::Limits::with_compression(
                 Size::new(widths[i], 0.),
                 Size::new(widths[i], limits.max().height),
+                limits.compression(),
             );
             nodes.push(child.as_widget_mut().layout(state, renderer, &child_limits));
         }
@@ -121,11 +156,23 @@ impl Widget<Message, Theme, Renderer> for Columns<'_> {
             nodes[0].size().height + gap + nodes[1].size().height
         };
         let offset = if side {
-            Vector::new(widths[0] + gap, 0.)
+            // A labelled row centers both sides, so a one-line label lines up
+            // with its switch or choice instead of sitting at the top.
+            let middle = |node: &layout::Node| {
+                if self.field {
+                    ((height - node.size().height) / 2.).max(0.).round()
+                } else {
+                    0.
+                }
+            };
+            let left = middle(&nodes[0]);
+            nodes[0] = nodes[0].clone().translate(Vector::new(0., left));
+            Vector::new(widths[0] + gap, middle(&nodes[1]))
         } else {
             Vector::new(0., nodes[0].size().height + gap)
         };
         nodes[1] = nodes[1].clone().translate(offset);
+        self.stage_layout = Some(nodes[0].clone());
         layout::Node::with_children(Size::new(width, height), nodes)
     }
     fn operate(
@@ -135,17 +182,45 @@ impl Widget<Message, Theme, Renderer> for Columns<'_> {
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
+        let pin = tree
+            .state
+            .downcast_ref::<State>()
+            .viewport_origin
+            .get()
+            .map_or(0., |origin| {
+                self.pin(
+                    layout,
+                    &Rectangle {
+                        y: origin + layout.virtual_offset().y,
+                        ..Rectangle::default()
+                    },
+                )
+            });
+        let offset = layout.virtual_offset();
+        let parent = layout.position();
         operation.container(None, layout.bounds());
         operation.traverse(&mut |operation| {
-            for ((child, state), layout) in self
+            for (index, ((child, state), child_layout)) in self
                 .children
                 .iter_mut()
                 .zip(&mut tree.children)
                 .zip(layout.children())
+                .enumerate()
             {
-                child
-                    .as_widget_mut()
-                    .operate(state, layout, renderer, operation);
+                let child_layout = if index == 0 && pin > 0. {
+                    Layout::with_offset(
+                        Vector::new(parent.x, parent.y + pin),
+                        self.stage_layout.as_ref().expect("layout precedes operate"),
+                    )
+                } else {
+                    child_layout
+                };
+                child.as_widget_mut().operate(
+                    state,
+                    child_layout.with_virtual_offset(offset),
+                    renderer,
+                    operation,
+                );
             }
         });
     }
@@ -161,14 +236,33 @@ impl Widget<Message, Theme, Renderer> for Columns<'_> {
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        for ((child, state), layout) in self
+        tree.state
+            .downcast_ref::<State>()
+            .viewport_origin
+            .set(Some(viewport.y - layout.virtual_offset().y));
+        let offset = layout.virtual_offset();
+        let pin = self.pin(layout, viewport);
+        for (index, ((child, state), layout)) in self
             .children
             .iter_mut()
             .zip(&mut tree.children)
             .zip(layout.children())
+            .enumerate()
         {
+            let shift = if index == 0 { pin } else { 0. };
+            let moved = Rectangle {
+                y: viewport.y - shift,
+                ..*viewport
+            };
             child.as_widget_mut().update(
-                state, event, layout, cursor, renderer, clipboard, shell, viewport,
+                state,
+                event,
+                layout.with_virtual_offset(offset),
+                cursor - Vector::new(0., shift),
+                renderer,
+                clipboard,
+                shell,
+                &moved,
             );
         }
     }
@@ -181,14 +275,25 @@ impl Widget<Message, Theme, Renderer> for Columns<'_> {
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
+        let offset = layout.virtual_offset();
+        let pin = self.pin(layout, viewport);
         self.children
             .iter()
             .zip(&tree.children)
             .zip(layout.children())
-            .map(|((child, state), layout)| {
-                child
-                    .as_widget()
-                    .mouse_interaction(state, layout, cursor, viewport, renderer)
+            .enumerate()
+            .map(|(index, ((child, state), layout))| {
+                let shift = if index == 0 { pin } else { 0. };
+                child.as_widget().mouse_interaction(
+                    state,
+                    layout.with_virtual_offset(offset),
+                    cursor - Vector::new(0., shift),
+                    &Rectangle {
+                        y: viewport.y - shift,
+                        ..*viewport
+                    },
+                    renderer,
+                )
             })
             .max()
             .unwrap_or_default()
@@ -204,15 +309,47 @@ impl Widget<Message, Theme, Renderer> for Columns<'_> {
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        for ((child, state), layout) in self
+        use cosmic::iced::advanced::Renderer as _;
+        tree.state
+            .downcast_ref::<State>()
+            .viewport_origin
+            .set(Some(viewport.y - layout.virtual_offset().y));
+        let offset = layout.virtual_offset();
+        let pin = self.pin(layout, viewport);
+        for (index, ((child, state), layout)) in self
             .children
             .iter()
             .zip(&tree.children)
             .zip(layout.children())
+            .enumerate()
         {
-            child
-                .as_widget()
-                .draw(state, renderer, theme, style, layout, cursor, viewport);
+            if index == 0 && pin > 0. {
+                let moved = Rectangle {
+                    y: viewport.y - pin,
+                    ..*viewport
+                };
+                renderer.with_translation(Vector::new(0., pin), |renderer| {
+                    child.as_widget().draw(
+                        state,
+                        renderer,
+                        theme,
+                        style,
+                        layout.with_virtual_offset(offset),
+                        cursor - Vector::new(0., pin),
+                        &moved,
+                    );
+                });
+            } else {
+                child.as_widget().draw(
+                    state,
+                    renderer,
+                    theme,
+                    style,
+                    layout.with_virtual_offset(offset),
+                    cursor,
+                    viewport,
+                );
+            }
         }
     }
     fn drag_destinations(
@@ -245,20 +382,34 @@ impl Widget<Message, Theme, Renderer> for Columns<'_> {
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
-        overlay::from_children(
-            &mut self.children,
-            tree,
-            layout,
-            renderer,
-            viewport,
-            translation,
-        )
+        let pin = self.pin(layout, viewport);
+        let overlays: Vec<_> = self
+            .children
+            .iter_mut()
+            .zip(&mut tree.children)
+            .zip(layout.children())
+            .enumerate()
+            .filter_map(|(index, ((child, state), layout))| {
+                let shift = if index == 0 { pin } else { 0. };
+                child.as_widget_mut().overlay(
+                    state,
+                    layout,
+                    renderer,
+                    viewport,
+                    translation + Vector::new(0., shift),
+                )
+            })
+            .collect();
+        (!overlays.is_empty()).then(|| overlay::Group::with_children(overlays).overlay())
     }
 }
 
 fn right_width(pattern: Pattern, width: f32, minimum: [f32; 2], scale: f32, gap: f32) -> f32 {
     match pattern {
         Pattern::Balanced => (width - gap) / 2.,
+        Pattern::Workspace => {
+            (width * 0.28).clamp(minimum[1] * scale, 288_f32.max(minimum[1]) * scale)
+        }
         Pattern::Scene => (width * 0.40).clamp(minimum[1] * scale, 420_f32.max(minimum[1]) * scale),
         Pattern::Controls => {
             width - gap - (width * 0.34).clamp(minimum[0] * scale, 340_f32.max(minimum[0]) * scale)
@@ -269,6 +420,68 @@ fn right_width(pattern: Pattern, width: f32, minimum: [f32; 2], scale: f32, gap:
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ux_native_pinned_scene_uses_visible_bounds_for_pointer_and_keyboard() {
+        use super::*;
+        let view = || -> Element<'static, Message> {
+            column::with_children(vec![
+                cosmic::widget::Space::new().height(70).into(),
+                scrollable(column::with_children(vec![
+                    cosmic::widget::Space::new().height(90).into(),
+                    page(
+                        button::standard("Edit scene")
+                            .id("pin-hit".into())
+                            .on_press(Message::ToggleHelp("pin-hit"))
+                            .height(120)
+                            .width(Length::Fill)
+                            .into(),
+                        container(label("Long inspector", 14., MUTED))
+                            .height(1200)
+                            .width(Length::Fill)
+                            .into(),
+                        [320., 248.],
+                        Pattern::Scene,
+                    ),
+                ]))
+                .id("settings-content")
+                .height(Length::Fill)
+                .into(),
+            ])
+            .into()
+        };
+        let mut native = crate::native_test::Native::new(Size::new(820., 600.));
+        let _ = native.render(view(), &Theme::dark());
+        native.scroll(view(), "settings-content", 300.);
+        // Operations see the new scroll offset even before the next draw.
+        let bounds = native.bounds(view(), "pin-hit");
+        assert!((bounds.y - 70.).abs() < 1., "{bounds:?}");
+        let _ = native.render(view(), &Theme::dark());
+        native.operate(
+            view(),
+            Box::new(super::super::super::navigation::Reveal::target("pin-hit")),
+        );
+        assert_eq!(native.bounds(view(), "pin-hit"), bounds);
+        let mut actions = Vec::new();
+        for event in [
+            mouse::Event::CursorMoved {
+                position: bounds.center(),
+            },
+            mouse::Event::ButtonPressed(mouse::Button::Left),
+            mouse::Event::ButtonReleased(mouse::Button::Left),
+        ] {
+            actions.extend(native.event(view(), Event::Mouse(event), bounds.center()).0);
+        }
+        assert!(
+            actions
+                .iter()
+                .any(|message| matches!(message, Message::ToggleHelp("pin-hit")))
+        );
+        // A narrow layout scrolls normally instead of pinning a stacked scene.
+        native.size.width = 480.;
+        let _ = native.render(view(), &Theme::dark());
+        assert!(native.bounds(view(), "pin-hit").y < 70.);
+    }
+
     #[test]
     fn polish050_control_pattern_prioritizes_controls_and_reflows_for_large_text() {
         use super::*;

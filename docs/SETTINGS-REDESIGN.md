@@ -37,7 +37,7 @@ editor and state. The table covers all 28 current `Page` variants.
 
 | Current page IDs | New home and retained functions |
 | --- | --- |
-| `Themes` | Appearance → Theme and colors; style browser, color source, Whole desktop / Widgets only, theme library operations |
+| `Themes` | Appearance → Theme and colors; style row (Show all lists every style in place), color source, Whole desktop / Widgets only, theme library operations |
 | `Appearance` | Appearance → Surface finishes; shared and individual surface overrides, readability, motion and legacy styling |
 | `DesktopAppearance` | Appearance → Fonts and icons, detailed mode colors, window appearance and supported effects |
 | `DesktopWallpaper` | Appearance → Wallpaper; pictures, gradients, slideshows, fit and display targeting |
@@ -59,7 +59,7 @@ editor and state. The table covers all 28 current `Page` variants.
 | `PendingChanges` | App settings → Restore and recovery; unfinished work, conflicts, export and original wallpaper restoration |
 
 Retain screens without their own page IDs: first-run wizard, getting-started
-checklist, style browser, connection flows, library operations and local forms.
+checklist, connection flows, library operations and local forms.
 Keep connections accessible within their widget. First use opens Appearance;
 later launches restore the last destination unless an explicit route is supplied.
 

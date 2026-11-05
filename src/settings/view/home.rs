@@ -36,13 +36,15 @@ pub(in crate::settings) fn widget_page(widget: Widget) -> Page {
 }
 
 impl Settings {
+    /// The Desktop landing: your real desktop, large, with everything on it
+    /// one click away. Widgets are named right beside the picture.
     pub(super) fn overview_page(&self) -> Element<'_, Message> {
-        if self.canvas.is_some() {
+        if self.canvas_visible() {
             return self.canvas_page();
         }
         if self.setup_requested {
             return column::with_children(vec![
-                button::text("Back to Layout and displays")
+                button::text("Back to Desktop")
                     .leading_icon(icon::from_name("go-previous-symbolic").size(14))
                     .id(cosmic::widget::Id::new("setup-back"))
                     .on_press(Message::SetupOpen(false))
@@ -80,63 +82,34 @@ impl Settings {
             .spacing(16)
             .into();
         }
-        // Leave room for the selected widget's inspector and keyboard hint,
-        // including native window decoration, without resizing mid-gesture.
-        let height = (self.window.height - 440.).clamp(120., 420.);
-        let mut parts = vec![heading(
-            "Layout and displays",
-            "Place and style your widgets on each display.",
-        )];
-        if self.needs_setup() {
-            parts.push(self.setup_prompt());
-        }
-        parts.push(
-            button::suggested("Edit layout…")
+        let header = split(
+            heading("Widgets", "Click a widget in the picture to change it."),
+            button::standard("Arrange widgets")
                 .id(cosmic::widget::Id::new("canvas-start"))
                 .on_press(Message::Canvas(crate::settings::canvas::Message::Start))
                 .into(),
         );
-        parts.push(self.monitor_overview());
-        parts.push(self.scene_frame(
-            self.placement_picture(height.max(180.), false),
-            "Current layout · sample content",
-        ));
-        parts.push(split(
-            self.help("layout-editing", "Editing your desktop", "Edit layout opens a local draft. Apply saves movement, size and style together; Cancel keeps your current desktop. Arrange on desktop opens the full-size overlay with its own Save and Cancel."),
-            button::text("Arrange on desktop…")
-                .id(cosmic::widget::Id::new("layout-arrange"))
-                .on_press_maybe((!self.busy).then_some(Message::ArrangeDesktop)).into(),
-        ));
-        // Manual placement makes automatic column ordering irrelevant.
-        if !self.config.has_custom_positions() && !self.placement.dirty() {
-            parts.push(self.home_column_order());
+        // Your real wallpaper, bars and widgets; every object opens its editor.
+        let height = (self.content_width() * 0.4).clamp(200., 340.);
+        let scene = match self.profiles.preview() {
+            Some(preview) => self.profile_scene(preview.clone(), height, true, true),
+            None => self.placement_picture(height, false),
+        };
+        let mut parts = vec![header];
+        if self.displays.outputs().len() > 1 {
+            parts.push(self.monitor_overview());
         }
-        column::with_children(parts).spacing(12).into()
-    }
-
-    fn home_column_order(&self) -> Element<'_, Message> {
-        let open = self.advanced_open(Page::WidgetLayout);
-        let mut items = vec![
-            button::text(if open {
-                "Hide automatic order"
-            } else {
-                "Automatic column order"
-            })
-            .trailing_icon(
-                icon::from_name(if open {
-                    "go-up-symbolic"
-                } else {
-                    "go-down-symbolic"
-                })
-                .size(14),
-            )
-            .on_press(Message::ToggleAdvanced(Page::WidgetLayout))
-            .into(),
-        ];
-        if open {
-            items.push(self.widget_order_controls());
+        parts.push(
+            container(scene)
+                .id(cosmic::widget::Id::new("desktop-scene"))
+                .width(Length::Fill)
+                .into(),
+        );
+        if self.needs_setup() && !self.config.onboarded {
+            parts.push(self.setup_prompt());
         }
-        column::with_children(items).spacing(8).into()
+        parts.push(self.widgets_page());
+        column::with_children(parts).spacing(20).into()
     }
 
     /// The real wallpaper behind the shared placement editor. The backdrop
@@ -145,14 +118,31 @@ impl Settings {
         // A missing image must not substitute Settings' own light/dark theme
         // for the desktop: transparent white clock text still needs dark ink
         // contrast. This neutral fallback is labelled by the canvas editor.
-        let fallback =
+        // A soft diagonal wash rather than flat black or white, so the
+        // fallback still reads as a desktop.
+        // Light text sits on the same dusk sky as every other preview.
+        let [top, middle, bottom] =
             if crate::desktop_theme::luminance(self.canvas_config().wallpaper_palette().foreground)
                 > 0.18
             {
-                Color::BLACK
+                [
+                    Color::from_rgb(0.16, 0.24, 0.50),
+                    Color::from_rgb(0.45, 0.29, 0.55),
+                    Color::from_rgb(0.80, 0.47, 0.36),
+                ]
             } else {
-                Color::WHITE
+                [
+                    Color::from_rgb(0.90, 0.92, 0.95),
+                    Color::from_rgb(0.81, 0.84, 0.89),
+                    Color::from_rgb(0.72, 0.76, 0.83),
+                ]
             };
+        let fallback = Background::Gradient(cosmic::iced::Gradient::Linear(
+            cosmic::iced::gradient::Linear::new(cosmic::iced::Radians(2.4))
+                .add_stop(0., top)
+                .add_stop(0.55, middle)
+                .add_stop(1., bottom),
+        ));
         let background: Element<'_, Message> = match self.profiles.home_image() {
             Some(handle) => cosmic::widget::image(handle.clone())
                 .width(size[0])
@@ -165,7 +155,7 @@ impl Settings {
                 .height(size[1])
                 .class(cosmic::theme::Container::custom(move |_| {
                     cosmic::iced::widget::container::Style {
-                        background: Some(Background::Color(fallback)),
+                        background: Some(fallback),
                         border: Border {
                             radius: 10.into(),
                             ..Default::default()

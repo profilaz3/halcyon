@@ -1,8 +1,20 @@
 # Build sequence
 
-The target is a coherent, production-qualified customization system. 0.4.1 is published; 0.5 is the next working target. These stages supersede the UI-first sequencing in the archived concept proposals.
+The target is a coherent, production-qualified customization system. The current source baseline is 0.6.0; the next release number is unassigned. These stages supersede the UI-first sequencing in the archived concept proposals.
 
-## Next feature for 0.5
+## Next work accepted 2026-11-01
+
+[The next-work plan](NEXT-WORK.md) covers Activity island (FB31), Weather-connected
+scenes (FB33), Sun and Moon (FB34), Wallpaper layers (FB32), Custom data tiles
+(FB35) and Desktop companion (FB36), in that proposed order. FB31 has a local first native version; the other five are planned.
+See the [implementation and boundaries](ACTIVITY-ISLAND-IMPLEMENTATION.md); its earlier desktop-widget
+concept is superseded. Review, validate and fix each meaningful increment, including native visual
+reviews, before advancing. Terminal/editor theme syncing is excluded.
+
+The sections below describe the earlier foundation and 0.5 delivery sequence;
+their historical status statements do not supersede this next-work queue.
+
+## Earlier 0.5 sequence — sun-based appearance schedules
 
 [FB21 — Sun-based appearance schedules](FB21-PLAN.md), requested in
 [issue #14](https://github.com/profilaz3/halcyon/issues/14), extends the existing

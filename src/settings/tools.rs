@@ -13,6 +13,7 @@ use crate::tools::{focus, music, notes};
 use cosmic::app::Task;
 use cosmic::widget::image::Handle;
 use cosmic::widget::text_editor;
+mod note_history;
 
 #[derive(Clone, Debug)]
 pub enum Message {
@@ -32,7 +33,11 @@ pub enum Message {
     /// One member of a tool's configuration section.
     Option(Widget, &'static str, serde_json::Value),
     Note(text_editor::Action),
+    NoteUndo,
+    NoteRedo,
     NoteSave,
+    /// Save the note once typing has paused.
+    NoteAutosave,
     NoteSaved(String, Result<notes::Note, notes::SaveError>),
     NoteRevert,
     /// After a conflict: replace the newer note with this text.
@@ -54,6 +59,7 @@ pub struct ToolsEditor {
     querying: bool,
     pub note: Result<notes::Note, String>,
     pub content: text_editor::Content,
+    history: note_history::History,
     /// The saved text this editor started from.
     pub base: String,
     pub problem: Option<String>,
@@ -66,6 +72,8 @@ pub struct ToolsEditor {
     /// A draft file holds this editor's unsaved edits.
     kept: bool,
     pub focus: focus::Session,
+    /// When the note text last changed here; saved once typing pauses.
+    edited: Option<std::time::Instant>,
     /// Notes is the last tools tab shown; the navigation returns to it.
     pub tab: Widget,
 }
@@ -88,6 +96,7 @@ impl Default for ToolsEditor {
             art_loading: false,
             querying: false,
             content: text_editor::Content::with_text(&text),
+            history: note_history::History::default(),
             base: text,
             note,
             problem: None,
@@ -97,6 +106,7 @@ impl Default for ToolsEditor {
             close_after_save: false,
             kept: draft.is_some(),
             focus: focus::Session::load(),
+            edited: None,
             tab: Widget::Music,
         };
         if let Some(draft) = draft {
@@ -144,6 +154,16 @@ impl ToolsEditor {
     }
     pub fn dirty(&self) -> bool {
         editor_text(&self.content) != self.base
+    }
+    /// Typing has started and the note isn't saved yet.
+    pub fn autosave_pending(&self) -> bool {
+        self.edited.is_some()
+    }
+    pub fn can_undo_note(&self) -> bool {
+        self.history.can_undo()
+    }
+    pub fn can_redo_note(&self) -> bool {
+        self.history.can_redo()
     }
     pub fn saving(&self) -> bool {
         self.saving.is_some()
@@ -206,6 +226,7 @@ impl ToolsEditor {
             self.problem = None;
         } else if !self.dirty() {
             self.content = text_editor::Content::with_text(&saved.text);
+            self.history.clear();
             self.base = saved.text.clone();
             self.problem = None;
             self.conflict = None;
@@ -432,7 +453,32 @@ impl ToolsEditor {
             }
             Message::Note(action) => {
                 if !matches!(self.note, Err(_)) {
-                    self.content.perform(action);
+                    let edit = action.is_edit();
+                    self.history.edit(&mut self.content, action);
+                    if edit {
+                        self.edited = Some(std::time::Instant::now());
+                    }
+                }
+            }
+            Message::NoteUndo => {
+                self.history.undo(&mut self.content);
+                self.edited = Some(std::time::Instant::now());
+            }
+            Message::NoteRedo => {
+                self.history.redo(&mut self.content);
+                self.edited = Some(std::time::Instant::now());
+            }
+            Message::NoteAutosave => {
+                let quiet = self
+                    .edited
+                    .is_some_and(|at| at.elapsed() >= std::time::Duration::from_millis(1200));
+                if !quiet || self.saving() {
+                    return (Task::none(), None);
+                }
+                self.edited = None;
+                if self.dirty() && self.note.is_ok() && self.conflict.is_none() {
+                    let expected = self.base.clone();
+                    return (self.save_note(expected), None);
                 }
             }
             Message::NoteSave => {
@@ -448,6 +494,7 @@ impl ToolsEditor {
                     self.base = saved.text.clone();
                 }
                 self.content = text_editor::Content::with_text(&self.base);
+                self.history.clear();
                 self.problem = None;
                 self.conflict = None;
             }
@@ -459,6 +506,7 @@ impl ToolsEditor {
             Message::NoteUseSaved => {
                 if let Some(current) = self.conflict.take() {
                     self.content = text_editor::Content::with_text(&current.text);
+                    self.history.clear();
                     self.base = current.text.clone();
                     self.note = Ok(current);
                     self.problem = None;

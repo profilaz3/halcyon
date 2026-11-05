@@ -16,7 +16,7 @@ The current `rounded_blur` capability is false. See [the decorative material not
 
 ## Compatibility and build
 
-The patch targets official cosmic-panel `ca20ce3185b3b4404f429d59d429c40b58a2ddef`. The current `cosmic-1.10-1.11-startup-v4` policy in `runtime_compatibility.py` admits bounded startup attempts on supported panel/session families. Packaging binds that policy, the native binary and the helper files into an immutable generation. The full historical exact-cohort catalog remains in source; current-policy packages carry its validated startup policy. See [the compatibility contract](../docs/COMPATIBILITY.md).
+The patch targets official cosmic-panel `ca20ce3185b3b4404f429d59d429c40b58a2ddef`. The current `cosmic-1.10-1.11-startup-v5` policy in `runtime_compatibility.py` admits bounded startup attempts on supported panel/session families. Packaging binds that policy, the native binary and the helper files into an immutable generation. The full historical exact-cohort catalog remains in source; current-policy packages carry its validated startup policy. See [the compatibility contract](../docs/COMPATIBILITY.md).
 
 Panel and session must share a supported family. Native loader/Wayland checks, configuration consistency and child-owned IPC readiness must pass; unknown families or failed checks select stock. Eligibility is not physical-hardware or full OS certification. New native binaries require fresh final-package acceptance rather than historical evidence. Halcyon and the companion retain separate libcosmic pins and lockfiles. The shared `dock-islands-core` crate contains only schema, IPC types and logical geometry.
 

@@ -1046,7 +1046,12 @@ impl Settings {
                 } else {
                     "Customize"
                 })
-                .on_press(super::Message::Page(super::view::home::widget_page(widget)))
+                .id(cosmic::widget::Id::new("layout-content-settings"))
+                .on_press(if self.page == super::view::home::widget_page(widget) {
+                    super::Message::ObjectTab(super::navigation::ObjectTab::Content)
+                } else {
+                    super::Message::Page(super::view::home::widget_page(widget))
+                })
                 .into(),
                 button::text(if editor.resize_mode {
                     "Move with arrows"
@@ -1472,7 +1477,7 @@ impl Settings {
             .width(Length::Fill)
             .height(Length::Fill)
             .align_x(Alignment::Center)
-            .align_y(Alignment::Center)
+            .align_y(Alignment::Start)
             .into()
         })
         .width(Length::Fill)
@@ -1485,7 +1490,7 @@ impl Settings {
         let dirty = editor.dirty();
         let switch = |title: &'static str, value: bool, event: fn(bool) -> Message| {
             row::with_children(vec![
-                label(title, 12., if value { FOREGROUND } else { MUTED }),
+                label(title, 13., FOREGROUND),
                 toggler(value)
                     .on_toggle(move |value| message(event(value)))
                     .into(),
@@ -1500,43 +1505,28 @@ impl Settings {
             .and_then(Widget::parse)
             .map(|widget| {
                 format!(
-                    "{} · arrows {} · Shift for more",
+                    "{} selected · arrow keys {} it, hold Shift for bigger steps",
                     widget.title(),
                     if editor.resize_mode { "resize" } else { "move" }
                 )
             })
-            .unwrap_or_else(|| "Drag to move · select a widget to resize or customize".into());
+            .unwrap_or_default();
         let caption = row::with_children(vec![
             container(label(hint, 11., MUTED))
                 .width(Length::Fill)
                 .into(),
-            if dirty {
-                label(
-                    if self.canvas.is_some() && !editor.dragging() {
-                        "Previewing"
-                    } else {
-                        "Moving…"
-                    },
-                    11.,
-                    self.settings_accent(),
-                )
-            } else {
-                label(
-                    format!(
-                        "{} × {}",
-                        editor.snapshot.screen[0] as u32, editor.snapshot.screen[1] as u32
-                    ),
-                    11.,
-                    MUTED,
-                )
-            },
+            label(
+                if editor.dragging() { "Moving…" } else { "" },
+                11.,
+                self.settings_accent(),
+            ),
         ])
         .spacing(10)
         .height(24)
         .align_y(Alignment::Center);
         let mut action_buttons = vec![
-            switch("Snap", editor.snap, Message::Snap).into(),
-            switch("Grid", editor.guides, Message::Guides).into(),
+            switch("Line up with others", editor.snap, Message::Snap).into(),
+            switch("Show grid", editor.guides, Message::Guides).into(),
             container(text::body("")).width(Length::Fill).into(),
         ];
         if self.canvas.is_some() {
@@ -1575,11 +1565,13 @@ impl Settings {
         // Reserve the same toolbar height: selecting or dragging must not
         // move the miniature under the pointer when draft actions appear.
         let actions = row::with_children(action_buttons)
-            .spacing(8)
+            .spacing(16)
             .height(40)
             .align_y(Alignment::Center);
         let mut parts = vec![actions.into(), preview.into(), caption.into()];
-        if matches!(self.page, super::Page::Overview | super::Page::WidgetLayout) {
+        if self.canvas_visible()
+            || matches!(self.page, super::Page::Overview | super::Page::WidgetLayout)
+        {
             if self.canvas.is_some() {
                 let choices = self
                     .displays
@@ -1601,7 +1593,7 @@ impl Settings {
                 parts.insert(0, self.monitor_overview());
             }
         }
-        if self.page != super::Page::Overview {
+        if self.page != super::Page::Overview && !self.canvas_visible() {
             parts.push(self.placement_inspector());
         }
         column::with_children(parts)
@@ -1787,7 +1779,11 @@ mod tests {
         let neighbor = app.placement.position("weather").unwrap();
         let original = app.placement.position("clock").unwrap();
         let _ = app.update(App::EditWidgetLayout(Widget::Clock));
-        assert_eq!(app.page, Page::Overview);
+        assert_eq!(app.page, Page::Clock);
+        assert_eq!(
+            app.object_tab,
+            super::super::navigation::ObjectTab::Position
+        );
         assert_eq!(app.placement.selected(), Some(Widget::Clock));
         let _ = app.update(App::Placement(Message::Center(0)));
         let _ = app.update(App::Placement(Message::Center(1)));
@@ -2628,7 +2624,12 @@ mod tests {
             settings.canvas.is_some(),
             "Navigation keeps the local canvas"
         );
+        // A root click opens the landing; Resume returns to the kept arrangement.
         let _ = settings.update(App::Page(Page::Overview));
+        assert!(!settings.placement_active());
+        let _ = settings.update(App::ResumeKept(
+            super::super::navigation::KeptTarget::Canvas,
+        ));
         assert!(settings.placement_active());
         let _ = settings.update(App::Canvas(super::super::canvas::Message::Cancel));
         assert!(!settings.placement_active());

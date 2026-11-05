@@ -1,5 +1,16 @@
 # Planned work
 
+## Next work — accepted 2026-11-01
+
+The [next-work plan](future-builder/NEXT-WORK.md) adds six planned features after
+the 0.5.6 baseline: Activity island, Weather-connected scenes, Sun and Moon widget,
+Wallpaper layer editor, Custom data tiles and Desktop companion. It records
+scope, proposed order and review/validation gates. Terminal/editor theme syncing
+is excluded. The Activity island ships as a beta in 0.6.0; the others are unassigned. It has a
+[local first native version](future-builder/ACTIVITY-ISLAND-IMPLEMENTATION.md). [FB31–FB36](future-builder/tracker.json) own their status.
+
+The dated entries below retain their historical implementation/release scope.
+
 ## Architecture follow-up
 
 Updated 2026-10-27. The [follow-up tracker](ARCHITECTURE-FOLLOWUP.md) records

@@ -6,7 +6,7 @@ use super::windows::{recovery_banner, store_pill};
 use super::*;
 use crate::desktop::panels::Setting;
 use crate::desktop::workspaces::{
-    TypingAction, WorkspaceConfig, WorkspaceLayout, WorkspaceMode, WorkspacesDraft,
+    TypingAction, WorkspaceConfig, WorkspaceLayout, WorkspaceMode,
 };
 use crate::settings::workspaces::Message as Edit;
 
@@ -68,35 +68,19 @@ impl Settings {
         };
         let config = draft.config();
         let known = config.known().copied();
-        let height = (self.window.height * 0.15).clamp(76., 104.);
-        items.push(if embedded {
-            column::with_children(vec![
-                split(
-                    label("Workspaces", 20., FG),
-                    store_pill(editor.store(), accent),
-                ),
-                label(summary(known), 12., MUTED),
-            ])
-            .spacing(2)
-            .into()
-        } else {
-            column::with_children(vec![
-                split(
-                    heading("Workspaces", ""),
-                    store_pill(editor.store(), accent),
-                ),
-                label(summary(known), 12., MUTED),
-                self.scene_frame(
-                    container(workspace_diagram(known.unwrap_or_default(), accent, height))
-                        .max_width(520)
-                        .width(Length::Fill)
-                        .into(),
-                    "Schematic · workspace orientation and display behavior",
-                ),
-            ])
-            .spacing(16)
-            .into()
-        });
+        if !embedded {
+            items.push(split(
+                heading("Workspaces", ""),
+                store_pill(editor.store(), accent),
+            ));
+            let height = (self.window.height * 0.15).clamp(76., 104.);
+            items.push(
+                container(workspace_diagram(known.unwrap_or_default(), accent, height))
+                    .max_width(520)
+                    .width(Length::Fill)
+                    .into(),
+            );
+        }
         if let Some(banner) = recovery_banner(
             editor.recovery(),
             editor.writable(),
@@ -109,6 +93,7 @@ impl Settings {
             items.push(conflict_banner(
                 crate::settings::system_appearance::describe(draft.conflicts()),
                 edit(Edit::UseCurrent),
+                edit(Edit::KeepMine),
             ));
         }
         if let Setting::Unsupported(raw) = &config {
@@ -118,41 +103,64 @@ impl Settings {
                 vec![kept(raw)],
             ));
         }
-        items.push(workspaces_navigation(draft, known, accent));
+        let wrap: Element<'_, Message> = match draft.config() {
+            Setting::Known(config) => toggler(config.workspace_wraparound)
+                .on_toggle(|on| edit(Edit::Wraparound(on)))
+                .into(),
+            Setting::Unsupported(_) => text::body("").into(),
+        };
+        let mode = known.map(|config| config.workspace_mode);
         items.push(group(
-            Some("Workspaces · displays"),
+            Some("Workspaces"),
             vec![
-                choice(
-                    known.map(|config| config.workspace_mode),
-                    &[
-                        ("Separate on each display", WorkspaceMode::OutputBound),
-                        ("Shared across displays", WorkspaceMode::Global),
-                    ],
-                    Edit::Mode,
-                    accent,
+                group_row(
+                    "Direction",
+                    "How workspaces are lined up",
+                    choice(
+                        known.map(|config| config.workspace_layout),
+                        &[
+                            ("Vertical", WorkspaceLayout::Vertical),
+                            ("Horizontal", WorkspaceLayout::Horizontal),
+                        ],
+                        Edit::Layout,
+                        accent,
+                    ),
                 ),
-                label(
-                    match known.map(|config| config.workspace_mode) {
-                        Some(WorkspaceMode::Global) => {
-                            "Switching workspaces changes every display together."
-                        }
-                        _ => "Each display switches its own workspaces.",
+                group_row(
+                    "Wrap around",
+                    "Going past the last workspace returns to the first",
+                    wrap,
+                ),
+                group_row(
+                    "Switch workspaces",
+                    match mode {
+                        Some(WorkspaceMode::Global) => "All displays switch together",
+                        _ => "Each display switches on its own",
                     },
-                    11.,
-                    MUTED,
+                    choice(
+                        mode,
+                        &[
+                            ("Per display", WorkspaceMode::OutputBound),
+                            ("All together", WorkspaceMode::Global),
+                        ],
+                        Edit::Mode,
+                        accent,
+                    ),
                 ),
             ],
         ));
+        // The overview is its own thing, not a workspace setting.
         items.push(group(
-            Some("Workspaces · overview"),
-            vec![split(
-                label("Typing in the overview", 13., FG),
+            Some("Overview"),
+            vec![group_row(
+                "When you start typing",
+                "In the workspace overview",
                 choice(
                     known.map(|config| config.action_on_typing),
                     &[
                         ("Nothing", TypingAction::None),
-                        ("Launcher", TypingAction::OpenLauncher),
-                        ("Applications", TypingAction::OpenApplications),
+                        ("Search apps", TypingAction::OpenApplications),
+                        ("Run a command", TypingAction::OpenLauncher),
                     ],
                     Edit::Typing,
                     accent,
@@ -161,64 +169,6 @@ impl Settings {
         ));
         column::with_children(items).spacing(16).into()
     }
-}
-
-fn summary(config: Option<WorkspaceConfig>) -> String {
-    let Some(config) = config else {
-        return "Kept as they are".into();
-    };
-    let layout = match config.workspace_layout {
-        WorkspaceLayout::Vertical => "Vertical",
-        WorkspaceLayout::Horizontal => "Horizontal",
-    };
-    let mode = match config.workspace_mode {
-        WorkspaceMode::OutputBound => "separate on each display",
-        WorkspaceMode::Global => "shared across displays",
-    };
-    format!("{layout} · {mode}")
-}
-
-fn workspaces_navigation<'a>(
-    draft: &WorkspacesDraft,
-    known: Option<WorkspaceConfig>,
-    accent: Color,
-) -> Element<'a, Message> {
-    let wrap: Element<'a, Message> = match draft.config() {
-        Setting::Known(config) => toggler(config.workspace_wraparound)
-            .on_toggle(|on| edit(Edit::Wraparound(on)))
-            .into(),
-        Setting::Unsupported(_) => text::body("").into(),
-    };
-    group(
-        Some("Workspaces · navigation"),
-        vec![
-            split(
-                label("Orientation", 13., FG),
-                choice(
-                    known.map(|config| config.workspace_layout),
-                    &[
-                        ("Vertical", WorkspaceLayout::Vertical),
-                        ("Horizontal", WorkspaceLayout::Horizontal),
-                    ],
-                    Edit::Layout,
-                    accent,
-                ),
-            ),
-            split(
-                column::with_children(vec![
-                    label("Wrap around", 13., FG),
-                    label(
-                        "Moving past the last workspace returns to the first",
-                        11.,
-                        MUTED,
-                    ),
-                ])
-                .spacing(2)
-                .into(),
-                wrap,
-            ),
-        ],
-    )
 }
 
 /// Two displays and their workspaces: a strip beside (vertical) or below

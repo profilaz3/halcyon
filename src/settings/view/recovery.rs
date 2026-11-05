@@ -55,7 +55,6 @@ impl Settings {
                     }
                 }
             }
-            rows.push(self.help("islands-included", "About Islands", "Islands is included in Halcyon. Enable it here, then log out and back in when convenient. Your current panel keeps running. Dock and panel styles below stay saved when Islands is off."));
             return pages::section(rows);
         }
         let mut rows = vec![detail(
@@ -127,7 +126,7 @@ impl Settings {
                                 button::text("Copy diagnostics")
                                     .on_press(Message::CopyIslandsDiagnostics)
                                     .into(),
-                                button::text("Dock & panel")
+                                button::text("Dock and panel")
                                     .id("manage-islands".into())
                                     .on_press(Message::Page(Page::DesktopDock))
                                     .into(),
@@ -151,107 +150,72 @@ impl Settings {
         );
         pages::section(rows)
     }
-    pub(super) fn desktop_recovery_section(&self) -> Element<'_, Message> {
+    /// The desktop as it was before Halcyon's first change, with the
+    /// confirmation folded into the same rows.
+    pub(super) fn desktop_recovery_rows(&self) -> Vec<Element<'_, Message>> {
         let recovery = &self.desktop_recovery;
-        let mut rows = vec![split(
-            detail("Restore desktop", recovery.summary()),
-            row::with_children(vec![
-                button::text("Export…")
-                    .id("export-recovery".into())
-                    .on_press_maybe(
-                        ((recovery.info.is_some() || recovery.problem.is_some()) && !recovery.busy)
-                            .then_some(Message::ExportRecovery),
-                    )
-                    .into(),
-                button::standard("Restore desktop…")
-                    .id("restore-desktop".into())
-                    .on_press_maybe(
-                        (recovery.info.is_some() && !recovery.busy)
-                            .then_some(Message::DesktopRestorePreview),
-                    )
-                    .into(),
-            ])
-            .spacing(8)
-            .into(),
+        let mut rows = vec![group_row(
+            "Desktop from before Halcyon",
+            recovery.summary(),
+            button::standard("Restore…")
+                .id("restore-desktop".into())
+                .on_press_maybe(
+                    (recovery.info.is_some() && !recovery.busy && recovery.plan.is_none())
+                        .then_some(Message::DesktopRestorePreview),
+                )
+                .into(),
         )];
         if let Some((crate::desktop::Owner::Recovery, _, id)) = &self.last_desktop_change {
-            rows.push(
-                button::text("Undo Restore")
+            rows.push(group_row(
+                "Desktop restored",
+                "",
+                button::text("Undo")
                     .id("undo-desktop-restore".into())
                     .on_press_maybe(
                         (!recovery.busy && !self.native_busy)
                             .then(|| Message::UndoDesktopRestore(id.clone())),
                     )
                     .into(),
-            );
+            ));
         }
         if let Some(problem) = &recovery.problem {
             rows.push(label(problem, 12., MUTED));
         }
         if let Some(plan) = &recovery.plan {
-            rows.push(label(
-                format!(
-                    "Restore {} {} in {} {}?",
-                    plan.changes(),
-                    if plan.changes() == 1 {
-                        "setting"
-                    } else {
-                        "settings"
-                    },
-                    plan.domains.len(),
-                    if plan.domains.len() == 1 {
-                        "scope"
-                    } else {
-                        "scopes"
-                    }
-                ),
-                14.,
-                FG,
-            ));
-            rows.push(label("A recovery point is saved first. Undo stays available after restart. Schedules stay on; the next future event can apply. Automatic colors resume with the next wallpaper.", 12., MUTED));
-            let later = plan
-                .snapshot
-                .domains
-                .iter()
-                .filter(|d| d.captured_at != plan.snapshot.captured_at)
-                .map(|d| {
-                    format!(
-                        "{:?} · {}",
-                        d.domain,
-                        d.captured_at.split('T').next().unwrap_or(&d.captured_at)
-                    )
-                })
-                .collect::<Vec<_>>();
-            if !later.is_empty() {
-                rows.push(label(
-                    format!("Captured later: {}", later.join(", ")),
-                    12.,
-                    MUTED,
-                ));
-            }
+            let mut notes = vec![format!(
+                "{} {} go back. Undo stays available, even after a restart.",
+                plan.changes(),
+                if plan.changes() == 1 {
+                    "setting will"
+                } else {
+                    "settings will"
+                },
+            )];
             if !plan.skipped.is_empty() {
-                rows.push(label(
-                    format!(
-                        "{} unsupported or unavailable settings kept; included in export.",
-                        plan.skipped.len()
-                    ),
-                    12.,
-                    MUTED,
+                notes.push(format!(
+                    "{} can't be restored here and stay as they are.",
+                    plan.skipped.len()
                 ));
             }
             if !plan.missing_assets.is_empty() {
-                rows.push(label(
-                    format!("Missing wallpaper: {}", plan.missing_assets.join(", ")),
-                    12.,
-                    MUTED,
+                notes.push(format!(
+                    "Missing wallpaper: {}",
+                    plan.missing_assets.join(", ")
                 ));
             }
-            if plan.snapshot.domains.iter().any(|d| d.motion.is_some()) {
-                rows.push(label("App animations use a separate GSettings preference. Its saved raw override is exportable; Restore and Undo leave it unchanged.", 12., MUTED));
-            }
+            rows.push(detail("Restore the earlier desktop?", notes.join(" ")));
             rows.push(
                 row::with_children(vec![
-                    button::standard("Cancel")
+                    button::text("Save a copy first…")
+                        .id("export-recovery".into())
+                        .on_press_maybe(
+                            ((recovery.info.is_some() || recovery.problem.is_some())
+                                && !recovery.busy)
+                                .then_some(Message::ExportRecovery),
+                        )
+                        .into(),
+                    cosmic::widget::space().width(Length::Fill).into(),
+                    button::text("Cancel")
                         .id("restore-desktop-cancel".into())
                         .on_press(Message::DesktopRestoreConfirm(false))
                         .into(),
@@ -261,9 +225,10 @@ impl Settings {
                         .into(),
                 ])
                 .spacing(8)
+                .align_y(Alignment::Center)
                 .into(),
             );
         }
-        pages::section(rows)
+        rows
     }
 }

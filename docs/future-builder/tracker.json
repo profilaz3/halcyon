@@ -2,12 +2,17 @@
   "title": "Halcyon future builder",
   "working_target": "next release (version unassigned)",
   "target_is_release_commitment": false,
-  "updated": "2026-10-30",
-  "phase": "0.5.0 remains published. Native Fedora RPM/shared updates and Music/Focus widget designs are implemented locally; collector schema 5 and the private reporting workbook are updated. Spectrum, circular audio visualizers and native rain are also locally implemented and validated. No new app or repository publication is authorized.",
+  "updated": "2026-11-04",
+  "phase": "FB31 reactive Activity island implemented and validated locally, including shared system adapters, quiet-policy-gated reveals and native keyboard focus. Remaining placement, stationary-hover and packaged-artifact qualification stay open. No release assigned.",
   "implementation_started": true,
   "status_source": "This file is the canonical task status; roadmap and archived proposals do not override it.",
   "next": [
-    "FB25",
+    "FB31",
+    "FB33",
+    "FB34",
+    "FB32",
+    "FB35",
+    "FB36",
     "FB20"
   ],
   "statuses": [
@@ -433,7 +438,7 @@
         "FB25"
       ],
       "plan": "REPORTING-AND-CHANNELS.md",
-      "exit": "Schemas 1\u20135, consent, retention and channel histories validated with isolated fixtures; additive live migration preserves records, deployment endpoint and ownership; native formulas, filters and coverage verified without fabricating live activity.",
+      "exit": "Schemas 1–5, consent, retention and channel histories validated with isolated fixtures; additive live migration preserves records, deployment endpoint and ownership; native formulas, filters and coverage verified without fabricating live activity.",
       "evidence": [
         "../REPORTING-CHANNELS.md",
         "../../.task-channels-reporting-20261030/result.json"
@@ -502,6 +507,147 @@
       ],
       "owner": null,
       "validation": "Implementation complete. Initial 22 regressions, native control captures, setup round trips, 15 hardware GPU cases and two private desktop runs passed. Optimization pass: 26 regressions, 25 hardware stress cases, 22 before/after pixel comparisons and a rebuilt-app desktop behavior run passed; smaller atmosphere textures, reusable backgrounds and simulation storage, cached stationary fields and hidden-preview redraw suppression. Native visual confirmation remains open after intermittent Clock clipping in a nested compositor logging EGL failures. Local only; no release."
+    },
+    {
+      "id": "FB31",
+      "title": "Activity island",
+      "status": "in_progress",
+      "depends_on": [
+        "FB07",
+        "FB16",
+        "FB27"
+      ],
+      "plan": "ACTIVITY-ISLAND.md",
+      "accepted_research_idea": 1,
+      "exit": "Native panel slot/popup composition proven as one morphing visual surface with no duplicated content or displaced neighbors; shared Music/Focus/Calendar providers; hover, keyboard, quiet policies, priority, privacy, persistence and native visual/resource checks pass.",
+      "evidence": [
+        "ACTIVITY-ISLAND-IMPLEMENTATION.md",
+        "../../.task-activity-island-20261101/delivery.json",
+        "../../.task-activity-island-20261101/polish/delivery.json",
+        "../../.task-activity-production-20261103/delivery.json",
+        "../../.task-activity-opus-20261103/delivery.json",
+        "../../.task-activity-opus-20261103/parent-review/delivery.json",
+        "../../.task-activity-islands-integration-20261103/delivery.json",
+        "../../.task-activity-seam-20261103/delivery.json",
+        "../../.task-activity-native-reactive-20261104/delivery.json",
+        "../../.task-activity-density-20261104/delivery.json",
+        "../../.task-activity-alignment-20261104/delivery.json"
+      ],
+      "owner": null,
+      "concept": "concepts/activity-island.html",
+      "implementation": "ACTIVITY-ISLAND-IMPLEMENTATION.md",
+      "first_delivery": {
+        "name": "native-v1",
+        "status": "validated",
+        "scope": "52 focused tests, exact release ELF in private native COSMIC, live Music/Focus actions, hover/hold/Escape/outside-click and service reconnection; scaled control captures and idle measurement. No host installation or release.",
+        "remaining": [
+          "Live fullscreen, lock, DND and hardware service-event qualification",
+          "Crowded-panel adaptive placement",
+          "Physical display, hardware presentation and final packaged-artifact qualification"
+        ],
+        "visual_revision": "Smaller native capsule, persistent icon tabs, preserved action controls and discreet hold indicator; 15 focused tests, scaled native visual checks and exact-ELF private COSMIC acceptance passed.",
+        "production_pass": "2026-11-03: named activity choices, explicit pinning, deadline/reconnect/stale-input fixes. 23 focused tests, light/dark and scaled visual review, and exact-ELF private COSMIC interaction/idle checks passed. Host/package/display qualifications remain open.",
+        "opus_revision": "Opus visual/technical review implemented: compact220x32, expanded328x118; stable title/cue, primary actions, quiet segmented choices, clock formatting and progress, hover-intent/flick/Escape fixes. Parent closed animated Escape reentry; 35 focused tests and final exact-ELF private COSMIC checks pass. Not installed or released.",
+        "open_interaction_issues": [
+          "Stationary hover can still expire after the five-second unentered-popup grace in the current COSMIC popup/input path; moving into the popup or explicitly holding it avoids that path."
+        ],
+        "panel_islands_integration": "2026-11-03: follows owning Panel Islands mode; Standard/stock fallback hides and disconnects; retained placement, native dark/light/custom palette. 56 focused checks and final-ELF private dark/light mode cycles, grouped Islands, controls/restart and stock fallback passed. No installation or release.",
+        "outer_frame_correction": "2026-11-03: popup aligns to panel height, padding and top corners; parent title hidden during popup motion/open state. 43 focused regressions and final-ELF private dark/light interactions plus XS/M/padded-XL captures passed; 300-frame native recording reviewed. No install or release."
+      },
+      "reactive_delivery": {
+        "date": "2026-11-04",
+        "status": "validated_locally",
+        "tests": "64 focused Rust tests; exact-ELF private dark/light native acceptance; source-reproduced companion focus correction",
+        "implementation": "ACTIVITY-ISLAND-IMPLEMENTATION.md",
+        "remaining": [
+          "Stationary hover can still expire after the five-second unentered-popup grace in the current COSMIC popup/input path; moving into the popup or explicitly holding it avoids that path.",
+          "Crowded-panel adaptive placement, physical hotplug, hardware presentation and final packaged-artifact qualification remain open.",
+          "Automatic-reveal state gates are tested; actual fullscreen/lock/DND transitions and real hardware system-service events were not exercised end-to-end this turn."
+        ]
+      },
+      "density_revision": {
+        "date": "2026-11-04",
+        "status": "validated_locally",
+        "scope": "220 px active slot, 296×128 expanded on XS; native-height inheritance; centered compact identity and continuous movement; 44 px transport targets retained",
+        "validation": "65 focused tests and private native XS/M acceptance passed; no installation or release"
+      },
+      "alignment_revision": {
+        "date": "2026-11-04",
+        "status": "validated_locally",
+        "scope": "Playback icons and collapse chevron centered within unchanged targets; 66 tests, rendered glyph checks at 100/150/200% in both themes, and private native acceptance passed. Local only."
+      }
+    },
+    {
+      "id": "FB32",
+      "title": "Wallpaper layer editor",
+      "status": "planned",
+      "depends_on": [
+        "FB14",
+        "FB18"
+      ],
+      "plan": "NEXT-WORK.md",
+      "accepted_research_idea": 2,
+      "exit": "Imported cutouts and manual masks render consistently in preview and desktop; ordering, scaling, input pass-through, bounded assets, setup transport and Apply/Undo/recovery pass.",
+      "evidence": [],
+      "owner": null
+    },
+    {
+      "id": "FB33",
+      "title": "Weather-connected scenes",
+      "status": "planned",
+      "depends_on": [
+        "FB07",
+        "FB21",
+        "FB30"
+      ],
+      "plan": "NEXT-WORK.md",
+      "accepted_research_idea": 3,
+      "exit": "Opt-in weather mapping drives existing effects with intensity limits, stale-data fallback, explicit override policy and preserved solar/power/reduced-motion behaviour; native transitions and resource checks pass.",
+      "evidence": [],
+      "owner": null
+    },
+    {
+      "id": "FB34",
+      "title": "Sun and Moon widget",
+      "status": "planned",
+      "depends_on": [
+        "FB17",
+        "FB21"
+      ],
+      "plan": "NEXT-WORK.md",
+      "accepted_research_idea": 4,
+      "exit": "Strip/dial and subsequent sky view share location and solar calculations with separately validated lunar phase; polar/time-zone/resume cases, native readability and static idle checks pass.",
+      "evidence": [],
+      "owner": null
+    },
+    {
+      "id": "FB35",
+      "title": "Custom data tiles",
+      "status": "planned",
+      "depends_on": [
+        "FB07",
+        "FB17",
+        "FB18"
+      ],
+      "plan": "NEXT-WORK.md",
+      "accepted_research_idea": 6,
+      "exit": "Typed local JSON then endpoint sources feed bounded native text/gauge/progress/graph tiles; stale/error states, cancellation, secrets, portable local rebinding and multi-tile resource checks pass without executable recipes.",
+      "evidence": [],
+      "owner": null
+    },
+    {
+      "id": "FB36",
+      "title": "Desktop companion",
+      "status": "planned",
+      "depends_on": [
+        "FB07",
+        "FB28"
+      ],
+      "plan": "NEXT-WORK.md",
+      "accepted_research_idea": 7,
+      "exit": "An optional licensed character reacts to selected Focus/Music/weather events with deterministic precedence, quiet mode, bounded sprites, input pass-through and verified hidden/session/power pause behaviour.",
+      "evidence": [],
+      "owner": null
     }
   ],
   "release_gate_note": "FB20 applies to each shipping milestone. Published 0.5.0 verification is in ../releases/0.5.0-acceptance.md and publication is recorded in DELIVERY-050.md. New DEB/RPM artifacts require their own qualification; historical checks do not qualify a future package.",
@@ -512,7 +658,7 @@
     "Automatic foreground segmentation",
     "Unqualified vertical Islands or native compositor effects"
   ],
-  "evidence_policy": "Validated design tasks FB01\u2013FB04 qualify documentation/contracts/current baseline and scoped capability probes only. They do not validate future behavior. Implementation tasks require exact source/artifact, environment and reproducible results.",
+  "evidence_policy": "Validated design tasks FB01–FB04 qualify documentation/contracts/current baseline and scoped capability probes only. They do not validate future behavior. Implementation tasks require exact source/artifact, environment and reproducible results.",
   "log": [
     {
       "date": "2026-10-30",
@@ -589,6 +735,38 @@
     {
       "date": "2026-10-30",
       "change": "Implemented FB25 locally and validated FB26 collector/workbook. Signed RPM acceptance uses a private test key; APT and published 0.5.0 remain untouched. User requested stopping before a new release. See REPORTING-AND-CHANNELS.md and private result.json for scope."
+    },
+    {
+      "date": "2026-11-01",
+      "change": "Accepted research ideas 1–4 and 6–7 as FB31–FB36; excluded terminal/editor theme syncing (idea 5). Added NEXT-WORK.md with first deliveries, boundaries, proposed order and per-increment review/native visual/validation gates. Planning only; no production code, builds, installations or releases."
+    },
+    {
+      "date": "2026-11-01",
+      "change": "Expanded FB31 into a Dynamic Island-style desktop interaction proposal: Compact, Peek and Expanded states, activity priority, privacy, placement and delivery slices. Added an interactive HTML concept with simulated Music/Focus/Calendar actions. Native behaviour and performance are not validated by this prototype."
+    },
+    {
+      "date": "2026-11-01",
+      "change": "User rejected floating-widget placement. Revised FB31 to live in the status bar, expand on hover and briefly reveal relevant activity. Researched Apple Live Activities and Boring Notch, revised the HTML concept and made native panel integration the first capability gate. Previous concept archived; no production implementation."
+    },
+    {
+      "date": "2026-11-01",
+      "change": "Revised FB31 again after user rejected duplicated bar/card content. One capsule and persistent title move between compact, hover and reveal states; controls emerge, other activities use one switcher. Archived attached-card concept. Native composition and smoothness remain unproven."
+    },
+    {
+      "date": "2026-11-01",
+      "change": "Implemented and locally validated the first native FB31 applet. Fixed reserved slot, interruptible capsule animation, shared Music/Focus/Calendar projection, private bounded IPC, guarded Add Activity island action and DEB/RPM/source payload integration. 52 focused tests and exact-ELF private COSMIC interactions passed. Full FB31 remains in progress; no installed-session changes, version bump or release."
+    },
+    {
+      "date": "2026-11-01",
+      "change": "Reworked FB31 after visual feedback: removed the navigation-only state and held outline, reduced expanded height, added persistent activity tabs with labels and reserved title indicator space. Fifteen focused tests and renewed private native COSMIC acceptance passed. Local only; no installation or release."
+    },
+    {
+      "date": "2026-11-03",
+      "change": "Hardened FB31 native interaction and lifecycle. Named tabs retain hover behavior; explicit Pin; truthful unavailable/completed states; calendar boundaries and native dismissal cleanup; bounded startup; stale popup-cursor fence. 23 focused regressions and final private COSMIC acceptance passed, including visual correction of a stuck tooltip. No installation or release; remaining FB31 qualifications unchanged."
+    },
+    {
+      "date": "2026-11-03",
+      "change": "Accepted Opus Activity Island improvements after parent source/visual review and one animated Escape fix. 35 focused tests and final private COSMIC playback/Focus/Settings/restart/dismissal checks passed. Five-second unentered-popup timeout and pinned-hover wallpaper-click behavior remain open interaction issues; prior placement/device/package qualification limits remain. No installation or release."
     }
   ],
   "foundation_probe_code_added": true,

@@ -35,10 +35,23 @@ fn penumbra_control_is_separate_reachable_and_uses_the_normal_action_path() {
                 .try_bounds(app.settings_view(), "penumbra-maximized-opacity")
                 .is_none()
         );
-        let bounds = native_reveal(&app, &mut native, "penumbra-gradient");
+        let _ = app.update(Message::ObjectTab(
+            crate::settings::navigation::ObjectTab::Design,
+        ));
+        // Without host support and while off, the row shows the way forward
+        // instead of a switch that would do nothing.
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "penumbra-gradient")
+                .is_none()
+        );
+        let bounds = native_reveal(&app, &mut native, "penumbra-setup");
         assert!(bounds.x >= 0. && bounds.x + bounds.width <= size.width);
         assert!(bounds.y >= 0. && bounds.y + bounds.height <= size.height);
         app.desktop.penumbra_supported = true;
+        let bounds = native_reveal(&app, &mut native, "penumbra-gradient");
+        assert!(bounds.x >= 0. && bounds.x + bounds.width <= size.width);
+        assert!(bounds.y >= 0. && bounds.y + bounds.height <= size.height);
         native_send(
             &mut app,
             &mut native,
@@ -85,7 +98,11 @@ fn penumbra_control_is_separate_reachable_and_uses_the_normal_action_path() {
     }
 }
 
-fn native_send(app: &mut Settings, native: &mut crate::native_test::Native, message: Message) {
+pub(super) fn native_send(
+    app: &mut Settings,
+    native: &mut crate::native_test::Native,
+    message: Message,
+) {
     use cosmic::iced::futures::StreamExt;
     use cosmic::iced::runtime::Action;
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -136,7 +153,8 @@ fn auditfix_embedded_editor_errors_stay_visible_in_normal_and_candidate_footers(
             "theme-soft",
         ))),
     );
-    assert!(app.profiles.profile().is_some());
+    // Appearance applies a chosen style at once, so there is no separate
+    // candidate footer any more; the error must still show after the choice.
     app.system_appearance.notice = Some(desktop::Notice::Error("Mode could not be saved".into()));
     native.text_bounds(app.settings_view(), "Mode could not be saved");
     send_settings(&mut app, Message::Page(Page::DesktopWindows));
@@ -213,17 +231,21 @@ fn auditfix_keyboard_back_closes_browser_and_preserves_theme_candidate() {
             "theme-soft",
         ))),
     );
-    send_settings(&mut app, Message::StyleBrowser(true));
-    assert!(app.style_browser);
-    send_settings(&mut app, Message::Back);
-    assert!(!app.style_browser);
-    assert_eq!(app.page, Page::Themes);
+    // Choosing a style on Appearance applies it at once.
+    let chosen = std::fs::read(Config::path().unwrap()).unwrap();
+    assert_ne!(chosen, before);
     assert_eq!(
-        app.profiles.selection(),
-        &profiles::Selection::Preset("theme-soft")
+        Config::load().appearance.family,
+        Some(crate::desktop_theme::Family::Soft)
     );
-    assert!(app.profiles.profile().is_some());
-    assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
+    send_settings(&mut app, Message::ToggleSection("appearance-all-styles"));
+    assert_eq!(app.page, Page::Themes);
+    // Showing every style keeps the chosen style and writes nothing more.
+    assert_eq!(
+        Config::load().appearance.family,
+        Some(crate::desktop_theme::Family::Soft)
+    );
+    assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), chosen);
 }
 
 #[test]
@@ -283,24 +305,26 @@ fn redesign_navigation_scene_and_scroll_are_local_and_remembered() {
     let mut app = open_isolated_editor(&root);
     let before = fixture_files(&root.join("cosmic-root"));
     let preferences = std::fs::read(Config::path().unwrap()).unwrap();
+    // The preview is always shown; the old collapse message changes nothing.
     send_settings(&mut app, Message::ToggleScene);
-    assert!(!app.scene_open());
+    assert!(app.scene_open());
     send_settings(&mut app, Message::ContentScrolled(175.));
     send_settings(&mut app, Message::Page(Page::DesktopIcons));
-    assert!(app.scene_open(), "collapse belongs to its editor");
+    assert!(app.scene_open());
     send_settings(&mut app, Message::Page(Page::Clock));
     let desktop = app
         .nav_model
         .iter()
-        .find(|&id| app.nav_model.data::<Page>(id) == Some(&Page::DesktopDock))
+        .find(|&id| app.nav_model.data::<Page>(id) == Some(&Page::Overview))
         .unwrap();
     send_settings(&mut app, Message::NavSelected(desktop));
-    assert_eq!(app.page, Page::DesktopIcons, "root restores last editor");
+    assert_eq!(app.page, Page::Overview, "a root opens its stable landing");
     send_settings(&mut app, Message::Page(Page::DesktopDock));
-    assert!(!app.scene_open());
+    assert!(app.scene_open());
     assert_eq!(app.page_scroll.get(Page::DesktopDock.key()), Some(&175.));
     send_settings(&mut app, Message::Tick);
-    assert!(!app.scene_open(), "refresh must preserve scene state");
+    assert!(app.scene_open(), "refresh must preserve scene state");
+    assert_eq!(app.page_scroll.get(Page::DesktopDock.key()), Some(&175.));
     assert_eq!(fixture_files(&root.join("cosmic-root")), before);
     assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), preferences);
     assert!(!checkpoint_message(&Message::ToggleScene));
@@ -448,7 +472,8 @@ fn redesign_search_reveals_maintenance_pages_and_scene_bypasses_native_queue() {
     send_settings(&mut app, Message::ToggleSection("structural"));
     assert_eq!(app.help_open, Some("structural"));
     assert!(app.open_sections.contains("structural"));
-    assert!(!app.scene_open());
+    // The preview can no longer be hidden; the message is still view-only.
+    assert!(app.scene_open());
     assert!(
         app.native_deferred.is_empty(),
         "view changes never accumulate in desktop write queue"
@@ -485,10 +510,14 @@ fn polish_primary_content_actions_fit_without_collapsing_or_scrolling() {
     let size = Size::new(820., 552.);
     send_settings(&mut app, Message::Resized(size));
     for (page, ids) in [
-        (Page::Notes, vec!["note-editor", "note-save", "note-revert"]),
+        // Notes save as you type; Save and Throw away only appear for
+        // edits restored from last time.
+        (Page::Notes, vec!["note-editor"]),
         (Page::Calendar, vec!["calendar-subscription-open"]),
         (Page::Weather, vec!["weather-city"]),
-        (Page::Projects, vec!["project-folder-input"]),
+        // The folder chooser is the primary way in; typing a path is only
+        // offered when the chooser cannot open.
+        (Page::Projects, vec!["project-choose-folders"]),
         (
             Page::Appearance,
             vec![
@@ -505,16 +534,22 @@ fn polish_primary_content_actions_fit_without_collapsing_or_scrolling() {
             "primary actions do not require hiding the preview"
         );
         let mut native = crate::native_test::Native::new(size);
+        // The always-shown preview sits above the controls, so a primary
+        // control may sit below the first screen; it is reached by
+        // scrolling the page and then fits whole beside the sidebar.
         for id in ids {
-            let bounds = native.bounds(app.settings_view(), id);
+            // native_reveal also checks the control is whole inside the
+            // scrolling page, which may end at the window's bottom edge.
+            let bounds = native_reveal(&app, &mut native, id);
             assert!(
-                bounds.x >= 184.
-                    && bounds.y >= 100.
+                bounds.x >= app.sidebar_width()
+                    && bounds.y >= 80.
                     && bounds.x + bounds.width <= size.width
-                    && bounds.y + bounds.height <= size.height - 8.,
+                    && bounds.y + bounds.height <= size.height,
                 "{page:?}/{id}: {bounds:?}"
             );
         }
+        native.scroll(app.settings_view(), "settings-content", 0.);
         native.capture(
             app.settings_view(),
             &cosmic::Theme::dark(),
@@ -585,8 +620,8 @@ fn polish_privacy_discloses_activity_and_opt_out_status_in_view() {
     send_settings(&mut app, Message::AppSettingsPage(AppSettingsPage::Privacy));
     let mut native = crate::native_test::Native::new(size);
     for label in [
-        "Reports versions, update channel, first start, country and daily activity. Never widget content.",
-        "Turning this off stops activity reporting and queues a final preference update.",
+        "The app version, your country and which days you use it. Never what's in your widgets.",
+        "Never sent anywhere, even with usage data on",
     ] {
         let bounds = native.text_bounds(app.settings_view(), label);
         assert!(
@@ -596,6 +631,12 @@ fn polish_privacy_discloses_activity_and_opt_out_status_in_view() {
             "{bounds:?}"
         );
     }
+    // The opt-out switch sits beside what it shares, in the same view.
+    let toggle = native.bounds(app.settings_view(), "share-usage-data");
+    assert!(
+        toggle.y > 0. && toggle.y + toggle.height < size.height && toggle.x + toggle.width <= size.width,
+        "{toggle:?}"
+    );
 }
 
 #[test]
@@ -651,8 +692,9 @@ fn comfort_navigation_and_scene_shortcuts_are_reachable_without_writes() {
     send_settings(&mut app, Message::Resized(size));
     send_settings(&mut app, Message::Page(Page::Themes));
     let mut native = crate::native_test::Native::new(size);
-    let search = native.bounds(app.settings_view(), "settings-search");
-    assert!(search.x + search.width <= 184. && search.y > 0.);
+    // The rail opens the search screen; its field gets focus there.
+    let search = native.bounds(app.settings_view(), "rail-search");
+    assert!(search.x + search.width <= app.sidebar_width() && search.y > 0.);
     for page in Page::SIDEBAR[0].1 {
         let bounds = native.bounds(app.settings_view(), &format!("nav-{}", page.key()));
         assert!(
@@ -660,15 +702,34 @@ fn comfort_navigation_and_scene_shortcuts_are_reachable_without_writes() {
             "comfortable visible navigation: {bounds:?}"
         );
     }
-    assert!(!app.scene_objects_open);
+    // Appearance has no separate list of shortcuts: parts of the preview
+    // itself open their settings. The sample window sits in the middle.
     assert!(
         native
-            .try_bounds(app.settings_view(), "scene-open-window")
+            .try_bounds(app.settings_view(), "scene-objects-toggle")
             .is_none()
     );
-    native_click(&mut app, &mut native, "scene-objects-toggle");
-    assert!(app.scene_objects_open);
-    native_click(&mut app, &mut native, "scene-open-window");
+    let scene = native.bounds(app.settings_view(), "desktop-scene");
+    let point = scene.center();
+    assert!(
+        point.x > app.sidebar_width() && point.y > 0. && point.y < size.height,
+        "the preview's middle is on screen: {scene:?}"
+    );
+    {
+        use cosmic::iced::{Event, mouse};
+        for event in [
+            mouse::Event::CursorMoved { position: point },
+            mouse::Event::ButtonPressed(mouse::Button::Left),
+            mouse::Event::ButtonReleased(mouse::Button::Left),
+        ] {
+            for message in native
+                .event(app.settings_view(), Event::Mouse(event), point)
+                .0
+            {
+                send_settings(&mut app, message);
+            }
+        }
+    }
     assert_eq!(app.page, Page::DesktopAppearance);
     assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
     assert!(!checkpoint_message(&Message::ToggleSceneObjects));
@@ -693,7 +754,14 @@ fn comfort_theme_inspector_keeps_color_picker_inside_its_column() {
     send_settings(&mut app, Message::Page(Page::Themes));
     send_settings(
         &mut app,
-        Message::ColorWell(color_well::Message::Open(color_well::Target::Accent, None)),
+        Message::Profiles(profiles::Message::ThemeCustom(Some("#12".into()))),
+    );
+    send_settings(
+        &mut app,
+        Message::ColorWell(color_well::Message::Open(
+            color_well::Target::ThemeCustom,
+            None,
+        )),
     );
     for size in [
         Size::new(820., 600.),
@@ -706,17 +774,16 @@ fn comfort_theme_inspector_keeps_color_picker_inside_its_column() {
         let scene = native.bounds(app.settings_view(), "desktop-scene");
         let picker = native.bounds(app.settings_view(), "color-panel");
         assert!(picker.x + picker.width <= size.width - 20., "{picker:?}");
-        if size.width == 820. {
-            assert!(
-                picker.y > scene.y + scene.height,
-                "compact picker stacks: {scene:?}; {picker:?}"
-            );
-        } else {
-            assert!(
-                picker.x > scene.x + scene.width,
-                "scene={scene:?}; picker={picker:?}"
-            );
-        }
+        // One column at every width: the picker opens under the color row,
+        // below the preview and inside the content column.
+        assert!(
+            picker.y > scene.y + scene.height,
+            "picker stacks under the preview: {scene:?}; {picker:?}"
+        );
+        assert!(
+            picker.x >= scene.x && picker.x + picker.width <= scene.x + scene.width + 1.,
+            "picker stays inside the content column: {scene:?}; {picker:?}"
+        );
         assert!(
             picker.width >= 328.,
             "300 px native picker plus its padding must fit: {picker:?}"
@@ -789,8 +856,8 @@ fn setups_collection_comparison_and_keyboard_back_are_local_and_reachable() {
             "two real cards fit: {first:?}/{second:?}"
         );
         assert!(
-            first.width >= 240. && first.y + first.height <= size.height,
-            "first choices fit without scrolling: {first:?}"
+            first.width >= 240. && first.y >= 0. && first.y + first.height <= size.height,
+            "the whole first choice fits without scrolling: {first:?}"
         );
         for id in crate::desktop::profiles::discovery::CURATED
             .into_iter()
@@ -817,8 +884,11 @@ fn setups_collection_comparison_and_keyboard_back_are_local_and_reachable() {
             );
             let scene = native.bounds(app.settings_view(), "profile-scene-candidate");
             assert!(
-                scene.y + scene.height <= apply.y - 8.,
-                "whole desktop must fit above the fixed footer: {scene:?}, {apply:?}"
+                scene.x >= app.sidebar_width()
+                    && scene.x + scene.width <= size.width
+                    && scene.y >= 0.
+                    && scene.y + scene.height <= apply.y - 8.,
+                "the whole desktop picture fits above the fixed footer: {scene:?}, {apply:?}"
             );
             native_click(&mut app, &mut native, "setup-show-current");
             assert!(app.profiles.compare_current);
@@ -834,16 +904,24 @@ fn setups_collection_comparison_and_keyboard_back_are_local_and_reachable() {
             );
             native_click(&mut app, &mut native, "setup-show-candidate");
             assert!(!app.profiles.compare_current);
-            send_settings(&mut app, Message::Back);
+            // The footer's Cancel returns to the gallery. Alt+Left follows
+            // history instead, returning to the editor that opened Looks.
+            native_click(&mut app, &mut native, "profiles-discard");
             assert_eq!(app.page, Page::DesktopProfiles);
             assert_eq!(app.profiles.selection(), &profiles::Selection::Current);
             native.scroll(app.settings_view(), "settings-content", 0.);
+            assert!(
+                native
+                    .try_bounds(app.settings_view(), "preset-tidal")
+                    .is_some(),
+                "leaving the review shows the gallery again"
+            );
         }
-        native_click(&mut app, &mut native, "setups-saved");
-        assert!(app.profiles.saved_collection);
+        // Saved looks are listed under the gallery; there are no separate
+        // Browse and Saved tabs any more.
         assert!(
             native
-                .try_bounds(app.settings_view(), "preset-tidal")
+                .try_bounds(app.settings_view(), "setups-saved")
                 .is_none()
         );
         native.capture(
@@ -851,8 +929,10 @@ fn setups_collection_comparison_and_keyboard_back_are_local_and_reachable() {
             &cosmic::Theme::dark(),
             &format!("setups-saved-{}", size.width),
         );
-        native_click(&mut app, &mut native, "setups-explore");
     }
+    assert_eq!(app.back_title().as_deref(), Some("Dock"));
+    send_settings(&mut app, Message::Back);
+    assert_eq!(app.page, Page::DesktopDock);
     assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), preferences);
     assert_eq!(fixture_files(&root.join("cosmic-root")), desktop);
     for message in [
@@ -917,7 +997,12 @@ fn setups_islands_scenes_follow_plan_and_do_not_edit_applet_selection() {
     send_settings(&mut app, Message::Resized(Size::new(820., 600.)));
     let mut native = crate::native_test::Native::new(Size::new(820., 552.));
     assert!(!app.desktop.opened());
-    native.bounds(app.settings_view(), "starter-islands-panel");
+    let ids: Vec<&str> = app.profiles.presets().iter().map(|p| p.id).collect();
+    assert!(ids.iter().any(|id| {
+        native
+            .try_bounds(app.settings_view(), &format!("starter-islands-panel-{id}"))
+            .is_some()
+    }));
     for id in ["halcyon", "focus", "paper", "rose", "calm", "evening"] {
         send_settings(
             &mut app,
@@ -1025,5 +1110,176 @@ fn structural_setup_inspector_keeps_scene_and_apply_visible() {
             );
         }
     }
+    assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
+}
+
+#[test]
+fn reactive_activity_preferences_are_reachable_saved_and_undoable() {
+    let name = "reactive_activity_preferences_are_reachable_saved_and_undoable";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    seed(
+        &root.join("cosmic-root/config/cosmic"),
+        &[(
+            "com.system76.CosmicPanel.Panel",
+            "plugins_center",
+            "Some([\"io.github.profilaz3.Halcyon.Activity\"])",
+        )],
+    );
+    send_settings(&mut app, Message::DesktopEditor(desktop::Message::Refresh));
+    send_settings(
+        &mut app,
+        Message::OpenBar(crate::desktop::panels::PanelKind::Panel),
+    );
+    send_settings(
+        &mut app,
+        Message::ObjectTab(crate::settings::navigation::ObjectTab::Content),
+    );
+    for size in [Size::new(820., 600.), Size::new(1280., 900.)] {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        let b = native_reveal(&app, &mut native, "activity-preference-media");
+        assert!(
+            b.x >= 0. && b.x + b.width <= size.width && b.y >= 0. && b.y + b.height <= size.height
+        );
+        native_click(&mut app, &mut native, "activity-preference-media");
+        assert!(
+            !Config::load().activity_island.media,
+            "click must save: {:?} / {} / {:?}",
+            b,
+            app.status,
+            Config::load().activity_island
+        );
+        assert!(Config::load().activity_island.system);
+        assert!(
+            crate::desktop::store::widget::FIELDS
+                .iter()
+                .all(|f| !f.pointer.starts_with("/activity_island/")),
+            "local activity choices never enter shared setups"
+        );
+        send_settings(&mut app, Message::UndoDesktop);
+        assert!(Config::load().activity_island.media);
+        send_settings(&mut app, Message::ActivityPreference("system", false));
+        send_settings(&mut app, Message::ActivityLead(2));
+        assert!(
+            !Config::load().activity_island.system,
+            "editing lead time preserves other choices"
+        );
+        assert_eq!(Config::load().activity_island.lead_minutes, 15);
+        send_settings(&mut app, Message::ActivityPreference("system", true));
+        // Per-source and notification switches sit under their parent and
+        // only while it is on.
+        for key in ["battery", "camera", "bluetooth", "updates", "replace_popups", "notification_text"] {
+            assert!(native.try_bounds(app.settings_view(), &format!("activity-preference-{key}")).is_some(), "{key}");
+        }
+        send_settings(&mut app, Message::ActivityPreference("network", false));
+        assert!(!Config::load().activity_island.network && Config::load().activity_island.battery);
+        send_settings(&mut app, Message::UndoDesktop);
+        assert!(Config::load().activity_island.network, "per-source choices undo");
+        send_settings(&mut app, Message::ActivityPreference("notifications", false));
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "activity-preference-replace_popups")
+                .is_none()
+        );
+        send_settings(&mut app, Message::ActivityPreference("notifications", true));
+        // Taller than a small window: each switch scrolls into view.
+        for key in ["camera", "bluetooth", "reveals"] {
+            native_reveal(&app, &mut native, &format!("activity-preference-{key}"));
+        }
+        send_settings(&mut app, Message::ActivityPreference("bluetooth", false));
+        assert!(!Config::load().activity_island.bluetooth && Config::load().activity_island.camera);
+        native.capture(
+            app.settings_view(),
+            &cosmic::Theme::dark(),
+            &format!("activity-preferences-{}", size.width),
+        );
+    }
+}
+
+#[test]
+fn whats_new_opens_from_updates_and_each_note_leads_to_its_setting() {
+    let name = "whats_new_opens_from_updates_and_each_note_leads_to_its_setting";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use cosmic::iced::{Event, mouse};
+    fn click(app: &mut Settings, native: &mut crate::native_test::Native, id: &str) {
+        let point = native_reveal(app, native, id).center();
+        for event in [
+            mouse::Event::CursorMoved { position: point },
+            mouse::Event::ButtonPressed(mouse::Button::Left),
+            mouse::Event::ButtonReleased(mouse::Button::Left),
+        ] {
+            for message in native
+                .event(app.settings_view(), Event::Mouse(event), point)
+                .0
+            {
+                native_send(app, native, message);
+            }
+        }
+    }
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    let before = std::fs::read(Config::path().unwrap()).unwrap();
+    let mut native = crate::native_test::Native::new(Size::new(1280., 900.));
+    native_send(
+        &mut app,
+        &mut native,
+        Message::AppSettingsPage(AppSettingsPage::Updates),
+    );
+    let away = cosmic::iced::Point::new(-1., -1.);
+    native.capture_hover(app.settings_view(), &cosmic::Theme::dark(), away, "whats-new-updates");
+    click(&mut app, &mut native, "updates-whats-new");
+    assert_eq!(app.app_settings_page, AppSettingsPage::WhatsNew);
+    // Its way up names Updates, where it was opened.
+    assert_eq!(app.up_link().map(|(title, _)| title).as_deref(), Some("Updates"));
+    for (theme, name) in [(cosmic::Theme::dark(), "dark"), (cosmic::Theme::light(), "light")] {
+        native.capture_hover(app.settings_view(), &theme, away, &format!("whats-new-{name}"));
+    }
+    let release = crate::settings::release_notes::current().unwrap();
+    for (index, note) in release.notes.iter().enumerate() {
+        let id = format!("whats-new-open-{index}");
+        let Some(place) = note.place else {
+            assert!(native.try_bounds(app.settings_view(), &id).is_none());
+            continue;
+        };
+        click(&mut app, &mut native, &id);
+        assert_eq!(app.page, place.page, "{}", note.title);
+        if place.page == Page::General {
+            assert_eq!(app.app_settings_page, place.app_destination());
+        }
+        // The note's place is on screen, not just its page.
+        native_send(&mut app, &mut native, Message::RevealSearch(place));
+        if place.anchor() != "page-start" {
+            let bounds = native.bounds(app.settings_view(), place.anchor());
+            assert!(bounds.y >= 0. && bounds.y < 900., "{}: {bounds:?}", note.title);
+        }
+        native_send(&mut app, &mut native, Message::Back);
+        assert_eq!(
+            (app.page, app.app_settings_page),
+            (Page::General, AppSettingsPage::WhatsNew),
+            "Back from {}",
+            note.title
+        );
+    }
+    // Reading the notes and following them changes nothing.
     assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
 }

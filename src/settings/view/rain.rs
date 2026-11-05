@@ -1,4 +1,4 @@
-//! The wallpaper owns the picture; rain is a separate, immediately saved effect.
+//! Wallpaper and effects share one local preview and Apply action.
 use super::*;
 use crate::rain::{Effect, FogColor, Mode, Quality};
 use crate::settings::rain::Edit;
@@ -7,36 +7,55 @@ fn edit(e: Edit) -> Message {
 }
 impl Settings {
     pub(super) fn rain_controls(&self) -> Element<'_, Message> {
-        let p = self.rain.draft.as_ref().unwrap_or(&self.config.rain);
-        let next = p.clone();
-        let mut rows = vec![switch("Wallpaper effect", "", p.enabled, move |enabled| {
-            let mut p = next.clone();
-            p.enabled = enabled;
-            edit(Edit::Set(p))
-        })];
+        let p = self.wallpaper.effect().unwrap_or(&self.config.rain);
         const EFFECTS: &[Effect] = &[Effect::Rain, Effect::Snow, Effect::Fog, Effect::Clouds];
         const TITLES: &[&str] = &[
+            "None",
             Effect::Rain.title(),
             Effect::Snow.title(),
             Effect::Fog.title(),
             Effect::Clouds.title(),
         ];
+        // One choice: no effect, or which one. Choosing applies it.
         let next = p.clone();
-        rows.push(column::with_children(vec![
-            self.help("effect-help", "Effect", "One effect at a time, behind windows, widgets and the dock. Each effect remembers its settings. Changes save when you finish adjusting a control."),
-            cosmic::widget::dropdown(TITLES, EFFECTS.iter().position(|e| *e==p.effect), move |i| {
-                let mut p=next.clone(); p.effect=EFFECTS[i]; edit(Edit::Set(p))
-            }).width(Length::Fill).into(),
-        ]).spacing(6).into());
-        if !p.enabled {
+        let chosen = if p.enabled {
+            EFFECTS.iter().position(|e| *e == p.effect).map(|i| i + 1)
+        } else {
+            Some(0)
+        };
+        let mut rows = vec![split(
+            detail("Moving effect", "Plays behind windows and widgets"),
+            cosmic::widget::dropdown(TITLES, chosen, move |i| {
+                let mut p = next.clone();
+                p.enabled = i > 0;
+                if i > 0 {
+                    p.effect = EFFECTS[i - 1];
+                }
+                edit(Edit::Set(p))
+            })
+            .width(160)
+            .into(),
+        )];
+        if self.wallpaper.effect_conflict() {
+            rows.push(label(
+                "Effects changed elsewhere. Choose which version to keep.",
+                12.,
+                desktop::ERROR,
+            ));
             rows.push(
-                button::text(if self.rain.preview {
-                    "Stop preview"
-                } else {
-                    "Try effect"
-                })
-                .id(cosmic::widget::Id::new("rain-try"))
-                .on_press(edit(Edit::Preview(!self.rain.preview)))
+                cosmic::widget::flex_row(vec![
+                    button::text("Use current")
+                        .on_press(Message::Wallpaper(
+                            crate::settings::wallpaper::Message::ResolveEffect(false),
+                        ))
+                        .into(),
+                    button::text("Keep my preview")
+                        .on_press(Message::Wallpaper(
+                            crate::settings::wallpaper::Message::ResolveEffect(true),
+                        ))
+                        .into(),
+                ])
+                .spacing(6)
                 .into(),
             );
         }
@@ -233,24 +252,19 @@ impl Settings {
             ));
             let state = self.rain.lifecycle;
             if !self.config.material_motion {
-                rows.push(label("Paused · Reduce motion is on", 12., MUTED));
+                rows.push(label("Paused while Reduce motion is on", 12., MUTED));
             } else if !state.ready {
                 rows.push(label("Waiting for the desktop session", 12., MUTED));
             } else if p.pause_on_battery && state.on_battery {
                 rows.push(label("Paused on battery", 12., MUTED));
             }
-            rows.push(label(
-                "Applies to all displays · changes save immediately",
-                12.,
-                MUTED,
-            ));
         }
-        container(group(Some("Living wallpaper"), rows))
+        container(group(None, rows))
             .id(cosmic::widget::Id::new("rain-controls"))
             .into()
     }
     pub(super) fn rain_preview(&self, height: f32) -> Option<Element<'_, Message>> {
-        let p = self.rain.draft.as_ref().unwrap_or(&self.config.rain);
+        let p = self.wallpaper.effect().unwrap_or(&self.config.rain);
         if !p.enabled && !self.rain.preview {
             self.rain.release_image();
             return None;

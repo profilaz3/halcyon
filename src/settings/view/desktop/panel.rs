@@ -17,6 +17,7 @@ impl Settings {
     pub(super) fn panel_contents(&self, draft: &PanelDraft) -> Element<'_, Message> {
         let editor = &self.desktop;
         let accent = self.settings_accent();
+        let idle = !editor.drag.active() && !self.native_busy;
         let horizontal = draft.anchor().known().is_none_or(|a| a.horizontal());
         let Setting::Known(regions) = draft.applets() else {
             return self.applets_section(draft);
@@ -26,18 +27,20 @@ impl Settings {
         }
         let mut blocks = vec![split(
             label("Contents", 16., FG),
-            button::text("Add applets")
+            button::text("Add items")
+                .id("panel-add-applets".into())
                 .leading_icon(icon::from_name("list-add-symbolic").size(16))
-                .on_press_maybe(
-                    (!editor.drag.active()).then_some(edit(Edit::Picker(Some(Region::End)))),
-                )
+                .on_press_maybe(idle.then_some(edit(Edit::Picker(Some(Region::End)))))
                 .into(),
         )];
         blocks.push(label(
-            "Drag a handle to move an applet, or select one for controls.",
+            "Drag to reorder.",
             11.,
             MUTED,
         ));
+        if let Some(add) = self.add_activity_island(draft, &regions) {
+            blocks.push(add);
+        }
         let lanes: Vec<Element<'_, Message>> = Region::ALL
             .into_iter()
             .map(|region| {
@@ -56,10 +59,12 @@ impl Settings {
                         FG,
                     ),
                     button::icon(icon::from_name("list-add-symbolic"))
+                        .id(cosmic::widget::Id::new(format!(
+                            "applets-add-{}",
+                            region.key()
+                        )))
                         .tooltip(format!("Add to {}", region_title(region, horizontal)))
-                        .on_press_maybe(
-                            (!editor.drag.active()).then_some(edit(Edit::Picker(Some(region)))),
-                        )
+                        .on_press_maybe(idle.then_some(edit(Edit::Picker(Some(region)))))
                         .into(),
                 );
                 let mut chips = vec![self.panel_drop_target(header, start)];
@@ -150,7 +155,8 @@ impl Settings {
                 row::with_children(vec![
                     button::suggested("Use starter layout")
                         .on_press_maybe(
-                            (starter != Regions::default()).then_some(edit(Edit::UseStarter)),
+                            (idle && starter != Regions::default())
+                                .then_some(edit(Edit::UseStarter)),
                         )
                         .into(),
                     button::text("Cancel")
@@ -164,21 +170,34 @@ impl Settings {
             blocks.push(split(
                 label(
                     if editor.drag.active() {
-                        "Drop on an applet or empty space · Esc cancels"
+                        "Drop it where you want it. Esc cancels."
                     } else if regions == Regions::default() {
-                        "Start with the essentials, or add your own applets."
+                        "Start with the essentials, or add your own items."
                     } else {
-                        "Move or remove applets here. Undo restores your last change."
+                        "Drag to reorder."
                     },
                     11.,
                     MUTED,
                 ),
                 button::text("Starter layout…")
-                    .on_press_maybe((!editor.drag.active()).then_some(edit(Edit::Starter(true))))
+                    .on_press_maybe(idle.then_some(edit(Edit::Starter(true))))
                     .into(),
             ));
         }
-        section(blocks)
+        if Region::ALL.iter().any(|r| {
+            regions
+                .list(*r)
+                .iter()
+                .any(|id| id == crate::activity_island::APPLET_ID)
+        }) {
+            blocks.push(separator());
+            blocks.push(self.activity_preferences());
+        }
+        // What's new and search open the Activity island here.
+        container(section(blocks))
+            .id(cosmic::widget::Id::new("panel-items"))
+            .width(Length::Fill)
+            .into()
     }
 
     fn panel_drop_target<'a>(
@@ -202,23 +221,30 @@ impl Settings {
         let dragging = editor.drag.source == Some(slot);
         let name = editor.catalog.panel_label(id);
         let known = editor.catalog.known(id);
+        let idle = !editor.drag.active() && !self.native_busy;
         let handle = mouse_area(
-            container(icon::from_name("grip-lines-symbolic").size(12).icon()).padding([8, 3]),
+            container(icon::from_name("grip-lines-symbolic").size(12).icon())
+                .padding([8, 3])
+                .id(control_id(slot, AppletControl::Drag)),
         )
-        .on_press(edit(Edit::DragStart(slot)))
         .on_release(edit(Edit::DropAt(slot)))
         .interaction(if dragging {
             cosmic::iced::mouse::Interaction::Grabbing
         } else {
             cosmic::iced::mouse::Interaction::Grab
         });
+        let handle = if idle {
+            handle.on_press(edit(Edit::DragStart(slot)))
+        } else {
+            handle
+        };
         // Names remain visible alongside the pointer and keyboard controls.
         let content = vec![
             icon::from_name(editor.catalog.icon(id))
                 .size(18)
                 .icon()
                 .into(),
-            line(name.clone(), 11., if known { FG } else { MUTED }),
+            line(name.clone(), 13., if known { FG } else { MUTED }),
         ];
         let chip = button::custom(
             row::with_children(content)
@@ -231,7 +257,7 @@ impl Settings {
         .selected(selected)
         .padding([5, 4])
         .width(Length::Fill)
-        .on_press_maybe((!editor.drag.active()).then_some(edit(Edit::SelectApplet(Some(slot)))));
+        .on_press_maybe(idle.then_some(edit(Edit::SelectApplet(Some(slot)))));
         let chip = cosmic::widget::tooltip(
             chip,
             text::body(if known {
@@ -242,10 +268,17 @@ impl Settings {
             cosmic::widget::tooltip::Position::Bottom,
         );
         self.panel_drop_target(
-            row::with_children(vec![handle.into(), chip.into()])
-                .align_y(Alignment::Center)
-                .width(140)
-                .into(),
+            row::with_children(vec![
+                handle.into(),
+                chip.into(),
+                button::text("Remove")
+                    .id(control_id(slot, AppletControl::Remove))
+                    .on_press_maybe(idle.then_some(edit(Edit::Remove(slot))))
+                    .into(),
+            ])
+            .align_y(Alignment::Center)
+            .width(260)
+            .into(),
             slot,
         )
     }
@@ -260,10 +293,10 @@ impl Settings {
         let id = &regions.list(slot.region)[slot.index];
         let accent = self.settings_accent();
         let description = editor.catalog.get(id).map_or(
-            "Not installed. This applet stays in your layout until you remove it.",
+            "Not installed. It stays in your layout until you remove it.",
             |i| i.description(),
         );
-        let idle = !editor.drag.active();
+        let idle = !editor.drag.active() && !self.native_busy;
         let mut items = vec![
             separator(),
             split(
@@ -317,10 +350,6 @@ impl Settings {
                         .then_some(edit(Edit::Step(slot, 1))),
                     )
                     .into(),
-                button::text("Remove")
-                    .id(control_id(slot, AppletControl::Remove))
-                    .on_press_maybe(idle.then_some(edit(Edit::Remove(slot))))
-                    .into(),
             ])
             .spacing(8)
             .wrap()
@@ -337,7 +366,7 @@ impl Settings {
         let mut items = vec![
             separator(),
             split(
-                label("Add an applet", 14., FG),
+                label("Add an item", 14., FG),
                 button::text("Close")
                     .on_press(edit(Edit::Picker(None)))
                     .into(),
@@ -360,7 +389,7 @@ impl Settings {
             ),
         ));
         items.push(
-            cosmic::widget::search_input("Search installed applets", &editor.applet_query)
+            cosmic::widget::search_input("Search", &editor.applet_query)
                 .on_input(|text| edit(Edit::Search(text)))
                 .on_clear(edit(Edit::Search(String::new())))
                 .into(),
@@ -386,8 +415,8 @@ impl Settings {
             .collect();
         if shown.is_empty() {
             items.push(label(if editor.applet_group == AppletGroup::Readings && editor.applet_query.trim().is_empty() {
-                "No system readings applet is installed. Detailed readings are available in the System monitor desktop card."
-            } else { "No installed applet matches. Try another search or category." }, 12., MUTED));
+                "No system readings item is installed. The System monitor widget shows them on the desktop."
+            } else { "Nothing matches. Try another search or category." }, 12., MUTED));
         }
         for info in shown {
             let here = placed.contains(&info.id);
@@ -415,7 +444,13 @@ impl Settings {
                         .width(Length::Fill)
                         .into(),
                     button::text(if here { "Add another" } else { "Add" })
-                        .on_press(edit(Edit::Add(region, info.id.clone())))
+                        .id(cosmic::widget::Id::new(format!(
+                            "applet-picker-add-{}",
+                            info.id
+                        )))
+                        .on_press_maybe(
+                            (!self.native_busy).then_some(edit(Edit::Add(region, info.id.clone()))),
+                        )
                         .into(),
                 ])
                 .spacing(10)

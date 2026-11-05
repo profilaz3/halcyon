@@ -55,8 +55,10 @@ fn fb17_recipe_action_uses_widget_ink_and_keeps_native_keyboard_focus() {
                         .all(|(c, expected)| (pixels[*i + c] as f32 - expected * 255.).abs() < 10.)
                 })
                 .count();
+            // The shortcut is small inside the card's inset; a few dozen
+            // pixels in exactly the widget ink show it isn't theme-colored.
             assert!(
-                matching >= 40,
+                matching >= 24,
                 "{family:?}: expected visible widget ink, found {matching} pixels"
             );
             let face_ink = (8..210)

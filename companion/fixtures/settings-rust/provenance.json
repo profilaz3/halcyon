@@ -10,9 +10,9 @@
     "companion/fixtures/settings-generator/Cargo.lock": "0a857a312bf0b1e4166a60a38e2a06f66b096aaa310a421e44d65e64c54f1336",
     "companion/fixtures/settings-generator/src/main.rs": "21ee54bf01bbf10846f10b78206df91e4d933339fd9f01ccfc74da5bb3a6fa4e",
     "companion/dock-islands-core/Cargo.toml": "a011a3a62d293ea8f2e04c060a9b479fb6a424c5c4693711e7b893d5333c2d9b",
-    "companion/patches/0001-dock-islands.patch": "6207734618f4815676fd7e2c0beccfcf094f21170fa1b941dfd9946edf17053f",
+    "companion/patches/0001-dock-islands.patch": "9cc2f0c9a518f1d25b5f02822f1da3a1eff3a9cb21dc6aa3c850ff337c68bdde",
     "companion/dock-islands-core/src/lib.rs": "181c76a7f9903a6e3212e123264d8503d26a3f2fccb681666256bc85ebe99546",
-    "companion/dock-islands-core/src/material.rs": "3292fd4bfb7bedb42a2088db25a6900d0ef4586a99349494311bcdb9b95d416f",
+    "companion/dock-islands-core/src/material.rs": "4bba0b0be63e8376092a8936e17492ed39adfeedf27c0180bdc0586baaeb91dc",
     "companion/dock-islands-core/src/tests.rs": "dc9f45db4b831049c6ac85beebbbad54288856d5fcb054b461c05497eb72d9f5"
   },
   "fixture_sha256": {

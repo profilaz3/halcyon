@@ -1,5 +1,6 @@
 use super::*;
 use crate::displays::test_support::isolated;
+use crate::settings::Page;
 use crate::settings::tests::send_settings;
 use crate::widget_style::resolver::{ClockFace, ClockSurface};
 use cosmic::{Application, app::Core};

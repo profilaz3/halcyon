@@ -126,7 +126,6 @@ impl Settings {
                 MUTED,
             ));
         }
-        items.push(self.help("mix-sources", "Sources", "Each part is copied into your mix. Later changes to a source do not change this setup. Your content and display assignments stay yours."));
         self.inspector_layout(
             self.selection_scene(),
             column::with_children(items).spacing(14).into(),

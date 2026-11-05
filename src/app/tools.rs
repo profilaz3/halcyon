@@ -245,6 +245,9 @@ impl Cards {
     }
 
     fn music_art_task(&mut self) -> Task<Message> {
+        if self.activity.clients > 0 && !self.provider_visible(Widget::Music) {
+            return Task::none();
+        }
         if !self.config.music_artwork() || self.tools.art_loading.is_some() {
             return Task::none();
         }
@@ -643,8 +646,7 @@ impl Cards {
             self.tools.focus.ends_at()
         }
         .map(|at| now + Duration::from_millis((at - wall).max(1) as u64));
-        let music = self
-            .music_demand()
+        let music = (self.music_demand() && self.provider_visible(Widget::Music))
             .then_some(())
             .filter(|_| {
                 self.config.music.show_progress

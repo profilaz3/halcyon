@@ -268,6 +268,14 @@ impl WorkspacesDraft {
         base.insert(key, old);
         self.base = base;
     }
+    /// Keeps every edit over the outside changes: the current values of
+    /// the conflicting keys become the baseline, so Apply writes the edits
+    /// over them and still refuses anything changed after this.
+    pub fn keep_edits(&mut self, snapshot: Snapshot) {
+        let keys = std::mem::take(&mut self.conflicts);
+        self.base.adopt(&snapshot, &keys);
+        self.refresh(snapshot);
+    }
     /// Drops the edits (they all depend on the one struct) and adopts the
     /// current value.
     pub fn resolve_conflicts(&mut self, snapshot: Snapshot, keys: &[ConfigKey]) {

@@ -295,6 +295,75 @@ impl Native {
         )
         .unwrap();
     }
+    /// Named widgets that appear more than once. libcosmic reuses widget state by
+    /// name, so a repeated name loses its state and panics on the next frame.
+    pub fn duplicate_ids<M>(&mut self, view: cosmic::Element<'_, M>) -> Vec<String> {
+        #[derive(Default)]
+        struct Ids(Vec<String>, Vec<String>);
+        impl Ids {
+            fn add(&mut self, id: Option<&cosmic::widget::Id>) {
+                if let Some(id) = id {
+                    // `Id(Custom(serial, "name"))`: the serial differs per call.
+                    let text = format!("{id:?}");
+                    if text.contains("Custom")
+                        && let Some(name) = text.split('"').nth(1)
+                    {
+                        self.0.push(name.to_owned());
+                    }
+                }
+            }
+        }
+        impl Operation for Ids {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn Operation)) {
+                f(self);
+            }
+            fn container(&mut self, id: Option<&cosmic::widget::Id>, _: Rectangle) {
+                // Text inputs report themselves here and as focusable, once each.
+                let before = self.0.len();
+                self.add(id);
+                let added: Vec<String> = self.0.drain(before..).collect();
+                self.1.extend(added);
+            }
+            fn scrollable(
+                &mut self,
+                id: Option<&cosmic::widget::Id>,
+                _: Rectangle,
+                _: Rectangle,
+                _: cosmic::iced::Vector,
+                _: &mut dyn cosmic::iced::advanced::widget::operation::Scrollable,
+            ) {
+                self.add(id);
+            }
+            fn focusable(
+                &mut self,
+                id: Option<&cosmic::widget::Id>,
+                _: Rectangle,
+                _: &mut dyn cosmic::iced::advanced::widget::operation::Focusable,
+            ) {
+                self.add(id);
+            }
+        }
+        let mut ui = UserInterface::build(
+            view,
+            self.size,
+            std::mem::take(&mut self.cache),
+            &mut self.renderer,
+        );
+        let mut ids = Ids::default();
+        ui.operate(&self.renderer, &mut ids);
+        self.cache = ui.into_cache();
+        let mut repeated = Vec::new();
+        for list in [&mut ids.0, &mut ids.1] {
+            list.sort();
+            repeated.extend(
+                list.windows(2)
+                    .filter(|pair| pair[0] == pair[1])
+                    .map(|pair| pair[0].clone()),
+            );
+        }
+        repeated.dedup();
+        repeated
+    }
     /// Locate visible labels in the real widget tree for pointer interaction tests.
     pub fn text_bounds<M>(&mut self, view: cosmic::Element<'_, M>, text: &str) -> Rectangle {
         struct Find {

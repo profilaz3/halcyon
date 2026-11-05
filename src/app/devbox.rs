@@ -10,6 +10,8 @@ const INDICATOR_HEIGHT: f32 = 5.;
 const LINE_GAP: f32 = 4.;
 const SECTION_GAP: f32 = 8.;
 const EMPTY_HEIGHT: f32 = 20.;
+/// Counted, with the card's 8px gap below it, by `devbox_content_height`.
+const TITLE_HEIGHT: f32 = crate::layout_state::DEVBOX_TITLE_HEIGHT;
 
 impl Cards {
     pub(super) fn devbox_natural_height(&self) -> f32 {
@@ -71,19 +73,16 @@ pub(super) fn view<'a>(
     {
         rows.push(match section {
             DevboxSection::Cpu => {
-                let temperature = m
-                    .cpu_temperature
-                    .map(|value| format!(" · {value:.0}°C"))
-                    .unwrap_or_default();
-                let color = if m.cpu_temperature.is_some_and(|value| value >= 85.) {
-                    Color::from_rgb8(244, 132, 116)
-                } else {
-                    p.foreground
-                };
+                let hot = m.cpu_temperature.is_some_and(|value| value >= 85.);
                 metric_section(
                     spread(
                         metric_name(section, "CPU", p),
-                        metric_text(format!("{:.0}%{temperature}", m.cpu), 12., color),
+                        reading(
+                            format!("{:.0}%", m.cpu),
+                            m.cpu_temperature.map(|value| format!("{value:.0}°C")),
+                            if hot { HOT } else { p.foreground },
+                            p,
+                        ),
                     ),
                     indicator(section, bar(&[(m.cpu / 100., p.accent)], p)),
                 )
@@ -118,7 +117,7 @@ pub(super) fn view<'a>(
                     .disk
                     .map(|(used, total)| {
                         (
-                            format!("{used:.1} / {total:.0} GiB"),
+                            format!("{used:.0} / {total:.0} GB"),
                             bar(&[((used / total.max(1.)) as f32, p.accent)], p),
                         )
                     })
@@ -132,20 +131,22 @@ pub(super) fn view<'a>(
                 )
             }
             DevboxSection::Network => {
-                let rates = match &m.network {
-                    Some(network) if network.interfaces == 0 => "No active link".into(),
+                // Download is the main reading; upload is the muted detail.
+                let (rate, upload) = match &m.network {
+                    Some(network) if network.interfaces == 0 => ("No active link".into(), None),
                     Some(network) => match (network.download, network.upload) {
-                        (Some(download), Some(upload)) => {
-                            format!("↓ {}   ↑ {}", throughput(download), throughput(upload))
-                        }
-                        _ => "Measuring…".into(),
+                        (Some(download), Some(upload)) => (
+                            format!("↓ {}", throughput(download)),
+                            Some(format!("↑ {}", throughput(upload))),
+                        ),
+                        _ => ("Measuring…".into(), None),
                     },
-                    None => "Unavailable".into(),
+                    None => ("Unavailable".into(), None),
                 };
                 metric_section(
                     spread(
                         metric_name(section, "Network", p),
-                        metric_text(rates, 12., p.foreground),
+                        reading(rate, upload, p.foreground, p),
                     ),
                     indicator(section, neutral_rule(p)),
                 )
@@ -165,32 +166,30 @@ pub(super) fn view<'a>(
                         .iter()
                         .enumerate()
                         .map(|(index, gpu)| {
-                            let title = gpu_title(index, m.gpus.len(), &gpu.name);
-                            let mut status = if gpu.asleep {
+                            let title = gpu_title(index, m.gpus.len());
+                            let usage = if gpu.asleep {
                                 "Sleeping".into()
                             } else {
                                 gpu.utilization
                                     .map(|load| format!("{load:.0}%"))
-                                    .unwrap_or_else(|| "—".into())
+                                    .unwrap_or_else(|| "No reading".into())
                             };
-                            if let Some(temperature) = gpu.temperature {
-                                status.push_str(&format!(" · {temperature:.0}°C"));
-                            }
-                            let mut values = Vec::new();
-                            if !gpu.asleep {
-                                let memory = gpu
-                                    .memory
-                                    .map(|(used, total)| {
+                            let memory = (!gpu.asleep)
+                                .then(|| {
+                                    gpu.memory.map(|(used, total)| {
                                         format!(
-                                            "{:.2} / {:.2} GiB",
+                                            "{:.1} / {:.0} GB",
                                             used as f64 / 1_073_741_824.,
                                             total as f64 / 1_073_741_824.
                                         )
                                     })
-                                    .unwrap_or_else(|| "VRAM —".into());
-                                values.push(metric_text(memory, 10., p.muted));
-                            }
-                            values.push(metric_text(status, 12., p.foreground));
+                                })
+                                .flatten();
+                            let detail =
+                                [memory, gpu.temperature.map(|value| format!("{value:.0}°C"))]
+                                    .into_iter()
+                                    .flatten()
+                                    .collect::<Vec<_>>();
                             let indicator = if MetricHistories::enabled(preferences, section) {
                                 histories.view(section, Some(&gpu.id), p)
                             } else {
@@ -201,10 +200,12 @@ pub(super) fn view<'a>(
                             metric_section(
                                 spread(
                                     metric_name(section, title, p),
-                                    row::with_children(values)
-                                        .spacing(10)
-                                        .align_y(Alignment::Center)
-                                        .into(),
+                                    reading(
+                                        usage,
+                                        (!detail.is_empty()).then(|| detail.join(" · ")),
+                                        p.foreground,
+                                        p,
+                                    ),
                                 ),
                                 indicator,
                             )
@@ -270,7 +271,35 @@ pub(super) fn view<'a>(
             .into(),
         );
     }
+    rows.insert(
+        0,
+        container(label("System", crate::widget_style::TITLE, p.foreground))
+            .height(Length::Fixed(TITLE_HEIGHT))
+            .align_y(Alignment::Center)
+            .into(),
+    );
     card(rows, p, config.appearance, Widget::Devbox, height)
+}
+
+const HOT: Color = Color::from_rgb(244. / 255., 132. / 255., 116. / 255.);
+
+/// A row's reading: its main value at the right edge, so main values line
+/// up down the card, and any detail before it, muted and smaller.
+fn reading<'a>(
+    main: String,
+    detail: Option<String>,
+    color: Color,
+    p: Palette,
+) -> Element<'a, Message> {
+    let mut values = Vec::new();
+    if let Some(detail) = detail {
+        values.push(metric_text(detail, 11., p.muted));
+    }
+    values.push(metric_text(main, 12., color));
+    row::with_children(values)
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .into()
 }
 
 fn memory_summary(metrics: &Metrics) -> String {
@@ -278,7 +307,7 @@ fn memory_summary(metrics: &Metrics) -> String {
         "Unavailable".into()
     } else {
         format!(
-            "{:.1} / {:.0} GiB",
+            "{:.1} / {:.0} GB",
             metrics.memory_used, metrics.memory_total
         )
     }
@@ -320,10 +349,10 @@ fn memory_header(
         let gaps = gap * (usize::from(swap.is_some()) + usize::from(cache.is_some())) as f32;
         // Reserve the icon, name and spread gap; fit only when the full readings
         // need more room. Swap stays smaller than RAM at every supported width.
-        let available = (bounds.width - 16. - 6. - measure("RAM", 12.) - 8. - gaps - 2.).max(1.);
+        let available = (bounds.width - 16. - 6. - measure("Memory", 12.) - 8. - gaps - 2.).max(1.);
         let needed = measure(&memory, 12.)
-            + swap.as_ref().map_or(0., |value| measure(value, 10.))
-            + cache.as_ref().map_or(0., |value| measure(value, 10.));
+            + swap.as_ref().map_or(0., |value| measure(value, 11.))
+            + cache.as_ref().map_or(0., |value| measure(value, 11.));
         let scale = (available / needed.max(1.)).min(1.);
         let reading = |value: String, size, color, id: &'static str| {
             container(
@@ -339,12 +368,12 @@ fn memory_header(
         };
         let mut values = Vec::new();
         if let Some(swap) = &swap {
-            values.push(reading(swap.clone(), 10. * scale, p.muted, "swap-summary"));
+            values.push(reading(swap.clone(), 11. * scale, p.muted, "swap-summary"));
         }
         if let Some(cache) = &cache {
             values.push(reading(
                 cache.clone(),
-                10. * scale,
+                11. * scale,
                 p.muted,
                 "cache-summary",
             ));
@@ -356,7 +385,7 @@ fn memory_header(
             "ram-summary",
         ));
         spread(
-            metric_name(DevboxSection::Memory, "RAM", p),
+            metric_name(DevboxSection::Memory, "Memory", p),
             row::with_children(values)
                 .spacing(gap)
                 .align_y(Alignment::Center)
@@ -366,31 +395,13 @@ fn memory_header(
     .into()
 }
 
-fn gpu_title(index: usize, count: usize, name: &str) -> String {
-    let label = if count == 1 {
+fn gpu_title(index: usize, count: usize) -> String {
+    // The model name stays out of the card: the row is about load, not
+    // hardware, and long names crowded the readings.
+    if count == 1 {
         "GPU".into()
     } else {
         format!("GPU {}", index + 1)
-    };
-    let name = name
-        .split(" [")
-        .next()
-        .unwrap_or(name)
-        .trim()
-        .trim_start_matches("NVIDIA ")
-        .trim_start_matches("AMD ")
-        .trim_start_matches("ATI ")
-        .trim_start_matches("GeForce ")
-        .trim_start_matches("Radeon ");
-    if name.is_empty() {
-        label
-    } else {
-        // Keep the device identifiable without crowding inline memory readings.
-        let short: String = name.chars().take(8).collect();
-        format!(
-            "{label} · {short}{}",
-            if name.chars().count() > 8 { "…" } else { "" }
-        )
     }
 }
 
@@ -470,9 +481,13 @@ fn metric_row<'a>(
 }
 
 fn neutral_rule<'a>(p: Palette) -> Element<'a, Message> {
-    // No fill or invented percentage for network, uptime and services.
-    // Their neutral track occupies the same space as utilization indicators.
-    bar(&[], p)
+    // No fill or invented percentage for network, uptime and services, and
+    // no empty track either (it read as a broken bar). The same height
+    // keeps the rows aligned with the utilization bars.
+    let _ = p;
+    cosmic::iced::widget::space()
+        .height(Length::Fixed(5.))
+        .into()
 }
 
 fn service_status<'a>(name: &str, status: &str, active: bool, p: Palette) -> Element<'a, Message> {
@@ -487,11 +502,11 @@ fn service_status<'a>(name: &str, status: &str, active: bool, p: Palette) -> Ele
 
 fn throughput(bytes_per_second: f64) -> String {
     if bytes_per_second >= 1_073_741_824. {
-        format!("{:.1} GiB/s", bytes_per_second / 1_073_741_824.)
+        format!("{:.1} GB/s", bytes_per_second / 1_073_741_824.)
     } else if bytes_per_second >= 1_048_576. {
-        format!("{:.1} MiB/s", bytes_per_second / 1_048_576.)
+        format!("{:.1} MB/s", bytes_per_second / 1_048_576.)
     } else if bytes_per_second >= 1_024. {
-        format!("{:.0} KiB/s", bytes_per_second / 1_024.)
+        format!("{:.0} KB/s", bytes_per_second / 1_024.)
     } else {
         format!("{bytes_per_second:.0} B/s")
     }
@@ -503,12 +518,9 @@ mod tests {
     use cosmic::Application;
 
     #[test]
-    fn gpu_labels_keep_the_model_in_the_limited_name_space() {
-        assert_eq!(gpu_title(0, 1, "NVIDIA GeForce RTX 5090"), "GPU · RTX 5090");
-        assert_eq!(
-            gpu_title(0, 1, "Cezanne [Radeon Vega Series]"),
-            "GPU · Cezanne"
-        );
+    fn gpu_labels_name_the_device_without_its_model() {
+        assert_eq!(gpu_title(0, 1), "GPU");
+        assert_eq!(gpu_title(1, 2), "GPU 2");
     }
 
     #[test]
@@ -560,14 +572,14 @@ mod tests {
             cards.metrics.gpus = vec![Default::default()];
             assert_eq!(
                 cards.devbox_natural_height(),
-                61.,
+                92.,
                 "{key} reserves its metric slot and category labels"
             );
             cards.config.devbox.swap = true;
             cards.config.devbox.memory_cache = true;
             assert_eq!(
                 cards.devbox_natural_height(),
-                61.,
+                92.,
                 "optional swap and cache fit inside the RAM header"
             );
         }
@@ -591,7 +603,7 @@ mod tests {
             cards.metrics.gpus = vec![Default::default()];
             assert_eq!(
                 cards.devbox_natural_height(),
-                112.,
+                143.,
                 "CPU and {second} share indicator height; RAM keeps its labels"
             );
             for _ in 0..400 {
@@ -601,13 +613,13 @@ mod tests {
             }
             assert_eq!(
                 cards.devbox_natural_height(),
-                112.,
+                143.,
                 "sample count must not resize the card"
             );
             cards.config.devbox.cpu = false;
             assert_eq!(
                 cards.devbox_natural_height(),
-                61.,
+                92.,
                 "a hidden CPU history must not enlarge {second}"
             );
         }

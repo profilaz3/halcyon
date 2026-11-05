@@ -150,14 +150,25 @@ fn polish050_native_page_patterns_and_one_builder_footer() {
                 &format!("polish050-{}-{}", page.key(), size.width),
             );
             if page == Page::Builder {
-                let controls = native.bounds(app.settings_view(), "recipe-inspector");
+                // One column: the sample, then the controls; the footer has
+                // only Use this design, and Save sits under More in the page.
+                let controls = native.bounds(app.settings_view(), "recipe-stage");
                 let apply = native.bounds(app.settings_view(), "recipe-apply");
+                assert!(
+                    controls.width >= 320.,
+                    "readable builder controls: {controls:?}"
+                );
+                native.operate(
+                    app.settings_view(),
+                    Box::new(navigation::Reveal::target("recipe-save")),
+                );
+                let viewport = native.bounds(app.settings_view(), "settings-viewport");
                 let save = native.bounds(app.settings_view(), "recipe-save");
                 assert!(
-                    (save.center_y() - apply.center_y()).abs() < 1.,
-                    "Builder actions share one row: {save:?}, {apply:?}"
+                    save.y >= viewport.y && save.y + save.height <= viewport.y + viewport.height,
+                    "Save is reachable in the page: {save:?} in {viewport:?}"
                 );
-                assert!(controls.width >= 350., "{controls:?}");
+                native.scroll(app.settings_view(), "settings-content", 0.);
                 assert!(
                     apply.y >= 0.
                         && apply.y + apply.height <= size.height
@@ -296,7 +307,8 @@ fn polish050_prior_page_undo_does_not_label_calendar_but_remains_available() {
     send_settings(&mut app, Message::ClockFormat(!before));
     assert!(app.page_undo_button().is_some());
     send_settings(&mut app, Message::Page(Page::Calendar));
-    assert!(app.page_undo_button().is_none());
+    // The bar names the real target everywhere, so Ctrl+Z never surprises.
+    assert!(app.page_undo_button().is_some());
     send_settings(&mut app, Message::UndoDesktop);
     assert_eq!(app.config.clock.format_24h, before);
 }
@@ -323,10 +335,15 @@ fn polish050_schedule_from_moment_routes_without_losing_target() {
         Message::Automation(automation::Message::Schedule(target.clone())),
     );
     assert_eq!(app.page, Page::DesktopAutomation);
-    assert_eq!(app.automation.draft.as_ref().unwrap().profile, Some(target));
+    assert_eq!(app.automation.draft.as_ref().unwrap().profile, Some(target.clone()));
+    // Adaptive looks are chosen on the same time of day page, so opening
+    // them keeps the schedule draft and its target.
     send_settings(&mut app, Message::Page(Page::AdaptiveLooks));
-    send_settings(&mut app, Message::Back);
     assert_eq!(app.page, Page::DesktopAutomation);
+    assert_eq!(app.automation.draft.as_ref().unwrap().profile, Some(target));
+    // Back returns to where scheduling started.
+    send_settings(&mut app, Message::Back);
+    assert_eq!(app.page, Page::Moments);
 }
 // Include inside settings::tests; uses the existing isolated desktop harness.
 #[test]
@@ -363,9 +380,9 @@ fn polish050_setup_scope_exports_and_empty_library_fit_native_windows() {
             &mut app,
             Message::Profiles(Edit::Select(Selection::Current)),
         );
-        send_settings(&mut app, Message::Profiles(Edit::Collection(true)));
+        // Saving and importing sit together at the top of Looks.
         let mut native = crate::native_test::Native::new(size);
-        for id in ["setup-save-current", "setup-import"] {
+        for id in ["setup-save-current", "discovery-import"] {
             native_reveal(&app, &mut native, id);
         }
         native.capture(
@@ -425,7 +442,7 @@ fn polish050_setup_scope_exports_and_empty_library_fit_native_windows() {
             native_reveal(&app, &mut native, id);
         }
         native.text_bounds(app.settings_view(), "Save image…");
-        native.text_bounds(app.settings_view(), "Setup file (.json)…");
+        native.text_bounds(app.settings_view(), "Look file (.json)…");
         native.text_bounds(app.settings_view(), "Portable package (.halcyon)…");
         native.capture(
             app.settings_view(),

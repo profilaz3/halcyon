@@ -15,24 +15,36 @@ from panel_configuration import Snapshot, Watch
 from runtime_identity import (_proc_bytes, _stat, _owned_by_host, host_process, LOADER_ENV,
                               rpm_system, package_version, watch_package_database)
 
-POLICY = dict(version=4, id='cosmic-1.10-1.11-startup-v4', families=['1.10','1.11'],
+POLICY = dict(version=5, id='cosmic-1.10-1.11-startup-v5', families=['1.10','1.11'],
     assurance='supported-family-probed-startup-not-hardware-qualification',
-    native_source={**CONFIGURATION_SOURCE, 'patch_sha256':'6207734618f4815676fd7e2c0beccfcf094f21170fa1b941dfd9946edf17053f',
+    native_source={**CONFIGURATION_SOURCE, 'patch_sha256':'9cc2f0c9a518f1d25b5f02822f1da3a1eff3a9cb21dc6aa3c850ff337c68bdde',
                    'islands_sha256':'4428bc01b14ec266af1fd82735b0370a773b82c350ef6ebbedd9c2cec088be6c',
                    'penumbra_patch_sha256':'c65009b2b68854de092ea3f9b728b5ecb5a189490f816b60575916d85f70e9ae'},
-    binary_sha256='9133db20d917d5125f9c18e220a4be4424cc8537063c3f202703157d2ba1a9e9',
+    binary_sha256='dd31de5c06e2585a3016b164da09ed615fec59301a5d33ef74e533cb97937584',
     protocol=1, runtime_probe=1, max_outputs=32)
-# Separate native Fedora bytes. The existing Debian policy and historical
-# release evidence remain immutable; this policy grants probed startup only.
-FEDORA_POLICY = {**POLICY, 'id':'fedora43-cosmic-1.10-startup-v1', 'families':['1.10'],
+# Separate native Fedora bytes, one policy per Fedora release. They grant
+# probed startup only.
+FEDORA43_POLICY = {**POLICY, 'id':'fedora43-cosmic-1.10-1.11-startup-v3', 'families':['1.10','1.11'],
+    'platform':{'id':'fedora','version':'43','architecture':'x86_64'},
+    'binary_sha256':'95e8c8e5ebcf1927f503e04d45d28f4223eb24c44424f23ab4c9244197cb9ae4'}
+FEDORA44_POLICY = {**POLICY, 'id':'fedora44-cosmic-1.11-startup-v2', 'families':['1.11'],
+    'platform':{'id':'fedora','version':'44','architecture':'x86_64'},
+    'binary_sha256':'eb763134b8161757bbe17f243c4a3d0a4d34df1b3e83b8a2f4d4794dcbcce069'}
+# Policies of published releases, unchanged, so a generation staged by an
+# installed 0.5.x package still verifies while an upgrade replaces it.
+PUBLISHED_POLICY = dict(POLICY, version=4, id='cosmic-1.10-1.11-startup-v4',
+    native_source={**POLICY['native_source'], 'patch_sha256':'6207734618f4815676fd7e2c0beccfcf094f21170fa1b941dfd9946edf17053f'},
+    binary_sha256='9133db20d917d5125f9c18e220a4be4424cc8537063c3f202703157d2ba1a9e9')
+FEDORA_POLICY = {**PUBLISHED_POLICY, 'id':'fedora43-cosmic-1.10-startup-v1', 'families':['1.10'],
     'platform':{'id':'fedora','version':'43','architecture':'x86_64'},
     'binary_sha256':'17ab8522091680f81d2595e3a9c1f26a8a6e043c589b51165ecf203b2e559b8c'}
-FEDORA43_POLICY = {**FEDORA_POLICY, 'id':'fedora43-cosmic-1.10-1.11-startup-v2',
+PUBLISHED_FEDORA43_POLICY = {**FEDORA_POLICY, 'id':'fedora43-cosmic-1.10-1.11-startup-v2',
     'families':['1.10','1.11']}
-FEDORA44_POLICY = {**POLICY, 'id':'fedora44-cosmic-1.11-startup-v1', 'families':['1.11'],
+PUBLISHED_FEDORA44_POLICY = {**PUBLISHED_POLICY, 'id':'fedora44-cosmic-1.11-startup-v1', 'families':['1.11'],
     'platform':{'id':'fedora','version':'44','architecture':'x86_64'},
     'binary_sha256':'070e0684c9cdce957d3033012d8b9fdd1d899d98db68122d4698c42f1b11ac5d'}
-POLICIES = (POLICY, FEDORA_POLICY, FEDORA43_POLICY, FEDORA44_POLICY)
+POLICIES = (POLICY, FEDORA43_POLICY, FEDORA44_POLICY,
+            PUBLISHED_POLICY, FEDORA_POLICY, PUBLISHED_FEDORA43_POLICY, PUBLISHED_FEDORA44_POLICY)
 CORE = ('cosmic-comp', 'cosmic-session', 'cosmic-settings-daemon')
 
 

@@ -1,6 +1,6 @@
 [package]
 name = "cosmic-ext-halcyon"
-version = "0.5.6"
+version = "0.6.0"
 description = "Desktop widgets and themes for COSMIC"
 homepage = "https://github.com/profilaz3/halcyon"
 repository = "https://github.com/profilaz3/halcyon"
@@ -20,6 +20,7 @@ dock-islands-core = { path = "companion/dock-islands-core" }
 # Reuse libcosmic's already locked icon resolver for selected-theme specimens.
 freedesktop-icons = { package = "cosmic-freedesktop-icons", git = "https://github.com/pop-os/freedesktop-icons" }
 cosmic = { package = "libcosmic", git = "https://github.com/pop-os/libcosmic", default-features = false, features = [
+    "applet",
     "autosize",
     "multi-window",
     "tokio",
@@ -48,7 +49,9 @@ xkbcommon = "=0.8.0"
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
 # Music controls talk MPRIS on the session bus; the same zbus libcosmic
 # already builds (with its tokio support), so no new crates are compiled.
-zbus = { version = "=5.17.0", default-features = false, features = ["tokio"] }
+# `p2p` speaks to the notification daemon over the panel's applet socket; it
+# only enables uuid's v4 generator, already locked.
+zbus = { version = "=5.17.0", default-features = false, features = ["tokio", "p2p"] }
 # Calendar authorization uses the system keyring and Google's native-app PKCE flow.
 secret-service = { version = "=5.2.0", features = ["rt-tokio-crypto-rust"] }
 base64 = "=0.22.1"

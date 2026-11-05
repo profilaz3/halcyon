@@ -12,7 +12,7 @@ pub enum Edit {
     Source(String),
     Export,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Draft {
     pub profile: Profile,
     pub picture: bool,

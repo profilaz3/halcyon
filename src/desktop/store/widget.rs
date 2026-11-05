@@ -73,7 +73,7 @@ fn int_in(value: &Value, min: u64, max: u64) -> bool {
     value.as_u64().is_some_and(|n| (min..=max).contains(&n))
 }
 fn card_opacity(value: &Value) -> bool {
-    int_in(value, 70, 100)
+    int_in(value, crate::config::MIN_CARD_OPACITY.into(), 100)
 }
 fn card_corners(value: &Value) -> bool {
     int_in(value, 0, 32)
@@ -271,6 +271,21 @@ pub static FIELDS: [WidgetField; 108] = fields![
 // Local preferences participate in transactions and Undo but are never
 // captured or exported by the profile library.
 pub static LOCAL_FIELDS: &[WidgetField] = &fields![
+    "/activity_island/system", "Activity system sources", Style, boolean;
+    "/activity_island/media", "Activity media", Style, boolean;
+    "/activity_island/calendar", "Activity meetings", Style, boolean;
+    "/activity_island/reveals", "Activity reveals", Style, boolean;
+    "/activity_island/lead_minutes", "Activity reminder", Style, |v| matches!(v.as_u64(),Some(5|10|15));
+    "/activity_island/notifications", "Activity notifications", Style, boolean;
+    "/activity_island/notification_text", "Activity message text", Style, boolean;
+    "/activity_island/replace_popups", "Activity notification popups", Style, boolean;
+    "/activity_island/battery", "Activity battery", Style, boolean;
+    "/activity_island/sound", "Activity sound output", Style, boolean;
+    "/activity_island/microphone", "Activity microphone", Style, boolean;
+    "/activity_island/camera", "Activity camera", Style, boolean;
+    "/activity_island/network", "Activity network", Style, boolean;
+    "/activity_island/bluetooth", "Activity Bluetooth", Style, boolean;
+    "/activity_island/updates", "Activity updates", Style, boolean;
     "/calendar_private", "Calendar privacy", Style, boolean;
     "/widget_monitors/clock/display", "Widget display", Layout, |v| v.is_null() || v.as_str().is_some_and(crate::displays::valid_name);
     "/widget_monitors/clock/hide_disconnected", "Disconnected widget", Layout, boolean;
@@ -303,6 +318,7 @@ pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/appearance/match_wallpaper", "Matching wallpaper", Style, boolean;
     "/appearance/match_cosmic_colors", "Follow COSMIC colors", Style, boolean;
     "/weather/show_dew_point", "Weather dew point", Style, boolean;
+    "/weather/fahrenheit", "Weather units", Style, boolean;
     "/placement/columns", "Arrangement grid", Layout, |v| int_in(v,12,24);
     "/widgets_visible", "Show widgets", Layout, boolean;
     "/location", "Weather city", Style, |v| v.is_null() || serde_json::from_value::<crate::config::Location>(v.clone()).is_ok();

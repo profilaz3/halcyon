@@ -97,11 +97,22 @@ fn framed<'a>(
     }
     if missing {
         layers.push(
-            container(pill("Missing", WARN))
+            // Dimmed, with a quiet note, rather than a warning on every tile.
+            container(label("Not installed", 11., FG))
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .align_bottom(Length::Fill)
-                .padding([6, 8])
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center)
+                .class(cosmic::theme::Container::custom(|_| {
+                    cosmic::iced::widget::container::Style {
+                        background: Some(Background::Color(Color::from_rgba(0., 0., 0., 0.5))),
+                        border: Border {
+                            radius: 8.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
+                }))
                 .into(),
         );
     }
@@ -131,18 +142,32 @@ impl Settings {
                 .content_fit(cosmic::iced::ContentFit::Cover)
                 .border_radius(12.)
                 .into(),
-            None => fill(
-                container(label(shown.note.unwrap_or("No preview"), 12., MUTED))
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill)
-                    .into(),
-                BASE,
-                LINE,
-                1.,
+            // No picture: the soft wash every desktop preview falls back to,
+            // with the reason quietly on it.
+            None => container(label(
+                shown.note.unwrap_or("No preview"),
                 12.,
-            )
+                Color { a: 0.75, ..Color::WHITE },
+            ))
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
             .width(Length::Fill)
             .height(height)
+            .class(cosmic::theme::Container::custom(|_| {
+                cosmic::iced::widget::container::Style {
+                    background: Some(Background::Gradient(
+                        cosmic::iced::gradient::Linear::new(2.4)
+                            .add_stop(0., Color::from_rgb(0.20, 0.23, 0.29))
+                            .add_stop(1., Color::from_rgb(0.08, 0.09, 0.12))
+                            .into(),
+                    )),
+                    border: Border {
+                        radius: 12.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            }))
             .into(),
         };
         let picture = if let Some(rain) = self.rain_preview(height) {
@@ -217,7 +242,7 @@ impl Settings {
     }
 
     /// Same background on all displays, and which display is being edited.
-    fn wallpaper_displays(&self) -> Option<Element<'_, Message>> {
+    fn wallpaper_displays(&self) -> Option<Vec<Element<'_, Message>>> {
         let accent = self.wallpaper_accent();
         let editor = &self.wallpaper;
         let draft = editor.draft()?;
@@ -281,35 +306,23 @@ impl Settings {
                     .into(),
             ));
         }
-        Some(group(Some("Wallpaper display"), rows))
+        Some(rows)
     }
 
     /// Theme mode and fonts are a separate System appearance draft, so they
     /// are linked rather than mixed into this page's Apply.
     fn wallpaper_related(&self) -> Element<'_, Message> {
-        let link = |id: &'static str,
-                    title: &'static str,
-                    description: &'static str,
-                    trailing: Element<'static, Message>,
-                    message: Message| {
-            button::custom(
-                row::with_children(vec![detail(title, description), trailing])
-                    .spacing(12)
-                    .align_y(Alignment::Center),
-            )
-            .id(cosmic::widget::Id::new(id))
-            .class(nav_style(false, self.wallpaper_accent()))
-            .padding([4, 0])
-            .width(Length::Fill)
-            .on_press(message)
-            .into()
-        };
-        link(
-            "wallpaper-cosmic-settings",
-            "More in COSMIC Settings",
-            "Options this app doesn’t cover",
-            label("↗", 16., MUTED),
-            Message::OpenDesktop("wallpaper"),
+        group(
+            None,
+            vec![
+                self.subpage_row(
+                    "Icons on the desktop",
+                    "Files, folders and drives on top of the wallpaper",
+                    Page::DesktopIcons,
+                    "desktop-open-desktop-icons",
+                ),
+                self.cosmic_link("wallpaper"),
+            ],
         )
     }
 
@@ -321,17 +334,11 @@ impl Settings {
 
     /// Page title with the store note (fixture or preview mode only).
     pub(super) fn wallpaper_header(&self) -> Element<'_, Message> {
-        row::with_children(vec![
-            heading(
-                "Wallpaper",
-                "Choose locally, then Apply wallpaper to confirm.",
-            ),
+        // Choose picture… sits with the pictures, not up here.
+        split(
+            heading("Wallpaper", "The picture behind your windows and widgets."),
             store_pill(self.wallpaper.store(), self.wallpaper_accent()),
-        ])
-        .spacing(8)
-        .align_y(Alignment::Center)
-        .wrap()
-        .into()
+        )
     }
 
     fn wallpaper_tile<'a>(&'a self, tile: &'a Tile, enabled: bool) -> Element<'a, Message> {
@@ -469,6 +476,7 @@ impl Settings {
             items.push(conflict_banner(
                 crate::settings::system_appearance::describe(draft.conflicts()),
                 edit(Edit::UseCurrent),
+                edit(Edit::KeepMine),
             ));
         }
         let blocked_target = editor.target_blocked();
@@ -533,7 +541,7 @@ impl Settings {
                 );
             }
             items.push(banner(
-                "The current background picture is missing.",
+                "Your wallpaper picture can’t be found. Choose another one below.",
                 WARN,
                 actions,
             ));
@@ -541,37 +549,54 @@ impl Settings {
         items.extend(self.colors_conflicts());
 
         let enabled = blocked_target.is_none();
-        let scene = if self.scene_open() {
-            self.wallpaper_preview(self.stage_width().max(240.) - 12.)
-        } else {
-            cosmic::widget::space().height(0).into()
-        };
-        let target = match editor.target() {
-            Target::Shared => "Shared wallpaper".to_string(),
-            Target::Output(name) => display_name(name),
-        };
-        let caption = format!(
-            "{} · {target}",
-            if editor.background_dirty() {
-                "Previewing wallpaper · local until Apply wallpaper"
-            } else {
-                "Current wallpaper"
+        // A compact picture with its options beside it keeps the gallery,
+        // the page's main task, in view without scrolling.
+        let width = (self.content_width() * 0.4).clamp(220., 400.);
+        let preview: Element<'_, Message> = container(self.wallpaper_preview(width))
+            .id(cosmic::widget::Id::new("desktop-scene"))
+            .width(width)
+            .into();
+        let mut side = Vec::new();
+        let mut fit = Vec::new();
+        if let Some(Setting::Known(entry)) = editor.entry() {
+            match &entry.source {
+                BgSource::Path(_) if editor.shown().folder => {
+                    side.push(self.wallpaper_slideshow(&entry, enabled))
+                }
+                BgSource::Path(_) => fit = self.wallpaper_fit(&entry, enabled),
+                BgSource::Color(_) => {}
             }
-        );
-        let preview = self.scene_frame(scene, &caption);
-        let mut side = vec![self.wallpaper_choose()];
-        if let Some(displays) = self.wallpaper_displays() {
-            side.push(displays);
         }
-        side.push(self.rain_controls());
-        side.push(self.wallpaper_related());
-        items.push(self.inspector_layout(
-            preview,
-            column::with_children(side).spacing(14).into(),
-            "wallpaper",
-        ));
-        items.push(self.wallpaper_gallery(enabled, false));
-        column::with_children(items).spacing(16).into()
+        // Picture size and displays share one card beside the preview.
+        if let Some(displays) = self.wallpaper_displays() {
+            fit.extend(displays);
+        }
+        if !fit.is_empty() {
+            side.push(group(None, fit));
+        }
+        // With no effect running it is one row, which fits beside the
+        // picture; a running effect has its options and goes below.
+        let effect_on = self.wallpaper.effect().unwrap_or(&self.config.rain).enabled;
+        if !effect_on {
+            side.push(self.rain_controls());
+        }
+        items.push(
+            row::with_children(vec![
+                preview,
+                container(column::with_children(side).spacing(12))
+                    .width(Length::Fill)
+                    .into(),
+            ])
+            .spacing(20)
+            .into(),
+        );
+        // Pictures come first: choosing one is the main task here.
+        items.push(self.wallpaper_gallery(enabled, true));
+        if effect_on {
+            items.push(self.rain_controls());
+        }
+        items.push(self.wallpaper_related());
+        column::with_children(items).spacing(20).into()
     }
 
     /// Wallpapers heading, sources, thumbnails and the options for what the
@@ -580,7 +605,7 @@ impl Settings {
         let accent = self.wallpaper_accent();
         let editor = &self.wallpaper;
         let mut items: Vec<Element<'_, Message>> = Vec::new();
-        let title: Element<'_, Message> = text::heading("Wallpapers").into();
+        let title: Element<'_, Message> = text::heading("Pictures").into();
         items.push(if choose {
             split(title, self.wallpaper_choose())
         } else {
@@ -589,10 +614,10 @@ impl Settings {
         let tab = editor.tab;
         items.push(segmented(
             [
-                ("Halcyon", Tab::Bundled),
-                ("COSMIC", Tab::Cosmic),
-                ("Yours", Tab::Yours),
-                ("Solid & gradient", Tab::Colors),
+                ("Featured", Tab::Bundled),
+                ("System", Tab::Cosmic),
+                ("Your pictures", Tab::Yours),
+                ("Colors", Tab::Colors),
             ]
             .into_iter()
             .map(|(title, value)| {
@@ -628,9 +653,14 @@ impl Settings {
         for tile in editor.page_tiles() {
             tiles.push(self.wallpaper_tile(tile, enabled));
         }
+        // Spread the fixed-size tiles so the grid ends where the rows do.
+        let available = self.content_width() - 2.;
+        let outer = TILE_W + 4.;
+        let columns = ((available + 6.) / (outer + 6.)).floor().max(2.);
+        let gap = ((available - columns * outer) / (columns - 1.)).floor().clamp(6., 24.);
         items.push(
             row::with_children(tiles)
-                .spacing(6)
+                .spacing(gap)
                 .wrap()
                 .vertical_spacing(10)
                 .into(),
@@ -680,79 +710,10 @@ impl Settings {
             _ => {}
         }
 
-        // Options for what the selected display shows.
-        if let Some(Setting::Known(entry)) = editor.entry() {
-            let folder = editor.shown().folder;
-            match &entry.source {
-                BgSource::Path(_) if folder => {
-                    items.push(self.wallpaper_slideshow(&entry, enabled))
-                }
-                BgSource::Path(_) => items.push(self.wallpaper_fit(&entry, enabled)),
-                BgSource::Color(_) => {}
-            }
-        }
         column::with_children(items).spacing(12).into()
     }
 
-    /// Colors from the selected wallpaper's hues, toned to be usable as an
-    /// accent, or why there are none yet.
-    pub(super) fn wallpaper_swatches(&self) -> Element<'_, Message> {
-        let editor = &self.wallpaper;
-        let accent = self.wallpaper_accent();
-        if let Some(suggestion) = editor
-            .suggestion()
-            .filter(|value| !value.accents.is_empty())
-        {
-            row::with_children(suggestion.accents.iter().enumerate().map(|(index, rgb)| {
-                let [r, g, b] = *rgb;
-                let selected =
-                    editor.accent_color().or(self.config.appearance.accent) == Some(*rgb);
-                let chip = fill(
-                    cosmic::iced::widget::space().width(24).height(24).into(),
-                    Color::from_rgb8(r, g, b),
-                    if selected { FG } else { LINE },
-                    if selected { 2. } else { 1. },
-                    12.,
-                );
-                container(
-                    button::custom(chip)
-                        .class(nav_style(selected, accent))
-                        .padding(4)
-                        .on_press(edit(Edit::Accent(*rgb))),
-                )
-                .id(cosmic::widget::Id::new(format!("wallpaper-swatch-{index}")))
-                .into()
-            }))
-            .spacing(2)
-            .wrap()
-            .into()
-        } else {
-            container(label(
-                match editor.shown().note {
-                    _ if editor
-                        .suggestion()
-                        .is_some_and(|value| !value.swatches.is_empty()) =>
-                    {
-                        "No strong colors here"
-                    }
-                    Some("Loading…") => "Finding colors…",
-                    Some(crate::desktop::wallpaper::media::NO_PREVIEW) => {
-                        "Available for PNG and JPEG"
-                    }
-                    Some(crate::desktop::wallpaper::media::MISSING) => {
-                        "Choose an available picture"
-                    }
-                    _ => "Choose a background",
-                },
-                12.,
-                MUTED,
-            ))
-            .max_width(180)
-            .into()
-        }
-    }
-
-    fn wallpaper_fit<'a>(&'a self, entry: &BgEntry, enabled: bool) -> Element<'a, Message> {
+    fn wallpaper_fit<'a>(&'a self, entry: &BgEntry, enabled: bool) -> Vec<Element<'a, Message>> {
         let accent = self.wallpaper_accent();
         let editor = &self.wallpaper;
         let choice = match entry.scaling_mode {
@@ -761,7 +722,7 @@ impl Settings {
             ScalingMode::Stretch => FitChoice::Stretch,
         };
         let mut rows = vec![split(
-            label("Fit", 15., FG),
+            label("Picture size", 14., FG),
             segmented(
                 [
                     ("Fill", FitChoice::Fill),
@@ -814,7 +775,7 @@ impl Settings {
                 rows.push(panel);
             }
         }
-        section(rows)
+        rows
     }
 
     fn wallpaper_slideshow<'a>(&'a self, entry: &BgEntry, enabled: bool) -> Element<'a, Message> {
@@ -1018,40 +979,29 @@ impl Settings {
 
     pub(super) fn wallpaper_actions(&self) -> Element<'_, Message> {
         let editor = &self.wallpaper;
-        if !editor.background_dirty() {
+        let failed = matches!(editor.notice(), Some(Notice::Error(_)));
+        // Clicked choices apply on their own; the bar is only for a typed
+        // value or a change that could not apply.
+        if !editor.preview_open() || (!failed && (!editor.dirty() || self.wallpaper_instant)) {
             return self.simple_status();
         }
-        let error = match editor.notice() {
+        let status = match editor.notice() {
             Some(Notice::Error(error)) => error.as_str(),
-            _ => "Previewing wallpaper · desktop unchanged until Apply",
+            _ if self.native_busy => "Saving…",
+            _ => "Not applied yet",
         };
-        container(
-            row::with_children(vec![
-                container(label(
-                    error,
-                    12.,
-                    if matches!(editor.notice(), Some(Notice::Error(_))) {
-                        ERROR
-                    } else {
-                        MUTED
-                    },
-                ))
-                .width(Length::Fill)
+        self.preview_bar(
+            label(status, 12., if failed { ERROR } else { MUTED }),
+            editor.can_undo_step(),
+            Vec::new(),
+            edit(Edit::Discard),
+            "wallpaper-discard",
+            button::suggested("Apply wallpaper")
+                .id(cosmic::widget::Id::new("wallpaper-apply"))
+                .on_press_maybe(
+                    (editor.can_apply() && !self.native_busy).then_some(edit(Edit::Apply)),
+                )
                 .into(),
-                button::text("Cancel")
-                    .id(cosmic::widget::Id::new("wallpaper-discard"))
-                    .on_press(edit(Edit::Discard))
-                    .into(),
-                button::suggested("Apply wallpaper")
-                    .id(cosmic::widget::Id::new("wallpaper-apply"))
-                    .on_press_maybe(editor.can_apply().then_some(edit(Edit::Apply)))
-                    .into(),
-            ])
-            .spacing(10)
-            .align_y(Alignment::Center),
         )
-        .padding([8, 22])
-        .width(Length::Fill)
-        .into()
     }
 }

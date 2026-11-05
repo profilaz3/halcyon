@@ -5,12 +5,12 @@ use super::*;
 use crate::desktop::appearance::catalog::{self, weight_title};
 use crate::desktop::appearance::{
     self as domain, AppearanceDraft, ColorRole, FontRole, Preview, Surface, SystemMode,
-    ThemeVariant, WindowEffect,
+    WindowEffect,
 };
 use crate::desktop::panels::Setting;
 use crate::settings::system_appearance::{Message as Edit, Picker, picker_id, search_id};
 use cosmic::cosmic_theme::palette::Srgba;
-use cosmic::cosmic_theme::{Density, Roundness};
+use cosmic::cosmic_theme::Roundness;
 use cosmic::iced::font::Style;
 
 fn edit(message: Edit) -> Message {
@@ -60,7 +60,17 @@ fn field<'a>(title: &'static str, control: Element<'a, Message>) -> Element<'a, 
         .width(Length::Fill)
         .into()
 }
-fn choice<'a, T: PartialEq + Copy>(
+/// Label left, choice right, for short choices.
+fn inline_field<'a>(title: &'static str, control: Element<'a, Message>) -> Element<'a, Message> {
+    split(
+        label(title, 13., FG),
+        row::with_children(vec![control])
+            .align_y(Alignment::Center)
+            .wrap()
+            .into(),
+    )
+}
+pub(super) fn choice<'a, T: PartialEq + Copy>(
     setting: &Setting<T>,
     options: &[(&'static str, T)],
     message: impl Fn(T) -> Edit,
@@ -99,56 +109,10 @@ impl Settings {
     pub(super) fn system_appearance_header(&self) -> Element<'_, Message> {
         let accent = self.appearance_accent();
         let editor = &self.system_appearance;
-        let title = split(
-            heading("Fonts & icons", ""),
+        split(
+            heading("Fonts and icons", "Used by COSMIC apps. Text size follows display scaling."),
             super::windows::store_pill(editor.store(), accent),
-        );
-        let Some(draft) = editor.draft() else {
-            return title;
-        };
-        let active = draft.active_variant();
-        let selector = segmented(
-            ThemeVariant::ALL
-                .into_iter()
-                .map(|variant| {
-                    let edited = draft.edits().any(|(control, _)| {
-                        matches!(control, domain::Control::Color(owner, _) if *owner == variant)
-                    });
-                    let mut title = variant.title().to_string();
-                    if variant == active {
-                        title.push_str(" · in use");
-                    }
-                    if editor.unfinished_variant(variant) {
-                        title.push_str(" · finish color");
-                    } else if edited {
-                        title.push_str(" •");
-                    }
-                    (
-                        title,
-                        editor.variant == variant,
-                        Some(edit(Edit::Variant(variant))),
-                    )
-                })
-                .collect(),
-            accent,
-        );
-        let system =
-            button::text("Open COSMIC Settings ↗").on_press(Message::OpenDesktop("appearance"));
-        column::with_children(vec![
-            title,
-            row::with_children(vec![
-                label("Colors to edit", 12., MUTED),
-                selector,
-                system.into(),
-            ])
-            .spacing(10)
-            .align_y(Alignment::Center)
-            .wrap()
-            .into(),
-        ])
-        .spacing(10)
-        .width(Length::Fill)
-        .into()
+        )
     }
 
     pub(super) fn system_appearance_page(&self) -> Element<'_, Message> {
@@ -194,6 +158,7 @@ impl Settings {
             items.push(conflict_banner(
                 crate::settings::system_appearance::describe(draft.conflicts()),
                 edit(Edit::UseCurrent),
+                edit(Edit::KeepMine),
             ));
         }
         if editor.accent_choice.is_some() {
@@ -227,34 +192,19 @@ impl Settings {
                 ],
             ));
         }
-        let scene = if self.scene_open() {
-            column::with_children(vec![
-                type_specimen(draft.preview(editor.variant), draft),
-                self.disclosure(
-                    "appearance-window-example",
-                    "Window example",
-                    sample_window(draft.preview(editor.variant), draft, 180.),
-                ),
-            ])
-            .spacing(12)
-            .into()
-        } else {
-            cosmic::widget::space().height(0).into()
-        };
         items.push(
-            self.inspector_layout(
-                self.scene_frame(scene, "Sample · fonts and icons"),
-                column::with_children(vec![
-                    self.search_target("appearance-fonts", self.appearance_type(draft)),
-                    self.search_target("appearance-colors", self.appearance_colors(draft)),
-                    self.appearance_window(draft),
-                    self.search_target("appearance-effects", self.appearance_effects(draft)),
-                ])
-                .spacing(16)
+            container(type_specimen(draft.preview(editor.variant), draft))
+                .id(cosmic::widget::Id::new("desktop-scene"))
+                .width(Length::Fill)
                 .into(),
-                "fonts",
-            ),
         );
+        items.push(self.search_target("appearance-fonts", self.appearance_type(draft)));
+        // Mode and colors live in Appearance; window details stay here,
+        // folded away.
+        if self.color_well.is_some() {
+            items.push(self.search_target("appearance-colors", self.appearance_colors(draft)));
+        }
+        items.push(group(None, vec![self.cosmic_link("appearance")]));
         column::with_children(items).spacing(16).into()
     }
 
@@ -371,7 +321,7 @@ impl Settings {
         let accent = self.appearance_accent();
         let editor = &self.system_appearance;
         let mut items = vec![
-            label("Mode & colors", 16., FG),
+            label("Mode and colors", 16., FG),
             field(
                 "Mode",
                 choice(
@@ -419,7 +369,7 @@ impl Settings {
         );
         if open {
             items.push(label(
-                "Surface overrides for the theme preview above. Choose the accent in Theme & colors.",
+                "Surface overrides for the theme preview above. Choose the accent in Theme and colors.",
                 11.,
                 MUTED,
             ));
@@ -460,7 +410,7 @@ impl Settings {
             .family(role.monospace(), &font.family)
             .or_else(|| editor.fonts.family(!role.monospace(), &font.family));
         let open = editor.picker == Some(Picker::Font(role));
-        let mut first: Vec<Element<'_, Message>> = vec![
+        let first: Vec<Element<'_, Message>> = vec![
             container(
                 button::custom(
                     row::with_children(vec![
@@ -487,17 +437,26 @@ impl Settings {
             .width(Length::Fill)
             .into(),
         ];
-        if installed.is_none()
-            && !(editor.fonts.interface.is_empty() && editor.fonts.monospace.is_empty())
-        {
-            first.push(pill("Not installed · kept", WARN));
-        }
-        let mut rows = vec![
-            row::with_children(first)
-                .spacing(8)
-                .align_y(Alignment::Center)
-                .into(),
-        ];
+        // A missing font is said under the label, so the chooser keeps its width.
+        let missing = installed.is_none()
+            && !(editor.fonts.interface.is_empty() && editor.fonts.monospace.is_empty());
+        // Label left, font button right; weights and the list sit below.
+        let mut rows = vec![split(
+            if missing {
+                detail(role.title(), "Not installed, using the default")
+            } else if role == FontRole::Monospace {
+                detail(role.title(), "Terminals and code")
+            } else {
+                label(role.title(), 14., FG)
+            },
+            container(
+                row::with_children(first)
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+            )
+            .width(Length::Fixed(260.))
+            .into(),
+        )];
         let weights = installed
             .map(|family| family.weights.clone())
             .unwrap_or_default();
@@ -563,7 +522,7 @@ impl Settings {
                 move |name| edit(Edit::FontFamily(role, name)),
             ));
         }
-        field(role.title(), column::with_children(rows).spacing(8).into())
+        column::with_children(rows).spacing(8).into()
     }
 
     /// Search field plus a bounded, scrolling list. It is always the last
@@ -632,7 +591,7 @@ impl Settings {
                 let theme = editor.icons.get(&id);
                 let open = editor.picker == Some(Picker::Icons);
                 let name = theme.map_or_else(|| id.clone(), |theme| theme.name.clone());
-                let mut first: Vec<Element<'_, Message>> = vec![
+                let first: Vec<Element<'_, Message>> = vec![
                     container(
                         button::custom(
                             row::with_children(vec![
@@ -657,15 +616,21 @@ impl Settings {
                     .width(Length::Fill)
                     .into(),
                 ];
-                if theme.is_none() {
-                    first.push(pill("Not installed · kept", WARN));
-                }
-                let mut rows = vec![
-                    row::with_children(first)
-                        .spacing(8)
-                        .align_y(Alignment::Center)
-                        .into(),
-                ];
+                // Same shape as the font rows: label left, chooser right.
+                let mut rows = vec![split(
+                    if theme.is_none() {
+                        detail("Icon theme", "Not installed, using the default")
+                    } else {
+                        label("Icon theme", 14., FG)
+                    },
+                    container(
+                        row::with_children(first)
+                            .spacing(8)
+                            .align_y(Alignment::Center),
+                    )
+                    .width(Length::Fixed(260.))
+                    .into(),
+                )];
                 if !editor.icons.errors.is_empty() {
                     rows.push(label(
                         format!(
@@ -703,27 +668,32 @@ impl Settings {
                 }
                 column::with_children(rows).spacing(8).into()
             }
-            Setting::Unsupported(raw) => kept(&raw),
+            Setting::Unsupported(raw) => field("Icon theme", kept(&raw)),
         };
-        section(vec![
-            label("Fonts & icons", 16., FG),
+        group(None, vec![
             self.font_row(draft, FontRole::Interface),
             self.font_row(draft, FontRole::Monospace),
-            field("Icon theme", icons),
-            label(
-                "COSMIC apps use these. Other toolkits follow only where they read COSMIC settings. Text size follows display scaling.",
-                11.,
-                MUTED,
+            // Halcyon's widgets can use their own font; it lives with the
+            // other fonts so it is found in one place.
+            self.search_target(
+                "widget-font",
+                self.widget_font_row(
+                    super::super::FontTarget::Text,
+                    "Widget font",
+                    self.config.widget_font.as_deref(),
+                    "Match style",
+                ),
             ),
+            icons,
         ])
     }
 
-    fn appearance_window(&self, draft: &AppearanceDraft) -> Element<'_, Message> {
+    pub(super) fn appearance_window(&self, draft: &AppearanceDraft) -> Element<'_, Message> {
         let accent = self.appearance_accent();
         let variant = self.system_appearance.variant;
         let width = draft.outline_width(variant);
         let mut items = vec![
-            label("Window appearance", 16., FG),
+            label("Windows", 14., FG),
             self.color_row(draft, ColorRole::Outline),
         ];
         items.push(match width {
@@ -768,14 +738,15 @@ impl Settings {
             Setting::Unsupported(raw) => field("Outline width", kept(&raw)),
         });
         items.push(separator());
-        items.push(field(
-            "Roundness",
+        items.push(inline_field(
+            "Window corners",
             choice(
                 &draft.roundness(variant),
+                // The same words and order as every other corners choice.
                 &[
-                    ("Round", Roundness::Round),
-                    ("Slightly round", Roundness::SlightlyRound),
                     ("Square", Roundness::Square),
+                    ("Rounded", Roundness::SlightlyRound),
+                    ("Very round", Roundness::Round),
                 ],
                 Edit::Roundness,
                 accent,
@@ -788,21 +759,8 @@ impl Settings {
                 MUTED,
             ));
         }
-        items.push(field(
-            "Density",
-            choice(
-                &draft.density(),
-                &[
-                    ("Compact", Density::Compact),
-                    ("Standard", Density::Standard),
-                    ("Spacious", Density::Spacious),
-                ],
-                Edit::Density,
-                accent,
-            ),
-        ));
         items.push(label(
-            "Dock & Panel keep their own corners and spacing.",
+            "The dock and panel keep their own corners.",
             11.,
             MUTED,
         ));
@@ -821,7 +779,7 @@ impl Settings {
         section(items)
     }
 
-    fn appearance_effects(&self, draft: &AppearanceDraft) -> Element<'_, Message> {
+    pub(super) fn appearance_effects(&self, draft: &AppearanceDraft) -> Element<'_, Message> {
         let accent = self.appearance_accent();
         let editor = &self.system_appearance;
         let open = editor.effects;
@@ -961,7 +919,7 @@ fn type_specimen<'a>(preview: Preview, draft: &AppearanceDraft) -> Element<'a, M
             FontRole::Interface,
         ),
         line("0123456789 · 09:41", 19., FontRole::Interface),
-        line("Aa Bb Cc  •  {} [] /", 14., FontRole::Monospace),
+        line("0O 1lI  Aa Bb  {} []", 14., FontRole::Monospace),
     ];
     if let Setting::Known(theme) = draft.icon_theme() {
         let icons: Vec<Element<'a, Message>> =
@@ -985,161 +943,12 @@ fn type_specimen<'a>(preview: Preview, draft: &AppearanceDraft) -> Element<'a, M
     fill(
         column::with_children(rows).spacing(14).into(),
         color(preview.background),
-        Color::TRANSPARENT,
-        0.,
+        // A thin outline frames the sample, which shares the app's color.
+        Color { a: 0.14, ..FG },
+        1.,
         12.,
     )
-    .padding(16)
+    .padding(20)
     .width(Length::Fill)
-    .into()
-}
-
-fn sample_window<'a>(
-    preview: Preview,
-    draft: &AppearanceDraft,
-    height: f32,
-) -> Element<'a, Message> {
-    let font = |role: FontRole| match draft.font(role) {
-        Setting::Known(font) => cosmic::iced::Font::from(font),
-        Setting::Unsupported(_) => cosmic::iced::Font::default(),
-    };
-    let compact = height < 125.;
-    let text_in =
-        |value: &'static str, size: f32, tone: Srgba, role: FontRole| -> Element<'a, Message> {
-            let mut text = text::body(value)
-                .size(size)
-                .font(font(role))
-                .wrapping(cosmic::iced::advanced::text::Wrapping::None)
-                .class(cosmic::theme::Text::Color(color(tone)));
-            if compact {
-                // Lines sized to the small text, not the body text.
-                text = text.line_height(cosmic::iced::widget::text::LineHeight::Relative(1.2));
-            }
-            text.into()
-        };
-    let radius_m = preview.radius_m.min(height / 6.);
-    let radius_s = preview.radius_s.min(height / 10.);
-    let dot = |tone: Srgba| -> Element<'a, Message> {
-        fill(
-            cosmic::iced::widget::space().width(8).height(8).into(),
-            color(tone),
-            Color::TRANSPARENT,
-            0.,
-            4.,
-        )
-        .into()
-    };
-    let title_bar = row::with_children(vec![
-        text_in("Files", 11., preview.on_background, FontRole::Interface),
-        container(text::body("")).width(Length::Fill).into(),
-        dot(Srgba {
-            alpha: 0.5,
-            ..preview.on_background
-        }),
-        dot(Srgba {
-            alpha: 0.5,
-            ..preview.on_background
-        }),
-        dot(preview.accent),
-    ])
-    .spacing(5)
-    .align_y(Alignment::Center);
-    let mut places = vec![
-        fill(
-            text_in("Home", 10., preview.on_accent, FontRole::Interface),
-            color(preview.accent),
-            Color::TRANSPARENT,
-            0.,
-            radius_s,
-        )
-        .padding([2, 6])
-        .width(Length::Fill)
-        .into(),
-        text_in("Music", 10., preview.on_primary, FontRole::Interface),
-    ];
-    if !compact {
-        places.push(text_in(
-            "Notes",
-            10.,
-            preview.on_primary,
-            FontRole::Interface,
-        ));
-    }
-    let sidebar = fill(
-        column::with_children(places).spacing(4).into(),
-        color(preview.primary),
-        Color::TRANSPARENT,
-        0.,
-        radius_s,
-    )
-    .padding(6)
-    .width(Length::FillPortion(2))
-    .height(Length::Fill);
-    let mut buttons: Vec<Element<'a, Message>> = Vec::new();
-    if !compact {
-        buttons.push(
-            fill(
-                text_in("Cancel", 10., preview.on_button, FontRole::Interface),
-                color(preview.button),
-                Color::TRANSPARENT,
-                0.,
-                radius_s,
-            )
-            .padding([2, 8])
-            .into(),
-        );
-    }
-    buttons.push(
-        fill(
-            text_in("Save", 10., preview.on_accent, FontRole::Interface),
-            color(preview.accent),
-            Color::TRANSPARENT,
-            0.,
-            radius_s,
-        )
-        .padding([2, 8])
-        .into(),
-    );
-    let card = fill(
-        column::with_children(vec![
-            text_in(
-                "Aa Sample text",
-                11.,
-                preview.on_secondary,
-                FontRole::Interface,
-            ),
-            text_in("fn main()", 10., preview.on_secondary, FontRole::Monospace),
-            cosmic::iced::widget::space().height(Length::Fill).into(),
-            row::with_children(buttons).spacing(6).into(),
-        ])
-        .spacing(3)
-        .into(),
-        color(preview.secondary),
-        Color::TRANSPARENT,
-        0.,
-        radius_s,
-    )
-    .padding(6)
-    .width(Length::FillPortion(3))
-    .height(Length::Fill);
-    let outline = (preview.outline_width as f32).clamp(0., 6.);
-    fill(
-        column::with_children(vec![
-            title_bar.into(),
-            row::with_children(vec![sidebar.into(), card.into()])
-                .spacing(6)
-                .height(Length::Fill)
-                .into(),
-        ])
-        .spacing(6)
-        .into(),
-        color(preview.background),
-        color(preview.outline),
-        outline,
-        radius_m,
-    )
-    .padding(8)
-    .width(Length::Fill)
-    .height(height)
     .into()
 }

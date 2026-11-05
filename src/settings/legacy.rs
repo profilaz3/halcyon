@@ -607,6 +607,9 @@ impl Proposal {
                 }
                 c.patch(store, plan(saved.draft.plan())?, use_proposed)?;
             }
+            Kind::Previews | Kind::Recipe => {
+                return Err("Review this preview on its own screen.".into());
+            }
             Kind::Preset => {
                 if !use_proposed {
                     return Err(

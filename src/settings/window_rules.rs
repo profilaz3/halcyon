@@ -106,6 +106,8 @@ pub enum Message {
     Undo,
     Refresh,
     UseCurrent,
+    /// Keeps the edits over a value changed outside this editor.
+    KeepMine,
     Recover,
     KeepRecovery,
 }
@@ -346,6 +348,7 @@ impl WindowRulesEditor {
             }
             Message::Refresh => self.core.refresh(),
             Message::UseCurrent => self.core.use_current(&[]),
+            Message::KeepMine => self.core.keep_edits(),
             Message::Recover => self.core.recover(true),
             Message::KeepRecovery => self.core.recover(false),
         }

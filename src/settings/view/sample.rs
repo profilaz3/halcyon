@@ -91,6 +91,27 @@ impl Widget<Message, cosmic::Theme, cosmic::Renderer> for Sample<'_> {
         ) * Transformation::scale(scale)
             * Transformation::translate(-original.x, -original.y);
         if let Some(clip) = bounds.intersection(viewport) {
+            // A faint outline of the card's own box, so a widget without a
+            // background still reads as placed on purpose, not off-centre.
+            if self.source.is_none() {
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: Rectangle {
+                            x: bounds.x + (bounds.width - original.width * scale) / 2.,
+                            y: bounds.y,
+                            width: original.width * scale,
+                            height: original.height * scale,
+                        },
+                        border: cosmic::iced::Border {
+                            color: Color { a: 0.14, ..FG },
+                            width: 1.,
+                            radius: (12. * scale).into(),
+                        },
+                        ..Default::default()
+                    },
+                    Color::TRANSPARENT,
+                );
+            }
             renderer.with_layer(clip, |renderer| {
                 renderer.with_transformation(transform, |renderer| {
                     self.child.as_widget().draw(

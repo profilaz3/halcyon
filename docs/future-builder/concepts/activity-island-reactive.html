@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Activity Island · interaction study</title>
+<style>
+:root {
+ color-scheme:light dark;
+ --ink:var(--foreground,#eee); --quiet:color-mix(in srgb,var(--foreground,#eee) 68%,var(--popover,var(--card,#222b2a)) 32%);
+ --line:var(--border,#38403f); --surface:var(--card,#222b2a);
+ --soft:var(--secondary,#303c39); --plate:var(--popover,var(--surface));
+ --tint:color-mix(in srgb,var(--primary,#94d8c2) 38%,var(--foreground,#eee) 62%);
+ --round:var(--radius,16px);
+}
+* {box-sizing:border-box}
+body {margin:0;color:var(--ink);font:14px/1.5 var(--font-sans,system-ui,sans-serif)}
+button,input {font:inherit}
+button {cursor:pointer;color:inherit;border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:8px 12px}
+button:hover {background:var(--soft)}
+button:focus-visible,input:focus-visible {outline:2px solid var(--tint);outline-offset:3px}
+button[aria-pressed=true] {border-color:var(--tint);background:color-mix(in srgb,var(--tint) 14%,var(--surface))}
+button:disabled {opacity:.4;cursor:default}
+svg {width:20px;height:20px;fill:currentColor;display:block;flex:none}
+.symbols {position:absolute;width:0;height:0;overflow:hidden}
+small {color:var(--quiet)}
+.intro {display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.intro strong {font-size:16px}
+.scene {position:relative;min-height:266px;border:1px solid var(--line);border-radius:var(--round);overflow:hidden;background:radial-gradient(ellipse at 75% 100%,color-mix(in srgb,var(--tint) 13%,transparent),transparent 65%),linear-gradient(145deg,var(--soft),var(--surface))}
+.bar-side {position:absolute;top:15px;border-radius:12px;padding:8px 12px;background:var(--plate);font-size:11px}
+.bar-side.left {left:12px}.bar-side.right {right:12px}
+.anchor {position:absolute;top:14px;left:50%;transform:translateX(-50%);width:324px;max-width:calc(100% - 24px);z-index:2}
+.island {position:relative;background:var(--plate);border:1px solid color-mix(in srgb,var(--line) 55%,transparent);border-radius:23px;width:100%;height:45px;box-shadow:0 6px 22px #0002;transition:height 330ms cubic-bezier(.2,.85,.2,1),width 330ms cubic-bezier(.2,.85,.2,1),border-radius 330ms;overflow:hidden;margin:0 auto}
+.island.open {height:var(--open-height,152px);border-radius:23px}
+.island.choosing {height:218px}
+.island.idle:not(.open) {width:112px;height:36px;border-radius:18px;box-shadow:0 3px 12px #0001}
+.head {display:flex;align-items:center;height:43px;gap:8px;padding:0 14px;transition:height 300ms}
+.island.open .head {height:64px;align-items:flex-start;padding-top:14px}
+.island.idle:not(.open) .head {height:34px;padding:0 13px}
+.title-btn {border:0;padding:0;background:none!important;border-radius:7px;display:flex;align-items:center;gap:10px;flex:1;min-width:0;text-align:left;height:100%;white-space:nowrap}
+.island.open .title-btn {height:40px;align-items:flex-start}
+.title-copy {display:flex;flex-direction:column;min-width:0;flex:1;gap:2px}
+.title {overflow:hidden;text-overflow:ellipsis;font-size:13px;font-weight:650;line-height:20px}
+.island.open .title {font-size:15px;line-height:22px}
+.artist {font-size:12px;line-height:16px;color:var(--quiet);overflow:hidden;text-overflow:ellipsis;display:none;font-weight:400}
+.island.music.open .artist {display:block}
+.symbol {flex:none;width:20px;color:var(--tint);font-size:19px;line-height:22px;text-align:center}
+.island.idle .symbol {display:none}
+.island.idle:not(.open) .title {font-size:11px;font-weight:500;text-align:center;color:var(--quiet)}
+.cue {color:var(--tint);font-size:11px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.island.open .cue {display:none}
+.count {flex:none;border:0;background:var(--soft);padding:3px 6px;font-size:10px;border-radius:8px;min-width:24px}
+.collapse {display:none;align-items:center;justify-content:center;flex:none;width:26px;height:26px;padding:3px;border:0;border-radius:50%;color:var(--quiet);background:transparent}
+.collapse svg {width:16px;height:16px}
+.island.open .collapse {display:flex}
+.body {padding:0 18px 16px;opacity:0;transform:translateY(-4px);transition:opacity 130ms,transform 200ms;visibility:hidden}
+.island.open .body {opacity:1;transform:none;visibility:visible;transition-delay:65ms}
+.detail {font-size:13px;color:var(--quiet);min-height:20px;margin-bottom:12px}
+.meter {height:3px;background:color-mix(in srgb,var(--ink) 12%,transparent);border-radius:3px;overflow:hidden}
+.fill {height:100%;width:43%;background:var(--tint);border-radius:3px;transition:width 250ms}
+.time {display:flex;justify-content:space-between;color:var(--quiet);font-size:10px;font-variant-numeric:tabular-nums;margin-top:3px}
+.transport {display:flex;gap:20px;justify-content:center;align-items:center;margin-top:9px}
+.transport button {border:0;background:transparent;padding:0;display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:50%;transition:background 130ms,transform 130ms}
+.transport button:hover {background:color-mix(in srgb,var(--ink) 8%,transparent)}
+.transport button:active {transform:scale(.94)}
+.transport button svg {width:22px;height:22px}
+.transport .play {background:var(--tint);color:var(--background,#111);width:44px;height:44px}
+.transport .play:hover {background:color-mix(in srgb,var(--tint) 82%,var(--ink))}
+.actions {display:flex;gap:8px;align-items:center;margin-top:12px}
+.actions button {padding:7px 11px;font-size:12px;border:0}
+.actions button:first-child {background:color-mix(in srgb,var(--tint) 15%,var(--surface))}
+.privacy {flex:none;color:color-mix(in srgb,var(--warning,#e8ba74) 60%,var(--ink) 40%);font-size:10px;display:flex;gap:4px;align-items:center;height:24px}
+.dot {width:5px;height:5px;border-radius:50%;background:currentColor}
+.chooser {max-height:136px;overflow:auto}
+.chooser button {display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;border:0;background:none;text-align:left;font-size:12px;padding:9px}
+.chooser button:hover {background:var(--soft)}
+.chooser small {font-size:10px;white-space:nowrap}
+.scene-foot {position:absolute;left:16px;right:16px;bottom:14px;display:flex;gap:10px;justify-content:space-between;font-size:11px;color:var(--quiet)}
+.states {display:flex;gap:7px;margin:12px 0;flex-wrap:wrap}
+.states button {padding:7px 13px;font-size:12px}
+.events {display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
+.events button {padding:7px 10px;font-size:12px}
+summary {cursor:pointer;font-size:12px;color:var(--quiet);padding:4px 0}
+.options {display:flex;align-items:center;flex-wrap:wrap;gap:15px;margin:12px 0 4px;font-size:12px}
+.options label {display:flex;align-items:center;gap:5px}
+.options input {accent-color:var(--tint)}
+.explanation {padding:9px 0 0;font-size:12px;color:var(--quiet);min-height:49px}
+.explanation strong {color:var(--ink);font-weight:550;margin-right:5px}
+.nomotion * {transition:none!important}
+@media(max-width:620px) {.bar-side{display:none}.intro small{font-size:11px}.scene-foot{font-size:10px}}
+@media(prefers-reduced-motion:reduce) {*{transition:none!important}}
+[hidden] {display:none!important}
+</style>
+</head>
+<body>
+<svg class="symbols" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs>
+ <symbol id="i-previous" viewBox="0 0 24 24"><path d="M5 5h2v14H5zM19 5.6a.8.8 0 0 0-1.2-.7L8.7 11.3a.85.85 0 0 0 0 1.4l9.1 6.4a.8.8 0 0 0 1.2-.7z"/></symbol>
+ <symbol id="i-next" viewBox="0 0 24 24"><path d="M17 5h2v14h-2zM5 5.6a.8.8 0 0 1 1.2-.7l9.1 6.4a.85.85 0 0 1 0 1.4l-9.1 6.4a.8.8 0 0 1-1.2-.7z"/></symbol>
+ <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/></symbol>
+ <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5.7a1 1 0 0 1 1.5-.9l10.1 6.3a1 1 0 0 1 0 1.8L8.5 19.2a1 1 0 0 1-1.5-.9z"/></symbol>
+ <symbol id="i-up" viewBox="0 0 24 24"><path d="m6 14 6-6 6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</defs></svg>
+<div class="intro"><strong>Activity Island</strong><small>Interaction study · sample data</small></div>
+<div class="scene" id="scene">
+ <div class="bar-side left">Workspaces</div><div class="bar-side right">Tue&nbsp; 14:20</div>
+ <div class="anchor" id="anchor"><div class="island" id="island">
+  <div class="head">
+   <button class="title-btn" id="titleButton" aria-expanded="true" aria-controls="body"><span class="symbol" id="symbol" aria-hidden="true">♫</span><span class="title-copy"><span class="title" id="title">Golden Hour</span><span class="artist" id="artist">Aura · Solstice</span></span><span class="cue" id="cue"></span></button>
+   <span class="privacy" id="privacy" hidden aria-label="Microphone in use" title="Microphone in use"><span class="dot"></span><span>Mic</span></span>
+   <button class="count" id="count" hidden aria-label="Other active activities" aria-controls="chooser" aria-expanded="false">+1</button>
+   <button class="collapse" id="collapse" aria-label="Collapse activity" title="Collapse · Escape"><svg aria-hidden="true"><use href="#i-up"/></svg></button>
+  </div>
+  <div class="body" id="body">
+   <div id="details">
+    <div id="musicPanel">
+     <div class="meter" role="progressbar" aria-label="Track progress" aria-valuemin="0" aria-valuemax="236" aria-valuenow="102" id="trackProgress"><div class="fill" id="trackFill"></div></div>
+     <div class="time"><span id="elapsed">1:42</span><span id="duration">3:56</span></div>
+     <div class="transport" role="group" aria-label="Playback controls">
+      <button id="previous" aria-label="Previous track" title="Previous track"><svg aria-hidden="true"><use href="#i-previous"/></svg></button>
+      <button id="playPause" class="play" aria-label="Pause playback" title="Pause playback"><svg aria-hidden="true"><use id="playIcon" href="#i-pause"/></svg></button>
+      <button id="next" aria-label="Next track" title="Next track"><svg aria-hidden="true"><use href="#i-next"/></svg></button>
+     </div>
+    </div>
+    <div id="otherPanel" hidden>
+     <div class="detail" id="detail"></div>
+     <div id="progressGroup"><div class="meter"><div class="fill" id="fill"></div></div><div class="time"><span id="metaLeft"></span><span id="metaRight"></span></div></div>
+     <div class="actions"><button id="action"></button><button id="secondary" hidden></button></div>
+    </div>
+   </div>
+   <div class="chooser" id="chooser" hidden></div>
+  </div>
+ </div></div>
+ <div class="scene-foot"><span id="surfaceMode">Click outside or press Escape to collapse</span><span>Panel Islands</span></div>
+</div>
+<div class="states" role="group" aria-label="Preview state"><button id="showPlayer">Player</button><button id="showPaused">Paused</button><button id="showCompact">Compact</button><button id="reset">Quiet</button></div>
+<details id="eventControls"><summary>Try incoming activities</summary><div class="events">
+ <button id="musicEvent" aria-pressed="true">Media playing</button><button id="meetingEvent" aria-pressed="false">Meeting in 5 min</button><button id="updateEvent" aria-pressed="false">Update running</button><button id="chargeEvent">Charger connected</button><button id="micEvent" aria-pressed="false">Microphone active</button>
+</div><div class="options"><label><input type="checkbox" id="dnd">Do Not Disturb</label><label><input type="checkbox" id="reduced">Reduced motion</label></div></details>
+<div class="explanation" role="status" aria-live="polite"><strong id="reasonTitle">Player.</strong><span id="reason">Previous, play/pause and next. Hover for controls; click the title to keep them open.</span></div>
+<script>
+(()=>{
+'use strict';
+const $=id=>document.getElementById(id);
+const s={music:true,paused:false,meeting:false,update:false,mic:false,charge:false,open:true,held:true,choosing:false,selected:'music',dnd:false,origin:'manual',track:0};
+let hoverTimer,leaveTimer,revealTimer,chargeTimer,pausedTimer;
+let blockHover=false,keyboardInput=false;
+const tracks=[{title:'Golden Hour',artist:'Aura · Solstice',elapsed:102,duration:236},{title:'Night Drive',artist:'Aura · After Hours',elapsed:0,duration:214},{title:'Blue Light',artist:'Aura · Solstice',elapsed:0,duration:248}];
+const copy={
+ idle:{symbol:'',title:'Activities',cue:'',detail:'No active tasks',action:'Activity settings'},
+ meeting:{symbol:'▦',title:'Design catch-up',cue:'in 5 min',detail:'14:25–14:55 · Personal calendar',action:'Open Calendar',secondary:'Dismiss'},
+ update:{symbol:'↓',title:'Installing updates',cue:'64%',detail:'4 of 7 packages',left:'Installation in progress',right:'64%',action:'Open updater',progress:64},
+ mic:{symbol:'●',title:'Microphone in use',cue:'Active',detail:'Example app · Built-in microphone',action:'Input settings'},
+ charge:{symbol:'ϟ',title:'Charging',cue:'62%',detail:'Power connected',left:'About 44 min to full',right:'62%',action:'Power settings',progress:62}
+};
+function active(){return ['meeting','music','update','mic'].filter(k=>s[k]);}
+function automatic(){return s.meeting?'meeting':s.music?'music':s.update?'update':s.mic?'mic':'idle';}
+function eligible(k){return k==='idle'?active().length===0:k==='charge'?s.charge:!!s[k];}
+function content(k){if(k==='music')return {symbol:'♫',title:tracks[s.track].title,cue:s.paused?'Paused':'Playing',detail:tracks[s.track].artist};return copy[k];}
+function explanation(title,text){$('reasonTitle').textContent=title;$('reason').textContent=text;}
+function time(value){return Math.floor(value/60)+':'+String(value%60).padStart(2,'0');}
+function armPauseGrace(){clearTimeout(pausedTimer);if(s.music&&s.paused&&!s.open)pausedTimer=setTimeout(()=>{if(s.paused&&!s.open){s.music=false;s.paused=false;render();}},10000);}
+function setOpen(value,held=false,origin='manual'){
+ clearTimeout(hoverTimer);clearTimeout(leaveTimer);clearTimeout(revealTimer);clearTimeout(pausedTimer);
+ s.open=value;s.held=held&&value;s.choosing=false;s.origin=origin;
+ if(!value)s.selected=s.charge&&!s.dnd?'charge':automatic();
+ render();armPauseGrace();
+}
+function close(restoreFocus=false){blockHover=true;setOpen(false);if(restoreFocus)$('titleButton').focus();}
+function render(){
+ if(!s.open)s.selected=s.charge&&!s.dnd?'charge':automatic();
+ const k=s.selected,c={...content(k)},ended=k!=='idle'&&!eligible(k),music=k==='music'&&!ended;
+ if(ended){c.cue='Ended';c.detail='This activity has ended.';c.action='Done';c.progress=null;delete c.secondary;}
+ $('island').style.setProperty('--open-height',music?'162px':c.progress!=null?'187px':'160px');
+ for(const [name,value] of [['open',s.open],['idle',k==='idle'],['music',music],['choosing',s.choosing]])$('island').classList.toggle(name,value);
+ $('titleButton').setAttribute('aria-expanded',String(s.open));
+ $('titleButton').setAttribute('aria-label',c.title+(c.cue?', '+c.cue:'')+(s.open?'. Click to '+(s.held?'collapse':'keep open'):'. Open details'));
+ $('body').inert=!s.open;
+ $('symbol').textContent=c.symbol;$('title').textContent=c.title;$('cue').textContent=c.cue;
+ $('artist').textContent=music?tracks[s.track].artist:'';
+ $('musicPanel').hidden=!music;$('otherPanel').hidden=music;
+ $('detail').textContent=c.detail||'';$('action').textContent=c.action||'';
+ $('secondary').hidden=!c.secondary;$('secondary').textContent=c.secondary||'';
+ $('progressGroup').hidden=c.progress==null;$('fill').style.width=(c.progress||0)+'%';
+ $('metaLeft').textContent=c.left||'';$('metaRight').textContent=c.right||'';
+ const track=tracks[s.track];$('trackFill').style.width=(100*track.elapsed/track.duration)+'%';
+ $('trackProgress').setAttribute('aria-valuemax',track.duration);$('trackProgress').setAttribute('aria-valuenow',track.elapsed);
+ $('elapsed').textContent=time(track.elapsed);$('duration').textContent=time(track.duration);
+ $('playPause').setAttribute('aria-label',s.paused?'Resume playback':'Pause playback');$('playPause').title=s.paused?'Resume playback':'Pause playback';
+ $('playIcon').setAttribute('href',s.paused?'#i-play':'#i-pause');
+ const others=active().filter(a=>a!==k);
+ $('count').hidden=others.length===0;$('count').textContent='+'+others.length;
+ $('count').setAttribute('aria-label',others.length+' other active '+(others.length===1?'activity':'activities'));
+ $('count').setAttribute('aria-expanded',String(s.choosing));$('privacy').hidden=!s.mic||k==='mic';
+ $('surfaceMode').textContent=s.choosing?'Choose an active task':s.open?(s.held?'Click outside or press Escape to collapse':'Move away to collapse'):(k==='idle'?'Quiet · hover or click for activities':'Hover for controls · click to keep open');
+ $('details').hidden=s.choosing;$('chooser').hidden=!s.choosing;
+ if(s.choosing){$('chooser').replaceChildren();for(const a of active()){
+  const b=document.createElement('button'),title=document.createElement('span'),cue=document.createElement('small'),entry=content(a);
+  title.textContent=entry.title;cue.textContent=entry.cue;b.append(title,cue);
+  b.addEventListener('click',()=>{s.selected=a;s.choosing=false;render();$('titleButton').focus();});$('chooser').append(b);
+ }}
+ for(const [id,key] of [['musicEvent','music'],['meetingEvent','meeting'],['updateEvent','update'],['micEvent','mic']])$(id).setAttribute('aria-pressed',String(s[key]));
+}
+function reveal(kind){if(s.open||s.dnd)return;clearTimeout(pausedTimer);s.selected=kind;s.open=true;s.held=false;s.origin='reveal';render();clearTimeout(revealTimer);revealTimer=setTimeout(()=>{if(!s.held)setOpen(false);},3000);}
+function event(key){
+ if(key==='music'){clearTimeout(pausedTimer);s.paused=false;}s[key]=!s[key];
+ if(s.open){explanation('Controls stay in place.','New activities wait in the count until you finish here.');render();return;}
+ render();
+ if(key==='meeting'&&s.meeting){reveal('meeting');explanation(s.dnd?'Quiet mode.':'Meeting approaching.',s.dnd?'The countdown updates without expanding.':'A brief reveal, then a compact countdown. Playing media stays available.');}
+ else if(key==='mic')explanation('Microphone.',s.mic?'Capture stays visible without replacing the player.':'The capture indicator clears when capture ends.');
+ else if(key==='update')explanation('Updates.',s.update?'Progress stays available while the operation runs.':'The sample operation has ended.');
+ else explanation(s.music?'Playing.':'Stopped.',s.music?'Playing media is eligible for the island.':'The island returns to another activity or its quiet capsule.');
+}
+function preset(mode){
+ for(const t of [hoverTimer,leaveTimer,revealTimer,chargeTimer,pausedTimer])clearTimeout(t);
+ blockHover=false;s.track=0;s.choosing=false;s.charge=false;
+ for(const k of ['music','paused','meeting','update','mic'])s[k]=false;
+ s.music=mode!=='quiet';s.paused=mode==='paused';s.selected=s.music?'music':'idle';
+ setOpen(mode==='player'||mode==='paused',true);
+ explanation(mode==='quiet'?'Quiet.':mode==='paused'?'Paused.':mode==='compact'?'Compact.':'Player.',mode==='quiet'?'A slim Activities capsule stays in the panel. Hover or click to open.':mode==='paused'?'Resume stays in the same place. After closing, the player withdraws after a short grace period.':mode==='compact'?'The same title stays in place as its controls open below.':'Previous, play/pause and next. Hover for controls; click the title to keep them open.');
+}
+$('showPlayer').addEventListener('click',()=>preset('player'));$('showPaused').addEventListener('click',()=>preset('paused'));$('showCompact').addEventListener('click',()=>preset('compact'));$('reset').addEventListener('click',()=>preset('quiet'));
+for(const [id,key] of [['musicEvent','music'],['meetingEvent','meeting'],['updateEvent','update'],['micEvent','mic']])$(id).addEventListener('click',()=>event(key));
+$('chargeEvent').addEventListener('click',()=>{
+ s.charge=true;clearTimeout(chargeTimer);
+ if(!s.open&&!s.dnd)reveal('charge');else render();
+ explanation(s.dnd?'Quiet mode.':'Power connected.',s.dnd?'No unsolicited expansion.':'A brief acknowledgement when free; current controls remain stable while in use.');
+ chargeTimer=setTimeout(()=>{s.charge=false;if(s.selected==='charge'&&!s.held)setOpen(false);else render();},3100);
+});
+$('titleButton').addEventListener('click',()=>{blockHover=false;if(s.open&&s.held)close();else setOpen(true,true);});
+$('collapse').addEventListener('click',()=>close(true));
+$('count').addEventListener('click',()=>{clearTimeout(revealTimer);clearTimeout(pausedTimer);s.open=true;s.held=true;s.origin='manual';s.choosing=!s.choosing;render();if(s.choosing)$('chooser').querySelector('button')?.focus();});
+$('island').addEventListener('pointerenter',()=>{clearTimeout(leaveTimer);clearTimeout(revealTimer);if(s.open&&s.origin==='reveal')s.origin='hover';if(!blockHover&&!s.open)hoverTimer=setTimeout(()=>setOpen(true,false,'hover'),150);});
+$('island').addEventListener('pointerleave',()=>{blockHover=false;clearTimeout(hoverTimer);if(!s.held)leaveTimer=setTimeout(()=>setOpen(false),300);});
+$('island').addEventListener('focusin',e=>{if(keyboardInput&&s.open&&e.target!==$('titleButton')){s.held=true;s.origin='manual';clearTimeout(revealTimer);$('surfaceMode').textContent='Click outside or press Escape to collapse';}});
+$('playPause').addEventListener('click',()=>{if(!s.music)return;clearTimeout(pausedTimer);s.paused=!s.paused;render();explanation(s.paused?'Paused.':'Playing.',s.paused?'Resume stays under your pointer.':'Playback resumes in place.');armPauseGrace();});
+function skip(delta){if(!s.music)return;s.track=(s.track+delta+tracks.length)%tracks.length;render();explanation('Track changed.','The title and duration update; the controls stay in place.');}
+$('previous').addEventListener('click',()=>skip(-1));$('next').addEventListener('click',()=>skip(1));
+$('action').addEventListener('click',()=>{if(!eligible(s.selected)&&s.selected!=='idle'){close();return;}explanation('Sample action.','The native version opens the relevant app or settings. This study does not control your desktop.');});
+$('secondary').addEventListener('click',()=>{s.meeting=false;explanation('Dismissed.','This occurrence leaves automatic selection. The calendar event is unchanged.');close();});
+$('dnd').addEventListener('change',e=>{s.dnd=e.target.checked;if(s.dnd&&s.open&&s.origin==='reveal')setOpen(false);render();explanation(s.dnd?'Quiet mode.':'Automatic reveals.',s.dnd?'No unsolicited expansion. Explicit access and compact status still work.':'Only new events can reveal; earlier events are not replayed.');});
+$('reduced').addEventListener('change',e=>document.body.classList.toggle('nomotion',e.target.checked));
+document.addEventListener('pointerdown',()=>{keyboardInput=false;},true);
+document.addEventListener('keydown',e=>{keyboardInput=true;if(e.key==='Escape')close(true);});
+$('scene').addEventListener('pointerdown',e=>{if(!$('island').contains(e.target))close();});
+render();
+})();
+</script>
+</body>
+</html>

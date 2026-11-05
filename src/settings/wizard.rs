@@ -1,11 +1,6 @@
-//! First-run setup: Welcome, Look, Dock & panel, Widgets, Arrange, optional Weather and Ready, one
-//! decision per screen in the Settings window without the sidebar.
-//!
-//! A look and the dock and panel choices are applied as they are made,
-//! through the same profile plan as Setups, so they never touch applets,
-//! their order or anything else the look doesn't own. Every change is a
-//! normal desktop change; Cancel undoes the wizard's own changes, newest
-//! first. Choosing a city is a preference and stays.
+//! Staged setup: welcome, look, bars, widgets and city, review, completion.
+//! Choices stay in the wizard until one guarded Apply; leaving can retain or
+//! forget the draft without changing the desktop.
 pub mod follow_up;
 pub mod widgets;
 use crate::desktop::DesktopStore;
@@ -24,23 +19,35 @@ pub enum Step {
     Look,
     Bars,
     Widgets,
+    /// The order view of the widgets step.
     Arrange,
+    /// Older saved progress only; the city now lives on the widgets step.
     Weather,
+    /// Review: every choice, then Apply and finish.
     Ready,
+    /// The ending: what was applied, Undo, and what comes next.
+    Done,
 }
 
 impl Step {
-    pub const ALL: [Self; 7] = [
+    /// The welcome screen, four steps and the ending.
+    pub const ALL: [Self; 6] = [
         Self::Welcome,
         Self::Look,
         Self::Bars,
         Self::Widgets,
-        Self::Arrange,
-        Self::Weather,
         Self::Ready,
+        Self::Done,
     ];
     pub fn index(self) -> usize {
-        Self::ALL.iter().position(|step| *step == self).unwrap_or(0)
+        let step = match self {
+            Self::Arrange | Self::Weather => Self::Widgets,
+            other => other,
+        };
+        Self::ALL
+            .iter()
+            .position(|known| *known == step)
+            .unwrap_or(0)
     }
     fn next(self) -> Option<Self> {
         Self::ALL.get(self.index() + 1).copied()
@@ -57,20 +64,24 @@ impl Step {
             Self::Arrange => "arrange",
             Self::Weather => "weather",
             Self::Ready => "ready",
+            Self::Done => "done",
         }
     }
     fn parse(key: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|step| step.key() == key)
+        match key {
+            "arrange" => Some(Self::Arrange),
+            "weather" => Some(Self::Weather),
+            key => Self::ALL.into_iter().find(|step| step.key() == key),
+        }
     }
     pub fn title(self) -> &'static str {
         match self {
             Self::Welcome => "Halcyon",
-            Self::Look => "Look",
-            Self::Bars => "Dock & panel",
-            Self::Widgets => "Your widgets",
-            Self::Arrange => "Arrange widgets",
-            Self::Weather => "Weather",
-            Self::Ready => "Ready",
+            Self::Look => "Start with",
+            Self::Bars => "Dock and panel",
+            Self::Widgets | Self::Arrange | Self::Weather => "Your widgets",
+            Self::Ready => "Review",
+            Self::Done => "Done",
         }
     }
 }
@@ -114,6 +125,70 @@ pub struct Bars {
 }
 
 impl Bars {
+    fn saved_value(self, touched: Touched) -> serde_json::Value {
+        json!({
+            "islands": self.islands, "panel": self.panel_shape.title(),
+            "dock": self.dock_shape.title(), "floating": self.floating, "hides": self.hides,
+            "touched": [touched.islands, touched.panel_shape, touched.dock_shape,
+                touched.floating, touched.hides],
+        })
+    }
+    fn saved(value: &serde_json::Value) -> Option<(Self, Touched)> {
+        let shape = |key: &str| {
+            let title = value[key].as_str()?;
+            Shape::ALL.into_iter().find(|shape| shape.title() == title)
+        };
+        let touched = value["touched"].as_array()?;
+        let flag = |index: usize| {
+            touched
+                .get(index)
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        };
+        Some((
+            Self {
+                islands: value["islands"].as_bool()?,
+                panel_shape: shape("panel")?,
+                dock_shape: shape("dock")?,
+                floating: value["floating"].as_bool()?,
+                hides: value["hides"].as_bool()?,
+            },
+            Touched {
+                islands: flag(0),
+                panel_shape: flag(1),
+                dock_shape: flag(2),
+                floating: flag(3),
+                hides: flag(4),
+            },
+        ))
+    }
+    /// What these bars become with a look's own choices on top.
+    fn with_look(mut self, profile: &Profile, islands_available: bool) -> Self {
+        let Ok(record) = serde_json::to_value(profile) else {
+            return self;
+        };
+        let shape = |radius: u64| match radius {
+            0 => Shape::Square,
+            radius if radius < 40 => Shape::Rounded,
+            _ => Shape::Pill,
+        };
+        if let Some(radius) = record["panel"]["border_radius"].as_u64() {
+            self.panel_shape = shape(radius);
+        }
+        if let Some(on) = record["panel"]["islands"]["enabled"].as_bool() {
+            self.islands = on && islands_available;
+        }
+        if let Some(radius) = record["dock"]["border_radius"].as_u64() {
+            self.dock_shape = shape(radius);
+        }
+        if let Some(on) = record["dock"]["floating"].as_bool() {
+            self.floating = on;
+        }
+        if let Some(mode) = record["dock"]["autohide"].as_str() {
+            self.hides = mode != "Never";
+        }
+        self
+    }
     pub fn starter(islands: bool) -> Self {
         Self {
             islands,
@@ -206,7 +281,7 @@ impl Bars {
             return Ok(None);
         }
         let mut record = json!({
-            "format": "desktop-cards-profile", "version": profiles::VERSION, "name": "Dock & panel",
+            "format": "desktop-cards-profile", "version": profiles::VERSION, "name": "Dock and panel",
         });
         if !panel.is_empty() {
             record["panel"] = panel.into();
@@ -249,6 +324,17 @@ pub enum Message {
     Show(Step),
     Skip,
     Cancel,
+    /// Leaves with every choice kept for later. The desktop stays as it is.
+    KeepForLater,
+    AskLeave(bool),
+    /// Writes every choice as one desktop change.
+    ApplyAll,
+    /// Undoes that one change and returns to Review.
+    UndoSetup,
+    /// Back to the desktop as it is: no starter look.
+    KeepCurrent,
+    /// Keep the dock and panel as they are, or shape them here.
+    KeepBars(bool),
     Finish,
     Look(&'static str),
     Islands(bool),
@@ -334,10 +420,20 @@ pub enum Outcome {
     Changed,
     /// The wizard is over. `finish` starts the cards (and at sign-in when
     /// `startup`); otherwise nothing more happens.
+    /// Setup closes with its choices saved for later; nothing was written.
+    Left,
     Done {
         finish: bool,
         startup: bool,
     },
+}
+
+/// What one Apply changed, as the ending says it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Applied {
+    pub lines: Vec<String>,
+    pub next_login: bool,
+    pub changed: bool,
 }
 
 #[derive(Clone)]
@@ -359,12 +455,21 @@ pub struct Wizard {
     pub startup: bool,
     /// The person chose Start at sign-in themselves.
     pub startup_touched: bool,
+    /// The chosen city waits here until Apply, so leaving leaves it unsaved.
+    pub city: Option<crate::config::Location>,
+    /// Asking how to leave: keep the choices or forget them.
+    pub leaving: bool,
+    /// Change came from Review, so Next goes straight back to it.
+    returning: bool,
+    /// What Apply did, for the ending.
+    pub applied: Option<Applied>,
     pub widgets: widgets::Draft,
     pub displays: Registry,
     geometry: Snapshot,
     other_geometry: Vec<Snapshot>,
     bar_insets: Vec<(crate::desktop::panels::Output, usize, f32)>,
     visited: Vec<Step>,
+    pub keep_bars: bool,
 }
 
 /// Setup in progress, kept between Settings sessions.
@@ -389,6 +494,7 @@ impl Wizard {
             displays: Registry::default(),
             bar_insets: Vec::new(),
             visited: Vec::new(),
+            keep_bars: true,
             step: Step::Welcome,
             view_id: next_view(),
             look: None,
@@ -400,6 +506,10 @@ impl Wizard {
             error: None,
             startup,
             startup_touched: false,
+            city: None,
+            leaving: false,
+            returning: false,
+            applied: None,
         }
     }
 
@@ -454,6 +564,32 @@ impl Wizard {
             .unwrap_or_default();
         wizard.startup = saved["startup"].as_bool().unwrap_or(startup);
         wizard.startup_touched = saved["startup_touched"].as_bool().unwrap_or(false);
+        wizard.keep_bars = saved["keep_bars"].as_bool().unwrap_or(false);
+        wizard.returning = saved["returning"].as_bool().unwrap_or(false);
+        wizard.city = serde_json::from_value(saved["city"].clone()).ok();
+        if saved["applied"].is_object() {
+            wizard.applied = Some(Applied {
+                lines: saved["applied"]["lines"]
+                    .as_array()
+                    .map(|lines| {
+                        lines
+                            .iter()
+                            .take(32)
+                            .filter_map(|line| Some(line.as_str()?.to_owned()))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                next_login: saved["applied"]["next_login"].as_bool().unwrap_or(false),
+                changed: saved["applied"]["changed"].as_bool().unwrap_or(false),
+            });
+        }
+        if let Some(choices) = saved.get("bars").and_then(Bars::saved) {
+            wizard.bars = choices.0;
+            wizard.touched = choices.1;
+        }
+        if matches!(wizard.step, Step::Weather) {
+            wizard.step = Step::Widgets;
+        }
         wizard.capture_insets(Some(store));
         Some(wizard)
     }
@@ -481,8 +617,27 @@ impl Wizard {
             "look": self.look, "changes": changes, "widgets": self.widgets,
             "visited": self.visited.iter().map(|s| s.key()).collect::<Vec<_>>(),
             "startup": self.startup, "startup_touched": self.startup_touched,
+            "keep_bars": self.keep_bars, "returning": self.returning,
+            "city": self.city,
+            "bars": self.bars.saved_value(self.touched),
+            "applied": self.applied.as_ref().map(|applied| json!({
+                "lines": applied.lines, "next_login": applied.next_login,
+                "changed": applied.changed,
+            })),
         });
         crate::config::write_config_text(&path, Some(&state.to_string()))
+    }
+
+    /// Whether the dock and panel step holds choices of its own.
+    pub fn has_bar_choices(&self) -> bool {
+        self.touched.any()
+    }
+
+    /// Saves progress after a choice made outside `update`.
+    pub fn remember(&mut self, store: &DesktopStore) {
+        if let Err(error) = self.save(store) {
+            self.error = Some(format!("Could not save setup progress: {error}"));
+        }
     }
 
     /// Setup is over: nothing to resume.
@@ -656,7 +811,45 @@ impl Wizard {
                     self.view_id = next_view();
                 }
             }
-            Message::Show(step) => self.go(step),
+            Message::Show(step) => {
+                self.returning = self.step == Step::Ready;
+                self.go(step);
+            }
+            Message::AskLeave(on) => self.leaving = on,
+            Message::KeepForLater => {
+                self.leaving = false;
+                return Outcome::Left;
+            }
+            Message::KeepCurrent => {
+                self.look = None;
+                if !self.widgets.customized {
+                    self.reset_widgets(config);
+                }
+                if !self.touched.any() {
+                    self.bars = self.applied_bars;
+                }
+            }
+            Message::KeepBars(keep) => {
+                if keep {
+                    self.touched = Touched::default();
+                    self.keep_bars = true;
+                    self.bars = self.applied_bars;
+                } else {
+                    self.keep_bars = false;
+                    if !self.touched.any() {
+                        self.bars = self.look_bars();
+                    }
+                }
+            }
+            Message::ApplyAll => return self.apply_all(store, config),
+            Message::UndoSetup => {
+                let changed = self.undo_all(store);
+                if self.error.is_none() {
+                    self.applied = None;
+                    self.go(Step::Ready);
+                }
+                return changed;
+            }
             Message::Skip => {
                 if matches!(self.step, Step::Widgets | Step::Arrange) {
                     self.reset_widgets(config);
@@ -669,41 +862,47 @@ impl Wizard {
                 if self.step == Step::Bars {
                     self.bars = self.applied_bars;
                     self.touched = Touched::default();
+                    self.keep_bars = true;
                 }
                 self.advance();
             }
             Message::Next => {
-                if self.step == Step::Arrange {
-                    return self.apply_widgets(store, config);
+                // A layout that cannot fit stays here with its reason.
+                if matches!(self.step, Step::Widgets | Step::Arrange)
+                    && self.widget_plan(config).error.is_some()
+                {
+                    return Outcome::None;
                 }
-                if self.step == Step::Bars && self.touched.any() {
-                    let changed = self.apply_bars(store);
-                    if self.error.is_some() {
-                        return changed;
-                    }
-                    self.advance();
-                    return changed;
+                if self.returning || matches!(self.step, Step::Widgets | Step::Arrange) {
+                    self.returning = false;
+                    self.go(Step::Ready);
+                    return Outcome::None;
                 }
                 self.advance();
             }
             Message::Look(id) => return self.choose_look(id, store, config),
             Message::Islands(on) => {
+                self.keep_bars = false;
                 self.bars.islands = on && self.islands_available;
                 self.touched.islands = true;
             }
             Message::PanelShape(shape) => {
+                self.keep_bars = false;
                 self.bars.panel_shape = shape;
                 self.touched.panel_shape = true;
             }
             Message::DockShape(shape) => {
+                self.keep_bars = false;
                 self.bars.dock_shape = shape;
                 self.touched.dock_shape = true;
             }
             Message::Floating(on) => {
+                self.keep_bars = false;
                 self.bars.floating = on;
                 self.touched.floating = true;
             }
             Message::Hides(on) => {
+                self.keep_bars = false;
                 self.bars.hides = on;
                 self.touched.hides = true;
             }
@@ -813,10 +1012,6 @@ impl Wizard {
                 };
             }
             Message::Finish => {
-                if self.widgets.pending {
-                    self.go(Step::Arrange);
-                    return Outcome::None;
-                }
                 return Outcome::Done {
                     finish: true,
                     startup: self.startup,
@@ -842,14 +1037,8 @@ impl Wizard {
             self.go(step);
         }
     }
-    fn after_widgets(&mut self, config: &crate::config::Config) {
-        self.go(
-            if self.widgets.selected(Widget::Weather) && config.location.is_none() {
-                Step::Weather
-            } else {
-                Step::Ready
-            },
-        );
+    fn after_widgets(&mut self, _config: &crate::config::Config) {
+        self.go(Step::Ready);
     }
     pub fn refresh_widgets(&mut self, config: &crate::config::Config, displays: &Registry) {
         if self.displays.generation != displays.generation
@@ -994,47 +1183,20 @@ impl Wizard {
             }
         }
     }
-    fn apply_widgets(
-        &mut self,
-        store: Option<&DesktopStore>,
-        config: &crate::config::Config,
-    ) -> Outcome {
-        let Some(store) = store else {
-            self.error = Some("Desktop settings are unavailable.".into());
-            return Outcome::None;
-        };
-        let plan = self.widget_plan(config);
-        let result = self.widgets.patch(&plan, &self.displays).and_then(|patch| {
-            if patch.is_empty() {
-                return Ok(None);
-            }
-            store
-                .apply_owned(
-                    &crate::desktop::DesktopPatch::new(),
-                    Some(&patch),
-                    crate::desktop::Owner::Profile,
-                    "Onboarding widgets",
-                )
-                .map(Some)
-                .map_err(|e| e.to_string())
-        });
-        match result {
-            Ok(change) => {
-                self.changes.extend(change);
-                match widgets::raw() {
-                    Ok(raw) => self.widgets.committed(&raw),
-                    Err(e) => {
-                        self.error = Some(e);
-                        return Outcome::Changed;
-                    }
-                }
-                self.after_widgets(config);
-            }
-            Err(e) => self.error = Some(e),
+    /// The bars this setup starts from: the desktop's, with a chosen look on top.
+    fn look_bars(&self) -> Bars {
+        if self.keep_bars {
+            return self.applied_bars;
         }
-        Outcome::Changed
+        match self.look.and_then(profiles::preset) {
+            Some(preset) => self
+                .applied_bars
+                .with_look(&preset.profile, self.islands_available),
+            None => self.applied_bars,
+        }
     }
 
+    /// Choosing a look only stages it. Nothing reaches the desktop until Apply.
     fn choose_look(
         &mut self,
         id: &'static str,
@@ -1044,68 +1206,181 @@ impl Wizard {
         if self.look == Some(id) {
             return Outcome::None;
         }
-        let Some(store) = store else {
+        if store.is_none() {
             self.error = Some("Desktop settings are unavailable.".into());
             return Outcome::None;
-        };
-        let Some(preset) = profiles::preset(id) else {
+        }
+        if profiles::preset(id).is_none() {
             return Outcome::None;
-        };
-        // Another look goes on top of the last one: if it can't be applied,
-        // the last one stays, still selected. Cancel undoes both.
-        let bundled = crate::desktop::wallpaper::bundled_dir(store);
-        let mut preset = profiles::fitted(preset, config, &bundled, self.islands_available);
-        if self.widgets.customized {
-            preset.profile.widget_layout = None;
         }
-        match apply(store, &preset.profile, true) {
-            Ok(change) => {
-                self.changes.push(change);
-                self.look = Some(id);
-                self.bars = Bars::current(store, self.islands_available);
-                self.applied_bars = self.bars;
-                self.touched = Touched::default();
-                self.capture_insets(Some(store));
-                if let Ok(current) = crate::config::Config::try_load() {
-                    if !self.widgets.customized {
-                        self.reset_widgets(&current);
-                    }
-                    self.refresh_widgets(&current, &self.displays.clone());
-                }
-            }
-            Err(error) => self.error = Some(error),
+        self.look = Some(id);
+        if !self.touched.any() {
+            self.bars = self.look_bars();
         }
-        Outcome::Changed
+        if !self.widgets.customized {
+            let _ = self.handle(Message::UseSetupWidgets, store, config);
+        }
+        Outcome::None
     }
 
-    fn apply_bars(&mut self, store: Option<&DesktopStore>) -> Outcome {
-        let Some(store) = store else {
-            self.error = Some("Desktop settings are unavailable.".into());
-            return Outcome::None;
-        };
+    /// The look with the chosen dock and panel values on top of it.
+    fn composed(
+        &self,
+        store: &DesktopStore,
+        config: &crate::config::Config,
+    ) -> Result<Option<Profile>, String> {
         let gap = self
             .look
             .and_then(profiles::preset)
             .and_then(|preset| preset.profile.panel?.islands)
             .map_or(14, |islands| islands.gap);
-        let applied = self
+        let overlay = self
             .bars
-            .profile(self.touched, self.islands_available, gap)
-            .and_then(|profile| {
-                profile
-                    .map(|profile| apply(store, &profile, false))
-                    .transpose()
-            });
-        match applied {
+            .profile(self.touched, self.islands_available, gap)?;
+        let base = self.look.and_then(profiles::preset).map(|preset| {
+            let bundled = crate::desktop::wallpaper::bundled_dir(store);
+            let mut preset = profiles::fitted(preset, config, &bundled, self.islands_available);
+            // The widgets step owns widget choices; they join the same change.
+            preset.profile.widget_layout = None;
+            if self.keep_bars {
+                preset.profile.panel = None;
+                preset.profile.dock = None;
+            }
+            preset.profile
+        });
+        let Some(mut record) = base
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|e| e.to_string())?
+        else {
+            return Ok(overlay);
+        };
+        if let Some(overlay) = &overlay {
+            let overlay = serde_json::to_value(overlay).map_err(|e| e.to_string())?;
+            for part in ["panel", "dock"] {
+                if let Some(values) = overlay[part].as_object() {
+                    if !record[part].is_object() {
+                        record[part] = json!({});
+                    }
+                    for (key, value) in values {
+                        if !value.is_null() {
+                            record[part][key] = value.clone();
+                        }
+                    }
+                }
+            }
+        }
+        profiles::import_local(record.to_string().as_bytes())
+            .map(Some)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Every choice becomes one desktop change with one Undo. A failure writes
+    /// nothing and stays on Review with its reason.
+    fn apply_all(
+        &mut self,
+        store: Option<&DesktopStore>,
+        config: &crate::config::Config,
+    ) -> Outcome {
+        let Some(store) = store else {
+            self.error = Some("Desktop settings are unavailable.".into());
+            return Outcome::None;
+        };
+        let lines = self.summary_lines(config);
+        let next_login = self.bars.islands && !self.applied_bars.islands;
+        let result = (|| -> Result<Option<LatestChange>, String> {
+            let plan = self.widget_plan(config);
+            if let Some(error) = plan.error.clone() {
+                return Err(error);
+            }
+            let mut widget = self.widgets.patch(&plan, &self.displays)?;
+            if let Some(city) = &self.city {
+                let raw = widgets::raw()?;
+                widget.set(
+                    "/location",
+                    crate::desktop::store::widget::get(&raw, "/location"),
+                    Some(serde_json::to_value(city).map_err(|e| e.to_string())?),
+                )?;
+            }
+            match self.composed(store, config)? {
+                Some(profile) => apply_with(
+                    store,
+                    &profile,
+                    self.look.is_some(),
+                    self.touched.islands.then_some(self.bars.islands),
+                    widget,
+                ),
+                None if widget.is_empty() => Ok(None),
+                None => store
+                    .apply_owned(
+                        &crate::desktop::DesktopPatch::new(),
+                        Some(&widget),
+                        crate::desktop::Owner::Profile,
+                        "Setup",
+                    )
+                    .map(Some)
+                    .map_err(|e| e.to_string()),
+            }
+        })();
+        match result {
             Ok(change) => {
+                let changed = change.is_some();
                 self.changes.extend(change);
-                self.capture_insets(Some(store));
+                if let Ok(raw) = widgets::raw() {
+                    self.widgets.committed(&raw);
+                }
+                self.bars = Bars::current(store, self.islands_available);
                 self.applied_bars = self.bars;
                 self.touched = Touched::default();
+                self.applied = Some(Applied {
+                    lines,
+                    next_login,
+                    changed,
+                });
+                self.go(Step::Done);
+                if changed {
+                    Outcome::Changed
+                } else {
+                    Outcome::None
+                }
             }
-            Err(error) => self.error = Some(error),
+            Err(error) => {
+                self.error = Some(error);
+                Outcome::None
+            }
         }
-        Outcome::Changed
+    }
+
+    /// One short line per choice that Apply would change.
+    pub fn summary_lines(&self, config: &crate::config::Config) -> Vec<String> {
+        let mut lines = Vec::new();
+        if let Some(preset) = self.look.and_then(profiles::preset) {
+            lines.push(format!("Setup: {}", preset.profile.name));
+        }
+        if self.touched.any() {
+            lines.push(format!(
+                "Panel {} {}, {} dock",
+                self.bars.panel_shape.title().to_lowercase(),
+                if self.bars.islands { "islands" } else { "bar" },
+                self.bars.dock_shape.title().to_lowercase()
+            ));
+        }
+        let projected = self.widgets.config(config);
+        let names: Vec<&str> = Widget::ALL
+            .into_iter()
+            .filter(|widget| projected.widget_selected(*widget))
+            .map(|widget| widget.title())
+            .collect();
+        lines.push(if names.is_empty() {
+            "Widgets: none".into()
+        } else {
+            format!("Widgets: {}", names.join(", "))
+        });
+        if let Some(city) = &self.city {
+            lines.push(format!("Weather city: {}", city.name));
+        }
+        lines
     }
 
     /// Undoes the wizard's own changes, newest first, leaving anything else
@@ -1119,7 +1394,7 @@ impl Wizard {
         while let Some(change) = self.changes.last() {
             if let Err(error) = store.undo_change(change) {
                 self.error = Some(format!(
-                    "{error} Some of setup's changes stay; undo them from Setups or the Dock & panel page."
+                    "{error} Some of setup's changes stay; undo them from Setups or the Dock and panel page."
                 ));
                 break;
             }
@@ -1135,31 +1410,32 @@ impl Wizard {
     }
 }
 
-/// Plans `profile` for all its parts and applies it as one change; the
-/// change's ID, for Undo. `keep_colors` keeps a look's colors from being
-/// recomputed for the wallpaper it just set, as Setups does.
-fn apply(
+/// Plans `profile` for all its parts and applies it, with `widget`, as one
+/// change; the change's ID, for Undo. `keep_colors` keeps a look's colors from
+/// being recomputed for the wallpaper it just set, as Setups does.
+fn apply_with(
     store: &DesktopStore,
     profile: &Profile,
     keep_colors: bool,
-) -> Result<LatestChange, String> {
+    islands_choice: Option<bool>,
+    widget: crate::desktop::store::WidgetPatch,
+) -> Result<Option<LatestChange>, String> {
     use crate::desktop::panels::PanelKind;
     let installed = profiles::Installed::discover(store);
     let selected = profile.domains().into_iter().collect();
     let mut plan = profiles::plan(store, &installed, profile, &selected);
-    if !keep_colors {
-        for (kind, look) in [
-            (PanelKind::Panel, &profile.panel),
-            (PanelKind::Dock, &profile.dock),
-        ] {
-            if let Some(islands) = look.as_ref().and_then(|look| look.islands.as_ref()) {
-                plan.choose_islands(store, kind, islands.enabled)
-                    .map_err(|error| error.to_string())?;
-            }
-        }
+    if let Some(enabled) = islands_choice {
+        plan.choose_islands(store, PanelKind::Panel, enabled)
+            .map_err(|error| error.to_string())?;
     }
+    plan.add_widget_patch(widget)?;
     if !plan.can_apply() {
-        return Err(plan.blocking_reasons().join(" "));
+        let blocked = plan.blocking_reasons();
+        return if blocked.is_empty() {
+            Ok(None)
+        } else {
+            Err(blocked.join(" "))
+        };
     }
     if let Some(reason) = plan.recheck().into_iter().next() {
         return Err(reason);
@@ -1168,7 +1444,7 @@ fn apply(
     if keep_colors {
         let _ = crate::desktop::wallpaper::automatic::keep_manual_colors(store);
     }
-    Ok(latest)
+    Ok(Some(latest))
 }
 
 #[cfg(test)]
@@ -1230,6 +1506,105 @@ mod tests {
 #[cfg(test)]
 mod task2_tests {
     use super::*;
+
+    #[test]
+    fn ux_staged_islands_choice_is_independent_of_setup_colors() {
+        for keep_colors in [false, true] {
+            let f = crate::desktop::store::tests::Fixture::new(&format!(
+                "ux-staged-islands-{keep_colors}"
+            ));
+            crate::desktop::islands::fixture_installed(&f.0);
+            f.system("com.system76.CosmicPanel", "entries", "[\"Panel\"]");
+            f.system("com.system76.CosmicPanel.Panel", "anchor", "Top");
+            let path = f.0.join("config.json");
+            std::fs::write(&path, "{}").unwrap();
+            let store = f.store().with_app_config(path);
+            for enabled in [true, false] {
+                let mut bars = Bars::starter(enabled);
+                bars.islands = enabled;
+                let profile = bars
+                    .profile(
+                        Touched {
+                            islands: true,
+                            ..Default::default()
+                        },
+                        true,
+                        12,
+                    )
+                    .unwrap()
+                    .unwrap();
+                apply_with(
+                    &store,
+                    &profile,
+                    keep_colors,
+                    Some(enabled),
+                    Default::default(),
+                )
+                .unwrap();
+                let raw = store
+                    .read_user(&crate::desktop::islands::key(
+                        crate::desktop::panels::PanelKind::Panel,
+                    ))
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    raw.decode::<dock_islands_core::Settings>().unwrap().enabled,
+                    enabled
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ux_keep_current_bars_excludes_setup_bars_and_survives_resume() {
+        let f = crate::desktop::store::tests::Fixture::new("ux-staged-keep-bars");
+        let store = f.store();
+        let bars = Bars::starter(false);
+        let config = crate::config::Config::default();
+        let mut wizard = Wizard::new(false, bars, false);
+        wizard.look = Some("calm");
+        wizard.keep_bars = false;
+        assert!(
+            wizard
+                .composed(&store, &config)
+                .unwrap()
+                .unwrap()
+                .dock
+                .is_some()
+        );
+        wizard.handle(Message::KeepBars(true), Some(&store), &config);
+        let profile = wizard.composed(&store, &config).unwrap().unwrap();
+        assert!(profile.dock.is_none() && profile.panel.is_none());
+        assert_eq!(wizard.bars, bars);
+        wizard.save(&store).unwrap();
+        let resumed = Wizard::resume(&store, false, bars, false).unwrap();
+        assert!(resumed.keep_bars);
+        let profile = resumed.composed(&store, &config).unwrap().unwrap();
+        assert!(profile.dock.is_none() && profile.panel.is_none());
+    }
+
+    #[test]
+    fn ux_already_matching_setup_is_a_successful_noop() {
+        let f = crate::desktop::store::tests::Fixture::new("ux-staged-noop");
+        f.system("com.system76.CosmicPanel", "entries", "[\"Dock\"]");
+        f.system("com.system76.CosmicPanel.Dock", "anchor", "Bottom");
+        f.user("com.system76.CosmicPanel.Dock", "padding", "4");
+        let profile = profiles::import_local(
+            json!({
+                "format": "desktop-cards-profile", "version": profiles::VERSION,
+                "name": "Already here", "dock": {"padding": 4}
+            })
+            .to_string()
+            .as_bytes(),
+        )
+        .unwrap();
+        assert!(
+            apply_with(&f.store(), &profile, false, None, Default::default())
+                .unwrap()
+                .is_none()
+        );
+    }
+
     #[test]
     fn task2_explicit_wizard_islands_choice_is_saved_for_disabled_installation() {
         let f = crate::desktop::store::tests::Fixture::new("wizard-disabled-installation");
@@ -1250,7 +1625,7 @@ mod task2_tests {
             )
             .unwrap()
             .unwrap();
-        apply(&store, &profile, false).unwrap();
+        apply_with(&store, &profile, false, Some(true), Default::default()).unwrap();
         let raw = store
             .read_user(&crate::desktop::islands::key(
                 crate::desktop::panels::PanelKind::Panel,

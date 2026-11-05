@@ -92,7 +92,7 @@ fn fresh_user_setup_routes_to_weather_calendar_and_local_widgets() {
             &controls_theme(&app.config),
             &format!("new-user-home-{}", size.width),
         );
-        let canvas = native.bounds(app.settings_view(), "placement-canvas");
+        let canvas = native.bounds(app.settings_view(), "desktop-scene");
         assert!(canvas.y >= 0. && canvas.y + canvas.height <= size.height);
         click(&mut app, &mut native, "setup-open");
         assert!(!app.placement_active());
@@ -131,9 +131,7 @@ fn fresh_user_setup_routes_to_weather_calendar_and_local_widgets() {
             &controls_theme(&app.config),
             &format!("new-user-connect-{}", size.width),
         );
-        if app.scene_open() {
-            click(&mut app, &mut native, "scene-toggle");
-        }
+        // The preview is always shown; the connect button is reached by scrolling.
         click(&mut app, &mut native, "calendar-connect");
         assert!(app.calendar.busy && app.calendar.connecting);
         let _ = app.update(Message::Calendar(calendar::Message::Cancel));
@@ -225,8 +223,7 @@ fn connected_account_selector_and_errors_fit_and_reject_old_responses() {
             &controls_theme(&app.config),
             &format!("new-user-connected-{}", size.width),
         );
-        click(&mut app, &mut native, "scene-toggle");
-        assert!(!app.scene_open());
+        // The preview is always shown; account options are reached by scrolling.
         click(&mut app, &mut native, "calendar-account-options");
         click(&mut app, &mut native, "calendar-disconnect");
         assert!(app.calendar.confirm_disconnect);
@@ -275,12 +272,15 @@ fn polish050_saved_selection_and_optional_followups_survive_hiding_and_restart()
         "Finish must not erase selected missing-content tasks"
     );
     assert_eq!(app.setup_followups.pending(&app.config, false).len(), 3);
+    assert!(native.duplicate_ids(app.settings_view()).is_empty());
     native.capture(
         app.settings_view(),
         &controls_theme(&app.config),
         "polish050-widget-followups-820",
     );
-    click(&mut app, &mut native, "setup-task-dismiss-weather");
+    // Onboarded users no longer get a reminder card on the Widgets page, so
+    // the reminders are driven through the same messages its buttons sent.
+    let _ = app.update(Message::DismissSetupTask(wizard::follow_up::Task::Weather));
     assert!(
         !app.error,
         "Dismissal must save through the production dispatcher: {}",
@@ -325,7 +325,7 @@ fn polish050_saved_selection_and_optional_followups_survive_hiding_and_restart()
         app.setup_followups.pending(&app.config, false),
         vec![wizard::follow_up::Task::Projects]
     );
-    click(&mut app, &mut native, "setup-task-projects");
+    let _ = app.update(Message::Page(wizard::follow_up::Task::Projects.page()));
     assert_eq!(app.page, Page::Projects);
     assert!(
         native

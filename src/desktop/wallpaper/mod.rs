@@ -42,7 +42,7 @@ pub const MAX_OUTPUTS: usize = 16;
 
 /// The built-in wallpapers (file stem, title): the Halcyon scenes the
 /// starter looks use, then one per widget palette.
-pub const BUNDLED: [(&str, &str); 14] = [
+pub const BUNDLED: [(&str, &str); 17] = [
     ("halcyon-ridge", "Ridge"),
     ("halcyon-night", "Halcyon night"),
     ("halcyon-calm", "Calm"),
@@ -50,7 +50,10 @@ pub const BUNDLED: [(&str, &str); 14] = [
     ("halcyon-focus", "Focus"),
     ("halcyon-workbench", "Workbench"),
     ("halcyon-paper", "Paper"),
-    ("halcyon-rose", "Rosé"),
+    ("halcyon-rose", "Blush"),
+    ("halcyon-rain", "Rainy evening"),
+    ("halcyon-snow", "First snow"),
+    ("halcyon-fog", "Morning fog"),
     ("lavender", "Lavender"),
     ("amber", "Amber"),
     ("teal", "Teal"),
@@ -1518,6 +1521,14 @@ impl WallpaperDraft {
             base.insert(key, entry);
         }
         self.base = base;
+    }
+    /// Keeps every edit over the outside changes: the current values of
+    /// the conflicting keys become the baseline, so Apply writes the edits
+    /// over them and still refuses anything changed after this.
+    pub fn keep_edits(&mut self, snapshot: Snapshot) {
+        let keys = std::mem::take(&mut self.conflicts);
+        self.base.adopt(&snapshot, &keys);
+        self.refresh(snapshot);
     }
     /// Drops only the edits that read `keys` (or the current conflicts),
     /// adopts current values and keeps the other edits on their baselines.

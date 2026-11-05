@@ -174,30 +174,30 @@ impl Part {
     }
     pub fn title(self) -> &'static str {
         match self {
-            Self::Track => "Track & player",
+            Self::Track => "Song and player",
             Self::Artwork => "Artwork",
             Self::Progress => "Track progress",
             Self::Playback => "Playback controls",
-            Self::Timer => "Time & phase",
+            Self::Timer => "Time left",
             Self::TimerControls => "Timer controls",
             Self::SessionDots => "Sessions today",
-            Self::Cpu => "CPU",
+            Self::Cpu => "Processor",
             Self::Memory => "Memory",
             Self::Disk => "Disk",
             Self::Network => "Network",
-            Self::Gpu => "GPU",
-            Self::Uptime => "Uptime",
+            Self::Gpu => "Graphics",
+            Self::Uptime => "Time since start",
             Self::Face => "Clock face",
             Self::Agenda => "Agenda",
             Self::Date => "Date",
             Self::City => "City",
-            Self::Reading => "Temperature & icon",
+            Self::Reading => "Temperature",
             Self::Conditions => "Conditions",
             Self::Forecast => "Forecast",
             Self::Caption => "Caption",
             Self::Divider => "Divider",
             Self::Space => "Space",
-            Self::Settings => "Open settings",
+            Self::Settings => "Shortcut to settings",
         }
     }
 }

@@ -1,5 +1,32 @@
 # Design decisions
 
+## 2026-11-01 — one morphing activity surface
+
+The user rejected duplicated content between the bar label and expanded card.
+The current concept uses one visual title/icon/status that moves into the expanded
+layout. Remove the attached-card stem, repeated headers and permanent tabs; place
+other activities behind one switcher. Keep neighbors in place and retarget motion
+smoothly. Native applet/popup composition must prove this visual contract before
+implementation advances. This supersedes the attached-card mockup.
+
+## 2026-11-01 — Activity island belongs in the status bar
+
+The user rejected the floating desktop-card concept. FB31 now lives in the native
+status bar and expands from that anchor on hover or relevant activity. Keep the
+panel height fixed, controls stable and automatic reveals brief and non-focusing.
+[The revised design](ACTIVITY-ISLAND.md) supersedes widget-only placement and
+no-auto-expansion assumptions. Prove the native panel slot, popup and input behavior
+first; stock/Islands support is a capability question, not a demonstrated guarantee.
+
+## 2026-11-01 — accepted next-work scope
+
+The user accepted research ideas 1–4 and 6–7: Activity island, Wallpaper layer
+editor, Weather-connected scenes, Sun and Moon widget, Custom data tiles and
+Desktop companion. Idea 5, terminal/editor theme syncing, is excluded.
+[NEXT-WORK.md](NEXT-WORK.md) records the proposed implementation order and
+boundaries. These are planned tasks, with no release number assigned; each needs
+review and validation, including native visual review for visual changes.
+
 ## Settled direction
 
 | ID | Decision | Reason |

@@ -136,7 +136,7 @@ pub struct StyleSpec {
 const SOFT: StyleSpec = StyleSpec {
     id: "soft",
     title: "Soft",
-    description: "Rounded, tinted surfaces",
+    description: "Soft and rounded",
     accent: [157, 207, 190],
     light: false,
     surface: (0.305, 0.30, 0.034, (0., 0.)),
@@ -168,7 +168,7 @@ const SOFT: StyleSpec = StyleSpec {
 const OUTLINE: StyleSpec = StyleSpec {
     id: "outline",
     title: "Outline",
-    description: "Fine rules and monospace type",
+    description: "Thin lines, typewriter text",
     accent: [164, 193, 223],
     light: false,
     surface: (0.218, 0.16, 0.020, (0., 0.)),
@@ -200,7 +200,7 @@ const OUTLINE: StyleSpec = StyleSpec {
 const PAPER: StyleSpec = StyleSpec {
     id: "paper",
     title: "Paper",
-    description: "Warm paper and dark ink",
+    description: "Warm paper, dark ink",
     accent: [60, 112, 91],
     light: true,
     surface: (0.965, 0.05, 0.006, (0.002, 0.012)),
@@ -232,7 +232,7 @@ const PAPER: StyleSpec = StyleSpec {
 const BARE: StyleSpec = StyleSpec {
     id: "bare",
     title: "Bare",
-    description: "Open space and quiet dividers",
+    description: "Open and quiet",
     accent: [209, 199, 158],
     light: false,
     surface: (0.282, 0.22, 0.026, (0., 0.)),
@@ -263,8 +263,8 @@ const BARE: StyleSpec = StyleSpec {
 };
 const GLASS: StyleSpec = StyleSpec {
     id: "glass",
-    title: "Glass",
-    description: "See-through cards, bright edges, soft shadow",
+    title: "Frosted",
+    description: "See-through cards",
     accent: [184, 162, 237],
     light: false,
     surface: (0.30, 0.40, 0.05, (0., 0.)),
@@ -296,7 +296,7 @@ const GLASS: StyleSpec = StyleSpec {
 const FROSTED: StyleSpec = StyleSpec {
     id: "frosted",
     title: "Frosted glass",
-    description: "Soft tinted glass with readable surfaces",
+    description: "Tinted, easy to read",
     frosted: true,
     wallpaper: ([30, 40, 60], [150, 100, 140]),
     ..GLASS
@@ -304,7 +304,7 @@ const FROSTED: StyleSpec = StyleSpec {
 const MIDNIGHT: StyleSpec = StyleSpec {
     id: "midnight",
     title: "Midnight",
-    description: "True black for OLED, hairline type",
+    description: "True black, thin text",
     accent: [122, 162, 255],
     light: false,
     surface: (0.0, 0.0, 0.0, (0., 0.)),
@@ -337,7 +337,7 @@ const MIDNIGHT: StyleSpec = StyleSpec {
 const TERMINAL: StyleSpec = StyleSpec {
     id: "terminal",
     title: "Terminal",
-    description: "Square, monospace, phosphor ink",
+    description: "Old green screen",
     accent: [142, 240, 168],
     light: false,
     surface: (0.16, 0.25, 0.04, (0., 0.)),
@@ -369,7 +369,7 @@ const TERMINAL: StyleSpec = StyleSpec {
 const NEON: StyleSpec = StyleSpec {
     id: "neon",
     title: "Neon",
-    description: "Vivid edges that glow",
+    description: "Glowing edges",
     accent: [255, 79, 216],
     light: false,
     surface: (0.17, 0.5, 0.08, (0., 0.)),
@@ -401,7 +401,7 @@ const NEON: StyleSpec = StyleSpec {
 const EDITORIAL: StyleSpec = StyleSpec {
     id: "editorial",
     title: "Editorial",
-    description: "Light, sharp, magazine serif",
+    description: "Magazine serif",
     accent: [192, 57, 43],
     light: true,
     surface: (0.99, 0.02, 0.004, (0., 0.)),
@@ -433,7 +433,7 @@ const EDITORIAL: StyleSpec = StyleSpec {
 const RETRO: StyleSpec = StyleSpec {
     id: "retro",
     title: "Retro",
-    description: "Bold outlines and a hard shadow",
+    description: "Bold outlines",
     accent: [217, 98, 43],
     light: true,
     surface: (0.965, 0.25, 0.03, (0.004, 0.02)),
@@ -465,7 +465,7 @@ const RETRO: StyleSpec = StyleSpec {
 const PASTEL: StyleSpec = StyleSpec {
     id: "pastel",
     title: "Pastel",
-    description: "Light, round and friendly",
+    description: "Round and friendly",
     accent: [185, 174, 240],
     light: true,
     surface: (0.975, 0.35, 0.03, (0., 0.)),
@@ -497,7 +497,7 @@ const PASTEL: StyleSpec = StyleSpec {
 const BAUHAUS: StyleSpec = StyleSpec {
     id: "bauhaus",
     title: "Bauhaus",
-    description: "Geometric type, primary blocks",
+    description: "Shapes and primary colors",
     accent: [209, 59, 43],
     light: true,
     surface: (0.985, 0.0, 0.0, (0., 0.)),

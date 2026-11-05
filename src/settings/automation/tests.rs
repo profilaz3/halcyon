@@ -36,8 +36,10 @@ fn opening_reads_only_and_offers_every_profile_and_display() {
             "Studio",
             "Tidal",
             "Paper",
-            "Moss",
             "Carbon",
+            "Rainy evening",
+            "First snow",
+            "Morning fog",
             "Clean desktop",
             "Tidal · Day",
             "Tidal · Evening",
@@ -451,6 +453,9 @@ fn adaptive_cycle_requires_city_and_adds_once_without_touching_desktop_or_existi
     let (fixture, mut editor) = editor("adaptive-cycle");
     editor.update(Message::AdaptiveRoutine(Look::Tidal, Source::Manual), true);
     assert!(!fixture.0.join("state/automation.json").exists());
+    assert!(
+        matches!(editor.notice, Some(Notice::Error(ref message)) if message == "Choose where you are first.")
+    );
     editor.update(
         Message::ManualCity(crate::config::Location {
             name: "Zagreb".into(),
@@ -487,9 +492,35 @@ fn adaptive_cycle_requires_city_and_adds_once_without_touching_desktop_or_existi
             }
         ));
     }
+    // Choosing the same look again keeps the same three rules (only their
+    // start time is refreshed).
+    let shape = |settings: &Automation| -> Vec<(String, ProfileRef, String, Trigger, bool)> {
+        settings
+            .rules
+            .iter()
+            .map(|r| (r.id.clone(), r.profile.clone(), r.name.clone(), r.when.clone(), r.enabled))
+            .collect()
+    };
     editor.update(Message::AdaptiveRoutine(Look::Tidal, Source::Manual), true);
+    assert_eq!(shape(&saved(&fixture)), shape(&added));
+    // Another look takes over the same three daily slots in one change.
     editor.update(Message::AdaptiveRoutine(Look::Moss, Source::Manual), true);
-    assert_eq!(saved(&fixture), added);
+    let moss = saved(&fixture);
+    assert_eq!(moss.rules.len(), 4);
+    assert_eq!(moss.rules[0], before.rules[0]);
+    assert_eq!(moss.paused, before.paused);
+    for (rule, old) in moss.rules[1..].iter().zip(&added.rules[1..]) {
+        assert_eq!(rule.id, old.id);
+        assert_eq!(rule.when, old.when);
+        assert!(matches!(&rule.profile, ProfileRef::Preset(id) if id.starts_with("adaptive-moss-")));
+    }
+    // Turning the cycle off keeps every other rule.
+    editor.update(Message::AdaptiveOff, true);
+    let off = saved(&fixture);
+    assert_eq!(off.rules, before.rules);
+    // Turning day and night styles off removes only moment rules.
+    editor.update(Message::MomentsOff, true);
+    assert!(saved(&fixture).rules.is_empty());
     assert_eq!(
         fixture.store().app_config().map(|p| std::fs::read(p).ok()),
         config

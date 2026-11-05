@@ -64,8 +64,8 @@ def unit(prefix):
     return template.replace('/usr/bin/halcyon', str(prefix / 'bin/halcyon'))
 
 
-def launcher(prefix):
-    text = (SOURCE / 'packaging' / f'{APP_ID}.desktop').read_text()
+def launcher(prefix, suffix=""):
+    text = (SOURCE / 'packaging' / f'{APP_ID}{suffix}.desktop').read_text()
     lines = []
     for line in text.splitlines():
         if line.startswith('Exec=halcyon'):
@@ -83,6 +83,7 @@ def files(binary, prefix, google_client):
         (share / PACKAGE / 'google-calendar-setup.html',
          (SOURCE / 'docs/google-calendar-setup.html').read_bytes(), 0o644),
         (share / 'applications' / f'{APP_ID}.desktop', launcher(prefix).encode(), 0o644),
+        (share / 'applications' / f'{APP_ID}.Activity.desktop', launcher(prefix, '.Activity').encode(), 0o644),
         (share / 'metainfo' / f'{APP_ID}.metainfo.xml',
          (SOURCE / 'packaging' / f'{APP_ID}.metainfo.xml').read_bytes(), 0o644),
     ]

@@ -84,9 +84,11 @@ impl Summary {
                 UpdateChannel::Source => {
                     result("Local development build", identity.reason.into(), false)
                 }
-                UpdateChannel::Unknown => {
-                    result("Installation needs checking", identity.reason.into(), false)
-                }
+                UpdateChannel::Unknown => result(
+                    "Updates come from your system",
+                    "Your system's software updater keeps Halcyon up to date.".into(),
+                    false,
+                ),
             },
         }
     }
