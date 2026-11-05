@@ -33,6 +33,17 @@ jobs:
         with:
           toolchain: '1.93.0'
       - uses: Swatinem/rust-cache@v2
+      - name: Install the COSMIC icon theme for rendering tests
+        # Activity island tests check rendered COSMIC symbolic icons. Ubuntu
+        # does not package the theme, so install the reviewed upstream commit
+        # that Pop!_OS 24.04 ships (cosmic-icons 0.1.0 f1a282a).
+        run: |
+          git init -q /tmp/cosmic-icons
+          git -C /tmp/cosmic-icons fetch -q --depth 1 https://github.com/pop-os/cosmic-icons.git f1a282a0822aed1f0083dd2ab2e6c65bd5b401eb
+          git -C /tmp/cosmic-icons checkout -q FETCH_HEAD
+          test "$(git -C /tmp/cosmic-icons rev-parse HEAD)" = f1a282a0822aed1f0083dd2ab2e6c65bd5b401eb
+          (cd /tmp/cosmic-icons && sudo just install)
+          test -f /usr/share/icons/Cosmic/index.theme
       - name: Validate desktop metadata
         run: |
           appstreamcli validate --no-net packaging/io.github.profilaz3.Halcyon.metainfo.xml
