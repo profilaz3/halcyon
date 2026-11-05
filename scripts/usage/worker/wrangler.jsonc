@@ -1,0 +1,28 @@
+// Halcyon reports: activity collector + public dashboard.
+// Deploy: npx wrangler@4.158.0 d1 migrations apply halcyon-reports --remote && npx wrangler@4.158.0 deploy
+{
+  "$schema": "https://unpkg.com/wrangler@4.158.0/config-schema.json",
+  "name": "halcyon-reports",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./public"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "halcyon-reports",
+      "database_id": "787e4d20-9ebb-44e1-a7ea-46d23ef41e10",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "triggers": {
+    "crons": ["17 * * * *"]
+  },
+  // Reports must never be logged; keep Workers Logs and traces off.
+  "observability": {
+    "enabled": false
+  }
+}

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Halcyon in numbers</title>
+<meta name="description" content="Public usage statistics for Halcyon, a desktop for COSMIC. Aggregates only, from installations that share usage data.">
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='2' y='8' width='3' height='6' rx='1' fill='%232a78d6'/%3E%3Crect x='6.5' y='5' width='3' height='9' rx='1' fill='%232a78d6'/%3E%3Crect x='11' y='2' width='3' height='12' rx='1' fill='%232a78d6'/%3E%3C/svg%3E">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Halcyon in numbers</h1>
+      <div class="sub" id="sub">Installations that share usage data</div>
+    </div>
+    <button class="ghost" id="theme" type="button">Dark mode</button>
+  </header>
+  <div class="filters" role="group" aria-label="Filters">
+    <div class="seg" id="range" role="group" aria-label="Date range">
+      <button type="button" data-v="7">7 days</button>
+      <button type="button" data-v="30" aria-pressed="true">30 days</button>
+      <button type="button" data-v="90">90 days</button>
+    </div>
+    <select id="segment" aria-label="Install method"></select>
+    <span class="hint" id="history"></span>
+  </div>
+  <p class="status" id="status">Loading…</p>
+  <div id="content" hidden>
+  <section class="kpis" id="kpis" aria-label="Headline numbers"></section>
+  <div class="grid main">
+    <article class="card span-12" id="c-active">
+      <div class="card-head"><div><h2>Daily active installations</h2><div class="note">Installations that reported each day (UTC). Lines mark releases.</div></div><button class="tbl-toggle" type="button">Table</button></div>
+      <div class="body"></div>
+    </article>
+    <article class="card span-7" id="c-versions">
+      <div class="card-head"><div><h2>Which version people run</h2><div class="note">Share of each day's active installations.</div></div><button class="tbl-toggle" type="button">Table</button></div>
+      <div class="body"></div>
+    </article>
+    <article class="card span-5" id="c-speed">
+      <div class="card-head"><div><h2>Updates</h2><div class="note">Days until half of active installations ran each release or newer.</div></div><button class="tbl-toggle" type="button">Table</button></div>
+      <div class="body"></div>
+    </article>
+    <div class="span-6 stack">
+      <article class="card" id="c-platforms">
+        <div class="card-head"><div><h2>How it's installed</h2><div class="note">Active installations, last 28 days.</div></div><button class="tbl-toggle" type="button">Table</button></div>
+        <div class="body"></div>
+      </article>
+      <article class="card" id="c-usage">
+        <div class="card-head"><div><h2>How often it's used</h2><div class="note">Days each installation was active in the last 28 days.</div></div><button class="tbl-toggle" type="button">Table</button></div>
+        <div class="body"></div>
+      </article>
+    </div>
+    <article class="card span-6" id="c-countries">
+      <div class="card-head"><div><h2>Countries</h2><div class="note">First reported country, last 28 days. Countries with fewer than 5 installations are counted in Other.</div></div><button class="tbl-toggle" type="button">Table</button></div>
+      <div class="body"></div>
+    </article>
+    <article class="card span-6" id="c-features">
+      <div class="card-head"><div><h2>What people turn on</h2><div class="note">Share of installations with each feature on, from their latest settings in the last 28 days. Versions 0.6.1 and newer, all install methods.</div></div><button class="tbl-toggle" type="button">Table</button></div>
+      <div class="body"></div>
+    </article>
+    <article class="card span-6" id="c-widgets">
+      <div class="card-head"><div><h2>Widgets on the desktop</h2><div class="note">Share of installations showing each widget, same period.</div></div><button class="tbl-toggle" type="button">Table</button></div>
+      <div class="body"></div>
+    </article>
+    <article class="card span-12" id="c-looks">
+      <div class="card-head"><div><h2>Looks</h2><div class="note">Theme style and wallpaper effect in use, same period. Choices with fewer than 5 installations are counted in Other.</div></div><button class="tbl-toggle" type="button">Table</button></div>
+      <div class="body"></div>
+    </article>
+    <article class="card span-12" id="c-retention">
+      <div class="card-head"><div><h2>Do people keep using it?</h2><div class="note">Share of each week's new installations still reporting in later weeks. All install methods.</div></div><button class="tbl-toggle" type="button">Table</button></div>
+      <div class="body"></div>
+    </article>
+  </div>
+  </div>
+  <footer>
+    <p>Counts include only installations with <b>Share usage data</b> on. No installation is shown on its own: groups smaller than 5 are folded into Other or hidden. <span id="optout"></span></p>
+    <p>An installation is one copy of Halcyon on one computer, not a person or a download. <a href="https://github.com/profilaz3/halcyon/blob/main/docs/PRIVACY.md">What is collected</a> · <a href="/api/summary.json">Data as JSON</a> · <a href="https://github.com/profilaz3/halcyon/tree/main/scripts/usage/worker">Source</a></p>
+  </footer>
+</div>
+<div class="tip" id="tip" role="status" aria-live="polite"></div>
+</body>
+</html>

@@ -1,6 +1,13 @@
 # Activity and reporting-choice collector
 
-The live private collector accepts schema 1–4. Local verification needs no live
+> **Moved to Cloudflare (November 2026).** The live collector and the public
+> statistics page are now the Worker in [`worker/`](worker/README.md). The Apps
+> Script deployment runs [`relay/Code.gs`](relay/Code.gs), which forwards reports
+> from Halcyon 0.2.0 to 0.6.0 and stores nothing. `collector.gs` and the notes
+> below describe the former Google Sheet collector and are kept for reference;
+> its protocol rules are unchanged in the Worker.
+
+The former private collector accepted schema 1–5. Local verification needs no live
 endpoint or connected Google service. Reporting views are described below.
 
 ## Wire protocol and compatibility

@@ -70,18 +70,24 @@ fn late_response_cannot_replace_a_new_identity() {
     assert!(state.last_success.is_none());
 }
 #[test]
-fn endpoint_is_limited_to_a_production_google_deployment() {
-    assert!(endpoint("https://script.google.com/macros/s/ABC_123/exec").is_some());
+fn endpoint_is_limited_to_the_cloudflare_collector() {
+    assert!(endpoint("https://halcyon-reports.profilaz3.workers.dev/v1/report").is_some());
+    assert!(
+        endpoint(ENDPOINT).is_some(),
+        "shipped endpoint must validate"
+    );
     for value in [
         "",
-        "https://script.google.com/macros/s//exec",
-        "https://script.google.com/macros/s/%20/exec",
-        "http://script.google.com/macros/s/ABC/exec",
-        "https://evil.test/macros/s/ABC/exec",
-        "https://user:secret@script.google.com/macros/s/ABC/exec",
-        "https://script.google.com/macros/s/ABC/dev",
-        "https://script.google.com/macros/s/ABC/exec?account=private",
-        "https://script.google.com:123/macros/s/ABC/exec",
+        "http://halcyon-reports.profilaz3.workers.dev/v1/report",
+        "https://halcyon-reports.profilaz3.workers.dev/v1/report/",
+        "https://halcyon-reports.profilaz3.workers.dev/api/summary.json",
+        "https://evil.test/v1/report",
+        "https://halcyon-reports.profilaz3.workers.dev.evil.test/v1/report",
+        "https://user:secret@halcyon-reports.profilaz3.workers.dev/v1/report",
+        "https://halcyon-reports.profilaz3.workers.dev/v1/report?account=private",
+        "https://halcyon-reports.profilaz3.workers.dev/v1/report#x",
+        "https://halcyon-reports.profilaz3.workers.dev:8443/v1/report",
+        "https://script.google.com/macros/s/ABC_123/exec",
     ] {
         assert!(endpoint(value).is_none(), "{value}");
     }
@@ -89,7 +95,7 @@ fn endpoint_is_limited_to_a_production_google_deployment() {
 #[test]
 fn report_contains_only_the_documented_fields() {
     let report = serde_json::to_value(Report {
-        schema: 5,
+        schema: 6,
         kind: "activity",
         revision: 0,
         installation: &"a".repeat(64),
@@ -97,10 +103,11 @@ fn report_contains_only_the_documented_fields() {
         country: Some("HR"),
         first_started_at: Some(1000),
         installation_info: crate::installation::Observation::default(),
+        features: features::Features::default(),
     })
     .unwrap();
-    assert_eq!(report.as_object().unwrap().len(), 10);
-    assert_eq!(report["schema"], 5);
+    assert_eq!(report.as_object().unwrap().len(), 11);
+    assert_eq!(report["schema"], 6);
     assert_eq!(report["version"], "0.2.0");
     assert_eq!(report["country"], "HR");
     assert!(report.get("installation").is_some());
@@ -292,8 +299,8 @@ async fn failed_country_lookup_still_sends_activity_with_unknown_country() {
     let request = report_request.join().unwrap();
     let report: serde_json::Value =
         serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
-    assert_eq!(report.as_object().unwrap().len(), 10);
-    assert_eq!(report["schema"], 5);
+    assert_eq!(report.as_object().unwrap().len(), 11);
+    assert_eq!(report["schema"], 6);
     assert_eq!(report["installation"], id);
     assert_eq!(report["first_started_at"], 900);
     assert!(report["country"].is_null());
@@ -367,6 +374,7 @@ fn choice_is_durable_minimal_and_latest_only_with_monotonic_revision() {
         "package_format",
         "update_channel",
         "installed_app_version",
+        "features",
     ] {
         assert!(body.get(forbidden).is_none());
     }

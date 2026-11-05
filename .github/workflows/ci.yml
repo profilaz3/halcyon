@@ -50,9 +50,16 @@ jobs:
           desktop-file-validate packaging/io.github.profilaz3.Halcyon.desktop
       - name: Build release binary
         run: cargo build --release --locked
+      - name: Install Node.js for collector tests
+        # The Worker tests use the built-in node:sqlite module (Node 22.13+).
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - name: Test activity collector
         run: |
           node --test scripts/usage/collector*.test.cjs
+          node --test scripts/usage/relay/relay.test.cjs
+          node --test scripts/usage/worker/test/*.test.js
           python3 -m unittest discover -s scripts/usage -p 'test_*.py'
       - name: Test Python helpers and packaging
         run: |

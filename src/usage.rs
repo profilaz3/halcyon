@@ -7,6 +7,7 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+mod features;
 mod scheduling;
 
 const RETRY_SECONDS: i64 = 6 * 60 * 60;
@@ -84,6 +85,7 @@ struct Report<'a> {
     first_started_at: Option<i64>,
     #[serde(flatten)]
     installation_info: crate::installation::Observation,
+    features: features::Features,
 }
 #[derive(Serialize)]
 struct StatusReport<'a> {
@@ -451,43 +453,25 @@ async fn report_once(
     )
     .await
 }
+// Reports go only to the published Cloudflare collector, never elsewhere.
+const COLLECTOR_HOST: &str = "halcyon-reports.profilaz3.workers.dev";
 fn endpoint(value: &str) -> Option<reqwest::Url> {
     let url = reqwest::Url::parse(value.trim()).ok()?;
     (url.scheme() == "https"
-        && url.host_str() == Some("script.google.com")
+        && url.host_str() == Some(COLLECTOR_HOST)
         && url.port_or_known_default() == Some(443)
         && url.username().is_empty()
         && url.password().is_none()
         && url.query().is_none()
         && url.fragment().is_none()
-        && url.path().starts_with("/macros/s/")
-        && url.path().ends_with("/exec")
-        && url.path().split('/').count() == 5
-        && url.path().split('/').nth(3).is_some_and(|id| {
-            !id.is_empty()
-                && id
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
-        }))
+        && url.path() == "/v1/report")
     .then_some(url)
 }
 fn client() -> Result<reqwest::Client, reqwest::Error> {
+    // The collector answers directly; a redirect is never followed.
     reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            // Apps Script serves the response from a temporary Google URL.
-            if attempt.previous().len() < 4
-                && attempt.url().scheme() == "https"
-                && matches!(
-                    attempt.url().host_str(),
-                    Some("script.google.com" | "script.googleusercontent.com")
-                )
-            {
-                attempt.follow()
-            } else {
-                attempt.stop()
-            }
-        }))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
 }
 async fn post(
@@ -534,7 +518,7 @@ async fn send(
         client,
         url,
         &Report {
-            schema: 5,
+            schema: 6,
             kind: "activity",
             installation,
             revision,
@@ -542,6 +526,7 @@ async fn send(
             country,
             first_started_at,
             installation_info: crate::installation::reporting_observation().await,
+            features: features::observe().await,
         },
     )
     .await?;
