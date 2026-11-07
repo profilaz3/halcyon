@@ -331,6 +331,7 @@ pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/meeting_notice_minutes", "Meeting notice", Style, |v| int_in(v,1,60);
     "/sidebar_slide", "Sidebar animation", Style, boolean;
     "/settings_animations", "Settings animation", Style, boolean;
+    "/show_explanations", "Show explanations", Style, boolean;
     "/setup_dismissed", "Setup guide", Style, boolean;
     "/setup_followup_weather_dismissed", "Weather setup reminder", Style, boolean;
     "/setup_followup_calendar_dismissed", "Calendar setup reminder", Style, boolean;

@@ -273,7 +273,7 @@ impl Settings {
                 button::custom(split(
                     row::with_children(vec![
                         dot(area_tint(hit.page.area(), self.settings_accent()), 8.),
-                        detail(
+                        detail_state(
                             hit.label,
                             format!(
                                 "{} › {}{}",
@@ -313,7 +313,7 @@ impl Settings {
         )];
         for (index, proposal) in self.recovery_sheet.rows.iter().enumerate() {
             let mut parts = vec![split(
-                detail(proposal.kind.title(), &proposal.summary),
+                detail_state(proposal.kind.title(), &proposal.summary),
                 toggler(proposal.selected)
                     .on_toggle(move |on| Message::RecoverySelect(index, on))
                     .into(),
@@ -358,7 +358,7 @@ impl Settings {
         if self.recovery_sheet.rows.is_empty() {
             rows.push(group(
                 None,
-                vec![detail(
+                vec![detail_state(
                     "Nothing to recover",
                     "Nothing was left half-done when Halcyon updated.",
                 )],

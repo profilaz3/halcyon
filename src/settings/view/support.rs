@@ -59,7 +59,7 @@ impl Settings {
                 Health::Attention => super::desktop::WARN,
                 _ => MUTED,
             };
-            let mut parts = vec![dot(color, 8.), detail(c.name, c.state)];
+            let mut parts = vec![dot(color, 8.), detail_state(c.name, c.state)];
             if c.health == Health::Healthy {
                 rows.push(
                     container(
@@ -119,7 +119,7 @@ impl Settings {
         if self.support.local.paused || self.support.local.skipping {
             items.push(group(
                 None,
-                vec![group_row(
+                vec![group_row_state(
                     if self.support.local.paused {
                         "Automatic switching is paused"
                     } else {
@@ -204,7 +204,7 @@ impl Settings {
                     let time = date
                         .map(|d| d.format("%H:%M").to_string())
                         .unwrap_or_default();
-                    let mut rows = vec![group_row(
+                    let mut rows = vec![group_row_state(
                         line.what,
                         format!("{time} · {}", line.cause),
                         action("Review rules", Edit::Open(Destination::Automation)),
@@ -249,7 +249,7 @@ impl Settings {
                         .into(),
                 );
             }
-            let mut rows = vec![group_row(
+            let mut rows = vec![group_row_state(
                 entry.title(),
                 meta,
                 row::with_children(actions).spacing(8).wrap().into(),

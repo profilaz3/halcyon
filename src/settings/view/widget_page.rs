@@ -40,9 +40,29 @@ impl Settings {
         message: Message,
         id: String,
     ) -> Element<'a, Message> {
+        self.link(detail(title, description), message, id)
+    }
+
+    /// A [`link_row`](Self::link_row) whose line is live state, always shown.
+    pub(super) fn link_row_state<'a>(
+        &self,
+        title: impl Into<String>,
+        state: impl Into<String>,
+        message: Message,
+        id: String,
+    ) -> Element<'a, Message> {
+        self.link(detail_state(title, state), message, id)
+    }
+
+    fn link<'a>(
+        &self,
+        text: Element<'a, Message>,
+        message: Message,
+        id: String,
+    ) -> Element<'a, Message> {
         button::custom(
             row::with_children(vec![
-                detail(title, description),
+                text,
                 icon::from_name("go-next-symbolic").size(16).icon().into(),
             ])
             .spacing(12)
@@ -80,7 +100,7 @@ impl Settings {
             && matches!(widget, Widget::Clock | Widget::Weather | Widget::Calendar);
         let mut rows = Vec::new();
         if combined {
-            rows.push(self.link_row(
+            rows.push(self.link_row_state(
                 "Daily overview",
                 "This widget is shown inside it, with clock, weather and calendar",
                 Message::Page(Page::Glance),
@@ -102,7 +122,7 @@ impl Settings {
                 rows.push(
                     // Offer the one step that makes it possible.
                     split(
-                        detail("Move or resize", "It needs to be on the desktop first"),
+                        detail_state("Move or resize", "It needs to be on the desktop first"),
                         button::standard("Show on desktop")
                             .id(cosmic::widget::Id::new(format!("{key}-show")))
                             .on_press(Message::Widget(widget, true))
@@ -120,19 +140,21 @@ impl Settings {
             .into_iter()
             .find(|kind| kind.widget() == widget)
         {
-            let existing = self.config.recipes.get(kind);
-            rows.push(self.link_row(
-                if existing.is_some() {
-                    "Your own design"
-                } else {
-                    "Make your own design"
-                },
-                existing.map_or("Build this widget from parts".to_string(), |recipe| {
-                    recipe.name.clone()
-                }),
-                Message::OpenRecipe(kind),
-                format!("{key}-own-design"),
-            ));
+            let id = format!("{key}-own-design");
+            rows.push(match self.config.recipes.get(kind) {
+                Some(recipe) => self.link_row_state(
+                    "Your own design",
+                    recipe.name.clone(),
+                    Message::OpenRecipe(kind),
+                    id,
+                ),
+                None => self.link_row(
+                    "Make your own design",
+                    "Build this widget from parts",
+                    Message::OpenRecipe(kind),
+                    id,
+                ),
+            });
         }
         if rows.is_empty() {
             return column::with_children(Vec::new()).into();

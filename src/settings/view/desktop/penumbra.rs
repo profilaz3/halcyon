@@ -79,7 +79,7 @@ impl Settings {
         const ABOUT: &str = "The background fades into the picture behind it";
         let note = |text: &'static str| -> Element<'_, Message> {
             if titled {
-                detail(TITLE, text)
+                detail_state(TITLE, text)
             } else {
                 label(text, 12., MUTED)
             }
@@ -93,7 +93,11 @@ impl Settings {
             return note("Comes with Halcyon’s panel. See Shape above.");
         }
         let Some(step) = self.host_step("This uses") else {
-            return note(ABOUT);
+            return if titled {
+                detail(TITLE, ABOUT)
+            } else {
+                label(ABOUT, 12., MUTED)
+            };
         };
         if titled {
             column::with_children(vec![detail(TITLE, ABOUT), step])

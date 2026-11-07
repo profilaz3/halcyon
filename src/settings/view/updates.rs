@@ -3,7 +3,7 @@ use crate::settings::updates::{Check, Message as Update, UpdateChannel};
 
 impl Settings {
     /// One line for the Settings landing; never claims more than a check found.
-    pub(super) fn updates_summary_line(&self) -> String {
+    pub(in crate::settings) fn updates_summary_line(&self) -> String {
         self.updates.summary_line()
     }
     pub(in crate::settings) fn updates_section(&self) -> Element<'_, Message> {
@@ -30,7 +30,7 @@ impl Settings {
                     .as_deref()
                     .unwrap_or(&identity.running_version);
                 content.push(group_row("Version", "", label(main, 14., MUTED)));
-                content.push(detail(summary.title.clone(), summary.detail.clone()));
+                content.push(detail_state(summary.title.clone(), summary.detail.clone()));
                 // Islands and Blend turn on in Dock and panel. This is where
                 // to look when Halcyon's panel won't start.
                 addons.extend(self.panel_troubleshooting());
@@ -142,7 +142,7 @@ impl Settings {
             ));
         }
         if let Some(release) = crate::settings::release_notes::current() {
-            content.push(self.link_row(
+            content.push(self.link_row_state(
                 "What’s new",
                 format!("New in {}", release.version),
                 Message::AppSettingsPage(AppSettingsPage::WhatsNew),
@@ -223,7 +223,7 @@ impl Settings {
             Host::SignIn => "Starts the next time you sign in.",
             Host::Failed(reason) | Host::Unavailable(reason) => reason,
         };
-        let mut rows = vec![self.link_row(
+        let mut rows = vec![self.link_row_state(
             "Status",
             status,
             Message::OpenBar(crate::desktop::panels::PanelKind::Panel),

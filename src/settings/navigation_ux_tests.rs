@@ -369,3 +369,92 @@ fn preview_conflict_choices_render_and_resolve_at_compact_size() {
     let _ = native.render(app.settings_view(), &cosmic::Theme::dark());
     assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
 }
+
+/// Explanations sit behind a "?": hover shows a tooltip, a click shows the
+/// line under the title and a second click hides it. "Show explanations"
+/// brings every line back and is saved.
+#[test]
+fn explanations_open_from_question_mark_and_can_always_show() {
+    if isolated(
+        "settings::navigation::ux_regressions::explanations_open_from_question_mark_and_can_always_show",
+    ) {
+        return;
+    }
+    use crate::settings::view::explain;
+    let mut app = app(Page::General);
+    send_settings(
+        &mut app,
+        Message::AppSettingsPage(crate::settings::view::AppSettingsPage::Interface),
+    );
+    let (title, line) = ("Animate settings", "Sections slide open when you expand them");
+    let key = explain::key(title);
+    let id = format!("explain-{key:016x}");
+    for width in [820., 1280.] {
+        let size = Size::new(width, 900.);
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = Native::new(size);
+        assert!(native.duplicate_ids(app.settings_view()).is_empty());
+        assert!(native.text_all(app.settings_view(), line).is_empty(), "hidden at first");
+        assert_eq!(native.text_all(app.settings_view(), title).len(), 1);
+        for (theme, name) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
+            native.capture(app.settings_view(), &theme, &format!("explain-closed-{width}-{name}"));
+            let mark = native.bounds(app.settings_view(), &id);
+            native.capture_hover(
+                app.settings_view(),
+                &theme,
+                mark.center(),
+                &format!("explain-hover-{width}-{name}"),
+            );
+        }
+        click(&mut app, &mut native, &id);
+        assert_eq!(app.explained, Some((Page::General, key)));
+        assert_eq!(native.text_all(app.settings_view(), line).len(), 1, "shown after a click");
+        for (theme, name) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
+            native.capture(app.settings_view(), &theme, &format!("explain-open-{width}-{name}"));
+        }
+        click(&mut app, &mut native, &id);
+        assert_eq!(app.explained, None);
+        assert!(native.text_all(app.settings_view(), line).is_empty(), "hidden again");
+    }
+
+    // Opening another section closes the open explanation.
+    let mut native = Native::new(Size::new(1280., 900.));
+    click(&mut app, &mut native, &id);
+    assert!(app.explained.is_some());
+    send_settings(
+        &mut app,
+        Message::AppSettingsPage(crate::settings::view::AppSettingsPage::Help),
+    );
+    assert_eq!(app.explained, None);
+    send_settings(
+        &mut app,
+        Message::AppSettingsPage(crate::settings::view::AppSettingsPage::Interface),
+    );
+
+    click(&mut app, &mut native, "settings-explanations-toggle");
+    assert!(app.config.show_explanations);
+    assert_eq!(Config::load().show_explanations, true);
+    assert_eq!(native.text_all(app.settings_view(), line).len(), 1);
+    assert!(native.try_bounds(app.settings_view(), &id).is_none(), "no ? when shown");
+    assert!(native.duplicate_ids(app.settings_view()).is_empty());
+    native.capture(app.settings_view(), &cosmic::Theme::dark(), "explain-always-1280-dark");
+    send_settings(&mut app, Message::UndoPreferences);
+    assert!(!Config::load().show_explanations);
+}
+
+/// Live state stays on screen: the Updates row on the Halcyon page says
+/// what is happening without any click.
+#[test]
+fn live_state_lines_stay_visible_without_explanations() {
+    if isolated(
+        "settings::navigation::ux_regressions::live_state_lines_stay_visible_without_explanations",
+    ) {
+        return;
+    }
+    let mut app = app(Page::General);
+    assert!(!app.config.show_explanations);
+    let mut native = Native::new(Size::new(1280., 900.));
+    let line = app.updates_summary_line();
+    assert!(!line.is_empty());
+    assert_eq!(native.text_all(app.settings_view(), &line).len(), 1);
+}

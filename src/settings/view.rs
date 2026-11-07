@@ -9,6 +9,7 @@ mod design;
 mod desktop;
 pub(super) use desktop::host::Host;
 mod desktop_icons;
+pub(super) mod explain;
 pub(super) mod home;
 mod layered;
 mod materials;
@@ -147,11 +148,23 @@ fn frame<'a>(
         }))
         .into()
 }
+/// A setting's title with its explanation behind a "?" (see [`explain`]).
+/// Only for text that explains; live state goes through [`detail_state`].
 fn detail<'a>(title: impl Into<String>, description: impl Into<String>) -> Element<'a, Message> {
-    let description = description.into();
+    let title = title.into();
+    let heading = label(title.clone(), 14., FG);
+    explain::titled(heading, &title, description.into(), 12., 3)
+}
+/// A title with a line under it that is always shown: current state,
+/// values, warnings and the next step.
+fn detail_state<'a>(
+    title: impl Into<String>,
+    state: impl Into<String>,
+) -> Element<'a, Message> {
+    let state = state.into();
     let mut lines = vec![label(title, 14., FG)];
-    if !description.is_empty() {
-        lines.push(label(description, 12., MUTED));
+    if !state.is_empty() {
+        lines.push(label(state, 12., MUTED));
     }
     column::with_children(lines)
         .spacing(3)
@@ -173,15 +186,8 @@ fn switch<'a>(
     )
 }
 fn heading<'a>(title: &'static str, description: &'static str) -> Element<'a, Message> {
-    let mut lines: Vec<Element<'a, Message>> =
-        vec![text::title3(title).size(28).width(Length::Fill).into()];
-    if !description.is_empty() {
-        lines.push(label(description, 13., MUTED));
-    }
-    column::with_children(lines)
-        .spacing(4)
-        .width(Length::Fill)
-        .into()
+    let big = text::title3(title).size(28).into();
+    explain::titled(big, title, description.to_owned(), 13., 4)
 }
 fn separator() -> Element<'static, Message> {
     container(text::body(""))
@@ -217,6 +223,20 @@ pub(super) fn group_row<'a>(
     // A wrapping row keeps segmented controls sized to their labels.
     split(
         detail(title, description),
+        row::with_children(vec![control])
+            .align_y(Alignment::Center)
+            .wrap()
+            .into(),
+    )
+}
+/// A [`group_row`] whose line under the title is live state, always shown.
+pub(super) fn group_row_state<'a>(
+    title: impl Into<String>,
+    state: impl Into<String>,
+    control: Element<'a, Message>,
+) -> Element<'a, Message> {
+    split(
+        detail_state(title, state),
         row::with_children(vec![control])
             .align_y(Alignment::Center)
             .wrap()
@@ -494,6 +514,15 @@ impl Settings {
         cosmic::theme::active().cosmic().accent_text_color().into()
     }
     pub(super) fn settings_view(&self) -> Element<'_, Message> {
+        // Setup and recovery explain every step in full.
+        explain::begin(explain::Frame {
+            show: self.config.show_explanations
+                || self.wizard.is_some()
+                || self.config.design_problem.is_some(),
+            open: self
+                .explained
+                .and_then(|(page, key)| (page == self.page).then_some(key)),
+        });
         if self.config.design_problem.is_some() {
             return self.design_recovery_view();
         }

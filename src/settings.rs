@@ -557,6 +557,9 @@ pub enum Message {
     /// The edge sidebar slides (`true`) or appears at once.
     SidebarSlide(bool),
     SettingsAnimations(bool),
+    ShowExplanations(bool),
+    /// Shows or hides one explanation under its title.
+    Explain(u64),
     ActivityPreference(&'static str, bool),
     ActivityLead(usize),
     ReadSystemMotion,
@@ -750,6 +753,8 @@ pub struct Settings {
     setup_requested: bool,
     setup_followups: wizard::follow_up::State,
     search_selected: Option<navigation::SearchHit>,
+    /// The explanation opened with its "?", on the page it belongs to.
+    explained: Option<(Page, u64)>,
     advanced_pages: Vec<Page>,
     help_open: Option<&'static str>,
     open_sections: std::collections::BTreeSet<&'static str>,
@@ -994,6 +999,7 @@ impl cosmic::Application for Settings {
             setup_requested: false,
             setup_followups: wizard::follow_up::State::load(),
             search_selected: None,
+            explained: None,
             advanced_pages: Vec::new(),
             help_open: None,
             // `--settings styles` opens Appearance with every style shown.
@@ -2433,6 +2439,7 @@ impl Settings {
             },
             Message::RecoveryOpen(index) => return self.open_recovered_form(index),
             Message::UndoPreferences => {
+                self.explained = None;
                 let id = self
                     .last_desktop_change
                     .as_ref()
@@ -2532,6 +2539,14 @@ impl Settings {
                 self.save_activity(json!({"lead_minutes":([5,10,15][index.min(2)])}))
             }
             Message::SettingsAnimations(on) => self.save(json!({"settings_animations": on})),
+            Message::ShowExplanations(on) => {
+                self.explained = None;
+                self.save(json!({"show_explanations": on}))
+            }
+            Message::Explain(key) => {
+                self.explained = (self.explained != Some((self.page, key)))
+                    .then_some((self.page, key));
+            }
             Message::ReadSystemMotion => {
                 self.motion_generation = self.motion_generation.wrapping_add(1);
                 let generation = self.motion_generation;
@@ -2675,6 +2690,9 @@ impl Settings {
             }
             Message::Automation(message) => return self.update_automation(message),
             Message::AppSettingsPage(page) => {
+                if self.app_settings_page != page {
+                    self.explained = None;
+                }
                 // Opening a Settings section is a real step: Back returns here.
                 if self.page == Page::General && self.app_settings_page != page {
                     self.remember_route();

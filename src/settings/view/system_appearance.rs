@@ -443,7 +443,7 @@ impl Settings {
         // Label left, font button right; weights and the list sit below.
         let mut rows = vec![split(
             if missing {
-                detail(role.title(), "Not installed, using the default")
+                detail_state(role.title(), "Not installed, using the default")
             } else if role == FontRole::Monospace {
                 detail(role.title(), "Terminals and code")
             } else {
@@ -619,7 +619,7 @@ impl Settings {
                 // Same shape as the font rows: label left, chooser right.
                 let mut rows = vec![split(
                     if theme.is_none() {
-                        detail("Icon theme", "Not installed, using the default")
+                        detail_state("Icon theme", "Not installed, using the default")
                     } else {
                         label("Icon theme", 14., FG)
                     },
@@ -817,7 +817,7 @@ impl Settings {
                 // change), taking every applet with it. It can be turned off
                 // here, never on, until a fixed panel is installed.
                 Setting::Known(false) if surface == Surface::Panel => split(
-                    detail(
+                    detail_state(
                         surface.title(),
                         "Off: the installed COSMIC panel crashes with a frosted background",
                     ),

@@ -19,15 +19,16 @@ impl Settings {
                 .into(),
             _ => label("Reading…", 13., MUTED),
         };
-        let mut motion = vec![group_row(
-            "Reduce motion",
-            if unavailable {
-                "Your system doesn't offer this yet"
-            } else {
-                "Less animation in Halcyon, most apps and web browsers"
-            },
-            apps,
-        )];
+        // Why it can't be used stays in view; what it does sits behind "?".
+        let mut motion = vec![if unavailable {
+            group_row_state("Reduce motion", "Your system doesn't offer this yet", apps)
+        } else {
+            group_row(
+                "Reduce motion",
+                "Less animation in Halcyon, most apps and web browsers",
+                apps,
+            )
+        }];
         if editor.read_only().is_some() {
             motion.push(label("Changes are off in this preview", 12., WARN));
         }

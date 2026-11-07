@@ -1,8 +1,9 @@
 use super::*;
 impl Settings {
     pub(in crate::settings) fn usage_control(&self) -> Element<'_, Message> {
+        // What is shared is consent text: always on screen, never behind "?".
         let mut controls = vec![split(
-            detail(
+            detail_state(
                 "Share usage data",
                 "The app version, your country, which days you use it and which main features are on. Never what's in your widgets.",
             ),
@@ -42,7 +43,7 @@ impl Settings {
             ),
             group(
                 Some("Always stays on your computer"),
-                vec![detail(
+                vec![detail_state(
                     "Your calendar, notes, accounts and projects",
                     "Never sent anywhere, even with usage data on",
                 )],

@@ -366,6 +366,16 @@ impl Native {
     }
     /// Locate visible labels in the real widget tree for pointer interaction tests.
     pub fn text_bounds<M>(&mut self, view: cosmic::Element<'_, M>, text: &str) -> Rectangle {
+        let found = self.text_all(view, text);
+        assert_eq!(
+            found.len(),
+            1,
+            "unique real-view text {text}: {found:?}"
+        );
+        found[0]
+    }
+    /// Every place `text` is drawn in the real widget tree.
+    pub fn text_all<M>(&mut self, view: cosmic::Element<'_, M>, text: &str) -> Vec<Rectangle> {
         struct Find {
             text: String,
             found: Vec<Rectangle>,
@@ -409,12 +419,6 @@ impl Native {
         };
         ui.operate(&self.renderer, &mut find);
         self.cache = ui.into_cache();
-        assert_eq!(
-            find.found.len(),
-            1,
-            "unique real-view text {text}: {:?}",
-            find.found
-        );
-        find.found[0]
+        find.found
     }
 }

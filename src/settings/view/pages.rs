@@ -179,14 +179,11 @@ impl Settings {
         let visibility = super::group(
             None,
             vec![split(
-                detail(
-                    "Show widgets",
-                    if self.config.widgets_visible {
-                        "Turn off to hide every widget at once"
-                    } else {
-                        "Widgets are hidden; your choices are kept"
-                    },
-                ),
+                if self.config.widgets_visible {
+                    detail("Show widgets", "Turn off to hide every widget at once")
+                } else {
+                    detail_state("Show widgets", "Widgets are hidden; your choices are kept")
+                },
                 container(toggler(self.config.widgets_visible).on_toggle(Message::Desktop))
                     .id(cosmic::widget::Id::new("widgets-show-all"))
                     .into(),
@@ -230,7 +227,11 @@ impl Settings {
             button::custom(
                 row::with_children(vec![
                     icon::from_name(widget.icon()).size(20).icon().into(),
-                    detail(widget.title(), status),
+                    if widget == Widget::Glance {
+                        detail(widget.title(), status)
+                    } else {
+                        detail_state(widget.title(), status)
+                    },
                     icon::from_name("go-next-symbolic").size(16).icon().into(),
                 ])
                 .spacing(14)
@@ -400,7 +401,7 @@ impl Settings {
                     });
                     location_controls.push(
                         button::custom(split(
-                            detail(city.name.clone(), city.region()),
+                            detail_state(city.name.clone(), city.region()),
                             label(
                                 if selected { "Current" } else { "Choose →" },
                                 12.,
@@ -415,7 +416,7 @@ impl Settings {
                     );
                 }
             } else if state.searched {
-                location_controls.push(detail(
+                location_controls.push(detail_state(
                     "No cities found",
                     "Try another spelling or a nearby town.",
                 ));
@@ -474,7 +475,7 @@ impl Settings {
             roots.push(split(
                 row::with_children(vec![
                     icon::from_name("folder-symbolic").size(22).icon().into(),
-                    detail(name, root.clone()),
+                    detail_state(name, root.clone()),
                 ])
                 .spacing(12)
                 .align_y(Alignment::Center)
@@ -1256,13 +1257,18 @@ impl Settings {
         symbol: &'static str,
         title: &'static str,
         description: String,
+        live: bool,
         message: Message,
         id: String,
     ) -> Element<'a, Message> {
         button::custom(
             row::with_children(vec![
                 icon::from_name(symbol).size(20).icon().into(),
-                detail(title, description),
+                if live {
+                    detail_state(title, description)
+                } else {
+                    detail(title, description)
+                },
                 icon::from_name("go-next-symbolic").size(16).icon().into(),
             ])
             .spacing(14)
@@ -1278,11 +1284,12 @@ impl Settings {
 
     /// The stable Settings landing: one list, Accessibility first.
     fn settings_home(&self) -> Element<'_, Message> {
-        let row = |symbol, page: AppSettingsPage, description: String| {
+        let row = |symbol, page: AppSettingsPage, description: String, live: bool| {
             self.settings_row(
                 symbol,
                 page.tab_title(),
                 description,
+                live,
                 Message::AppSettingsPage(page),
                 format!("app-settings-{}", page.key()),
             )
@@ -1294,6 +1301,7 @@ impl Settings {
                 "preferences-desktop-accessibility-symbolic",
                 "Accessibility",
                 "Motion and readability".into(),
+                false,
                 Message::Page(Page::DesktopMotion),
                 "settings-accessibility".into(),
             ))
@@ -1305,16 +1313,19 @@ impl Settings {
                 } else {
                     "Running, sign-in and setup".into()
                 },
+                self.service.startup,
             ))
             .add(row(
                 "view-dual-symbolic",
                 AppSettingsPage::Interface,
                 "Screen-edge menu and this window".into(),
+                false,
             ))
             .add(row(
                 "software-update-available-symbolic",
                 AppSettingsPage::Updates,
                 self.updates_summary_line(),
+                true,
             ))
             .add(row(
                 "security-medium-symbolic",
@@ -1324,6 +1335,7 @@ impl Settings {
                 } else {
                     "Nothing is shared".into()
                 },
+                true,
             ))
             .add(row(
                 "document-open-recent-symbolic",
@@ -1333,11 +1345,13 @@ impl Settings {
                 } else {
                     "Saved copies from before big changes".into()
                 },
+                waiting > 0,
             ))
             .add(row(
                 "help-browser-symbolic",
                 AppSettingsPage::Help,
                 "Get help or report a problem".into(),
+                false,
             ));
         column::with_children(vec![
             heading("General", "How Halcyon starts, updates and behaves."),
@@ -1391,12 +1405,21 @@ impl Settings {
             running = running.on_toggle(Message::Background);
             startup = startup.on_toggle(Message::Startup);
         }
+        // Why it can't be changed yet stays visible; the explanation hides.
         let background = if preview() {
-            "Not available in this preview"
+            group_row_state(
+                "Keep running in the background",
+                "Not available in this preview",
+                running.into(),
+            )
         } else if !self.service_known {
-            "Checking…"
+            group_row_state("Keep running in the background", "Checking…", running.into())
         } else {
-            "Wallpaper colors and schedules keep working while widgets are hidden"
+            group_row(
+                "Keep running in the background",
+                "Wallpaper colors and schedules keep working while widgets are hidden",
+                running.into(),
+            )
         };
         column::with_children(vec![
             group(
@@ -1408,7 +1431,7 @@ impl Settings {
                         self.config.widgets_visible,
                         Message::Desktop,
                     ),
-                    group_row("Keep running in the background", background, running.into()),
+                    background,
                     group_row("Start when you sign in", "", startup.into()),
                 ],
             ),
@@ -1454,6 +1477,13 @@ impl Settings {
                     "Sections slide open when you expand them",
                     toggler(self.config.settings_animations).on_toggle(Message::SettingsAnimations).into(),
                 )),
+                self.search_target("settings-explanations", group_row(
+                    "Show explanations",
+                    "Show what each setting does under its name. Off, point at or click ? beside a name to read it.",
+                    container(toggler(self.config.show_explanations).on_toggle(Message::ShowExplanations))
+                        .id(cosmic::widget::Id::new("settings-explanations-toggle"))
+                        .into(),
+                )),
             ]),
         ])
         .spacing(16)
@@ -1467,7 +1497,7 @@ impl Settings {
         let mut rows: Vec<Element<'_, Message>> = kept
             .iter()
             .map(|item| {
-                group_row(
+                group_row_state(
                     item.title.clone(),
                     if item.conflict {
                         "Changed on your desktop too · choose what to keep"
@@ -1482,7 +1512,7 @@ impl Settings {
             })
             .collect();
         if rows.is_empty() {
-            rows.push(detail(
+            rows.push(detail_state(
                 "Nothing waiting",
                 "Previews you leave stay listed here.",
             ));

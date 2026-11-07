@@ -222,7 +222,7 @@ impl Settings {
                             .id(cosmic::widget::Id::new("moment-activate"))
                             .into(),
                     ),
-                    group_row(
+                    group_row_state(
                         "Switch automatically",
                         schedule,
                         {

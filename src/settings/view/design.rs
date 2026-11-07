@@ -7,7 +7,7 @@ impl Settings {
         let action = |edit| Message::Design(edit);
         let mut rows = Vec::new();
         if self.design.review {
-            rows.push(detail(
+            rows.push(detail_state(
                 "Update your widgets?",
                 "Every widget comes along, hidden ones too. Notes, accounts and your weather city stay as they are, and Undo keeps working. Older Halcyon versions can't edit widgets afterwards, so save a copy first if you might go back.",
             ));
@@ -100,7 +100,7 @@ impl Settings {
         if self.design.source_conflict {
             if self.design.source_review {
                 parts.push(pages::section(vec![
-                    detail("Keep the current widget design?", "Changes from the older app and its saved history are backed up first. The current design and unrelated app preferences are retained."),
+                    detail_state("Keep the current widget design?", "Changes from the older app and its saved history are backed up first. The current design and unrelated app preferences are retained."),
                     row::with_children(vec![
                         button::text("Cancel").on_press(Message::Design(Edit::Cancel)).into(),
                         button::suggested("Keep current design").id("design-keep-source".into()).on_press_maybe((!self.native_busy).then_some(Message::Design(Edit::KeepDesign))).into(),

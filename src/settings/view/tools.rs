@@ -397,14 +397,14 @@ impl Settings {
         let items = group(
             None,
             vec![split(
-                detail(
-                    "Card size",
-                    if resized {
-                        "You resized it by hand. Use Move or resize to change it"
-                    } else {
-                        "Grows with your note, up to this size"
-                    },
-                ),
+                if resized {
+                    detail_state(
+                        "Card size",
+                        "You resized it by hand. Use Move or resize to change it",
+                    )
+                } else {
+                    detail("Card size", "Grows with your note, up to this size")
+                },
                 sizes,
             )],
         );

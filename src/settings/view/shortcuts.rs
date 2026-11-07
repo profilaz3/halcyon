@@ -326,7 +326,7 @@ impl Settings {
         }
         if matching.is_empty() {
             // One empty state: what is missing and what to do about it.
-            items.push(group(None, vec![detail(
+            items.push(group(None, vec![detail_state(
                 if query.is_empty() && editor.filter == Filter::Custom {
                     "No shortcuts of your own yet".to_string()
                 } else if query.is_empty() {

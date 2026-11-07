@@ -116,6 +116,7 @@ fn message_scope(config: &Config, message: &Message) -> Vec<String> {
         Message::ActivityPreference(key, _) => add(&["activity_island", key]),
         Message::ActivityLead(_) => add(&["activity_island", "lead_minutes"]),
         Message::SettingsAnimations(_) => add(&["settings_animations"]),
+        Message::ShowExplanations(_) => add(&["show_explanations"]),
         Message::MaterialMotion(_) => add(&["material_motion"]),
         Message::Tools(tools::Message::Player(_))
         | Message::Tools(tools::Message::Card(crate::tools::cards::Action::MusicAuto)) => {
