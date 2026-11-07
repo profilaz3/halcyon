@@ -1407,11 +1407,11 @@ fn appearance_shows_one_row_of_styles_and_every_style_on_request() {
         *app.profiles.selection(),
         profiles::Selection::Preset("theme-neon")
     );
-    // Whether looks color the dock and panel lives with the dock now.
+    // Whether looks color the dock and panel lives with the dock now. The
+    // Dock page needs a desktop to draw its switch, so the isolated
+    // polish_e_dock_shape_follow_style_and_looks_header checks it there.
     let mut native = crate::native_test::Native::new(size);
     assert!(native.text_all(app.settings_view(), "Style the dock and panel").is_empty());
-    let _ = app.update(Message::Page(Page::DesktopDock));
-    assert!(native.try_bounds(app.settings_view(), "dock-style-bars").is_some());
 }
 
 #[test]
