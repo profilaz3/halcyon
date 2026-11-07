@@ -114,7 +114,7 @@ impl Settings {
         let mut rows = Vec::new();
         if scoped {
             rows.push(
-                container(group(None, vec![group_row("Use on", state, scopes)]))
+                container(group(None, vec![group_row_state("Use on", state, scopes)]))
                     .id(cosmic::widget::Id::new("material-scope"))
                     .width(Length::Fill)
                     .into(),

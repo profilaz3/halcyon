@@ -301,7 +301,7 @@ impl Settings {
             .material_draft
             .filter(|_| self.material_target == Target::Shared)
             .or(shared);
-        let mut rows = vec![self.link_row(
+        let mut rows = vec![self.link_row_state(
             "Glass and transparency",
             match finish {
                 Some(finish) => format!(
@@ -335,15 +335,21 @@ impl Settings {
             .id(cosmic::widget::Id::new("appearance-corners"))
             .into(),
         ));
-        rows.push(self.link_row(
-            "Day and night style",
-            match self.config.moments.active {
-                Some(phase) => format!("Showing the {} style", phase.title().to_lowercase()),
-                None => "Widget styles only. Wallpaper and colors stay".to_string(),
-            },
-            Message::Page(Page::Moments),
-            "appearance-moments".into(),
-        ));
+        // Which style shows now stays in view; what the page does sits behind "?".
+        rows.push(match self.config.moments.active {
+            Some(phase) => self.link_row_state(
+                "Day and night style",
+                format!("Showing the {} style", phase.title().to_lowercase()),
+                Message::Page(Page::Moments),
+                "appearance-moments".into(),
+            ),
+            None => self.link_row(
+                "Day and night style",
+                "Widget styles only. Wallpaper and colors stay",
+                Message::Page(Page::Moments),
+                "appearance-moments".into(),
+            ),
+        });
         group(Some("Widgets and bars"), rows)
     }
 
@@ -872,6 +878,9 @@ impl Settings {
             .profiles
             .suggestion()
             .is_some_and(|s| s.accents.is_empty() && !s.swatches.is_empty());
+        // A wallpaper with no usable color, or a problem reading it, stays in
+        // view; what each choice means sits behind "?".
+        let live = matches!(choice, Choice::Wallpaper) && (neutral || auto_rgb.is_none());
         let description = match choice {
             Choice::Wallpaper if neutral => format!(
                 "This wallpaper has no strong color, so {}’s own is used until it changes",
@@ -897,7 +906,11 @@ impl Settings {
         };
         // Labelled like every other row: the name left, the choices right.
         let mut rows = vec![split(
-            detail("Accent color", description),
+            if live {
+                detail_state("Accent color", description)
+            } else {
+                detail("Accent color", description)
+            },
             row::with_children(chips)
                 .spacing(4)
                 .wrap()

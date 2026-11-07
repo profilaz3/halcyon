@@ -1469,7 +1469,7 @@ impl Settings {
             return section(items);
         }
         let Some(profile) = editor.profile() else {
-            items.push(detail(
+            items.push(detail_state(
                 "Current desktop",
                 "Choose a look to compare its changes.",
             ));
@@ -1578,9 +1578,9 @@ impl Settings {
         {
             items.push(
                 row::with_children(vec![
-                    detail("Picture from", origin.picture.name.clone()),
-                    detail("Style from", origin.style.name.clone()),
-                    detail("Layout from", origin.layout.name.clone()),
+                    detail_state("Picture from", origin.picture.name.clone()),
+                    detail_state("Style from", origin.style.name.clone()),
+                    detail_state("Layout from", origin.layout.name.clone()),
                 ])
                 .spacing(16)
                 .wrap()
@@ -1645,7 +1645,7 @@ impl Settings {
                         .as_ref()
                         .is_some_and(|output| s.outputs.contains_key(output))
                 });
-            items.push(detail("Panel composition", description));
+            items.push(detail_state("Panel composition", description));
             items.push(label(if !editor.included(Domain::Panel) {
                 "Panel is excluded, so your current arrangement stays."
             } else if customized {
@@ -2001,7 +2001,7 @@ impl Settings {
                 };
                 button::custom(
                     row::with_children(vec![
-                        detail(name, description),
+                        detail_state(name, description),
                         icon::from_name("go-next-symbolic").size(16).icon().into(),
                     ])
                     .spacing(12)
@@ -2185,7 +2185,7 @@ impl Settings {
             .wrap()
             .into();
             pages::section(vec![
-                detail(conflict.label.clone(), conflict.domain.title()),
+                detail_state(conflict.label.clone(), conflict.domain.title()),
                 label(format!("Current: {}", conflict.current), 12., MUTED),
                 label(format!("Preview: {}", conflict.preview), 12., FG),
                 choices,

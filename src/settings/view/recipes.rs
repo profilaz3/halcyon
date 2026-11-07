@@ -156,7 +156,7 @@ impl Settings {
             ));
         }
         if recipe.kind == Kind::Calendar && self.config.glance.enabled {
-            widget_rows.push(group_row(
+            widget_rows.push(group_row_state(
                 "Calendar is part of Daily overview now",
                 "Your design shows when Calendar has its own card",
                 button::text("Widgets")
@@ -226,7 +226,7 @@ impl Settings {
         }
         let wide = editor.wide;
         let arrangement = if wide { recipe.wide } else { recipe.compact };
-        let mut parts = vec![group_row(
+        let mut parts = vec![group_row_state(
             "Layout",
             if wide {
                 "When the widget is wide"
@@ -365,7 +365,7 @@ impl Settings {
         }
         if editor.delete_review {
             more.push(split(
-                detail(
+                detail_state(
                     "Delete this design?",
                     "Widgets already using it keep their own copy.",
                 ),

@@ -13,7 +13,7 @@ impl Settings {
                 .size(28)
                 .icon()
                 .into(),
-            detail(
+            detail_state(
                 match editor.connection.backend {
                     Backend::Subscription => "Calendar links",
                     Backend::Disconnected => "Connect a calendar",
@@ -67,7 +67,7 @@ impl Settings {
             rows.push(label(error, 12., Color::from_rgb8(245, 190, 107)));
         }
         if editor.busy {
-            rows.push(detail(
+            rows.push(detail_state(
                 if editor.pending.is_some() {
                     "Finish signing in in your browser"
                 } else if editor.connecting {
@@ -101,7 +101,7 @@ impl Settings {
             }
             rows.push(row::with_children(actions).spacing(8).wrap().into());
         } else if editor.confirm_disconnect {
-            rows.push(detail("Disconnect on this computer?", "This removes the app’s cached events. Your original calendars and events stay unchanged."));
+            rows.push(detail_state("Disconnect on this computer?", "This removes the app’s cached events. Your original calendars and events stay unchanged."));
             rows.push(
                 row::with_children(vec![
                     button::standard("Keep connected")
@@ -186,7 +186,7 @@ impl Settings {
                 );
             }
         } else if editor.connection.cleanup_pending() {
-            rows.push(detail(
+            rows.push(detail_state(
                 "Disconnected on this computer",
                 "Your cached events were removed. Finish removing the saved sign-in from the system keyring before connecting again.",
             ));
@@ -297,7 +297,7 @@ impl Settings {
                     // Not connected yet: one row that says what to do, with
                     // the ways to do it on the right.
                     rows.push(split(
-                        detail(
+                        detail_state(
                             "Add a calendar",
                             if editor.client_ready {
                                 "Sign in to Google, or paste the sharing link from Outlook or Apple Calendar"

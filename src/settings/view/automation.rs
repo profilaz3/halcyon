@@ -158,7 +158,7 @@ impl Settings {
         };
         group(
             None,
-            vec![self.link_row(
+            vec![self.link_row_state(
                 "Change with time of day",
                 text,
                 Message::Page(Page::DesktopAutomation),
@@ -305,36 +305,39 @@ impl Settings {
             items.extend(city.take());
         }
         items.push(row::with_children(tiles).spacing(12).into());
-        items.push(
-            group(
-                None,
-                vec![group_row(
+        let shifting: Element<'_, Message> = container(segmented(
+            Look::ALL
+                .into_iter()
+                .map(|look| {
+                    (
+                        look.title().into(),
+                        shades == Some(look),
+                        (ready && shades != Some(look))
+                            .then(|| edit(Edit::AdaptiveRoutine(look, source))),
+                    )
+                })
+                .collect(),
+            accent,
+        ))
+        .id(cosmic::widget::Id::new("automation-shades"))
+        .into();
+        // Without a city the line is the reason it can't be picked yet.
+        items.push(group(
+            None,
+            vec![if has_city {
+                group_row(
                     "Or one look that shifts through the day",
-                    if has_city {
-                        "Its own lighter and darker shades fill all three"
-                    } else {
-                        "Ready once your city is added"
-                    },
-                    container(segmented(
-                        Look::ALL
-                            .into_iter()
-                            .map(|look| {
-                                (
-                                    look.title().into(),
-                                    shades == Some(look),
-                                    (ready && shades != Some(look)).then(|| {
-                                        edit(Edit::AdaptiveRoutine(look, source))
-                                    }),
-                                )
-                            })
-                            .collect(),
-                        accent,
-                    ))
-                    .id(cosmic::widget::Id::new("automation-shades"))
-                    .into(),
-                )],
-            ),
-        );
+                    "Its own lighter and darker shades fill all three",
+                    shifting,
+                )
+            } else {
+                group_row_state(
+                    "Or one look that shifts through the day",
+                    "Ready once your city is added",
+                    shifting,
+                )
+            }],
+        ));
         items.extend(city);
         column::with_children(items)
         .spacing(16)
@@ -366,7 +369,7 @@ impl Settings {
             }
             column::with_children(lines).spacing(2).into()
         } else {
-            detail("Switching is off", "Your choices above are kept for later")
+            detail_state("Switching is off", "Your choices above are kept for later")
         };
         let head = split(
             text,
@@ -695,14 +698,14 @@ impl Settings {
         let context = &self.automation.solar;
         let summary = match context.city(source) {
             Ok(city) if source == Source::Weather => {
-                detail("Where you are", format!("{}, same as Weather", city.name))
+                detail_state("Where you are", format!("{}, same as Weather", city.name))
             }
-            Ok(city) => detail("Where you are", city.name.clone()),
-            Err(reason) if reason.starts_with("Choose a city") => detail(
+            Ok(city) => detail_state("Where you are", city.name.clone()),
+            Err(reason) if reason.starts_with("Choose a city") => detail_state(
                 "Where you are",
                 "Add your city to pick a look for each part of the day",
             ),
-            Err(reason) => detail("Where you are", reason),
+            Err(reason) => detail_state("Where you are", reason),
         };
         if source == Source::Weather {
             controls.push(split(

@@ -310,6 +310,14 @@ const SEARCH: &[SearchHit] = &[
     .at("settings-motion")
     .destination(AppSettingsPage::Interface),
     hit(
+        Page::General,
+        "Show explanations",
+        "show explanations help descriptions hints question mark tooltips text",
+        false,
+    )
+    .at("settings-explanations")
+    .destination(AppSettingsPage::Interface),
+    hit(
         Page::Devbox,
         "Reorder readings",
         "system monitor devbox reorder readings drag move order",

@@ -20,7 +20,7 @@ impl Settings {
         let pending = self
             .setup_followups
             .pending(&self.config, self.calendar.connection.connected());
-        let mut rows = vec![detail(
+        let mut rows = vec![detail_state(
             "Finish your widgets",
             "Optional · add your own content",
         )];
@@ -70,7 +70,7 @@ impl Settings {
                         if ready { "✓" } else { number },
                         if ready { accent } else { MUTED },
                     ),
-                    detail(title.to_string(), description),
+                    detail_state(title.to_string(), description),
                 ])
                 .spacing(10)
                 .align_y(Alignment::Center)
@@ -83,7 +83,7 @@ impl Settings {
         };
         section(vec![
             split(
-                detail(
+                detail_state(
                     "Getting started",
                     "Make the desktop yours. Every step is optional.",
                 ),
@@ -117,7 +117,7 @@ impl Settings {
             ),
             separator(),
             split(
-                detail("Settings · Startup", "Run Halcyon when you sign in."),
+                detail_state("Settings · Startup", "Run Halcyon when you sign in."),
                 startup.into(),
             ),
             separator(),
@@ -206,7 +206,7 @@ impl Settings {
         }
         frame(
             split(
-                detail(
+                detail_state(
                     "Getting started",
                     "Choose a weather city and connect your calendar.",
                 ),

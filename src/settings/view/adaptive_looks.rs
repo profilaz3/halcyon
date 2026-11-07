@@ -68,13 +68,7 @@ impl Settings {
         ];
         let cycle_detail = "Day after sunrise, evening at golden hour, night after sunset";
         let can_toggle = (has_rules || city) && self.automation.writable() && !self.native_busy;
-        let mut cycle = vec![group_row(
-            "Change through the day",
-            if has_rules || city {
-                cycle_detail
-            } else {
-                "Needs your city, just below"
-            },
+        let cycle_toggle: Element<'_, Message> =
             container(toggler(has_rules).on_toggle_maybe(can_toggle.then_some(
                 move |on: bool| {
                     Message::Automation(if on {
@@ -85,8 +79,17 @@ impl Settings {
                 },
             )))
             .id(cosmic::widget::Id::new("adaptive-enable"))
-            .into(),
-        )];
+            .into();
+        // The next step stays in view; what the cycle does sits behind "?".
+        let mut cycle = vec![if has_rules || city {
+            group_row("Change through the day", cycle_detail, cycle_toggle)
+        } else {
+            group_row_state(
+                "Change through the day",
+                "Needs your city, just below",
+                cycle_toggle,
+            )
+        }];
         if has_rules {
             cycle.push(self.link_row(
                 "Adjust the times",
@@ -122,7 +125,7 @@ impl Settings {
         if !has_rules {
             cycle.push(self.schedule_city_controls(source));
         }
-        cycle.push(group_row(
+        cycle.push(group_row_state(
             "Use this look at a set time",
             format!("{} {}", look.title(), phase.title().to_lowercase()),
             button::standard("Schedule…")

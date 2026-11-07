@@ -4,7 +4,7 @@ impl Settings {
     /// confirmation folded into the same rows.
     pub(super) fn desktop_recovery_rows(&self) -> Vec<Element<'_, Message>> {
         let recovery = &self.desktop_recovery;
-        let mut rows = vec![group_row(
+        let mut rows = vec![group_row_state(
             "Desktop from before Halcyon",
             recovery.summary(),
             button::standard("Restore…")
@@ -53,7 +53,10 @@ impl Settings {
                     plan.missing_assets.join(", ")
                 ));
             }
-            rows.push(detail("Restore the earlier desktop?", notes.join(" ")));
+            rows.push(detail_state(
+                "Restore the earlier desktop?",
+                notes.join(" "),
+            ));
             rows.push(
                 row::with_children(vec![
                     button::text("Save a copy first…")

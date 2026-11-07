@@ -76,6 +76,8 @@ pub struct Config {
     /// once (Pop!_OS › Motion).
     pub sidebar_slide: bool,
     pub settings_animations: bool,
+    /// Explanations are shown under every setting instead of behind a "?".
+    pub show_explanations: bool,
     pub activity_island: crate::activity_island::preferences::Preferences,
     pub setup_dismissed: bool,
     /// First-run setup was finished, skipped or cancelled.
@@ -128,6 +130,7 @@ impl Default for Config {
             focus: FocusPreferences::default(),
             sidebar_slide: true,
             settings_animations: true,
+            show_explanations: false,
             activity_island: Default::default(),
             setup_dismissed: false,
             onboarded: false,

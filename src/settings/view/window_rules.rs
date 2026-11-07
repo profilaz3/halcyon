@@ -121,7 +121,7 @@ impl Settings {
         {
             items.push(group(
                 None,
-                vec![group_row(
+                vec![group_row_state(
                     "Tiling is off",
                     "These rules start working when windows tile",
                     button::standard("Turn on tiling")
@@ -373,7 +373,7 @@ impl Settings {
         }
         if items.is_empty() {
             items.push(if rows.is_empty() {
-                detail("No apps yet", "Use Add app to pick one.")
+                detail_state("No apps yet", "Use Add app to pick one.")
             } else {
                 label(format!("No apps match “{}”.", editor.search), 12., MUTED)
             });
