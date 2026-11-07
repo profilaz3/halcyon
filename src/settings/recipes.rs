@@ -340,9 +340,9 @@ impl Editor {
                 self.steps.clear();
                 self.typing = false;
                 self.notice = Some(if matches!(edit, Message::UseBuiltin) {
-                    "Built-in widget restored · Undo in Settings → Recovery".into()
+                    "Built-in widget restored · Undo in Changes".into()
                 } else {
-                    "Widget applied · Undo in Settings → Recovery".into()
+                    "Widget applied · Undo in Changes".into()
                 });
                 return Config::try_load().map(Some);
             }

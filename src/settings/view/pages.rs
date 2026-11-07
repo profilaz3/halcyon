@@ -26,7 +26,7 @@ impl AppSettingsPage {
 
     pub fn title(self) -> &'static str {
         match self {
-            Self::Home => "General",
+            Self::Home => "Halcyon",
             Self::Operation => "Startup",
             Self::Interface => "Interface",
             Self::Privacy => "Privacy",
@@ -1277,7 +1277,7 @@ impl Settings {
         .into()
     }
 
-    /// The stable Settings landing: one list, Accessibility first.
+    /// The Halcyon landing: one list of how the app itself runs.
     fn settings_home(&self) -> Element<'_, Message> {
         let row = |symbol, page: AppSettingsPage, description: String, live: bool| {
             self.settings_row(
@@ -1289,30 +1289,22 @@ impl Settings {
                 format!("app-settings-{}", page.key()),
             )
         };
-        // One list: no group heading, Accessibility first.
+        // One list, no group heading; Accessibility has its own entry.
         let halcyon = cosmic::widget::settings::section()
-            .add(self.settings_row(
-                "preferences-desktop-accessibility-symbolic",
-                "Accessibility",
-                "Motion and readability".into(),
-                false,
-                Message::Page(Page::DesktopMotion),
-                "settings-accessibility".into(),
-            ))
             .add(row(
                 "system-log-out-symbolic",
                 AppSettingsPage::Operation,
                 if self.service.startup {
                     "Starts at sign-in".into()
                 } else {
-                    "Running, sign-in and setup".into()
+                    "Running, sign-in and set up again".into()
                 },
                 self.service.startup,
             ))
             .add(row(
                 "view-dual-symbolic",
                 AppSettingsPage::Interface,
-                "Screen-edge menu and this window".into(),
+                "Widget controls and this window".into(),
                 false,
             ))
             .add(row(
@@ -1338,7 +1330,7 @@ impl Settings {
                 false,
             ));
         column::with_children(vec![
-            heading("General", "How Halcyon starts, updates and behaves."),
+            heading("Halcyon", "How Halcyon starts, updates and behaves."),
             halcyon.into(),
         ])
         .spacing(16)
@@ -1405,12 +1397,7 @@ impl Settings {
             group(
                 Some("Running"),
                 vec![
-                    switch(
-                        "Show widgets on the desktop",
-                        "",
-                        self.config.widgets_visible,
-                        Message::Desktop,
-                    ),
+                    // Show widgets lives on the Widgets page only.
                     background,
                     group_row("Start when you sign in", "", startup.into()),
                 ],
@@ -1423,13 +1410,6 @@ impl Settings {
                         "Pick a look, dock, widgets and weather step by step",
                         button::standard("Start")
                             .on_press_maybe((!self.busy).then_some(Message::OpenWizard))
-                            .into(),
-                    ),
-                    group_row(
-                        "Finish setting up",
-                        "A short list of what's left to do",
-                        button::standard("Open")
-                            .on_press(Message::SetupOpen(true))
                             .into(),
                     ),
                 ],

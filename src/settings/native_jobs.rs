@@ -586,7 +586,7 @@ impl Settings {
             }
             Done::Design(result) => {
                 self.config = Config::load();
-                self.design = design::State::load();
+                self.design = design::State::load().offered(self.design.offered);
                 self.design.notice = Some(match result {
                     Ok(notice) => notice,
                     Err(error) => error,

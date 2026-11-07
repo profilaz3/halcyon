@@ -98,7 +98,7 @@ pub enum Page {
     DesktopWindows,
     /// Workspace layout and navigation, a subpage of Pop!_OS.
     DesktopWorkspaces,
-    /// App animations and the sidebar's slide, a subpage of Pop!_OS.
+    /// Accessibility: app animations and readability, a root of its own.
     DesktopMotion,
     /// Apps that open floating while tiling, a subpage of Pop!_OS (also
     /// linked from Windows).
@@ -114,7 +114,7 @@ pub enum Page {
     Changes,
 }
 impl Page {
-    /// Seven roots, each named for what it changes; leaf routes keep their
+    /// Eight roots, each named for what it changes; leaf routes keep their
     /// existing command keys.
     const SIDEBAR: [(Option<&'static str>, &'static [Self]); 1] = [(
         None,
@@ -125,6 +125,7 @@ impl Page {
             Self::Overview,
             Self::DesktopDock,
             Self::DesktopWindows,
+            Self::DesktopMotion,
             Self::General,
         ],
     )];
@@ -176,7 +177,8 @@ impl Page {
             Self::DesktopAutomation | Self::Moments | Self::AdaptiveLooks => {
                 Self::DesktopAutomation
             }
-            Self::General | Self::DesktopMotion => Self::General,
+            Self::General => Self::General,
+            Self::DesktopMotion => Self::DesktopMotion,
             Self::Changes | Self::PendingChanges => Self::Changes,
             Self::Widgets | Self::Overview | Self::WidgetLayout | Self::Desktop => Self::Overview,
             page => page,
@@ -196,7 +198,8 @@ impl Page {
             Self::DesktopWindows | Self::DesktopWindowRules | Self::DesktopShortcuts => {
                 Self::DesktopWindows
             }
-            Self::DesktopMotion | Self::General => Self::General,
+            Self::DesktopMotion => Self::DesktopMotion,
+            Self::General => Self::General,
             Self::Changes | Self::PendingChanges => Self::Changes,
             _ => Self::Overview,
         }
@@ -227,7 +230,7 @@ impl Page {
             Self::DesktopWindows => "Windows",
             Self::DesktopIcons => "Desktop icons",
             Self::DesktopMotion => "Accessibility",
-            Self::General => "General",
+            Self::General => "Halcyon",
             page => page.title(),
         }
     }
@@ -313,7 +316,7 @@ impl Page {
             Self::Music => "Music",
             Self::Notes => "Notes",
             Self::Focus => "Focus timer",
-            Self::General => "General",
+            Self::General => "Halcyon",
             Self::Desktop => "Desktop",
             Self::DesktopDock => "Dock and panel",
             Self::DesktopAppearance => "Fonts and icons",
@@ -340,7 +343,7 @@ impl Page {
             "setups" | "looks" => "desktop-profiles",
             "dock" | "panel" => "desktop-dock",
             "wallpaper" => "desktop-wallpaper",
-            "settings" => "general",
+            "settings" | "halcyon" => "general",
             "accessibility" => "desktop-motion",
             "shortcuts" => "desktop-shortcuts",
             "windows" => "desktop-windows",
@@ -987,7 +990,10 @@ impl cosmic::Application for Settings {
             page = Page::Changes;
             navigation::remember_app_destination(AppSettingsPage::Home);
         }
-        let (config, design) = design::State::initialize();
+        let (config, mut design) = design::State::initialize();
+        if page == Page::Builder {
+            design.offer(config.design_problem.is_some());
+        }
         let wizard = OPEN_WIZARD
             .swap(false, std::sync::atomic::Ordering::Relaxed)
             .then_some(())
@@ -2759,7 +2765,7 @@ impl Settings {
                             .is_some_and(crate::design::storage::managed) =>
                     {
                         self.config.design_problem = Some(error);
-                        self.design = design::State::load();
+                        self.design = design::State::load().offered(self.design.offered);
                         return Task::none();
                     }
                     Err(_) => {}
@@ -3240,6 +3246,16 @@ impl Settings {
                 self.desktop.drag.cancel();
                 if page == Page::DesktopDock {
                     self.desktop.open();
+                }
+                // The builder needs the one-time widget update: its first
+                // visit opens the review instead of waiting for a click.
+                // Updating stays an explicit choice; Cancel keeps it closed.
+                if page == Page::Builder {
+                    self.design.offer(self.config.design_problem.is_some());
+                } else if from == Page::Builder && self.design.automatic {
+                    // A review the person never asked for stays with the builder.
+                    self.design.review = false;
+                    self.design.automatic = false;
                 }
                 if matches!(page, Page::DesktopAppearance | Page::DesktopWindows) {
                     self.system_appearance.open();
@@ -10736,7 +10752,7 @@ mod tests {
         use cosmic::iced::advanced::renderer::Headless;
         use cosmic::iced::runtime::user_interface::{Cache, UserInterface};
         assert_eq!(Page::parse("desktop-motion"), Page::DesktopMotion);
-        assert_eq!(Page::DesktopMotion.sidebar(), Page::General);
+        assert_eq!(Page::DesktopMotion.sidebar(), Page::DesktopMotion);
         let _isolated = isolated_root();
         let root = PathBuf::from(std::env::var_os(crate::desktop::store::FIXTURE_ENV).unwrap());
         let mut renderer =

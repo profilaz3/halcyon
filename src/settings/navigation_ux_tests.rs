@@ -458,3 +458,102 @@ fn live_state_lines_stay_visible_without_explanations() {
     assert!(!line.is_empty());
     assert_eq!(native.text_all(app.settings_view(), &line).len(), 1);
 }
+
+#[test]
+fn structure_accessibility_root_halcyon_and_one_owner_each() {
+    if isolated(
+        "settings::navigation::ux_regressions::structure_accessibility_root_halcyon_and_one_owner_each",
+    ) {
+        return;
+    }
+    use crate::settings::view::AppSettingsPage;
+    // Accessibility is a root of its own; General is named Halcyon.
+    assert_eq!(Page::DesktopMotion.sidebar(), Page::DesktopMotion);
+    assert_eq!(Page::DesktopMotion.parent(), None);
+    assert_eq!(Page::General.nav_title(), "Halcyon");
+    assert_eq!(Page::parse("accessibility"), Page::DesktopMotion);
+    assert_eq!(Page::parse("halcyon"), Page::General);
+    assert_eq!(Page::parse("general"), Page::General);
+    let mut app = app(Page::Overview);
+    for width in [820., 1280.] {
+        let size = Size::new(width, 800.);
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = Native::new(size);
+        click(&mut app, &mut native, "nav-desktop-motion");
+        assert_eq!(app.page, Page::DesktopMotion);
+        assert!(native.duplicate_ids(app.settings_view()).is_empty());
+        for (theme, name) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
+            native.capture(app.settings_view(), &theme, &format!("structure-accessibility-{width}-{name}"));
+        }
+        click(&mut app, &mut native, "nav-general");
+        assert_eq!(app.page, Page::General);
+        // The landing no longer repeats Accessibility.
+        assert!(native.try_bounds(app.settings_view(), "settings-accessibility").is_none());
+        assert!(native.try_bounds(app.settings_view(), "app-settings-interface").is_some());
+        for (theme, name) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
+            native.capture(app.settings_view(), &theme, &format!("structure-halcyon-{width}-{name}"));
+        }
+        // Startup: no second Show widgets and no second setup entry.
+        click(&mut app, &mut native, "app-settings-operation");
+        assert_eq!(app.app_settings_page, AppSettingsPage::Operation);
+        assert!(native.text_all(app.settings_view(), "Show widgets on the desktop").is_empty());
+        assert!(native.text_all(app.settings_view(), "Finish setting up").is_empty());
+        assert_eq!(native.text_all(app.settings_view(), "Set up again").len(), 1);
+        for (theme, name) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
+            native.capture(app.settings_view(), &theme, &format!("structure-startup-{width}-{name}"));
+        }
+        send_settings(&mut app, Message::AppSettingsPage(AppSettingsPage::Home));
+    }
+    // Show widgets has one home: the Widgets page.
+    send_settings(&mut app, Message::Page(Page::Widgets));
+    let mut native = Native::new(Size::new(1280., 800.));
+    assert_eq!(native.text_all(app.settings_view(), "Show widgets").len(), 1);
+    // Search speaks the new names and still understands the old ones.
+    for (query, label) in [
+        ("edge menu", "Widget controls"),
+        ("widget controls", "Widget controls"),
+        ("accessibility", "Animations in supported apps"),
+    ] {
+        assert!(
+            crate::settings::navigation::search(query)
+                .iter()
+                .any(|hit| hit.label == label),
+            "{query}"
+        );
+    }
+}
+
+#[test]
+fn builder_first_visit_opens_widget_update_review_once() {
+    if isolated(
+        "settings::navigation::ux_regressions::builder_first_visit_opens_widget_update_review_once",
+    ) {
+        return;
+    }
+    let mut app = app(Page::Overview);
+    assert!(!app.design.managed, "an existing profile starts unmigrated");
+    assert!(!app.design.review);
+    send_settings(&mut app, Message::Page(Page::Builder));
+    assert!(app.design.review, "the first visit opens the review");
+    // Leaving closes a review the person didn't open: Updates stays calm.
+    send_settings(&mut app, Message::Page(Page::General));
+    assert!(!app.design.review);
+    send_settings(&mut app, Message::Page(Page::Builder));
+    assert!(!app.design.review, "offered once per session");
+    send_settings(&mut app, Message::Design(crate::settings::design::Message::Review));
+    let size = Size::new(1280., 800.);
+    send_settings(&mut app, Message::Resized(size));
+    let mut native = Native::new(size);
+    assert!(native.try_bounds(app.settings_view(), "design-migrate").is_some());
+    for (theme, name) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
+        native.capture(app.settings_view(), &theme, &format!("structure-builder-review-{name}"));
+    }
+    // Cancel keeps it closed for the rest of the session; nothing migrated.
+    click(&mut app, &mut native, "design-cancel");
+    assert!(!app.design.review);
+    send_settings(&mut app, Message::Page(Page::Overview));
+    send_settings(&mut app, Message::Page(Page::Builder));
+    assert!(!app.design.review);
+    assert!(!app.design.managed);
+    assert!(native.try_bounds(app.settings_view(), "design-review").is_some());
+}
