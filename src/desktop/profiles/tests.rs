@@ -1530,3 +1530,40 @@ fn rain_setup_capture_keeps_explicit_off_and_applies_with_undo() {
         serde_json::from_slice::<Value>(&before).unwrap()
     );
 }
+
+#[test]
+fn a_hiding_look_releases_reserved_space_even_from_a_stale_capture() {
+    use crate::desktop::panels::{AutoHide, PanelDraft, PanelKind};
+    let desk = desk(
+        "profile-autohide-zone",
+        Srgb::new(0.2, 0.6, 0.4),
+        Srgb::new(0.8, 0.3, 0.2),
+        "teal",
+    );
+    desk.fixture.user(DOCK, "autohide", "Never");
+    desk.fixture.user(DOCK, "exclusive_zone", "true");
+    let draft = || PanelDraft::load(&desk.store(), PanelKind::Dock).unwrap();
+    // Reserved space on a hiding panel grows during each reveal and pushes
+    // desktop widgets aside, so a look that hides it gives the space back.
+    for exclusive_zone in [None, Some(true)] {
+        let look = PanelLook {
+            autohide: Some(AutoHide::Always),
+            exclusive_zone,
+            ..Default::default()
+        };
+        let styled = preview_panel_style(draft(), &look, false);
+        assert_eq!(styled.value::<bool>("exclusive_zone").known(), Some(&false));
+        assert_eq!(
+            styled.value::<AutoHide>("autohide").known(),
+            Some(&AutoHide::Always)
+        );
+    }
+    // An always-visible look may still opt out of reserving space.
+    let look = PanelLook {
+        autohide: Some(AutoHide::Never),
+        exclusive_zone: Some(false),
+        ..Default::default()
+    };
+    let styled = preview_panel_style(draft(), &look, false);
+    assert_eq!(styled.value::<bool>("exclusive_zone").known(), Some(&false));
+}

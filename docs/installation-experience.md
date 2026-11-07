@@ -189,7 +189,7 @@ source. Default enrollment code and the published 0.3.0 assets are unchanged.
 3. Optionally open **App settings → Updates → Get Islands…**. The app downloads
    the reviewed companion, verifies its exact size/hash, and simulates the
    proposed install. **Install Islands** hands the verified file to the OS.
-4. Choose **Enable for next login**. The existing per-user helper checks ownership,
+4. Choose **Switch at next sign-in**. The existing per-user helper checks ownership,
    failed state, native qualification and activation conditions under its lock.
    Log out and back in. Disabled packages intentionally report compatibility as
    unknown; the button requests the authoritative check instead of inventing an

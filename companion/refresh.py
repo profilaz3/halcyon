@@ -7,6 +7,7 @@ import hashlib
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import tempfile
 
@@ -22,6 +23,53 @@ SELECTOR = '.local/bin/cosmic-panel'
 SELECTION = DATA + 'companion/selection.json'
 POINTER = DATA + 'companion/generation.json'
 LIBRARY = Path('/usr/lib') / PACKAGE
+# Every panel_launcher.py/selector.py Halcyon has shipped. A reinstall or a
+# removed data directory can leave one of these at ~/.local/bin/cosmic-panel
+# with no journal. Byte-identical copies are ours, so enable may adopt them.
+SHIPPED_SELECTORS = frozenset((
+    '044db18fd5256083a0af235ec61381984ba90545a48e1a2ea90eb5308ef53617',
+    '1b5d57b52bfcb10615016c3f9ccb5300045ec11037d02cba877b69c985d01d14',
+    '2445c851cbd274a5de841e11119904f0532044af15a9e9fc34e300e60a0a926e',
+    '2afd5dc066e8ca674cf817c364f61769e8dff37a589162d07c296ac93d60db8c',
+    '2b3374a53c7357bd632908e1c8e1fce31b75f9c2fdac5958985a1e9054c4ad58',
+    '437fdc03a6c9e4cf99aab3c40c2e6b556e919aff5ead758a9e0d3d9120c1d29b',
+    '60106cc52516fdff082aa77269e3112b816c7f39320c09232989407efc121187',
+    '69c504b6cb094b79f08f0c6c913252864317347596f8203956f9a1486bf0c2d5',
+    '6da8cf6e189d7fdd877fcbd3e119c2567ddbb699a332e5849a63157da4271de0',
+    '835d960e44ede612920472e56b76cf2403afafe2070b1306e4cb1aba74ec545d',
+    '83d839904cb5e44978ea7a74ddb3d5d44039b745ba71f9f706f11912e5e29507',
+    '8ee52f89a0b215c6074ebc93ff14662bcc7df5aaed6b4c73752720e949f8ed97',
+    '90f89a3b6dae5750f545d81e6825a4b40ea47af5e7bf62852c5fbb42e647e260',
+    '9cb6b5514dc600d7328adbe9ff2524cfdfe3eee27354daf516aaba3e19627edf',
+    '9ec2e47f8b3e20b608a1ec3c28eed216d948ceed97be2b38b7d5c497f60cbd7d',
+    'ac1c56d1ed3b83b5f0f4a2afbb277defb6b4491d9154c04176bfad3ba50e5be5',
+    'ac5285fa80a8d665254acbc9434fed79c27fa0c7d748b9e28ee4c807a4f4e851',
+    'c0e77659ab6f1df7e2695ad10039fd0abca81269813d3dd23f32cef89f0418a8',
+    'd2fc6ca6781785efe535584abf6f99967b6f502b2d85c782fc3d27dad22190f0',
+    'db761a0bf455eadf35b75e34d2ed524e5b77bb0b6f33b20cff2fe4f39d969948',
+    'dcfc9185f6f27695da5c95b1de46688e91b9a3d2f033576ab0228c134d91c085',
+    'df6a8d1b2d9976656a12b44fa69d2d3f50239007bddf876098ad5c0e5a53aa36',
+))
+
+
+def adopt_orphans(home, library):
+    """Remove Halcyon's own unjournaled selector/pointer; False if anything is foreign."""
+    # Parents must not be symlinks; a symlinked leaf is reported as foreign.
+    selector = install.safe_path(home, str(Path(SELECTOR).parent)) / Path(SELECTOR).name
+    pointer = install.safe_path(home, str(Path(POINTER).parent)) / Path(POINTER).name
+    known = SHIPPED_SELECTORS | {digest(library / name) for name in ('panel_launcher.py', 'selector.py')
+                                 if (library / name).is_file()}
+    if os.path.lexists(selector):
+        info = os.lstat(selector)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or digest(selector) not in known):
+            return False
+    if os.path.lexists(pointer) and not stat.S_ISREG(os.lstat(pointer).st_mode):
+        return False
+    for path in (selector, pointer):
+        if os.path.lexists(path):
+            os.unlink(path)
+    return True
 
 
 def response(state, reason, generation=None):
@@ -85,7 +133,7 @@ def _stage_locked(home, library, *, session, fixture, boundary, enable, context,
     active = records(home)
     if not active and not enable:
         return response('disabled', 'not_owned_enabled')
-    if not active and (os.path.lexists(home / SELECTOR) or os.path.lexists(home / POINTER)):
+    if not active and not adopt_orphans(home, library):
         return response('external_change', 'unowned_selector')
     try:
         if active:

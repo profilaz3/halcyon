@@ -99,8 +99,8 @@ AppStream metadata and icons are provided, but a native Store search trial has n
 been claimed by this deployment work.
 
 Since 0.5, the main package includes Islands and Penumbra. Open **Desktop →
-Dock & panel** and choose **Enable for next login** to use the included panel
-component. No additional download or administrator prompt is needed. Log out
+Dock & panel**, set **Shape** to **Islands** and choose **Switch at next
+sign-in** to use the included panel component. No additional download or administrator prompt is needed. Log out
 and back in when convenient; activation does not restart the running panel.
 
 Existing split installations migrate automatically through an empty transition
@@ -180,7 +180,7 @@ Available since Halcyon 0.4.0.
 
 Open **App settings → Updates → Get Islands…**. Halcyon downloads and verifies
 one reviewed companion package, checks the proposed system changes, then asks
-**Install Islands**. The system handles authorization. **Enable for next login**
+**Install Islands**. The system handles authorization. **Switch at next sign-in**
 is a separate per-user choice; the existing helper checks native compatibility,
 ownership and previous failures before staging activation. Log out and back in.
 

@@ -78,8 +78,11 @@ function view() {
 function timeChart(body, opts) {
   const {days, height, label, stacked, series, right = 12} = opts;
   const W = Math.max(280, body.clientWidth), H = height, narrow = W < 520;
-  const m = {t: 30, r: stacked && narrow ? 12 : right, b: 24, l: 40};
   const svg = el('svg', {width: W, height: H, role: 'img', 'aria-label': label}, body);
+  // Stacked charts name each band at the right edge; leave room for the longest.
+  const ends = stacked && !narrow ? series.map(ser => txt(svg, 0, -100, ser.name + ' 100%', {class: 'lbl'}).getComputedTextLength()) : [];
+  ends.length && svg.replaceChildren();
+  const m = {t: 30, r: stacked && narrow ? 12 : Math.max(right, ...ends.map(w => w + 12)), b: 24, l: 40};
   const iw = W - m.l - m.r, ih = H - m.t - m.b, n = days.length;
   const x = i => m.l + (n === 1 ? iw / 2 : i / (n - 1) * iw);
   const max = stacked ? 1 : niceMax(Math.max(1, ...series[0].values) * 1.08);
@@ -91,11 +94,23 @@ function timeChart(body, opts) {
   }
   const step = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(iw / 80))));
   for (let i = n - 1; i >= 0; i -= step) txt(svg, x(i), H - 6, fmtDay(days[i]), {'text-anchor': i === n - 1 && n > 1 ? 'end' : 'middle'});
+  // One marker per day: releases shipped the same day share a line and a label.
+  const marks = new Map();
   for (const r of data.releases) {
     const i = days.indexOf(r.date);
-    if (i < 0) continue;
+    if (i >= 0) marks.set(i, [...(marks.get(i) || []), r.version]);
+  }
+  let free = W;
+  for (const i of [...marks.keys()].sort((a, b) => b - a)) {
     el('line', {x1: x(i), x2: x(i), y1: m.t - 8, y2: m.t + ih, stroke: css('axis'), 'stroke-width': 1}, svg);
-    txt(svg, x(i), m.t - 14, r.version, {class: 'lbl', 'text-anchor': 'middle'});
+    const versions = marks.get(i).sort((a, b) => b.localeCompare(a, 'en', {numeric: true}));
+    const t = txt(svg, x(i), m.t - 14, versions.join(', '), {class: 'lbl', 'text-anchor': 'middle'});
+    const w = t.getComputedTextLength();
+    // Keep the label inside the chart, and drop it rather than overlap a newer one.
+    const cx = Math.min(Math.max(x(i), m.l + w / 2), Math.min(W - 2, free - 8) - w / 2);
+    if (cx - w / 2 < 0 || Math.abs(cx - x(i)) > w / 2) { t.remove(); continue; }
+    t.setAttribute('x', cx);
+    free = cx - w / 2;
   }
   if (stacked) {
     const totals = days.map((_, i) => series.reduce((s, ser) => s + ser.values[i], 0));
@@ -201,14 +216,14 @@ const shareText = r => r.on === null ? (r.known < 5 ? 'not enough data' : 'fewer
 const shareCells = r => [r.name, r.on === null ? (r.known < 5 ? 'not enough data' : 'fewer than 5') : fmt(r.on), r.on === null ? '' : pct(r.value)];
 function featureEmpty(body, f) {
   const n = f ? f.reported : 0;
-  empty(body, `Shown once at least 5 installations run Halcyon 0.6.1 or newer${n ? ` (${fmt(n)} so far)` : ''}.`);
+  empty(body, `Shown once at least 5 installations have reported their settings${n ? ` (${fmt(n)} so far)` : ''}.`);
 }
 
 function kpis() {
   const s = seg(), w = s.windows[state.range];
   const tiles = [];
   const delta = (cur, prev) => prev ? cur / prev - 1 : null;
-  const partial = !w.complete && data.history_start ? `since ${fmtDay(data.history_start)}, when tracking began` : null;
+  const partial = !w.complete && data.history_start ? `since ${fmtDay(data.history_start)}, when reporting began` : null;
   tiles.push({hero: true, label: `Active installations, last ${state.range} days`, value: fmt(w.active),
     delta: delta(w.active, w.previous), vs: `previous ${state.range} days`, note: partial || 'not enough history to compare yet'});
   tiles.push({label: 'Active yesterday', value: s.yesterday === null ? 'n/a' : fmt(s.yesterday),
@@ -276,7 +291,7 @@ const renderers = {
     if (rows.length) {
       hbars(body, rows, 'Days until half of installations updated', text);
       body.appendChild(html('div', 'note', 'Shorter is better.'));
-    } else empty(body, 'Shown from the first release after tracking began.');
+    } else empty(body, 'Shown from the first release after reporting began.');
     if (s.updates) {
       const sub = html('div', 'note', 'Signed updates through APT and DNF, DEB and RPM installs');
       sub.classList.add('spaced');
@@ -301,7 +316,7 @@ const renderers = {
     if (tableMode['c-usage']) return body.appendChild(table(['Active days', 'Installations', 'Share'], rows.map(r => [r.name, fmt(r.value), pct(r.value / total)])));
     hbars(body, rows, 'Installations by active days in the last 28 days', text);
     if (data.history_start && parseDay(data.today) - parseDay(data.history_start) < 27 * DAY)
-      body.appendChild(html('div', 'note', `Tracking began ${fmtDay(data.history_start)}, so fewer than 28 days are possible so far.`));
+      body.appendChild(html('div', 'note', `Reporting began ${fmtDay(data.history_start)}, so fewer than 28 days are possible so far.`));
   },
   'c-countries'(body) {
     const rows = seg().countries.map(c => ({name: c.name, value: c.count, muted: c.key === 'other' || c.key === 'unknown'}));
@@ -401,7 +416,7 @@ function setup() {
   select.hidden = data.segments.length < 2;
   select.addEventListener('change', () => { state.segment = select.value; renderAll(); });
   const updated = new Date(data.generated_at);
-  $('sub').textContent = `Installations that share usage data · updated hourly, last at ${updated.toLocaleString('en-GB', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'UTC'})} UTC`;
+  $('sub').textContent = `${data.since_version ? `Halcyon ${data.since_version} and newer` : 'Installations that share usage data'} · updated hourly, last at ${updated.toLocaleString('en-GB', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'UTC'})} UTC`;
   $('history').textContent = data.history_start ? `Daily history starts ${fmtDay(data.history_start)}` : '';
   document.querySelectorAll('.tbl-toggle').forEach(b => b.addEventListener('click', () => {
     const id = b.closest('.card').id;

@@ -687,6 +687,8 @@ pub enum Message {
     RecoveryExported(Result<Option<PathBuf>, String>),
     OpenIslandsGuide,
     CopyIslandsDiagnostics,
+    /// COSMIC's own log-out prompt, with its countdown and Cancel.
+    SignOut,
     NativeDone(native_jobs::Delivery),
     InstallationChecked(
         u64,
@@ -4157,6 +4159,13 @@ impl Settings {
                 if let Some(diagnostics) = self.desktop.islands.installation.diagnostics() {
                     return cosmic::iced::clipboard::write(diagnostics.to_owned());
                 }
+            }
+            Message::SignOut => {
+                return run_command(
+                    "/usr/bin/cosmic-osd".into(),
+                    vec!["log-out".into()],
+                    "Signing out",
+                );
             }
             Message::OpenIslandsGuide => {
                 return run_command(

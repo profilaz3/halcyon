@@ -11,6 +11,7 @@ use crate::settings::desktop::Message as Edit;
 use cosmic::iced::advanced::text as advanced_text;
 
 mod applets;
+pub(super) mod host;
 mod islands;
 mod panel;
 mod penumbra;
@@ -293,23 +294,17 @@ impl Settings {
                 edit(Edit::KeepMine),
             ));
         }
-        // One page, no tabs: how the bar looks, where it sits, what it holds.
-        items.push(self.bar_style(draft));
-        items.push(self.bar_position(draft));
+        // One page, no tabs: its shape, how it looks, where it sits, what it
+        // holds. A missing or unhealthy host must not hide a saved Islands
+        // shape or the way back to the bar.
         if draft.kind() == PanelKind::Panel
-            && (self.desktop.islands.installation.installed() || self.updates.islands.busy())
-        {
-            items.push(self.addons_section());
-        }
-        // A missing or unhealthy host must not hide the saved Islands intent
-        // or its recovery controls.
-        if (self.desktop.islands.installation.installed()
-            || draft.islands().known().is_some_and(|s| s.enabled))
-            && (draft.kind() == PanelKind::Dock
-                || draft.islands().known().is_some_and(|s| s.enabled))
+            || self.desktop.islands.installation.installed()
+            || draft.islands().known().is_some_and(|s| s.enabled)
         {
             items.push(self.islands_section(draft));
         }
+        items.push(self.bar_style(draft));
+        items.push(self.bar_position(draft));
         if draft.kind() == PanelKind::Panel {
             items.push(self.panel_contents(draft));
         } else {
@@ -416,9 +411,6 @@ impl Settings {
             );
         }
         let mut style: Vec<Element<'_, Message>> = Vec::new();
-        if draft.kind() == PanelKind::Panel {
-            style.push(self.panel_style(draft));
-        }
         style.push(field(
             "Size",
             choice(&draft.size(), sizes, Edit::Size, accent),
