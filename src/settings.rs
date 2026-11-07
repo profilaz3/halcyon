@@ -554,6 +554,8 @@ pub enum Message {
     UndoDesktop,
     KeyboardUndo(bool),
     UndoDesktopShown(Option<String>),
+    /// Puts back what one older change replaced, from Changes.
+    PutBackChange(String),
     ResolveUndoShown(crate::desktop::store::UndoReview, bool),
     RecoverySelect(usize, bool),
     RecoveryUseProposed(usize),
@@ -2408,6 +2410,13 @@ impl Settings {
                     self.wizard_undo_completed(shown);
                 }
                 return task;
+            }
+            Message::PutBackChange(id) => {
+                if !self.appearance_pending.is_empty() || self.notice_editing {
+                    self.failed("Finish the current edit before putting back a change.".into());
+                    return Task::none();
+                }
+                return self.put_back_change(id);
             }
             Message::UndoDesktopRestore(expected) => {
                 if self

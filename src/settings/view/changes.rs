@@ -1,7 +1,7 @@
 //! Changes: every recorded change on one page, pinned at the bottom of the
-//! sidebar. Undo is offered for the latest manual change only; every other
-//! entry opens the setting it changed. Older setups to go back to, and work
-//! left unfinished by an update, live here too.
+//! sidebar. The latest manual change offers Undo; older ones offer Put back
+//! while their record is kept; every entry opens the setting it changed. Older
+//! setups to go back to, and work left unfinished by an update, live here too.
 use super::desktop::{WARN, banner};
 use super::*;
 use chrono::Datelike;
@@ -205,7 +205,7 @@ impl Settings {
     pub(super) fn changes_page(&self) -> Element<'_, Message> {
         let mut items = vec![heading(
             "Changes",
-            "What changed on your desktop, and why. Undo the latest change, or open any change where it was made.",
+            "What changed on your desktop and widgets, and why. Undo the latest change, put back an older one, or open any change where it was made.",
         )];
         let unfinished = self.recovery_sheet.rows.len();
         if unfinished > 0 {
@@ -382,6 +382,11 @@ impl Settings {
             && entry.action == Action::Changed
             && entry.cause == Cause::You
             && self.support.local.recent.undo_id.as_deref() == Some(&entry.id);
+        // Older changes of yours can be put back while their record is kept.
+        let yours = elsewhere && entry.action == Action::Changed && entry.cause == Cause::You;
+        let put_back = yours
+            && !undo
+            && self.support.local.recent.restorable.iter().any(|id| *id == entry.id);
         let meta = format!(
             "{time} · {} · {}",
             entry.cause.title(),
@@ -408,6 +413,14 @@ impl Settings {
                 button::standard("Undo")
                     .id(cosmic::widget::Id::new("history-review-undo"))
                     .on_press(Message::UndoDesktopShown(Some(entry.id.clone())))
+                    .into(),
+            );
+        }
+        if put_back {
+            actions.push(
+                button::standard("Put back")
+                    .id(cosmic::widget::Id::new(format!("change-put-back-{}", entry.id)))
+                    .on_press(Message::PutBackChange(entry.id.clone()))
                     .into(),
             );
         }
@@ -443,9 +456,9 @@ impl Settings {
                     FG,
                 ));
             }
-            if !undo && elsewhere && entry.cause == Cause::You && entry.action == Action::Changed {
+            if yours && !undo && !put_back {
                 rows.push(label(
-                    "Undo is available only for your latest change.",
+                    "Already undone or put back, or too old to put back.",
                     12.,
                     MUTED,
                 ));

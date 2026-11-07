@@ -45,6 +45,73 @@ pub struct Summary {
     pub areas: Vec<String>,
     #[serde(default)]
     pub details: Vec<Detail>,
+    /// Which widget settings a change touched, by fixed group name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub widgets: Vec<String>,
+}
+/// The widget setting groups a change can name, in display order.
+pub const WIDGET_GROUPS: &[&str] = &[
+    "Clock",
+    "Daily overview",
+    "Weather",
+    "Calendar",
+    "System monitor",
+    "Music",
+    "Notes",
+    "Focus",
+    "Projects",
+    "Recipes",
+    "Activity",
+    "Time of day",
+    "Widget style",
+    "Wallpaper effects",
+    "Widget arrangement",
+    "Dock and panel style",
+    "Settings app",
+];
+/// The group a widget setting belongs to, from its first path part.
+pub fn widget_group(pointer: &str) -> Option<&'static str> {
+    let mut parts = pointer.trim_start_matches('/').split('/');
+    let first = parts.next()?;
+    if pointer == "/appearance/style_bars" {
+        return Some("Dock and panel style");
+    }
+    // An update interval belongs to the widget it updates.
+    if first == "refresh_intervals" {
+        return Some(match parts.next() {
+            Some("clock") => "Clock",
+            Some("weather") => "Weather",
+            Some("calendar") => "Calendar",
+            Some("projects") => "Projects",
+            Some("devbox") => "System monitor",
+            Some("glance") => "Daily overview",
+            _ => "Widget arrangement",
+        });
+    }
+    Some(match first {
+        "clock" | "clock_font" => "Clock",
+        "glance" => "Daily overview",
+        "weather" | "location" => "Weather",
+        "calendar_private" | "calendar_show_today" | "calendar_show_tomorrow"
+        | "meeting_notice_minutes" => "Calendar",
+        "devbox" => "System monitor",
+        "music" => "Music",
+        "notes" => "Notes",
+        "focus" => "Focus",
+        "project_roots" => "Projects",
+        "recipes" => "Recipes",
+        "activity_island" => "Activity",
+        "moments" => "Time of day",
+        "appearance" | "widget_font" | "theme" | "materials" | "material_motion" => "Widget style",
+        "rain" => "Wallpaper effects",
+        "enabled_widgets" | "widgets_visible" | "widget_order" | "widget_display"
+        | "widget_positions" | "widget_sizes" | "widget_monitors" | "monitor_layouts"
+        | "placement" => "Widget arrangement",
+        "sidebar_slide" | "show_explanations" | "settings_animations" | "onboarded"
+        | "setup_dismissed" => "Settings app",
+        key if key.starts_with("setup_followup_") => "Settings app",
+        _ => return None,
+    })
 }
 const AREAS: &[&str] = &[
     "Appearance",
@@ -75,6 +142,11 @@ const SETTINGS: &[&str] = &[
 impl Summary {
     pub fn title(&self) -> String {
         if self.action == Action::Undone {
+            if let ([one], Some(Owner::Preferences)) =
+                (self.widgets.as_slice(), Owner::parse(&self.owner))
+            {
+                return format!("Undid a change to {one}");
+            }
             return "Undid a desktop change".into();
         }
         if self.action == Action::Kept {
@@ -104,6 +176,13 @@ impl Summary {
                     "{}: {} → {}{}",
                     detail.setting, detail.before, detail.after, unit
                 );
+            }
+        }
+        if matches!(owner, Some(Owner::Preferences)) {
+            match self.widgets.as_slice() {
+                [one] => return format!("Changed {one}"),
+                [one, two] => return format!("Changed {one} and {two}"),
+                _ => {}
             }
         }
         let title = match owner {
@@ -237,8 +316,14 @@ pub(super) fn summarize(file: &UndoFile, display: bool) -> Summary {
             });
         }
     }
+    let mut widgets = Vec::new();
     if let Some(widget) = &file.widget {
         areas.push("Widgets".into());
+        for group in WIDGET_GROUPS {
+            if widget.fields.iter().any(|f| widget_group(&f.pointer) == Some(group)) {
+                widgets.push(group.to_string());
+            }
+        }
         for field in &widget.fields {
             let name = match field.pointer.as_str() {
                 "/appearance/opacity" => "Widget opacity",
@@ -274,9 +359,15 @@ pub(super) fn summarize(file: &UndoFile, display: bool) -> Summary {
         action: Action::Changed,
         areas,
         details,
+        widgets,
     }
 }
-pub(super) fn append(recent: &mut Vec<Summary>, summary: Summary) {
+pub(super) fn append(recent: &mut Vec<Summary>, mut summary: Summary) {
+    // A group name this version doesn't know is dropped, never the entry.
+    summary
+        .widgets
+        .retain(|w| WIDGET_GROUPS.contains(&w.as_str()));
+    summary.widgets.truncate(WIDGET_GROUPS.len());
     if !summary.valid() || recent.iter().any(|s| s.id == summary.id) {
         return;
     }
@@ -305,6 +396,8 @@ pub struct RecentChanges {
     pub entries: Vec<Summary>,
     pub undo_id: Option<String>,
     pub earlier_partial: bool,
+    /// Your changes whose full record is still kept, so they can be put back.
+    pub restorable: Vec<String>,
 }
 impl DesktopStore {
     pub fn recent_change_path(&self) -> std::path::PathBuf {
@@ -315,6 +408,13 @@ impl DesktopStore {
             return Ok(RecentChanges::default());
         };
         let undo_id = file.manual().map(|f| f.id.clone());
+        let restorable = file
+            .history
+            .iter()
+            .chain(std::iter::once(&file))
+            .filter(|f| f.source == Source::Manual && has_changes(f))
+            .map(|f| f.id.clone())
+            .collect();
         let earlier_partial = file.recent_partial || file.recent.is_empty();
         let mut entries = file.recent.clone();
         if entries.is_empty() {
@@ -329,6 +429,7 @@ impl DesktopStore {
             entries,
             undo_id,
             earlier_partial,
+            restorable,
         })
     }
 }
