@@ -155,8 +155,10 @@ fn fb15_native_moments_primary_controls_fit_and_keyboard_activation_is_scoped() 
             super::super::Message::Resized(Size::new(width, height)),
         );
         let mut native = crate::native_test::Native::new(Size::new(width, height));
-        // The schedule buttons only show once switching is on; the switch is always there.
-        for id in ["moment-activate", "moment-auto"] {
+        // On Time of day, what changes is in view; the styles follow below
+        // where you are and the three parts of the day.
+        crate::settings::tests::native_reveal(&app, &mut native, "moment-activate");
+        for id in ["moment-activate"] {
             let b = native.bounds(app.settings_view(), id);
             assert!(
                 b.x >= 0. && b.y >= 0. && b.x + b.width <= width && b.y + b.height <= height,
@@ -176,9 +178,6 @@ fn fb15_native_moments_primary_controls_fit_and_keyboard_activation_is_scoped() 
             &format!("fb15-night-{width}"),
         );
         assert_eq!(raw(), before);
-        // The phase-specific Schedule action is primary. The all-schedules link
-        // remains reachable below the style controls through the actual scrollable.
-        crate::settings::tests::native_reveal(&app, &mut native, "moments-schedules");
         crate::settings::tests::native_reveal(&app, &mut native, "moment-activate");
         // "Right now" is a segmented choice; focus its "Night style" option.
         let night = native.text_bounds(app.settings_view(), "Night style").center();

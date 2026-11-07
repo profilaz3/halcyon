@@ -187,9 +187,7 @@ impl Page {
     /// The sidebar root a page belongs to.
     fn sidebar(self) -> Self {
         match self.canonical() {
-            Self::Themes | Self::Appearance | Self::DesktopAppearance | Self::Moments => {
-                Self::Themes
-            }
+            Self::Themes | Self::Appearance | Self::DesktopAppearance => Self::Themes,
             Self::DesktopProfiles | Self::DesktopAutomation | Self::AdaptiveLooks => {
                 Self::DesktopProfiles
             }
@@ -218,7 +216,7 @@ impl Page {
     /// The short sidebar name.
     fn nav_title(self) -> &'static str {
         match self {
-            Self::DesktopAutomation => "Change with time of day",
+            Self::DesktopAutomation => "Time of day",
             Self::Overview => "Widgets",
             Self::Widgets => "Widgets",
             Self::WidgetLayout => "Layout",
@@ -329,8 +327,8 @@ impl Page {
             Self::DesktopMotion => "Accessibility",
             Self::DesktopWindowRules => "Apps that don’t tile",
             Self::DesktopShortcuts => "Shortcuts",
-            Self::DesktopAutomation => "Change with time of day",
-            Self::Moments => "Day and night style",
+            Self::DesktopAutomation => "Time of day",
+            Self::Moments => "Time of day",
             Self::AdaptiveLooks => "Adaptive looks",
             Self::Builder => "Widget builder",
             Self::Changes => "Changes",
@@ -358,11 +356,13 @@ impl Page {
             "history" | "recent" | "recent-changes" | "restore" => "changes",
             _ => value,
         };
-        Self::ALL
+        let page = Self::ALL
             .into_iter()
             .find(|page| page.key() == value)
-            .unwrap_or(Self::Overview)
-            .canonical()
+            .unwrap_or(Self::Overview);
+        // Day and night style opens Time of day ready for widget styles;
+        // opening the page canonicalizes it.
+        if page == Self::Moments { page } else { page.canonical() }
     }
     /// Keep legacy layout links and recovered drafts, but use one editor.
     fn canonical(self) -> Self {
@@ -370,8 +370,9 @@ impl Page {
             Self::WidgetLayout | Self::Widgets | Self::Desktop => Self::Overview,
             // Workspaces is a section of Windows.
             Self::DesktopWorkspaces => Self::DesktopWindows,
-            // The shifting looks are chosen on the time of day page.
-            Self::AdaptiveLooks => Self::DesktopAutomation,
+            // Shifting looks and day and night widget styles are both
+            // chosen on the one Time of day page.
+            Self::AdaptiveLooks | Self::Moments => Self::DesktopAutomation,
             other => other,
         }
     }
@@ -983,6 +984,8 @@ impl cosmic::Application for Settings {
         let _native = crate::desktop::islands::Installation::native_view(Default::default());
         // Styles name their fonts; learn which are installed before drawing.
         crate::desktop_theme::load_installed_fonts();
+        // The old Day and night style page opens Time of day for widgets.
+        let widget_style = page == Page::Moments;
         let mut page = page.canonical();
         // Settings › Restore became Changes; whoever left Settings there
         // comes back to Changes.
@@ -1127,6 +1130,7 @@ impl cosmic::Application for Settings {
             capture_key: String::new(),
             window: initial_size(),
         };
+        app.automation.widget_mode = widget_style.then_some(true);
         app.set_header_title("Halcyon".into());
         // With frosted windows, libcosmic's title bar has no color of its own:
         // the compositor's blur shows through it, unlike the opaque pages, and
@@ -3197,6 +3201,11 @@ impl Settings {
             }
             Message::Page(page) => {
                 let reveal_widgets = page == Page::Widgets;
+                // The old Day and night style page opens Time of day ready
+                // for widget styles.
+                if page == Page::Moments {
+                    self.automation.widget_mode = Some(true);
+                }
                 let legacy_layout = page == Page::WidgetLayout;
                 let page = page.canonical();
                 let from = self.page;

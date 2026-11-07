@@ -335,21 +335,16 @@ impl Settings {
             .id(cosmic::widget::Id::new("appearance-corners"))
             .into(),
         ));
-        // Which style shows now stays in view; what the page does sits behind "?".
-        rows.push(match self.config.moments.active {
-            Some(phase) => self.link_row_state(
-                "Day and night style",
-                format!("Showing the {} style", phase.title().to_lowercase()),
+        // A day or night widget style overrides the style above, so while
+        // one shows, say so; choosing them lives on Looks › Time of day.
+        if let Some(phase) = self.config.moments.active {
+            rows.push(self.link_row_state(
+                "Day and night widget style",
+                format!("Showing the {} style · Time of day", phase.title().to_lowercase()),
                 Message::Page(Page::Moments),
                 "appearance-moments".into(),
-            ),
-            None => self.link_row(
-                "Day and night style",
-                "Widget styles only. Wallpaper and colors stay",
-                Message::Page(Page::Moments),
-                "appearance-moments".into(),
-            ),
-        });
+            ));
+        }
         group(Some("Widgets and bars"), rows)
     }
 

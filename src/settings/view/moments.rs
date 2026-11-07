@@ -48,9 +48,9 @@ impl Settings {
             )],
         )
     }
-    /// A different widget style for day and night: which one shows now,
-    /// then the style each one uses.
-    pub(super) fn moments_page(&self) -> Element<'_, Message> {
+    /// On the Time of day page in Widget style only: a preview, which style
+    /// shows now, then the style each one uses.
+    pub(super) fn moment_style_section(&self) -> Element<'_, Message> {
         let phase = self.moment_preview;
         let look = self.config.moments.get(phase);
         let preview = self.moment_sample();
@@ -138,53 +138,7 @@ impl Settings {
                 Some(edit(Edit::Activate(Some(p)))),
             )
         }));
-        // What the schedule does today, so the buttons aren't a mystery.
-        let h24 = self.config.clock.format_24h;
-        let planned: Vec<String> = self
-            .automation
-            .settings()
-            .ok()
-            .map(|settings| {
-                Phase::ALL
-                    .into_iter()
-                    .filter_map(|p| {
-                        let rule = settings.rules.iter().find(|rule| {
-                            rule.enabled
-                                && rule.profile == crate::automation::ProfileRef::Moment(p)
-                        })?;
-                        Some(format!("{} {}", p.title(), rule.when.summary(h24).to_lowercase()))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let scheduled = !planned.is_empty();
-        let schedule = if scheduled {
-            planned.join(" · ")
-        } else {
-            "Pick when the day and night styles start".to_string()
-        };
-        let schedule_buttons: Vec<Element<'_, Message>> = Phase::ALL
-            .into_iter()
-            .map(|p| {
-                button::standard(format!("{}…", p.title()))
-                    .id(cosmic::widget::Id::new(if p == Phase::Day {
-                        "moment-schedule".to_string()
-                    } else {
-                        format!("moment-schedule-{}", p.title().to_lowercase())
-                    }))
-                    .on_press(Message::Automation(
-                        crate::settings::automation::Message::Schedule(
-                            crate::automation::ProfileRef::Moment(p),
-                        ),
-                    ))
-                    .into()
-            })
-            .collect();
         column::with_children(vec![
-            heading(
-                "Day and night style",
-                "Widgets can look different by day and by night. Wallpaper and colors stay as they are.",
-            ),
             container(self.preview_stage(
                 column::with_children(vec![
                     container(label(
@@ -213,42 +167,14 @@ impl Settings {
             .id(cosmic::widget::Id::new("moment-preview"))
             .into(),
             group(
-                Some("When it shows"),
-                vec![
-                    group_row(
-                        "Right now",
-                        "Off shows your Appearance settings as they are",
-                        container(segmented(showing, accent))
-                            .id(cosmic::widget::Id::new("moment-activate"))
-                            .into(),
-                    ),
-                    group_row_state(
-                        "Switch automatically",
-                        schedule,
-                        {
-                            // Turning it on starts with the day style's time.
-                            let toggle = container(toggler(scheduled).on_toggle(|on| {
-                                Message::Automation(if on {
-                                    crate::settings::automation::Message::Schedule(
-                                        crate::automation::ProfileRef::Moment(Phase::Day),
-                                    )
-                                } else {
-                                    crate::settings::automation::Message::MomentsOff
-                                })
-                            }))
-                            .id(cosmic::widget::Id::new("moment-auto"));
-                            let mut controls: Vec<Element<'_, Message>> = Vec::new();
-                            if scheduled {
-                                controls.extend(schedule_buttons);
-                            }
-                            controls.push(toggle.into());
-                            row::with_children(controls)
-                                .spacing(8)
-                                .align_y(Alignment::Center)
-                                .into()
-                        },
-                    ),
-                ],
+                None,
+                vec![group_row(
+                    "Showing now",
+                    "Until the next part of the day. Off shows your Appearance settings as they are.",
+                    container(segmented(showing, accent))
+                        .id(cosmic::widget::Id::new("moment-activate"))
+                        .into(),
+                )],
             ),
             column::with_children(vec![
             row::with_children(vec![
@@ -326,15 +252,6 @@ impl Settings {
             ])
             .spacing(8)
             .into(),
-            group(
-                None,
-                vec![self.link_row(
-                    "Change the whole look with the time of day",
-                    "Wallpaper and colors too, in Looks",
-                    Message::Page(Page::DesktopAutomation),
-                    "moments-schedules".into(),
-                )],
-            ),
         ])
         .spacing(16)
         .into()

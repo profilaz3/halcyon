@@ -328,7 +328,10 @@ fn polish050_schedule_from_moment_routes_without_losing_target() {
     }
     let root = isolated_root();
     let mut app = open_isolated_editor(&root);
+    send_settings(&mut app, Message::Page(Page::Themes));
+    // Day and night style is now part of Time of day.
     send_settings(&mut app, Message::Page(Page::Moments));
+    assert_eq!(app.page, Page::DesktopAutomation);
     let target = crate::automation::ProfileRef::Moment(crate::moments::Phase::Night);
     send_settings(
         &mut app,
@@ -341,9 +344,9 @@ fn polish050_schedule_from_moment_routes_without_losing_target() {
     send_settings(&mut app, Message::Page(Page::AdaptiveLooks));
     assert_eq!(app.page, Page::DesktopAutomation);
     assert_eq!(app.automation.draft.as_ref().unwrap().profile, Some(target));
-    // Back returns to where scheduling started.
+    // Back returns to where the person came from.
     send_settings(&mut app, Message::Back);
-    assert_eq!(app.page, Page::Moments);
+    assert_eq!(app.page, Page::Themes);
 }
 // Include inside settings::tests; uses the existing isolated desktop harness.
 #[test]

@@ -86,8 +86,8 @@ impl Settings {
             heading(rule_editor_title(draft), "")
         } else {
             heading(
-                "Change with time of day",
-                "Your wallpaper, colors and widgets switch on their own through the day.",
+                "Time of day",
+                "Your look, or just your widgets' style, switches on its own through the day.",
             )
         };
         let mut items = vec![split(title, store_pill(editor.store(), accent))];
@@ -119,10 +119,27 @@ impl Settings {
             items.push(self.automation_rules(&settings));
             return column::with_children(items).spacing(16).into();
         }
-        // The day slots come first; choosing a look is what turns this on.
-        items.push(self.automation_day(&settings));
-        if !settings.rules.is_empty() {
-            items.push(self.automation_status(&settings));
+        // One switch, then what changes, where you are and the three parts
+        // of the day; choosing what a part of the day uses turns it on.
+        let widgets = self.time_widget_mode(&settings);
+        items.push(self.automation_status(&settings));
+        items.push(self.time_mode(&settings, widgets));
+        items.push(self.automation_day(&settings, widgets));
+        if widgets {
+            items.push(self.moment_style_section());
+        } else if let Some(active) = self.config.moments.active {
+            // A widget style left on from before would hide the look's own.
+            items.push(group(
+                None,
+                vec![group_row_state(
+                    format!("Widgets keep the {} style", active.title().to_lowercase()),
+                    "Looks switch, but widgets stay in this style",
+                    button::standard("Use each look’s style")
+                        .id(cosmic::widget::Id::new("time-of-day-style-reset"))
+                        .on_press(Message::Moment(crate::settings::moments::Message::Activate(None)))
+                        .into(),
+                )],
+            ));
         }
         items.push(self.disclosure(
             "automation-more",
@@ -139,37 +156,48 @@ impl Settings {
         column::with_children(items).spacing(16).into()
     }
 
-    /// Compact shared status on the pages that choose an appearance.
-    pub(super) fn automation_link_status(&self, id: &'static str) -> Element<'_, Message> {
-        let text = match self.automation.settings() {
-            Ok(settings) => {
-                words::status_with_solar(
-                    settings,
-                    &self.automation.state,
-                    &Local,
-                    chrono::Utc::now(),
-                    self.automation.manual_at,
-                    self.h24(),
-                    &self.automation.solar,
-                )
-                .headline
-            }
-            Err(_) => "Needs a look".into(),
-        };
+    /// Widget style only when the daily slots say so; the chosen mode otherwise.
+    pub(in crate::settings) fn time_widget_mode(&self, settings: &crate::automation::Automation) -> bool {
+        self.automation.widget_style(settings)
+    }
+
+    /// What changes through the day: the whole look or only the widgets.
+    fn time_mode(&self, settings: &crate::automation::Automation, widgets: bool) -> Element<'_, Message> {
+        let writable = self.automation.writable() && !self.native_busy;
+        let _ = settings;
         group(
             None,
-            vec![self.link_row_state(
-                "Change with time of day",
-                text,
-                Message::Page(Page::DesktopAutomation),
-                id.into(),
+            vec![group_row(
+                "What changes",
+                "Whole look switches wallpaper, colors and widgets. Widget style only switches between the day and night widget styles; wallpaper and colors stay.",
+                container(segmented(
+                    vec![
+                        (
+                            "Whole look".into(),
+                            !widgets,
+                            (writable && widgets).then(|| edit(Edit::WidgetStyle(false))),
+                        ),
+                        (
+                            "Widget style only".into(),
+                            widgets,
+                            (writable && !widgets).then(|| edit(Edit::WidgetStyle(true))),
+                        ),
+                    ],
+                    self.settings_accent(),
+                ))
+                .id(cosmic::widget::Id::new("time-of-day-mode"))
+                .into(),
             )],
         )
     }
 
     /// Day, evening and night as three sky tiles, each with its look
     /// picker, then where you are (the times depend on it).
-    fn automation_day(&self, settings: &crate::automation::Automation) -> Element<'_, Message> {
+    fn automation_day(
+        &self,
+        settings: &crate::automation::Automation,
+        widgets: bool,
+    ) -> Element<'_, Message> {
         use crate::desktop::profiles::adaptive::Phase;
         let editor = &self.automation;
         let context = &editor.solar;
@@ -196,9 +224,14 @@ impl Settings {
                 matches!(rule.when, Trigger::Solar { event: e, days, .. }
                     if e == event && days == Days::EVERY)
             });
+            // Each mode offers its own choices: looks, or widget styles.
+            let (choices, labels) = if widgets {
+                (&editor.style_choices, &editor.style_labels)
+            } else {
+                (&editor.look_choices, &editor.look_labels)
+            };
             let selected = match rule {
-                Some(rule) => editor
-                    .profiles
+                Some(rule) => choices
                     .iter()
                     .position(|(profile, _)| *profile == rule.profile)
                     .map(|index| index + 1),
@@ -219,18 +252,19 @@ impl Settings {
                 }
                 None => format!("From {}", moment(event)),
             };
-            let targets: Vec<_> = editor
-                .profiles
-                .iter()
-                .map(|(profile, _)| profile.clone())
-                .collect();
-            let picker = cosmic::widget::dropdown(&editor.moment_labels, selected, move |index| {
+            let targets: Vec<_> = choices.iter().map(|(profile, _)| profile.clone()).collect();
+            let picker = cosmic::widget::dropdown(labels, selected, move |index| {
                 edit(Edit::Moment(
                     event,
                     index.checked_sub(1).map(|index| targets[index].clone()),
                 ))
             })
-            .placeholder("Look unavailable")
+            // Says what the slot holds when it isn't one of this mode's choices.
+            .placeholder(match rule.map(|rule| &rule.profile) {
+                Some(crate::automation::ProfileRef::Moment(_)) => "Uses a widget style",
+                Some(_) if widgets => "Uses a whole look",
+                _ => "Look unavailable",
+            })
             .width(Length::Fill);
             let (top, bottom, ink) = match phase {
                 // Deep enough that white text and the picker stay readable.
@@ -255,7 +289,24 @@ impl Settings {
                         label(starts, 12., Color { a: 0.8, ..ink }),
                         cosmic::iced::widget::space().height(Length::Fill).into(),
                         if has_city {
-                            picker.into()
+                            // A theme-coloured plate keeps the picker's text
+                            // readable on every sky, in light and dark.
+                            container(picker)
+                                .class(cosmic::theme::Container::custom(|theme| {
+                                    let base: Color = theme.cosmic().background(theme.transparent).base.into();
+                                    cosmic::iced::widget::container::Style {
+                                        background: Some(Background::Color(Color {
+                                            a: 0.82,
+                                            ..base
+                                        })),
+                                        border: Border {
+                                            radius: 8.into(),
+                                            ..Default::default()
+                                        },
+                                        ..Default::default()
+                                    }
+                                }))
+                                .into()
                         } else {
                             cosmic::iced::widget::space().height(0).into()
                         },
@@ -299,12 +350,12 @@ impl Settings {
         });
         let ready = has_city && editor.writable() && !self.native_busy;
         let accent = self.settings_accent();
-        let mut city = Some(group(None, vec![self.schedule_city_controls(source)]));
-        let mut items = Vec::new();
-        if !has_city {
-            items.extend(city.take());
-        }
+        // Where you are sets the times, so it comes before them.
+        let mut items = vec![group(None, vec![self.schedule_city_controls(source)])];
         items.push(row::with_children(tiles).spacing(12).into());
+        if widgets {
+            return column::with_children(items).spacing(16).into();
+        }
         let shifting: Element<'_, Message> = container(segmented(
             Look::ALL
                 .into_iter()
@@ -338,7 +389,6 @@ impl Settings {
                 )
             }],
         ));
-        items.extend(city);
         column::with_children(items)
         .spacing(16)
         .into()
@@ -361,7 +411,21 @@ impl Settings {
             Tone::Attention => WARN,
             _ => MUTED,
         };
-        // No master switch: a status line, with Turn off or Turn on beside it.
+        // The master switch: on while anything is set to switch.
+        if settings.rules.is_empty() {
+            // Nothing to switch yet: no dead switch, only what to do first.
+            let source = if editor.solar.city(Source::Weather).is_ok() {
+                Source::Weather
+            } else {
+                Source::Manual
+            };
+            let next = if editor.solar.city(source).is_ok() {
+                "Choose what a part of the day uses below to turn this on"
+            } else {
+                "Add where you are to begin"
+            };
+            return group(None, vec![detail_state("Off", next)]);
+        }
         let text = if settings.enabled {
             let mut lines = vec![label(status.headline.trim_end_matches('.').to_string(), 14., FG)];
             if let Some(more) = status.detail {
@@ -369,17 +433,16 @@ impl Settings {
             }
             column::with_children(lines).spacing(2).into()
         } else {
-            detail_state("Switching is off", "Your choices above are kept for later")
+            detail_state("Off", "Your choices below are kept for later")
         };
+        let mut switch = toggler(settings.enabled);
+        if editor.writable() {
+            switch = switch.on_toggle(|on| edit(Edit::Enable(on)));
+        }
         let head = split(
             text,
-            button::text(if settings.enabled { "Turn off" } else { "Turn on" })
+            container(switch)
                 .id(cosmic::widget::Id::new("automation-enable"))
-                .on_press_maybe(
-                    editor
-                        .writable()
-                        .then_some(edit(Edit::Enable(!settings.enabled))),
-                )
                 .into(),
         );
         let mut rows = vec![head];
@@ -411,7 +474,6 @@ impl Settings {
         let now_unix = now.timestamp();
         if settings.running() && editor.writable() {
             if settings.skipping_at(now_unix).is_some() {
-                rows.push(separator());
                 rows.push(
                     row::with_children(vec![
                         container(label(
@@ -431,7 +493,6 @@ impl Settings {
                     .into(),
                 );
             } else if settings.paused_at(now_unix).is_some() {
-                rows.push(separator());
                 rows.push(
                     row::with_children(vec![
                         container(label(
@@ -478,7 +539,6 @@ impl Settings {
                             .into(),
                     );
                 }
-                rows.push(separator());
                 rows.push(
                     row::with_children(choices)
                         .spacing(6)

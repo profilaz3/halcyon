@@ -50,8 +50,8 @@ fn opening_reads_only_and_offers_every_profile_and_display() {
             "Moss · Day",
             "Moss · Evening",
             "Moss · Night",
-            "Day moment",
-            "Night moment"
+            "Day style",
+            "Night style"
         ]
     );
     let choices = editor.display_choices();
@@ -514,13 +514,6 @@ fn adaptive_cycle_requires_city_and_adds_once_without_touching_desktop_or_existi
         assert_eq!(rule.when, old.when);
         assert!(matches!(&rule.profile, ProfileRef::Preset(id) if id.starts_with("adaptive-moss-")));
     }
-    // Turning the cycle off keeps every other rule.
-    editor.update(Message::AdaptiveOff, true);
-    let off = saved(&fixture);
-    assert_eq!(off.rules, before.rules);
-    // Turning day and night styles off removes only moment rules.
-    editor.update(Message::MomentsOff, true);
-    assert!(saved(&fixture).rules.is_empty());
     assert_eq!(
         fixture.store().app_config().map(|p| std::fs::read(p).ok()),
         config
