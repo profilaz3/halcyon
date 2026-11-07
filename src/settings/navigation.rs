@@ -618,8 +618,8 @@ const SEARCH: &[SearchHit] = &[
     ),
     hit(
         Page::DesktopAutomation,
-        "Change with time of day",
-        "adaptive daily cycle day evening night moments automation schedule automatic time displays monitors rules preset sun solar dawn sunrise noon golden hour sunset city timezone",
+        "Time of day",
+        "change with time of day day and night style widget style moments clock night style adaptive daily cycle day evening night moments automation schedule automatic time displays monitors rules preset sun solar dawn sunrise noon golden hour sunset city timezone",
         false,
     ),
     STARTUP,
@@ -831,7 +831,7 @@ impl Page {
             | Self::General
             | Self::Changes => None,
             // Detail editors that open from rows on Appearance.
-            Self::Appearance | Self::DesktopAppearance | Self::Moments => Some(Self::Themes),
+            Self::Appearance | Self::DesktopAppearance => Some(Self::Themes),
             Self::DesktopAutomation => Some(Self::DesktopProfiles),
             Self::AdaptiveLooks => Some(Self::DesktopAutomation),
             Self::PendingChanges => Some(Self::Changes),
@@ -1065,7 +1065,7 @@ mod tests {
         assert_eq!(Page::Calendar.parent(), Some(Page::Overview));
         assert_eq!(Page::DesktopDock.parent(), None);
         assert_eq!(Page::DesktopWorkspaces.sidebar(), Page::DesktopWindows);
-        assert_eq!(Page::Moments.sidebar(), Page::Themes);
+        assert_eq!(Page::Moments.sidebar(), Page::DesktopProfiles);
         assert_eq!(
             entries,
             [
@@ -1086,7 +1086,7 @@ mod tests {
         }
         // Roots have no parent; detailed editors go Back to their root.
         assert_eq!(Page::DesktopAppearance.parent(), Some(Page::Themes));
-        assert_eq!(Page::Moments.parent(), Some(Page::Themes));
+        assert_eq!(Page::Moments.parent(), Some(Page::DesktopProfiles));
         assert_eq!(Page::DesktopMotion.parent(), None);
         assert_eq!(
             Page::DesktopWindowRules.parent(),
@@ -1721,7 +1721,7 @@ impl Settings {
         match target {
             KeptTarget::Wallpaper => self.handle(Message::Page(Page::DesktopWallpaper)),
             KeptTarget::Colors => self.handle(Message::Page(Page::Themes)),
-            KeptTarget::Adaptive => self.handle(Message::Page(Page::AdaptiveLooks)),
+            KeptTarget::Adaptive => self.handle(Message::Page(Page::DesktopAutomation)),
             KeptTarget::Setup(selection) => {
                 if self.page == Page::DesktopProfiles && self.profiles.selection() != &selection {
                     let _ = self.leave_review_to_browse();

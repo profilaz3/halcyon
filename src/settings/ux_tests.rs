@@ -2246,7 +2246,7 @@ fn ux_native_eight_roots_and_every_old_route_resolves() {
         (Page::Themes, Page::Themes),
         (Page::Appearance, Page::Themes),
         (Page::DesktopAppearance, Page::Themes),
-        (Page::Moments, Page::Themes),
+        (Page::Moments, Page::DesktopProfiles),
         (Page::DesktopProfiles, Page::DesktopProfiles),
         (Page::DesktopAutomation, Page::DesktopProfiles),
         (Page::AdaptiveLooks, Page::DesktopProfiles),

@@ -55,10 +55,9 @@ pub enum DraftEdit {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Message {
     AdaptiveRoutine(crate::desktop::profiles::adaptive::Look, Source),
-    /// Stop a look's own shades from switching through the day.
-    AdaptiveOff,
-    /// Stop day and night widget styles from switching on their own.
-    MomentsOff,
+    /// What time of day changes: `true` only the widget style (day and
+    /// night styles), `false` the whole look.
+    WidgetStyle(bool),
     ManualCity(crate::config::Location),
     /// Choose the look for one part of the day (`None`: don't change then).
     Moment(Event, Option<ProfileRef>),
@@ -240,6 +239,18 @@ pub struct AutomationEditor {
     pub profile_labels: Vec<String>,
     /// "Don't change" followed by every look, for the time-of-day choices.
     pub moment_labels: Vec<String>,
+    /// The whole looks a part of the day can switch to.
+    pub look_choices: Vec<(ProfileRef, String)>,
+    pub look_labels: Vec<String>,
+    /// The widget styles a part of the day can switch to.
+    pub style_choices: Vec<(ProfileRef, String)>,
+    pub style_labels: Vec<String>,
+    /// The mode chosen before any rule says which it is.
+    pub widget_mode: Option<bool>,
+    /// The daily slots each mode had before switching away from it
+    /// (`[whole look, widget style]`) with their places in the list, put
+    /// back on switching back.
+    stashed: [Option<Vec<(usize, Rule)>>; 2],
     profile_scopes: Vec<(ProfileRef, Vec<Domain>)>,
     pub displays: Vec<Display>,
     /// Display connectors with nothing connected.
@@ -259,7 +270,41 @@ pub struct AutomationEditor {
     running: Option<bool>,
 }
 
+/// One of the three daily sun-time slots: Day, Evening or Night.
+pub fn daily_slot(rule: &Rule) -> bool {
+    crate::desktop::profiles::adaptive::Phase::ALL.into_iter().any(|phase| {
+        matches!(rule.when, Trigger::Solar { event, days, .. }
+            if event == phase.event() && days == Days::EVERY)
+    })
+}
+
+fn styled(rule: &Rule) -> bool {
+    matches!(rule.profile, ProfileRef::Moment(_))
+}
+
 impl AutomationEditor {
+    /// What time of day changes: widget styles when the daily slots hold
+    /// only styles, whole looks when only looks; otherwise what was chosen.
+    pub fn widget_style(&self, settings: &Automation) -> bool {
+        let daily = || settings.rules.iter().filter(|rule| daily_slot(rule));
+        match (daily().any(styled), daily().any(|rule| !styled(rule))) {
+            (true, false) => true,
+            (false, true) => false,
+            (true, true) => self.widget_mode.unwrap_or(false),
+            (false, false) => self.widget_mode.unwrap_or_else(|| {
+                settings.rules.iter().any(styled) && !settings.rules.iter().any(|r| !styled(r))
+            }),
+        }
+    }
+
+    /// Before an edit, remember the mode on screen so emptying the slots
+    /// doesn't flip the page to the other one.
+    fn hold_mode(&mut self) {
+        if let Ok(settings) = self.settings() {
+            self.widget_mode = Some(self.widget_style(settings));
+        }
+    }
+
     pub fn open(&mut self) {
         if self.store.is_none() {
             self.store = Some(DesktopStore::from_env().map_err(|error| error.to_string()));
@@ -386,7 +431,7 @@ impl AutomationEditor {
             crate::moments::Phase::ALL.into_iter().map(|phase| {
                 (
                     ProfileRef::Moment(phase),
-                    format!("{} moment", phase.title()),
+                    format!("{} style", phase.title()),
                 )
             }),
         );
@@ -409,6 +454,21 @@ impl AutomationEditor {
         self.profile_labels = choices.iter().map(|(_, name)| name.clone()).collect();
         self.moment_labels = std::iter::once("Keep current look".to_string())
             .chain(self.profile_labels.iter().cloned())
+            .collect();
+        self.look_choices = choices
+            .iter()
+            .filter(|(profile, _)| !matches!(profile, ProfileRef::Moment(_)))
+            .cloned()
+            .collect();
+        self.look_labels = std::iter::once("Keep current look".to_string())
+            .chain(self.look_choices.iter().map(|(_, name)| name.clone()))
+            .collect();
+        self.style_choices = crate::moments::Phase::ALL
+            .into_iter()
+            .map(|phase| (ProfileRef::Moment(phase), format!("{} style", phase.title())))
+            .collect();
+        self.style_labels = std::iter::once("Keep current style".to_string())
+            .chain(self.style_choices.iter().map(|(_, name)| name.clone()))
             .collect();
         self.profiles = choices;
         self.profile_scopes = scopes;
@@ -602,29 +662,138 @@ impl AutomationEditor {
                     Ok(())
                 }, Some("Daily cycle added. It starts at the next sun event.".into()));
             }
-            Message::AdaptiveOff => {
-                self.change(
-                    |settings, _| {
-                        settings.rules.retain(|r| {
-                            !matches!(&r.profile, ProfileRef::Preset(id) if id.starts_with("adaptive-"))
-                        });
+            Message::WidgetStyle(widgets) => {
+                self.widget_mode = Some(widgets);
+                let Ok(settings) = self.settings().cloned() else {
+                    return;
+                };
+                let source = settings
+                    .rules
+                    .iter()
+                    .find_map(|rule| match rule.when {
+                        Trigger::Solar { source, .. } => Some(source),
+                        _ => None,
+                    })
+                    .unwrap_or(if self.solar.city(Source::Weather).is_ok() {
+                        Source::Weather
+                    } else {
+                        Source::Manual
+                    });
+                let located = self.solar.city(source).is_ok();
+                // The slots this mode gives up, kept to come back on switching back.
+                let leaving: Vec<(usize, Rule)> = settings
+                    .rules
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, rule)| daily_slot(rule) && styled(rule) != widgets)
+                    .map(|(index, rule)| (index, rule.clone()))
+                    .collect();
+                let kept = settings.rules.iter().any(|rule| daily_slot(rule) && styled(rule) == widgets);
+                // What this mode had before, while its looks still exist; or
+                // the day and night styles on a first switch to widget styles.
+                let available = |profile: &ProfileRef| {
+                    matches!(profile, ProfileRef::Moment(_))
+                        || self.look_choices.iter().any(|(choice, _)| choice == profile)
+                };
+                let restoring = self.stashed[usize::from(widgets)]
+                    .as_ref()
+                    .map(|rules| {
+                        rules
+                            .iter()
+                            .filter(|(_, rule)| available(&rule.profile))
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    })
+                    .filter(|rules| !rules.is_empty() && !kept);
+                let adding: Vec<(usize, Rule)> = match restoring {
+                    Some(rules) => rules,
+                    None if widgets && !kept => {
+                        use crate::automation::solar::Event;
+                        crate::moments::Phase::ALL
+                            .into_iter()
+                            .map(|phase| {
+                                (
+                                    usize::MAX,
+                                    Rule {
+                                        id: String::new(),
+                                        enabled: true,
+                                        since: 0,
+                                        profile: ProfileRef::Moment(phase),
+                                        name: format!("{} style", phase.title()),
+                                        when: Trigger::Solar {
+                                            event: if phase == crate::moments::Phase::Day {
+                                                Event::Sunrise
+                                            } else {
+                                                Event::Sunset
+                                            },
+                                            days: Days::EVERY,
+                                            source,
+                                        },
+                                    },
+                                )
+                            })
+                            .collect()
+                    }
+                    None => Vec::new(),
+                };
+                if leaving.is_empty() && adding.is_empty() {
+                    return;
+                }
+                if !adding.is_empty() && !located {
+                    // Nothing changes yet: for widget styles, the city starts them.
+                    self.notice = Some(if widgets {
+                        Notice::Done("Add where you are; then day and night get their styles".into())
+                    } else {
+                        Notice::Error("Choose where you are first.".into())
+                    });
+                    return;
+                }
+                let restored = !widgets && !adding.is_empty();
+                let done = if widgets {
+                    "Widgets switch between the day and night styles"
+                } else if restored {
+                    "Your looks for each part of the day are back"
+                } else {
+                    "Pick a look for each part of the day"
+                };
+                let first = settings.rules.is_empty();
+                let saved = self.write(
+                    |settings, now| {
+                        // Out first, so a full list still has room.
+                        settings.rules.retain(|rule| !(daily_slot(rule) && styled(rule) != widgets));
+                        for (index, mut rule) in adding {
+                            if settings.rules.len() >= automation::rules::MAX_RULES {
+                                return Err("Remove a rule under More rules first.".into());
+                            }
+                            rule.id = settings.next_id();
+                            rule.since = now;
+                            rule.when = match rule.when {
+                                Trigger::Solar { event, days, .. } => Trigger::Solar { event, days, source },
+                                when => when,
+                            };
+                            // Back in its old place, so priorities stay as they were.
+                            let index = index.min(settings.rules.len());
+                            settings.rules.insert(index, rule);
+                        }
+                        // Like a first choice for a part of the day, the first
+                        // rules turn it on; an Off switch otherwise stays off.
+                        if first && !settings.enabled {
+                            settings.enabled = true;
+                            settings.since = now;
+                        }
                         Ok(())
                     },
-                    Some("Daily cycle turned off".into()),
+                    Some(done.into()),
                 );
-            }
-            Message::MomentsOff => {
-                self.change(
-                    |settings, _| {
-                        settings
-                            .rules
-                            .retain(|r| !matches!(r.profile, ProfileRef::Moment(_)));
-                        Ok(())
-                    },
-                    Some("Day and night styles stay as they are now".into()),
-                );
+                if saved {
+                    if !leaving.is_empty() {
+                        self.stashed[usize::from(!widgets)] = Some(leaving);
+                    }
+                    self.stashed[usize::from(widgets)] = None;
+                }
             }
             Message::Moment(event, profile) => {
+                self.hold_mode();
                 let name = profile
                     .as_ref()
                     .map(|profile| self.profile_name(profile, ""))
@@ -689,7 +858,9 @@ impl AutomationEditor {
                 );
             }
             Message::ManualCity(city) => {
-                self.change(
+                let located = self.solar.city(Source::Weather).is_ok()
+                    || self.solar.city(Source::Manual).is_ok();
+                let saved = self.write(
                     |settings, _| {
                         solar::validate_city(&city)?;
                         settings.manual_city = Some(city);
@@ -697,6 +868,14 @@ impl AutomationEditor {
                     },
                     Some("Schedule city saved".into()),
                 );
+                // Widget styles chosen while there was no city start now.
+                if saved
+                    && !located
+                    && self.widget_mode == Some(true)
+                    && self.settings().is_ok_and(|s| !s.rules.iter().any(daily_slot))
+                {
+                    self.update(Message::WidgetStyle(true), h24);
+                }
             }
             Message::Enable(on) => self.change(
                 |settings, now| {
@@ -785,6 +964,7 @@ impl AutomationEditor {
                 };
             }
             Message::Delete(id, true) => {
+                self.hold_mode();
                 self.confirm_delete = None;
                 let name = self
                     .settings()

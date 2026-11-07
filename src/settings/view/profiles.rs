@@ -1978,10 +1978,10 @@ impl Settings {
             {
                 items.push(self.name_field("Save"));
             }
-            // The looks themselves first; switching by time of day after.
+            // Time of day as a card on top, then the looks themselves.
+            items.push(self.looks_schedule());
             items.push(self.looks_gallery());
             items.extend(self.your_looks());
-            items.push(self.looks_schedule());
         }
         column::with_children(items)
             .spacing(if reviewing { 20 } else { 16 })
@@ -2044,19 +2044,30 @@ impl Settings {
     /// Less frequent ways to use looks, as plain rows.
     /// The time-of-day row, shown first on Looks.
     fn looks_schedule(&self) -> Element<'_, Message> {
-        let schedule = match self.automation.settings() {
-            Ok(settings) if settings.enabled && !settings.rules.is_empty() => "On",
-            _ => "Off",
+        // What it does right now stays visible on the card.
+        let (schedule, line) = match self.automation.settings() {
+            Ok(settings) if settings.enabled && !settings.rules.is_empty() => (
+                "On",
+                crate::automation::status::status_with_solar(
+                    settings,
+                    &self.automation.state,
+                    &chrono::Local,
+                    chrono::Utc::now(),
+                    self.automation.manual_at,
+                    self.config.clock.format_24h,
+                    &self.automation.solar,
+                )
+                .headline,
+            ),
+            _ => ("Off", "Switch your look or widget style by morning, evening and night".into()),
         };
         group(
             None,
             vec![
                 button::custom(
                     row::with_children(vec![
-                        detail(
-                            "Change with time of day",
-                            "Use a different look in the morning, evening and night",
-                        ),
+                        icon::from_name("alarm-symbolic").size(20).icon().into(),
+                        container(detail_state("Time of day", line)).width(Length::Fill).into(),
                         label(schedule, 13., MUTED),
                         icon::from_name("go-next-symbolic").size(16).icon().into(),
                     ])
