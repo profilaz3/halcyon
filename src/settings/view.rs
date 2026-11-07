@@ -281,6 +281,12 @@ pub(super) fn segmented<'a>(
                         crate::settings::desktop::PanelStyle::Islands,
                     ),
                 )) => cosmic::widget::Id::new("native-islands-style"),
+                Some(Message::DesktopEditor(crate::settings::desktop::Message::PanelStyle(
+                    crate::settings::desktop::PanelStyle::Compact,
+                ))) => cosmic::widget::Id::new("native-shape-compact"),
+                Some(Message::DesktopEditor(crate::settings::desktop::Message::PanelStyle(
+                    crate::settings::desktop::PanelStyle::FullWidth,
+                ))) => cosmic::widget::Id::new("native-shape-full"),
                 _ => cosmic::widget::Id::unique(),
             };
             // An option that can't be picked right now is dimmed.

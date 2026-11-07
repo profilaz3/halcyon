@@ -115,6 +115,9 @@ const STARTER: [(Region, &str); 10] = [
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AppletCatalog {
     applets: BTreeMap<String, AppletInfo>,
+    /// Icons of the dock's pinned apps, drawn in previews in place of the
+    /// app list applet's own icon.
+    pinned: Vec<String>,
 }
 
 impl AppletCatalog {
@@ -148,7 +151,7 @@ impl AppletCatalog {
             )
         })
         .collect();
-        Self { applets }
+        Self { applets, pinned: Vec::new() }
     }
 
     /// An explicit starting point, using only installed native applets.
@@ -201,7 +204,7 @@ impl AppletCatalog {
                 }
             }
         }
-        Self { applets }
+        Self { applets, pinned: Vec::new() }
     }
     pub fn get(&self, id: &str) -> Option<&AppletInfo> {
         self.applets.get(id)
@@ -213,6 +216,19 @@ impl AppletCatalog {
         self.get(id)
             .map(|info| info.name.clone())
             .unwrap_or_else(|| fallback_label(id))
+    }
+    /// Draws the app list as the apps pinned to it.
+    pub fn with_pinned(mut self, pinned: Vec<String>) -> Self {
+        self.pinned = pinned;
+        self
+    }
+    /// The icons a preview draws for one applet: the pinned apps for the
+    /// app list when there are any, otherwise the applet's own icon.
+    pub fn icons(&self, id: &str) -> Vec<String> {
+        if id == "com.system76.CosmicAppList" && !self.pinned.is_empty() {
+            return self.pinned.clone();
+        }
+        vec![self.icon(id)]
     }
     pub fn icon(&self, id: &str) -> String {
         self.get(id)

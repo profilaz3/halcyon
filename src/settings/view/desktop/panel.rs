@@ -461,38 +461,44 @@ impl Settings {
         column::with_children(items).spacing(10).into()
     }
 
+    /// Shape: compact, edge to edge, or islands (once they can run here).
     pub(super) fn panel_style(&self, draft: &PanelDraft) -> Element<'_, Message> {
-        let Setting::Known(islands) = draft.islands() else {
-            return field("Shape", kept("Unsupported island settings"));
-        };
+        let islands = draft.islands().known().is_some_and(|s| s.enabled);
+        let extend = draft.extend().known().copied();
+        let horizontal = draft.anchor().known().is_none_or(|a| a.horizontal());
         let mut options = vec![
             (
-                if draft.anchor().known().is_none_or(|a| a.horizontal()) {
-                    "Full width"
-                } else {
-                    "Full height"
-                }
-                .into(),
-                !islands.enabled && draft.extend().known() == Some(&true),
-                Some(edit(Edit::PanelStyle(PanelStyle::FullWidth))),
+                "Compact".into(),
+                !islands && extend == Some(false),
+                Some(edit(Edit::PanelStyle(PanelStyle::Compact))),
             ),
             (
-                "Islands".into(),
-                islands.enabled,
-                Some(edit(Edit::PanelStyle(PanelStyle::Islands))),
+                if horizontal { "Full width" } else { "Full height" }.into(),
+                !islands && extend == Some(true),
+                Some(edit(Edit::PanelStyle(PanelStyle::FullWidth))),
             ),
         ];
-        if !self.desktop.islands.installation.installed() {
-            if islands.enabled {
-                options[1].0 = "Islands · not installed".into();
-                options[1].2 = None;
-            } else {
-                options.truncate(1);
+        if draft.islands().known().is_some() {
+            if self.desktop.islands.installation.installed() {
+                options.push((
+                    "Islands".into(),
+                    islands,
+                    Some(edit(Edit::PanelStyle(PanelStyle::Islands))),
+                ));
+            } else if islands {
+                options.push(("Islands · not installed".into(), true, None));
             }
         }
-        if !islands.enabled && draft.extend().known() != Some(&true) {
-            options.push(("Compact · kept".into(), true, None));
+        let shape = segmented(options, self.settings_accent());
+        // A width this editor can't read is kept until a shape is chosen.
+        match draft.extend() {
+            Setting::Unsupported(raw) if !islands => field(
+                "Shape",
+                cosmic::widget::column::with_children(vec![shape, kept(&raw)])
+                    .spacing(6)
+                    .into(),
+            ),
+            _ => field("Shape", shape),
         }
-        field("Shape", segmented(options, self.settings_accent()))
     }
 }

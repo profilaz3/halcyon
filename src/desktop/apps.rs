@@ -76,6 +76,58 @@ impl AppCatalog {
     }
 }
 
+/// The dock's pinned apps (COSMIC's app list favorites), as icon names in
+/// their order. Reads only each pinned app's own entry from `dirs`
+/// (highest precedence first); at most `limit`.
+pub fn pinned_icons(
+    store: &crate::desktop::store::DesktopStore,
+    dirs: &[PathBuf],
+    limit: usize,
+) -> Vec<String> {
+    let Ok(key) = crate::desktop::store::ConfigKey::new("com.system76.CosmicAppList", 1, "favorites")
+    else {
+        return Vec::new();
+    };
+    let Ok(snapshot) = store.load(std::slice::from_ref(&key)) else {
+        return Vec::new();
+    };
+    let Some(Ok(ids)) = snapshot.effective(&key).map(|raw| raw.decode::<Vec<String>>()) else {
+        return Vec::new();
+    };
+    ids.iter()
+        .filter(|id| !id.is_empty() && !id.contains(['/', '\\']) && id.len() <= 255)
+        .take(limit)
+        .map(|id| {
+            // The first entry found wins, as for the launcher; its icon is
+            // used even when the entry is kept out of menus.
+            dirs.iter()
+                .find_map(|dir| std::fs::read_to_string(dir.join(format!("{id}.desktop"))).ok())
+                .and_then(|text| entry_icon(&text))
+                .filter(|icon| !icon.is_empty())
+                // Apps usually name their icon after their ID.
+                .unwrap_or_else(|| id.clone())
+        })
+        .collect()
+}
+
+/// The `Icon` of a desktop entry, unless the entry is `Hidden` (removed).
+fn entry_icon(text: &str) -> Option<String> {
+    let mut in_entry = false;
+    let mut icon = None;
+    for line in text.lines().map(str::trim) {
+        if line.starts_with('[') {
+            in_entry = line == "[Desktop Entry]";
+            continue;
+        }
+        match line.split_once('=').filter(|_| in_entry) {
+            Some(("Hidden", value)) if value.trim() == "true" => return None,
+            Some(("Icon", value)) => icon = Some(value.trim().to_string()),
+            _ => {}
+        }
+    }
+    icon
+}
+
 fn parse(id: &str, text: &str) -> Option<AppInfo> {
     let mut in_entry = false;
     let mut values = BTreeMap::new();

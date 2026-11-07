@@ -475,6 +475,28 @@ impl Config {
         let path = Self::path().ok_or("Configuration directory unavailable")?;
         Self::save_section_at(&path, "clock", changes)
     }
+    /// The clock's style and its font in one write.
+    pub fn save_clock_style(
+        clock: serde_json::Value,
+        clock_font: serde_json::Value,
+    ) -> Result<Self, String> {
+        let path = Self::path().ok_or("Configuration directory unavailable")?;
+        let clock = clock.as_object().ok_or("Settings must be an object")?;
+        let value = patch_config(&path, |value| {
+            if value.get("clock").is_none() {
+                value["clock"] = serde_json::json!({});
+            }
+            let settings = value["clock"]
+                .as_object_mut()
+                .ok_or("clock settings must be an object")?;
+            for (key, change) in clock {
+                settings.insert(key.clone(), change.clone());
+            }
+            value["clock_font"] = clock_font;
+            Ok(())
+        })?;
+        Self::from_saved_value(value)
+    }
     pub fn save_weather(changes: serde_json::Value) -> Result<Self, String> {
         let path = Self::path().ok_or("Configuration directory unavailable")?;
         Self::save_section_at(&path, "weather", changes)

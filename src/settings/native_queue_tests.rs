@@ -186,13 +186,13 @@ fn task2r2_style_toggle_defers_while_helper_holds_transaction_locks() {
     native.size = Size::new(1024., 1800.);
     send_settings(&mut app, Message::Resized(native.size));
     let _ = native.render(app.settings_view(), &controls_theme(&app.config));
-    let before = Config::load().appearance.style_bars;
+    let before = Config::load().appearance.sync_colors;
     assert!(app.profiles.can_apply(), "{:?}", app.profiles.notice);
     LockedNativeJob::arm(&store);
     let task = app.update(Message::Profiles(profiles::Message::Apply));
     let job = LockedNativeJob::start(&store, task);
     let started = Instant::now();
-    let toggle = queue_pointer(&mut app, &mut native, "theme-style-bars");
+    let toggle = queue_pointer(&mut app, &mut native, "colors-scope");
     let elapsed = started.elapsed();
     // Release before asserting so RED has a deterministic bounded shutdown.
     // Other save()/Config writers absent from the old classifier must take
@@ -201,7 +201,7 @@ fn task2r2_style_toggle_defers_while_helper_holds_transaction_locks() {
     assert!(
         app.native_deferred.iter().any(|message| matches!(
             message,
-            Message::Profiles(profiles::Message::Color(profiles::colors::Edit::StyleBars(on)))
+            Message::Profiles(profiles::Message::ThemeScope(on))
                 if *on != before
         )),
         "the actual pointer must queue the requested off value: {:?}",
@@ -227,7 +227,7 @@ fn task2r2_style_toggle_defers_while_helper_holds_transaction_locks() {
     assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), raw_before);
     assert_eq!(app.native_deferred.len(), queued + 3);
     let timed_out = job.root.join("worker-timeout").exists();
-    let still_before = Config::load().appearance.style_bars == before;
+    let still_before = Config::load().appearance.sync_colors == before;
     let messages = job.release();
     assert!(
         elapsed < Duration::from_millis(250),
@@ -253,14 +253,14 @@ fn task2r2_style_toggle_defers_while_helper_holds_transaction_locks() {
     assert!(!app.native_busy && app.native_deferred.is_empty());
     // Dismissing setup left Appearance before the queued switch could
     // apply, so it waits as a kept Appearance change and is not lost.
-    assert_eq!(Config::load().appearance.style_bars, before);
+    assert_eq!(Config::load().appearance.sync_colors, before);
     assert_eq!(app.profiles.parked().len(), 1);
     // The queued switch is an Appearance choice, which applies by itself:
     // back on Appearance it finishes without an Apply button.
     send_settings(&mut app, Message::Page(Page::Themes));
     assert!(native.try_bounds(app.settings_view(), "profiles-confirm").is_none());
-    assert_eq!(app.profiles.color_style_bars(&app.config), !before);
-    assert_eq!(Config::load().appearance.style_bars, !before);
+    assert_eq!(app.profiles.color_preferences(&app.config).sync_colors, !before);
+    assert_eq!(Config::load().appearance.sync_colors, !before);
     let applied = raw_preferences();
     assert_eq!(applied["setup_dismissed"], true);
     assert_eq!(applied["widgets_visible"], false);

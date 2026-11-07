@@ -276,19 +276,6 @@ impl Settings {
                 .id(cosmic::widget::Id::new("colors-scope"))
                 .into(),
         ));
-        rows.push(group_row(
-            "Style the dock and panel",
-            "Off keeps the standard COSMIC bars",
-            container(
-                toggler(self.profiles.color_style_bars(&self.config)).on_toggle(|on| {
-                    edit(Edit::Color(
-                        crate::settings::profiles::colors::Edit::StyleBars(on),
-                    ))
-                }),
-            )
-            .id(cosmic::widget::Id::new("theme-style-bars"))
-            .into(),
-        ));
         group(Some("Color"), rows)
     }
 

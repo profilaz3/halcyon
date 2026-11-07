@@ -364,8 +364,53 @@ pub(super) struct SavedSelection {
     pub(super) theme: Option<String>,
 }
 
+/// The look last applied from Looks.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct Applied {
+    look: String,
+    change: String,
+    #[serde(default = "LookStyle::plain")]
+    style: LookStyle,
+}
+/// The clock and Daily overview choices a look leaves, which their
+/// "Follow the look's style" switches compare against and restore.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct LookStyle {
+    pub clock: serde_json::Value,
+    pub clock_font: serde_json::Value,
+    pub glance: serde_json::Value,
+}
+impl LookStyle {
+    pub fn plain() -> Self {
+        Self {
+            clock: serde_json::json!({"face": null, "weight": null, "italic": null, "surface": null}),
+            clock_font: serde_json::Value::Null,
+            glance: serde_json::json!({"own_background": false, "font": null, "clock_font": null}),
+        }
+    }
+    pub fn of(config: &Config) -> Self {
+        let value = |v: serde_json::Result<serde_json::Value>| v.unwrap_or_default();
+        Self {
+            clock: serde_json::json!({
+                "face": value(serde_json::to_value(config.clock.face)),
+                "weight": value(serde_json::to_value(config.clock.weight)),
+                "italic": config.clock.italic,
+                "surface": value(serde_json::to_value(config.clock.surface)),
+            }),
+            clock_font: config.clock_font.clone().into(),
+            glance: serde_json::json!({
+                "own_background": config.glance.own_background,
+                "font": config.glance.font,
+                "clock_font": config.glance.clock_font,
+            }),
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct ProfilesEditor {
+    /// The look last applied from Looks, read back from the store's state.
+    last_applied: Option<Applied>,
     /// The screen the live review belongs to.
     owner: previews::PreviewKind,
     /// The live review changed since it opened; leaving keeps it.
@@ -389,7 +434,7 @@ pub struct ProfilesEditor {
     /// The Islands panel component answered when the looks were fitted.
     islands: bool,
     /// A widget style leaves the dock and panel as they are
-    /// (Colors & theme › "Style the dock and panel too" off).
+    /// (Dock › "Follow the look's style" off).
     keep_bars: bool,
     theme_override: Option<Profile>,
     theme_jobs: Vec<ThemeJob>,
@@ -930,6 +975,7 @@ impl ProfilesEditor {
             .list()
             .map_err(|error| error.to_string());
         self.library = Some(library);
+        self.read_last_applied();
         self.refresh_recovery();
         let retained = self.keeps_intent(self.owner) || self.session_review;
         if retained && self.theme_override.is_none() {
@@ -1550,7 +1596,110 @@ impl ProfilesEditor {
         self.replan();
     }
 
+    /// Where the last applied look is kept, with the change that applied it
+    /// and the clock and overview style it left.
+    fn last_applied_path(&self) -> Option<std::path::PathBuf> {
+        self.store().map(|store| store.state_dir().join("looks-last-applied"))
+    }
+    /// The look last applied from Looks, when it is still offered here.
+    pub fn last_applied(&self) -> Option<Selection> {
+        let value = self.last_applied.as_ref()?.look.as_str();
+        if let Some(id) = value.strip_prefix("preset:") {
+            return self
+                .presets
+                .iter()
+                .find(|preset| preset.id == id && !preset.profile.appearance_only)
+                .map(|preset| Selection::Preset(preset.id));
+        }
+        value
+            .strip_prefix("saved:")
+            .and_then(|id| ProfileId::parse(id).ok())
+            .map(Selection::Saved)
+    }
+    /// The clock and overview style the last applied look left; the plain
+    /// widget style when no look was applied from here.
+    pub fn applied_style(&self) -> LookStyle {
+        self.last_applied
+            .as_ref()
+            .map(|applied| applied.style.clone())
+            .unwrap_or_else(LookStyle::plain)
+    }
+    fn remember_applied(&mut self, change: &str) {
+        // A mix or a theme changes the desktop too: the earlier look's label
+        // and style no longer describe it.
+        let look = match (&self.selection, &self.mix, self.profile()) {
+            (_, Some(_), _) | (Selection::Current, _, _) => None,
+            (_, _, Some(profile)) if profile.appearance_only => None,
+            (Selection::Preset(id), _, _) => Some(format!("preset:{id}")),
+            (Selection::Saved(id), _, _) => Some(format!("saved:{}", id.as_str())),
+        };
+        let Some(look) = look else {
+            let previous = self.last_applied.as_ref().map(|a| a.change.clone());
+            if let Some(previous) = previous {
+                self.forget_applied(&previous);
+            }
+            return;
+        };
+        let Some(store) = self.store() else {
+            return;
+        };
+        let style = wallpaper::automatic::read_config(store)
+            .map(|(_, config)| LookStyle::of(&config))
+            .unwrap_or_else(|_| LookStyle::plain());
+        let applied = Applied {
+            look,
+            change: change.to_string(),
+            style,
+        };
+        if let Some(path) = self.last_applied_path()
+            && let Ok(bytes) = serde_json::to_vec(&applied)
+        {
+            let _ = std::fs::create_dir_all(path.parent().unwrap_or(&path));
+            let _ = std::fs::write(&path, bytes);
+        }
+        self.last_applied = Some(applied);
+    }
+    /// The change that applied the last look was undone: the desktop no
+    /// longer shows it, so neither its label nor its style is kept.
+    pub fn forget_applied(&mut self, change: &str) {
+        if self
+            .last_applied
+            .as_ref()
+            .is_none_or(|applied| applied.change != change)
+        {
+            return;
+        }
+        self.last_applied = None;
+        if let Some(path) = self.last_applied_path() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+    fn read_last_applied(&mut self) {
+        let applied: Option<Applied> = self
+            .last_applied_path()
+            .and_then(|path| std::fs::read(path).ok())
+            .filter(|bytes| bytes.len() <= 4096)
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+        // A look applied since (a scheduled switch, for one) replaced it.
+        let replaced = applied.as_ref().is_some_and(|applied| {
+            self.store()
+                .and_then(|store| store.recent_changes().ok())
+                .is_some_and(|recent| {
+                    recent
+                        .entries
+                        .iter()
+                        .skip_while(|entry| entry.id != applied.change)
+                        .skip(1)
+                        .any(|entry| {
+                            entry.action == crate::desktop::store::activity::Action::Changed
+                                && Owner::parse(&entry.owner) == Some(Owner::Profile)
+                        })
+                })
+        });
+        self.last_applied = applied.filter(|_| !replaced);
+    }
     fn reload_library(&mut self) {
+        self.read_last_applied();
         if let Some(store) = self.store() {
             self.library = Some(
                 ProfileLibrary::new(store)
@@ -2111,6 +2260,7 @@ impl ProfilesEditor {
                         let _ = wallpaper::automatic::keep_manual_colors(store);
                     }
                 }
+                self.remember_applied(&latest.id);
                 self.undo = Some(latest);
                 self.elsewhere = None;
                 self.replan();
@@ -2145,10 +2295,12 @@ impl ProfilesEditor {
         let (Some(store), Some(change)) = (self.store(), self.undo.as_ref()) else {
             return Outcome::None;
         };
-        match store.undo_latest(&change.id) {
+        let id = change.id.clone();
+        match store.undo_latest(&id) {
             Ok(_) => {
                 let _ = wallpaper::automatic::keep_manual_colors(store);
                 self.undo = None;
+                self.forget_applied(&id);
                 self.refresh();
                 self.notice = Some(Notice::Done("Previous settings restored".into()));
                 Outcome::Changed

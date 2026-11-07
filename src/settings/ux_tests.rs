@@ -1407,9 +1407,11 @@ fn appearance_shows_one_row_of_styles_and_every_style_on_request() {
         *app.profiles.selection(),
         profiles::Selection::Preset("theme-neon")
     );
-    // The dock and panel switch the old browser carried lives here too.
+    // Whether looks color the dock and panel lives with the dock now.
     let mut native = crate::native_test::Native::new(size);
-    assert!(native.try_bounds(app.settings_view(), "theme-style-bars").is_some());
+    assert!(native.text_all(app.settings_view(), "Style the dock and panel").is_empty());
+    let _ = app.update(Message::Page(Page::DesktopDock));
+    assert!(native.try_bounds(app.settings_view(), "dock-style-bars").is_some());
 }
 
 #[test]
@@ -1715,6 +1717,7 @@ fn fb12_native_mix_choices_preview_cancel_and_apply_fit_both_sizes() {
         let (mut app, _) = Settings::init(Core::default(), Page::DesktopProfiles);
         let _ = app.update(Message::Resized(size));
         let mut native = Native::new(size);
+        mix_native_click(&mut app, &mut native, "looks-more");
         mix_native_click(&mut app, &mut native, "mix-start");
         assert!(app.profiles.mix.is_some());
         native.capture(

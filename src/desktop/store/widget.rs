@@ -213,7 +213,7 @@ pub static FIELDS: [WidgetField; 108] = fields![
     "/glance/show_tomorrow", "Glance tomorrow", Style, boolean;
     "/glance/opacity", "Glance opacity", Style, percent;
     "/glance/own_background", "Glance own background", Style, boolean;
-    "/appearance/style_bars", "Style the dock and panel", Style, boolean;
+    "/appearance/style_bars", "Dock and panel follow the look's style", Style, boolean;
     "/glance/font", "Glance font", Style, font_family;
     "/glance/clock_font", "Glance clock font", Style, font_family;
     "/devbox/cpu", "Devbox CPU", Style, boolean;

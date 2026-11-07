@@ -74,6 +74,9 @@ pub enum Message {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PanelStyle {
+    /// As long as its contents.
+    Compact,
+    /// Edge to edge.
     FullWidth,
     Islands,
 }
@@ -270,10 +273,18 @@ impl DesktopEditor {
             .fixture_root()
             .map(|root| root.join("applications"))
             .filter(|dir| dir.is_dir());
-        match applications {
-            Some(dir) => AppletCatalog::discover(&[dir]),
-            None => AppletCatalog::installed(),
-        }
+        // The preview draws the dock's pinned apps where its app list sits.
+        let (applets, dirs) = match applications {
+            Some(dir) => (AppletCatalog::discover(std::slice::from_ref(&dir)), vec![dir]),
+            None => (
+                AppletCatalog::installed(),
+                crate::desktop::applets::application_dirs(
+                    dirs::data_dir(),
+                    std::env::var("XDG_DATA_DIRS").ok(),
+                ),
+            ),
+        };
+        applets.with_pinned(crate::desktop::apps::pinned_icons(store, &dirs, 8))
     }
     fn discover_applets(&mut self) {
         if let Some(store) = self.store() {
@@ -577,43 +588,59 @@ impl DesktopEditor {
                 }
             }
             Message::UseStarter => {}
-            Message::PanelStyle(style) if self.selected == PanelKind::Panel => {
+            Message::PanelStyle(style) => {
+                let panel = self.selected == PanelKind::Panel;
+                let islands = self.current().and_then(|d| d.islands().known().cloned());
                 if style == PanelStyle::Islands
-                    && !self.store().is_some_and(|s| {
-                        crate::desktop::islands::Installation::discover(s).installed()
-                    })
+                    && (islands.is_none()
+                        || !self.store().is_some_and(|s| {
+                            crate::desktop::islands::Installation::discover(s).installed()
+                        }))
                 {
                     return None;
                 }
-                if self
-                    .current()
-                    .is_some_and(|d| d.islands().known().is_some())
-                {
-                    let first_islands = self.current().and_then(|d| d.islands().known().cloned())
-                        == Some(dock_islands_core::Settings::default());
-                    self.island_edit(islands::Edit::Enabled(style == PanelStyle::Islands));
-                    if style == PanelStyle::Islands && first_islands {
+                let first_islands = islands == Some(dock_islands_core::Settings::default());
+                let want = style == PanelStyle::Islands;
+                if islands.as_ref().is_some_and(|s| s.enabled != want) {
+                    self.island_edit(islands::Edit::Enabled(want));
+                    // Islands that could not be switched (not installed, or
+                    // the arrangement is unreadable) leave the bar as it is,
+                    // with the reason from the islands check.
+                    let enabled = self
+                        .current()
+                        .and_then(|d| d.islands().known().map(|s| s.enabled));
+                    if enabled != Some(want) {
+                        return None;
+                    }
+                    if panel && style == PanelStyle::Islands && first_islands {
                         // Separate defaults to left/centre/right; retain every
                         // saved island position and the dock's independent style.
                         self.island_edit(islands::Edit::Placement(
                             dock_islands_core::Placement::Separate,
                         ));
                     }
-                    self.edit(|d| {
-                        if style != PanelStyle::Islands {
-                            d.set_extend(style == PanelStyle::FullWidth);
+                }
+                self.edit(|d| {
+                    if style != PanelStyle::Islands {
+                        d.set_extend(style == PanelStyle::FullWidth);
+                    }
+                    // The panel's edge-to-edge shape sits on the edge and its
+                    // islands float; the dock keeps its own Floating choice.
+                    if panel {
+                        match style {
+                            PanelStyle::FullWidth => d.set_floating(false),
+                            PanelStyle::Islands => d.set_floating(true),
+                            PanelStyle::Compact => {}
                         }
-                        d.set_floating(style != PanelStyle::FullWidth);
                         if style == PanelStyle::Islands
                             && first_islands
                             && d.radius().known() == Some(&0)
                         {
                             d.set_radius(12);
                         }
-                    });
-                }
+                    }
+                });
             }
-            Message::PanelStyle(_) => {}
             Message::Search(text) => self.applet_query = text.chars().take(64).collect(),
             Message::Overview(open) => {
                 self.overview = open;
@@ -1156,6 +1183,72 @@ mod tests {
         assert_eq!(editor.draft(PanelKind::Dock), Some(&dock));
         editor.update(Message::Discard);
         assert!(!editor.dirty());
+    }
+
+    #[test]
+    fn polish_e_shape_works_for_both_bars_and_keeps_bars_when_islands_cannot_switch() {
+        let fixture = Fixture::new("polish-e-shape");
+        crate::desktop::islands::fixture_installed(&fixture.0);
+        let mut editor = editor(&fixture);
+        // The dock: Full width, then Islands, then Compact turns islands off
+        // and never touches the dock's own Floating choice.
+        let floating = editor.current().unwrap().floating();
+        editor.update(Message::PanelStyle(PanelStyle::FullWidth));
+        assert_eq!(editor.current().unwrap().extend(), Setting::Known(true));
+        editor.update(Message::PanelStyle(PanelStyle::Islands));
+        assert!(editor.current().unwrap().islands().known().unwrap().enabled);
+        editor.update(Message::PanelStyle(PanelStyle::Compact));
+        let dock = editor.current().unwrap();
+        assert!(!dock.islands().known().unwrap().enabled);
+        assert_eq!(dock.extend(), Setting::Known(false));
+        assert_eq!(dock.floating(), floating);
+        // The panel: Compact keeps Floating, Full width sits on the edge.
+        editor.update(Message::Select(PanelKind::Panel));
+        editor.update(Message::PanelStyle(PanelStyle::Islands));
+        editor.update(Message::PanelStyle(PanelStyle::Compact));
+        let panel = editor.current().unwrap();
+        assert_eq!(panel.extend(), Setting::Known(false));
+        assert_eq!(panel.floating(), Setting::Known(true));
+        editor.update(Message::PanelStyle(PanelStyle::Islands));
+        // Islands left on after the host was removed can't be switched off
+        // here, so the bar keeps its shape instead of half-changing.
+        std::fs::remove_file(fixture.0.join("islands-installation.json")).unwrap();
+        let before = editor.current().unwrap().clone();
+        editor.update(Message::PanelStyle(PanelStyle::FullWidth));
+        assert_eq!(editor.current().unwrap(), &before);
+        assert!(editor.current().unwrap().islands().known().unwrap().enabled);
+    }
+
+    #[test]
+    fn polish_e_dock_preview_shows_pinned_app_icons() {
+        let fixture = Fixture::new("polish-e-pinned");
+        fixture.user(
+            "com.system76.CosmicAppList",
+            "favorites",
+            "[\"web\", \"hidden\", \"plain\", \"../escape\", \"a/b\"]",
+        );
+        let (user, system) = (fixture.0.join("user-apps"), fixture.0.join("system-apps"));
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::create_dir_all(&system).unwrap();
+        std::fs::write(user.join("web.desktop"), "[Desktop Entry]\nName=Web\nIcon=web-browser\n")
+            .unwrap();
+        // The user's copy wins, even kept out of menus; a removed (Hidden)
+        // one falls back to the app's ID like a missing entry.
+        std::fs::write(
+            user.join("hidden.desktop"),
+            "[Desktop Entry]\nName=H\nNoDisplay=true\nIcon=my-files\n",
+        )
+        .unwrap();
+        std::fs::write(system.join("hidden.desktop"), "[Desktop Entry]\nName=H\nIcon=files\n")
+            .unwrap();
+        std::fs::write(user.join("plain.desktop"), "[Desktop Entry]\nHidden=true\nIcon=x\n")
+            .unwrap();
+        let icons = crate::desktop::apps::pinned_icons(&fixture.store(), &[user, system], 8);
+        // Missing entries use the app's ID; IDs that name a path are skipped.
+        assert_eq!(icons, ["web-browser", "my-files", "plain"]);
+        let catalog = AppletCatalog::default().with_pinned(icons.clone());
+        assert_eq!(catalog.icons("com.system76.CosmicAppList"), icons);
+        assert_eq!(crate::desktop::apps::pinned_icons(&fixture.store(), &[], 2).len(), 2);
     }
 
     #[test]

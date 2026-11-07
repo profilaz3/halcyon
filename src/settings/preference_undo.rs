@@ -82,6 +82,18 @@ fn message_scope(config: &Config, message: &Message) -> Vec<String> {
             add(&["glance", key]);
         }
         Message::GlanceStyle(_) => add(&["glance", "style"]),
+        Message::GlanceFollowStyle(true) => {
+            for key in ["own_background", "font", "clock_font"] {
+                add(&["glance", key]);
+            }
+        }
+        Message::StyleBars(_) => add(&["appearance", "style_bars"]),
+        Message::ClockFollowStyle(true) => {
+            for key in ["face", "weight", "italic", "surface"] {
+                add(&["clock", key]);
+            }
+            add(&["clock_font"]);
+        }
         Message::GlanceDensity(_) => add(&["glance", "density"]),
         Message::GlanceTomorrow(_) => add(&["glance", "show_tomorrow"]),
         Message::GlanceOpacity(_) => add(&["glance", "opacity"]),

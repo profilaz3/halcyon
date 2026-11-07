@@ -9,27 +9,15 @@ impl Settings {
     /// Shape: a plain bar or islands. Picking Islands shows the one step
     /// Halcyon's panel still needs; layout controls appear once it runs.
     pub(super) fn islands_section(&self, draft: &PanelDraft) -> Element<'_, Message> {
-        let accent = self.settings_accent();
+        // One Shape for both bars: compact, edge to edge, or islands.
+        let mut items = vec![self.panel_style(draft)];
         let settings = match draft.islands() {
             Setting::Known(s) => s,
             Setting::Unsupported(_) => {
-                return section(vec![field("Shape", kept("Unsupported island settings"))]);
+                items.push(field("Islands", kept("Unsupported island settings")));
+                return section(items);
             }
         };
-        // The Panel's shape also decides full width; the Dock's is just this.
-        let mut items = vec![if draft.kind() == PanelKind::Panel {
-            self.panel_style(draft)
-        } else {
-            field(
-                "Shape",
-                choice(
-                    &Setting::Known(settings.enabled),
-                    vec![("Bar".into(), false), ("Islands".into(), true)],
-                    |v| Edit::Islands(IslandEdit::Enabled(v)),
-                    accent,
-                ),
-            )
-        }];
         if !settings.enabled {
             return section(items);
         }
