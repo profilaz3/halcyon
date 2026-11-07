@@ -286,7 +286,7 @@ SETTINGS_PAGES = ('adaptive', 'builder', 'moments', 'overview', 'pending', 'them
                   'projects', 'music', 'notes', 'focus', 'general', 'desktop', 'desktop-dock',
                   'desktop-appearance', 'desktop-wallpaper', 'desktop-icons', 'desktop-profiles',
                   'desktop-windows', 'desktop-workspaces', 'desktop-motion', 'desktop-window-rules',
-                  'desktop-shortcuts', 'desktop-automation')
+                  'desktop-shortcuts', 'desktop-automation', 'changes')
 
 
 def main():

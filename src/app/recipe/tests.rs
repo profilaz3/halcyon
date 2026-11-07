@@ -225,7 +225,14 @@ fn fb17_stale_recipe_weather_keeps_age_and_failure_visible_at_compact_sizes() {
 
 #[test]
 fn calendar_recipe_privacy_status_and_compact_actions_use_existing_agenda() {
-    let now = chrono::Local::now();
+    // Midday, so the event ten minutes later is always on today's agenda.
+    let now = chrono::Local::now()
+        .date_naive()
+        .and_hms_opt(12, 0, 0)
+        .unwrap()
+        .and_local_timezone(chrono::Local)
+        .earliest()
+        .unwrap();
     let data = CalendarData {
         updated_at: (now - chrono::Duration::days(2)).to_rfc3339(),
         events: vec![CalendarEvent {
