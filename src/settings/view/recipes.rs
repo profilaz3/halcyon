@@ -390,6 +390,8 @@ impl Settings {
             label(
                 if applied {
                     format!("Your {} uses this design", recipe.kind.title())
+                } else if !self.design.managed && self.design.review {
+                    "Update widgets above to use this design".into()
                 } else if !self.design.managed {
                     "Press Get ready… above to use this design".into()
                 } else {

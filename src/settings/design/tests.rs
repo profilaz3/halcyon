@@ -240,6 +240,9 @@ fn polish050_builder_migration_review_stays_with_unsaved_recipe() {
     );
     let before = raw();
     let draft = app.recipe_editor.draft.clone();
+    // The first visit opens the review by itself; dismissing it means no.
+    assert!(app.design.review && app.design.automatic);
+    send_settings(&mut app, super::super::Message::Design(Message::Cancel));
     send_settings(&mut app, super::super::Message::Design(Message::Migrate));
     assert!(!app.design.managed, "migration requires explicit review");
     send_settings(&mut app, super::super::Message::Design(Message::Review));

@@ -20,6 +20,10 @@ pub(super) struct State {
     pub source_conflict: bool,
     pub source_review: bool,
     pub notice: Option<String>,
+    /// The builder opened the update review once this session.
+    pub offered: bool,
+    /// The open review was opened by the builder, not by the person.
+    pub automatic: bool,
 }
 impl State {
     /// Settings may be constructed without the command-line startup path.
@@ -49,19 +53,38 @@ impl State {
             ..Self::default()
         }
     }
+
+    /// A reload keeps whether the builder already offered the update.
+    pub fn offered(mut self, offered: bool) -> Self {
+        self.offered = offered;
+        self
+    }
+
+    /// The builder's first visit opens the review; updating stays a choice.
+    pub fn offer(&mut self, problem: bool) {
+        if !self.managed && !self.offered && !problem {
+            self.offered = true;
+            self.review = true;
+            self.automatic = true;
+        }
+    }
 }
 impl Settings {
     pub(super) fn update_design(&mut self, edit: Message) -> Task<super::Message> {
         match edit {
-            Message::Review => self.design.review = true,
+            Message::Review => {
+                self.design.review = true;
+                self.design.automatic = false;
+            }
             Message::Cancel => {
                 self.design.review = false;
+                self.design.automatic = false;
                 self.design.source_review = false;
             }
             Message::ReviewSource => self.design.source_review = self.design.source_conflict,
             Message::Recheck => {
                 self.config = Config::load();
-                self.design = State::load();
+                self.design = State::load().offered(self.design.offered);
                 if self.config.design_problem.is_none() {
                     return self.after_desktop_change();
                 }

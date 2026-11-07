@@ -588,9 +588,11 @@ fn split_sidebar_keyboard_navigation_keeps_focus_and_drafts() {
     for (name, page) in [
         (Named::ArrowDown, Page::DesktopDock),
         (Named::ArrowDown, Page::DesktopWindows),
+        (Named::ArrowDown, Page::DesktopMotion),
         (Named::ArrowDown, Page::General),
         (Named::ArrowDown, Page::Changes),
         (Named::ArrowUp, Page::General),
+        (Named::ArrowUp, Page::DesktopMotion),
         (Named::ArrowUp, Page::DesktopWindows),
         (Named::Home, Page::DesktopProfiles),
         (Named::ArrowUp, Page::DesktopProfiles),
@@ -2205,7 +2207,7 @@ fn ux_native_every_route_and_tab_renders_without_repeated_names() {
 }
 
 #[test]
-fn ux_native_seven_roots_and_every_old_route_resolves() {
+fn ux_native_eight_roots_and_every_old_route_resolves() {
     assert_eq!(
         Page::SIDEBAR[0].1,
         &[
@@ -2215,6 +2217,7 @@ fn ux_native_seven_roots_and_every_old_route_resolves() {
             Page::Overview,
             Page::DesktopDock,
             Page::DesktopWindows,
+            Page::DesktopMotion,
             Page::General
         ]
     );
@@ -2248,7 +2251,7 @@ fn ux_native_seven_roots_and_every_old_route_resolves() {
         (Page::DesktopAutomation, Page::DesktopProfiles),
         (Page::AdaptiveLooks, Page::DesktopProfiles),
         (Page::General, Page::General),
-        (Page::DesktopMotion, Page::General),
+        (Page::DesktopMotion, Page::DesktopMotion),
         (Page::PendingChanges, Page::Changes),
         (Page::Changes, Page::Changes),
     ] {

@@ -17,6 +17,7 @@ pub enum Area {
     Widgets,
     Bars,
     Windows,
+    Accessibility,
     App,
 }
 
@@ -29,7 +30,8 @@ impl Area {
             Self::Widgets => "Widgets",
             Self::Bars => "Dock and panel",
             Self::Windows => "Windows",
-            Self::App => "Settings",
+            Self::Accessibility => "Accessibility",
+            Self::App => "Halcyon",
         }
     }
 }
@@ -249,7 +251,7 @@ pub(super) const LOOKS: SearchHit = hit(
 pub(super) const STARTUP: SearchHit = hit(
     Page::General,
     "Startup and background",
-    "general app settings startup login widgets background service setup again",
+    "general halcyon app settings startup login background service setup again",
     false,
 );
 pub(super) const ACTIVITY_ISLAND: SearchHit = hit(
@@ -623,8 +625,8 @@ const SEARCH: &[SearchHit] = &[
     STARTUP,
     hit(
         Page::General,
-        "Edge menu",
-        "sidebar edge menu side delay animation",
+        "Widget controls",
+        "widget controls sidebar screen edge menu side panel slide delay animation",
         false,
     )
     .destination(AppSettingsPage::Interface),
@@ -825,13 +827,13 @@ impl Page {
             | Self::DesktopWallpaper
             | Self::DesktopDock
             | Self::DesktopWindows
+            | Self::DesktopMotion
             | Self::General
             | Self::Changes => None,
             // Detail editors that open from rows on Appearance.
             Self::Appearance | Self::DesktopAppearance | Self::Moments => Some(Self::Themes),
             Self::DesktopAutomation => Some(Self::DesktopProfiles),
             Self::AdaptiveLooks => Some(Self::DesktopAutomation),
-            Self::DesktopMotion => Some(Self::General),
             Self::PendingChanges => Some(Self::Changes),
             Self::DesktopWindowRules | Self::DesktopShortcuts => Some(Self::DesktopWindows),
             Self::DesktopIcons => Some(Self::DesktopWallpaper),
@@ -847,6 +849,7 @@ impl Page {
             Self::DesktopWallpaper => Area::Wallpaper,
             Self::DesktopDock => Area::Bars,
             Self::DesktopWindows => Area::Windows,
+            Self::DesktopMotion => Area::Accessibility,
             Self::General | Self::Changes => Area::App,
             _ => Area::Widgets,
         }
@@ -1072,6 +1075,7 @@ mod tests {
                 Page::Overview,
                 Page::DesktopDock,
                 Page::DesktopWindows,
+                Page::DesktopMotion,
                 Page::General
             ]
         );
@@ -1083,7 +1087,7 @@ mod tests {
         // Roots have no parent; detailed editors go Back to their root.
         assert_eq!(Page::DesktopAppearance.parent(), Some(Page::Themes));
         assert_eq!(Page::Moments.parent(), Some(Page::Themes));
-        assert_eq!(Page::DesktopMotion.parent(), Some(Page::General));
+        assert_eq!(Page::DesktopMotion.parent(), None);
         assert_eq!(
             Page::DesktopWindowRules.parent(),
             Some(Page::DesktopWindows)
@@ -1544,7 +1548,7 @@ impl Settings {
         match route.page {
             Page::General if route.report.is_some() => "Support report".into(),
             Page::General => match route.app {
-                AppSettingsPage::Home => "Settings".into(),
+                AppSettingsPage::Home => "Halcyon".into(),
                 page => page.tab_title().into(),
             },
             Page::DesktopDock => match route.bar {

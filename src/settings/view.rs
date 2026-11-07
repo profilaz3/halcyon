@@ -824,7 +824,7 @@ impl Settings {
                         .into(),
                     title.into(),
                 ])
-                .spacing(4)
+                .spacing(2)
                 .width(Length::Fill)
                 .align_x(Alignment::Center)
                 .into()
@@ -845,7 +845,8 @@ impl Settings {
                 )))
                 .class(nav_style(active, self.settings_accent()))
                 .selected(active)
-                .padding(if rail { [8, 2] } else { [11, 12] })
+                // Eight roots and the pinned Changes fit the rail at 820×552.
+                .padding(if rail { [5, 2] } else { [11, 12] })
                 .width(Length::Fill)
                 .on_press(Message::NavSelected(id))
                 .into()
@@ -860,14 +861,14 @@ impl Settings {
                             .into(),
                         text::body("Search").size(12).into(),
                     ])
-                    .spacing(4)
+                    .spacing(2)
                     .width(Length::Fill)
                     .align_x(Alignment::Center),
                 )
                 .id(cosmic::widget::Id::new("rail-search"))
                 .class(nav_style(self.search_open, self.settings_accent()))
                 .selected(self.search_open)
-                .padding([8, 2])
+                .padding([5, 2])
                 .width(Length::Fill)
                 .on_press(Message::FocusSearch)
                 .into(),
@@ -882,7 +883,8 @@ impl Settings {
                 search = search.on_clear(Message::SearchSettings(String::new()));
             }
             vec![
-                container(text::title3("Halcyon").size(22))
+                // The app's own root is called Halcyon; this is its settings.
+                container(text::title3("Settings").size(22))
                     .padding([14, 12, 6, 12])
                     .into(),
                 container(search).padding([0, 2, 12, 2]).into(),
@@ -900,7 +902,7 @@ impl Settings {
                 .collect();
             groups.push(
                 column::with_children(items)
-                    .spacing(if rail { 4 } else { 6 })
+                    .spacing(if rail { 2 } else { 6 })
                     .into(),
             );
         }
@@ -956,7 +958,7 @@ impl Settings {
             });
         }
         let pinned = container(self.changes_entry(rail))
-            .padding(if rail { [6, 6, 10, 6] } else { [6, 8, 12, 8] })
+            .padding(if rail { [4, 6, 6, 6] } else { [6, 8, 12, 8] })
             .width(Length::Fill);
         let content = container(column::with_children(vec![
             scrollable(

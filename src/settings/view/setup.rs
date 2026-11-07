@@ -117,7 +117,7 @@ impl Settings {
             ),
             separator(),
             split(
-                detail_state("Settings · Startup", "Run Halcyon when you sign in."),
+                detail_state("Halcyon · Startup", "Run Halcyon when you sign in."),
                 startup.into(),
             ),
             separator(),

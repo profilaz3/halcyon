@@ -165,7 +165,7 @@ impl Settings {
                     .into(),
                 title.into(),
             ])
-            .spacing(4)
+            .spacing(2)
             .width(Length::Fill)
             .align_x(Alignment::Center)
             .into()
@@ -179,7 +179,7 @@ impl Settings {
             .id(cosmic::widget::Id::new("nav-changes"))
             .class(nav_style(active, accent))
             .selected(active)
-            .padding(if rail { [8, 2] } else { [11, 12] })
+            .padding(if rail { [5, 2] } else { [11, 12] })
             .width(Length::Fill)
             .on_press(Message::OpenRoot(Page::Changes));
         let tip = if unfinished {
