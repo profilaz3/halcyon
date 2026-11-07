@@ -40,7 +40,6 @@ pub(super) enum SearchOpen {
     None,
     City,
     Effects,
-    Recent,
     Readability,
     /// The widget material's see-through control.
     Transparency,
@@ -287,13 +286,11 @@ const SEARCH: &[SearchHit] = &[
     )
     .destination(AppSettingsPage::Help),
     hit(
-        Page::General,
-        "Recent changes",
-        "why did my desktop change history automatic schedule undo recent changes",
+        Page::Changes,
+        "Changes",
+        "why did my desktop change history automatic schedule undo recent changes log",
         false,
-    )
-    .destination(AppSettingsPage::Restore)
-    .open(SearchOpen::Recent),
+    ),
     hit(
         Page::Themes,
         "Shared desktop themes",
@@ -647,12 +644,12 @@ const SEARCH: &[SearchHit] = &[
     )
     .destination(AppSettingsPage::WhatsNew),
     hit(
-        Page::General,
+        Page::Changes,
         "Restore previous desktop",
-        "recovery restore reset previous wallpaper hide widgets",
+        "recovery restore reset previous wallpaper hide widgets earlier setups",
         false,
     )
-    .destination(AppSettingsPage::Restore),
+    .at("changes-earlier"),
 ];
 
 const fn hit(page: Page, label: &'static str, terms: &'static str, advanced: bool) -> SearchHit {
@@ -1015,7 +1012,6 @@ mod tests {
             match renamed.open {
                 SearchOpen::City => assert!(app.city_editing),
                 SearchOpen::Effects => assert!(app.system_appearance.effects),
-                SearchOpen::Recent => assert!(app.support.recent_open),
                 SearchOpen::Readability | SearchOpen::Transparency => {
                     assert!(app.material_adjust);
                     assert_eq!(app.material_target, crate::materials::Target::Widgets);
@@ -1034,7 +1030,10 @@ mod tests {
             .collect();
         for page in Page::ALL {
             // Every page lights exactly one menu entry.
-            assert!(entries.contains(&page.sidebar()), "{page:?}");
+            assert!(
+                entries.contains(&page.sidebar()) || page.sidebar() == Page::PINNED,
+                "{page:?}"
+            );
             let destination = match page {
                 Page::WidgetLayout | Page::Widgets | Page::Desktop => Page::Overview,
                 Page::DesktopWorkspaces => Page::DesktopWindows,
@@ -1337,7 +1336,6 @@ pub(super) struct Route {
     saved_collection: bool,
     setup_review: Option<super::profiles::Selection>,
     setup_requested: bool,
-    recent_open: bool,
     report: Option<String>,
 }
 const MAX_HISTORY: usize = 40;
@@ -1436,7 +1434,6 @@ impl Settings {
             setup_review: (self.page == Page::DesktopProfiles && self.profiles.review_open())
                 .then(|| self.profiles.selection().clone()),
             setup_requested: self.setup_requested,
-            recent_open: self.support.recent_open,
             report: self.support.report.clone(),
         }
     }
@@ -1460,10 +1457,10 @@ impl Settings {
         if last.is_some_and(|route| route.search_open || !route.query.trim().is_empty()) {
             return Some(("Search results".into(), Message::Back));
         }
-        if self.page == Page::PendingChanges && !self.history.last().is_some_and(|r| r.page != Page::General) {
+        if self.page == Page::PendingChanges && !self.history.last().is_some_and(|r| r.page != Page::Changes) {
             return Some((
-                AppSettingsPage::Restore.tab_title().into(),
-                Message::AppSettingsPage(AppSettingsPage::Restore),
+                Page::Changes.nav_title().into(),
+                Message::Page(Page::Changes),
             ));
         }
         if self.page == Page::Overview && self.canvas_visible() {
@@ -1489,8 +1486,7 @@ impl Settings {
         }
         let inside = match self.page {
             Page::General
-                if self.support.recent_open
-                    || self.support.report.is_some()
+                if self.support.report.is_some()
                     || self.app_settings_page != AppSettingsPage::Home =>
             {
                 Some(Page::General)
@@ -1538,7 +1534,6 @@ impl Settings {
     }
     fn route_title(&self, route: &Route) -> String {
         match route.page {
-            Page::General if route.recent_open => "Recent changes".into(),
             Page::General if route.report.is_some() => "Support report".into(),
             Page::General => match route.app {
                 AppSettingsPage::Home => "Settings".into(),
@@ -1566,7 +1561,6 @@ impl Settings {
                     && self.app_settings_page != AppSettingsPage::Home =>
                 {
                     self.app_settings_page = AppSettingsPage::Home;
-                    self.support.recent_open = false;
                     self.support.report = None;
                     Task::none()
                 }
@@ -1584,7 +1578,6 @@ impl Settings {
         self.object_tab = route.tab;
         self.arranging = route.arranging && self.canvas.is_some();
         self.setup_requested = route.setup_requested;
-        self.support.recent_open = route.recent_open;
         self.support.report = route.report;
         if route.page == Page::DesktopProfiles {
             if let Some(selection) = route.setup_review {
@@ -1642,7 +1635,6 @@ impl Settings {
         self.search_selected = None;
         if root == Page::General {
             self.app_settings_page = AppSettingsPage::Home;
-            self.support.recent_open = false;
             self.support.report = None;
         }
         if root == Page::DesktopProfiles {

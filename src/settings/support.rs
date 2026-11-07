@@ -105,7 +105,9 @@ pub enum Message {
     Refresh,
     Changed,
     Loaded(u64, Local),
-    Recent(bool),
+    Filter(Filter),
+    /// Opens the setting a recorded change was made in.
+    OpenChange(String),
     Details(Option<String>),
     Preview(bool),
     Copy,
@@ -114,18 +116,80 @@ pub enum Message {
     Open(Destination),
     ReportProblem,
 }
+/// Which changes the Changes page lists.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Filter {
+    #[default]
+    All,
+    You,
+    Automatic,
+}
+impl Filter {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::You => "You",
+            Self::Automatic => "Automatic",
+        }
+    }
+}
 #[derive(Default)]
 pub struct Support {
     pub local: Local,
     pub loading: bool,
     pub observed: Option<chrono::DateTime<chrono::Local>>,
-    pub recent_open: bool,
+    pub filter: Filter,
     pub expanded: Option<String>,
     pub report: Option<String>,
     pub notice: Option<&'static str>,
     generation: u64,
 }
+/// The page a recorded change was made on.
+fn change_page(entry: &crate::desktop::store::activity::Summary) -> Page {
+    use crate::desktop::Owner;
+    use crate::desktop::store::activity::Cause;
+    match entry.cause {
+        Cause::Schedule | Cause::DisplayRule => Page::DesktopAutomation,
+        Cause::WallpaperColors => Page::Themes,
+        Cause::You => match Owner::parse(&entry.owner) {
+            Some(Owner::DockPanel) => Page::DesktopDock,
+            Some(Owner::Profile) => Page::DesktopProfiles,
+            Some(Owner::Wallpaper) => Page::DesktopWallpaper,
+            Some(Owner::Appearance) => Page::Themes,
+            Some(Owner::Windows) => Page::DesktopWindows,
+            Some(Owner::Workspaces) => Page::DesktopWorkspaces,
+            Some(Owner::WindowRules) => Page::DesktopWindowRules,
+            Some(Owner::Shortcuts) => Page::DesktopShortcuts,
+            Some(Owner::DesktopIcons) => Page::DesktopIcons,
+            Some(Owner::Preferences) => Page::Appearance,
+            Some(Owner::Recovery) | None => Page::Changes,
+        },
+    }
+}
 impl Settings {
+    /// Opens where a change was made: the changed setting itself, picked
+    /// out as a search result would be, or else its page.
+    fn open_change(&mut self, id: &str) -> Task<AppMessage> {
+        let Some(entry) = self.support.local.recent.entries.iter().find(|e| e.id == id) else {
+            return Task::none();
+        };
+        let page = change_page(entry);
+        if page == Page::Changes {
+            return Task::none();
+        }
+        let hit = entry.details.iter().find_map(|detail| {
+            super::navigation::search(&detail.setting)
+                .into_iter()
+                .find(|hit| hit.page.sidebar() == page.sidebar())
+        });
+        match hit {
+            Some(hit) => self.handle(AppMessage::SearchResult(hit)),
+            None => {
+                self.remember_route();
+                self.handle(AppMessage::Page(page))
+            }
+        }
+    }
     pub(super) fn help_snapshot(&self) -> Snapshot {
         use super::updates::{Check, UpdateChannel};
         use Destination::*;
@@ -349,22 +413,11 @@ impl Settings {
                 self.support.loading = false;
                 self.support.observed = Some(chrono::Local::now());
             }
-            Message::Recent(open) => {
-                if open
-                    && !self.support.recent_open
-                    && self.page == Page::General
-                    && self.app_settings_page == AppSettingsPage::Restore
-                {
-                    self.remember_route();
-                }
+            Message::Filter(filter) => {
+                self.support.filter = filter;
                 self.support.expanded = None;
-                let nav = self.handle(AppMessage::AppSettingsPage(AppSettingsPage::Restore));
-                self.support.recent_open = open;
-                if open {
-                    return Task::batch([nav, self.load_support()]);
-                }
-                return nav;
             }
+            Message::OpenChange(id) => return self.open_change(&id),
             Message::Details(id) => self.support.expanded = id,
             Message::Preview(open) => {
                 if open && self.support.report.is_none() {
@@ -439,7 +492,7 @@ impl Settings {
                     Destination::Background => {
                         AppMessage::AppSettingsPage(AppSettingsPage::Operation)
                     }
-                    Destination::Recovery => AppMessage::AppSettingsPage(AppSettingsPage::Restore),
+                    Destination::Recovery => AppMessage::Page(Page::Changes),
                     Destination::Calendar => AppMessage::Page(super::Page::Calendar),
                     Destination::Displays => AppMessage::Page(super::Page::Overview),
                     Destination::Automation => AppMessage::Page(super::Page::DesktopAutomation),

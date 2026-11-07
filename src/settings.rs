@@ -110,6 +110,8 @@ pub enum Page {
     Moments,
     AdaptiveLooks,
     Builder,
+    /// Every recorded change, pinned at the bottom of the sidebar.
+    Changes,
 }
 impl Page {
     /// Seven roots, each named for what it changes; leaf routes keep their
@@ -126,7 +128,9 @@ impl Page {
             Self::General,
         ],
     )];
-    const ALL: [Self; 31] = [
+    /// Pinned below the roots, at the bottom of the sidebar.
+    const PINNED: Self = Self::Changes;
+    const ALL: [Self; 32] = [
         Self::Overview,
         Self::WidgetLayout,
         Self::PendingChanges,
@@ -158,6 +162,7 @@ impl Page {
         Self::Moments,
         Self::AdaptiveLooks,
         Self::Builder,
+        Self::Changes,
     ];
     /// The flat destination a page is reached through; used for search context.
     fn nav(self) -> Self {
@@ -171,7 +176,8 @@ impl Page {
             Self::DesktopAutomation | Self::Moments | Self::AdaptiveLooks => {
                 Self::DesktopAutomation
             }
-            Self::General | Self::PendingChanges | Self::DesktopMotion => Self::General,
+            Self::General | Self::DesktopMotion => Self::General,
+            Self::Changes | Self::PendingChanges => Self::Changes,
             Self::Widgets | Self::Overview | Self::WidgetLayout | Self::Desktop => Self::Overview,
             page => page,
         }
@@ -190,7 +196,8 @@ impl Page {
             Self::DesktopWindows | Self::DesktopWindowRules | Self::DesktopShortcuts => {
                 Self::DesktopWindows
             }
-            Self::DesktopMotion | Self::General | Self::PendingChanges => Self::General,
+            Self::DesktopMotion | Self::General => Self::General,
+            Self::Changes | Self::PendingChanges => Self::Changes,
             _ => Self::Overview,
         }
     }
@@ -241,6 +248,7 @@ impl Page {
             Self::DesktopProfiles => "applications-graphics-symbolic",
             Self::DesktopAutomation => "alarm-symbolic",
             Self::General => "emblem-system-symbolic",
+            Self::Changes => "document-open-recent-symbolic",
             page => page.icon(),
         }
     }
@@ -286,6 +294,7 @@ impl Page {
             Self::Moments => "moments",
             Self::AdaptiveLooks => "adaptive",
             Self::Builder => "builder",
+            Self::Changes => "changes",
         }
     }
     fn title(self) -> &'static str {
@@ -321,6 +330,7 @@ impl Page {
             Self::Moments => "Day and night style",
             Self::AdaptiveLooks => "Adaptive looks",
             Self::Builder => "Widget builder",
+            Self::Changes => "Changes",
         }
     }
     fn parse(value: &str) -> Self {
@@ -342,6 +352,7 @@ impl Page {
             "app-settings" => "general",
             "presets" => "desktop-profiles",
             "schedules" => "desktop-automation",
+            "history" | "recent" | "recent-changes" | "restore" => "changes",
             _ => value,
         };
         Self::ALL
@@ -366,6 +377,7 @@ impl Page {
             Self::Overview => "preferences-desktop-display-symbolic",
             Self::WidgetLayout => "object-move-symbolic",
             Self::PendingChanges => "document-save-symbolic",
+            Self::Changes => "document-open-recent-symbolic",
             Self::Appearance => "preferences-desktop-wallpaper-symbolic",
             Self::Widgets => "view-grid-symbolic",
             Self::Glance => "preferences-system-time-symbolic",
@@ -1214,15 +1226,8 @@ impl cosmic::Application for Settings {
         let motion = app.handle(Message::ReadSystemMotion);
         app.desktop_recovery.refresh();
         let installation = app.handle(Message::RefreshInstallation);
-        let support = if page == Page::General
-            && matches!(
-                app.app_settings_page,
-                AppSettingsPage::Help | AppSettingsPage::Restore
-            ) {
-            app.load_support()
-        } else {
-            Task::none()
-        };
+        // The sidebar's Changes entry shows today's count from the start.
+        let support = app.load_support();
         (
             app,
             Task::batch([
@@ -1500,9 +1505,8 @@ impl cosmic::Application for Settings {
                 );
             }
         }
-        if self.page == Page::General
-            && (self.support.recent_open || self.app_settings_page == AppSettingsPage::Help)
-            && let Some(store) = self
+        // Always watched: the sidebar's Changes entry counts today's changes.
+        if let Some(store) = self
                 .support
                 .local
                 .store
@@ -2248,12 +2252,10 @@ impl Settings {
                 }
                 self.prepare_search_control(hit);
                 self.search_selected = Some(hit);
-                let support = if hit.page == Page::General
-                    && matches!(
-                        self.app_settings_page,
-                        AppSettingsPage::Help | AppSettingsPage::Restore
-                    ) {
-                    self.support.recent_open = hit.open == navigation::SearchOpen::Recent;
+                let support = if (hit.page == Page::General
+                    && self.app_settings_page == AppSettingsPage::Help)
+                    || hit.page == Page::Changes
+                {
                     self.support.report = None;
                     self.load_support()
                 } else {
@@ -2287,10 +2289,6 @@ impl Settings {
             Message::Back => {
                 if self.wizard.is_some() {
                     return self.update_wizard(wizard::Message::Back);
-                }
-                if self.history.is_empty() && self.page == Page::General && self.support.recent_open
-                {
-                    return self.update_support(support::Message::Recent(false));
                 }
                 if self.history.is_empty()
                     && self.page == Page::General
@@ -2703,9 +2701,8 @@ impl Settings {
                     Task::none()
                 };
                 self.app_settings_page = page;
-                self.support.recent_open = false;
                 self.support.report = None;
-                let support = if matches!(page, AppSettingsPage::Help | AppSettingsPage::Restore) {
+                let support = if page == AppSettingsPage::Help {
                     self.load_support()
                 } else {
                     Task::none()
@@ -2794,13 +2791,13 @@ impl Settings {
                                 }
                                 if let Some(action) = value["support"].as_str() {
                                     let action = match action {
-                                        "report" => Some(support::Message::Preview(true)),
-                                        "recent" => Some(support::Message::Recent(true)),
-                                        "refresh" => Some(support::Message::Refresh),
+                                        "report" => Some(Message::Support(support::Message::Preview(true))),
+                                        "recent" => Some(Message::Page(Page::Changes)),
+                                        "refresh" => Some(Message::Support(support::Message::Refresh)),
                                         _ => None,
                                     };
                                     if let Some(action) = action {
-                                        tasks.push(self.update(Message::Support(action)));
+                                        tasks.push(self.update(action));
                                     }
                                 }
                                 if value["recent_details"] == true
@@ -3323,9 +3320,15 @@ impl Settings {
                 } else {
                     Task::none()
                 };
+                let changes = if page == Page::Changes {
+                    self.load_support()
+                } else {
+                    Task::none()
+                };
                 return Task::batch([
                     scroll,
                     reveal,
+                    changes,
                     if matches!(page, Page::General | Page::Overview) {
                         service_task()
                     } else {
@@ -12668,7 +12671,7 @@ if not presence:
                 .try_bounds(app.settings_view(), "get-islands")
                 .is_none()
         );
-        send_settings(&mut app, Message::AppSettingsPage(AppSettingsPage::Restore));
+        send_settings(&mut app, Message::Page(Page::Changes));
         native_click(&mut app, &mut native, "restore-desktop");
         assert_eq!(
             store.read_user(&key).unwrap().unwrap().as_str(),
@@ -12699,7 +12702,7 @@ if not presence:
         send_settings(&mut reopened, Message::Resized(size));
         send_settings(
             &mut reopened,
-            Message::AppSettingsPage(AppSettingsPage::Restore),
+            Message::Page(Page::Changes),
         );
         native_click(&mut reopened, &mut native, "undo-desktop-restore");
         app = reopened;

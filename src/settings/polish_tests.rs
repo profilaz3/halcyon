@@ -502,7 +502,7 @@ fn polish050_history_exposes_only_exact_eligible_undo_without_expansion() {
                 .id,
         );
     }
-    send_settings(&mut app, Message::Support(support::Message::Recent(true)));
+    send_settings(&mut app, Message::Page(Page::Changes));
     assert_eq!(
         app.support.local.recent.undo_id.as_deref(),
         Some(ids[1].as_str())
@@ -537,4 +537,103 @@ fn polish050_history_exposes_only_exact_eligible_undo_without_expansion() {
         store.recent_changes().unwrap().undo_id.as_deref(),
         Some(ids[0].as_str())
     );
+}
+
+/// Changes sits pinned at the bottom of the sidebar with today's count.
+/// The page filters by who made a change, offers Undo only on the latest
+/// manual change and opens any change where it was made.
+#[test]
+fn changes_pinned_in_sidebar_filters_and_opens_where_made() {
+    let name = "changes_pinned_in_sidebar_filters_and_opens_where_made";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::desktop::store::{RawValue, Source};
+    use crate::desktop::{DesktopPatch, Owner};
+    use crate::settings::support::Filter;
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    let store = app.desktop.store().unwrap().clone();
+    let key = dock_key("spacing");
+    let mut ids = Vec::new();
+    for value in [5, 9] {
+        let mut patch = DesktopPatch::new();
+        patch.set(
+            key.clone(),
+            store.read_user(&key).unwrap(),
+            Some(RawValue::parse(value.to_string()).unwrap()),
+        );
+        ids.push(
+            store
+                .apply_action(&patch, None, Owner::DockPanel, "Dock spacing", Source::Manual)
+                .unwrap()
+                .id,
+        );
+    }
+    send_settings(&mut app, Message::Page(Page::Overview));
+    send_settings(&mut app, Message::Support(support::Message::Changed));
+    assert_eq!(app.changes_today(), 2);
+    assert!(app.latest_change_line().is_some_and(|line| line.starts_with("Latest: ")));
+
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        send_settings(&mut app, Message::Resized(size));
+        send_settings(&mut app, Message::Page(Page::Overview));
+        let mut native = crate::native_test::Native::new(size);
+        let entry = native.bounds(app.settings_view(), "nav-changes");
+        assert!(entry.y + entry.height <= size.height, "pinned inside the window");
+        native.capture_hover(
+            app.settings_view(),
+            &cosmic::Theme::dark(),
+            entry.center(),
+            &format!("changes-sidebar-hover-{}", size.width),
+        );
+        native_click(&mut app, &mut native, "nav-changes");
+        assert_eq!(app.page, Page::Changes);
+        assert!(native.duplicate_ids(app.settings_view()).is_empty());
+        native_reveal(&app, &mut native, "history-review-undo");
+        for (theme, name) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
+            native.capture(app.settings_view(), &theme, &format!("changes-page-{}-{name}", size.width));
+        }
+    }
+
+    let mut native = crate::native_test::Native::new(Size::new(1280., 800.));
+    // Only the latest manual change can be undone; the earlier one opens.
+    assert!(native.try_bounds(app.settings_view(), &format!("change-open-{}", ids[0])).is_some());
+    send_settings(&mut app, Message::Support(support::Message::Filter(Filter::Automatic)));
+    assert!(native.try_bounds(app.settings_view(), "history-review-undo").is_none());
+    native.text_bounds(app.settings_view(), "No automatic changes yet");
+    native.capture(app.settings_view(), &cosmic::Theme::dark(), "changes-filter-automatic");
+    send_settings(&mut app, Message::Support(support::Message::Filter(Filter::You)));
+    assert!(native.try_bounds(app.settings_view(), "history-review-undo").is_some());
+
+    native_click(&mut app, &mut native, &format!("change-open-{}", ids[0]));
+    assert_eq!(app.page.sidebar(), Page::DesktopDock, "opens where it was made");
+    send_settings(&mut app, Message::Back);
+    assert_eq!(app.page, Page::Changes);
+
+    // The footer's last save leads to the same list.
+    send_settings(&mut app, Message::Page(Page::DesktopDock));
+    app.last_desktop_change = Some((Owner::DockPanel, "Dock spacing".into(), ids[1].clone()));
+    app.undo_baseline = None;
+    // The footer sits below the scrolling page, so it is clicked in place.
+    let point = native.bounds(app.settings_view(), "settings-saved-changes").center();
+    for event in [
+        cosmic::iced::mouse::Event::CursorMoved { position: point },
+        cosmic::iced::mouse::Event::ButtonPressed(cosmic::iced::mouse::Button::Left),
+        cosmic::iced::mouse::Event::ButtonReleased(cosmic::iced::mouse::Button::Left),
+    ] {
+        let (messages, _) =
+            native.event(app.settings_view(), cosmic::iced::Event::Mouse(event), point);
+        for message in messages {
+            send_settings(&mut app, message);
+        }
+    }
+    assert_eq!(app.page, Page::Changes);
 }
