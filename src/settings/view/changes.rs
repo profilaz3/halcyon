@@ -158,12 +158,16 @@ impl Settings {
             cosmic::iced::widget::space().width(0).into()
         };
         let content: Element<'_, Message> = if rail {
+            // Today's count sits beside the label, not above it.
             column::with_children(vec![
-                row::with_children(vec![icon, mark, count])
+                row::with_children(vec![icon, mark])
                     .spacing(2)
                     .align_y(Alignment::Start)
                     .into(),
-                title.into(),
+                row::with_children(vec![title.into(), count])
+                    .spacing(4)
+                    .align_y(Alignment::Center)
+                    .into(),
             ])
             .spacing(2)
             .width(Length::Fill)

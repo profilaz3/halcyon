@@ -802,7 +802,11 @@ impl Settings {
                 self.nav_model.is_active(id) && self.page.sidebar() != Page::PINNED;
             let page = self.nav_model.data::<Page>(id).copied();
             let waiting = page.is_some_and(|page| kept.iter().any(|item| item.root == page));
-            let title = text::body(self.nav_model.text(id).unwrap_or_default().to_owned())
+            let name = match page {
+                Some(page) if rail => page.rail_title(),
+                _ => self.nav_model.text(id).unwrap_or_default(),
+            };
+            let title = text::body(name.to_owned())
                 .size(if rail { 12 } else { 15 })
                 .class(if active {
                     cosmic::theme::Text::Custom(|theme| cosmic::iced::widget::text::Style {

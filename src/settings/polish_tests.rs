@@ -893,3 +893,69 @@ fn history_f_changes_names_widgets_and_puts_back_older_changes() {
         "keeping writes nothing back"
     );
 }
+
+/// The narrow rail shows each entry as an icon over one line of text, with
+/// the Changes count beside its label.
+#[test]
+fn rail_entries_keep_one_line_labels() {
+    let name = "rail_entries_keep_one_line_labels";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    // Something changed today, so Changes shows its count.
+    let date = app.config.clock.show_date;
+    send_settings(&mut app, Message::ClockDate(!date));
+    send_settings(&mut app, Message::Support(support::Message::Changed));
+    let size = Size::new(820., 600.);
+    send_settings(&mut app, Message::Resized(size));
+    let mut native = crate::native_test::Native::new(size);
+    assert!(native.duplicate_ids(app.settings_view()).is_empty());
+    let changes = native.bounds(app.settings_view(), "nav-changes");
+    let label = native.text_bounds(app.settings_view(), "Changes");
+    let lines = |native: &mut crate::native_test::Native, text: &str| {
+        native
+            .text_all(app.settings_view(), text)
+            .into_iter()
+            .filter(|bounds| bounds.x < 84.)
+            .collect::<Vec<_>>()
+    };
+    let one = label.height;
+    for text in [
+        "Looks",
+        "Appearance",
+        "Wallpaper",
+        "Widgets",
+        "Dock",
+        "Windows",
+        "Accessibility",
+        "Halcyon",
+    ] {
+        let found = lines(&mut native, text);
+        assert_eq!(found.len(), 1, "{text} shows once in the rail");
+        assert!(found[0].height <= one + 1., "{text} wraps: {:?}", found[0]);
+        assert!(found[0].width <= 80., "{text} is too wide: {:?}", found[0]);
+    }
+    assert!(lines(&mut native, "Dock and panel").is_empty());
+    // The count sits on the label's line, inside the entry.
+    let count = lines(&mut native, "1");
+    assert_eq!(count.len(), 1, "one count beside Changes");
+    assert!((count[0].center_y() - label.center_y()).abs() <= 2., "{count:?} {label:?}");
+    assert!(count[0].x > label.x + label.width);
+    assert!(count[0].x + count[0].width <= changes.x + changes.width);
+    for (theme, mode) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
+        native.capture(app.settings_view(), &theme, &format!("rail-820-{mode}"));
+    }
+    // The wide sidebar keeps the full name.
+    send_settings(&mut app, Message::Resized(Size::new(1280., 800.)));
+    let mut native = crate::native_test::Native::new(Size::new(1280., 800.));
+    assert!(!native.text_all(app.settings_view(), "Dock and panel").is_empty());
+}

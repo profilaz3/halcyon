@@ -232,6 +232,13 @@ impl Page {
             page => page.title(),
         }
     }
+    /// The name in the narrow rail, short enough for one line.
+    fn rail_title(self) -> &'static str {
+        match self.sidebar() {
+            Self::DesktopDock => "Dock",
+            page => page.nav_title(),
+        }
+    }
     fn nav_icon(self) -> &'static str {
         match self {
             Self::Overview => "view-grid-symbolic",
