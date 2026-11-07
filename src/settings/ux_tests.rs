@@ -583,17 +583,20 @@ fn split_sidebar_keyboard_navigation_keeps_focus_and_drafts() {
             repeat: false,
         })
     };
-    // Arrows walk the seven root destinations and retain focus across changes.
+    // Arrows walk the root destinations, then the pinned Changes, and
+    // retain focus across changes.
     for (name, page) in [
         (Named::ArrowDown, Page::DesktopDock),
         (Named::ArrowDown, Page::DesktopWindows),
         (Named::ArrowDown, Page::General),
+        (Named::ArrowDown, Page::Changes),
+        (Named::ArrowUp, Page::General),
         (Named::ArrowUp, Page::DesktopWindows),
         (Named::Home, Page::DesktopProfiles),
         (Named::ArrowUp, Page::DesktopProfiles),
         (Named::ArrowDown, Page::Themes),
-        (Named::End, Page::General),
-        (Named::ArrowDown, Page::General),
+        (Named::End, Page::Changes),
+        (Named::ArrowDown, Page::Changes),
     ] {
         let (messages, status) = native.event(app.settings_view(), key(name), Point::ORIGIN);
         assert_eq!(status, cosmic::iced::event::Status::Captured);
@@ -614,7 +617,7 @@ fn split_sidebar_keyboard_navigation_keeps_focus_and_drafts() {
     assert!(
         !messages
             .iter()
-            .any(|message| matches!(message, Message::NavSelected(_)))
+            .any(|message| matches!(message, Message::NavSelected(_) | Message::OpenRoot(_)))
     );
     assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
 }
@@ -2246,12 +2249,13 @@ fn ux_native_seven_roots_and_every_old_route_resolves() {
         (Page::AdaptiveLooks, Page::DesktopProfiles),
         (Page::General, Page::General),
         (Page::DesktopMotion, Page::General),
-        (Page::PendingChanges, Page::General),
+        (Page::PendingChanges, Page::Changes),
+        (Page::Changes, Page::Changes),
     ] {
         assert_eq!(page.sidebar(), root, "{page:?}");
         assert_eq!(Page::parse(page.key()).sidebar(), root, "{page:?}");
     }
-    assert_eq!(Page::ALL.len(), 31, "a new route must be mapped here too");
+    assert_eq!(Page::ALL.len(), 32, "a new route must be mapped here too");
     for (alias, page) in [
         ("home", Page::Overview),
         ("layout", Page::Overview),

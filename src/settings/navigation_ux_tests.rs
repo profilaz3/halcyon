@@ -156,11 +156,11 @@ fn back_from_setup_review_reaches_its_named_search_destination() {
     );
     send_settings(&mut app, Message::SearchSettings("recent changes".into()));
     send_settings(&mut app, Message::SearchFirst);
-    assert!(app.support.recent_open);
+    assert_eq!(app.page, Page::Changes);
     assert_eq!(app.back_title().as_deref(), Some("Search results"));
     send_settings(&mut app, Message::Back);
     assert_eq!(app.search_query, "recent changes");
-    assert!(!app.support.recent_open);
+    assert_ne!(app.page, Page::Changes);
 }
 
 #[test]

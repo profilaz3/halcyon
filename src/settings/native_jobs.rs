@@ -605,9 +605,8 @@ impl Settings {
         self.last_desktop_change = navigation::latest_desktop_change();
         self.checkpoint_session_drafts();
         let mut tasks = vec![task];
-        if self.page == Page::General
-            && (self.support.recent_open || self.app_settings_page == super::AppSettingsPage::Help)
-        {
+        // Changes is refreshed by its file watcher; Help reads more.
+        if self.page == Page::General && self.app_settings_page == super::AppSettingsPage::Help {
             tasks.push(self.load_support());
         }
         while !self.native_busy {

@@ -459,10 +459,18 @@ impl Settings {
                 .map(|(_, title, _)| format!("Saved · {title}"));
             if let Some(status) = fresh {
                 empty = false;
+                // The latest save opens the full list of changes.
                 items.push(
-                    container(label(status, 12., MUTED))
-                        .width(Length::Fill)
-                        .into(),
+                    container(
+                        // Reads as the quiet status line it replaces.
+                        button::custom(label(status, 12., MUTED))
+                            .id(cosmic::widget::Id::new("settings-saved-changes"))
+                            .class(cosmic::theme::Button::Text)
+                            .padding([2, 4])
+                            .on_press(Message::OpenRoot(Page::Changes)),
+                    )
+                    .width(Length::Fill)
+                    .into(),
                 );
             } else {
                 items.push(container(label("", 12., MUTED)).width(Length::Fill).into());

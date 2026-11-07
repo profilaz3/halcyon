@@ -12,17 +12,15 @@ pub(crate) enum AppSettingsPage {
     Updates,
     /// This version's release notes, opened from Updates.
     WhatsNew,
-    Restore,
     Help,
 }
 
 impl AppSettingsPage {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 5] = [
         Self::Operation,
         Self::Interface,
         Self::Privacy,
         Self::Updates,
-        Self::Restore,
         Self::Help,
     ];
 
@@ -34,7 +32,6 @@ impl AppSettingsPage {
             Self::Privacy => "Privacy",
             Self::Updates => "Updates",
             Self::WhatsNew => "What’s new",
-            Self::Restore => "Restore",
             Self::Help => "Help",
         }
     }
@@ -43,7 +40,6 @@ impl AppSettingsPage {
         match self {
             Self::Operation => "Startup",
             Self::Updates => "Updates",
-            Self::Restore => "Restore",
             Self::Help => "Help",
             page => page.title(),
         }
@@ -57,7 +53,6 @@ impl AppSettingsPage {
             Self::Privacy => "privacy",
             Self::Updates => "updates",
             Self::WhatsNew => "whats-new",
-            Self::Restore => "restore",
             Self::Help => "help",
         }
     }
@@ -1294,7 +1289,6 @@ impl Settings {
                 format!("app-settings-{}", page.key()),
             )
         };
-        let waiting = self.kept_previews().len();
         // One list: no group heading, Accessibility first.
         let halcyon = cosmic::widget::settings::section()
             .add(self.settings_row(
@@ -1338,16 +1332,6 @@ impl Settings {
                 true,
             ))
             .add(row(
-                "document-open-recent-symbolic",
-                AppSettingsPage::Restore,
-                if waiting > 0 {
-                    format!("{waiting} not applied yet")
-                } else {
-                    "Saved copies from before big changes".into()
-                },
-                waiting > 0,
-            ))
-            .add(row(
                 "help-browser-symbolic",
                 AppSettingsPage::Help,
                 "Get help or report a problem".into(),
@@ -1370,13 +1354,10 @@ impl Settings {
             AppSettingsPage::Privacy => self.privacy_section(),
             AppSettingsPage::Updates => self.updates_section(),
             AppSettingsPage::WhatsNew => self.whats_new_page(),
-            AppSettingsPage::Restore if self.support.recent_open => self.recent_changes_page(),
-            AppSettingsPage::Restore => self.app_restore_page(),
             AppSettingsPage::Help => self.help_page(),
         };
         let mut parts = Vec::new();
-        if !(selected == AppSettingsPage::Restore && self.support.recent_open)
-            && !(selected == AppSettingsPage::Help && self.support.report.is_some())
+        if !(selected == AppSettingsPage::Help && self.support.report.is_some())
         {
             parts.push(heading(
                 selected.title(),
@@ -1388,7 +1369,6 @@ impl Settings {
                     }
                     AppSettingsPage::Updates => "Which version you have and how it updates.",
                     AppSettingsPage::WhatsNew => "New in this version.",
-                    AppSettingsPage::Restore => "Go back to how things were.",
                     AppSettingsPage::Help => "Get help, or tell us about a problem.",
                     AppSettingsPage::Home => "",
                 },
@@ -1520,48 +1500,4 @@ impl Settings {
         group(Some("Not applied yet"), rows)
     }
 
-    fn app_restore_page(&self) -> Element<'_, Message> {
-        let mut items = Vec::new();
-        if !self.kept_previews().is_empty() {
-            items.push(self.not_applied_section());
-        }
-        items.push(group(
-            Some("History"),
-            vec![self.link_row(
-                "Recent changes",
-                "See what changed and undo it",
-                Message::Support(crate::settings::support::Message::Recent(true)),
-                "recovery-recent-changes".into(),
-            )],
-        ));
-        let mut earlier = self.desktop_recovery_rows();
-        earlier.push(group_row(
-            "Wallpaper from before Halcyon",
-            "The picture you had when Halcyon was installed",
-            button::standard("Restore…")
-                .on_press_maybe((!self.busy && !preview()).then_some(Message::Restore(true)))
-                .into(),
-        ));
-        items.push(group(Some("Earlier setups"), earlier));
-        if !self.recovery_sheet.rows.is_empty() {
-            let count = self.recovery_sheet.rows.len();
-            items.push(group(
-                Some("From the previous version"),
-                vec![self.link_row(
-                    format!(
-                        "{count} unfinished {}",
-                        if count == 1 { "change" } else { "changes" }
-                    ),
-                    "Nothing changes until you choose",
-                    Message::Page(Page::PendingChanges),
-                    "restore-pending".into(),
-                )],
-            ));
-        }
-        // Before the update, "how widgets are saved" lives under Updates.
-        if self.design.managed {
-            items.push(self.design_section(Some("Widgets")));
-        }
-        column::with_children(items).spacing(16).into()
-    }
 }

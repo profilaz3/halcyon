@@ -3,6 +3,7 @@ mod adaptive_looks;
 mod automation;
 mod calendar;
 mod canvas;
+mod changes;
 mod color_well;
 mod colors;
 mod design;
@@ -537,6 +538,7 @@ impl Settings {
                 self.overview_page()
             }
             Page::PendingChanges => self.pending_changes_page(),
+            Page::Changes => self.changes_page(),
             Page::Appearance => self.appearance_page(),
             Page::Glance => self.glance_page(),
             Page::Calendar => self.calendar_page(),
@@ -790,7 +792,9 @@ impl Settings {
         let rail = self.rail();
         let kept = self.kept_previews();
         let entry = |id: cosmic::widget::segmented_button::Entity| -> Element<'_, Message> {
-            let active = self.nav_model.is_active(id);
+            // The pinned Changes entry has no place in the model.
+            let active =
+                self.nav_model.is_active(id) && self.page.sidebar() != Page::PINNED;
             let page = self.nav_model.data::<Page>(id).copied();
             let waiting = page.is_some_and(|page| kept.iter().any(|item| item.root == page));
             let title = text::body(self.nav_model.text(id).unwrap_or_default().to_owned())
@@ -915,7 +919,7 @@ impl Settings {
                 .class(nav_style(false, self.settings_accent()))
                 .padding([6, 0])
                 .width(Length::Fill)
-                .on_press(Message::AppSettingsPage(AppSettingsPage::Restore))
+                .on_press(Message::Page(Page::Changes))
                 .into()
             } else {
                 let mut rows = vec![
@@ -951,30 +955,40 @@ impl Settings {
                 column::with_children(rows).spacing(2).into()
             });
         }
-        let content = container(
+        let pinned = container(self.changes_entry(rail))
+            .padding(if rail { [6, 6, 10, 6] } else { [6, 8, 12, 8] })
+            .width(Length::Fill);
+        let content = container(column::with_children(vec![
             scrollable(
                 container(column::with_children(groups).spacing(14))
                     .padding(if rail { [10, 6, 10, 6] } else { [12, 8, 12, 8] })
                     .width(Length::Fill),
             )
-            .height(Length::Fill),
-        )
+            .height(Length::Fill)
+            .into(),
+            pinned.into(),
+        ]))
         .width(self.sidebar_width())
         .height(Length::Fill)
         .class(cosmic::theme::Container::Primary)
         .into();
-        let entries = self
+        let mut entries: Vec<_> = self
             .nav_model
             .iter()
             .filter_map(|entity| {
                 self.nav_model.data::<Page>(entity).map(|page| {
                     (
                         cosmic::widget::Id::new(format!("nav-{}", page.key())),
-                        entity,
+                        Message::NavSelected(entity),
                     )
                 })
             })
             .collect();
+        // Arrows continue from the last group into the pinned Changes.
+        entries.push((
+            cosmic::widget::Id::new("nav-changes"),
+            Message::OpenRoot(Page::PINNED),
+        ));
         sidebar::navigation(content, entries)
     }
 

@@ -456,7 +456,6 @@ fn redesign_search_reveals_maintenance_pages_and_scene_bypasses_native_queue() {
         ("settings animations", AppSettingsPage::Interface),
         ("privacy usage", AppSettingsPage::Privacy),
         ("updates installation", AppSettingsPage::Updates),
-        ("restore previous desktop", AppSettingsPage::Restore),
         ("startup", AppSettingsPage::Operation),
     ] {
         let hit = navigation::search(query)[0];

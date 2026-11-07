@@ -3,19 +3,19 @@ use super::Message;
 use cosmic::iced::advanced::widget::{Operation, Tree, operation::Focusable};
 use cosmic::iced::advanced::{Clipboard, Layout, Shell, Widget, layout, overlay, renderer};
 use cosmic::iced::{Event, Length, Rectangle, Size, Vector, keyboard, mouse};
-use cosmic::widget::{Id, segmented_button::Entity};
+use cosmic::widget::Id;
 use cosmic::{Element, Renderer, Theme};
 
 pub(super) fn navigation<'a>(
     content: Element<'a, Message>,
-    entries: Vec<(Id, Entity)>,
+    entries: Vec<(Id, Message)>,
 ) -> Element<'a, Message> {
     Element::new(Navigation { content, entries })
 }
 
 struct Navigation<'a> {
     content: Element<'a, Message>,
-    entries: Vec<(Id, Entity)>,
+    entries: Vec<(Id, Message)>,
 }
 
 #[derive(Default)]
@@ -115,10 +115,10 @@ impl Widget<Message, Theme, Renderer> for Navigation<'_> {
                     Named::Home => 0,
                     _ => self.entries.len() - 1,
                 };
-                let (id, entity) = self.entries[next].clone();
+                let (id, open) = self.entries[next].clone();
                 let mut focus = cosmic::iced::advanced::widget::operation::focusable::focus(id);
                 self.operate(tree, layout, renderer, &mut focus);
-                shell.publish(Message::NavSelected(entity));
+                shell.publish(open);
                 shell.capture_event();
                 return;
             }

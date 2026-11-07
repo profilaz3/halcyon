@@ -153,9 +153,8 @@ impl Settings {
         if !addons.is_empty() {
             groups.push(group(Some("Halcyon’s panel"), addons));
         }
-        if !self.design.managed {
-            groups.push(self.design_section(Some("Widgets")));
-        }
+        // Before the update: get ready; afterwards: save a copy.
+        groups.push(self.design_section(Some("Widgets")));
         column::with_children(groups).spacing(16).into()
     }
 

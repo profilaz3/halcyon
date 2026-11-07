@@ -442,16 +442,15 @@ fn product_help_report_and_history_are_read_only_and_keep_private_data_out() {
     );
     send_settings(&mut app, Message::Back);
     assert!(app.support.report.is_none());
-    send_settings(&mut app, Message::Support(support::Message::Recent(true)));
-    assert!(app.support.recent_open);
-    assert_eq!(app.app_settings_page, AppSettingsPage::Restore);
+    send_settings(&mut app, Message::Page(Page::Changes));
+    assert_eq!(app.page, Page::Changes);
     send_settings(&mut app, Message::Back);
-    assert!(!app.support.recent_open);
+    assert_ne!(app.page, Page::Changes);
     for query in ["diagnostics", "why did my desktop change"] {
         send_settings(&mut app, Message::SearchSettings(query.into()));
         send_settings(&mut app, Message::SearchFirst);
-        assert_eq!(app.page, Page::General);
-        assert_eq!(app.support.recent_open, query.starts_with("why"));
+        let expected = if query.starts_with("why") { Page::Changes } else { Page::General };
+        assert_eq!(app.page, expected, "{query}");
     }
     assert_eq!(fixture_files(&root.join("cosmic-root")), before);
     assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), config);
