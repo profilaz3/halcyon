@@ -1,6 +1,7 @@
 //! Read-only local observations. Reports are an allowlisted projection, never config dumps.
 use super::{AppSettingsPage, Message as AppMessage, Page, Settings, Task};
-use crate::desktop::islands::{CompatibilityStatus, Installation};
+use super::view::Host;
+use crate::desktop::islands::Installation;
 use crate::desktop::store::activity::RecentChanges;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -145,26 +146,24 @@ impl Settings {
             health,
             action: Background,
         });
-        let (state, health) = match &self.desktop.islands.installation {
-            Installation::Pending => ("Not checked", Unknown),
-            Installation::Absent => ("Not installed", Neutral),
-            Installation::Installed { enabled: false, .. } => ("Disabled", Neutral),
-            Installation::Installed {
-                status: Some(CompatibilityStatus::Ready),
-                ..
-            } => ("Ready", Healthy),
-            Installation::Installed {
-                status: Some(CompatibilityStatus::LogoutRequired),
-                ..
-            } => ("Log out to activate", Attention),
-            Installation::Installed {
-                status: Some(CompatibilityStatus::Checking),
-                ..
-            } => ("Checking…", Unknown),
-            Installation::Installed { .. } => ("On, but may not suit this COSMIC version", Attention),
+        // Same words as the Dock and panel page and Updates.
+        let (state, health) = match self.panel_host() {
+            Host::Running => ("Running", Healthy),
+            Host::Checking => ("Checking…", Unknown),
+            Host::Switching => ("Getting ready…", Unknown),
+            Host::Switch => ("Not in use. Choose Islands under Dock and panel › Shape", Neutral),
+            Host::SignIn => ("Ready. Sign out and back in to start it", Attention),
+            Host::Failed(reason) => (reason, Attention),
+            Host::Unavailable(reason) => (
+                reason,
+                match self.desktop.islands.installation {
+                    Installation::Absent => Neutral,
+                    _ => Attention,
+                },
+            ),
         };
         components.push(Component {
-            name: "Panel islands",
+            name: "Halcyon’s panel",
             state,
             health,
             action: Islands,

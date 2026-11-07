@@ -7,6 +7,7 @@ mod color_well;
 mod colors;
 mod design;
 mod desktop;
+pub(super) use desktop::host::Host;
 mod desktop_icons;
 pub(super) mod home;
 mod layered;

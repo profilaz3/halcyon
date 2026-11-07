@@ -233,10 +233,12 @@ async fn run_activation(
         let mut child = command
             .kill_on_drop(true)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|_| Failure::Failed)?;
+        let stdout = tokio::spawn(bounded_output(child.stdout.take()));
+        let stderr = tokio::spawn(bounded_output(child.stderr.take()));
         let status = tokio::select! {
             biased;
             _ = packagekit::cancelled(&mut cancel) => Err(Failure::Cancelled),
@@ -245,7 +247,11 @@ async fn run_activation(
         };
         match status {
             Ok(status) if status.success() => Ok(()),
-            Ok(_) => Err(Failure::Activation),
+            Ok(_) => {
+                let stdout = stdout.await.unwrap_or_default();
+                let stderr = stderr.await.unwrap_or_default();
+                Err(refusal(&stdout, &stderr).map_or(Failure::Activation, Failure::IslandsRefused))
+            }
             Err(error) => {
                 child.kill().await.map_err(|_| Failure::Activation)?;
                 Err(error)
@@ -254,6 +260,62 @@ async fn run_activation(
     })
     .await
     .map_err(|_| Failure::Activation)?
+}
+/// Reads at most 64 KiB, and gives up if a stray descendant keeps the pipe open.
+async fn bounded_output<R: tokio::io::AsyncRead + Unpin>(pipe: Option<R>) -> String {
+    use tokio::io::AsyncReadExt;
+    let Some(pipe) = pipe else {
+        return String::new();
+    };
+    let mut bytes = Vec::new();
+    let mut pipe = pipe.take(64 * 1024);
+    let _ = tokio::time::timeout(Duration::from_secs(1), pipe.read_to_end(&mut bytes)).await;
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+/// Turns the helper's machine-readable refusal into something a person can act on.
+/// Unknown reasons keep the generic message rather than guessing.
+fn refusal(stdout: &str, stderr: &str) -> Option<&'static str> {
+    if stderr.contains("PATH must put ~/.local/bin before /usr/bin") {
+        return Some(
+            "Islands needs ~/.local/bin ahead of /usr/bin in your session PATH. Fix your shell profile, sign out and back in, then try again.",
+        );
+    }
+    if stderr.contains("previous Islands failure") {
+        return Some(
+            "Islands failed at an earlier sign-in, so the standard panel stays in use. Check Islands diagnostics before retrying.",
+        );
+    }
+    let reason = stdout
+        .lines()
+        .rev()
+        .find_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())?
+        .get("reason")?
+        .as_str()?
+        .to_owned();
+    Some(match reason.as_str() {
+        "unowned_selector" => {
+            "Another program put its own cosmic-panel in ~/.local/bin. Move it away, then try again."
+        }
+        "owned_files_changed" | "generation_missing" => {
+            "Islands files in your home folder were changed outside Halcyon. Check Islands diagnostics before retrying."
+        }
+        "busy" => "Islands is already being changed. Try again in a moment.",
+        "session_unknown" | "not_cosmic_session" => {
+            "Couldn’t identify your COSMIC session. Sign out and back in, then try again."
+        }
+        "unsupported_data_location" => {
+            "Islands needs the default data folder. Unset XDG_DATA_HOME for your session, then try again."
+        }
+        "unsupported_cosmic_family" | "no_qualified_cohort" | "installed_runtime_unqualified" => {
+            "This Islands release doesn’t support your COSMIC version yet. The standard panel stays in use."
+        }
+        "package_absent"
+        | "package_version_mismatch"
+        | "package_changed_during_staging"
+        | "not_installed_package"
+        | "non_monotonic_version" => Failure::IslandsMismatch.label(),
+        _ => return None,
+    })
 }
 async fn enable(cancel: watch::Receiver<bool>) -> Activation {
     enable_checked(cancel)
@@ -378,6 +440,52 @@ mod tests {
             )
             .await,
             Err(Failure::Cancelled)
+        );
+    }
+    #[test]
+    fn helper_refusals_become_actionable_messages() {
+        let refused = |stdout: &str, stderr: &str| refusal(stdout, stderr);
+        assert!(
+            refused(
+                r#"{"state": "external_change", "reason": "unowned_selector", "generation": null}"#,
+                ""
+            )
+            .unwrap()
+            .contains("~/.local/bin")
+        );
+        assert!(
+            refused(
+                "",
+                "Islands: The session PATH must put ~/.local/bin before /usr/bin"
+            )
+            .unwrap()
+            .contains("PATH")
+        );
+        assert!(refused(
+            "",
+            "Islands: A previous Islands failure selects the stock panel. Activation was not changed."
+        )
+        .unwrap()
+        .contains("earlier sign-in"));
+        assert_eq!(
+            refused(r#"{"reason": "package_absent"}"#, ""),
+            Some(Failure::IslandsMismatch.label())
+        );
+        assert_eq!(refused(r#"{"reason": "something_new"}"#, ""), None);
+        assert_eq!(refused("not json", "Traceback ..."), None);
+    }
+    #[tokio::test]
+    async fn activation_failure_reports_the_helper_reason() {
+        let (_sender, cancel) = watch::channel(false);
+        let mut command = tokio::process::Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg(r#"echo '{"state": "blocked", "reason": "busy"}'; exit 1"#);
+        assert_eq!(
+            run_activation(command, cancel, Duration::from_secs(5)).await,
+            Err(Failure::IslandsRefused(
+                "Islands is already being changed. Try again in a moment."
+            ))
         );
     }
     #[test]

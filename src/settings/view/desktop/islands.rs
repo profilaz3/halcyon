@@ -6,50 +6,40 @@ fn change(e: IslandEdit) -> Message {
     edit(Edit::Islands(e))
 }
 impl Settings {
+    /// Shape: a plain bar or islands. Picking Islands shows the one step
+    /// Halcyon's panel still needs; layout controls appear once it runs.
     pub(super) fn islands_section(&self, draft: &PanelDraft) -> Element<'_, Message> {
         let accent = self.settings_accent();
         let settings = match draft.islands() {
             Setting::Known(s) => s,
             Setting::Unsupported(_) => {
-                return section(vec![field("Style", kept("Unsupported island settings"))]);
+                return section(vec![field("Shape", kept("Unsupported island settings"))]);
             }
         };
-        let mut items = if draft.kind() == PanelKind::Panel {
-            vec![label("Island placement", 16., FG)]
+        // The Panel's shape also decides full width; the Dock's is just this.
+        let mut items = vec![if draft.kind() == PanelKind::Panel {
+            self.panel_style(draft)
         } else {
-            vec![
-                label("Island placement", 16., FG),
-                field(
-                    "Dock shape",
-                    choice(
-                        &Setting::Known(settings.enabled),
-                        vec![("Standard".into(), false), ("Islands".into(), true)],
-                        |v| Edit::Islands(IslandEdit::Enabled(v)),
-                        accent,
-                    ),
+            field(
+                "Shape",
+                choice(
+                    &Setting::Known(settings.enabled),
+                    vec![("Bar".into(), false), ("Islands".into(), true)],
+                    |v| Edit::Islands(IslandEdit::Enabled(v)),
+                    accent,
                 ),
-            ]
-        };
+            )
+        }];
         if !settings.enabled {
+            return section(items);
+        }
+        if let Some(step) = self.host_step("Islands use") {
+            items.push(step);
             return section(items);
         }
         let state = &self.desktop.islands;
         for message in state.installation.applet_messages() {
             items.push(label(message, 12., WARN));
-        }
-        if let Some(status) = state.availability_message() {
-            items.push(banner(
-                status,
-                WARN,
-                vec![
-                    button::text("Setup and updates")
-                        .on_press(Message::OpenIslandsGuide)
-                        .into(),
-                    button::text("Check again")
-                        .on_press(change(IslandEdit::Check))
-                        .into(),
-                ],
-            ));
         }
         let pending_native = draft.edited().any(|key| key != "islands");
         if pending_native {
@@ -59,42 +49,17 @@ impl Settings {
                 MUTED,
             ));
         }
-        items.push(field(
-            "Placement",
-            row::with_children(vec![
-                choice(
-                    &Setting::Known(settings.placement),
-                    vec![
-                        ("Together".into(), Placement::Together),
-                        ("Separate".into(), Placement::Separate),
-                    ],
-                    |v| Edit::Islands(IslandEdit::Placement(v)),
-                    accent,
-                ),
-                if self.desktop.arranging() {
-                    row::with_children(vec![
-                        button::text("Cancel")
-                            .on_press(change(IslandEdit::Cancel))
-                            .into(),
-                        button::suggested("Done")
-                            .on_press(change(IslandEdit::Done))
-                            .into(),
-                    ])
-                    .spacing(8)
-                    .into()
-                } else {
-                    button::standard("Arrange")
-                        .on_press_maybe(
-                            (state.compatible && draft.listed() && !pending_native)
-                                .then_some(change(IslandEdit::Arrange)),
-                        )
-                        .into()
-                },
-            ])
-            .spacing(12)
-            .align_y(Alignment::Center)
-            .wrap()
-            .into(),
+        items.push(split(
+            detail("Keep islands together", "Off spreads them along the edge"),
+            toggler(settings.placement == Placement::Together)
+                .on_toggle(|together| {
+                    change(IslandEdit::Placement(if together {
+                        Placement::Together
+                    } else {
+                        Placement::Separate
+                    }))
+                })
+                .into(),
         ));
         let text = state
             .gap_text
@@ -102,9 +67,9 @@ impl Settings {
             .unwrap_or_else(|| settings.gap.to_string());
         items.push(field(
             if settings.placement == Placement::Together {
-                "Gap"
+                "Space between"
             } else {
-                "Minimum gap"
+                "Minimum space"
             },
             row::with_children(vec![
                 cosmic::widget::slider(0..=64, settings.gap, |n| change(IslandEdit::Gap(n)))
@@ -124,13 +89,24 @@ impl Settings {
             .align_y(Alignment::Center)
             .into(),
         ));
-        if self.desktop.arranging() {
-            items.push(label(
-                "Drag the handles on the selected bar. Tab selects; arrows move; Esc cancels.",
-                12.,
-                MUTED,
-            ));
+        if !self.desktop.arranging() {
+            items.push(
+                button::standard("Arrange on screen…")
+                    .id("islands-arrange".into())
+                    .on_press_maybe(
+                        (state.compatible && draft.listed() && !pending_native)
+                            .then_some(change(IslandEdit::Arrange)),
+                    )
+                    .into(),
+            );
+            return section(items);
         }
+        items.push(label(
+            "Drag the handles on the panel. Tab selects; arrows move; Esc cancels.",
+            12.,
+            MUTED,
+        ));
+        // Keyboard and pointer alternatives to dragging, only while arranging.
         let groups = draft.applets().known().cloned().unwrap_or_default();
         let horizontal = draft.anchor().known().is_none_or(|a| a.horizontal());
         let mut selected = Vec::new();
@@ -138,16 +114,15 @@ impl Settings {
             if groups.list(region).is_empty() {
                 continue;
             }
-            let id = Section::ALL[i];
             selected.push(
-                button::text(format!("{}: {}", i + 1, region.title(horizontal)))
-                    .on_press(change(IslandEdit::Select(id)))
+                button::text(region.title(horizontal))
+                    .on_press(change(IslandEdit::Select(Section::ALL[i])))
                     .into(),
             );
         }
         if settings.placement == Placement::Together {
             selected.push(
-                button::text("Group")
+                button::text("All together")
                     .on_press(change(IslandEdit::Group(true)))
                     .into(),
             );
@@ -169,6 +144,18 @@ impl Settings {
             ]);
         }
         items.push(cosmic::widget::flex_row(selected).spacing(6).into());
+        items.push(
+            row::with_children(vec![
+                button::text("Cancel")
+                    .on_press(change(IslandEdit::Cancel))
+                    .into(),
+                button::suggested("Done")
+                    .on_press(change(IslandEdit::Done))
+                    .into(),
+            ])
+            .spacing(8)
+            .into(),
+        );
         section(items)
     }
 }

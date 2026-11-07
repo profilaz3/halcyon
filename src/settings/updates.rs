@@ -28,10 +28,13 @@ pub enum Failure {
     InstallationChanged,
     Activation,
     IslandsMismatch,
+    /// The Islands helper refused with a specific, actionable reason.
+    IslandsRefused(&'static str),
 }
 impl Failure {
     pub fn label(&self) -> &'static str {
         match self {
+            Self::IslandsRefused(label) => label,
             Self::IslandsMismatch => {
                 "The Islands package changed or does not match this Halcyon. Update or reinstall Halcyon in your package manager, then check again."
             }

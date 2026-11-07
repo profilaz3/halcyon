@@ -31,31 +31,9 @@ impl Settings {
                     .unwrap_or(&identity.running_version);
                 content.push(group_row("Version", "", label(main, 14., MUTED)));
                 content.push(detail(summary.title.clone(), summary.detail.clone()));
-                let status = match self.desktop.islands.installation.status_label() {
-                    "Islands not installed" => "Not installed",
-                    other => other,
-                };
-                let addon = if identity.islands_version.is_some() {
-                    format!("Floating panel style · included · {status}")
-                } else {
-                    format!("Floating panel style · {status}")
-                };
-                // One update card. Islands turns on in Dock and panel; only
-                // a real exception adds anything here.
-                addons.push(self.link_row(
-                    "Panel islands",
-                    addon,
-                    Message::OpenBar(crate::desktop::panels::PanelKind::Panel),
-                    "updates-open-panel".into(),
-                ));
-                if let crate::settings::updates::islands::Phase::Failed(error) =
-                    &self.updates.islands.phase
-                {
-                    addons.push(label(error.label(), 12., MUTED));
-                }
-                if let Some(notice) = identity.islands_activation_notice() {
-                    addons.push(label(notice, 12., MUTED));
-                }
+                // Islands and Blend turn on in Dock and panel. This is where
+                // to look when Halcyon's panel won't start.
+                addons.extend(self.panel_troubleshooting());
                 if let Check::Failed(error) = &self.updates.check
                     && summary.title != "Update check failed"
                 {
@@ -173,7 +151,7 @@ impl Settings {
         }
         let mut groups = vec![group(Some("This version"), content)];
         if !addons.is_empty() {
-            groups.push(group(Some("Add-ons"), addons));
+            groups.push(group(Some("Halcyon’s panel"), addons));
         }
         if !self.design.managed {
             groups.push(self.design_section(Some("Widgets")));
@@ -230,5 +208,68 @@ impl Settings {
             );
         }
         column::with_children(groups).spacing(16).into()
+    }
+
+    /// Status in plain words, then the tools for when it won't start.
+    fn panel_troubleshooting(&self) -> Vec<Element<'_, Message>> {
+        use super::desktop::host::Host;
+        use crate::settings::updates::islands::{self, Message as Panel};
+        let installation = &self.desktop.islands.installation;
+        let status = match self.panel_host() {
+            Host::Running => "Running. Islands and Blend into wallpaper are available.",
+            Host::Checking => "Checking…",
+            Host::Switching => "Getting ready for your next sign-in…",
+            Host::Switch => "Off. Choose Islands in Dock and panel to use it.",
+            Host::SignIn => "Starts the next time you sign in.",
+            Host::Failed(reason) | Host::Unavailable(reason) => reason,
+        };
+        let mut rows = vec![self.link_row(
+            "Status",
+            status,
+            Message::OpenBar(crate::desktop::panels::PanelKind::Panel),
+            "updates-open-panel".into(),
+        )];
+        let mut tools = vec![
+            button::text("Check again")
+                .id("check-islands".into())
+                .on_press_maybe(
+                    (!self.installation_busy && !self.updates.islands.busy())
+                        .then_some(Message::Updates(Update::Islands(Panel::Recheck))),
+                )
+                .into(),
+        ];
+        if installation.diagnostics().is_some() {
+            tools.push(
+                button::text("Copy details for a bug report")
+                    .on_press(Message::CopyIslandsDiagnostics)
+                    .into(),
+            );
+        }
+        tools.push(
+            button::text("Setup guide ↗")
+                .on_press(Message::OpenIslandsGuide)
+                .into(),
+        );
+        rows.push(row::with_children(tools).spacing(8).wrap().into());
+        if islands::can_disable(installation)
+            && self
+                .updates
+                .identity
+                .as_ref()
+                .is_some_and(|id| id.can_enable_islands())
+        {
+            rows.push(group_row(
+                "Go back to the COSMIC panel",
+                "From your next sign-in. Your Islands layout is kept.",
+                button::standard("Switch back")
+                    .id("disable-islands".into())
+                    .on_press_maybe(
+                        (!self.updates.islands.busy())
+                            .then_some(Message::Updates(Update::Islands(Panel::Disable))),
+                    )
+                    .into(),
+            ));
+        }
+        rows
     }
 }

@@ -11,9 +11,10 @@ on failure. The recorded complete-session test used COSMIC 1.11 with software
 rendering; physical GPUs and a complete 1.10 session are not validated.
 
 From 0.5, install the Halcyon package and open **Settings → Dock and panel**.
-Choose **Enable for next login**, then log out and back in when convenient.
-No additional package download is needed. **Turn off for next login** restores
-standard startup without changing your saved bar styles or layouts.
+Set **Shape** to **Islands** (or turn on **Blend into wallpaper**), choose
+**Switch at next sign-in**, then sign out and back in when convenient. No
+additional package download is needed. **App settings → Updates → Switch back**
+restores the COSMIC panel without changing your saved bar styles or layouts.
 
 For diagnostics or terminal management, run as your desktop user:
 

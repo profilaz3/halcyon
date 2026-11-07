@@ -3,12 +3,14 @@
 Halcyon **0.2.5** introduced a reporting checkbox. Halcyon 0.2.0 reports automatically;
 older 0.1.0/0.1.1 releases do not report.
 
-**Collector status:** in November 2026 the collector moved from a Google Apps
-Script web app and private Google Sheet to a Cloudflare Worker with a private
-Cloudflare D1 database. Halcyon 0.2.0 to 0.6.0 keep posting to the old Google
-address, which now only forwards each report unchanged to the new collector and
-stores nothing. Later versions send reports to the new collector directly. The
-existing records were copied across, keeping every reporting choice. Turning
+**Collector status:** Halcyon 0.6.1 moved reporting from a Google Apps Script
+web app and private Google Sheet to a Cloudflare Worker with a private
+Cloudflare D1 database. Halcyon 0.6.1 and later report to the new collector.
+Halcyon 0.2.0 to 0.6.0 keep reporting to the Google Apps Script collector, which
+stores them in the private Google Sheet as before, under the same 90-day
+retention. The two are kept separate: older reports are not forwarded, and the
+public statistics count only 0.6.1 and later. Records from before the move were
+copied across once, keeping every reporting choice. Turning
 reporting off works locally without server acknowledgement. Preference updates
 retry for up to seven days, then expire without changing the saved choice;
 expired updates are not sent later. Reports rejected before the 2026-10-26
@@ -135,9 +137,9 @@ The collector does not store IP addresses and does not log request bodies;
 Worker request logging is turned off. Cloudflare receives the connection's IP
 and processes infrastructure metadata under its own
 [privacy policy](https://www.cloudflare.com/privacypolicy/). Reports from
-Halcyon 0.2.0 to 0.6.0 first pass through the old Google Apps Script address,
-which forwards them without storing anything; Google receives the connection's
-IP there under its own [privacy policy](https://policies.google.com/privacy).
+Halcyon 0.2.0 to 0.6.0 go to the Google Apps Script collector and its private
+Google Sheet instead; Google receives the connection's IP there under its own
+[privacy policy](https://policies.google.com/privacy).
 
 ### Public statistics
 
@@ -210,9 +212,9 @@ retained. After an identifiable record expires, the collector no longer has its
 revision/status tombstone; ordering guarantees apply to retained records.
 The local off preference continues to prevent reporting. Cloudflare's D1
 point-in-time recovery keeps database history for up to 30 days, and
-infrastructure logs follow Cloudflare's own retention practices. The former
-Google Sheet is no longer written to and will be deleted once the copy is
-verified.
+infrastructure logs follow Cloudflare's own retention practices. The Google
+Sheet that still receives reports from Halcyon 0.2.0 to 0.6.0 applies the same
+retention in its daily maintenance; its backups follow Google's own practices.
 
 ## Local state
 
@@ -223,7 +225,7 @@ from exported looks and setups. Older 0.2.0 clients reject this extended state
 rather than ignoring the off preference. Uninstalling preserves it normally;
 stopping the desktop and Settings processes stops future transmissions.
 
-The [client](../src/usage.rs), [collector and public statistics](../scripts/usage/worker/) and [forwarding script](../scripts/usage/relay/Code.gs) are
+The [client](../src/usage.rs), [collector and public statistics](../scripts/usage/worker/) and [Google Sheet collector](../scripts/usage/collector.gs) are
 open source. Questions can go to the [issue tracker](https://github.com/profilaz3/halcyon/issues).
 Do not post installation tokens, credentials or private widget contents there.
 

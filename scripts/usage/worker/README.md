@@ -10,8 +10,11 @@ The activity collector and the public statistics page, live at
 | `GET /api/summary.json` | Public aggregates, rebuilt hourly, cached for 5 minutes. |
 | `GET /` | The dashboard (`public/`), plain HTML, CSS and JS with a strict CSP. |
 
-Halcyon 0.2.0 to 0.6.0 still post to the old Google address. The script in
-[`../relay`](../relay) forwards those reports here unchanged.
+Halcyon 0.6.1 and later report here. Halcyon 0.2.0 to 0.6.0 still report to
+the Google Sheet collector in [`..`](../README.md); those reports are not
+forwarded, and the dashboard counts 0.6.1 and later only (`DIRECT_SINCE` in
+`src/stats.js`). Changing that value rebuilds every frozen daily total from
+retained activity on the next hourly run.
 
 ## Data
 
