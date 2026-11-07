@@ -1079,7 +1079,14 @@ mod tests {
                     })
                 );
                 assert_eq!(cards.tools.focus.phase, focus::Phase::Break);
-                assert_eq!(cards.tools.focus.rounds_today(&focus::today()), 1);
+                // A round counts on the local date it ends, which is
+                // tomorrow when it starts late in the evening.
+                let ended_on = chrono::DateTime::from_timestamp_millis(ends_at)
+                    .unwrap()
+                    .with_timezone(&chrono::Local)
+                    .format("%Y-%m-%d")
+                    .to_string();
+                assert_eq!(cards.tools.focus.rounds_today(&ended_on), 1);
                 assert_eq!(focus::Session::load(), cards.tools.focus);
                 let break_ends = cards.tools.focus.ends_at().unwrap();
                 assert_eq!(
@@ -1104,7 +1111,8 @@ mod tests {
                 assert!(cards.tools_wake().is_some());
                 let ends_at = cards.tools.focus.ends_at().unwrap();
                 assert!(cards.finish_focus(ends_at + 1).is_some());
-                assert_eq!(cards.tools.focus.rounds_today(&focus::today()), 2);
+                // It also ends about 25 minutes from now, on the same date.
+                assert_eq!(cards.tools.focus.rounds_today(&ended_on), 2);
                 // A tick before the end changes nothing and writes nothing.
                 let _ = cards.update(Message::Tool(Action::FocusReset));
                 let _ = cards.focus_command("start");
