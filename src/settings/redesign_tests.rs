@@ -38,14 +38,14 @@ fn penumbra_control_is_separate_reachable_and_uses_the_normal_action_path() {
         let _ = app.update(Message::ObjectTab(
             crate::settings::navigation::ObjectTab::Design,
         ));
-        // Without host support and while off, the row shows the way forward
-        // instead of a switch that would do nothing.
+        // Without host support and while off, the row explains what it needs
+        // instead of offering a switch that would do nothing.
         assert!(
             native
                 .try_bounds(app.settings_view(), "penumbra-gradient")
                 .is_none()
         );
-        let bounds = native_reveal(&app, &mut native, "penumbra-setup");
+        let bounds = native_reveal(&app, &mut native, "penumbra-controls");
         assert!(bounds.x >= 0. && bounds.x + bounds.width <= size.width);
         assert!(bounds.y >= 0. && bounds.y + bounds.height <= size.height);
         app.desktop.penumbra_supported = true;
@@ -1282,4 +1282,111 @@ fn whats_new_opens_from_updates_and_each_note_leads_to_its_setting() {
     }
     // Reading the notes and following them changes nothing.
     assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
+}
+
+/// Choosing Islands shows the one step Halcyon's panel still needs, right
+/// under Shape; Blend into wallpaper points there instead of repeating it;
+/// layout controls appear only once the panel answers.
+#[test]
+fn islands_shape_shows_one_step_then_layout_controls() {
+    let name = "islands_shape_shows_one_step_then_layout_controls";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::desktop::islands::{CompatibilityStatus, Installation, Provenance};
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    let store = app.desktop.store().unwrap().fixture_root().unwrap().to_path_buf();
+    crate::desktop::islands::fixture_installed(&store);
+    send_settings(
+        &mut app,
+        Message::DesktopEditor(desktop::Message::Select(
+            crate::desktop::panels::PanelKind::Panel,
+        )),
+    );
+    let size = Size::new(1024., 900.);
+    send_settings(&mut app, Message::Resized(size));
+    let mut native = crate::native_test::Native::new(size);
+    let disabled = Installation::Installed {
+        provenance: Provenance::Package,
+        enabled: false,
+        compatible: None,
+        status: Some(CompatibilityStatus::Disabled),
+        diagnostics: String::new(),
+    };
+    app.desktop.islands.installation = disabled.clone();
+    app.installation_busy = false;
+    app.updates.identity = Some(crate::settings::updates::Identity {
+        format_version: 1,
+        enrollment: crate::settings::updates::Enrollment::Enrolled,
+        channel: crate::settings::updates::UpdateChannel::Apt,
+        reason: "fixture",
+        running_version: "0.2.0".into(),
+        installed_version: Some("0.2.0".into()),
+        package_version: None,
+        islands_version: None,
+        architecture: Some("amd64".into()),
+        store: None,
+        islands_match: crate::installation::IslandsMatch::Ready,
+        evidence: Some("fixture verified identity".into()),
+    });
+    let _ = app.update(Message::ObjectTab(
+        crate::settings::navigation::ObjectTab::Design,
+    ));
+    native_send(
+        &mut app,
+        &mut native,
+        Message::DesktopEditor(desktop::Message::PanelStyle(desktop::PanelStyle::Islands)),
+    );
+    assert!(
+        app.desktop
+            .current()
+            .unwrap()
+            .islands()
+            .known()
+            .is_some_and(|s| s.enabled),
+        "the Islands shape is saved even before Halcyon's panel runs"
+    );
+    app.desktop.islands.installation = disabled;
+    app.desktop.islands.compatible = false;
+    app.desktop.penumbra_supported = false;
+    native_reveal(&app, &mut native, "enable-islands");
+    native.text_bounds(
+        app.settings_view(),
+        "Islands use Halcyon’s panel instead of the COSMIC one. It takes over the next time you sign in.",
+    );
+    native.text_bounds(
+        app.settings_view(),
+        "Comes with Halcyon’s panel. See Shape above.",
+    );
+    assert!(native.duplicate_ids(app.settings_view()).is_empty());
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "islands-arrange")
+            .is_none(),
+        "no layout controls for a panel that isn't running"
+    );
+    native.capture(
+        app.settings_view(),
+        &cosmic::Theme::dark(),
+        "panel-shape-islands-switch",
+    );
+    app.desktop.islands.compatible = true;
+    app.desktop.penumbra_supported = true;
+    native_reveal(&app, &mut native, "islands-arrange");
+    assert!(native.try_bounds(app.settings_view(), "panel-host").is_none());
+    native.text_bounds(app.settings_view(), "Keep islands together");
+    native_reveal(&app, &mut native, "penumbra-gradient");
+    native.capture(
+        app.settings_view(),
+        &cosmic::Theme::dark(),
+        "panel-shape-islands-running",
+    );
 }

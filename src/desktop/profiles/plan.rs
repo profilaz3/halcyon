@@ -1263,6 +1263,28 @@ fn set_typed(draft: &mut PanelDraft, name: &str, value: &RawValue) -> Result<(),
     }
     match name {
         "anchor" => typed!(Anchor),
+        // A hiding panel that keeps reserved space grows that space while it
+        // slides in, so the compositor shoves every desktop widget aside on
+        // each reveal. Pair the two keys as PanelDraft::set_autohide does.
+        "autohide" => {
+            let mode: AutoHide = value.decode()?;
+            let set: Result<(), String> = typed!(AutoHide);
+            set?;
+            if draft.value::<bool>("exclusive_zone").known().is_some() {
+                draft.set_value("exclusive_zone", &(mode == AutoHide::Never));
+            }
+            Ok(())
+        }
+        // Looks run autohide first; a stale captured `true` can't undo that.
+        "exclusive_zone"
+            if draft
+                .value::<AutoHide>("autohide")
+                .known()
+                .is_some_and(|mode| *mode != AutoHide::Never) =>
+        {
+            let _: bool = value.decode()?;
+            Ok(())
+        }
         "anchor_gap" | "expand_to_edges" | "exclusive_zone" | "keep_style_on_maximize" => {
             typed!(bool)
         }
@@ -1270,7 +1292,6 @@ fn set_typed(draft: &mut PanelDraft, name: &str, value: &RawValue) -> Result<(),
         "size" => typed!(PanelSize),
         "size_wings" => typed!(Option<(Option<PanelSize>, Option<PanelSize>)>),
         "size_center" => typed!(Option<PanelSize>),
-        "autohide" => typed!(AutoHide),
         "autohide_behavior" => typed!(AutoHideBehavior),
         "opacity" => typed!(f32),
         "border_radius" | "spacing" | "padding" => typed!(u32),

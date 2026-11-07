@@ -463,7 +463,7 @@ impl Settings {
 
     pub(super) fn panel_style(&self, draft: &PanelDraft) -> Element<'_, Message> {
         let Setting::Known(islands) = draft.islands() else {
-            return section(vec![field("Style", kept("Unsupported island settings"))]);
+            return field("Shape", kept("Unsupported island settings"));
         };
         let mut options = vec![
             (
@@ -484,7 +484,7 @@ impl Settings {
         ];
         if !self.desktop.islands.installation.installed() {
             if islands.enabled {
-                options[1].0 = "Islands · host unavailable".into();
+                options[1].0 = "Islands · not installed".into();
                 options[1].2 = None;
             } else {
                 options.truncate(1);
@@ -493,6 +493,6 @@ impl Settings {
         if !islands.enabled && draft.extend().known() != Some(&true) {
             options.push(("Compact · kept".into(), true, None));
         }
-        field("Panel style", segmented(options, self.settings_accent()))
+        field("Shape", segmented(options, self.settings_accent()))
     }
 }

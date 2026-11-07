@@ -142,6 +142,7 @@ impl Installation {
     pub fn installed(&self) -> bool {
         matches!(self, Self::Installed { .. })
     }
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn status_label(&self) -> &'static str {
         match self {
             Self::Installed {

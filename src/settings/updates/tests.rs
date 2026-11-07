@@ -632,40 +632,69 @@ fn ui_click(
     messages
 }
 
+/// Islands and Blend into wallpaper share one "Halcyon's panel" step on the
+/// Dock and panel page. Whichever asks for it, there is exactly one next step.
 fn penumbra_setup_actions(app: &mut Settings, native: &mut crate::native_test::Native) {
     use crate::desktop::islands::{CompatibilityStatus, Installation, Provenance};
     use crate::settings::{AppSettingsPage, Page, navigation::ObjectTab};
     use cosmic::Application;
+    let clicked = |messages: Vec<SettingsMessage>, wanted: &dyn Fn(&SettingsMessage) -> bool| {
+        messages.iter().any(wanted)
+    };
     app.object_tab = ObjectTab::Design;
     app.desktop.penumbra_supported = false;
+    app.desktop.islands.compatible = false;
     let before = app.desktop.current().unwrap().penumbra();
-    // Off and unavailable shows one row with the way forward, not a dead switch.
+    // Off and unavailable: no dead switch, one way forward.
     assert!(
         native
             .try_bounds(app.settings_view(), "penumbra-gradient")
             .is_none()
     );
-    assert!(
-        ui_click(app, native, "penumbra-setup")
-            .iter()
-            .any(|m| matches!(
-                m,
-                SettingsMessage::Updates(Message::Islands(islands::Message::Enable))
-            ))
-    );
+    assert!(clicked(
+        ui_click(app, native, "enable-islands"),
+        &|m| matches!(
+            m,
+            SettingsMessage::Updates(Message::Islands(islands::Message::Enable))
+        )
+    ));
     assert!(native.duplicate_ids(app.settings_view()).is_empty());
     native.capture(
         app.settings_view(),
         &cosmic::Theme::dark(),
-        &format!("penumbra-enable-{}", native.size.width),
+        &format!("panel-host-switch-{}", native.size.width),
+    );
+    native.scroll(app.settings_view(), "settings-content", 0.);
+    native.capture(
+        app.settings_view(),
+        &cosmic::Theme::dark(),
+        &format!("panel-shape-{}", native.size.width),
     );
 
     app.updates.islands.phase = islands::Phase::Enabling;
-    assert!(ui_click(app, native, "penumbra-setup").is_empty());
-    assert!(ui_click(app, native, "penumbra-recheck").is_empty());
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "enable-islands")
+            .is_none()
+    );
+    native.text_bounds(app.settings_view(), "Getting Halcyon’s panel ready…");
+    app.updates.islands.phase = islands::Phase::Failed(Failure::IslandsRefused("Nope."));
+    native.text_bounds(app.settings_view(), "Nope.");
+    assert!(clicked(
+        ui_click(app, native, "retry-islands"),
+        &|m| matches!(
+            m,
+            SettingsMessage::Updates(Message::Islands(islands::Message::Enable))
+        )
+    ));
     app.updates.islands.phase = islands::Phase::Idle;
     app.installation_busy = true;
-    assert!(ui_click(app, native, "penumbra-setup").is_empty());
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "enable-islands")
+            .is_none()
+    );
+    native.text_bounds(app.settings_view(), "Checking Halcyon’s panel…");
     app.installation_busy = false;
 
     app.desktop.islands.installation = Installation::Installed {
@@ -675,24 +704,29 @@ fn penumbra_setup_actions(app: &mut Settings, native: &mut crate::native_test::N
         status: Some(CompatibilityStatus::LogoutRequired),
         diagnostics: String::new(),
     };
-    assert!(
-        ui_click(app, native, "penumbra-setup")
-            .iter()
-            .any(|m| matches!(
-                m,
-                SettingsMessage::Updates(Message::Islands(islands::Message::Recheck))
-            ))
+    native.text_bounds(
+        app.settings_view(),
+        "Ready. Sign out and back in to see it.",
     );
-    native.text_bounds(app.settings_view(), "Ready after you sign out and back in. Then turn this on.");
+    assert!(clicked(
+        ui_click(app, native, "sign-out-islands"),
+        &|m| matches!(m, SettingsMessage::SignOut)
+    ));
+    assert!(clicked(
+        ui_click(app, native, "disable-islands"),
+        &|m| matches!(
+            m,
+            SettingsMessage::Updates(Message::Islands(islands::Message::Disable))
+        )
+    ));
+    assert!(native.duplicate_ids(app.settings_view()).is_empty());
     native.capture(
         app.settings_view(),
         &cosmic::Theme::dark(),
-        &format!("penumbra-next-login-{}", native.size.width),
+        &format!("panel-host-sign-in-{}", native.size.width),
     );
 
-    // A live older host can support Islands while rejecting PenumbraSupport.
-    // Its route must offer the package update, never a disabled activation loop.
-    app.desktop.islands.compatible = true;
+    // Nothing on this page can fix a manual install; Troubleshooting can explain.
     app.desktop.islands.installation = Installation::Installed {
         provenance: Provenance::Manual,
         enabled: true,
@@ -700,23 +734,29 @@ fn penumbra_setup_actions(app: &mut Settings, native: &mut crate::native_test::N
         status: None,
         diagnostics: String::new(),
     };
-    native.text_bounds(app.settings_view(), "Not available with a manually installed panel. Install the Halcyon package to use it.");
-    let actions = ui_click(app, native, "penumbra-setup");
-    assert!(actions.iter().any(|m| matches!(
+    native.text_bounds(
+        app.settings_view(),
+        "Not available with a manually installed panel. Install the Halcyon package to use it.",
+    );
+    let actions = ui_click(app, native, "islands-help");
+    assert!(clicked(actions.clone(), &|m| matches!(
         m,
         SettingsMessage::AppSettingsPage(AppSettingsPage::Updates)
     )));
-    assert!(native.duplicate_ids(app.settings_view()).is_empty());
-    native.capture(
-        app.settings_view(),
-        &cosmic::Theme::dark(),
-        &format!("penumbra-older-panel-{}", native.size.width),
-    );
     for message in actions {
         drop(app.update(message));
     }
     assert_eq!(app.page, Page::General);
     assert_eq!(app.app_settings_page, AppSettingsPage::Updates);
+    native.text_bounds(
+        app.settings_view(),
+        "Not available with a manually installed panel. Install the Halcyon package to use it.",
+    );
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "check-islands")
+            .is_some()
+    );
     app.page = Page::DesktopDock;
     crate::settings::navigation::select(&mut app.nav_model, app.page);
     app.object_tab = ObjectTab::Design;
@@ -728,30 +768,30 @@ fn penumbra_setup_actions(app: &mut Settings, native: &mut crate::native_test::N
         status: Some(CompatibilityStatus::UpdateNeeded),
         diagnostics: String::new(),
     };
-    app.desktop.islands.compatible = false;
-    app.installation_busy = false;
-    assert!(
-        ui_click(app, native, "penumbra-setup")
-            .iter()
-            .any(|m| matches!(
-                m,
-                SettingsMessage::AppSettingsPage(AppSettingsPage::Updates)
-            ))
-    );
-    // No switch to turn on while the panel can't blend.
+    assert!(clicked(
+        ui_click(app, native, "islands-help"),
+        &|m| matches!(
+            m,
+            SettingsMessage::AppSettingsPage(AppSettingsPage::Updates)
+        )
+    ));
     assert!(
         native
             .try_bounds(app.settings_view(), "penumbra-gradient")
             .is_none()
     );
 
+    // Running with blend support: the switch, and no setup step for it.
+    app.desktop.islands.compatible = true;
     app.desktop.penumbra_supported = true;
+    native.bounds(app.settings_view(), "penumbra-gradient");
     assert!(
         native
-            .try_bounds(app.settings_view(), "penumbra-setup")
+            .try_bounds(app.settings_view(), "panel-host")
             .is_none()
     );
     assert_eq!(app.desktop.current().unwrap().penumbra(), before);
+    app.desktop.islands.compatible = false;
     app.desktop.penumbra_supported = false;
     app.object_tab = ObjectTab::Content;
     app.desktop.islands.installation = Installation::Installed {
@@ -817,7 +857,7 @@ fn native_updates_clicks_renders_failure_unknown_and_absence() {
             status: Some(crate::desktop::islands::CompatibilityStatus::Disabled),
             diagnostics: String::new(),
         };
-        // Islands turns on in Panel; Updates only names it.
+        // Halcyon's panel turns on from Dock and panel; Updates only names it.
         let _ = app.update(SettingsMessage::OpenBar(
             crate::desktop::panels::PanelKind::Panel,
         ));
@@ -887,6 +927,15 @@ fn native_updates_clicks_renders_failure_unknown_and_absence() {
             &theme,
             &format!("dock-islands-on-{suffix}"),
         );
+        // Going back to the COSMIC panel is a troubleshooting choice in
+        // App settings › Updates, not a second control on this page.
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "disable-islands")
+                .is_none()
+        );
+        app.page = Page::General;
+        crate::settings::navigation::select(&mut app.nav_model, app.page);
         assert!(
             ui_click(&app, &mut native, "disable-islands")
                 .iter()
@@ -895,8 +944,6 @@ fn native_updates_clicks_renders_failure_unknown_and_absence() {
                     SettingsMessage::Updates(Message::Islands(islands::Message::Disable))
                 ))
         );
-        app.page = Page::General;
-        crate::settings::navigation::select(&mut app.nav_model, app.page);
         if let Installation::Installed {
             enabled, status, ..
         } = &mut app.desktop.islands.installation
