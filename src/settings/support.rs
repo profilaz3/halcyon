@@ -162,9 +162,31 @@ pub(in crate::settings) fn change_page(entry: &crate::desktop::store::activity::
             Some(Owner::WindowRules) => Page::DesktopWindowRules,
             Some(Owner::Shortcuts) => Page::DesktopShortcuts,
             Some(Owner::DesktopIcons) => Page::DesktopIcons,
-            Some(Owner::Preferences) => Page::Appearance,
+            Some(Owner::Preferences) => widget_page(entry.widgets.first().map(String::as_str)),
             Some(Owner::Recovery) | None => Page::Changes,
         },
+    }
+}
+/// The page that owns a widget setting group.
+fn widget_page(group: Option<&str>) -> Page {
+    match group {
+        Some("Clock") => Page::Clock,
+        Some("Daily overview") => Page::Glance,
+        Some("Weather") => Page::Weather,
+        Some("Calendar") => Page::Calendar,
+        Some("System monitor") => Page::Devbox,
+        Some("Music") => Page::Music,
+        Some("Notes") => Page::Notes,
+        Some("Focus") => Page::Focus,
+        Some("Projects") => Page::Projects,
+        Some("Activity") => Page::DesktopDock,
+        Some("Time of day") => Page::DesktopAutomation,
+        Some("Wallpaper effects") => Page::DesktopWallpaper,
+        Some("Recipes") => Page::Builder,
+        Some("Dock and panel style") => Page::DesktopDock,
+        Some("Widget arrangement") => Page::Widgets,
+        Some("Settings app") => Page::General,
+        _ => Page::Appearance,
     }
 }
 impl Settings {

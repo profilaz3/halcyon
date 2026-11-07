@@ -459,6 +459,27 @@ impl Settings {
             Done::Undo(result.map(|()| undone), conflict)
         })
     }
+    pub(super) fn background_put_back(&mut self, id: String) -> Task<Message> {
+        self.begin_native();
+        task(move || {
+            let mut conflict = None;
+            let result = crate::desktop::actions::history_store()
+                .and_then(|store| {
+                    let result = store.put_back(&id);
+                    if matches!(
+                        result,
+                        Err(crate::desktop::DesktopError::Conflict(_)
+                            | crate::desktop::DesktopError::FieldConflict { .. })
+                    ) {
+                        conflict = store.review_put_back(&id).ok();
+                    }
+                    result
+                })
+                .map(|_| Some(id))
+                .map_err(|e| e.to_string());
+            Done::Undo(result, conflict)
+        })
+    }
     pub(super) fn background_material(
         &mut self,
         target: crate::materials::Target,

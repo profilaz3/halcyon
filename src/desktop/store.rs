@@ -1594,10 +1594,20 @@ impl DesktopStore {
                 summary.id = change.id.clone();
                 summary.at = created.clone();
                 summary.cause = activity::Cause::You;
-                summary.action = if !matches!(record, Record::Retire(_))
-                    && change.entries.is_empty()
-                    && widget_change.as_ref().is_none_or(|w| w.fields.is_empty())
-                {
+                // Keep current writes nothing back. A retired receipt counts
+                // as kept only when it reversed nothing at all, so a wizard
+                // Cancel of no-op restorations still reads as undone.
+                let wrote_nothing = change.entries.is_empty()
+                    && widget_change.as_ref().is_none_or(|w| w.fields.is_empty());
+                let kept = match record {
+                    Record::Retire(_) => {
+                        wrote_nothing
+                            && patch.reversed_native.is_empty()
+                            && patch.reversed_widget.is_empty()
+                    }
+                    _ => wrote_nothing,
+                };
+                summary.action = if kept {
                     activity::Action::Kept
                 } else {
                     activity::Action::Undone

@@ -375,9 +375,10 @@ impl Settings {
 
     pub(super) fn simple_status(&self) -> Element<'_, Message> {
         if let Some(review) = &self.undo_review {
+            let verb = if review.puts_back() { "Put back" } else { "Undo" };
             let mut lines = vec![label(
                 &format!(
-                    "Undo {} · some values changed elsewhere",
+                    "{verb} {} · some values changed since",
                     review.label.to_lowercase()
                 ),
                 13.,
@@ -396,7 +397,11 @@ impl Settings {
                         .id("undo-keep-current".into())
                         .on_press(Message::ResolveUndoShown(review.clone(), false))
                         .into(),
-                    button::suggested("Undo other changes")
+                    button::suggested(if review.puts_back() {
+                        "Put back the rest"
+                    } else {
+                        "Undo other changes"
+                    })
                         .id("undo-reviewed".into())
                         .on_press(Message::ResolveUndoShown(review.clone(), true))
                         .into(),

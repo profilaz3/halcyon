@@ -14,11 +14,18 @@ pub struct UndoReview {
     id: String,
     patch: DesktopPatch,
     widgets: Option<WidgetPatch>,
+    /// An older change put back: it leaves the history on its own and
+    /// every newer change stays.
+    retire: Option<LatestChange>,
 }
 impl UndoReview {
     /// The change this review would undo.
     pub fn id(&self) -> &str {
         &self.id
+    }
+    /// An older change being put back, not the latest one undone.
+    pub fn puts_back(&self) -> bool {
+        self.retire.is_some()
     }
 }
 impl DesktopStore {
@@ -37,14 +44,59 @@ impl DesktopStore {
             conflicts,
             patch,
             widgets,
+            retire: None,
         })
+    }
+    /// The kept change with `id`, at any place in the history.
+    fn kept_change(&self, id: &str) -> Result<LatestChange, DesktopError> {
+        let file = self.history_file()?.and_then(|history| {
+            history
+                .history
+                .iter()
+                .chain(std::iter::once(&history))
+                .find(|file| file.id == id && file.source == Source::Manual)
+                .cloned()
+        });
+        let mut file = file.ok_or_else(|| {
+            DesktopError::UndoUnavailable("This change is no longer kept, so it can't be put back".into())
+        })?;
+        file.history.clear();
+        file.recent.clear();
+        LatestChange::from_file(file)
+    }
+    /// Puts back what one change replaced, at any place in the history. Refuses
+    /// without writing when a setting it changed was changed again since.
+    pub fn put_back(&self, id: &str) -> Result<AppliedChange, DesktopError> {
+        let change = self.kept_change(id)?;
+        self.undo_change(&change)
+    }
+    /// What putting back one change can still do: settings changed since stay
+    /// as they are now and are listed.
+    pub fn review_put_back(&self, id: &str) -> Result<UndoReview, DesktopError> {
+        let change = self.kept_change(id)?;
+        let mut conflicts = Vec::new();
+        let (patch, widgets) = self.reversal_review(&change, Some(&mut conflicts))?;
+        Ok(UndoReview {
+            label: change.label.clone(),
+            id: change.id.clone(),
+            conflicts,
+            patch,
+            widgets,
+            retire: Some(change),
+        })
+    }
+    fn review_record<'a>(review: &'a UndoReview) -> Record<'a> {
+        match &review.retire {
+            Some(change) => Record::Retire(change),
+            None => Record::Clear(&review.id),
+        }
     }
     pub fn accept_undo_review(&self, review: &UndoReview) -> Result<AppliedChange, DesktopError> {
         self.transact(
             &review.patch,
             review.widgets.as_ref(),
             Operation::Undo,
-            Record::Clear(&review.id),
+            Self::review_record(review),
         )
         .map(|v| v.change)
     }
@@ -68,7 +120,7 @@ impl DesktopStore {
             &patch,
             Some(&widgets),
             Operation::Undo,
-            Record::Clear(&review.id),
+            Self::review_record(review),
         )
         .map(|v| v.change)
     }

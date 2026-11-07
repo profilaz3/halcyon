@@ -1545,3 +1545,91 @@ fn fb17_recipe_upgrade_failure_recovery_and_undo_preserve_frozen_state() {
         );
     }
 }
+
+/// One widget setting changed by you, as Settings records it.
+fn set_widget(
+    store: &DesktopStore,
+    pointer: &str,
+    before: Option<serde_json::Value>,
+    after: serde_json::Value,
+) -> LatestChange {
+    let mut widget = WidgetPatch::new();
+    widget.set(pointer, before, Some(after)).unwrap();
+    store
+        .apply_action(&DesktopPatch::new(), Some(&widget), Owner::Preferences, "Settings", Source::Manual)
+        .unwrap()
+}
+
+#[test]
+fn history_f_widget_changes_name_their_widget_and_older_ones_can_be_put_back() {
+    let case = Case::new("history-f-put-back");
+    let store = case.store();
+    let scale = set_widget(&store, "/clock/scale", None, json!(120));
+    let date = set_widget(&store, "/clock/show_date", None, json!(false));
+    let opacity = set_widget(&store, "/appearance/opacity", Some(json!(90)), json!(70));
+    let glance = set_widget(&store, "/glance/density", None, json!("compact"));
+    let recent = store.recent_changes().unwrap();
+    let title = |id: &str| recent.entries.iter().find(|e| e.id == id).unwrap().title();
+    assert_eq!(title(&glance.id), "Changed Daily overview");
+    assert_eq!(recent.entries.iter().find(|e| e.id == glance.id).unwrap().widgets, ["Daily overview"]);
+    // A single recorded value still reads as that value.
+    assert_eq!(title(&scale.id), "Clock scale: Default → 120%");
+    for change in [&scale, &date, &opacity, &glance] {
+        assert!(recent.restorable.contains(&change.id));
+    }
+    assert_eq!(recent.undo_id.as_deref(), Some(glance.id.as_str()));
+
+    // Putting back an older change restores only its own setting; newer
+    // changes, and the Undo of the latest, stay.
+    store.put_back(&date.id).unwrap();
+    let now = case.json();
+    assert!(now["clock"].get("show_date").is_none());
+    assert_eq!(now["clock"]["scale"], json!(120));
+    assert_eq!(now["appearance"]["opacity"], json!(70));
+    assert_eq!(now["glance"]["density"], json!("compact"));
+    let recent = store.recent_changes().unwrap();
+    assert_eq!(recent.entries.last().unwrap().title(), "Undid a change to Clock");
+    assert!(!recent.restorable.contains(&date.id));
+    assert!(recent.restorable.contains(&scale.id));
+    assert_eq!(recent.undo_id.as_deref(), Some(glance.id.as_str()));
+    assert!(store.put_back(&date.id).is_err(), "a change goes back once");
+
+    // A setting changed again since refuses without writing, and the review
+    // keeps the newer value while putting back the rest.
+    let both = {
+        let mut widget = WidgetPatch::new();
+        widget.set("/appearance/corner_radius", None, Some(json!(9))).unwrap();
+        widget.set("/clock/scale", Some(json!(120)), Some(json!(130))).unwrap();
+        store
+            .apply_action(&DesktopPatch::new(), Some(&widget), Owner::Preferences, "Settings", Source::Manual)
+            .unwrap()
+    };
+    set_widget(&store, "/appearance/corner_radius", Some(json!(9)), json!(14));
+    let before = case.text();
+    assert!(matches!(
+        store.put_back(&both.id),
+        Err(DesktopError::FieldConflict { .. } | DesktopError::Conflict(_))
+    ));
+    assert_eq!(case.text(), before, "nothing was written");
+    let review = store.review_put_back(&both.id).unwrap();
+    assert!(review.puts_back());
+    assert_eq!(review.conflicts.len(), 1);
+    store.accept_undo_review(&review).unwrap();
+    let now = case.json();
+    assert_eq!(now["appearance"]["corner_radius"], json!(14), "newer value kept");
+    assert_eq!(now["clock"]["scale"], json!(120), "the rest put back");
+    assert!(!store.recent_changes().unwrap().restorable.contains(&both.id));
+
+    assert_eq!(activity::widget_group("/appearance/style_bars"), Some("Dock and panel style"));
+    assert_eq!(activity::widget_group("/refresh_intervals/weather"), Some("Weather"));
+    assert_eq!(activity::widget_group("/appearance/opacity"), Some("Widget style"));
+
+    // Note text and calendar links never enter a change: they are kept in
+    // their own files and the keyring, and the journal refuses them.
+    let mut private = WidgetPatch::new();
+    for pointer in ["/notes/text", "/notes/content", "/calendar/subscriptions", "/calendar_urls"] {
+        assert!(private.set(pointer, None, Some(json!("SENTINEL"))).is_err(), "{pointer}");
+    }
+    let history = serde_json::to_string(&store.recent_changes().unwrap().entries).unwrap();
+    assert!(!history.contains("SENTINEL"), "no private values in Changes");
+}

@@ -966,6 +966,37 @@ impl Settings {
         self.last_desktop_change = latest_desktop_change();
         self.after_desktop_change()
     }
+    /// Puts back one older change from Changes. A setting changed since
+    /// stops it and opens the review, which keeps those values.
+    pub(super) fn put_back_change(&mut self, id: String) -> Task<Message> {
+        if self.native_worker_needed() {
+            return self.background_put_back(id);
+        }
+        let result = crate::desktop::actions::history_store().and_then(|store| {
+            let result = store.put_back(&id);
+            self.undo_review = if matches!(
+                result,
+                Err(crate::desktop::DesktopError::Conflict(_)
+                    | crate::desktop::DesktopError::FieldConflict { .. })
+            ) {
+                store.review_put_back(&id).ok()
+            } else {
+                None
+            };
+            result
+        });
+        match result {
+            Ok(_) => {
+                self.status.clear();
+                self.error = false;
+                self.profiles.forget_applied(&id);
+                self.wizard_undo_completed(Some(id));
+            }
+            Err(error) => self.failed(error.to_string()),
+        }
+        self.last_desktop_change = latest_desktop_change();
+        self.after_desktop_change()
+    }
     pub(super) fn resolve_undo_review(
         &mut self,
         review: crate::desktop::store::UndoReview,
@@ -985,6 +1016,7 @@ impl Settings {
             Ok(_) => {
                 if restore {
                     self.profiles.forget_applied(review.id());
+                    self.wizard_undo_completed(Some(review.id().to_string()));
                 }
                 self.undo_review = None;
                 self.error = false;

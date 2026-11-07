@@ -232,6 +232,13 @@ impl Page {
             page => page.title(),
         }
     }
+    /// The name in the narrow rail, short enough for one line.
+    fn rail_title(self) -> &'static str {
+        match self.sidebar() {
+            Self::DesktopDock => "Dock",
+            page => page.nav_title(),
+        }
+    }
     fn nav_icon(self) -> &'static str {
         match self {
             Self::Overview => "view-grid-symbolic",
@@ -554,6 +561,8 @@ pub enum Message {
     UndoDesktop,
     KeyboardUndo(bool),
     UndoDesktopShown(Option<String>),
+    /// Puts back what one older change replaced, from Changes.
+    PutBackChange(String),
     ResolveUndoShown(crate::desktop::store::UndoReview, bool),
     RecoverySelect(usize, bool),
     RecoveryUseProposed(usize),
@@ -2408,6 +2417,13 @@ impl Settings {
                     self.wizard_undo_completed(shown);
                 }
                 return task;
+            }
+            Message::PutBackChange(id) => {
+                if !self.appearance_pending.is_empty() || self.notice_editing {
+                    self.failed("Finish the current edit before putting back a change.".into());
+                    return Task::none();
+                }
+                return self.put_back_change(id);
             }
             Message::UndoDesktopRestore(expected) => {
                 if self
@@ -6415,6 +6431,8 @@ mod tests {
         capture: bool,
         /// `DESKTOP_CARDS_DESKTOP_ROOT` names a fixture root.
         fixture: bool,
+        /// The installed icon themes are readable, so captures draw icons.
+        icons: bool,
     }
 
     const TEST_ROOT: &str = "DESKTOP_CARDS_TEST_ROOT";
@@ -6509,6 +6527,11 @@ mod tests {
                 format!("[Icon Theme]\nName={name}\nDirectories=scalable\n"),
             )
             .unwrap();
+        }
+        if env.icons {
+            // Only the icon themes, read-only; desktop settings stay isolated.
+            std::fs::create_dir_all(dir.join("data")).unwrap();
+            std::os::unix::fs::symlink("/usr/share/icons", dir.join("data/icons")).unwrap();
         }
         let mut command = std::process::Command::new(std::env::current_exe().unwrap());
         command
@@ -7773,6 +7796,7 @@ mod tests {
                 app_config: true,
                 capture: true,
                 fixture: true,
+                ..Default::default()
             },
         ) {
             return;
@@ -8628,6 +8652,7 @@ mod tests {
                 app_config: true,
                 capture: true,
                 fixture: true,
+                ..Default::default()
             },
         ) {
             return;
