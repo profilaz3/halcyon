@@ -530,6 +530,8 @@ pub enum Message {
     /// Reveals the unresolved values inside the page's preview review.
     ReviewPreviewConflicts,
     NavSelected(cosmic::widget::nav_bar::Id),
+    /// Open a sidebar root that isn't in the nav model (the pinned Changes).
+    OpenRoot(Page),
     SearchSettings(String),
     SearchFirst,
     SearchResult(navigation::SearchHit),
@@ -978,7 +980,13 @@ impl cosmic::Application for Settings {
         let _native = crate::desktop::islands::Installation::native_view(Default::default());
         // Styles name their fonts; learn which are installed before drawing.
         crate::desktop_theme::load_installed_fonts();
-        let page = page.canonical();
+        let mut page = page.canonical();
+        // Settings › Restore became Changes; whoever left Settings there
+        // comes back to Changes.
+        if page == Page::General && navigation::left_in_restore() {
+            page = Page::Changes;
+            navigation::remember_app_destination(AppSettingsPage::Home);
+        }
         let (config, design) = design::State::initialize();
         let wizard = OPEN_WIZARD
             .swap(false, std::sync::atomic::Ordering::Relaxed)
@@ -2286,6 +2294,7 @@ impl Settings {
                     return self.open_root(page);
                 }
             }
+            Message::OpenRoot(page) => return self.open_root(page),
             Message::Back => {
                 if self.wizard.is_some() {
                     return self.update_wizard(wizard::Message::Back);
@@ -2370,7 +2379,7 @@ impl Settings {
                     return Task::none();
                 }
                 if self.last_desktop_change.as_ref().map(|(_, _, id)| id) != shown.as_ref() {
-                    self.failed("The last settings action changed. Review Undo again.".into());
+                    self.failed("The last settings action changed. Try Undo again.".into());
                     return Task::none();
                 }
                 let task = self.undo_shown_change(shown.clone());
@@ -2385,7 +2394,7 @@ impl Settings {
                     .as_ref()
                     .is_none_or(|(_, _, id)| *id != expected)
                 {
-                    self.failed("The last settings action changed. Review Undo again.".into());
+                    self.failed("The last settings action changed. Try Undo again.".into());
                     return Task::none();
                 }
                 let task = self.undo_shown_change(Some(expected.clone()));
@@ -2810,6 +2819,9 @@ impl Settings {
                                 if value["toggle_scene"] == true {
                                     tasks.push(self.update(Message::ToggleScene));
                                 }
+                                if value["app_settings"] == "restore" {
+                                    tasks.push(self.update(Message::Page(Page::Changes)));
+                                }
                                 if let Some(page) = value["app_settings"].as_str().and_then(|key| {
                                     AppSettingsPage::ALL.into_iter().find(|p| p.key() == key)
                                 }) {
@@ -3181,6 +3193,7 @@ impl Settings {
                 let reveal_widgets = page == Page::Widgets;
                 let legacy_layout = page == Page::WidgetLayout;
                 let page = page.canonical();
+                let from = self.page;
                 if self.page != page {
                     // A previous page's change stays available in Recent
                     // changes and keyboard Undo, not as this task's footer.
@@ -3321,6 +3334,13 @@ impl Settings {
                     Task::none()
                 };
                 let changes = if page == Page::Changes {
+                    // Back returns to the list as it was left.
+                    if !self.quiet_navigation
+                        && !matches!(from, Page::Changes | Page::PendingChanges)
+                    {
+                        // Arriving fresh shows everything, not a filter left on.
+                        self.support.filter = support::Filter::All;
+                    }
                     self.load_support()
                 } else {
                     Task::none()

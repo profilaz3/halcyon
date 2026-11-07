@@ -144,8 +144,9 @@ pub struct Support {
     pub notice: Option<&'static str>,
     generation: u64,
 }
-/// The page a recorded change was made on.
-fn change_page(entry: &crate::desktop::store::activity::Summary) -> Page {
+/// The page a recorded change was made on; `Changes` when it has no
+/// other home (a restore made from Changes itself).
+pub(in crate::settings) fn change_page(entry: &crate::desktop::store::activity::Summary) -> Page {
     use crate::desktop::Owner;
     use crate::desktop::store::activity::Cause;
     match entry.cause {
@@ -177,10 +178,13 @@ impl Settings {
         if page == Page::Changes {
             return Task::none();
         }
+        // Widget preferences span several pages, so their setting decides.
+        let any_page = crate::desktop::Owner::parse(&entry.owner)
+            == Some(crate::desktop::Owner::Preferences);
         let hit = entry.details.iter().find_map(|detail| {
             super::navigation::search(&detail.setting)
                 .into_iter()
-                .find(|hit| hit.page.sidebar() == page.sidebar())
+                .find(|hit| any_page || hit.page.sidebar() == page.sidebar())
         });
         match hit {
             Some(hit) => self.handle(AppMessage::SearchResult(hit)),
@@ -324,7 +328,7 @@ impl Settings {
         });
         if self.support.local.problem {
             components.push(Component {
-                name: "Recent changes",
+                name: "Changes",
                 state: "History can't be read",
                 health: Attention,
                 action: Recovery,
@@ -358,7 +362,9 @@ impl Settings {
     pub(super) fn load_support(&mut self) -> Task<AppMessage> {
         self.support.generation = self.support.generation.wrapping_add(1);
         let token = self.support.generation;
-        self.support.loading = true;
+        // Only the first read shows "Reading…"; later refreshes swap the
+        // list in place so nothing flickers after every save.
+        self.support.loading = self.support.observed.is_none();
         let store = self.desktop.store().cloned();
         cosmic::task::future(async move {
             let worker = tokio::task::spawn_blocking(move || {
@@ -402,8 +408,10 @@ impl Settings {
         match message {
             Message::Changed => return self.load_support(),
             Message::Refresh => {
+                let load = self.load_support();
+                self.support.loading = true;
                 return Task::batch([
-                    self.load_support(),
+                    load,
                     super::service_task(),
                     self.handle(AppMessage::RecheckInstallation),
                 ]);

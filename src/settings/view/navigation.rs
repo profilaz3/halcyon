@@ -462,9 +462,12 @@ impl Settings {
                 // The latest save opens the full list of changes.
                 items.push(
                     container(
-                        button::text(status)
+                        // Reads as the quiet status line it replaces.
+                        button::custom(label(status, 12., MUTED))
                             .id(cosmic::widget::Id::new("settings-saved-changes"))
-                            .on_press(Message::Page(Page::Changes)),
+                            .class(cosmic::theme::Button::Text)
+                            .padding([2, 4])
+                            .on_press(Message::OpenRoot(Page::Changes)),
                     )
                     .width(Length::Fill)
                     .into(),

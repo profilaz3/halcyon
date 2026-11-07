@@ -825,12 +825,14 @@ impl Page {
             | Self::DesktopWallpaper
             | Self::DesktopDock
             | Self::DesktopWindows
-            | Self::General => None,
+            | Self::General
+            | Self::Changes => None,
             // Detail editors that open from rows on Appearance.
             Self::Appearance | Self::DesktopAppearance | Self::Moments => Some(Self::Themes),
             Self::DesktopAutomation => Some(Self::DesktopProfiles),
             Self::AdaptiveLooks => Some(Self::DesktopAutomation),
-            Self::PendingChanges | Self::DesktopMotion => Some(Self::General),
+            Self::DesktopMotion => Some(Self::General),
+            Self::PendingChanges => Some(Self::Changes),
             Self::DesktopWindowRules | Self::DesktopShortcuts => Some(Self::DesktopWindows),
             Self::DesktopIcons => Some(Self::DesktopWallpaper),
             _ => Some(Self::Overview),
@@ -845,7 +847,7 @@ impl Page {
             Self::DesktopWallpaper => Area::Wallpaper,
             Self::DesktopDock => Area::Bars,
             Self::DesktopWindows => Area::Windows,
-            Self::General => Area::App,
+            Self::General | Self::Changes => Area::App,
             _ => Area::Widgets,
         }
     }
@@ -1232,7 +1234,7 @@ mod tests {
         );
         assert!(
             hits.iter()
-                .any(|hit| hit.page == Page::General && hit.label == "Recent changes")
+                .any(|hit| hit.page == Page::Changes && hit.label == "Changes")
         );
     }
 }
@@ -1263,12 +1265,17 @@ pub(super) fn select(model: &mut cosmic::widget::nav_bar::Model, page: Page) {
     }
 }
 
+fn remembered_app_destination() -> Option<String> {
+    crate::desktop::DesktopStore::from_env().ok().and_then(|store| {
+        std::fs::read_to_string(store.state_dir().join("settings-app-destination")).ok()
+    })
+}
+/// Settings was last left on the former Restore section, now Changes.
+pub(super) fn left_in_restore() -> bool {
+    remembered_app_destination().is_some_and(|key| key.trim() == "restore")
+}
 pub(super) fn app_destination() -> AppSettingsPage {
-    crate::desktop::DesktopStore::from_env()
-        .ok()
-        .and_then(|store| {
-            std::fs::read_to_string(store.state_dir().join("settings-app-destination")).ok()
-        })
+    remembered_app_destination()
         .and_then(|key| {
             AppSettingsPage::ALL
                 .into_iter()
@@ -1458,9 +1465,10 @@ impl Settings {
             return Some(("Search results".into(), Message::Back));
         }
         if self.page == Page::PendingChanges && !self.history.last().is_some_and(|r| r.page != Page::Changes) {
+            let back = self.history.last().is_some_and(|r| r.page == Page::Changes);
             return Some((
                 Page::Changes.nav_title().into(),
-                Message::Page(Page::Changes),
+                if back { Message::Back } else { Message::Page(Page::Changes) },
             ));
         }
         if self.page == Page::Overview && self.canvas_visible() {

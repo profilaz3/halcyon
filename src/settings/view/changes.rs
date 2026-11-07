@@ -4,6 +4,7 @@
 //! left unfinished by an update, live here too.
 use super::desktop::{WARN, banner};
 use super::*;
+use chrono::Datelike;
 use crate::desktop::store::activity::{Action, Cause, Summary};
 use crate::settings::support::{Destination, Filter, Message as Edit};
 
@@ -27,8 +28,18 @@ impl Row<'_> {
     }
 }
 
+/// A recorded time in local time; `None` when it wasn't recorded.
 fn local(time: i64) -> Option<chrono::DateTime<chrono::Local>> {
-    chrono::DateTime::from_timestamp_millis(time).map(|d| d.with_timezone(&chrono::Local))
+    (time > 0)
+        .then(|| chrono::DateTime::from_timestamp_millis(time))
+        .flatten()
+        .map(|d| d.with_timezone(&chrono::Local))
+}
+
+/// The time of day in the clock's own format.
+fn clock(date: chrono::DateTime<chrono::Local>, format_24h: bool) -> String {
+    date.format(if format_24h { "%H:%M" } else { "%-I:%M %p" })
+        .to_string()
 }
 
 /// "Today", "Yesterday" or the weekday and date.
@@ -40,7 +51,8 @@ fn day_title(date: Option<chrono::DateTime<chrono::Local>>) -> String {
     match (today - date.date_naive()).num_days() {
         0 => "Today".into(),
         1 => "Yesterday".into(),
-        _ => date.format("%A, %e %B").to_string(),
+        _ if date.year() == today.year() => date.format("%A %-d %B").to_string(),
+        _ => date.format("%A %-d %B %Y").to_string(),
     }
 }
 
@@ -77,11 +89,18 @@ impl Settings {
         timeline
     }
 
-    /// How many changes were made today, for the sidebar.
+    /// How many changes were made today, for the sidebar. Automatic
+    /// checks that left the desktop as it was don't count.
     pub(in crate::settings) fn changes_today(&self) -> usize {
         let today = chrono::Local::now().date_naive();
         self.change_timeline()
             .iter()
+            .filter(|(_, row)| match row {
+                Row::Change(_) => true,
+                Row::Automation(outcome) => {
+                    matches!(outcome.effect, crate::automation::Effect::Applied { .. })
+                }
+            })
             .filter(|(time, _)| local(*time).is_some_and(|d| d.date_naive() == today))
             .count()
     }
@@ -95,10 +114,14 @@ impl Settings {
                 crate::automation::status::outcome_line(outcome, self.config.clock.format_24h).what
             }
         };
-        let when = local(time)
-            .map(|d| format!("{} {}", day_title(Some(d)), d.format("%H:%M")))
-            .unwrap_or_default();
-        Some(format!("Latest: {what} · {when}"))
+        Some(match local(time) {
+            Some(d) => format!(
+                "Latest: {what} · {} {}",
+                day_title(Some(d)),
+                clock(d, self.config.clock.format_24h)
+            ),
+            None => format!("Latest: {what}"),
+        })
     }
 
     /// The pinned sidebar entry: "Changes", today's count and a dot when
@@ -107,6 +130,8 @@ impl Settings {
         let active = self.page.sidebar() == Page::Changes;
         let today = self.changes_today();
         let unfinished = !self.recovery_sheet.rows.is_empty();
+        // The dot means something waits for a choice; the count is news.
+        let waiting = unfinished || !self.kept_previews().is_empty();
         let accent = self.settings_accent();
         let title = text::body("Changes")
             .size(if rail { 12 } else { 15 })
@@ -122,21 +147,19 @@ impl Settings {
             .size(18)
             .icon()
             .into();
-        let mark: Element<'_, Message> = if unfinished {
+        let mark: Element<'_, Message> = if waiting {
             dot(WARN, 7.)
-        } else if today > 0 {
-            dot(accent, 7.)
         } else {
             cosmic::iced::widget::space().width(0).into()
         };
-        let count: Element<'_, Message> = if today > 0 && !rail {
-            label(today.to_string(), 12., MUTED)
+        let count: Element<'_, Message> = if today > 0 {
+            label(today.to_string(), if rail { 10. } else { 12. }, MUTED)
         } else {
             cosmic::iced::widget::space().width(0).into()
         };
         let content: Element<'_, Message> = if rail {
             column::with_children(vec![
-                row::with_children(vec![icon, mark])
+                row::with_children(vec![icon, mark, count])
                     .spacing(2)
                     .align_y(Alignment::Start)
                     .into(),
@@ -158,9 +181,11 @@ impl Settings {
             .selected(active)
             .padding(if rail { [8, 2] } else { [11, 12] })
             .width(Length::Fill)
-            .on_press(Message::Page(Page::Changes));
+            .on_press(Message::OpenRoot(Page::Changes));
         let tip = if unfinished {
             Some("Unfinished changes from the last update are waiting".to_owned())
+        } else if waiting {
+            Some("A previewed change is waiting to be applied or discarded".to_owned())
         } else {
             self.latest_change_line()
         };
@@ -279,18 +304,22 @@ impl Settings {
                 Filter::Automatic => row.automatic(),
             })
             .collect();
-        if timeline.is_empty() && !self.support.loading {
-            items.push(group(
-                None,
-                vec![detail_state(
-                    match filter {
-                        Filter::All => "No changes recorded yet",
-                        Filter::You => "No changes made by you yet",
-                        Filter::Automatic => "No automatic changes yet",
-                    },
+        if timeline.is_empty() && !self.support.loading && !self.support.local.problem {
+            let (title, description) = match filter {
+                Filter::All => (
+                    "No changes recorded yet",
                     "Completed desktop changes will appear here. Note editing and private calendar content are never recorded.",
-                )],
-            ));
+                ),
+                Filter::You => (
+                    "No changes made by you yet",
+                    "Changes you make in Halcyon will appear here. Note editing and private calendar content are never recorded.",
+                ),
+                Filter::Automatic => (
+                    "No automatic changes yet",
+                    "Looks switched by time of day, a display or the wallpaper will appear here.",
+                ),
+            };
+            items.push(group(None, vec![detail_state(title, description)]));
         }
         let mut day = String::new();
         let mut rows: Vec<Element<'_, Message>> = Vec::new();
@@ -326,8 +355,8 @@ impl Settings {
         item: Row<'_>,
     ) -> Element<'_, Message> {
         let time = date
-            .map(|d| d.format("%H:%M").to_string())
-            .unwrap_or_default();
+            .map(|d| clock(d, self.config.clock.format_24h))
+            .unwrap_or_else(|| "Time not recorded".into());
         let entry = match item {
             Row::Automation(outcome) => {
                 let line =
@@ -347,7 +376,10 @@ impl Settings {
             Row::Change(entry) => entry,
         };
         let open = self.support.expanded.as_deref() == Some(&entry.id);
-        let undo = entry.action == Action::Changed
+        // Restores made here are undone from Earlier setups, not twice.
+        let elsewhere = crate::settings::support::change_page(entry) != Page::Changes;
+        let undo = elsewhere
+            && entry.action == Action::Changed
             && entry.cause == Cause::You
             && self.support.local.recent.undo_id.as_deref() == Some(&entry.id);
         let meta = format!(
@@ -362,14 +394,18 @@ impl Settings {
                     (!open).then(|| entry.id.clone()),
                 )))
                 .into(),
-            button::text("Open")
-                .id(cosmic::widget::Id::new(format!("change-open-{}", entry.id)))
-                .on_press(edit(Edit::OpenChange(entry.id.clone())))
-                .into(),
         ];
+        if elsewhere {
+            actions.push(
+                button::text("Open")
+                    .id(cosmic::widget::Id::new(format!("change-open-{}", entry.id)))
+                    .on_press(edit(Edit::OpenChange(entry.id.clone())))
+                    .into(),
+            );
+        }
         if undo {
             actions.push(
-                button::standard("Undo…")
+                button::standard("Undo")
                     .id(cosmic::widget::Id::new("history-review-undo"))
                     .on_press(Message::UndoDesktopShown(Some(entry.id.clone())))
                     .into(),
@@ -407,7 +443,7 @@ impl Settings {
                     FG,
                 ));
             }
-            if !undo {
+            if !undo && elsewhere && entry.cause == Cause::You && entry.action == Action::Changed {
                 rows.push(label(
                     "Undo is available only for your latest change.",
                     12.,
@@ -427,12 +463,7 @@ impl Settings {
                 .on_press_maybe((!self.busy && !preview()).then_some(Message::Restore(true)))
                 .into(),
         ));
-        let mut items = vec![self.search_target("changes-earlier", group(Some("Earlier setups"), earlier))];
-        // Before the update, "how widgets are saved" lives under Updates.
-        if self.design.managed {
-            items.push(self.design_section(Some("Widgets")));
-        }
-        column::with_children(items).spacing(16).into()
+        self.search_target("changes-earlier", group(Some("Earlier setups"), earlier))
     }
 }
 

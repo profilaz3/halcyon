@@ -972,18 +972,23 @@ impl Settings {
         .height(Length::Fill)
         .class(cosmic::theme::Container::Primary)
         .into();
-        let entries = self
+        let mut entries: Vec<_> = self
             .nav_model
             .iter()
             .filter_map(|entity| {
                 self.nav_model.data::<Page>(entity).map(|page| {
                     (
                         cosmic::widget::Id::new(format!("nav-{}", page.key())),
-                        entity,
+                        Message::NavSelected(entity),
                     )
                 })
             })
             .collect();
+        // Arrows continue from the last group into the pinned Changes.
+        entries.push((
+            cosmic::widget::Id::new("nav-changes"),
+            Message::OpenRoot(Page::PINNED),
+        ));
         sidebar::navigation(content, entries)
     }
 
