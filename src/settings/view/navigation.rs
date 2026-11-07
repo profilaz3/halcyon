@@ -528,11 +528,9 @@ impl Settings {
         discard_id: &'static str,
         apply: Element<'a, Message>,
     ) -> Element<'a, Message> {
-        // libcosmic matches named siblings by name but keeps their old index, so a
-        // conditional named button would shift its neighbours onto the wrong state.
-        // Each sits in an unnamed slot, which is matched by position instead.
-        let slot =
-            |action: Element<'a, Message>| -> Element<'a, Message> { container(action).into() };
+        // Each action sits in an unnamed slot (see `slot`), so a named button
+        // that comes or goes never shifts its neighbours onto the wrong state.
+        let slot = super::slot;
         let undo = slot(
             button::text("Undo")
                 .id(cosmic::widget::Id::new("preview-undo"))

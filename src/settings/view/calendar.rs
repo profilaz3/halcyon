@@ -381,12 +381,3 @@ impl Settings {
         column::with_children(rows).spacing(10).into()
     }
 }
-
-/// libcosmic matches named siblings by name but keeps their old index, so a
-/// conditional named button in front of another named one leaves a row with
-/// fewer states than children, and a wrapping row then panics in layout. An
-/// unnamed slot is matched by position instead. A container is no slot: it
-/// reports its content's name as its own. A one-child column has none.
-fn slot(action: Element<'_, Message>) -> Element<'_, Message> {
-    column::with_children(vec![action]).into()
-}
