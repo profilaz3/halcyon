@@ -1136,11 +1136,13 @@ impl Settings {
             .into(),
         ];
         if self.page != Page::Themes {
-            parts.push(label(
-                crate::desktop::profiles::occasion(preset.id),
-                13.,
-                MUTED,
-            ));
+            // The look applied last says so instead of its occasion.
+            let last = self.profiles.last_applied() == Some(Selection::Preset(preset.id));
+            parts.push(if last {
+                label("Last applied", 13., self.settings_accent())
+            } else {
+                label(crate::desktop::profiles::occasion(preset.id), 13., MUTED)
+            });
         }
         button::custom(column::with_children(parts).spacing(8))
             .id(cosmic::widget::Id::new(format!("preset-{}", preset.id)))
@@ -1896,24 +1898,21 @@ impl Settings {
                     "Looks",
                     "A look sets your wallpaper, style, widgets, dock and panel together.",
                 ),
-                // Everything you can do with looks, in one place at the top.
+                // Saving is the main action; mixing and importing wait
+                // behind ⋯.
                 row::with_children(vec![
-                    button::text("Mix looks…")
-                        .id(cosmic::widget::Id::new("mix-start"))
-                        .on_press(edit(Edit::MixStart))
-                        .into(),
-                    button::text("Import a look…")
-                        .id(cosmic::widget::Id::new("discovery-import"))
-                        .on_press_maybe(
-                            (editor.writable() && !self.native_busy).then_some(edit(Edit::Import)),
-                        )
-                        .into(),
-                    button::text("Save current look…")
+                    button::suggested("Save current look…")
                         .id(cosmic::widget::Id::new("setup-save-current"))
                         .on_press_maybe(
                             (editor.writable() && !editor.busy())
                                 .then_some(edit(Edit::Name(Some(NameAction::Capture)))),
                         )
+                        .into(),
+                    button::icon(icon::from_name("view-more-symbolic").size(18))
+                        .id(cosmic::widget::Id::new("looks-more"))
+                        .tooltip("More ways to make a look")
+                        .selected(self.help_open == Some("looks-more"))
+                        .on_press(Message::ToggleHelp("looks-more"))
                         .into(),
                 ])
                 .spacing(6)
@@ -1921,6 +1920,25 @@ impl Settings {
                 .into(),
             )]
         };
+        if !reviewing && self.help_open == Some("looks-more") {
+            items.push(
+                row::with_children(vec![
+                    cosmic::iced::widget::space().width(Length::Fill).into(),
+                    button::standard("Mix looks…")
+                        .id(cosmic::widget::Id::new("mix-start"))
+                        .on_press(edit(Edit::MixStart))
+                        .into(),
+                    button::standard("Import a look…")
+                        .id(cosmic::widget::Id::new("discovery-import"))
+                        .on_press_maybe(
+                            (editor.writable() && !self.native_busy).then_some(edit(Edit::Import)),
+                        )
+                        .into(),
+                ])
+                .spacing(6)
+                .into(),
+            );
+        }
         if let Some(error) = editor.unavailable() {
             items.push(banner(
                 format!("Desktop settings are unavailable. {error}"),
@@ -1980,8 +1998,8 @@ impl Settings {
             }
             // Time of day as a card on top, then the looks themselves.
             items.push(self.looks_schedule());
-            items.push(self.looks_gallery());
             items.extend(self.your_looks());
+            items.push(self.looks_gallery());
         }
         column::with_children(items)
             .spacing(if reviewing { 20 } else { 16 })
@@ -1991,11 +2009,14 @@ impl Settings {
     /// Saved whole-desktop looks, newest first, when there are any.
     fn your_looks(&self) -> Option<Element<'_, Message>> {
         let entries = self.profiles.library().ok()?;
+        let last_applied = self.profiles.last_applied();
         let rows: Vec<Element<'_, Message>> = entries
             .iter()
             .filter(|entry| entry.profile.as_ref().map_or(true, |p| !p.appearance_only))
             .map(|entry| {
+                let last = last_applied.as_ref() == Some(&Selection::Saved(entry.id.clone()));
                 let (name, description) = match &entry.profile {
+                    Ok(profile) if last => (profile.name.clone(), "Last applied"),
                     Ok(profile) => (profile.name.clone(), "Saved look"),
                     Err(_) => ("Look that can’t be read".to_string(), "Open it to remove it"),
                 };

@@ -424,10 +424,11 @@ impl Settings {
         self.begin_native();
         task(move || {
             let mut conflict = None;
-            let undone = if review.is_none() {
-                shown.clone()
-            } else {
-                None
+            // Restoring from the review undoes that change as well.
+            let undone = match &review {
+                None => shown.clone(),
+                Some((review, true)) => Some(review.id().to_string()),
+                Some((_, false)) => None,
             };
             let result = crate::desktop::actions::history_store()
                 .and_then(|store| {
@@ -535,6 +536,9 @@ impl Settings {
                 match result {
                     Ok(id) => {
                         self.error = false;
+                        if let Some(id) = &id {
+                            self.profiles.forget_applied(id);
+                        }
                         self.wizard_undo_completed(id);
                         #[cfg(test)]
                         {

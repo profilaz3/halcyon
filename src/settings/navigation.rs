@@ -245,7 +245,7 @@ pub(super) const WIDGET_READABILITY: SearchHit = hit(
 pub(super) const LOOKS: SearchHit = hit(
     Page::DesktopProfiles,
     "Looks",
-    "setups profiles presets starter looks saved calm evening focus workbench paper rose clean desktop presentation welcome rain snow fog weather",
+    "setups profiles presets starter looks saved calm evening focus workbench paper rose clean desktop presentation welcome rain snow fog weather mix combine import share file save current",
     false,
 );
 pub(super) const STARTUP: SearchHit = hit(
@@ -296,7 +296,7 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::Themes,
         "Shared desktop themes",
-        "theme soft outline paper bare colors widgets dock panel style save share",
+        "theme soft outline paper bare colors widgets save share",
         false,
     ),
     WIDGET_READABILITY,
@@ -427,7 +427,7 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::Clock,
         "Face and typography",
-        "clock size scale alignment center analog digital face typography weight italic surface design font depth landscape",
+        "clock size scale alignment center analog digital face typography weight italic surface design font depth landscape follow look style",
         false,
     )
     .at("widget-design"),
@@ -440,7 +440,7 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::Glance,
         "Overview design",
-        "at a glance daily overview font background surface layout density opacity design",
+        "at a glance daily overview font background surface layout density opacity design follow look style",
         false,
     )
     .at("widget-design"),
@@ -567,14 +567,14 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::DesktopDock,
         "Dock",
-        "dock applets position size autohide penumbra gradient",
+        "dock applets position size autohide penumbra gradient shape compact full width floating background follow look style bars",
         false,
     )
     .bar(crate::desktop::panels::PanelKind::Dock),
     hit(
         Page::DesktopDock,
         "Panel and Islands",
-        "top bar panel islands applets position size autohide",
+        "top bar panel islands applets position size autohide shape compact full width",
         false,
     )
     .bar(crate::desktop::panels::PanelKind::Panel),
@@ -932,6 +932,7 @@ impl Settings {
         if self.native_worker_needed() {
             return self.background_undo(shown, None);
         }
+        let undone = shown.clone();
         let result = crate::desktop::actions::history_store().and_then(|store| {
             let id = shown.ok_or_else(|| {
                 crate::desktop::DesktopError::UndoUnavailable("No settings action to undo".into())
@@ -952,6 +953,9 @@ impl Settings {
             Ok(_) => {
                 self.status.clear();
                 self.error = false;
+                if let Some(id) = &undone {
+                    self.profiles.forget_applied(id);
+                }
                 #[cfg(test)]
                 {
                     self.preference_undo = None;
@@ -979,6 +983,9 @@ impl Settings {
         });
         match result {
             Ok(_) => {
+                if restore {
+                    self.profiles.forget_applied(review.id());
+                }
                 self.undo_review = None;
                 self.error = false;
                 self.status.clear();

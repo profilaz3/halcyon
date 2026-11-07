@@ -297,12 +297,7 @@ impl Settings {
         // One page, no tabs: its shape, how it looks, where it sits, what it
         // holds. A missing or unhealthy host must not hide a saved Islands
         // shape or the way back to the bar.
-        if draft.kind() == PanelKind::Panel
-            || self.desktop.islands.installation.installed()
-            || draft.islands().known().is_some_and(|s| s.enabled)
-        {
-            items.push(self.islands_section(draft));
-        }
+        items.push(self.islands_section(draft));
         items.push(self.bar_style(draft));
         items.push(self.bar_position(draft));
         if draft.kind() == PanelKind::Panel {
@@ -369,10 +364,6 @@ impl Settings {
 
     fn bar_style(&self, draft: &PanelDraft) -> Element<'_, Message> {
         let accent = self.settings_accent();
-        let horizontal = draft
-            .anchor()
-            .known()
-            .is_none_or(|anchor| anchor.horizontal());
         let mut sizes: Vec<(String, PanelSize)> = PanelSize::CHOICES
             .into_iter()
             .map(|size| (size.title(), size))
@@ -384,7 +375,7 @@ impl Settings {
         let opacity_percent = opacity
             .known()
             .map(|value| (value * 100.).round().clamp(0., 100.) as u32);
-        let mut toggle_items: Vec<Element<'_, Message>> = vec![
+        let toggle_items: Vec<Element<'_, Message>> = vec![
             container(self.desktop_switch(
                 "Floating",
                 "Gap from the screen edge",
@@ -394,22 +385,6 @@ impl Settings {
             .width(Length::FillPortion(1))
             .into(),
         ];
-        if draft.kind() == PanelKind::Dock && !draft.islands().known().is_some_and(|s| s.enabled) {
-            toggle_items.push(
-                container(self.desktop_switch(
-                    if horizontal {
-                        "Full width"
-                    } else {
-                        "Full height"
-                    },
-                    "",
-                    draft.extend(),
-                    Edit::Extend,
-                ))
-                .width(Length::FillPortion(1))
-                .into(),
-            );
-        }
         let mut style: Vec<Element<'_, Message>> = Vec::new();
         style.push(field(
             "Size",
@@ -460,6 +435,18 @@ impl Settings {
                 Edit::RadiusChoice,
                 accent,
             ),
+        ));
+        // Whether looks and styles color the bars; Background sets them here.
+        style.push(split(
+            detail(
+                "Follow the look's style",
+                "Applying a look or style also colors the dock and panel. Off keeps what you set here",
+            ),
+            container(
+                toggler(self.config.appearance.style_bars).on_toggle(Message::StyleBars),
+            )
+            .id(cosmic::widget::Id::new("dock-style-bars"))
+            .into(),
         ));
         style.push(field(
             "Background",

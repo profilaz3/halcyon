@@ -120,7 +120,13 @@ fn fb19_native_discovery_and_keyboard_remix_fit_compact_and_wide() {
         );
         app.open_sections.remove("setup-library-actions");
         let mut native = crate::native_test::Native::new(Size::new(w, h));
-        // Looks has no search field now; its actions sit at the top instead.
+        // Looks has no search field now; Mix and Import wait behind ⋯.
+        if app.help_open != Some("looks-more") {
+            crate::settings::tests::send_settings(
+                &mut app,
+                crate::settings::Message::ToggleHelp("looks-more"),
+            );
+        }
         let mix = native.bounds(app.settings_view(), "mix-start");
         assert!(mix.y >= 0. && mix.y + mix.height <= h && mix.x + mix.width <= w);
         native.capture(

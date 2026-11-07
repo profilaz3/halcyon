@@ -383,9 +383,12 @@ fn polish050_setup_scope_exports_and_empty_library_fit_native_windows() {
             &mut app,
             Message::Profiles(Edit::Select(Selection::Current)),
         );
-        // Saving and importing sit together at the top of Looks.
+        // Saving sits at the top of Looks; importing waits behind ⋯.
         let mut native = crate::native_test::Native::new(size);
-        for id in ["setup-save-current", "discovery-import"] {
+        if app.help_open != Some("looks-more") {
+            send_settings(&mut app, Message::ToggleHelp("looks-more"));
+        }
+        for id in ["setup-save-current", "looks-more", "discovery-import"] {
             native_reveal(&app, &mut native, id);
         }
         native.capture(
@@ -639,4 +642,137 @@ fn changes_pinned_in_sidebar_filters_and_opens_where_made() {
         }
     }
     assert_eq!(app.page, Page::Changes);
+}
+
+#[test]
+fn polish_e_dock_shape_follow_style_and_looks_header() {
+    let name = "polish_e_dock_shape_follow_style_and_looks_header";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::desktop::panels::{PanelKind, Setting};
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    let capture = |app: &Settings, native: &mut crate::native_test::Native, name: &str| {
+        for (theme, mode) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("{name}-{}-{mode}", native.size.width),
+            );
+        }
+    };
+    // Dock: one Shape (Compact / Full width) replaces the Full width
+    // switch; Floating stays its own choice.
+    send_settings(&mut app, Message::Page(Page::DesktopDock));
+    send_settings(
+        &mut app,
+        Message::DesktopEditor(desktop::Message::Select(PanelKind::Dock)),
+    );
+    let floating = app.desktop.current().unwrap().floating();
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        assert!(native.duplicate_ids(app.settings_view()).is_empty());
+        native_click(&mut app, &mut native, "native-shape-full");
+        assert_eq!(app.desktop.current().unwrap().extend(), Setting::Known(true));
+        native_click(&mut app, &mut native, "native-shape-compact");
+        assert_eq!(app.desktop.current().unwrap().extend(), Setting::Known(false));
+        assert_eq!(app.desktop.current().unwrap().floating(), floating);
+        assert!(native.text_all(app.settings_view(), "Full width").len() == 1, "only the Shape option");
+        native_reveal(&app, &mut native, "dock-style-bars");
+        capture(&app, &mut native, "polish-e-dock");
+    }
+    // Whether looks color the bars is set here now, not on Appearance.
+    let before = app.config.appearance.style_bars;
+    let mut native = crate::native_test::Native::new(Size::new(1280., 800.));
+    // The switch changes only itself: the rest of the widget appearance stays.
+    Config::save_appearance(json!({"opacity": 61, "corner_radius": 9})).unwrap();
+    send_settings(&mut app, Message::Page(Page::DesktopDock));
+    native_click(&mut app, &mut native, "dock-style-bars");
+    let saved = Config::load().appearance;
+    assert_eq!(saved.style_bars, !before);
+    assert_eq!((saved.opacity, saved.corner_radius), (61, 9));
+    send_settings(&mut app, Message::Page(Page::Themes));
+    assert!(native.text_all(app.settings_view(), "Style the dock and panel").is_empty());
+    // Clock: following the look hides its own style choices.
+    send_settings(&mut app, Message::Page(Page::Clock));
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        assert!(native.duplicate_ids(app.settings_view()).is_empty());
+        native_reveal(&app, &mut native, "clock-follow-style");
+        assert!(native.try_bounds(app.settings_view(), "font-clock").is_none());
+        capture(&app, &mut native, "polish-e-clock-follow");
+    }
+    let mut native = crate::native_test::Native::new(Size::new(1280., 800.));
+    native_click(&mut app, &mut native, "clock-follow-style");
+    assert!(native.try_bounds(app.settings_view(), "font-clock").is_some());
+    send_settings(
+        &mut app,
+        Message::ClockWeight(Some(crate::widget_style::resolver::ClockWeight::Bold)),
+    );
+    native_reveal(&app, &mut native, "clock-follow-style");
+    capture(&app, &mut native, "polish-e-clock-own");
+    native_click(&mut app, &mut native, "clock-follow-style");
+    assert_eq!(Config::load().clock.weight, None);
+    assert!(native.try_bounds(app.settings_view(), "font-clock").is_none());
+    // Looks: saving is the main action; Mix and Import wait behind ⋯.
+    send_settings(&mut app, Message::Page(Page::DesktopProfiles));
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        assert!(native.try_bounds(app.settings_view(), "setup-save-current").is_some());
+        assert!(native.try_bounds(app.settings_view(), "mix-start").is_none());
+        native_click(&mut app, &mut native, "looks-more");
+        assert!(native.try_bounds(app.settings_view(), "mix-start").is_some());
+        assert!(native.try_bounds(app.settings_view(), "discovery-import").is_some());
+        assert!(native.duplicate_ids(app.settings_view()).is_empty());
+        capture(&app, &mut native, "polish-e-looks-more");
+        native_click(&mut app, &mut native, "looks-more");
+        assert!(native.try_bounds(app.settings_view(), "mix-start").is_none());
+    }
+    // The look applied last says so on its tile.
+    let state = app.profiles.store().unwrap().state_dir().join("looks-last-applied");
+    std::fs::create_dir_all(state.parent().unwrap()).unwrap();
+    let tidal = json!({"face": "digital", "weight": "light", "italic": false, "surface": "none"});
+    std::fs::write(
+        &state,
+        serde_json::to_vec(&json!({"look": "preset:tidal", "change": "tidal-change", "style": {
+            "clock": tidal, "clock_font": null,
+            "glance": {"own_background": true, "font": null, "clock_font": null}}}))
+        .unwrap(),
+    )
+    .unwrap();
+    send_settings(&mut app, Message::Page(Page::Overview));
+    send_settings(&mut app, Message::Page(Page::DesktopProfiles));
+    assert_eq!(
+        app.profiles.last_applied(),
+        Some(profiles::Selection::Preset("tidal"))
+    );
+    let mut native = crate::native_test::Native::new(Size::new(1280., 800.));
+    native_reveal(&app, &mut native, "preset-tidal");
+    assert_eq!(native.text_all(app.settings_view(), "Last applied").len(), 1);
+    capture(&app, &mut native, "polish-e-looks-last-applied");
+    // Following the look puts back the look's own clock, not a blank one.
+    send_settings(&mut app, Message::Page(Page::Clock));
+    assert!(native.try_bounds(app.settings_view(), "font-clock").is_some());
+    native_reveal(&app, &mut native, "clock-follow-style");
+    native_click(&mut app, &mut native, "clock-follow-style");
+    assert_eq!(profiles::LookStyle::of(&Config::load()).clock, tidal);
+    assert!(native.try_bounds(app.settings_view(), "font-clock").is_none());
+    // Undoing that look forgets it; its clock then counts as the user's own.
+    app.profiles.forget_applied("another-change");
+    assert!(app.profiles.last_applied().is_some());
+    app.profiles.forget_applied("tidal-change");
+    assert_eq!(app.profiles.last_applied(), None);
+    assert!(!state.exists());
+    assert!(native.try_bounds(app.settings_view(), "font-clock").is_some());
 }

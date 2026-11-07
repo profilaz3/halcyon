@@ -907,12 +907,29 @@ impl Settings {
                 Some(Message::GlanceStyle(style)),
             ));
         }
-        let mut appearance = vec![split(
-            label("Background", 14., FG),
-            container(segmented(choices, accent))
-                .id(cosmic::widget::Id::new("glance-background"))
-                .into(),
-        )];
+        // With a widget style applied, one switch follows it and hides the
+        // card's own background and fonts.
+        let follows = family.is_some()
+            && !self.glance_custom
+            && crate::settings::profiles::LookStyle::of(&self.config).glance
+                == self.profiles.applied_style().glance;
+        let mut appearance = Vec::new();
+        if family.is_some() {
+            appearance.push(split(
+                detail("Follow the look's style", "Background and fonts come from the look"),
+                container(toggler(follows).on_toggle(Message::GlanceFollowStyle))
+                    .id(cosmic::widget::Id::new("glance-follow-style"))
+                    .into(),
+            ));
+        }
+        if !follows {
+            appearance.push(split(
+                label("Background", 14., FG),
+                container(segmented(choices, accent))
+                    .id(cosmic::widget::Id::new("glance-background"))
+                    .into(),
+            ));
+        }
         if family.is_none() && g.style == GlanceStyle::Panel {
             let mut choices = vec![50, 70, 85, 100];
             if !choices.contains(&g.opacity) {
@@ -1002,7 +1019,9 @@ impl Settings {
         let mut parts = vec![group(Some("Include in this card"), sections)];
         if g.enabled {
             parts.push(group(Some("Look"), appearance));
-            parts.push(self.glance_text_section());
+            if !follows {
+                parts.push(self.glance_text_section());
+            }
         }
         self.widget_template(Widget::Glance, "Daily overview", preview, parts)
     }
@@ -1024,18 +1043,30 @@ impl Settings {
             );
             (style.display.value, style.missing_font)
         };
+        // Following the look hides the clock's own style choices; editing a
+        // time-of-day layer always shows them.
+        let follows = self.clock_moment_target().is_none() && !self.clock_custom && {
+            let (now, look) = (
+                crate::settings::profiles::LookStyle::of(&self.config),
+                self.profiles.applied_style(),
+            );
+            now.clock == look.clock && now.clock_font == look.clock_font
+        };
         let preview_height = if self.config.moment_clock().face == Some(ClockFace::Analog) {
             176.
         } else {
             112.
         };
-        let mut controls = vec![
-            self.widget_font_row(
+        let mut controls: Vec<Element<'_, Message>> = Vec::new();
+        if !follows {
+            controls.push(self.widget_font_row(
                 super::super::FontTarget::Clock,
                 "Font",
                 self.config.clock_font.as_deref(),
                 "Same as widgets",
-            ),
+            ));
+        }
+        controls.extend([
             // A slider, like every other percentage in the app.
             column::with_children(vec![
                 split(
@@ -1099,66 +1130,68 @@ impl Settings {
                     self.settings_accent(),
                 ),
             ),
-        ];
-        controls.push(split(
-            label("Weight", 14., FG),
-            segmented(
-                [
-                    (follow, None),
-                    ("Light", Some(ClockWeight::Light)),
-                    ("Regular", Some(ClockWeight::Normal)),
-                    ("Bold", Some(ClockWeight::Bold)),
-                ]
-                .into_iter()
-                .map(|(name, value)| {
-                    (
-                        name.into(),
-                        clock.weight == value,
-                        value
-                            .is_none_or(|weight| {
-                                crate::desktop_theme::font_style_available(cosmic::iced::Font {
-                                    weight: weight.native(),
-                                    ..clock_font
+        ]);
+        if !follows {
+            controls.push(split(
+                label("Weight", 14., FG),
+                segmented(
+                    [
+                        (follow, None),
+                        ("Light", Some(ClockWeight::Light)),
+                        ("Regular", Some(ClockWeight::Normal)),
+                        ("Bold", Some(ClockWeight::Bold)),
+                    ]
+                    .into_iter()
+                    .map(|(name, value)| {
+                        (
+                            name.into(),
+                            clock.weight == value,
+                            value
+                                .is_none_or(|weight| {
+                                    crate::desktop_theme::font_style_available(cosmic::iced::Font {
+                                        weight: weight.native(),
+                                        ..clock_font
+                                    })
                                 })
-                            })
-                            .then_some(self.clock_moment_edit(Message::ClockWeight(value))),
-                    )
-                })
-                .collect(),
-                self.settings_accent(),
-            ),
-        ));
-        controls.push(split(
-            label("Letter style", 14., FG),
-            segmented(
-                [
-                    (follow, None),
-                    ("Upright", Some(false)),
-                    ("Italic", Some(true)),
-                ]
-                .into_iter()
-                .map(|(name, value)| {
-                    (
-                        name.into(),
-                        clock.italic == value,
-                        value
-                            .is_none_or(|italic| {
-                                crate::desktop_theme::font_style_available(cosmic::iced::Font {
-                                    style: if italic {
-                                        cosmic::iced::font::Style::Italic
-                                    } else {
-                                        cosmic::iced::font::Style::Normal
-                                    },
-                                    ..clock_font
+                                .then_some(self.clock_moment_edit(Message::ClockWeight(value))),
+                        )
+                    })
+                    .collect(),
+                    self.settings_accent(),
+                ),
+            ));
+            controls.push(split(
+                label("Letter style", 14., FG),
+                segmented(
+                    [
+                        (follow, None),
+                        ("Upright", Some(false)),
+                        ("Italic", Some(true)),
+                    ]
+                    .into_iter()
+                    .map(|(name, value)| {
+                        (
+                            name.into(),
+                            clock.italic == value,
+                            value
+                                .is_none_or(|italic| {
+                                    crate::desktop_theme::font_style_available(cosmic::iced::Font {
+                                        style: if italic {
+                                            cosmic::iced::font::Style::Italic
+                                        } else {
+                                            cosmic::iced::font::Style::Normal
+                                        },
+                                        ..clock_font
+                                    })
                                 })
-                            })
-                            .then_some(self.clock_moment_edit(Message::ClockItalic(value))),
-                    )
-                })
-                .collect(),
-                self.settings_accent(),
-            ),
-        ));
+                                .then_some(self.clock_moment_edit(Message::ClockItalic(value))),
+                        )
+                    })
+                    .collect(),
+                    self.settings_accent(),
+                ),
+            ));
+        }
         if missing_font.is_some() {
             controls.push(label(
                 "Selected font unavailable. Using the system sans-serif.",
@@ -1211,22 +1244,36 @@ impl Settings {
                     crate::desktop::wallpaper::BgSource::Path(path)
                         if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.contains("ridge")))
             );
-        let mut face_rows = vec![
-            split(label("Type", 14., FG), segmented(
-                [(follow, None), ("Digital", Some(ClockFace::Digital)), ("Analog", Some(ClockFace::Analog))]
-                    .into_iter().map(|(name, value)| (name.into(), clock.face == value,
-                        Some(self.clock_moment_edit(Message::ClockFace(value)))))
-                    .collect(), self.settings_accent())),
-            split(detail("Background", if self.config.glance.enabled {
-                "For the separate clock; Daily overview keeps its own"
-            } else {
-                "Behind the time"
-            }), segmented(
-                [(follow, None), ("None", Some(ClockSurface::None)), ("Card", Some(ClockSurface::Panel))]
-                    .into_iter().map(|(name, value)| (name.into(), clock.surface == value,
-                        Some(self.clock_moment_edit(Message::ClockSurface(value)))))
-                    .collect(), self.settings_accent())),
-        ];
+        let mut face_rows: Vec<Element<'_, Message>> = Vec::new();
+        if self.clock_moment_target().is_none() {
+            face_rows.push(split(
+                detail(
+                    "Follow the look's style",
+                    "Font, weight, letter style, type and background come from the look",
+                ),
+                container(toggler(follows).on_toggle(Message::ClockFollowStyle))
+                    .id(cosmic::widget::Id::new("clock-follow-style"))
+                    .into(),
+            ));
+        }
+        if !follows {
+            face_rows.extend([
+                split(label("Type", 14., FG), segmented(
+                    [(follow, None), ("Digital", Some(ClockFace::Digital)), ("Analog", Some(ClockFace::Analog))]
+                        .into_iter().map(|(name, value)| (name.into(), clock.face == value,
+                            Some(self.clock_moment_edit(Message::ClockFace(value)))))
+                        .collect(), self.settings_accent())),
+                split(detail("Background", if self.config.glance.enabled {
+                    "For the separate clock; Daily overview keeps its own"
+                } else {
+                    "Behind the time"
+                }), segmented(
+                    [(follow, None), ("None", Some(ClockSurface::None)), ("Card", Some(ClockSurface::Panel))]
+                        .into_iter().map(|(name, value)| (name.into(), clock.surface == value,
+                            Some(self.clock_moment_edit(Message::ClockSurface(value)))))
+                        .collect(), self.settings_accent())),
+            ]);
+        }
         if ridge {
             face_rows.push(split(
                 detail("Let the hills cover the clock", "With the Ridge wallpaper"),

@@ -15,6 +15,12 @@ pub struct UndoReview {
     patch: DesktopPatch,
     widgets: Option<WidgetPatch>,
 }
+impl UndoReview {
+    /// The change this review would undo.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+}
 impl DesktopStore {
     pub fn review_undo(&self, id: &str) -> Result<UndoReview, DesktopError> {
         let latest = self

@@ -64,6 +64,7 @@ impl ProfilesEditor {
             .or(self.color_options.mode)
     }
 
+    #[cfg(test)]
     pub fn color_style_bars(&self, config: &Config) -> bool {
         self.color_preferences(config).style_bars
     }

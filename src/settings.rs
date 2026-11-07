@@ -664,6 +664,11 @@ pub enum Message {
     ClockWeight(Option<crate::widget_style::resolver::ClockWeight>),
     ClockItalic(Option<bool>),
     ClockSurface(Option<crate::widget_style::resolver::ClockSurface>),
+    /// `true` drops the clock's own font, weight, letter style, type and
+    /// background so it follows the look; `false` shows those controls.
+    ClockFollowStyle(bool),
+    /// The same for Daily overview: its own background and fonts.
+    GlanceFollowStyle(bool),
     WeatherDewPoint(bool),
     WeatherFahrenheit(bool),
     CityInput(String),
@@ -739,6 +744,10 @@ pub struct Settings {
     adaptive_source: crate::automation::solar::Source,
     recipe_editor: recipes::Editor,
     moment_base_clock: bool,
+    /// The clock's own style controls are open although nothing is set yet.
+    clock_custom: bool,
+    /// The same for Daily overview's own background and fonts.
+    glance_custom: bool,
     updates: updates::Updates,
     support: support::Support,
     usage_enabled: bool,
@@ -1014,6 +1023,8 @@ impl cosmic::Application for Settings {
             adaptive_source: Default::default(),
             recipe_editor: recipes::Editor::loaded(),
             moment_base_clock: false,
+            clock_custom: false,
+            glance_custom: false,
             updates: updates::Updates::default(),
             support: support::Support::default(),
             usage_enabled: usage.as_ref().copied().unwrap_or(false),
@@ -2601,6 +2612,12 @@ impl Settings {
             Message::Wallpaper(message) => return self.update_wallpaper(message),
             Message::ColorWell(message) => return self.update_color_well(message),
             Message::FontMenu(target) => {
+                // Choosing a font of its own means not following the look.
+                match target {
+                    Some(FontTarget::Clock) => self.clock_custom = true,
+                    Some(FontTarget::GlanceText | FontTarget::GlanceClock) => self.glance_custom = true,
+                    _ => {}
+                }
                 self.font_menu = if self.font_menu == target {
                     None
                 } else {
@@ -3526,8 +3543,40 @@ impl Settings {
                 "own_background": self.config.appearance.family.is_some(),
             })),
             Message::GlanceMatchWidgets => self.save_glance(json!({"own_background": false})),
+            // Following puts back what the last applied look chose (or the
+            // plain widget style), never just clearing the look's choices.
+            Message::GlanceFollowStyle(follow) => {
+                self.glance_custom = !follow;
+                if follow {
+                    self.font_menu = None;
+                    let target = self.profiles.applied_style();
+                    if profiles::LookStyle::of(&self.config).glance != target.glance {
+                        self.save_glance(target.glance);
+                    }
+                }
+            }
+            Message::ClockFollowStyle(follow) => {
+                self.clock_custom = !follow;
+                if follow {
+                    self.font_menu = None;
+                    let target = self.profiles.applied_style();
+                    let now = profiles::LookStyle::of(&self.config);
+                    if now.clock != target.clock || now.clock_font != target.clock_font {
+                        // One write, so one Undo puts the whole clock back.
+                        match Config::save_clock_style(target.clock, target.clock_font) {
+                            Ok(config) => {
+                                self.config = config;
+                                self.saved();
+                            }
+                            Err(error) => self.failed(error),
+                        }
+                    }
+                }
+            }
             Message::StyleBars(on) => {
-                self.save(json!({"appearance": {"style_bars": on}}));
+                // Merged into the section: the other widget appearance
+                // settings stay as they are.
+                self.save_appearance(json!({"style_bars": on}));
                 self.profiles
                     .set_style_bars(self.config.appearance.style_bars);
             }
@@ -5473,6 +5522,7 @@ fn capture_desktop(event: &serde_json::Value) -> Option<desktop::Message> {
         Edit::MoveTo(slot(value)?, Region::parse(value.get(2)?.as_str()?)?)
     } else if let Some(value) = event["panel_style"].as_str() {
         Edit::PanelStyle(match value {
+            "compact" => desktop::PanelStyle::Compact,
             "full_width" => desktop::PanelStyle::FullWidth,
             "islands" => desktop::PanelStyle::Islands,
             _ => return None,

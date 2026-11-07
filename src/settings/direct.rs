@@ -197,11 +197,14 @@ pub(super) fn label(message: &Message) -> String {
         | Message::ClockFormat(_)
         | Message::ClockDate(_)
         | Message::ClockVertical(_)
-        | Message::ClockDepth(_) => "Clock",
+        | Message::ClockDepth(_)
+        | Message::ClockFollowStyle(_) => "Clock",
         edit if moments::clock_style_edit(edit).is_some() => "Clock",
-        Message::GlanceOpacity(_) | Message::GlanceStyle(_) | Message::GlanceDensity(_) => {
-            "Daily overview"
-        }
+        Message::GlanceOpacity(_)
+        | Message::GlanceStyle(_)
+        | Message::GlanceDensity(_)
+        | Message::GlanceFollowStyle(_) => "Daily overview",
+        Message::StyleBars(_) => "Dock and panel style",
         Message::Desktop(_) => "Show widgets",
         _ => "Settings",
     }

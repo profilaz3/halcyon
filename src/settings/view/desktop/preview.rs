@@ -102,15 +102,15 @@ fn preview_bar<'a>(
         regions
             .list(region)
             .iter()
-            .map(|id| {
-                icon::from_name(catalog.icon(id))
-                    .size(icon_size as u16)
-                    .icon()
-                    .into()
-            })
+            .flat_map(|id| catalog.icons(id))
+            .map(|name| icon::from_name(name).size(icon_size as u16).icon().into())
             .collect()
     };
-    let count = regions.start.len() + regions.center.len() + regions.end.len();
+    let count: usize = [&regions.start, &regions.center, &regions.end]
+        .into_iter()
+        .flatten()
+        .map(|id| catalog.icons(id).len())
+        .sum();
     let natural = count as f32 * (icon_size + spacing) + thickness + 24.;
     let length_limit = if horizontal { screen[0] } else { screen[1] } - margin * 2.;
     let length = if extend {
@@ -317,16 +317,20 @@ fn preview_islands<'a>(
         let capacity = ((major_length - 4. + spacing) / (icon_size as f32 + spacing))
             .floor()
             .max(1.) as usize;
-        let ids = regions.list(Region::ALL[i]);
+        let ids: Vec<String> = regions
+            .list(Region::ALL[i])
+            .iter()
+            .flat_map(|id| catalog.icons(id))
+            .collect();
         let icons: Vec<Element<'a, Message>> = ids
             .iter()
             .take(capacity)
             .enumerate()
-            .map(|(n, id)| {
+            .map(|(n, name)| {
                 let name = if ids.len() > capacity && n + 1 == capacity {
                     "view-more-symbolic".to_string()
                 } else {
-                    catalog.icon(id)
+                    name.clone()
                 };
                 icon::from_name(name).size(icon_size).icon().into()
             })
