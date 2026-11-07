@@ -904,6 +904,7 @@ fn rail_entries_keep_one_line_labels() {
         DesktopEnv {
             app_config: true,
             fixture: true,
+            icons: true,
             ..Default::default()
         },
     ) {

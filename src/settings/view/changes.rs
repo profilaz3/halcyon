@@ -153,7 +153,7 @@ impl Settings {
             cosmic::iced::widget::space().width(0).into()
         };
         let count: Element<'_, Message> = if today > 0 {
-            label(today.to_string(), if rail { 10. } else { 12. }, MUTED)
+            label(today.to_string(), 12., MUTED)
         } else {
             cosmic::iced::widget::space().width(0).into()
         };

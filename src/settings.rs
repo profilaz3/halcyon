@@ -6431,6 +6431,8 @@ mod tests {
         capture: bool,
         /// `DESKTOP_CARDS_DESKTOP_ROOT` names a fixture root.
         fixture: bool,
+        /// The installed icon themes are readable, so captures draw icons.
+        icons: bool,
     }
 
     const TEST_ROOT: &str = "DESKTOP_CARDS_TEST_ROOT";
@@ -6525,6 +6527,11 @@ mod tests {
                 format!("[Icon Theme]\nName={name}\nDirectories=scalable\n"),
             )
             .unwrap();
+        }
+        if env.icons {
+            // Only the icon themes, read-only; desktop settings stay isolated.
+            std::fs::create_dir_all(dir.join("data")).unwrap();
+            std::os::unix::fs::symlink("/usr/share/icons", dir.join("data/icons")).unwrap();
         }
         let mut command = std::process::Command::new(std::env::current_exe().unwrap());
         command
@@ -7789,6 +7796,7 @@ mod tests {
                 app_config: true,
                 capture: true,
                 fixture: true,
+                ..Default::default()
             },
         ) {
             return;
@@ -8644,6 +8652,7 @@ mod tests {
                 app_config: true,
                 capture: true,
                 fixture: true,
+                ..Default::default()
             },
         ) {
             return;
