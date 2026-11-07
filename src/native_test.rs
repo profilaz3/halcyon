@@ -376,33 +376,55 @@ impl Native {
     }
     /// Every place `text` is drawn in the real widget tree.
     pub fn text_all<M>(&mut self, view: cosmic::Element<'_, M>, text: &str) -> Vec<Rectangle> {
+        self.texts(view)
+            .into_iter()
+            .filter(|found| found.0 == text)
+            .map(|found| found.1)
+            .collect()
+    }
+    /// Text that runs past the window's right edge, outside any area that
+    /// scrolls sideways.
+    pub fn overflowing_text<M>(&mut self, view: cosmic::Element<'_, M>) -> Vec<(String, Rectangle)> {
+        let width = self.size.width;
+        self.texts(view)
+            .into_iter()
+            .filter(|(_, bounds, sideways)| !sideways && bounds.x + bounds.width > width + 0.5)
+            .map(|(text, bounds, _)| (text, bounds))
+            .collect()
+    }
+    /// Every text in the real widget tree with its bounds on screen, and
+    /// whether it sits in an area that scrolls sideways.
+    fn texts<M>(&mut self, view: cosmic::Element<'_, M>) -> Vec<(String, Rectangle, bool)> {
+        #[derive(Default)]
         struct Find {
-            text: String,
-            found: Vec<Rectangle>,
+            found: Vec<(String, Rectangle, bool)>,
             offset: cosmic::iced::Vector,
             pending: cosmic::iced::Vector,
+            sideways: bool,
+            pending_sideways: bool,
         }
         impl Operation for Find {
             fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn Operation)) {
-                let previous = self.offset;
+                let previous = (self.offset, self.sideways);
                 self.offset += std::mem::take(&mut self.pending);
+                self.sideways |= std::mem::take(&mut self.pending_sideways);
                 f(self);
-                self.offset = previous;
+                (self.offset, self.sideways) = previous;
             }
             fn scrollable(
                 &mut self,
                 _: Option<&cosmic::widget::Id>,
-                _: Rectangle,
-                _: Rectangle,
+                bounds: Rectangle,
+                content: Rectangle,
                 translation: cosmic::iced::Vector,
                 _: &mut dyn cosmic::iced::advanced::widget::operation::Scrollable,
             ) {
                 self.pending = translation;
+                self.pending_sideways = content.width > bounds.width + 0.5;
             }
             fn text(&mut self, _: Option<&cosmic::widget::Id>, bounds: Rectangle, text: &str) {
-                if text == self.text {
-                    self.found.push(bounds - self.offset);
-                }
+                self.found
+                    .push((text.to_owned(), bounds - self.offset, self.sideways));
             }
         }
         let mut ui = UserInterface::build(
@@ -411,12 +433,7 @@ impl Native {
             std::mem::take(&mut self.cache),
             &mut self.renderer,
         );
-        let mut find = Find {
-            text: text.to_owned(),
-            found: Vec::new(),
-            offset: Default::default(),
-            pending: Default::default(),
-        };
+        let mut find = Find::default();
         ui.operate(&self.renderer, &mut find);
         self.cache = ui.into_cache();
         find.found

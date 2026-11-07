@@ -904,7 +904,7 @@ fn rail_entries_keep_one_line_labels() {
         DesktopEnv {
             app_config: true,
             fixture: true,
-            icons: true,
+            icons: Icons::Shown,
             ..Default::default()
         },
     ) {
@@ -959,4 +959,81 @@ fn rail_entries_keep_one_line_labels() {
     send_settings(&mut app, Message::Resized(Size::new(1280., 800.)));
     let mut native = crate::native_test::Native::new(Size::new(1280., 800.));
     assert!(!native.text_all(app.settings_view(), "Dock and panel").is_empty());
+}
+
+/// Every sidebar root and the main subpages in the narrow layout, light and
+/// dark, with real icons: no text runs past the window and no name repeats.
+/// Captures each screenful from the top to the end of the page.
+#[test]
+fn narrow_pages_fit_the_window() {
+    let name = "narrow_pages_fit_the_window";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::desktop::panels::PanelKind;
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    let size = Size::new(820., 600.);
+    send_settings(&mut app, Message::Resized(size));
+    assert!(app.rail());
+    let stops: [(&str, fn() -> Message); 16] = [
+        ("looks", || Message::OpenRoot(Page::DesktopProfiles)),
+        ("appearance", || Message::OpenRoot(Page::Themes)),
+        ("wallpaper", || Message::OpenRoot(Page::DesktopWallpaper)),
+        ("widgets", || Message::OpenRoot(Page::Overview)),
+        ("dock", || Message::OpenRoot(Page::DesktopDock)),
+        ("windows", || Message::OpenRoot(Page::DesktopWindows)),
+        ("accessibility", || Message::OpenRoot(Page::DesktopMotion)),
+        ("halcyon", || Message::OpenRoot(Page::General)),
+        ("changes", || Message::OpenRoot(Page::Changes)),
+        ("clock", || Message::Page(Page::Clock)),
+        ("glance", || Message::Page(Page::Glance)),
+        ("weather", || Message::Page(Page::Weather)),
+        ("calendar", || Message::Page(Page::Calendar)),
+        ("time-of-day", || Message::Page(Page::DesktopAutomation)),
+        ("dock-panel", || Message::OpenBar(PanelKind::Panel)),
+        // A saved change puts its note and Undo in the footer.
+        ("dock-panel-saved", || {
+            Message::DesktopEditor(desktop::Message::Floating(true))
+        }),
+    ];
+    for (stop, open) in stops {
+        send_settings(&mut app, open());
+        let mut native = crate::native_test::Native::new(size);
+        assert_eq!(
+            native.duplicate_ids(app.settings_view()),
+            Vec::<String>::new(),
+            "{stop}"
+        );
+        assert_eq!(
+            native.overflowing_text(app.settings_view()),
+            Vec::new(),
+            "{stop} runs past the window"
+        );
+        for (theme, mode) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
+            let viewport = native.bounds(app.settings_view(), "settings-viewport");
+            let step = viewport.height - 80.;
+            for screen in 0..8 {
+                native.scroll(app.settings_view(), "settings-content", screen as f32 * step);
+                native.capture(
+                    app.settings_view(),
+                    &theme,
+                    &format!("narrow-820-{stop}-{mode}-{screen}"),
+                );
+                let page = native.bounds(app.settings_view(), "page-start");
+                if page.y + page.height <= viewport.y + viewport.height {
+                    break;
+                }
+            }
+            native.scroll(app.settings_view(), "settings-content", 0.);
+        }
+    }
 }

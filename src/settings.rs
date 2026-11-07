@@ -6431,8 +6431,24 @@ mod tests {
         capture: bool,
         /// `DESKTOP_CARDS_DESKTOP_ROOT` names a fixture root.
         fixture: bool,
-        /// The installed icon themes are readable, so captures draw icons.
-        icons: bool,
+        /// Whether the installed icon themes are readable.
+        icons: Icons,
+    }
+
+    /// The child's data dir hides the installed icon themes, so every icon
+    /// draws as an empty slot. Linking them in (read-only, and only when
+    /// `/usr/share/icons` exists) makes layout captures look like the app.
+    #[derive(Clone, Copy, Default, PartialEq)]
+    enum Icons {
+        /// Linked while `DESKTOP_CARDS_LAYOUT_EVIDENCE` collects captures,
+        /// if a fixture supplies the app's icon theme list. Without one the
+        /// app would list the linked themes as installed.
+        #[default]
+        Evidence,
+        /// Always linked.
+        Shown,
+        /// Never linked: the test is about icon theme discovery.
+        Hidden,
     }
 
     const TEST_ROOT: &str = "DESKTOP_CARDS_TEST_ROOT";
@@ -6528,10 +6544,18 @@ mod tests {
             )
             .unwrap();
         }
-        if env.icons {
+        let icons = match env.icons {
+            Icons::Evidence => {
+                env.fixture && std::env::var_os("DESKTOP_CARDS_LAYOUT_EVIDENCE").is_some()
+            }
+            Icons::Shown => true,
+            Icons::Hidden => false,
+        };
+        let system_icons = std::path::Path::new("/usr/share/icons");
+        if icons && system_icons.is_dir() {
             // Only the icon themes, read-only; desktop settings stay isolated.
             std::fs::create_dir_all(dir.join("data")).unwrap();
-            std::os::unix::fs::symlink("/usr/share/icons", dir.join("data/icons")).unwrap();
+            std::os::unix::fs::symlink(system_icons, dir.join("data/icons")).unwrap();
         }
         let mut command = std::process::Command::new(std::env::current_exe().unwrap());
         command
@@ -6604,7 +6628,18 @@ mod tests {
     fn live_tree(root: &std::path::Path) -> std::collections::BTreeMap<PathBuf, Option<Vec<u8>>> {
         const LIBCOSMIC: [&str; 2] = ["com.system76.CosmicTheme.", "com.system76.CosmicTk"];
         let mut tree = crate::desktop::store::tests::tree(&root.join("home"));
-        tree.extend(crate::desktop::store::tests::tree(&root.join("data")));
+        // The linked icon themes (`Icons`) are system files, not desktop state.
+        for entry in std::fs::read_dir(root.join("data")).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_symlink() {
+                continue;
+            } else if path.is_dir() {
+                tree.insert(path.clone(), None);
+                tree.extend(crate::desktop::store::tests::tree(&path));
+            } else {
+                tree.insert(path.clone(), Some(std::fs::read(&path).unwrap()));
+            }
+        }
         let cosmic = root.join("home/.config/cosmic");
         tree.retain(|path, contents| {
             let libcosmic = contents.is_none()
@@ -8694,6 +8729,8 @@ mod tests {
             DesktopEnv {
                 app_config: true,
                 fixture: true,
+                // Counts the fixture's icon themes.
+                icons: Icons::Hidden,
                 ..Default::default()
             },
         ) {
@@ -8740,6 +8777,8 @@ mod tests {
             "system_appearance_preview_without_fixture_reads_isolated_live_tree_but_cannot_apply",
             DesktopEnv {
                 app_config: true,
+                // Without a fixture the app lists the installed icon themes.
+                icons: Icons::Hidden,
                 ..Default::default()
             },
         ) {
@@ -8784,6 +8823,8 @@ mod tests {
             DesktopEnv {
                 app_config: true,
                 fixture: true,
+                // The selected icon theme is missing.
+                icons: Icons::Hidden,
                 ..Default::default()
             },
         ) {
