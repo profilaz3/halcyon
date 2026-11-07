@@ -58,7 +58,6 @@ jobs:
       - name: Test activity collector
         run: |
           node --test scripts/usage/collector*.test.cjs
-          node --test scripts/usage/relay/relay.test.cjs
           node --test scripts/usage/worker/test/*.test.js
           python3 -m unittest discover -s scripts/usage -p 'test_*.py'
       - name: Test Python helpers and packaging

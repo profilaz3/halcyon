@@ -11,6 +11,11 @@ export const SEGMENT_NAMES = {
   source: 'Built from source', unknown: 'Not reported',
 };
 const MAX_HISTORY_DAYS = 365;
+// The dashboard counts reports sent straight here, which began with this
+// release. Older versions keep reporting to the former Google Sheet, and any
+// of their rows imported or retained here are left out of the statistics.
+export const DIRECT_SINCE = '0.6.1';
+const isDirect = (version, since) => typeof version === 'string' && compareVersions(version, since) >= 0;
 const COHORT_WEEKS = 10;
 
 export function compareVersions(a, b) {
@@ -161,25 +166,36 @@ export async function refreshReleases(db, fetchImpl, today) {
 }
 
 // Hourly: retention, rollups of completed days, then the public summary.
-export async function maintain(db, now, {fetchImpl = fetch} = {}) {
+export async function maintain(db, now, {fetchImpl = fetch, since = DIRECT_SINCE} = {}) {
   const today = dayOf(now), oldest = today - RETENTION_DAYS + 1;
   await applyRetention(db, now);
   await refreshReleases(db, fetchImpl, today);
-  const rows = await loadActivity(db, oldest);
+  // Nothing before the first direct release counts, even a pre-release build.
+  const released = await db.prepare('SELECT published_day FROM releases WHERE version = ?').bind(since).first('published_day');
+  const floor = Math.max(oldest, released ?? oldest);
+  const rows = (await loadActivity(db, floor)).filter(r => isDirect(r.version, since));
+  // A different scope invalidates every frozen day: rebuild them all from
+  // retained activity, and drop totals older than that.
+  const rescoped = await getMeta(db, 'scope') !== since;
+  if (rescoped) await db.batch([db.prepare('DELETE FROM daily'), db.prepare(`DELETE FROM meta WHERE key = 'rolled_through'`)]);
   const rolled = await getMeta(db, 'rolled_through');
-  const from = Math.max(rolled === null ? oldest : Number(rolled) + 1, oldest);
+  const from = Math.max(rolled === null ? floor : Number(rolled) + 1, floor);
   if (from <= today - 1) {
     const days = [];
     for (let d = from; d <= today - 1; d++) days.push(d);
     await writeDaily(db, days, days.flatMap(d => rollupDay(rows, d)));
     await setMeta(db, 'rolled_through', String(today - 1)).run();
   }
+  if (rescoped) await setMeta(db, 'scope', since).run();
   const [{results: daily}, {results: releases}, {results: statuses}] = await db.batch([
     db.prepare('SELECT day, segment, metric, key, value FROM daily WHERE day >= ? ORDER BY day').bind(today - MAX_HISTORY_DAYS),
     db.prepare('SELECT version, published_day FROM releases'),
-    db.prepare('SELECT status, COUNT(*) AS count FROM installations GROUP BY status'),
+    db.prepare('SELECT status, last_version AS version, COUNT(*) AS count FROM installations GROUP BY status, last_version'),
   ]);
-  const summary = buildSummary({rows, daily, releases, statuses, now});
+  // Choices of installations last seen on an older version stay out too;
+  // one that turned sharing off before ever reporting has no version and counts.
+  const direct = statuses.filter(s => s.version === null || isDirect(s.version, since));
+  const summary = buildSummary({rows, daily, releases, statuses: direct, now, since});
   await setMeta(db, 'summary', JSON.stringify(summary)).run();
   return summary;
 }
@@ -198,7 +214,7 @@ const COUNTRY_NAMES = (() => {
 })();
 const countryName = code => code === 'unknown' ? 'Unknown' : (COUNTRY_NAMES?.of(code) || code);
 
-export function buildSummary({rows, daily, releases, statuses, now}) {
+export function buildSummary({rows, daily, releases, statuses, now, since = DIRECT_SINCE}) {
   const today = dayOf(now), yesterday = today - 1, oldest = today - RETENTION_DAYS + 1;
   const activeDays = [...new Set(daily.filter(r => r.segment === 'all' && r.metric === 'active' && r.value > 0).map(r => r.day))];
   const historyStart = activeDays.length ? Math.min(...activeDays) : null;
@@ -350,13 +366,15 @@ export function buildSummary({rows, daily, releases, statuses, now}) {
   const retention4w = week4.length
     ? week4.reduce((n, c) => n + c.rates[4] * c.size, 0) / week4.reduce((n, c) => n + c.size, 0) : null;
 
-  const statusCount = Object.fromEntries(statuses.map(s => [s.status, s.count]));
+  const statusCount = {};
+  for (const s of statuses) statusCount[s.status] = (statusCount[s.status] || 0) + s.count;
   const retained = (statusCount.enabled || 0) + (statusCount.opted_out || 0);
   return {
     schema: 1,
     generated_at: now.toISOString(),
     today: isoDay(today),
     history_start: historyStart === null ? null : isoDay(historyStart),
+    since_version: since,
     days: days.map(isoDay),
     segments: segments.map(id => ({id, name: SEGMENT_NAMES[id]})),
     latest_release: latestRelease && {version: latestRelease.version, date: isoDay(latestRelease.day)},

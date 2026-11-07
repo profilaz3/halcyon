@@ -92,7 +92,7 @@ test('import statements merge with live data, are repeatable and never overwrite
   assert.equal(after.revision, 5);
   assert.equal(db.raw.prepare('SELECT COUNT(*) AS n FROM activity WHERE id = ?').get(id).n, 0);
 
-  const summary = await maintain(db, now, {fetchImpl: async () => new Response('[]')});
+  const summary = await maintain(db, now, {fetchImpl: async () => new Response('[]'), since: '0.5.6'});
   assert.equal(summary.history_start, '2026-10-27');
   assert.equal(summary.by_segment.all.active[summary.days.indexOf('2026-11-04')], 1);
 });

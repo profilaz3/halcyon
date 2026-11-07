@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createD1} from './d1.js';
 import worker, {handleReport} from '../src/index.js';
 import {dayOf, isoDay} from '../src/report.js';
-import {buildSummary, compareVersions, maintain, rollupDay} from '../src/stats.js';
+import {DIRECT_SINCE, buildSummary, compareVersions, maintain, rollupDay} from '../src/stats.js';
 
 const start = new Date('2026-10-26T09:00:00Z'); // a Monday
 const at = days => new Date(+start + days * 86400000);
@@ -52,7 +52,7 @@ test('end to end: hourly maintenance publishes aggregates only, with small group
   await post(env, report(99, {country: 'JP'}), at(14)); // a lone country and a late cohort member
   await post(env, {schema: 3, kind: 'status', installation: tokenOf(200), revision: 1, enabled: false, changed_at: 1}, at(3));
 
-  const summary = await maintain(env.DB, at(21), {fetchImpl: releases});
+  const summary = await maintain(env.DB, at(21), {fetchImpl: releases, since: '0.5.6'});
   const text = JSON.stringify(summary);
   assert.equal(/[0-9a-f]{64}/.test(text), false, 'no installation hashes in the public summary');
   assert.equal(summary.history_start, '2026-10-26');
@@ -94,8 +94,36 @@ test('end to end: hourly maintenance publishes aggregates only, with small group
   // Completed days are frozen: a later opt-out does not rewrite yesterday.
   const before = env.DB.raw.prepare(`SELECT value FROM daily WHERE day = ? AND segment = 'all' AND metric = 'active'`).get(dayOf(at(20))).value;
   await post(env, {schema: 3, kind: 'status', installation: tokenOf(1), revision: 1, enabled: false, changed_at: 2}, at(21));
-  const again = await maintain(env.DB, new Date(+at(21) + 3600000), {fetchImpl: releases});
+  const again = await maintain(env.DB, new Date(+at(21) + 3600000), {fetchImpl: releases, since: '0.5.6'});
   assert.equal(again.by_segment.all.active[20], before);
+});
+
+test('only direct reports count: older versions and days before the release are left out', async () => {
+  assert.equal(DIRECT_SINCE, '0.6.1');
+  const env = {DB: createD1()};
+  const direct = async () => new Response(JSON.stringify([
+    {tag_name: 'v0.6.1', published_at: at(5).toISOString(), draft: false, prerelease: false},
+    {tag_name: 'v0.6.0', published_at: at(5).toISOString(), draft: false, prerelease: false},
+  ]));
+  for (let d = 0; d < 10; d++) {
+    // Eight installations on 0.6.0 throughout; six move to 0.6.1 on release day.
+    for (let i = 1; i <= 8; i++) await post(env, report(i, {version: '0.6.0'}), at(d));
+    // A pre-release 0.6.1 build tested before the release does not start history.
+    if (d === 2) await post(env, report(50, {version: '0.6.1'}), at(d));
+    if (d >= 5) for (let i = 11; i <= 16; i++) await post(env, report(i, {version: '0.6.1'}), at(d));
+  }
+  await post(env, {schema: 3, kind: 'status', installation: tokenOf(3), revision: 1, enabled: false, changed_at: 1}, at(9));
+  // An earlier run under the old scope froze days that counted 0.6.0.
+  await maintain(env.DB, at(8), {fetchImpl: direct, since: '0.6.0'});
+  const summary = await maintain(env.DB, at(10), {fetchImpl: direct});
+  assert.equal(summary.since_version, '0.6.1');
+  assert.equal(summary.history_start, isoDay(dayOf(at(5))));
+  assert.deepEqual(summary.by_segment.all.active, [6, 6, 6, 6, 6]);
+  assert.deepEqual(summary.by_segment.all.versions.names, ['0.6.1']);
+  assert.equal(summary.by_segment.all.windows[7].active, 6);
+  assert.equal(summary.opt_out_share, 0, 'an older version turning sharing off is not counted');
+  const days = env.DB.raw.prepare(`SELECT MIN(day) AS first FROM daily`).get().first;
+  assert.equal(days, dayOf(at(5)), 'totals frozen under the old scope are rebuilt');
 });
 
 test('summary handles an empty database', () => {
