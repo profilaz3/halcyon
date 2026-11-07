@@ -33,15 +33,21 @@ fn every_label(seconds: u64) -> String {
     }
 }
 
+/// A tile's picture height for its width, in the thumbnails' proportion.
+fn tile_height(width: f32) -> f32 {
+    (width * TILE_H / TILE_W).round()
+}
+
 /// A tile's picture: thumbnail, rendered colour, or a quiet placeholder.
 fn face<'a>(
     handle: Option<&cosmic::widget::image::Handle>,
     placeholder: Element<'a, Message>,
+    width: f32,
 ) -> Element<'a, Message> {
     match handle {
         Some(handle) => cosmic::widget::image(handle.clone())
-            .width(TILE_W)
-            .height(TILE_H)
+            .width(width)
+            .height(tile_height(width))
             .content_fit(cosmic::iced::ContentFit::Cover)
             .border_radius(10.)
             .into(),
@@ -57,8 +63,8 @@ fn face<'a>(
             1.,
             10.,
         )
-        .width(TILE_W)
-        .height(TILE_H)
+        .width(width)
+        .height(tile_height(width))
         .into(),
     }
 }
@@ -98,7 +104,8 @@ fn framed<'a>(
     if missing {
         layers.push(
             // Dimmed, with a quiet note, rather than a warning on every tile.
-            container(label("Not installed", 11., FG))
+            // Light on the dark veil in either theme.
+            container(label("Not installed", 11., Color { a: 0.9, ..Color::WHITE }))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .align_x(Alignment::Center)
@@ -341,7 +348,13 @@ impl Settings {
         )
     }
 
-    fn wallpaper_tile<'a>(&'a self, tile: &'a Tile, enabled: bool) -> Element<'a, Message> {
+    /// `width` is the picture's; the selection ring adds 4.
+    fn wallpaper_tile<'a>(
+        &'a self,
+        tile: &'a Tile,
+        enabled: bool,
+        width: f32,
+    ) -> Element<'a, Message> {
         let accent = self.wallpaper_accent();
         let editor = &self.wallpaper;
         let source = tile.source(editor.bundled_dir());
@@ -381,7 +394,7 @@ impl Settings {
             ),
         };
         let picture = framed(
-            face(editor.thumb(tile), placeholder),
+            face(editor.thumb(tile), placeholder, width),
             selected,
             current,
             tile.missing,
@@ -399,7 +412,7 @@ impl Settings {
                     11.,
                     if selected { FG } else { MUTED },
                 ))
-                .width(TILE_W + 4.)
+                .width(width + 4.)
                 .padding([0, 4])
                 .into(),
             );
@@ -416,6 +429,7 @@ impl Settings {
         title: &'static str,
         symbol: &'static str,
         message: Edit,
+        width: f32,
     ) -> Element<'a, Message> {
         let accent = self.wallpaper_accent();
         button::custom(
@@ -432,12 +446,12 @@ impl Settings {
                 )
                 // Same outer size as a framed wallpaper, so the gallery wraps
                 // as an even grid.
-                .width(TILE_W + 4.)
-                .height(TILE_H + 4.)
+                .width(width + 4.)
+                .height(tile_height(width) + 4.)
                 .padding(2)
                 .into(),
                 container(label(title, 11., FG))
-                    .width(TILE_W + 4.)
+                    .width(width + 4.)
                     .padding([0, 4])
                     .into(),
             ])
@@ -646,18 +660,27 @@ impl Settings {
                 .into(),
             ));
         }
-        let mut tiles: Vec<Element<'_, Message>> = Vec::new();
-        if tab == Tab::Yours {
-            tiles.push(self.add_tile("Add folder", "folder-new-symbolic", Edit::AddFolder));
-        }
-        for tile in editor.page_tiles() {
-            tiles.push(self.wallpaper_tile(tile, enabled));
-        }
-        // Spread the fixed-size tiles so the grid ends where the rows do.
+        // Spread the tiles so the grid ends where the rows do. Past the
+        // widest gap, the tiles grow instead (narrow windows just short of
+        // one more column).
         let available = self.content_width() - 2.;
         let outer = TILE_W + 4.;
         let columns = ((available + 6.) / (outer + 6.)).floor().max(2.);
         let gap = ((available - columns * outer) / (columns - 1.)).floor().clamp(6., 24.);
+        let outer = ((available - gap * (columns - 1.)) / columns).floor().max(outer);
+        let width = outer - 4.;
+        let mut tiles: Vec<Element<'_, Message>> = Vec::new();
+        if tab == Tab::Yours {
+            tiles.push(self.add_tile(
+                "Add folder",
+                "folder-new-symbolic",
+                Edit::AddFolder,
+                width,
+            ));
+        }
+        for tile in editor.page_tiles() {
+            tiles.push(self.wallpaper_tile(tile, enabled, width));
+        }
         items.push(
             row::with_children(tiles)
                 .spacing(gap)
