@@ -36,7 +36,7 @@ release targets Pop!_OS 24.04 with COSMIC.
 | `bin/halcyon-ctl` | Controller (Python 3) |
 | `lib/cosmic-ext-halcyon/` | Helpers run by the program: `calendar-sync.py`, `project-status.py` |
 | `share/cosmic-ext-halcyon/` | `google-calendar-setup.html`; optional `google-calendar-client.json` (publisher OAuth client, added at release build time, never committed) |
-| `share/backgrounds/halcyon/` | Thirteen JPEG wallpapers and the prepared `halcyon-ridge.png`; identical assets for Debian and per-user installs |
+| `share/backgrounds/halcyon/` | Sixteen JPEG wallpapers and the prepared `halcyon-ridge.png`; identical assets for Debian and per-user installs |
 | `share/applications/io.github.profilaz3.Halcyon.desktop` | Launcher (opens Settings) |
 | `share/metainfo/io.github.profilaz3.Halcyon.metainfo.xml` | AppStream metadata |
 | `share/icons/hicolor/<size>x<size>/apps/io.github.profilaz3.Halcyon.png` | Icon at 48, 64, 128, 256 and 512 px |
@@ -130,3 +130,22 @@ executables to that main package, checks the bridge has no payload or scripts,
 and still requires fresh acceptance of the final artifacts. Source archives and
 build provenance must include both payload recipes and native dependency notices.
 No old native evidence automatically qualifies a new package.
+
+## Corresponding source
+
+The archive holds the committed tree as `main/`, the patched panel source as
+`islands/`, and their vendored Cargo dependencies under `dependencies/`, so each
+builds with `--locked --offline` and an empty Cargo home. Generate each vendor
+folder and `.cargo/config.toml` again for every release; never copy them from an
+earlier archive. Each Git source in
+`Cargo.lock` needs its own replacement entry, so an older configuration fails
+on sources added since, such as the `profilaz3/iced` fork patched in for
+libcosmic.
+
+```sh
+git archive --format=tar --prefix=main/ HEAD | tar -x -C SOURCE
+python3 packaging/source_closure.py vendor --tree SOURCE/main --into SOURCE/dependencies/main --offline-check
+```
+
+`source_closure.py check --tree SOURCE/main --offline-check` checks an extracted
+archive the same way.

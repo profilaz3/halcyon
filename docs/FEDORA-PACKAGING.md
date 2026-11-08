@@ -82,3 +82,71 @@ Release acceptance checks the final signed RPM and repository, fresh installatio
 and upgrade, corresponding source and nested native rendering. The RPM publication
 gate is separate from the retained historical DEB approvals; each platform binds
 its own executable and package bytes.
+
+### Container stage
+
+`scripts/rpm/container_acceptance.py` repeats the package checks in disposable
+`registry.fedoraproject.org/fedora:43` and `:44` containers. It needs git, cargo,
+network access and podman or docker usable without sudo:
+
+```sh
+python3 scripts/rpm/container_acceptance.py run --previous 0.6.1 --out ../fb25-acceptance
+python3 scripts/rpm/container_acceptance.py run --previous 0.6.1 --out ../fb25-acceptance --dry-run
+```
+
+It tests the committed tree only. It vendors the dependencies with
+`packaging/source_closure.py`, builds the application in each container with
+Rust 1.93.0, locked and offline with an empty Cargo home, and reuses the previous
+release's Fedora panel only while the panel source and startup policies are
+unchanged. `build-rpm.py` packages the result with the official public key
+embedded; a throwaway key generated in the container signs the package and the
+local repository. Each target then runs, against that repository:
+
+- fresh install, reinstall, removal and reinstall, checking EVR, `rpm -V`, both
+  executable hashes and the enrollment receipt;
+- upgrade from the previous released RPM, with the enrolled source untouched and
+  with it disabled by the administrator, keeping the source and user files;
+- rejection of a tampered package, tampered repository metadata and an
+  unavailable repository.
+
+Results are in `acceptance.json`, with `published: false`, and in per-stage logs.
+Never upload or publish anything from the output folder. Delete it afterwards.
+
+### Checks only a real Fedora COSMIC install can answer
+
+Containers have no session, SELinux policy, PolicyKit agent or GPU. Before a
+release, run these on Fedora 43 and Fedora 44 COSMIC, installed on hardware,
+using the final signed RPMs. Record the Fedora version, COSMIC version, GPU,
+driver and monitors with the results.
+
+1. **Exact artifacts.** Checksums match `SHA256SUMS`, and `rpm -K` passes after
+   importing only the official key. `/usr/share/doc/cosmic-ext-halcyon/fedora-build.json`
+   matches the release provenance for that Fedora version.
+2. **SELinux enforcing.** `getenforce` prints `Enforcing` during every step. After
+   the steps, `sudo ausearch -m AVC,USER_AVC -ts boot` lists nothing for
+   `halcyon`, `cosmic-panel-islands`, `rpm-enrollment.py` or `refresh.py`, and
+   `sudo restorecon -nvR /usr/bin/halcyon /usr/lib/cosmic-ext-halcyon* /etc/yum.repos.d /etc/pki/rpm-gpg /var/lib/halcyon`
+   prints nothing.
+3. **Installer and PolicyKit prompts.**
+   - Opening the downloaded RPM installs it after one administrator prompt; note
+     any untrusted-package warning.
+   - The first update from the Halcyon source asks to import the key with
+     fingerprint `A1EB 6576 D959 5ECA 5750 9CE1 4EB2 B42D F234 CB16`. Declining
+     it installs nothing.
+   - **Open system updates** opens COSMIC Store, and Updates offers the new
+     build. Without Store, the copied `sudo dnf upgrade --refresh cosmic-ext-halcyon`
+     works.
+   - Removing and reinstalling the package leaves the source off.
+4. **Full login.**
+   - After first run, `systemctl --user is-enabled halcyon.service` and
+     `is-active` both succeed, and widgets come back after logging out and in.
+   - Turning Islands and Penumbra on and off in Settings takes effect at the next
+     login and keeps panel layouts.
+   - Upgrading with Islands enabled keeps it enabled after the next login.
+   - `journalctl --user -b` shows no Halcyon or panel errors.
+5. **GPU and display.**
+   - Widgets render with the hardware driver, not llvmpipe.
+   - Mixed scaling and two monitors, including unplugging and replugging one.
+   - Suspend, resume and lock keep widgets and the Islands panel in place.
+   - Optional: note `drm-total-vram` for the Halcyon process from
+     `/proc/<pid>/fdinfo` with 12 widgets.
