@@ -220,7 +220,7 @@ impl Page {
             Self::Overview => "Widgets",
             Self::Widgets => "Widgets",
             Self::WidgetLayout => "Layout",
-            Self::Appearance => "Surfaces and transparency",
+            Self::Appearance => "Glass and transparency",
             Self::DesktopAppearance => "Fonts and icons",
             Self::DesktopWallpaper => "Wallpaper",
             Self::Themes => "Appearance",
@@ -310,7 +310,7 @@ impl Page {
             Self::Overview => "Widgets",
             Self::WidgetLayout => "Arrange widgets",
             Self::PendingChanges => "Recover unfinished work",
-            Self::Appearance => "Surfaces and transparency",
+            Self::Appearance => "Glass and transparency",
             Self::Widgets => "Widgets",
             Self::Glance => "Daily overview",
             Self::Calendar => "Calendar",
@@ -6378,6 +6378,7 @@ mod tests {
     include!("settings/solar_tests.rs");
     include!("settings/adaptive_tests.rs");
     include!("settings/polish_tests.rs");
+    include!("settings/search_label_tests.rs");
 
     /// What Wallpaper & colors recommends for a solid color background.
     fn recommended_color(rgb: [f32; 3]) -> [u8; 3] {
@@ -7080,12 +7081,8 @@ mod tests {
         assert!(app.search_query.is_empty());
         for (query, page, anchor) in [
             ("weather update", Page::Weather, "settings-advanced"),
-            (
-                "custom surface colors",
-                Page::DesktopAppearance,
-                "appearance-colors",
-            ),
             // Window corners, outline and shadows now live on Windows.
+            ("window corners", Page::DesktopWindows, "window-corners"),
             (
                 "desktop effects",
                 Page::DesktopWindows,
@@ -7099,7 +7096,7 @@ mod tests {
             assert_eq!(app.search_selected.unwrap().anchor(), anchor);
             assert!(app.advanced_open(page));
         }
-        assert!(app.system_appearance.advanced_colors && app.system_appearance.effects);
+        assert!(app.system_appearance.effects);
         assert!(app.desktop.advanced);
         assert!(app.pending_pages().is_empty());
         assert_eq!(raw_preferences(), preferences);

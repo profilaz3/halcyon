@@ -273,19 +273,7 @@ impl Settings {
                 button::custom(split(
                     row::with_children(vec![
                         dot(area_tint(hit.page.area(), self.settings_accent()), 8.),
-                        detail_state(
-                            hit.label,
-                            format!(
-                                "{} › {}{}",
-                                hit.page.area().label(),
-                                if hit.page == Page::General {
-                                    hit.app_destination().tab_title()
-                                } else {
-                                    hit.page.nav_title()
-                                },
-                                if hit.advanced { " › Advanced" } else { "" }
-                            ),
-                        ),
+                        detail_state(hit.label, hit.crumb()),
                     ])
                     .spacing(12)
                     .align_y(Alignment::Center)

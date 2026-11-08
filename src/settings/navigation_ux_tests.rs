@@ -512,7 +512,7 @@ fn structure_accessibility_root_halcyon_and_one_owner_each() {
     for (query, label) in [
         ("edge menu", "Widget controls"),
         ("widget controls", "Widget controls"),
-        ("accessibility", "Animations in supported apps"),
+        ("accessibility", "Reduce motion"),
     ] {
         assert!(
             crate::settings::navigation::search(query)

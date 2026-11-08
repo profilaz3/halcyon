@@ -342,16 +342,19 @@ impl Settings {
                 "Screen edge",
                 choice(&draft.anchor(), anchors, Edit::Anchor, accent),
             ),
-            field(
-                "Visibility",
-                choice(
-                    &draft.autohide(),
-                    AutoHide::ALL
-                        .into_iter()
-                        .map(|mode| (mode.title().to_string(), mode))
-                        .collect(),
-                    Edit::AutoHide,
-                    accent,
+            self.search_target(
+                "dock-visibility",
+                field(
+                    "Visibility",
+                    choice(
+                        &draft.autohide(),
+                        AutoHide::ALL
+                            .into_iter()
+                            .map(|mode| (mode.title().to_string(), mode))
+                            .collect(),
+                        Edit::AutoHide,
+                        accent,
+                    ),
                 ),
             ),
         ]);
@@ -408,36 +411,39 @@ impl Settings {
             ),
         });
         style.extend(toggle_items);
-        style.push(split(
-            // Each bar has its own corners; this tab sets only this bar's.
-            detail(
-                "Corners",
-                if draft.kind() == PanelKind::Panel {
-                    "Only the panel. Window corners are in Windows"
-                } else {
-                    "Only the dock. Window corners are in Windows"
-                },
-            ),
-            choice(
-                // The same words as Appearance; a size set elsewhere shows
-                // as the nearest of them.
-                &match draft.radius() {
-                    Setting::Known(value) => Setting::Known(
-                        [0, 12, 24, MAX_RADIUS]
-                            .into_iter()
-                            .min_by_key(|choice: &u32| choice.abs_diff(value))
-                            .unwrap_or(value),
-                    ),
-                    other => other,
-                },
-                vec![
-                    ("Square".into(), 0),
-                    ("Rounded".into(), 12),
-                    ("Very round".into(), 24),
-                    ("Pill".into(), MAX_RADIUS),
-                ],
-                Edit::RadiusChoice,
-                accent,
+        style.push(self.search_target(
+            "dock-corners",
+            split(
+                // Each bar has its own corners; this tab sets only this bar's.
+                detail(
+                    "Corners",
+                    if draft.kind() == PanelKind::Panel {
+                        "Only the panel. Window corners are in Windows"
+                    } else {
+                        "Only the dock. Window corners are in Windows"
+                    },
+                ),
+                choice(
+                    // The same words as Appearance; a size set elsewhere shows
+                    // as the nearest of them.
+                    &match draft.radius() {
+                        Setting::Known(value) => Setting::Known(
+                            [0, 12, 24, MAX_RADIUS]
+                                .into_iter()
+                                .min_by_key(|choice: &u32| choice.abs_diff(value))
+                                .unwrap_or(value),
+                        ),
+                        other => other,
+                    },
+                    vec![
+                        ("Square".into(), 0),
+                        ("Rounded".into(), 12),
+                        ("Very round".into(), 24),
+                        ("Pill".into(), MAX_RADIUS),
+                    ],
+                    Edit::RadiusChoice,
+                    accent,
+                ),
             ),
         ));
         // Whether looks and styles color the bars; Background sets them here.
@@ -452,23 +458,28 @@ impl Settings {
             .id(cosmic::widget::Id::new("dock-style-bars"))
             .into(),
         ));
-        style.push(field(
-            "Background",
-            choice(
-                &draft.background(),
-                {
-                    let mut options = vec![
-                        ("Match style".into(), PanelBackground::ThemeDefault),
-                        ("Dark".into(), PanelBackground::Dark),
-                        ("Light".into(), PanelBackground::Light),
-                    ];
-                    if let Setting::Known(color @ PanelBackground::Color(_)) = draft.background() {
-                        options.push(("Custom color".into(), color));
-                    }
-                    options
-                },
-                Edit::Background,
-                accent,
+        style.push(self.search_target(
+            "dock-background",
+            field(
+                "Background",
+                choice(
+                    &draft.background(),
+                    {
+                        let mut options = vec![
+                            ("Match style".into(), PanelBackground::ThemeDefault),
+                            ("Dark".into(), PanelBackground::Dark),
+                            ("Light".into(), PanelBackground::Light),
+                        ];
+                        if let Setting::Known(color @ PanelBackground::Color(_)) =
+                            draft.background()
+                        {
+                            options.push(("Custom color".into(), color));
+                        }
+                        options
+                    },
+                    Edit::Background,
+                    accent,
+                ),
             ),
         ));
         style.push(self.penumbra_controls(draft));
@@ -498,7 +509,7 @@ impl Settings {
         let open = self.desktop.advanced;
         let toggle = button::custom(
             row::with_children(vec![
-                label("Spacing and timing", 14., FG),
+                label(crate::settings::navigation::BAR_ADVANCED, 14., FG),
                 container(text::body("")).width(Length::Fill).into(),
                 icon::from_name(if open {
                     "go-up-symbolic"

@@ -235,10 +235,10 @@ impl Settings {
     fn appearance_color(&self, look: &Look) -> Element<'_, Message> {
         let accent = self.settings_accent();
         let mut rows = self.look_colors(look);
-        rows.push(group_row(
+        rows.push(self.search_target("appearance-mode", group_row(
             "Mode",
             "Automatic turns dark after sunset",
-            container(choice_row(segmented(
+            choice_row(segmented(
                 crate::desktop::appearance::SystemMode::ALL
                     .into_iter()
                     .map(|mode| {
@@ -252,10 +252,8 @@ impl Settings {
                     })
                     .collect(),
                 accent,
-            )))
-            .id(cosmic::widget::Id::new("appearance-mode"))
-            .into(),
-        ));
+            )),
+        )));
         if self.config.appearance.family.is_some()
             && self.config.appearance.native_mode_palettes == 0
         {
@@ -340,18 +338,21 @@ impl Settings {
         let accent = self.settings_accent();
         let mut rows = Vec::new();
         if let Some(draft) = self.system_appearance.draft() {
-            rows.push(group_row(
-                "Density",
-                "Spacing in apps",
-                super::system_appearance::choice(
-                    &draft.density(),
-                    &[
-                        ("Compact", cosmic::cosmic_theme::Density::Compact),
-                        ("Standard", cosmic::cosmic_theme::Density::Standard),
-                        ("Spacious", cosmic::cosmic_theme::Density::Spacious),
-                    ],
-                    crate::settings::system_appearance::Message::Density,
-                    accent,
+            rows.push(self.search_target(
+                "appearance-density",
+                group_row(
+                    "Density",
+                    "Spacing in apps",
+                    super::system_appearance::choice(
+                        &draft.density(),
+                        &[
+                            ("Compact", cosmic::cosmic_theme::Density::Compact),
+                            ("Standard", cosmic::cosmic_theme::Density::Standard),
+                            ("Spacious", cosmic::cosmic_theme::Density::Spacious),
+                        ],
+                        crate::settings::system_appearance::Message::Density,
+                        accent,
+                    ),
                 ),
             ));
         }
@@ -887,17 +888,20 @@ impl Settings {
             Choice::Custom => "Your color".to_string(),
         };
         // Labelled like every other row: the name left, the choices right.
-        let mut rows = vec![split(
-            if live {
-                detail_state("Accent color", description)
-            } else {
-                detail("Accent color", description)
-            },
-            row::with_children(chips)
-                .spacing(4)
-                .wrap()
-                .vertical_spacing(4)
-                .into(),
+        let mut rows = vec![self.search_target(
+            "appearance-accent",
+            split(
+                if live {
+                    detail_state("Accent color", description)
+                } else {
+                    detail("Accent color", description)
+                },
+                row::with_children(chips)
+                    .spacing(4)
+                    .wrap()
+                    .vertical_spacing(4)
+                    .into(),
+            ),
         )];
         if let Some(text) = &self.profiles.custom {
             let target = crate::settings::color_well::Target::ThemeCustom;
