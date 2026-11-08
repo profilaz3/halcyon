@@ -205,6 +205,10 @@ pub(in crate::settings) fn change_name(
     if label == "Style changes" {
         return "style changes".into();
     }
+    // A Dock or Panel item edit: "Added Sound", as Changes titles it.
+    if let Some(name) = summary.and_then(Summary::item_title) {
+        return name;
+    }
     if let Some(name) = summary.and_then(|s| s.value_line().or_else(|| s.widget_names())) {
         return name;
     }

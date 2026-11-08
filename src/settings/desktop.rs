@@ -7,6 +7,7 @@ use crate::desktop::panels::{
     self, Anchor, AppletDrag, AutoHide, Background, Output, PanelDraft, PanelKind, PanelSize,
     Region, Regions, Setting, Slot, Timing,
 };
+use crate::desktop::store::activity::{ItemAction, ItemBar, ItemChange};
 use crate::desktop::store::{ConfigKey, DesktopError, DesktopPatch, Journal, LatestChange, Owner};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -156,6 +157,64 @@ pub struct DesktopEditor {
     /// again (the former “Follow the look’s style” switch), in the same
     /// change.
     follow_style: bool,
+    /// The item edit waiting for Apply, named for its Undo and Changes.
+    item: Option<ItemChange>,
+}
+
+/// What one item edit did, from the bar's items before and after it: one
+/// item added or removed, one moved to another region, or the order of the
+/// same items changed. Anything else is not one item edit.
+fn item_edit<'a>(
+    before: &'a Regions,
+    after: &'a Regions,
+) -> Option<(ItemAction, &'a str, Option<Region>)> {
+    use std::collections::BTreeSet;
+    // How many of each item, in one region or the whole bar.
+    let counts = |regions: &'a Regions, only: Option<Region>| {
+        let mut counts: BTreeMap<&'a str, i64> = BTreeMap::new();
+        for region in Region::ALL {
+            if only.is_none_or(|only| only == region) {
+                for id in regions.list(region) {
+                    *counts.entry(id.as_str()).or_default() += 1;
+                }
+            }
+        }
+        counts
+    };
+    let changed = |only: Option<Region>| -> Vec<(&'a str, i64)> {
+        let (old, new) = (counts(before, only), counts(after, only));
+        old.keys()
+            .chain(new.keys())
+            .copied()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .map(|id| (id, new.get(id).unwrap_or(&0) - old.get(id).unwrap_or(&0)))
+            .filter(|(_, delta)| *delta != 0)
+            .collect()
+    };
+    match changed(None).as_slice() {
+        [] if before == after => return None,
+        [] => {}
+        [(id, 1)] => return Some((ItemAction::Added, id, None)),
+        [(id, -1)] => return Some((ItemAction::Removed, id, None)),
+        _ => return None,
+    }
+    let mut arrived = Vec::new();
+    let mut left = Vec::new();
+    for region in Region::ALL {
+        for (id, delta) in changed(Some(region)) {
+            match delta {
+                1 => arrived.push((id, region)),
+                -1 => left.push(id),
+                _ => return None,
+            }
+        }
+    }
+    match (arrived.as_slice(), left.as_slice()) {
+        ([], []) => Some((ItemAction::Reordered, "", None)),
+        ([(id, region)], [gone]) if id == gone => Some((ItemAction::Moved, id, Some(*region))),
+        _ => None,
+    }
 }
 
 impl DesktopEditor {
@@ -182,6 +241,7 @@ impl DesktopEditor {
             focus: self.focus,
             recovery: self.recovery.clone(),
             follow_style: self.follow_style,
+            item: self.item.clone(),
         }
     }
     /// First visit: choose the store and read current values. Later visits
@@ -476,15 +536,46 @@ impl DesktopEditor {
         if let Some(draft) = self.drafts.get_mut(&self.selected) {
             change(draft);
             self.notice = None;
+            // Any other edit is no longer just an item edit.
+            self.item = None;
         }
     }
     fn edit_applets(&mut self, change: impl FnOnce(&mut Regions) -> Option<Slot>) {
         let Some(Setting::Known(mut regions)) = self.current().map(PanelDraft::applets) else {
             return;
         };
+        let before = regions.clone();
+        // Named only as the one unsaved edit, so the name covers all Apply saves.
+        let clean = self
+            .drafts
+            .values()
+            .all(|draft| draft.edited().next().is_none());
         let focus = change(&mut regions);
         self.focus = focus;
         self.edit(|draft| draft.set_applets(&regions));
+        self.item = clean
+            .then(|| self.name_item_edit(&before, &regions))
+            .flatten();
+    }
+    /// An item edit in the words the editor shows: "Added Sound", "Moved
+    /// Sound to Right", "Reordered Dock items".
+    fn name_item_edit(&self, before: &Regions, after: &Regions) -> Option<ItemChange> {
+        let (action, id, to) = item_edit(before, after)?;
+        let horizontal = self
+            .current()?
+            .anchor()
+            .known()
+            .is_none_or(|anchor| anchor.horizontal());
+        let bar = match self.selected {
+            PanelKind::Dock => ItemBar::Dock,
+            PanelKind::Panel => ItemBar::Panel,
+        };
+        ItemChange::new(
+            action,
+            bar,
+            &self.catalog.label(id),
+            to.map(|region| region.title(horizontal)),
+        )
     }
 
     /// Applies `message`. After an arrow move it returns the control that
@@ -770,6 +861,16 @@ impl DesktopEditor {
             .values()
             .any(|d| d.edited().any(|n| n == "islands"));
         let follow_style = std::mem::take(&mut self.follow_style);
+        // Named for the item only when the item edit is all this saves.
+        let selected = self.selected;
+        let item = self.item.take().filter(|_| {
+            !follow_style
+                && self.drafts.iter().all(|(kind, draft)| {
+                    draft.edited().all(|name| {
+                        *kind == selected && matches!(name, "plugins_wings" | "plugins_center")
+                    })
+                })
+        });
         let Some(store) = self.store() else {
             return;
         };
@@ -780,6 +881,7 @@ impl DesktopEditor {
                 return;
             }
         }
+        patch.activity_item = item;
         // Match style also brings back styles restyling the bars, merged
         // into the preferences so nothing else in them changes.
         let mut widgets = crate::desktop::store::WidgetPatch::new();
@@ -1035,6 +1137,110 @@ mod tests {
                 .unwrap()
                 .unwrap()
                 .enabled
+        );
+    }
+
+    #[test]
+    fn item_edits_are_named_from_the_items_before_and_after() {
+        use ItemAction::*;
+        let r = |start: &[&str], center: &[&str], end: &[&str]| Regions {
+            start: start.iter().map(|s| s.to_string()).collect(),
+            center: center.iter().map(|s| s.to_string()).collect(),
+            end: end.iter().map(|s| s.to_string()).collect(),
+        };
+        let none: &[&str] = &[];
+        for (before, after, named) in [
+            (
+                r(none, none, none),
+                r(&["a"], none, none),
+                Some((Added, "a", None)),
+            ),
+            // A second copy of an item already on the bar.
+            (
+                r(&["a"], none, none),
+                r(&["a"], none, &["a"]),
+                Some((Added, "a", None)),
+            ),
+            (
+                r(&["a", "a"], none, none),
+                r(&["a"], none, none),
+                Some((Removed, "a", None)),
+            ),
+            (
+                r(&["a", "b"], none, none),
+                r(&["b"], none, &["a"]),
+                Some((Moved, "a", Some(Region::End))),
+            ),
+            (
+                r(&["a", "b"], none, none),
+                r(&["b", "a"], none, none),
+                Some((Reordered, "", None)),
+            ),
+            (
+                r(&["a", "b"], &["c", "d"], none),
+                r(&["b", "a"], &["d", "c"], none),
+                Some((Reordered, "", None)),
+            ),
+            // More than one edit is not one item's change.
+            (r(none, none, none), r(&["a", "b"], none, none), None),
+            (r(&["a"], none, none), r(&["b"], none, none), None),
+            (r(&["a", "b"], none, none), r(none, &["a"], &["b"]), None),
+            (r(&["a"], none, none), r(&["a"], none, none), None),
+        ] {
+            assert_eq!(item_edit(&before, &after), named, "{before:?} → {after:?}");
+        }
+    }
+
+    #[test]
+    fn item_edits_use_the_region_names_of_the_bar() {
+        let fixture = Fixture::new("item-edit-names");
+        let mut editor = editor(&fixture);
+        editor.update(Message::Select(PanelKind::Dock));
+        let start = |index| Slot {
+            region: Region::Center,
+            index,
+        };
+        editor.update(Message::MoveTo(start(0), Region::End));
+        let name = editor.catalog.label("a");
+        assert_eq!(
+            editor.item.as_ref().map(ItemChange::title),
+            Some(format!("Moved {name} to Right"))
+        );
+        // Any other edit makes it more than an item change.
+        editor.update(Message::Opacity(43));
+        assert_eq!(editor.item, None);
+        editor.update(Message::Discard);
+        // Down the side of the screen, the end is the Bottom.
+        editor.update(Message::Anchor(Anchor::Left));
+        editor.update(Message::Apply);
+        editor.update(Message::MoveTo(start(0), Region::End));
+        assert_eq!(
+            editor.item.as_ref().map(ItemChange::title),
+            Some(format!("Moved {name} to Bottom"))
+        );
+        // A second item edit before Apply makes it more than one item's.
+        editor.update(Message::Step(
+            Slot {
+                region: Region::End,
+                index: 0,
+            },
+            -1,
+        ));
+        assert_eq!(editor.item, None);
+        editor.update(Message::Discard);
+        editor.update(Message::MoveTo(start(0), Region::End));
+        editor.update(Message::Apply);
+        assert!(!editor.dirty());
+        editor.update(Message::Step(
+            Slot {
+                region: Region::Center,
+                index: 0,
+            },
+            -1,
+        ));
+        assert_eq!(
+            editor.item.as_ref().map(ItemChange::title),
+            Some(format!("Moved {} to Top", editor.catalog.label("b")))
         );
     }
 

@@ -1603,4 +1603,332 @@ fn windows_rows_match_the_other_pages() {
     );
     let mut native = crate::native_test::Native::new(size);
     native.text_bounds(app.settings_view(), "Arrange windows side by side for you");
+
+    // The folded corners, outline color and shadows section uses the same
+    // rows, and its Effects disclosure the same title as the dock's.
+    send_settings(
+        &mut app,
+        Message::Explain(view::explain::key("Tile windows automatically")),
+    );
+    send_settings(
+        &mut app,
+        Message::ToggleSection("appearance-window-details"),
+    );
+    let advanced = [
+        "Corners, outline color and shadows",
+        "Active window outline",
+        "Outline width",
+        "Window corners",
+        "Round floating window corners",
+        "Round tiled window corners",
+        "Shadows on tiled windows",
+        "Effects",
+    ];
+    let effects = [
+        "Panel and dock",
+        "Applet popups",
+        "System interface",
+        "App windows",
+        "Blur strength",
+        "Glass opacity",
+    ];
+    for open in [false, true] {
+        app.system_appearance.effects = open;
+        for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+            send_settings(&mut app, Message::Resized(size));
+            let mut native = crate::native_test::Native::new(size);
+            native_reveal(&app, &mut native, "window-corners");
+            let name = if open { "-effects" } else { "" };
+            capture_both(
+                &app,
+                &mut native,
+                &format!("windows-advanced-{}{name}", size.width),
+            );
+            // Only what is in view is drawn: scroll the page through.
+            let mut heights = std::collections::HashMap::new();
+            // Where the page puts the Effects row at the top of the view.
+            let mut effects_at = None;
+            for step in 0..60 {
+                let offset = step as f32 * 150.;
+                native.scroll(app.settings_view(), "settings-content", offset);
+                for title in advanced
+                    .iter()
+                    .chain(&effects)
+                    .chain(["Frosted surfaces and blur"].iter())
+                {
+                    let found = native.text_all(app.settings_view(), title);
+                    assert!(found.len() <= 1, "{title} is drawn once");
+                    if let Some(found) = found.first() {
+                        heights.insert(*title, found.height);
+                        if *title == "Effects" && effects_at.is_none() {
+                            effects_at = Some(offset + found.y - 120.);
+                        }
+                    }
+                }
+            }
+            for title in advanced.iter().chain(effects.iter().filter(|_| open)) {
+                assert_eq!(
+                    heights.get(title),
+                    Some(&floating),
+                    "{title} uses the same title size"
+                );
+            }
+            for title in effects.iter().filter(|_| !open) {
+                assert!(!heights.contains_key(title), "{title} stays folded");
+            }
+            // Search names the Effects section by this line, so it stays shown.
+            assert!(heights.contains_key("Frosted surfaces and blur"));
+            if open {
+                native.scroll(app.settings_view(), "settings-content", effects_at.unwrap());
+                capture_both(
+                    &app,
+                    &mut native,
+                    &format!("windows-advanced-{}{name}-lower", size.width),
+                );
+            }
+        }
+    }
+    // Search still opens the folded rows by their ids.
+    for (query, id) in [
+        ("window corners", "window-corners"),
+        ("blur", "appearance-effects"),
+    ] {
+        let hit = crate::settings::navigation::search(query)
+            .into_iter()
+            .find(|hit| hit.page == Page::DesktopWindows)
+            .unwrap_or_else(|| panic!("{query}"));
+        assert_eq!(hit.anchor(), id, "{query}");
+    }
+}
+
+#[test]
+fn dock_and_panel_item_changes_are_named() {
+    let name = "dock_and_panel_item_changes_are_named";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::desktop::panels::{PanelKind, Region, Slot};
+    use desktop::Message as Edit;
+    let root = isolated_root();
+    let fixture = root.join("cosmic-root");
+    let apps = fixture.join("applications");
+    std::fs::create_dir_all(&apps).unwrap();
+    for (id, label) in [("clock", "Time"), ("sound", "Sound")] {
+        std::fs::write(
+            apps.join(format!("{id}.desktop")),
+            format!("[Desktop Entry]\nName={label}\nComment=Fixture item\nX-CosmicApplet=true\n"),
+        )
+        .unwrap();
+    }
+    for kind in [PanelKind::Panel, PanelKind::Dock] {
+        let dir = fixture
+            .join("config/cosmic")
+            .join(kind.namespace())
+            .join("v1");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("plugins_wings"), "Some(([], []))").unwrap();
+        std::fs::write(dir.join("plugins_center"), "Some([])").unwrap();
+    }
+    let mut app = open_isolated_editor(&root);
+    send_settings(&mut app, Message::Page(Page::DesktopDock));
+    let items = |app: &Settings| {
+        app.desktop
+            .current()
+            .unwrap()
+            .applets()
+            .known()
+            .cloned()
+            .unwrap()
+    };
+    let at = |region, index| Slot { region, index };
+    let sizes = [Size::new(820., 600.), Size::new(1280., 800.)];
+    for kind in [PanelKind::Dock, PanelKind::Panel] {
+        let bar = kind.title();
+        send_settings(&mut app, Message::OpenBar(kind));
+        let steps = [
+            (
+                "add",
+                Edit::Add(Region::Start, "sound".into()),
+                "Added Sound".to_string(),
+            ),
+            (
+                "add-time",
+                Edit::Add(Region::Start, "clock".into()),
+                "Added Time".into(),
+            ),
+            (
+                "reorder",
+                Edit::Step(at(Region::Start, 0), 1),
+                format!("Reordered {bar} items"),
+            ),
+            // Past the region's end, the arrow moves it to the next one.
+            (
+                "step-across",
+                Edit::Step(at(Region::Start, 1), 1),
+                "Moved Sound to Middle".into(),
+            ),
+            (
+                "move",
+                Edit::MoveTo(at(Region::Start, 0), Region::End),
+                "Moved Time to Right".into(),
+            ),
+            (
+                "remove",
+                Edit::Remove(at(Region::End, 0)),
+                "Removed Time".into(),
+            ),
+        ];
+        for (step, edit, title) in steps {
+            let before = items(&app);
+            send_settings(&mut app, Message::DesktopEditor(edit.clone()));
+            assert!(!app.error, "{bar} {step}: {}", app.status);
+            let after = items(&app);
+            assert_ne!(after, before, "{bar} {step}");
+            // The footer, its Undo and Changes all use the same words.
+            let summary = app.last_desktop_summary.clone().unwrap();
+            assert_eq!(summary.title(), title, "{bar} {step}");
+            assert_eq!(
+                app.last_desktop_change.as_ref().map(|c| c.1.as_str()),
+                Some(title.as_str()),
+                "{bar} {step}"
+            );
+            send_settings(&mut app, Message::Support(support::Message::Changed));
+            assert_eq!(
+                app.support.local.recent.entries.last().map(|e| e.title()),
+                Some(title.clone()),
+                "{bar} {step}"
+            );
+            for size in sizes {
+                send_settings(&mut app, Message::Resized(size));
+                let mut native = crate::native_test::Native::new(size);
+                native.text_bounds(app.settings_view(), &format!("Saved · {title}"));
+                native.text_bounds(app.settings_view(), &format!("Undo {title}"));
+                assert!(
+                    native
+                        .text_all(app.settings_view(), "Dock and panel change")
+                        .is_empty(),
+                    "{bar} {step}"
+                );
+                // The item editor sits near the foot of the page.
+                native.scroll(app.settings_view(), "settings-content", 100_000.);
+                capture_both(
+                    &app,
+                    &mut native,
+                    &format!("item-footer-{}-{step}-{}", bar.to_lowercase(), size.width),
+                );
+            }
+            // Its Undo puts back exactly that change, then it is made again.
+            let mut native = crate::native_test::Native::new(sizes[1]);
+            native_click(&mut app, &mut native, "settings-undo");
+            assert!(!app.error, "{bar} {step}: {}", app.status);
+            assert_eq!(items(&app), before, "{bar} {step}: undo");
+            send_settings(&mut app, Message::DesktopEditor(edit));
+            assert_eq!(items(&app), after, "{bar} {step}: again");
+            assert_eq!(app.last_desktop_summary.as_ref().unwrap().title(), title);
+        }
+    }
+    // Other edits keep their own names.
+    let spacing = app
+        .desktop
+        .current()
+        .unwrap()
+        .spacing()
+        .known()
+        .copied()
+        .unwrap_or(0);
+    send_settings(&mut app, Message::DesktopEditor(Edit::Spacing(spacing + 4)));
+    send_settings(&mut app, Message::DesktopEditor(Edit::Apply));
+    assert!(
+        app.last_desktop_summary
+            .as_ref()
+            .unwrap()
+            .title()
+            .starts_with("Between items: ")
+    );
+    assert!(app.last_desktop_summary.as_ref().unwrap().item.is_none());
+
+    // Changes lists them by the same names.
+    send_settings(&mut app, Message::Page(Page::Changes));
+    send_settings(&mut app, Message::Support(support::Message::Changed));
+    for size in sizes {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        for title in [
+            "Removed Time",
+            "Moved Time to Right",
+            "Moved Sound to Middle",
+        ] {
+            assert!(
+                !native.text_all(app.settings_view(), title).is_empty(),
+                "{title}"
+            );
+        }
+        capture_both(&app, &mut native, &format!("item-changes-{}", size.width));
+    }
+}
+
+#[test]
+fn windows_page_saves_its_corner_and_effect_controls() {
+    let name = "windows_page_saves_its_corner_and_effect_controls";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use cosmic::cosmic_theme::Roundness;
+    use system_appearance::Message as Look;
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    send_settings(&mut app, Message::Page(Page::DesktopWindows));
+    send_settings(
+        &mut app,
+        Message::ToggleSection("appearance-window-details"),
+    );
+    // Effects opens in place.
+    send_settings(&mut app, Message::SystemAppearance(Look::Effects(true)));
+    assert!(app.system_appearance.effects);
+    // Window corners saves from here, as on Appearance.
+    let roundness = |app: &Settings| {
+        let variant = app.system_appearance.variant;
+        app.system_appearance
+            .draft()
+            .unwrap()
+            .roundness(variant)
+            .known()
+            .copied()
+    };
+    let other = if roundness(&app) == Some(Roundness::Square) {
+        Roundness::Round
+    } else {
+        Roundness::Square
+    };
+    send_settings(&mut app, Message::SystemAppearance(Look::Roundness(other)));
+    assert!(!app.error, "{}", app.status);
+    assert_eq!(roundness(&app), Some(other));
+    assert_eq!(
+        app.last_desktop_change.as_ref().map(|c| c.1.as_str()),
+        Some("Window corners")
+    );
+    let size = Size::new(1280., 800.);
+    send_settings(&mut app, Message::Resized(size));
+    let mut native = crate::native_test::Native::new(size);
+    native.text_bounds(app.settings_view(), "Undo Window corners");
+    // A fresh read sees it saved.
+    let mut reopened = open_isolated_editor(&root);
+    send_settings(&mut reopened, Message::Page(Page::DesktopWindows));
+    assert_eq!(roundness(&reopened), Some(other));
 }

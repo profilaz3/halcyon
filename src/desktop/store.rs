@@ -451,6 +451,9 @@ pub struct DesktopPatch {
     pub(crate) epoch_guard: Option<u64>,
     pub(crate) palette_ack: Option<u64>,
     pub(crate) activity_display: bool,
+    /// The Dock or Panel item this patch adds, removes or moves, as the
+    /// item editor names it, for the change's label and history.
+    pub(crate) activity_item: Option<activity::ItemChange>,
     // Verified reversals, including semantic restorations that become no-ops.
     // Kept-current conflicts are deliberately absent from this attribution.
     reversed_native: std::collections::BTreeSet<ConfigKey>,
@@ -1024,6 +1027,11 @@ impl DesktopStore {
             created: committed.created,
             change: committed.change,
             widget: committed.widget,
+            // As recorded: only the Dock and panel's own item edits are named.
+            item: patch
+                .activity_item
+                .clone()
+                .filter(|_| owner == Owner::DockPanel && source == Source::Manual),
         })
     }
     /// The persistent latest change, validated. `Ok(None)` when there is
@@ -1135,6 +1143,7 @@ impl DesktopStore {
             created: committed.created,
             change: committed.change,
             widget: committed.widget,
+            item: None,
         })
     }
 
@@ -1477,6 +1486,11 @@ impl DesktopStore {
                     created: created.clone(),
                     change: change.clone(),
                     widget: widget_change.clone(),
+                    // Only the Dock and panel's own item edits are named.
+                    item: patch
+                        .activity_item
+                        .clone()
+                        .filter(|_| owner == Owner::DockPanel && source == Source::Manual),
                 }
                 .to_file();
                 next.source = source;
@@ -1585,6 +1599,7 @@ impl DesktopStore {
                             entries: Vec::new(),
                         },
                         widget: None,
+                        item: None,
                     }
                     .to_file();
                     empty.source = Source::Derived;

@@ -127,6 +127,13 @@ pub(super) struct UndoFile {
     pub manual_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub palette_ack: Option<(u64, u64)>,
+    /// The Dock or Panel item this change added, removed or moved.
+    #[serde(
+        default,
+        deserialize_with = "super::activity::deserialize_item",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub item: Option<super::activity::ItemChange>,
 }
 
 /// The validated latest change, ready for Undo.
@@ -138,6 +145,8 @@ pub struct LatestChange {
     pub created: String,
     pub change: AppliedChange,
     pub widget: Option<WidgetChange>,
+    /// The Dock or Panel item this change added, removed or moved.
+    pub item: Option<super::activity::ItemChange>,
 }
 
 impl LatestChange {
@@ -176,6 +185,7 @@ impl LatestChange {
             transaction_id: None,
             manual_at: Some(self.created.clone()),
             palette_ack: None,
+            item: self.item.clone(),
         }
     }
     /// Validates a record read from disk. Anything unexpected, including a
@@ -231,6 +241,8 @@ impl LatestChange {
                 entries,
             },
             widget: file.widget,
+            // Optional naming never makes a record unusable for Undo.
+            item: file.item.filter(super::activity::ItemChange::valid),
         })
     }
 }

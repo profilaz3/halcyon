@@ -55,20 +55,32 @@ fn swatch<'a>(value: Color, size: u16) -> Element<'a, Message> {
 }
 /// Field label column: fixed width so controls line up.
 fn field<'a>(title: &'static str, control: Element<'a, Message>) -> Element<'a, Message> {
-    column::with_children(vec![label(title, 13., FG), control])
+    titled(title, 13., control)
+}
+/// A title over a control too wide to sit beside it.
+fn titled<'a>(
+    title: &'static str,
+    size: f32,
+    control: Element<'a, Message>,
+) -> Element<'a, Message> {
+    column::with_children(vec![label(title, size, FG), control])
         .spacing(6)
         .width(Length::Fill)
         .into()
 }
-/// Label left, choice right, for short choices.
-fn inline_field<'a>(title: &'static str, control: Element<'a, Message>) -> Element<'a, Message> {
-    split(
-        label(title, 13., FG),
-        row::with_children(vec![control])
-            .align_y(Alignment::Center)
-            .wrap()
-            .into(),
-    )
+/// A slider under its title and value, as the dock's sliders draw them.
+fn titled_slider<'a>(
+    title: &'static str,
+    value: String,
+    accent: Color,
+    control: Element<'a, Message>,
+) -> Element<'a, Message> {
+    column::with_children(vec![
+        split(label(title, 14., FG), label(value, 13., accent)),
+        control,
+    ])
+    .spacing(7)
+    .into()
 }
 pub(super) fn choice<'a, T: PartialEq + Copy>(
     setting: &Setting<T>,
@@ -208,7 +220,12 @@ impl Settings {
         column::with_children(items).spacing(16).into()
     }
 
-    fn color_row(&self, draft: &AppearanceDraft, role: ColorRole) -> Element<'_, Message> {
+    fn color_row(
+        &self,
+        draft: &AppearanceDraft,
+        role: ColorRole,
+        size: f32,
+    ) -> Element<'_, Message> {
         let editor = &self.system_appearance;
         let accent = self.appearance_accent();
         let variant = editor.variant;
@@ -231,8 +248,9 @@ impl Settings {
         if let Setting::Unsupported(raw) = &setting {
             controls.push(swatch(color(current), 22));
             controls.push(kept(raw));
-            return field(
+            return titled(
                 role.title(),
+                size,
                 row::with_children(controls).spacing(10).into(),
             );
         }
@@ -314,7 +332,11 @@ impl Settings {
         if let Some(panel) = self.color_panel(target, &[]) {
             rows.push(panel);
         }
-        field(role.title(), column::with_children(rows).spacing(6).into())
+        titled(
+            role.title(),
+            size,
+            column::with_children(rows).spacing(6).into(),
+        )
     }
 
     fn appearance_colors(&self, draft: &AppearanceDraft) -> Element<'_, Message> {
@@ -381,7 +403,7 @@ impl Settings {
                     continue;
                 }
                 items.push(
-                    container(self.color_row(draft, role))
+                    container(self.color_row(draft, role, 13.))
                         .id(cosmic::widget::Id::new(format!(
                             "appearance-color-{}",
                             role.key()
@@ -688,36 +710,30 @@ impl Settings {
         ])
     }
 
+    /// The rows inside Windows' "Corners, outline color and shadows": the
+    /// same rows as the rest of the page, lined up with the section title.
     pub(super) fn appearance_window(&self, draft: &AppearanceDraft) -> Element<'_, Message> {
         let accent = self.appearance_accent();
         let variant = self.system_appearance.variant;
         let width = draft.outline_width(variant);
-        let mut items = vec![
-            label("Windows", 14., FG),
-            self.color_row(draft, ColorRole::Outline),
-        ];
+        let mut items = vec![self.color_row(draft, ColorRole::Outline, 14.)];
         items.push(match width {
             Setting::Known(value) => {
                 let shown = value.min(16);
-                let mut column_items = vec![
-                    split(
-                        label("Outline width", 12., FG),
-                        label(
-                            if value > 16 {
-                                format!("{value} px · above range")
-                            } else {
-                                format!("{value} px")
-                            },
-                            11.,
-                            accent,
-                        ),
-                    ),
+                let mut column_items = vec![titled_slider(
+                    "Outline width",
+                    if value > 16 {
+                        format!("{value} px · above range")
+                    } else {
+                        format!("{value} px")
+                    },
+                    accent,
                     slider(0..=16u32, shown, |value| edit(Edit::OutlineWidth(value)))
                         .on_release(edit(Edit::Apply))
                         .step(1u32)
                         .width(Length::Fill)
                         .apply(|control| completed_slider(control.into(), edit(Edit::Apply))),
-                ];
+                )];
                 if let Setting::Known(gap) = draft.inner_gap(variant) {
                     let base = draft
                         .base_builder(variant)
@@ -735,13 +751,14 @@ impl Settings {
                 }
                 column::with_children(column_items).spacing(7).into()
             }
-            Setting::Unsupported(raw) => field("Outline width", kept(&raw)),
+            Setting::Unsupported(raw) => group_row("Outline width", "", kept(&raw)),
         });
         items.push(separator());
         items.push(self.search_target(
             "window-corners",
-            inline_field(
+            group_row(
                 "Window corners",
+                "",
                 choice(
                     &draft.roundness(variant),
                     // Appearance's Corners steps; windows have no Pill.
@@ -764,28 +781,29 @@ impl Settings {
         }
         items.push(separator());
         for effect in WindowEffect::ALL {
-            items.push(match draft.window(effect) {
-                Setting::Known(on) => split(
-                    label(effect.title(), 13., FG),
-                    toggler(on)
-                        .on_toggle(move |on| edit(Edit::Window(effect, on)))
-                        .into(),
-                ),
-                Setting::Unsupported(raw) => split(label(effect.title(), 13., FG), kept(&raw)),
-            });
+            let control = match draft.window(effect) {
+                Setting::Known(on) => toggler(on)
+                    .on_toggle(move |on| edit(Edit::Window(effect, on)))
+                    .into(),
+                Setting::Unsupported(raw) => kept(&raw),
+            };
+            items.push(group_row(effect.title(), "", control));
         }
-        section(items)
+        folded_rows(items)
     }
 
+    /// Effects folds away inside the same section, with the same folding
+    /// row as the dock's "Corners, spacing and timing".
     pub(super) fn appearance_effects(&self, draft: &AppearanceDraft) -> Element<'_, Message> {
         let accent = self.appearance_accent();
         let editor = &self.system_appearance;
         let open = editor.effects;
         let toggle = button::custom(
             row::with_children(vec![
-                label("Effects", 16., FG),
+                label("Effects", 14., FG),
                 container(text::body("")).width(Length::Fill).into(),
-                label("Frosted surfaces and blur", 11., MUTED),
+                // Search names this section by this line, so it stays shown.
+                label("Frosted surfaces and blur", 12., MUTED),
                 icon::from_name(if open {
                     "go-up-symbolic"
                 } else {
@@ -799,87 +817,71 @@ impl Settings {
             .align_y(Alignment::Center),
         )
         .class(nav_style(false, accent))
-        .padding([4, 4])
+        .padding([4, 10])
         .width(Length::Fill)
         .on_press(edit(Edit::Effects(!open)));
         if !open {
-            return section(vec![toggle.into()]);
+            return toggle.into();
         }
         let variant = editor.variant;
-        let mut items: Vec<Element<'_, Message>> =
-            vec![toggle.into(), label("Frosted", 12., MUTED)];
+        let mut items: Vec<Element<'_, Message>> = vec![label("Frosted", 13., FG)];
         for surface in Surface::ALL {
             items.push(match draft.frosted(variant, surface) {
                 // COSMIC panel 1.10 aborts when its frosted surface is
                 // unmapped on the current compositor (screen blank, display
                 // change), taking every applet with it. It can be turned off
                 // here, never on, until a fixed panel is installed.
-                Setting::Known(false) if surface == Surface::Panel => split(
-                    detail_state(
-                        surface.title(),
-                        "Off: the installed COSMIC panel crashes with a frosted background",
-                    ),
+                Setting::Known(false) if surface == Surface::Panel => group_row_state(
+                    surface.title(),
+                    "Off: the installed COSMIC panel crashes with a frosted background",
                     toggler(false).into(),
                 ),
-                Setting::Known(on) => split(
-                    label(surface.title(), 13., FG),
+                Setting::Known(on) => group_row(
+                    surface.title(),
+                    "",
                     toggler(on)
                         .on_toggle(move |on| edit(Edit::Frosted(surface, on)))
                         .into(),
                 ),
-                Setting::Unsupported(raw) => split(label(surface.title(), 13., FG), kept(&raw)),
+                Setting::Unsupported(raw) => group_row(surface.title(), "", kept(&raw)),
             });
         }
         let any = Surface::ALL
             .into_iter()
             .any(|surface| draft.frosted(variant, surface).known() == Some(&true));
         items.push(separator());
-        match draft.blur(variant) {
+        items.push(match draft.blur(variant) {
             Setting::Known(strength) => {
                 let step = strength as u8;
-                items.push(
-                    column::with_children(vec![
-                        split(
-                            label("Blur strength", 12., FG),
-                            label(format!("{} of 13", step), 11., accent),
-                        ),
-                        slider(0..=13u8, step, |value| edit(Edit::Blur(value)))
-                            .on_release(edit(Edit::Apply))
-                            .step(1u8)
-                            .width(Length::Fill)
-                            .apply(|control| completed_slider(control.into(), edit(Edit::Apply))),
-                    ])
-                    .spacing(7)
-                    .into(),
-                );
+                titled_slider(
+                    "Blur strength",
+                    format!("{step} of 13"),
+                    accent,
+                    slider(0..=13u8, step, |value| edit(Edit::Blur(value)))
+                        .on_release(edit(Edit::Apply))
+                        .step(1u8)
+                        .width(Length::Fill)
+                        .apply(|control| completed_slider(control.into(), edit(Edit::Apply))),
+                )
             }
-            Setting::Unsupported(raw) => {
-                items.push(split(label("Blur strength", 12., FG), kept(&raw)));
-            }
-        }
-        match draft.glass(variant) {
+            Setting::Unsupported(raw) => group_row("Blur strength", "", kept(&raw)),
+        });
+        items.push(match draft.glass(variant) {
             Setting::Known(glass) => {
                 let glass = glass.min(100) as u8;
-                items.push(
-                    column::with_children(vec![
-                        split(
-                            label("Glass opacity", 12., FG),
-                            label(format!("{glass}%"), 11., accent),
-                        ),
-                        slider(0..=100u8, glass, |value| edit(Edit::Glass(value / 5 * 5)))
-                            .on_release(edit(Edit::Apply))
-                            .step(5u8)
-                            .width(Length::Fill)
-                            .apply(|control| completed_slider(control.into(), edit(Edit::Apply))),
-                    ])
-                    .spacing(7)
-                    .into(),
-                );
+                titled_slider(
+                    "Glass opacity",
+                    format!("{glass}%"),
+                    accent,
+                    slider(0..=100u8, glass, |value| edit(Edit::Glass(value / 5 * 5)))
+                        .on_release(edit(Edit::Apply))
+                        .step(5u8)
+                        .width(Length::Fill)
+                        .apply(|control| completed_slider(control.into(), edit(Edit::Apply))),
+                )
             }
-            Setting::Unsupported(raw) => {
-                items.push(split(label("Glass opacity", 12., FG), kept(&raw)));
-            }
-        }
+            Setting::Unsupported(raw) => group_row("Glass opacity", "", kept(&raw)),
+        });
         items.push(label(
             if any {
                 "Applies to both themes. Blur and glass affect frosted surfaces only."
@@ -889,8 +891,18 @@ impl Settings {
             11.,
             MUTED,
         ));
-        section(items)
+        column::with_children(vec![toggle.into(), folded_rows(items)])
+            .spacing(10)
+            .into()
     }
+}
+
+/// Rows inside a folded section, inset like its title so they line up.
+fn folded_rows(items: Vec<Element<'_, Message>>) -> Element<'_, Message> {
+    container(column::with_children(items).spacing(10))
+        .padding([0, 10])
+        .width(Length::Fill)
+        .into()
 }
 
 /// A small window drawn from the draft: title bar inside the active outline,

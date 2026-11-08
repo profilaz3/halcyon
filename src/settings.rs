@@ -2712,8 +2712,11 @@ impl Settings {
                 }
             }
             Message::SystemAppearance(message) => {
-                if matches!(self.page, Page::DesktopAppearance | Page::Themes)
-                    && let Some(id) = self.system_appearance.update(message)
+                // Windows draws window corners, outline and effects from it too.
+                if matches!(
+                    self.page,
+                    Page::DesktopAppearance | Page::Themes | Page::DesktopWindows
+                ) && let Some(id) = self.system_appearance.update(message)
                 {
                     // A picker opened: focus its search and bring it into view.
                     return Task::batch([

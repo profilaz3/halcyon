@@ -76,6 +76,7 @@ impl DesktopStore {
                     entries: Vec::new(),
                 },
                 widget: None,
+                item: None,
             }
             .to_file();
             file.source = Source::Derived;
@@ -124,6 +125,7 @@ impl DesktopStore {
             created: c.created,
             change: c.change,
             widget: c.widget,
+            item: None,
         }))
     }
 }
