@@ -2,7 +2,7 @@
   "title": "Halcyon future builder",
   "working_target": "next release (version unassigned)",
   "target_is_release_commitment": false,
-  "updated": "2026-11-04",
+  "updated": "2026-11-08",
   "phase": "FB31 reactive Activity island implemented and validated locally, including shared system adapters, quiet-policy-gated reveals and native keyboard focus. Remaining placement, stationary-hover and packaged-artifact qualification stay open. No release assigned.",
   "implementation_started": true,
   "status_source": "This file is the canonical task status; roadmap and archived proposals do not override it.",
@@ -495,7 +495,7 @@
     {
       "id": "FB30",
       "title": "Manual snow, fog and cloud shadows",
-      "status": "in_progress",
+      "status": "validated",
       "depends_on": [
         "FB29"
       ],
@@ -503,10 +503,11 @@
       "evidence": [
         "WALLPAPER-EFFECTS.md",
         "../../.task-wallpaper-effects-20261030/result.json",
-        "../../.task-effects-optimization-20261031/result.json"
+        "../../.task-effects-optimization-20261031/result.json",
+        "evidence/fb30-native-20261108.json"
       ],
       "owner": null,
-      "validation": "Implementation complete. Initial 22 regressions, native control captures, setup round trips, 15 hardware GPU cases and two private desktop runs passed. Optimization pass: 26 regressions, 25 hardware stress cases, 22 before/after pixel comparisons and a rebuilt-app desktop behavior run passed; smaller atmosphere textures, reusable backgrounds and simulation storage, cached stationary fields and hidden-preview redraw suppression. Native visual confirmation remains open after intermittent Clock clipping in a nested compositor logging EGL failures. Local only; no release."
+      "validation": "Implementation complete. Initial 22 regressions, native control captures, setup round trips, 15 hardware GPU cases and two private desktop runs passed. Optimization pass: 26 regressions, 25 hardware stress cases, 22 before/after pixel comparisons and a rebuilt-app desktop behavior run passed. Real desktop review (2026-11-08, release build of b27fc19bc on the owner's COSMIC session, 1080p): all four effects reviewed in 25 screenshots; no Clock clipping at three Clock sizes/positions or across a minute rollover, so the nested-compositor clipping is attributed to its EGL failures; speed 0, Reduce motion, lock, sleep and battery pauses stop GPU work and resume correctly; fdinfo GPU busy 1.6–1.9 ms per frame at 30 fps plus about 39 ms/s compositor work. Local only; multi-monitor, HiDPI, battery device, energy and package qualification remain separate. No release."
     },
     {
       "id": "FB31",
@@ -767,6 +768,10 @@
     {
       "date": "2026-11-03",
       "change": "Accepted Opus Activity Island improvements after parent source/visual review and one animated Escape fix. 35 focused tests and final private COSMIC playback/Focus/Settings/restart/dismissal checks passed. Five-second unentered-popup timeout and pinned-hover wallpaper-click behavior remain open interaction issues; prior placement/device/package qualification limits remain. No installation or release."
+    },
+    {
+      "date": "2026-11-08",
+      "change": "Validated FB30 on the real COSMIC desktop with a release build of origin/main: Rain, Snow, Fog and Cloud shadows, Clock never clipped, speed 0, Reduce motion and lock/sleep/battery pauses (private logind/UPower stand-in), and fdinfo GPU cost for Halcyon and the compositor. The service and config were restored untouched. No installation or release."
     }
   ],
   "foundation_probe_code_added": true,

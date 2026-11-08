@@ -1,7 +1,7 @@
 # Manual wallpaper effects
 
-Implemented locally; unreleased. Native desktop visual confirmation remains open. Builds on FB29's existing native
-GPU surface, wallpaper cache, ownership, setup transport and guarded preferences.
+Implemented and validated locally, including a real COSMIC desktop review on
+2026-11-08; unreleased. Builds on FB29's existing native GPU surface, wallpaper cache, ownership, setup transport and guarded preferences.
 No new renderer, decoder, video, network source or generic plugin engine.
 
 ## Scope
@@ -37,9 +37,9 @@ input. Owned fixture processes were reaped; the installed app/session was untouc
 
 The nested Xvfb/COSMIC compositor logs persistent EGL surface failures and some
 captures show partially clipped Clock text. Native offscreen effect/Settings renders
-are clean; a disabled-effect baseline was stable. Cause is not established, so
-real-desktop visual confirmation remains open. This is not release qualification.
-Detailed captures and observations are in the private evidence directory.
+are clean; a disabled-effect baseline was stable. The real desktop review below did
+not reproduce the clipping. This is not release qualification. Detailed captures
+and observations are in the private evidence directory.
 
 ## Optimization pass
 
@@ -71,6 +71,45 @@ Two offscreen targets do not qualify physical multi-monitor behavior.
   rain and cloud-shadow captures are identical. Maximum mean channel difference
   is 0.0045 on the 0–255 scale.
 
-Hardware claims apply only to the measured AMD device. The separate nested-desktop
-Clock clipping observation above remains unresolved; this performance pass does
-not establish complete native visual or release qualification.
+Hardware claims apply only to the measured AMD device. This performance pass does
+not establish release qualification.
+
+## Real desktop review
+
+Evidence: `evidence/fb30-native-20261108.json`. A release build of `origin/main`
+(`b27fc19bc`) ran on the owner's real COSMIC session, one 1920×1080 output at 75 Hz,
+in place of the stopped `halcyon.service`. It used temporary copies of the app
+config and XDG folders; the same bounded command started the service again. The
+installed app and its config were untouched. 25 `cosmic-screenshot` captures were
+reviewed.
+
+- Rain (Flowing and Merging), Snow, Fog and Cloud shadows render behind windows,
+  widgets and the dock. Cloud shadows were also checked with a difference image
+  against the effect-off baseline.
+- The Clock was never clipped: the owner's 200% bold digital Clock, the same
+  Clock moved clear of windows, and a smaller Clock across a minute rollover,
+  each with an effect running and with none. The app logged no EGL errors. Xvfb
+  is no longer installed, so the nested run could not be repeated; the clipping
+  is attributed to that compositor's EGL surface failures.
+- Speed 0% freezes the effect: two captures 11 s apart are pixel-identical and no
+  GPU work is submitted. Reduce motion removes the effect surface at once and
+  turning it off resumes it.
+- Lock, sleep and battery pauses were driven through a private stand-in for
+  logind and UPower on a separate bus, so the real session was never locked. Each
+  stopped drawing and showed the plain wallpaper; unlocking, waking and turning
+  Pause on battery off each resumed at 30 fps.
+
+GPU busy time comes from amdgpu `drm-engine-gfx` in `/proc/<pid>/fdinfo`, for
+Halcyon and for `cosmic-comp`. At 30 fps Halcyon used 48–56 ms per second
+(1.6–1.9 ms per frame; a frame trace confirmed 28.9 fps) for every effect, and
+the compositor about 39 ms per second, against 0.1 and 5.6 ms with effects off.
+Smooth used 1.1–1.3 ms per frame at 60 fps. Frozen, Reduce motion, locked,
+sleeping and battery-paused effects used none. This is busy time at whatever
+clock the GPU chose, mostly 400 of 2000 MHz at 30 fps, and includes all of
+Halcyon's surfaces, so it is not directly comparable with the pass timestamps
+above. It stays below their 4K Balanced range and their largest p95 (3.42 ms).
+The compositor cost of presenting a full-screen animated surface was not part of
+the earlier measurements.
+
+Limits: one 1080p output; no multi-monitor, HiDPI, battery-powered device,
+energy or packaged-artifact qualification.
