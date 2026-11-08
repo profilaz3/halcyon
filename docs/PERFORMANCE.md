@@ -1,3 +1,49 @@
+## Idle CPU with the island in the panel — 2026-11-08
+
+Halcyon 0.6.1 used about 90% of a core while doing nothing, as long as the
+Activity island applet was in the panel. The island’s observers only run while
+an applet is connected, and one of them fed itself. `quiet::policy` watches
+`~/.config/cosmic` for Do Not Disturb with notify, whose inotify mask includes
+`IN_OPEN`, and it took any event on the `do_not_disturb` key, or on a folder
+above it, as a change. Each “change” read the key again through the desktop
+store, which opens each of those folders and then the key, and asked logind
+whether the session is locked (four or more system-bus calls). That read was
+the next change, about 1,500 times a second.
+
+Now only a creation, write, rename or removal counts, as in `watch::files`. A
+Do Not Disturb change reads only the key, with no logind call, and a burst of
+changes is coalesced over 25 ms. `activity_island::quiet::tests` runs the
+policy loop’s file half against a real inotify watch: with the old filter it
+wakes 50 times in a row (the test’s cap); now it wakes 0 times, and once for a
+real write.
+
+Measured on the Ryzen 7 5700G with a copy of the user’s configuration (Clock
+and Focus on screen) in temporary XDG folders and a test client on the island
+socket standing in for the applet; 60 s after a 15 s warm-up, from
+`/proc/<pid>/task`:
+
+| Build | CPU | Voluntary context switches |
+|---|---:|---:|
+| 0.6.1 (`/usr/bin/halcyon`) | 82.7% | 37,180/s |
+| main at b27fc19, release | 93.7% | 44,142/s |
+| main with the fix, release | 0.02% | 8.2/s |
+
+`strace -f -c` on 0.6.1 over about 35 s counted 171k `openat`, 140k `sendmsg`,
+410k `recvmsg` and 213k `futex`. Over 150 s the fixed build used 0.07% (0.09%
+counting the workers it starts). `DESKTOP_CARDS_CONFIG` can’t show this bug:
+in that preview mode the island’s observers are off.
+
+Idle wakeups left with an island connected (fixed build, from `strace`):
+
+| What | How often | |
+|---|---|---|
+| Clock depth worker (`--depth-worker`) | once a minute | Redraws the depth layer for the new time. By design. |
+| Two `watch::read_only_files` fallbacks | every 30 s each | Both include the wallpaper picture, so each reads all of it (615 KB here) and keeps a copy to compare. `watch::image_files` compares metadata instead. Not changed. |
+| Lock safety net, bus observers’ fallback reads, camera rescan | every 30 s | One logind query, one read each of UPower, NetworkManager and PackageKit, one `/sys/class/video4linux` scan. |
+| Network observer | about every 6 s here | Follows NetworkManager signals; reads stay 200 ms apart. |
+
+---
+
 ## Windows that show nothing — 2026-11-08
 
 Every open layer-shell window holds its own swapchain buffers and iced
