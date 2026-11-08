@@ -91,17 +91,20 @@ pub(super) async fn search(
         })
         .as_ref()
         .map_err(Clone::clone)?;
-    search_from(client, ENDPOINT, query, registration).await
+    search_from(&SLOTS, client, ENDPOINT, query, registration).await
 }
 
+/// `slots` bounds concurrent searches; production shares `SLOTS`, and tests
+/// pass their own so parallel tests never see each other's permits.
 async fn search_from(
+    slots: &tokio::sync::Semaphore,
     client: &reqwest::Client,
     endpoint: &str,
     query: String,
     registration: AbortRegistration,
 ) -> Result<Vec<City>, String> {
     let operation = async {
-        let _slot = SLOTS
+        let _slot = slots
             .acquire()
             .await
             .map_err(|_| "City search is unavailable.".to_string())?;
@@ -221,7 +224,14 @@ mod tests {
         let (query, registration) = search.begin(search.generation).unwrap();
         let old = search.generation;
         let job = tokio::spawn(async move {
-            search_from(&reqwest::Client::new(), &endpoint, query, registration).await
+            search_from(
+                &tokio::sync::Semaphore::new(2),
+                &reqwest::Client::new(),
+                &endpoint,
+                query,
+                registration,
+            )
+            .await
         });
         ready.await.unwrap();
         search.edit("Paris".into(), Instant::now());
@@ -238,13 +248,17 @@ mod tests {
 
     #[tokio::test]
     async fn selection_drop_and_waiting_for_a_slot_cancel_without_network() {
-        let permits = SLOTS.acquire_many(2).await.unwrap();
+        // This test's own slots: the shared ones are used by parallel tests.
+        let slots: &'static tokio::sync::Semaphore =
+            Box::leak(Box::new(tokio::sync::Semaphore::new(2)));
+        let permits = slots.acquire_many(2).await.unwrap();
         for select in [true, false] {
             let mut search = CitySearch::default();
             search.edit("Zagreb".into(), Instant::now());
             let (query, registration) = search.begin(search.generation).unwrap();
             let task = tokio::spawn(async move {
                 search_from(
+                    slots,
                     &reqwest::Client::new(),
                     "http://127.0.0.1:1",
                     query,
@@ -265,7 +279,7 @@ mod tests {
             assert_eq!(error, "Search cancelled.");
         }
         drop(permits);
-        assert_eq!(SLOTS.available_permits(), 2);
+        assert_eq!(slots.available_permits(), 2);
     }
 
     #[tokio::test]
@@ -291,6 +305,7 @@ mod tests {
             });
             let (abort, registration) = AbortHandle::new_pair();
             let result = search_from(
+                &tokio::sync::Semaphore::new(2),
                 &reqwest::Client::new(),
                 &endpoint,
                 "Paris".into(),
