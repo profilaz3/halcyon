@@ -21,12 +21,36 @@ still held 12 windows. Now a window is open only while it shows something:
   it is a strip one pixel tall along the top that measures the usable width.
   The edge strip, two pixels wide and already open, measures the usable height.
   Before, this was an invisible 1920×1080 window.
+- **Other displays with widgets** are measured by two `halcyon-display-probe`
+  strips each, a pixel thick, with an empty input region and no keyboard: one
+  along the top that the compositor sizes to the usable width, one along the
+  left sized to the usable height. Before, each such display had an invisible
+  window its own size.
 
 Two windows stay open for a real reason: the edge strip, which has to take the
 pointer to reveal the edge menu and which measures the height, and the
 one-pixel arrange strip, which tracks panels and docks that change the usable
-area. Displays with widgets on a second monitor still measure that monitor
-with a full-size `halcyon-display-probe` window.
+area. Each other display with widgets adds its two strips.
+
+**Why two strips per display.** A compositor chooses a layer surface's length
+only along an axis where the surface is anchored to both edges, so a single
+surface that reports both the usable width and height has to cover the whole
+usable area. Each strip is anchored to both ends of one axis with an exclusive
+zone of 0, which places it inside what panels and docks leave free: docks on
+the left or right shorten the top strip, panels or docks on the top or bottom
+shorten the left one. Widgets on that display wait until both are sized, as
+they waited for the full-size window, and the measurement feeds placement the
+same way. A strip configured again at the same length no longer rebuilds the
+widget windows; before, every configure of the full-size window did.
+
+**Arranging another display** makes it the display Halcyon is drawn on: its
+arrange surface covers it and its edge strip opens there, and the display
+being left (if it keeps widgets) gets the two strips instead. A probe itself
+never needs to cover a display.
+
+Not measured on hardware: the workstation used for these numbers has one
+display connected. `src/app/surface_lifecycle_tests.rs` replays the windows a
+second display opens and closes, including Arrange there and unplugging it.
 
 Measured on the same Ryzen 7 5700G with the same user configuration (Clock and
 Focus on screen, everything else off), read from `/proc/<pid>/fdinfo` 40 s

@@ -1,8 +1,11 @@
 //! Windows exist only while they show something. Each open layer surface
 //! holds its own swapchain buffers and renderer, so a hidden widget, the
 //! folded-away edge menu and the idle arrange surface close (or shrink)
-//! instead of waiting off screen.
+//! instead of waiting off screen, and a second display is measured by thin
+//! strips rather than a window its size.
 use super::*;
+use crate::config::monitors::WidgetMonitor;
+use crate::displays::WlOutput;
 use crate::displays::{
     OutputEvent,
     test_support::{Wire, info, isolated},
@@ -81,6 +84,33 @@ impl Desk {
     }
     fn window(&self, cards: &Cards, widget: Widget) -> Option<&SctkLayerSurfaceSettings> {
         self.open.get(&cards.widget_id(widget))
+    }
+    /// The open windows on one display.
+    fn on(&self, output: &WlOutput) -> Vec<&SctkLayerSurfaceSettings> {
+        self.open
+            .values()
+            .filter(|s| matches!(&s.output, IcedOutput::Output(o) if o == output))
+            .collect()
+    }
+    /// The open windows on one display by name, without the `halcyon-` prefix.
+    fn names_on(&self, output: &WlOutput) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .on(output)
+            .into_iter()
+            .map(|s| s.namespace.trim_start_matches("halcyon-").to_owned())
+            .collect();
+        names.sort();
+        names
+    }
+    /// The compositor sizes one of the other display's strips: 0 is the one
+    /// along the top (its usable width), 1 the one along the left (its usable
+    /// height).
+    fn resize_probe(&mut self, cards: &mut Cards, strip: usize, width: f32, height: f32) {
+        let id = cards.extra_probes[0].ids[strip];
+        self.send(
+            cards,
+            Message::SurfaceResized(id, cosmic::iced::Size::new(width, height)),
+        );
     }
 }
 
@@ -342,4 +372,315 @@ fn arranging_covers_the_display_and_the_strip_returns_afterwards() {
         "a pixel-tall strip keeps the height"
     );
     assert_eq!(desk.names(), ["arrange", "clock", "edge", "focus"]);
+}
+
+/// Clock and Focus on the first display (DP-1), Weather on a second (DP-2).
+fn weather_on_a_second_display() -> Config {
+    let mut config = clock_and_focus();
+    config.enabled_widgets = vec!["clock".into(), "weather".into()];
+    config.widget_display = Some("DP-1".into());
+    config.widget_monitors.insert(
+        "weather".into(),
+        WidgetMonitor {
+            display: Some("DP-2".into()),
+            hide_disconnected: false,
+        },
+    );
+    config.widget_positions.insert("weather".into(), [0.8, 0.3]);
+    config.widget_sizes.insert("weather".into(), [700., 500.]);
+    config
+}
+
+/// DP-2's usable area: 2560×1440 less a 32 px panel along the top, a 48 px
+/// dock along the bottom, a 64 px dock on the left and a 40 px one on the
+/// right, each with an exclusive zone.
+const DP2_USABLE: [f32; 2] = [2560. - 64. - 40., 1440. - 32. - 48.];
+
+/// `start`, then a 2560×1440 display joins. Every window moves to a fresh
+/// one, so DP-1 is measured again; DP-2 waits for its own strips.
+fn start_two() -> (Cards, Desk, Wire, WlOutput) {
+    let (mut cards, mut desk, wire) = start(weather_on_a_second_display());
+    let external = wire.output(2);
+    desk.send(
+        &mut cards,
+        Message::OutputChanged(
+            OutputEvent::Created(Some(info(Some("DP-2"), (2560, 1440)))),
+            external.clone(),
+        ),
+    );
+    assert_eq!(cards.extra_probes.len(), 1);
+    desk.resize(&mut cards, 5, 1920., 1.);
+    desk.resize(&mut cards, 3, 2., 1080.);
+    assert!(cards.output_known);
+    (cards, desk, wire, external)
+}
+
+/// The compositor sizes DP-2's strips inside what its panels leave free.
+fn measure_dp2(cards: &mut Cards, desk: &mut Desk, usable: [f32; 2]) {
+    desk.resize_probe(cards, 0, usable[0], 1.);
+    desk.resize_probe(cards, 1, 1., usable[1]);
+}
+
+/// A display that isn't drawn on is only measured: two invisible strips a
+/// pixel thick, one sized to its usable width and one to its usable height,
+/// that never take the pointer or the keyboard.
+fn assert_measured_by_strips(desk: &Desk, cards: &Cards, output: &WlOutput) {
+    let probe = cards
+        .extra_probes
+        .iter()
+        .find(|p| &p.output.handle == output)
+        .expect("the display has a probe");
+    let thin = Some(layout::PROBE_THICKNESS);
+    let strips = probe
+        .ids
+        .map(|id| desk.open.get(&id).expect("its strips are open"));
+    assert_eq!(strips[0].anchor, Anchor::TOP | Anchor::LEFT | Anchor::RIGHT);
+    assert_eq!(
+        strips[0].size,
+        Some((Some(0), thin)),
+        "as wide as the usable area"
+    );
+    assert_eq!(
+        strips[1].anchor,
+        Anchor::LEFT | Anchor::TOP | Anchor::BOTTOM
+    );
+    assert_eq!(
+        strips[1].size,
+        Some((thin, Some(0))),
+        "as tall as the usable area"
+    );
+    for strip in strips {
+        assert_eq!(strip.namespace, "halcyon-display-probe");
+        assert!(matches!(&strip.output, IcedOutput::Output(o) if o == output));
+        assert_eq!(strip.layer, Layer::Bottom);
+        assert_eq!(strip.keyboard_interactivity, KeyboardInteractivity::None);
+        assert_eq!(strip.input_zone, Some(Vec::new()));
+        // Placed inside what panels and docks leave free, never over them.
+        assert_eq!(strip.exclusive_zone, 0);
+    }
+    // Nothing on the display covers it: every window there is a strip or a
+    // widget.
+    for surface in desk.on(output) {
+        assert!(
+            surface.anchor != Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
+            "{} covers the display",
+            surface.namespace
+        );
+    }
+}
+
+#[test]
+fn a_second_display_is_measured_by_two_strips_that_place_its_widgets() {
+    if isolated(
+        "app::surface_lifecycle_tests::a_second_display_is_measured_by_two_strips_that_place_its_widgets",
+    ) {
+        return;
+    }
+    let (mut cards, mut desk, _wire, external) = start_two();
+    assert_measured_by_strips(&desk, &cards, &external);
+    // Weather would draw nothing until its display is measured: no window.
+    assert_eq!(desk.names_on(&external), ["display-probe", "display-probe"]);
+    assert!(!cards.widget_available(Widget::Weather));
+
+    desk.resize_probe(&mut cards, 0, DP2_USABLE[0], 1.);
+    assert!(
+        !cards.widget_available(Widget::Weather),
+        "the width alone isn't the display"
+    );
+    assert!(desk.window(&cards, Widget::Weather).is_none());
+    desk.resize_probe(&mut cards, 1, 1., DP2_USABLE[1]);
+    assert!(cards.widget_available(Widget::Weather));
+    assert_eq!(cards.widget_screen(Widget::Weather), DP2_USABLE);
+    assert_eq!(cards.widget_screen(Widget::Clock), [1920., 1080.]);
+    assert_eq!(cards.widget_size(Widget::Weather), [700., 500.]);
+
+    // Weather opens on DP-2 at its saved fraction of the usable area, as
+    // when a full-size window measured it.
+    let place = crate::layout::decode([0.8, 0.3], [700., 500.], DP2_USABLE);
+    assert_eq!(cards.placed_position(Widget::Weather), place);
+    let weather = desk
+        .window(&cards, Widget::Weather)
+        .expect("Weather opens once DP-2 is measured");
+    assert!(matches!(&weather.output, IcedOutput::Output(o) if *o == external));
+    let (inset, _) = cards.shadow_px();
+    assert_eq!(weather.margin.left, place[0].round() as i32 - inset);
+    assert_eq!(weather.margin.top, place[1].round() as i32 - inset);
+    assert_eq!(
+        desk.names_on(&external),
+        ["display-probe", "display-probe", "weather"]
+    );
+    assert_eq!(
+        desk.names(),
+        [
+            "arrange",
+            "clock",
+            "display-probe",
+            "display-probe",
+            "edge",
+            "focus",
+            "weather"
+        ]
+    );
+    assert_measured_by_strips(&desk, &cards, &external);
+
+    // The left dock closes: the compositor widens the top strip, and Weather
+    // moves into the room. The strips stay as they are.
+    let strips = cards.extra_probes[0].ids;
+    desk.destroyed.clear();
+    let wider = [DP2_USABLE[0] + 64., DP2_USABLE[1]];
+    desk.resize_probe(&mut cards, 0, wider[0], 1.);
+    assert_eq!(cards.widget_screen(Widget::Weather), wider);
+    let moved = crate::layout::decode([0.8, 0.3], [700., 500.], wider);
+    assert_eq!(cards.placed_position(Widget::Weather), moved);
+    assert!(strips.iter().all(|id| !desk.destroyed.contains(id)));
+    assert_eq!(cards.extra_probes[0].ids, strips);
+    // The bottom dock hides as well; a reconfigure of the same width changes
+    // nothing.
+    let taller = [wider[0], DP2_USABLE[1] + 48.];
+    desk.resize_probe(&mut cards, 1, 1., taller[1]);
+    assert_eq!(cards.widget_screen(Widget::Weather), taller);
+    desk.destroyed.clear();
+    desk.resize_probe(&mut cards, 0, taller[0], 1.);
+    assert!(desk.destroyed.is_empty(), "the same size rebuilds nothing");
+    // The saved place is a fraction and never changes with the panels.
+    assert_eq!(cards.config.widget_positions["weather"], [0.8, 0.3]);
+}
+
+#[test]
+fn arranging_a_second_display_covers_it_and_strips_measure_it_again_afterwards() {
+    if isolated(
+        "app::surface_lifecycle_tests::arranging_a_second_display_covers_it_and_strips_measure_it_again_afterwards",
+    ) {
+        return;
+    }
+    let (mut cards, mut desk, _wire, external) = start_two();
+    measure_dp2(&mut cards, &mut desk, DP2_USABLE);
+    let laptop = cards.selected_output.as_ref().unwrap().handle.clone();
+
+    desk.send(&mut cards, Message::ArrangeDisplay("DP-2".into()));
+    // DP-2 is now the display drawn on, measured by its own arrange and edge
+    // strips; DP-1, which keeps Clock and Focus, is measured by a probe.
+    assert_eq!(cards.selected_output.as_ref().unwrap().handle, external);
+    assert!(!cards.output_known);
+    desk.resize(&mut cards, 5, DP2_USABLE[0], 1.);
+    desk.resize(&mut cards, 3, 2., DP2_USABLE[1]);
+    assert!(cards.layout_editor.active);
+    let overlay = desk.open.get(&cards.ids[5]).expect("the arrange surface");
+    assert!(matches!(&overlay.output, IcedOutput::Output(o) if *o == external));
+    assert_eq!(
+        overlay.anchor,
+        Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT
+    );
+    assert_eq!(overlay.size, Some((Some(0), Some(0))), "covers DP-2");
+    assert_eq!(
+        overlay.keyboard_interactivity,
+        KeyboardInteractivity::Exclusive
+    );
+    assert!(
+        desk.on(&external)
+            .iter()
+            .all(|s| s.namespace != "halcyon-display-probe"),
+        "DP-2 has no probe while it is arranged"
+    );
+    desk.resize(&mut cards, 5, DP2_USABLE[0], DP2_USABLE[1]);
+    assert_eq!(cards.screen_size, DP2_USABLE);
+    assert_measured_by_strips(&desk, &cards, &laptop);
+    // Clock and Focus wait for DP-1's measurement, then open there.
+    assert_eq!(desk.names_on(&laptop), ["display-probe", "display-probe"]);
+    desk.resize_probe(&mut cards, 0, 1920., 1.);
+    desk.resize_probe(&mut cards, 1, 1., 1080.);
+    assert_eq!(cards.widget_screen(Widget::Clock), [1920., 1080.]);
+    assert_eq!(
+        desk.names_on(&laptop),
+        ["clock", "display-probe", "display-probe", "focus"]
+    );
+    assert_measured_by_strips(&desk, &cards, &laptop);
+
+    desk.send(&mut cards, Message::LayoutFinish(false));
+    assert_eq!(cards.selected_output.as_ref().unwrap().handle, laptop);
+    desk.resize(&mut cards, 5, 1920., 1.);
+    desk.resize(&mut cards, 3, 2., 1080.);
+    assert!(!cards.layout_editor.active);
+    assert_measured_by_strips(&desk, &cards, &external);
+    measure_dp2(&mut cards, &mut desk, DP2_USABLE);
+    assert_eq!(cards.widget_screen(Widget::Weather), DP2_USABLE);
+    assert_eq!(
+        desk.names_on(&external),
+        ["display-probe", "display-probe", "weather"]
+    );
+    assert_eq!(
+        desk.names_on(&laptop),
+        ["arrange", "clock", "edge", "focus"]
+    );
+    let strip = desk.open.get(&cards.ids[5]).unwrap();
+    assert_eq!(strip.size, Some((Some(0), Some(layout::PROBE_THICKNESS))));
+}
+
+#[test]
+fn unplugging_a_second_display_closes_its_strips_and_plugging_it_back_opens_new_ones() {
+    if isolated(
+        "app::surface_lifecycle_tests::unplugging_a_second_display_closes_its_strips_and_plugging_it_back_opens_new_ones",
+    ) {
+        return;
+    }
+    let (mut cards, mut desk, wire, external) = start_two();
+    measure_dp2(&mut cards, &mut desk, DP2_USABLE);
+    let place = cards.placed_position(Widget::Weather);
+    let strips = cards.extra_probes[0].ids;
+
+    desk.send(
+        &mut cards,
+        Message::OutputChanged(OutputEvent::Removed, external.clone()),
+    );
+    assert!(cards.extra_probes.is_empty());
+    for id in strips {
+        assert!(desk.destroyed.contains(&id) && !desk.open.contains_key(&id));
+    }
+    assert!(desk.on(&external).is_empty());
+    desk.resize(&mut cards, 5, 1920., 1.);
+    desk.resize(&mut cards, 3, 2., 1080.);
+    // Weather waits on DP-1 while DP-2 is away.
+    assert_eq!(
+        desk.names(),
+        ["arrange", "clock", "edge", "focus", "weather"]
+    );
+    assert_eq!(cards.widget_screen(Widget::Weather), [1920., 1080.]);
+
+    let replacement = wire.output(3);
+    desk.send(
+        &mut cards,
+        Message::OutputChanged(
+            OutputEvent::Created(Some(info(Some("DP-2"), (2560, 1440)))),
+            replacement.clone(),
+        ),
+    );
+    desk.resize(&mut cards, 5, 1920., 1.);
+    desk.resize(&mut cards, 3, 2., 1080.);
+    assert_eq!(cards.extra_probes.len(), 1);
+    let fresh = cards.extra_probes[0].ids;
+    assert!(fresh.iter().all(|id| !strips.contains(id)), "new strips");
+    assert_measured_by_strips(&desk, &cards, &replacement);
+    assert_eq!(
+        desk.names_on(&replacement),
+        ["display-probe", "display-probe"]
+    );
+    measure_dp2(&mut cards, &mut desk, DP2_USABLE);
+    assert_eq!(
+        desk.names_on(&replacement),
+        ["display-probe", "display-probe", "weather"]
+    );
+    assert_eq!(cards.widget_screen(Widget::Weather), DP2_USABLE);
+    assert_eq!(
+        cards.placed_position(Widget::Weather),
+        place,
+        "back in its place"
+    );
+    assert_eq!(
+        desk.names()
+            .iter()
+            .filter(|n| *n == "display-probe")
+            .count(),
+        2,
+        "the old strips are gone"
+    );
 }

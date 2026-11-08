@@ -628,7 +628,7 @@ impl Cards {
                         self.extra_probes
                             .iter()
                             .find(|p| p.output.handle == o.handle)
-                            .and_then(|p| p.size)
+                            .and_then(monitors::Probe::size)
                             .or_else(|| {
                                 o.info
                                     .logical_size

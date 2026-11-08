@@ -714,17 +714,22 @@ fn auditfix_measure_outputs(cards: &mut Cards) -> Vec<SctkLayerSurfaceSettings> 
         ));
         created.extend(emitted(cards, task).1);
     }
+    // Another display's probe is a strip along the top (its width) and one
+    // along the left (its height).
     let extra: Vec<_> = cards
         .extra_probes
         .iter()
-        .filter(|probe| probe.size.is_none())
-        .map(|probe| (probe.id, probe.output.info.logical_size.unwrap()))
+        .filter(|probe| probe.size().is_none())
+        .flat_map(|probe| {
+            let (width, height) = probe.output.info.logical_size.unwrap();
+            [
+                (probe.ids[0], cosmic::iced::Size::new(width as f32, 1.)),
+                (probe.ids[1], cosmic::iced::Size::new(1., height as f32)),
+            ]
+        })
         .collect();
-    for (id, (width, height)) in extra {
-        let task = cards.update(Message::SurfaceResized(
-            id,
-            cosmic::iced::Size::new(width as f32, height as f32),
-        ));
+    for (id, size) in extra {
+        let task = cards.update(Message::SurfaceResized(id, size));
         created.extend(emitted(cards, task).1);
     }
     created
