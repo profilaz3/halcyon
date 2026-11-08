@@ -14,7 +14,7 @@ compatible with distributing the combined program under the GPL version 3:
 | CDLA-Permissive-2.0 | `webpki-roots` (Mozilla's CA list) |
 | Apache-2.0 OR GPL-2.0-only | `self_cell` (used under Apache-2.0) |
 | MIT OR LGPL-3.0-or-later | `configparser` (used under MIT) |
-| No license field in the manifest | `libcosmic`, `cosmic-config`, `cosmic-config-derive`, `cosmic-theme`, `cosmic-settings-daemon`, `iced_accessibility`, `dnd`, `mime`, `apply` (System76 git dependencies; their repositories carry MPL-2.0 or MIT license files) |
+| No license field in the manifest | `libcosmic`, `cosmic-config`, `cosmic-config-derive`, `cosmic-theme`, `cosmic-settings-daemon`, `iced_accessibility`, `dnd`, `mime`, `apply` (System76 git dependencies; their repositories carry MPL-2.0 or MIT license files. The iced crates come from `profilaz3/iced`, a fork of System76's `pop-os/iced` with one fix, under the same MIT license) |
 
 Because two dependencies are GPL-3.0-only, binaries built from this
 repository are distributed under the GPL version 3.

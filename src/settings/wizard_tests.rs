@@ -390,6 +390,43 @@ fn rendering_probe() {
     }
 }
 
+/// The GPU renderer's image atlas starts as a placeholder and makes its real
+/// texture on the first upload. A small image and one that exactly fills an
+/// atlas layer (which adds no layer) must both draw on a fresh renderer.
+/// Needs a GPU adapter, like `rendering_probe`.
+#[test]
+#[ignore]
+fn gpu_images_draw_on_a_fresh_renderer() {
+    use cosmic::iced::widget::image as native_image;
+    for (side, rgb) in [(64, [220, 30, 40]), (2048, [30, 160, 60])] {
+        let pixels: Vec<u8> = std::iter::repeat_n([rgb[0], rgb[1], rgb[2], 255], side * side)
+            .flatten()
+            .collect();
+        let handle = native_image::Handle::from_rgba(side as u32, side as u32, pixels);
+        let mut native = Native::with_backend(Size::new(128., 128.), "wgpu");
+        assert_eq!(native.renderer_name(), "wgpu");
+        let theme = cosmic::Theme::dark();
+        let drawn = |p: &[u8; 4]| p[..3].iter().zip(rgb).all(|(&a, b)| a.abs_diff(b) <= 2);
+        let mut center = [0; 4];
+        // Large images can upload in the background; give them a few frames.
+        for _ in 0..50 {
+            let view: cosmic::Element<'_, Message> =
+                native_image(handle.clone()).width(128.).height(128.).into();
+            let frame = native.render(view, &theme);
+            let at = (64 * 128 + 64) * 4;
+            center.copy_from_slice(&frame[at..at + 4]);
+            if drawn(&center) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(
+            drawn(&center),
+            "{side}x{side} image drew {center:?}, expected {rgb:?}"
+        );
+    }
+}
+
 #[test]
 fn every_screen_fits_and_cancel_puts_the_desktop_back() {
     if child("every_screen_fits_and_cancel_puts_the_desktop_back") {
