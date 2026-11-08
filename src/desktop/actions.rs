@@ -207,15 +207,26 @@ fn action_label(patch: &DesktopPatch, owner: Owner, fallback: &str) -> String {
             "Panel"
         };
         let name = match key.key() {
-            "opacity" => "opacity",
-            "anchor" => "position",
-            "size" => "size",
-            "padding" => "padding",
-            "spacing" => "spacing",
-            "border_radius" => "corners",
-            _ => return fallback.into(),
+            "opacity" => Some("opacity"),
+            "anchor" => Some("position"),
+            "size" => Some("size"),
+            "padding" => Some("padding"),
+            "spacing" => Some("spacing"),
+            "border_radius" => Some("corners"),
+            // Other keys (Floating, Shape, …) take the control's name below.
+            _ => None,
         };
-        return format!("{bar} {name}");
+        if let Some(name) = name {
+            return format!("{bar} {name}");
+        }
+    }
+    // One control can write several keys (Floating sets the edge gap too);
+    // the control that was used names it.
+    if owner == Owner::DockPanel
+        && let Some(label) =
+            current_label().filter(|label| !matches!(label.as_str(), "Settings" | "Dock and panel"))
+    {
+        return label;
     }
     if owner == Owner::Appearance {
         if let Some(label) = current_label().filter(|label| label != "Settings") {

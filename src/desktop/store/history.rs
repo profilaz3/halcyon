@@ -832,7 +832,7 @@ mod tests {
                     &native,
                     Some(&patch),
                     Owner::Profile,
-                    "Scheduled setup",
+                    "Scheduled look",
                     Source::Scheduled
                 )
                 .is_err()

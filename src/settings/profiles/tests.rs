@@ -2877,5 +2877,5 @@ fn fb13_share_detects_external_library_change_with_the_same_selection() {
         Outcome::None
     );
     assert!(!editor.busy());
-    assert!(matches!(&editor.notice,Some(Notice::Error(text)) if text.contains("setup changed")));
+    assert!(matches!(&editor.notice,Some(Notice::Error(text)) if text.contains("look changed")));
 }

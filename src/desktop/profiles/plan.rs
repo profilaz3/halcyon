@@ -217,6 +217,9 @@ fn palette_title(name: &str) -> &'static str {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProfilePlan {
     appearance_only: bool,
+    /// An appearance-only change named for its style ("Paper"), not a
+    /// capture of the current colors.
+    style_named: bool,
     pub name: String,
     /// Selected domains in `Domain::ALL` order.
     pub domains: Vec<DomainPlan>,
@@ -615,7 +618,7 @@ impl ProfilePlan {
     ) -> Result<(), String> {
         self.widget
             .merge(extra)
-            .map_err(|keys| format!("Overlapping setup choices: {}", keys.join(", ")))
+            .map_err(|keys| format!("Overlapping look choices: {}", keys.join(", ")))
     }
     /// Whether two plans would write exactly the same values over the same
     /// starting values. Notes and warnings may still differ.
@@ -662,9 +665,17 @@ impl ProfilePlan {
     pub fn background(&self) -> Option<&BgEntry> {
         self.background.as_ref()
     }
-    /// The Undo label this change is recorded with.
+    /// The Undo label this change is recorded with. A look and a style both
+    /// apply as `Owner::Profile`, so the label says which it was (see
+    /// `activity::Applied`): appearance-only changes are made on Appearance.
     pub fn label(&self) -> String {
-        let label = format!("Profile “{}”", self.name);
+        let label = if !self.appearance_only {
+            format!("Profile “{}”", self.name)
+        } else if self.style_named {
+            format!("Style “{}”", self.name)
+        } else {
+            "Style changes".into()
+        };
         label.chars().take(120).collect()
     }
 }
@@ -692,6 +703,7 @@ pub fn plan(
     let selected = &selected;
     let mut result = ProfilePlan {
         appearance_only: profile.appearance_only,
+        style_named: super::themes::family(profile).is_some_and(|f| f.title() == profile.name),
         name: profile.name.clone(),
         domains: Vec::new(),
         blocking: Vec::new(),

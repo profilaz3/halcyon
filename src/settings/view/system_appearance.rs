@@ -809,7 +809,7 @@ impl Settings {
         }
         let variant = editor.variant;
         let mut items: Vec<Element<'_, Message>> =
-            vec![toggle.into(), label("FROSTED", 10., MUTED)];
+            vec![toggle.into(), label("Frosted", 12., MUTED)];
         for surface in Surface::ALL {
             items.push(match draft.frosted(variant, surface) {
                 // COSMIC panel 1.10 aborts when its frosted surface is

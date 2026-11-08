@@ -68,7 +68,7 @@ impl ProfilesEditor {
         if fresh != self.share_source || !same_name {
             self.cancel_share();
             self.notice = Some(Notice::Error(
-                "The setup changed. Save its preview again.".into(),
+                "The look changed. Save its preview again.".into(),
             ));
             return Outcome::None;
         }

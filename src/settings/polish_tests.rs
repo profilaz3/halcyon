@@ -307,9 +307,14 @@ fn polish050_prior_page_undo_does_not_label_calendar_but_remains_available() {
     send_settings(&mut app, Message::ClockFormat(!before));
     assert!(app.page_undo_button().is_some());
     send_settings(&mut app, Message::Page(Page::Calendar));
-    // The bar names the real target everywhere, so Ctrl+Z never surprises.
-    assert!(app.page_undo_button().is_some());
-    send_settings(&mut app, Message::UndoDesktop);
+    // Calendar didn't make it, so its footer has no Undo for it; Ctrl+Z
+    // still reaches it from here.
+    assert!(app.page_undo_button().is_none());
+    assert!(matches!(
+        app.undo_target(),
+        crate::settings::navigation::UndoTarget::Desktop(..)
+    ));
+    send_settings(&mut app, Message::KeyboardUndo(false));
     assert_eq!(app.config.clock.format_24h, before);
 }
 
@@ -518,7 +523,7 @@ fn polish050_history_exposes_only_exact_eligible_undo_without_expansion() {
         send_settings(&mut app, Message::Resized(size));
         let mut native = crate::native_test::Native::new(size);
         native_reveal(&app, &mut native, "history-review-undo");
-        native.text_bounds(app.settings_view(), "Bar spacing: 5 → 9 px");
+        native.text_bounds(app.settings_view(), "Between items: 5 → 9 px");
         native.capture(
             app.settings_view(),
             &cosmic::Theme::dark(),
@@ -946,15 +951,17 @@ fn rail_entries_keep_one_line_labels() {
         assert!(found[0].width <= 80., "{text} is too wide: {:?}", found[0]);
     }
     assert!(lines(&mut native, "Dock and panel").is_empty());
-    // The count sits on the label's line, inside the entry.
-    let count = lines(&mut native, "1");
-    assert_eq!(count.len(), 1, "one count beside Changes");
-    assert!((count[0].center_y() - label.center_y()).abs() <= 2., "{count:?} {label:?}");
-    assert!(count[0].x > label.x + label.width);
-    assert!(count[0].x + count[0].width <= changes.x + changes.width);
     for (theme, mode) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
         native.capture(app.settings_view(), &theme, &format!("rail-820-{mode}"));
     }
+    // The count is a badge beside the icon, above the one-line label, so
+    // it never reads as part of the name.
+    assert!(label.width <= 80., "Changes is too wide: {label:?}");
+    let count = lines(&mut native, "1");
+    assert_eq!(count.len(), 1, "one count on Changes");
+    assert!(count[0].y + count[0].height <= label.y, "{count:?} {label:?}");
+    assert!(count[0].center_x() > changes.center_x(), "beside the icon: {count:?} {changes:?}");
+    assert!(count[0].x + count[0].width <= changes.x + changes.width);
     // The wide sidebar keeps the full name.
     send_settings(&mut app, Message::Resized(Size::new(1280., 800.)));
     let mut native = crate::native_test::Native::new(Size::new(1280., 800.));
@@ -1036,4 +1043,173 @@ fn narrow_pages_fit_the_window() {
             native.scroll(app.settings_view(), "settings-content", 0.);
         }
     }
+}
+
+#[test]
+fn footer_undo_stays_on_the_page_that_made_the_change() {
+    let name = "footer_undo_stays_on_the_page_that_made_the_change";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::desktop::panels::PanelKind;
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    let size = Size::new(1280., 800.);
+    send_settings(&mut app, Message::Resized(size));
+    let mut native = crate::native_test::Native::new(size);
+    let capture = |app: &Settings, native: &mut crate::native_test::Native, name: &str| {
+        for (theme, mode) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
+            native.capture(app.settings_view(), &theme, &format!("{name}-{mode}"));
+        }
+    };
+    // A dock setting changed on its own page.
+    send_settings(&mut app, Message::Page(Page::DesktopDock));
+    send_settings(
+        &mut app,
+        Message::DesktopEditor(desktop::Message::Select(PanelKind::Dock)),
+    );
+    let spacing = app.desktop.current().unwrap().spacing().known().copied().unwrap_or(0);
+    send_settings(
+        &mut app,
+        Message::DesktopEditor(desktop::Message::Spacing(spacing + 4)),
+    );
+    send_settings(&mut app, Message::DesktopEditor(desktop::Message::Apply));
+    assert!(!app.error, "{}", app.status);
+    capture(&app, &mut native, "footer-owning-page");
+    // The footer uses the Changes page's own words for it.
+    let title = app.last_desktop_summary.as_ref().unwrap().title();
+    // An unset spacing reads as Default, as on the Changes page.
+    assert!(
+        title.starts_with("Between items: ") && title.ends_with(&format!("→ {} px", spacing + 4)),
+        "{title}"
+    );
+    native.text_bounds(app.settings_view(), &format!("Undo {title}"));
+    native.text_bounds(app.settings_view(), &format!("Saved · {title}"));
+
+    // Another page has no footer Undo for it.
+    send_settings(&mut app, Message::Page(Page::Overview));
+    capture(&app, &mut native, "footer-other-page");
+    assert!(native.try_bounds(app.settings_view(), "settings-undo").is_none());
+    assert!(native.text_all(app.settings_view(), &format!("Undo {title}")).is_empty());
+    // Its own page offers it again, though it was made on an earlier visit.
+    send_settings(&mut app, Message::Page(Page::DesktopDock));
+    native.text_bounds(app.settings_view(), &format!("Undo {title}"));
+    // Ctrl+Z still undoes it from anywhere.
+    send_settings(&mut app, Message::Page(Page::Overview));
+    let id = app.last_desktop_change.as_ref().unwrap().2.clone();
+    send_settings(&mut app, Message::KeyboardUndo(false));
+    assert!(!app.error, "{}", app.status);
+    assert_ne!(app.last_desktop_change.as_ref().map(|c| &c.2), Some(&id));
+
+    // A switch that writes two keys is named for the switch.
+    send_settings(&mut app, Message::Page(Page::DesktopDock));
+    let floating = app.desktop.current().unwrap().floating().known().copied().unwrap_or(false);
+    send_settings(
+        &mut app,
+        Message::DesktopEditor(desktop::Message::Floating(!floating)),
+    );
+    assert!(!app.error, "{}", app.status);
+    capture(&app, &mut native, "footer-floating");
+    assert_eq!(
+        app.last_desktop_change.as_ref().map(|c| c.1.as_str()),
+        Some("Floating"),
+        "{:?}",
+        app.last_desktop_summary.as_ref().map(|s| s.title())
+    );
+    native.text_bounds(app.settings_view(), "Undo Floating");
+    native.text_bounds(app.settings_view(), "Saved · Floating");
+
+    // A style chosen on Appearance is a style, not a look.
+    send_settings(&mut app, Message::Page(Page::Themes));
+    let _ = app
+        .profiles
+        .update(profiles::Message::Select(profiles::Selection::Preset(
+            "theme-paper",
+        )));
+    for job in app.profiles.take_theme_jobs() {
+        send_settings(&mut app, Message::Profiles(job.run()));
+    }
+    send_settings(&mut app, Message::Profiles(profiles::Message::Apply));
+    assert!(!app.error, "{}", app.status);
+    capture(&app, &mut native, "footer-style");
+    native.text_bounds(app.settings_view(), "Undo style “Paper”");
+    native.text_bounds(app.settings_view(), "Saved · Style “Paper”");
+    assert!(native.text_all(app.settings_view(), "Undo look “Paper”").is_empty());
+    let summary = app.last_desktop_summary.clone().unwrap();
+    assert!(summary.title().starts_with("Applied a style"), "{}", summary.title());
+    assert_eq!(support::change_page(&summary), Page::Themes);
+    // Looks didn't make it, so it has no footer Undo for it.
+    send_settings(&mut app, Message::Page(Page::DesktopProfiles));
+    assert!(native.try_bounds(app.settings_view(), "settings-undo").is_none());
+}
+
+#[test]
+fn dock_headings_corners_note_and_panel_regions_read_plainly() {
+    let name = "dock_headings_corners_note_and_panel_regions_read_plainly";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::desktop::panels::{PanelKind, Region};
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    let size = Size::new(1280., 800.);
+    send_settings(&mut app, Message::Resized(size));
+    let mut native = crate::native_test::Native::new(size);
+    let capture = |app: &Settings, native: &mut crate::native_test::Native, name: &str| {
+        for (theme, mode) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
+            native.capture(app.settings_view(), &theme, &format!("{name}-{mode}"));
+        }
+    };
+    send_settings(&mut app, Message::Page(Page::DesktopDock));
+    send_settings(
+        &mut app,
+        Message::DesktopEditor(desktop::Message::Select(PanelKind::Dock)),
+    );
+    send_settings(&mut app, Message::DesktopEditor(desktop::Message::Advanced(true)));
+    native_reveal(&app, &mut native, "dock-advanced");
+    capture(&app, &mut native, "dock-advanced");
+    // Sentence case, like every other heading.
+    native.text_bounds(app.settings_view(), "Hide timing");
+    native.text_bounds(app.settings_view(), "Spacing");
+    assert!(native.text_all(app.settings_view(), "SPACING").is_empty());
+    // The corners note sits behind its "?"; open it.
+    send_settings(&mut app, Message::Explain(view::explain::key("Corners")));
+    native_reveal(&app, &mut native, "dock-style-bars");
+    capture(&app, &mut native, "dock-tab-style");
+    native.text_bounds(app.settings_view(), "Only the dock. Window corners are in Windows");
+
+    // The panel's corners note speaks of the panel.
+    send_settings(
+        &mut app,
+        Message::DesktopEditor(desktop::Message::Select(PanelKind::Panel)),
+    );
+    native_reveal(&app, &mut native, "dock-style-bars");
+    capture(&app, &mut native, "panel-tab-style");
+    native.text_bounds(app.settings_view(), "Only the panel. Window corners are in Windows");
+    assert!(
+        native
+            .text_all(app.settings_view(), "Only the dock. Window corners are in Windows")
+            .is_empty()
+    );
+    native_reveal(&app, &mut native, "panel-add-applets");
+    capture(&app, &mut native, "panel-tab-contents");
+    // A bar's middle region has one name, across or down the screen.
+    assert_eq!(Region::Center.title(true), "Middle");
+    assert_eq!(Region::Center.title(false), "Middle");
 }

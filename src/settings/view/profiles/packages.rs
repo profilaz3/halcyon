@@ -7,16 +7,16 @@ impl Settings {
     pub(super) fn package_page<'a>(&'a self, draft: &'a Draft) -> Element<'a, Message> {
         let available = !self.native_busy && !self.profiles.busy();
         let mut items = vec![
-            button::text("Back to setup")
+            button::text("Back to look")
                 .on_press_maybe(available.then_some(message(PackageEdit::Close)))
                 .into(),
             column::with_children(vec![
-                label("Export setup package", 24., FG),
+                label("Export look package", 24., FG),
                 label(&draft.profile.name, 14., MUTED),
             ])
             .spacing(4)
             .into(),
-            label("Recipients review the setup before applying.", 14., MUTED),
+            label("Recipients review the look before applying.", 14., MUTED),
         ];
         if draft.has_picture() {
             items.push(
@@ -34,7 +34,7 @@ impl Settings {
                 MUTED,
             ));
         } else {
-            items.push(label("Built-in wallpapers and colors travel with the setup. Personal slideshows are left out.",12.,MUTED));
+            items.push(label("Built-in wallpapers and colors travel with the look. Personal slideshows are left out.",12.,MUTED));
         }
         items.push(section(vec![
             label("Credits", 16., FG),

@@ -481,8 +481,8 @@ impl Region {
         match (self, horizontal) {
             (Self::Start, true) => "Left",
             (Self::Start, false) => "Top",
-            (Self::Center, true) => "Center",
-            (Self::Center, false) => "Middle",
+            // The same word on every bar, across or down the screen.
+            (Self::Center, _) => "Middle",
             (Self::End, true) => "Right",
             (Self::End, false) => "Bottom",
         }

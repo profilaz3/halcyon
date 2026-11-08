@@ -613,7 +613,7 @@ impl Proposal {
             Kind::Preset => {
                 if !use_proposed {
                     return Err(
-                        "Review the included categories before using this saved theme or setup."
+                        "Review the included categories before using this saved theme or look."
                             .into(),
                     );
                 }

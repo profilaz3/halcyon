@@ -916,7 +916,7 @@ impl Settings {
         let mut appearance = Vec::new();
         if family.is_some() {
             appearance.push(split(
-                detail("Follow the look's style", "Background and fonts come from the look"),
+                detail("Follow the look’s style", "Background and fonts come from the look"),
                 container(toggler(follows).on_toggle(Message::GlanceFollowStyle))
                     .id(cosmic::widget::Id::new("glance-follow-style"))
                     .into(),
@@ -1248,7 +1248,7 @@ impl Settings {
         if self.clock_moment_target().is_none() {
             face_rows.push(split(
                 detail(
-                    "Follow the look's style",
+                    "Follow the look’s style",
                     "Font, weight, letter style, type and background come from the look",
                 ),
                 container(toggler(follows).on_toggle(Message::ClockFollowStyle))

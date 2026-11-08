@@ -213,10 +213,10 @@ impl Package {
     }
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
         if bytes.len() > MAX_BYTES {
-            return Err("This setup package is too large".into());
+            return Err("This look package is too large".into());
         }
         let package: Self =
-            serde_json::from_slice(bytes).map_err(|e| format!("Invalid setup package: {e}"))?;
+            serde_json::from_slice(bytes).map_err(|e| format!("Invalid look package: {e}"))?;
         package.validate()?;
         Ok(package)
     }
@@ -225,7 +225,7 @@ impl Package {
             || ![1, 2].contains(&self.version)
             || (self.version == 1 && !self.origin.ancestors.is_empty())
         {
-            return Err("This setup package needs a supported Halcyon version".into());
+            return Err("This look package needs a supported Halcyon version".into());
         }
         self.origin.validate()?;
         if self.origin.picture.as_ref() != self.wallpaper.as_ref().map(|p| &p.sha256) {
@@ -259,7 +259,7 @@ impl Package {
             assets::check_png(&bytes)?;
         }
         if self.fingerprint()? != self.origin.identity.revision {
-            return Err("The setup package revision does not match its contents".into());
+            return Err("The look package revision does not match its contents".into());
         }
         Ok(())
     }
@@ -267,7 +267,7 @@ impl Package {
         self.validate()?;
         let bytes = serde_json::to_vec(self).map_err(|e| e.to_string())?;
         if bytes.len() > MAX_BYTES {
-            return Err("This setup package is too large".into());
+            return Err("This look package is too large".into());
         }
         Ok(bytes)
     }
@@ -290,7 +290,7 @@ impl Package {
             {
                 Some(SourceLook::Image(path)) => path,
                 _ => return Err(
-                    "Choose a saved setup with a single personal wallpaper to include its picture"
+                    "Choose a saved look with a single personal wallpaper to include its picture"
                         .into(),
                 ),
             };

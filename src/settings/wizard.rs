@@ -1356,7 +1356,7 @@ impl Wizard {
     pub fn summary_lines(&self, config: &crate::config::Config) -> Vec<String> {
         let mut lines = Vec::new();
         if let Some(preset) = self.look.and_then(profiles::preset) {
-            lines.push(format!("Setup: {}", preset.profile.name));
+            lines.push(format!("Look: {}", preset.profile.name));
         }
         if self.touched.any() {
             lines.push(format!(
@@ -1394,7 +1394,7 @@ impl Wizard {
         while let Some(change) = self.changes.last() {
             if let Err(error) = store.undo_change(change) {
                 self.error = Some(format!(
-                    "{error} Some of setup's changes stay; undo them from Setups or the Dock and panel page."
+                    "{error} Some of setup's changes stay; undo them from Changes or the Dock and panel page."
                 ));
                 break;
             }

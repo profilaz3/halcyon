@@ -289,7 +289,7 @@ impl Editor {
                 self.draft.id = model::new_id()?;
                 self.draft.seal();
                 self.notice =
-                    Some("Library copy deleted · applied and saved setups are kept".into());
+                    Some("Library copy deleted · applied and saved looks are kept".into());
             }
             Message::Reload => {
                 self.load_library();

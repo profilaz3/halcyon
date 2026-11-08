@@ -171,10 +171,7 @@ impl Settings {
                 || (dragging && editor.drag.target == Some(start) && !list.is_empty());
             let header = container(split(
                 label(
-                    match (region, horizontal) {
-                        (Region::Center, true) => "Middle",
-                        _ => region.title(horizontal),
-                    },
+                    region.title(horizontal),
                     13.,
                     if header_target { accent } else { FG },
                 ),

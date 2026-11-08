@@ -413,7 +413,15 @@ impl Settings {
         });
         style.extend(toggle_items);
         style.push(split(
-            detail("Corners", "Only the dock. Window corners are in Windows"),
+            // Each bar has its own corners; this tab sets only this bar's.
+            detail(
+                "Corners",
+                if draft.kind() == PanelKind::Panel {
+                    "Only the panel. Window corners are in Windows"
+                } else {
+                    "Only the dock. Window corners are in Windows"
+                },
+            ),
             choice(
                 // The same words as Appearance; a size set elsewhere shows
                 // as the nearest of them.
@@ -439,7 +447,7 @@ impl Settings {
         // Whether looks and styles color the bars; Background sets them here.
         style.push(split(
             detail(
-                "Follow the look's style",
+                "Follow the look’s style",
                 "Applying a look or style also colors the dock and panel. Off keeps what you set here",
             ),
             container(
@@ -519,15 +527,16 @@ impl Settings {
         let hides = draft.autohide().known().copied();
         match draft.behavior() {
             Setting::Known(behavior) => {
-                items.push(label(
-                    if hides == Some(AutoHide::Never) {
-                        "HIDE TIMING · used when hiding is on"
-                    } else {
-                        "HIDE TIMING"
-                    },
-                    10.,
-                    MUTED,
-                ));
+                let mut heading = vec![label("Hide timing", 13., FG)];
+                if hides == Some(AutoHide::Never) {
+                    heading.push(label("Used when hiding is on", 12., MUTED));
+                }
+                items.push(
+                    row::with_children(heading)
+                        .spacing(8)
+                        .align_y(Alignment::Center)
+                        .into(),
+                );
                 for pair in Timing::ALL.chunks(2) {
                     let sliders: Vec<Element<'_, Message>> = pair
                         .iter()
@@ -554,7 +563,7 @@ impl Settings {
             }
         }
         items.push(separator());
-        items.push(label("SPACING", 10., MUTED));
+        items.push(label("Spacing", 13., FG));
         let number = |setting: Setting<u32>,
                       title: &'static str,
                       max: u32,

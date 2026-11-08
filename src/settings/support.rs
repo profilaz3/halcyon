@@ -152,20 +152,78 @@ pub(in crate::settings) fn change_page(entry: &crate::desktop::store::activity::
     match entry.cause {
         Cause::Schedule | Cause::DisplayRule => Page::DesktopAutomation,
         Cause::WallpaperColors => Page::Themes,
-        Cause::You => match Owner::parse(&entry.owner) {
-            Some(Owner::DockPanel) => Page::DesktopDock,
-            Some(Owner::Profile) => Page::DesktopProfiles,
-            Some(Owner::Wallpaper) => Page::DesktopWallpaper,
-            Some(Owner::Appearance) => Page::Themes,
-            Some(Owner::Windows) => Page::DesktopWindows,
-            Some(Owner::Workspaces) => Page::DesktopWorkspaces,
-            Some(Owner::WindowRules) => Page::DesktopWindowRules,
-            Some(Owner::Shortcuts) => Page::DesktopShortcuts,
-            Some(Owner::DesktopIcons) => Page::DesktopIcons,
-            Some(Owner::Preferences) => widget_page(entry.widgets.first().map(String::as_str)),
-            Some(Owner::Recovery) | None => Page::Changes,
-        },
+        Cause::You => owner_page(
+            Owner::parse(&entry.owner),
+            entry.applied,
+            entry.widgets.first().map(String::as_str),
+        ),
     }
+}
+/// The page that makes a change of yours, by who recorded it.
+pub(in crate::settings) fn owner_page(
+    owner: Option<crate::desktop::Owner>,
+    applied: Option<crate::desktop::store::activity::Applied>,
+    widgets: Option<&str>,
+) -> Page {
+    use crate::desktop::Owner;
+    use crate::desktop::store::activity::Applied;
+    match owner {
+        Some(Owner::DockPanel) => Page::DesktopDock,
+        // Styles and their colors are chosen on Appearance.
+        Some(Owner::Profile) if applied == Some(Applied::Style) => Page::Themes,
+        Some(Owner::Profile) => Page::DesktopProfiles,
+        Some(Owner::Wallpaper) => Page::DesktopWallpaper,
+        Some(Owner::Appearance) => Page::Themes,
+        Some(Owner::Windows) => Page::DesktopWindows,
+        Some(Owner::Workspaces) => Page::DesktopWorkspaces,
+        Some(Owner::WindowRules) => Page::DesktopWindowRules,
+        Some(Owner::Shortcuts) => Page::DesktopShortcuts,
+        Some(Owner::DesktopIcons) => Page::DesktopIcons,
+        Some(Owner::Preferences) => widget_page(widgets),
+        Some(Owner::Recovery) | None => Page::Changes,
+    }
+}
+/// What a recorded change is called beside its Undo, in the middle of a
+/// sentence: the Changes page's own words when they name one setting or
+/// widget, a look or style by its name, else the record's label.
+pub(in crate::settings) fn change_name(
+    summary: Option<&crate::desktop::store::activity::Summary>,
+    label: &str,
+) -> String {
+    use crate::desktop::store::activity::Summary;
+    let quoted = |prefix: &str| {
+        label
+            .strip_prefix(prefix)
+            .and_then(|name| name.strip_suffix('”'))
+    };
+    if let Some(name) = quoted("Profile “") {
+        return format!("look “{name}”");
+    }
+    if let Some(name) = quoted("Style “") {
+        return format!("style “{name}”");
+    }
+    if label == "Style changes" {
+        return "style changes".into();
+    }
+    if let Some(name) = summary.and_then(|s| s.value_line().or_else(|| s.widget_names())) {
+        return name;
+    }
+    // Labels that only name a page; Changes says which part changed.
+    if !matches!(label, "Dock & Panel" | "Dock and panel" | "Appearance" | "Settings") {
+        return label.into();
+    }
+    summary
+        .map(Summary::title)
+        .and_then(|title| title.strip_prefix("Changed ").map(|area| format!("{area} change")))
+        .unwrap_or_else(|| format!("{label} change"))
+}
+/// `change_name` at the start of a line.
+pub(in crate::settings) fn capitalized(name: &str) -> String {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
 }
 /// The page that owns a widget setting group.
 fn widget_page(group: Option<&str>) -> Page {

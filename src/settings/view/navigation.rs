@@ -376,10 +376,12 @@ impl Settings {
     pub(super) fn simple_status(&self) -> Element<'_, Message> {
         if let Some(review) = &self.undo_review {
             let verb = if review.puts_back() { "Put back" } else { "Undo" };
+            // Names keep their case: "Undo look “Paper”", not "paper".
+            let summary = self.latest_summary().filter(|s| s.id == review.id());
             let mut lines = vec![label(
                 &format!(
                     "{verb} {} · some values changed since",
-                    review.label.to_lowercase()
+                    crate::settings::support::change_name(summary, &review.label)
                 ),
                 13.,
                 desktop::ERROR,
@@ -458,10 +460,9 @@ impl Settings {
             );
         } else {
             let fresh = self
-                .last_desktop_change
-                .as_ref()
-                .filter(|(_, _, id)| self.undo_baseline.as_ref() != Some(id))
-                .map(|(_, title, _)| format!("Saved · {title}"));
+                .latest_change_name()
+                .filter(|_| self.latest_change_fresh())
+                .map(|name| format!("Saved · {}", crate::settings::support::capitalized(&name)));
             if let Some(status) = fresh {
                 empty = false;
                 // The latest save opens the full list of changes.
@@ -499,18 +500,59 @@ impl Settings {
         .into()
     }
 
-    /// The same target Ctrl+Z uses; local scopes draw their own Undo.
+    /// The latest change's summary, when it is the change Undo targets.
+    fn latest_summary(&self) -> Option<&crate::desktop::store::activity::Summary> {
+        let (_, _, id) = self.last_desktop_change.as_ref()?;
+        self.last_desktop_summary.as_ref().filter(|s| s.id == *id)
+    }
+    /// The latest change as the footer names it (see `support::change_name`).
+    fn latest_change_name(&self) -> Option<String> {
+        let (_, label, _) = self.last_desktop_change.as_ref()?;
+        Some(crate::settings::support::change_name(self.latest_summary(), label))
+    }
+    /// Made since this page opened (page changes reset the baseline).
+    fn latest_change_fresh(&self) -> bool {
+        self.last_desktop_change
+            .as_ref()
+            .is_some_and(|(_, _, id)| self.undo_baseline.as_ref() != Some(id))
+    }
+    /// Whether this page made the latest change: made here since it opened,
+    /// or recorded for this page. Elsewhere Ctrl+Z and Changes undo it.
+    pub(in crate::settings) fn owns_latest_change(&self) -> bool {
+        let Some((owner, label, _)) = &self.last_desktop_change else {
+            return false;
+        };
+        if self.latest_change_fresh() {
+            return true;
+        }
+        let page = match self.latest_summary() {
+            Some(summary) => crate::settings::support::change_page(summary),
+            None => crate::settings::support::owner_page(
+                Some(*owner),
+                crate::desktop::store::activity::Applied::of_label(label),
+                None,
+            ),
+        };
+        // Widget pages share the Widgets root but are pages of their own.
+        if page.sidebar() == Page::Overview {
+            page.canonical() == self.page.canonical()
+        } else {
+            page.sidebar() == self.page.sidebar()
+        }
+    }
+
+    /// The same target Ctrl+Z uses, on the page that owns it; local scopes
+    /// draw their own Undo.
     pub(in crate::settings) fn page_undo_button(&self) -> Option<Element<'_, Message>> {
-        let crate::settings::navigation::UndoTarget::Desktop(id, title) = self.undo_target() else {
+        let crate::settings::navigation::UndoTarget::Desktop(id, _) = self.undo_target() else {
             return None;
         };
-        let title = title
-            .strip_prefix("Profile “")
-            .and_then(|name| name.strip_suffix('”'))
-            .map(|name| format!("look “{name}”"))
-            .unwrap_or(title);
+        if !self.owns_latest_change() {
+            return None;
+        }
+        let name = self.latest_change_name()?;
         Some(
-            button::text(format!("Undo {title}"))
+            button::text(format!("Undo {name}"))
                 .id(cosmic::widget::Id::new("settings-undo"))
                 .leading_icon(icon::from_name("edit-undo-symbolic").size(14))
                 .on_press(Message::UndoDesktopShown(Some(id)))
