@@ -1,3 +1,30 @@
+## Video memory per window — 2026-11-08
+
+Halcyon draws each desktop widget in its own layer-shell window, and each
+window gets its own iced renderer. Each renderer's image atlas
+created its full 2048×2048 RGBA texture (16 MiB) as soon as it existed, even for
+windows that never draw an image. On integrated GPUs with a 512 MiB carve-out
+this filled most of the dedicated video memory and pushed the rest into GTT.
+
+The fix, in Halcyon's iced patch (`profilaz3/iced`, branch `lazy-image-atlas`,
+offered upstream to `pop-os/iced`), starts each atlas as a 1×1 placeholder and
+creates the full texture on its first image upload. Nothing else changes.
+
+Measured on a Ryzen 7 5700G (Radeon Vega, Cezanne), both builds with the same user
+configuration and 12 layer-shell windows open, read from
+`/proc/<pid>/fdinfo` 40 s after start.
+
+| amdgpu counter | Before | After |
+|---|---|---|
+| `drm-total-vram` | 382,340 KiB (373 MiB) | 87,436 KiB (85 MiB) |
+| `drm-resident-vram` | 185,732 KiB | 87,436 KiB |
+| `drm-resident-gtt` | 207,064 KiB | 10,440 KiB |
+
+Windows that do draw images (wallpapers, album art) still allocate their atlas on
+first use, so their cost is unchanged.
+
+---
+
 ## Large Settings scenes — 2026-10-25
 
 The visual comfort pass uses a separate 1280×720 bound for full-width wallpaper

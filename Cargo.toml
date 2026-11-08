@@ -65,6 +65,27 @@ rrule = "=0.14.0"
 # provenance and scope in vendor/rrule/HALCYON-PATCH.md.
 rrule = { path = "vendor/rrule" }
 
+[patch."https://github.com/pop-os/libcosmic"]
+# libcosmic builds iced from its own submodule. This swaps in the same iced
+# commit plus one fix: the wgpu image atlas no longer reserves a 16 MiB
+# texture for every window up front, only once a window draws an image.
+# Every iced crate must come from the same source, or Cargo builds two
+# copies with mismatched types. Remove this once libcosmic picks up the fix
+# (pop-os/iced lazy-image-atlas).
+iced = { git = "https://github.com/profilaz3/iced", rev = "22c073b9e305d1d4738fd21547763cfcdf852b74" }
+iced_accessibility = { git = "https://github.com/profilaz3/iced", rev = "22c073b9e305d1d4738fd21547763cfcdf852b74" }
+iced_core = { git = "https://github.com/profilaz3/iced", rev = "22c073b9e305d1d4738fd21547763cfcdf852b74" }
+iced_debug = { git = "https://github.com/profilaz3/iced", rev = "22c073b9e305d1d4738fd21547763cfcdf852b74" }
+iced_futures = { git = "https://github.com/profilaz3/iced", rev = "22c073b9e305d1d4738fd21547763cfcdf852b74" }
+iced_graphics = { git = "https://github.com/profilaz3/iced", rev = "22c073b9e305d1d4738fd21547763cfcdf852b74" }
+iced_program = { git = "https://github.com/profilaz3/iced", rev = "22c073b9e305d1d4738fd21547763cfcdf852b74" }
+iced_renderer = { git = "https://github.com/profilaz3/iced", rev = "22c073b9e305d1d4738fd21547763cfcdf852b74" }
+iced_runtime = { git = "https://github.com/profilaz3/iced", rev = "22c073b9e305d1d4738fd21547763cfcdf852b74" }
+iced_tiny_skia = { git = "https://github.com/profilaz3/iced", rev = "22c073b9e305d1d4738fd21547763cfcdf852b74" }
+iced_wgpu = { git = "https://github.com/profilaz3/iced", rev = "22c073b9e305d1d4738fd21547763cfcdf852b74" }
+iced_widget = { git = "https://github.com/profilaz3/iced", rev = "22c073b9e305d1d4738fd21547763cfcdf852b74" }
+iced_winit = { git = "https://github.com/profilaz3/iced", rev = "22c073b9e305d1d4738fd21547763cfcdf852b74" }
+
 [profile.release]
 # Release packages ship without symbols.
 strip = true
