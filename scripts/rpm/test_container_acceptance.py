@@ -189,6 +189,20 @@ class StageScriptTests(unittest.TestCase):
         self.assertNotIn('/etc/yum.repos.d/acceptance', text)
         self.assertIn('--setopt=halcyon.enabled=0', text)
 
+    def test_os_release_never_replaces_the_stage_environment(self):
+        # os-release defines VERSION; sourcing it in the script's own shell
+        # replaced the product version and build-rpm.py refused it.
+        text = STAGE.read_text()
+        self.assertNotRegex(text, r'(?m)^\s*(?:\.|source)\s+/etc/os-release')
+        with tempfile.TemporaryDirectory() as folder:
+            release = Path(folder)/'os-release'
+            release.write_text('ID=fedora\nVERSION_ID=43\nVERSION="43 (Container Image)"\n')
+            line = next(line for line in text.splitlines() if '/etc/os-release' in line and 'read' in line)
+            script = 'VERSION=0.6.1\n' + line.replace('/etc/os-release', str(release)) + \
+                '\nprintf "%s|%s|%s" "$os_id" "$os_version" "$VERSION"\n'
+            result = subprocess.run(['bash', '-c', script], check=True, capture_output=True, text=True)
+        self.assertEqual(result.stdout, 'fedora|43|0.6.1')
+
 
 class RecordTests(unittest.TestCase):
     def setUp(self):
