@@ -1874,3 +1874,61 @@ fn dock_and_panel_item_changes_are_named() {
         capture_both(&app, &mut native, &format!("item-changes-{}", size.width));
     }
 }
+
+#[test]
+fn windows_page_saves_its_corner_and_effect_controls() {
+    let name = "windows_page_saves_its_corner_and_effect_controls";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use cosmic::cosmic_theme::Roundness;
+    use system_appearance::Message as Look;
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    send_settings(&mut app, Message::Page(Page::DesktopWindows));
+    send_settings(
+        &mut app,
+        Message::ToggleSection("appearance-window-details"),
+    );
+    // Effects opens in place.
+    send_settings(&mut app, Message::SystemAppearance(Look::Effects(true)));
+    assert!(app.system_appearance.effects);
+    // Window corners saves from here, as on Appearance.
+    let roundness = |app: &Settings| {
+        let variant = app.system_appearance.variant;
+        app.system_appearance
+            .draft()
+            .unwrap()
+            .roundness(variant)
+            .known()
+            .copied()
+    };
+    let other = if roundness(&app) == Some(Roundness::Square) {
+        Roundness::Round
+    } else {
+        Roundness::Square
+    };
+    send_settings(&mut app, Message::SystemAppearance(Look::Roundness(other)));
+    assert!(!app.error, "{}", app.status);
+    assert_eq!(roundness(&app), Some(other));
+    assert_eq!(
+        app.last_desktop_change.as_ref().map(|c| c.1.as_str()),
+        Some("Window corners")
+    );
+    let size = Size::new(1280., 800.);
+    send_settings(&mut app, Message::Resized(size));
+    let mut native = crate::native_test::Native::new(size);
+    native.text_bounds(app.settings_view(), "Undo Window corners");
+    // A fresh read sees it saved.
+    let mut reopened = open_isolated_editor(&root);
+    send_settings(&mut reopened, Message::Page(Page::DesktopWindows));
+    assert_eq!(roundness(&reopened), Some(other));
+}
