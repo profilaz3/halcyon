@@ -627,7 +627,7 @@ impl Settings {
                 Task::none()
             }
         };
-        self.last_desktop_change = navigation::latest_desktop_change();
+        self.refresh_latest_change();
         self.checkpoint_session_drafts();
         let mut tasks = vec![task];
         // Changes is refreshed by its file watcher; Help reads more.

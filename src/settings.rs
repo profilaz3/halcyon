@@ -795,6 +795,8 @@ pub struct Settings {
     help_open: Option<&'static str>,
     open_sections: std::collections::BTreeSet<&'static str>,
     last_desktop_change: Option<(crate::desktop::Owner, String, String)>,
+    /// `last_desktop_change` as Changes lists it: its page and its words.
+    last_desktop_summary: Option<crate::desktop::store::activity::Summary>,
     /// The latest change when this window opened; the Undo bar offers only
     /// changes made since, so an old change doesn't follow you around.
     undo_baseline: Option<String>,
@@ -1059,7 +1061,8 @@ impl cosmic::Application for Settings {
             } else {
                 Default::default()
             },
-            last_desktop_change: navigation::latest_desktop_change(),
+            last_desktop_change: None,
+            last_desktop_summary: None,
             undo_baseline: navigation::latest_desktop_change().map(|(_, _, id)| id),
             color_well: None,
             font_menu: None,
@@ -1150,6 +1153,7 @@ impl cosmic::Application for Settings {
             capture_key: String::new(),
             window: initial_size(),
         };
+        app.refresh_latest_change();
         app.automation.widget_mode = widget_style.then_some(true);
         app.set_header_title("Halcyon".into());
         // With frosted windows, libcosmic's title bar has no color of its own:
@@ -1986,7 +1990,7 @@ impl cosmic::Application for Settings {
             }
         }
         if refresh_undo || crate::desktop::store::revision() != revision {
-            self.last_desktop_change = navigation::latest_desktop_change();
+            self.refresh_latest_change();
         }
         if checkpoint {
             self.checkpoint_session_drafts();
@@ -3284,7 +3288,7 @@ impl Settings {
                 navigation::select(&mut self.nav_model, page);
                 self.search_query.clear();
                 self.search_selected = None;
-                self.last_desktop_change = navigation::latest_desktop_change();
+                self.refresh_latest_change();
                 self.desktop.drag.cancel();
                 if page == Page::DesktopDock {
                     self.desktop.open();
@@ -4513,7 +4517,7 @@ impl Settings {
             && self.profiles.profile().is_some_and(|p| !p.appearance_only)
         {
             self.profiles.notice = Some(desktop::Notice::Error(
-                "Review this desktop setup in Setups.".into(),
+                "Review this look in Looks.".into(),
             ));
             return Task::none();
         }

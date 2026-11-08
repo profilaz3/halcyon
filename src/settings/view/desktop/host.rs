@@ -118,9 +118,12 @@ impl Settings {
     /// The one next step toward Halcyon's panel, or None once it runs.
     /// `lead` says what asked for it, e.g. "Islands use".
     pub(super) fn host_step(&self, lead: &str) -> Option<Element<'_, Message>> {
+        // Updates holds the panel's checks and fixes; the link says so, and
+        // lines up with the text above it.
         let help = || -> Element<'_, Message> {
-            button::text("Troubleshooting")
+            button::text("Troubleshoot in Updates")
                 .id("islands-help".into())
+                .padding([4, 0])
                 .on_press(Message::AppSettingsPage(AppSettingsPage::Updates))
                 .into()
         };

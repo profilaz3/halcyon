@@ -177,6 +177,20 @@ pub(super) fn label(message: &Message) -> String {
             | desktop::Message::PenumbraHeight(_)
             | desktop::Message::PenumbraMaximizedOpacity(_) => "Penumbra gradient",
             desktop::Message::Anchor(_) => "Dock position",
+            // The control's own name; a change of one key says more (see
+            // `actions::action_label`).
+            desktop::Message::Floating(_) => "Floating",
+            desktop::Message::Size(_) => "Size",
+            desktop::Message::PanelStyle(_) | desktop::Message::Extend(_) => "Shape",
+            desktop::Message::AutoHide(_) => "Visibility",
+            desktop::Message::Timing(..) => "Hide timing",
+            desktop::Message::Margin(_) => "Edge gap",
+            desktop::Message::Radius(_) | desktop::Message::RadiusChoice(_) => "Corners",
+            desktop::Message::Spacing(_) => "Between items",
+            desktop::Message::Padding(_) => "Inner padding",
+            desktop::Message::Background(_) => "Background",
+            desktop::Message::KeepStyle(_) => "Keep style when maximized",
+            desktop::Message::Output(_) => "Show on display",
             _ => "Dock and panel",
         },
         Message::SystemAppearance(edit) => match edit {
@@ -184,6 +198,11 @@ pub(super) fn label(message: &Message) -> String {
             system_appearance::Message::FontFamily(..)
             | system_appearance::Message::FontWeight(..)
             | system_appearance::Message::FontStyle(..) => "Font",
+            system_appearance::Message::IconTheme(_) => "Icon theme",
+            system_appearance::Message::OutlineWidth(_) => "Outline width",
+            system_appearance::Message::Roundness(_) => "Window corners",
+            system_appearance::Message::Blur(_) => "Blur strength",
+            system_appearance::Message::Glass(_) => "Glass opacity",
             _ => "Appearance",
         },
         Message::MaterialChoose(_) | Message::MaterialSave => "Glass material",

@@ -5,14 +5,6 @@ use crate::desktop::applets::AppletGroup;
 use crate::desktop::panels::Regions;
 use crate::settings::desktop::{AppletControl, PanelStyle, control_id};
 
-fn region_title(region: Region, horizontal: bool) -> &'static str {
-    if horizontal && region == Region::Center {
-        "Centre"
-    } else {
-        region.title(horizontal)
-    }
-}
-
 impl Settings {
     pub(super) fn panel_contents(&self, draft: &PanelDraft) -> Element<'_, Message> {
         let editor = &self.desktop;
@@ -52,7 +44,7 @@ impl Settings {
                     editor.drag.active() && editor.drag.target.is_some_and(|s| s.region == region);
                 let header = split(
                     label(
-                        format!("{} · {}", region_title(region, horizontal), list.len()),
+                        format!("{} · {}", region.title(horizontal), list.len()),
                         12.,
                         FG,
                     ),
@@ -61,7 +53,7 @@ impl Settings {
                             "applets-add-{}",
                             region.key()
                         )))
-                        .tooltip(format!("Add to {}", region_title(region, horizontal)))
+                        .tooltip(format!("Add to {}", region.title(horizontal)))
                         .on_press_maybe(idle.then_some(edit(Edit::Picker(Some(region)))))
                         .into(),
                 );
@@ -137,7 +129,7 @@ impl Settings {
                 blocks.push(label(
                     format!(
                         "{}: {}",
-                        region_title(region, horizontal),
+                        region.title(horizontal),
                         if names.is_empty() {
                             "Empty".into()
                         } else {
@@ -313,7 +305,7 @@ impl Settings {
                         .into_iter()
                         .map(|region| {
                             (
-                                region_title(region, horizontal).into(),
+                                region.title(horizontal).into(),
                                 slot.region == region,
                                 (idle && slot.region != region)
                                     .then_some(edit(Edit::MoveTo(slot, region))),
@@ -377,7 +369,7 @@ impl Settings {
                     .into_iter()
                     .map(|r| {
                         (
-                            region_title(r, horizontal).into(),
+                            r.title(horizontal).into(),
                             r == region,
                             Some(edit(Edit::PickerRegion(r))),
                         )
@@ -421,7 +413,7 @@ impl Settings {
             let locations = editor
                 .placements(&info.id)
                 .into_iter()
-                .map(|(kind, r, h)| format!("{} · {}", kind.title(), region_title(r, h)))
+                .map(|(kind, r, h)| format!("{} · {}", kind.title(), r.title(h)))
                 .collect::<Vec<_>>()
                 .join(" · ");
             let mut details = vec![label(info.name.clone(), 13., FG)];

@@ -158,16 +158,32 @@ impl Settings {
             cosmic::iced::widget::space().width(0).into()
         };
         let content: Element<'_, Message> = if rail {
-            // Today's count sits beside the label, not above it.
+            // Today's count is a small badge beside the icon, so the one-line
+            // label never reads as "Changes 2".
+            let badge: Element<'_, Message> = if today > 0 {
+                container(text::body(today.to_string()).size(10).line_height(1.0))
+                    .padding([2, 5])
+                    .class(cosmic::theme::Container::custom(move |theme| {
+                        cosmic::iced::widget::container::Style {
+                            background: Some(Background::Color(accent)),
+                            text_color: Some(theme.cosmic().on_accent_color().into()),
+                            border: Border {
+                                radius: 8.0.into(),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        }
+                    }))
+                    .into()
+            } else {
+                cosmic::iced::widget::space().width(0).into()
+            };
             column::with_children(vec![
-                row::with_children(vec![icon, mark])
+                row::with_children(vec![icon, badge, mark])
                     .spacing(2)
                     .align_y(Alignment::Start)
                     .into(),
-                row::with_children(vec![title.into(), count])
-                    .spacing(4)
-                    .align_y(Alignment::Center)
-                    .into(),
+                title.into(),
             ])
             .spacing(2)
             .width(Length::Fill)
@@ -380,7 +396,7 @@ impl Settings {
             Row::Change(entry) => entry,
         };
         let open = self.support.expanded.as_deref() == Some(&entry.id);
-        // Restores made here are undone from Earlier setups, not twice.
+        // Restores made here are undone from Before Halcyon, not twice.
         let elsewhere = crate::settings::support::change_page(entry) != Page::Changes;
         let undo = elsewhere
             && entry.action == Action::Changed
@@ -442,23 +458,7 @@ impl Settings {
                 ));
             }
             for d in &entry.details {
-                rows.push(label(
-                    format!(
-                        "{}: {} → {}{}",
-                        d.setting,
-                        d.before,
-                        d.after,
-                        match d.setting.as_str() {
-                            "Bar spacing" | "Bar padding" | "Bar margin" | "Widget corners" => {
-                                " px"
-                            }
-                            "Clock scale" | "Widget opacity" => "%",
-                            _ => "",
-                        }
-                    ),
-                    14.,
-                    FG,
-                ));
+                rows.push(label(d.line(), 14., FG));
             }
             if yours && !undo && !put_back {
                 rows.push(label(
@@ -480,7 +480,7 @@ impl Settings {
                 .on_press_maybe((!self.busy && !preview()).then_some(Message::Restore(true)))
                 .into(),
         ));
-        self.search_target("changes-earlier", group(Some("Earlier setups"), earlier))
+        self.search_target("changes-earlier", group(Some("Before Halcyon"), earlier))
     }
 }
 

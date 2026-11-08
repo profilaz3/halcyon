@@ -1394,7 +1394,7 @@ impl Wizard {
         while let Some(change) = self.changes.last() {
             if let Err(error) = store.undo_change(change) {
                 self.error = Some(format!(
-                    "{error} Some of setup's changes stay; undo them from Setups or the Dock and panel page."
+                    "{error} Some of setup's changes stay; undo them from Changes or the Dock and panel page."
                 ));
                 break;
             }

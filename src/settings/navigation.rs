@@ -648,7 +648,7 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::Changes,
         "Restore previous desktop",
-        "recovery restore reset previous wallpaper hide widgets earlier setups",
+        "recovery restore reset previous wallpaper hide widgets earlier setups before halcyon",
         false,
     )
     .at("changes-earlier"),
@@ -867,14 +867,22 @@ impl Page {
 }
 
 pub fn latest_desktop_change() -> Option<(crate::desktop::Owner, String, String)> {
+    latest_desktop_record().map(|change| (change.owner, change.label, change.id))
+}
+fn latest_desktop_record() -> Option<crate::desktop::store::LatestChange> {
     crate::desktop::actions::history_store()
         .ok()?
         .latest_change()
         .ok()?
-        .map(|change| (change.owner, change.label, change.id))
 }
 
 impl Settings {
+    /// Re-reads the change Undo targets, with the summary Changes shows for it.
+    pub(super) fn refresh_latest_change(&mut self) {
+        let latest = latest_desktop_record();
+        self.last_desktop_summary = latest.as_ref().map(|change| change.summary());
+        self.last_desktop_change = latest.map(|change| (change.owner, change.label, change.id));
+    }
     pub(super) fn advanced_open(&self, page: Page) -> bool {
         self.advanced_pages.contains(&page)
     }
@@ -918,7 +926,7 @@ impl Settings {
                 return Task::none();
             }
             if crate::desktop::store::revision() != revision {
-                self.last_desktop_change = latest_desktop_change();
+                self.refresh_latest_change();
             }
         }
         let shown = self
@@ -963,7 +971,7 @@ impl Settings {
             }
             Err(error) => self.failed(error.to_string()),
         }
-        self.last_desktop_change = latest_desktop_change();
+        self.refresh_latest_change();
         self.after_desktop_change()
     }
     /// Puts back one older change from Changes. A setting changed since
@@ -994,7 +1002,7 @@ impl Settings {
             }
             Err(error) => self.failed(error.to_string()),
         }
-        self.last_desktop_change = latest_desktop_change();
+        self.refresh_latest_change();
         self.after_desktop_change()
     }
     pub(super) fn resolve_undo_review(
@@ -1024,7 +1032,7 @@ impl Settings {
             }
             Err(error) => self.failed(error.to_string()),
         }
-        self.last_desktop_change = latest_desktop_change();
+        self.refresh_latest_change();
         self.after_desktop_change()
     }
 }
@@ -1578,7 +1586,7 @@ impl Settings {
             }
             Some(route) => Some(self.route_title(route)),
             None if self.page == Page::DesktopProfiles && self.profiles.review_open() => {
-                Some("Setups".into())
+                Some("Looks".into())
             }
             None => self.page.parent().map(|parent| parent.nav_title().into()),
         }

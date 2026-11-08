@@ -2144,7 +2144,7 @@ impl ProfilesEditor {
                 .and_then(|package| {
                     if themes_only {
                         return Err(profiles::ProfileError::Invalid(
-                            "Import setup packages in Setups.".into(),
+                            "Import looks in Looks (⋯ › Import a look…).".into(),
                         ));
                     }
                     let name = package.profile.name.clone();

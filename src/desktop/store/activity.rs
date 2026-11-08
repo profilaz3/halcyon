@@ -35,6 +35,51 @@ pub struct Detail {
     pub before: String,
     pub after: String,
 }
+impl Detail {
+    /// "Between items: 5 → 9 px", with the name the control shows.
+    pub fn line(&self) -> String {
+        let unit = match self.setting.as_str() {
+            "Bar spacing" | "Bar padding" | "Bar margin" | "Widget corners" => " px",
+            "Clock scale" | "Widget opacity" => "%",
+            _ => "",
+        };
+        format!(
+            "{}: {} → {}{unit}",
+            setting_title(&self.setting),
+            self.before,
+            self.after
+        )
+    }
+}
+/// The on-screen name of a recorded setting. Records keep their stored
+/// names, so older and newer versions still read each other's history.
+fn setting_title(setting: &str) -> &str {
+    match setting {
+        "Bar spacing" => "Between items",
+        "Bar padding" => "Inner padding",
+        "Bar margin" => "Edge gap",
+        other => other,
+    }
+}
+/// Which kind of saved choice a profile change applied.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Applied {
+    Look,
+    Style,
+}
+impl Applied {
+    /// From the record's Undo label (see `ProfilePlan::label`).
+    pub fn of_label(label: &str) -> Option<Self> {
+        if label.starts_with("Profile “") {
+            Some(Self::Look)
+        } else if label.starts_with("Style") {
+            Some(Self::Style)
+        } else {
+            None
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Summary {
     pub id: String,
@@ -48,6 +93,13 @@ pub struct Summary {
     /// Which widget settings a change touched, by fixed group name.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub widgets: Vec<String>,
+    /// A look or a style, for a profile change; older records don't say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applied: Option<Applied>,
+    /// Some changed values have no detail, so the details don't name the
+    /// whole change.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub partial: bool,
 }
 /// The widget setting groups a change can name, in display order.
 pub const WIDGET_GROUPS: &[&str] = &[
@@ -156,37 +208,18 @@ impl Summary {
             return "Updated colors from the wallpaper".into();
         }
         let owner = Owner::parse(&self.owner);
-        // Display only the same bounded, non-content values accepted by the
-        // journal. Old records and composite changes retain useful fallbacks.
-        if !matches!(owner, Some(Owner::Profile | Owner::Recovery))
-            && self.details.len() == 1
-            && self.areas.len() == 1
-        {
-            let detail = &self.details[0];
-            if SETTINGS.contains(&detail.setting.as_str())
-                && safe_scalar(&detail.before)
-                && safe_scalar(&detail.after)
-            {
-                let unit = match detail.setting.as_str() {
-                    "Bar spacing" | "Bar padding" | "Bar margin" | "Widget corners" => " px",
-                    "Clock scale" | "Widget opacity" => "%",
-                    _ => "",
-                };
-                return format!(
-                    "{}: {} → {}{}",
-                    detail.setting, detail.before, detail.after, unit
-                );
-            }
+        if let Some(line) = self.value_line() {
+            return line;
         }
-        if matches!(owner, Some(Owner::Preferences)) {
-            match self.widgets.as_slice() {
-                [one] => return format!("Changed {one}"),
-                [one, two] => return format!("Changed {one} and {two}"),
-                _ => {}
-            }
+        if let Some(widgets) = self.widget_names() {
+            return format!("Changed {widgets}");
         }
         let title = match owner {
-            Some(Owner::Profile) => "Applied a theme or setup",
+            Some(Owner::Profile) => match self.applied {
+                Some(Applied::Look) => "Applied a look",
+                Some(Applied::Style) => "Applied a style",
+                None => "Applied a look or style",
+            },
             Some(Owner::Recovery) => "Restored desktop settings",
             Some(Owner::DockPanel) => "Changed Dock and panel",
             Some(Owner::Appearance) => "Changed appearance",
@@ -210,6 +243,41 @@ impl Summary {
             }
         }
         title.into()
+    }
+    /// A change of one setting, in the title's value form: "Between items:
+    /// 5 → 9 px". Shows only the same bounded, non-content values the
+    /// journal accepts. Old records and composite changes have none.
+    pub fn value_line(&self) -> Option<String> {
+        if self.action != Action::Changed || self.cause == Cause::WallpaperColors || self.partial {
+            return None;
+        }
+        if matches!(
+            Owner::parse(&self.owner),
+            Some(Owner::Profile | Owner::Recovery)
+        ) || self.details.len() != 1
+            || self.areas.len() != 1
+        {
+            return None;
+        }
+        let detail = &self.details[0];
+        (SETTINGS.contains(&detail.setting.as_str())
+            && safe_scalar(&detail.before)
+            && safe_scalar(&detail.after))
+        .then(|| detail.line())
+    }
+    /// The one or two widget setting groups a widget change touched.
+    pub fn widget_names(&self) -> Option<String> {
+        if self.action != Action::Changed
+            || self.cause == Cause::WallpaperColors
+            || Owner::parse(&self.owner) != Some(Owner::Preferences)
+        {
+            return None;
+        }
+        match self.widgets.as_slice() {
+            [one] => Some(one.clone()),
+            [one, two] => Some(format!("{one} and {two}")),
+            _ => None,
+        }
     }
     fn valid(&self) -> bool {
         super::valid_name(&self.id, 96)
@@ -270,6 +338,8 @@ pub(super) fn summarize(file: &UndoFile, display: bool) -> Summary {
     };
     let mut areas = Vec::new();
     let mut details = Vec::new();
+    // A value without a detail of its own: the details are not the whole change.
+    let mut partial = false;
     for e in &file.entries {
         let area =
             if e.namespace.contains("CosmicPanel") || e.namespace == dock_islands_core::NAMESPACE {
@@ -314,17 +384,31 @@ pub(super) fn summarize(file: &UndoFile, display: bool) -> Summary {
                 before,
                 after,
             });
+        } else {
+            partial = true;
         }
     }
     let mut widgets = Vec::new();
     if let Some(widget) = &file.widget {
-        areas.push("Widgets".into());
+        // A dock or appearance choice also marks its property as chosen;
+        // that mark alone is not a widget change.
+        let mut fields: Vec<_> = widget
+            .fields
+            .iter()
+            .filter(|f| f.pointer != "/appearance/overrides")
+            .collect();
+        if fields.is_empty() && file.entries.is_empty() {
+            fields = widget.fields.iter().collect();
+        }
+        if !fields.is_empty() || file.entries.is_empty() {
+            areas.push("Widgets".into());
+        }
         for group in WIDGET_GROUPS {
-            if widget.fields.iter().any(|f| widget_group(&f.pointer) == Some(group)) {
+            if fields.iter().any(|f| widget_group(&f.pointer) == Some(group)) {
                 widgets.push(group.to_string());
             }
         }
-        for field in &widget.fields {
+        for field in fields {
             let name = match field.pointer.as_str() {
                 "/appearance/opacity" => "Widget opacity",
                 "/appearance/corner_radius" => "Widget corners",
@@ -334,7 +418,10 @@ pub(super) fn summarize(file: &UndoFile, display: bool) -> Summary {
                 "/clock/show_seconds" => "Clock seconds",
                 "/appearance/reduce_motion" => "Reduce motion",
                 "/placement/snap" => "Widget snap",
-                _ => continue,
+                _ => {
+                    partial = true;
+                    continue;
+                }
             };
             if let (Some(before), Some(after)) =
                 (scalar(field.before.as_ref()), scalar(field.after.as_ref()))
@@ -344,13 +431,19 @@ pub(super) fn summarize(file: &UndoFile, display: bool) -> Summary {
                     before,
                     after,
                 });
+            } else {
+                partial = true;
             }
         }
     }
+    partial |= details.len() > 12;
     details.truncate(12);
     if areas.is_empty() {
         areas.push("Desktop settings".into());
     }
+    let applied = (Owner::parse(&file.owner) == Some(Owner::Profile))
+        .then(|| Applied::of_label(&file.label))
+        .flatten();
     Summary {
         id: file.id.clone(),
         at: file.created.clone(),
@@ -360,6 +453,14 @@ pub(super) fn summarize(file: &UndoFile, display: bool) -> Summary {
         areas,
         details,
         widgets,
+        applied,
+        partial,
+    }
+}
+impl super::LatestChange {
+    /// This change as Changes lists it.
+    pub fn summary(&self) -> Summary {
+        summarize(&self.to_file(), false)
     }
 }
 pub(super) fn append(recent: &mut Vec<Summary>, mut summary: Summary) {
@@ -461,7 +562,7 @@ mod tests {
         let f = Fixture::new("polish050-history-title");
         apply(&f.store(), 7, Source::Manual, false);
         let mut entry = f.store().recent_changes().unwrap().entries.pop().unwrap();
-        assert_eq!(entry.title(), "Bar spacing: Default → 7 px");
+        assert_eq!(entry.title(), "Between items: Default → 7 px");
         entry.details.clear();
         assert_eq!(entry.title(), "Changed Dock and panel");
         entry.details.push(Detail {
