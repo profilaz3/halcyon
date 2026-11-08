@@ -67,24 +67,11 @@ pub(super) fn recovery_banner<'a>(
     }
 }
 
-/// A row: title and a short consequence on the left, the control right.
-fn row_of<'a>(
-    title: &'static str,
-    note: Option<&'static str>,
-    control: Element<'a, Message>,
-) -> Element<'a, Message> {
-    let mut left = vec![label(title, 13., FG)];
-    if let Some(note) = note {
-        left.push(label(note, 11., MUTED));
-    }
-    split(column::with_children(left).spacing(2).into(), control)
-}
-
 fn flag_row<'a>(
     draft: &WindowsDraft,
     behavior: Behavior,
     title: &'static str,
-    note: Option<&'static str>,
+    note: &'static str,
 ) -> Element<'a, Message> {
     let control = match draft.flag(behavior) {
         Setting::Known(on) => toggler(on)
@@ -92,7 +79,8 @@ fn flag_row<'a>(
             .into(),
         Setting::Unsupported(raw) => kept(&raw),
     };
-    row_of(title, note, control)
+    // The same row as every other page: the note sits behind its "?".
+    group_row(title, note, control)
 }
 
 impl Settings {
@@ -230,12 +218,12 @@ impl Settings {
         let mut items = Vec::new();
         let tiled = draft.flag(Behavior::Autotile).known() == Some(&true);
         items.push(match draft.flag(Behavior::Autotile) {
-            Setting::Known(on) => row_of(
+            Setting::Known(on) => group_row(
                 "Tile windows automatically",
-                Some("Arrange windows side by side for you"),
+                "Arrange windows side by side for you",
                 toggler(on).on_toggle(|on| edit(Edit::Autotile(on))).into(),
             ),
-            Setting::Unsupported(raw) => row_of("Tile windows automatically", None, kept(&raw)),
+            Setting::Unsupported(raw) => group_row("Tile windows automatically", "", kept(&raw)),
         });
         if tiled || !matches!(draft.scope(), Setting::Known(TileBehavior::Global)) {
             let scope = draft.scope();
@@ -288,7 +276,7 @@ impl Settings {
                     let shown = format!("{value} px");
                     items.push(
                         column::with_children(vec![
-                            split(label(title, 13., FG), label(shown, 12., MUTED)),
+                            split(label(title, 14., FG), label(shown, 13., MUTED)),
                             slider(0..=GAP_RANGE, value.min(GAP_RANGE), move |value| {
                                 edit(Edit::Gap(gap, value))
                             })
@@ -303,7 +291,7 @@ impl Settings {
                 }
             }
             (_, Setting::Unsupported(raw)) | (Setting::Unsupported(raw), _) => {
-                items.push(row_of("Gaps", None, kept(&raw)));
+                items.push(group_row("Gaps", "", kept(&raw)));
             }
         }
         group(Some("Gaps"), items)
@@ -316,7 +304,7 @@ impl Settings {
             draft,
             Behavior::FocusFollowsCursor,
             "Select a window by pointing at it",
-            Some("No click needed"),
+            "",
         ));
         if draft.flag(Behavior::FocusFollowsCursor).known() == Some(&true) {
             let text = editor.delay_text().map(str::to_owned).unwrap_or_else(|| {
@@ -342,7 +330,7 @@ impl Settings {
                 .align_y(Alignment::Center)
                 .into(),
             };
-            items.push(row_of("Delay", None, control));
+            items.push(group_row("Delay", "", control));
             if editor.delay_text().is_some() {
                 items.push(label(
                     format!(
@@ -358,7 +346,7 @@ impl Settings {
             draft,
             Behavior::CursorFollowsFocus,
             "Move the pointer to the window you switch to",
-            Some("Handy when switching with the keyboard"),
+            "Handy when switching with the keyboard",
         ));
         group(Some("Choosing a window"), items)
     }
@@ -369,14 +357,14 @@ impl Settings {
         let mut items = Vec::new();
         let snap = draft.edge_snap();
         items.push(match &snap {
-            Setting::Known(px) => row_of(
+            Setting::Known(px) => group_row(
                 "Snap to screen edges",
-                Some("Dragged windows stick to the display edges"),
+                "Dragged windows stick to the display edges",
                 toggler(*px > 0)
                     .on_toggle(|on| edit(Edit::EdgeSnap(on)))
                     .into(),
             ),
-            Setting::Unsupported(raw) => row_of("Snap to screen edges", None, kept(raw)),
+            Setting::Unsupported(raw) => group_row("Snap to screen edges", "", kept(raw)),
         });
         if let Setting::Known(px) = snap
             && (px > 0 || editor.snap_text().is_some())
@@ -385,9 +373,9 @@ impl Settings {
                 .snap_text()
                 .map(str::to_owned)
                 .unwrap_or_else(|| px.to_string());
-            items.push(row_of(
+            items.push(group_row(
                 "Snap distance",
-                Some("How close a window gets before it snaps"),
+                "How close a window gets before it snaps",
                 row::with_children(vec![
                     container(
                         text_input("10", text)
@@ -426,10 +414,10 @@ fn windows_controls<'a>(draft: &WindowsDraft) -> Element<'a, Message> {
                 draft,
                 Behavior::ActiveHint,
                 "Outline the active window",
-                Some("A thin line in your accent color"),
+                "A thin line in your accent color",
             ),
-            flag_row(draft, Behavior::ShowMinimize, "Minimize button", None),
-            flag_row(draft, Behavior::ShowMaximize, "Maximize button", None),
+            flag_row(draft, Behavior::ShowMinimize, "Minimize button", ""),
+            flag_row(draft, Behavior::ShowMaximize, "Maximize button", ""),
         ],
     )
 }

@@ -1506,3 +1506,111 @@ fn time_of_day_without_a_city_asks_for_it_once() {
         );
     }
 }
+
+#[test]
+fn windows_rows_match_the_other_pages() {
+    let name = "windows_rows_match_the_other_pages";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::desktop::panels::PanelKind;
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    let size = Size::new(1280., 800.);
+    send_settings(&mut app, Message::Resized(size));
+    let mut native = crate::native_test::Native::new(size);
+    // A row title elsewhere: the dock's Floating.
+    send_settings(&mut app, Message::OpenBar(PanelKind::Dock));
+    native_reveal(&app, &mut native, "dock-style-bars");
+    let floating = native.text_bounds(app.settings_view(), "Floating").height;
+    send_settings(&mut app, Message::Page(Page::DesktopWindows));
+    let titles = [
+        "Tile windows automatically",
+        "Snap to screen edges",
+        "Outline the active window",
+        "Minimize button",
+        "Maximize button",
+        "Select a window by pointing at it",
+        "Move the pointer to the window you switch to",
+    ];
+    let notes = [
+        "Arrange windows side by side for you",
+        "Dragged windows stick to the display edges",
+        "A thin line in your accent color",
+        "Handy when switching with the keyboard",
+    ];
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        for title in titles {
+            let found = native.text_bounds(app.settings_view(), title);
+            assert_eq!(found.height, floating, "{title} uses the same title size");
+        }
+        // Notes sit behind "?", like every other page; the shortest is cut.
+        for note in notes.into_iter().chain(["No click needed"]) {
+            assert!(
+                native.text_all(app.settings_view(), note).is_empty(),
+                "{note}"
+            );
+        }
+        capture_both(&app, &mut native, &format!("windows-rows-{}", size.width));
+        native.scroll(app.settings_view(), "settings-content", 100_000.);
+        capture_both(
+            &app,
+            &mut native,
+            &format!("windows-rows-{}-lower", size.width),
+        );
+    }
+    // Rows that appear with tiling, snapping and pointer focus match too.
+    use crate::desktop::windows::Behavior;
+    for message in [
+        windows::Message::Autotile(true),
+        windows::Message::EdgeSnap(true),
+        windows::Message::Flag(Behavior::FocusFollowsCursor, true),
+    ] {
+        send_settings(&mut app, Message::Windows(message));
+    }
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        for title in ["Workspaces", "Snap distance", "Delay"] {
+            // "Workspaces" is also a section title further down; the row is first.
+            let found = native.text_all(app.settings_view(), title)[0];
+            assert_eq!(found.height, floating, "{title} uses the same title size");
+        }
+        assert!(
+            native
+                .text_all(
+                    app.settings_view(),
+                    "How close a window gets before it snaps"
+                )
+                .is_empty()
+        );
+        native.scroll(app.settings_view(), "settings-content", 260.);
+        capture_both(
+            &app,
+            &mut native,
+            &format!("windows-rows-{}-on", size.width),
+        );
+        native.scroll(app.settings_view(), "settings-content", 100_000.);
+        capture_both(
+            &app,
+            &mut native,
+            &format!("windows-rows-{}-on-lower", size.width),
+        );
+    }
+    send_settings(
+        &mut app,
+        Message::Explain(view::explain::key("Tile windows automatically")),
+    );
+    let mut native = crate::native_test::Native::new(size);
+    native.text_bounds(app.settings_view(), "Arrange windows side by side for you");
+}
