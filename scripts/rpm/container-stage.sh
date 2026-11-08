@@ -49,9 +49,11 @@ dnf=(dnf -y --setopt=keepcache=True)
 # still sees a system without any Halcyon source.
 acceptance=(--setopt=reposdir=/etc/yum.repos.d,/etc/fb25-acceptance.repos.d)
 
-. /etc/os-release
-if [ "$ID" != fedora ] || [ "$VERSION_ID" != "$fedora" ] || [ "$(uname -m)" != x86_64 ]; then
-  echo "Expected Fedora $fedora on x86_64, found $ID $VERSION_ID $(uname -m)" >&2
+# Read os-release in a subshell: sourcing it here would replace VERSION, the
+# product version, with the distribution's own VERSION string.
+read -r os_id os_version < <(. /etc/os-release && printf '%s %s\n' "$ID" "$VERSION_ID")
+if [ "$os_id" != fedora ] || [ "$os_version" != "$fedora" ] || [ "$(uname -m)" != x86_64 ]; then
+  echo "Expected Fedora $fedora on x86_64, found $os_id $os_version $(uname -m)" >&2
   exit 2
 fi
 

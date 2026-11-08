@@ -111,6 +111,13 @@ local repository. Each target then runs, against that repository:
 
 Results are in `acceptance.json`, with `published: false`, and in per-stage logs.
 Never upload or publish anything from the output folder. Delete it afterwards.
+With rootful docker, pass `--engine "sudo docker"`; the script hands the output
+files back to the calling user.
+
+Last run, 2026-11-08, commit `2bcaed9ef` (main after the iced fork, weather
+scenes and this fix), upgrading from the published 0.6.1 RPMs with rootful
+docker 29.1.3: Fedora 43 and Fedora 44 each passed all 62 checks (build 9,
+fresh install 28, upgrade 12, upgrade with the source disabled 13).
 
 ### Checks only a real Fedora COSMIC install can answer
 
