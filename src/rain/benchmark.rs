@@ -200,6 +200,7 @@ fn rain_gpu_benchmark() {
                         } else {
                             Vec::new()
                         },
+                        fade: 1.,
                     })
                     .collect();
                 let prep_started = Instant::now();

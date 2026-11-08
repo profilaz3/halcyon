@@ -1,0 +1,48 @@
+{
+  "task": "FB30",
+  "date": "2026-11-08",
+  "status": "validated",
+  "release_eligible": false,
+  "head": "b27fc19bc",
+  "build": "cargo build --release --bin halcyon (origin/main)",
+  "environment": {
+    "desktop": "Real COSMIC session (cosmic-comp 1.0.0), not nested",
+    "output": "DP-1 1920x1080 at 75 Hz, scale 100%",
+    "gpu": "AMD Radeon integrated graphics (RADV RENOIR), amdgpu DPM 200/400/2000 MHz",
+    "wallpaper": "/usr/share/backgrounds/halcyon/halcyon-focus.jpg, Zoom (Clock depth not eligible)",
+    "method": "halcyon.service stopped; release build run with DESKTOP_CARDS_CONFIG and XDG_CONFIG_HOME/XDG_STATE_HOME/XDG_DATA_HOME/XDG_CACHE_HOME pointing at temporary copies; the service was started again by the same bounded command, including on failure. The user's config was never written."
+  },
+  "screenshots": {
+    "tool": "cosmic-screenshot --interactive=false --modal=false --notify=false",
+    "count": 25,
+    "kept": "Private scratch only; they show the owner's open windows.",
+    "effects": "Rain (Flowing and Merging), Snow, Fog and Cloud shadows all render behind windows and widgets. Cloud shadows confirmed with a difference image against the effect-off baseline.",
+    "clock": "No clipped Clock text in any capture: the owner's Clock (bold digital, 200%, 800x330), the same Clock moved clear of windows, and a 540x220 Clock across a minute rollover, each with rain, fog or no effect."
+  },
+  "pauses": {
+    "speed_zero": "Snow at 0% speed: two captures 11 s apart are pixel-identical; 0 ns GPU over 10 s.",
+    "reduce_motion": "Effect surface removed; capture matches the effect-off baseline outside changed text; 0 ns GPU over 10 s; motion back resumes.",
+    "lock_sleep_battery": "Private fake logind/UPower on a separate bus (DBUS_SYSTEM_BUS_ADDRESS for the test process only; the real session was not locked). LockedHint, PrepareForSleep and OnBattery each stopped drawing (0 ns GPU, clean wallpaper); unlock, wake and Pause on battery off each resumed at 30 fps."
+  },
+  "gpu": {
+    "source": "/proc/<pid>/fdinfo drm-engine-gfx, summed over unique drm-client-id, for halcyon and cosmic-comp",
+    "note": "Busy time, not timestamps: at 30 fps amdgpu mostly sits at 400 MHz, so per-frame busy time is higher than at full clock. Includes all Halcyon surfaces. Not comparable one-to-one with the 4K pass timestamps in WALLPAPER-EFFECTS.md.",
+    "cases_ms_per_second": [
+      {"case": "Effects off", "halcyon": 0.08, "cosmic_comp": 5.6},
+      {"case": "Rain, Flowing, Balanced (owner's settings)", "halcyon": 53.2, "per_frame_ms": 1.77, "cosmic_comp": 39.6},
+      {"case": "Rain, Flowing, Balanced (trace-counted 300 frames, 28.9 fps)", "halcyon": 55.8, "per_frame_ms": 1.94, "cosmic_comp": 38.9},
+      {"case": "Rain, Merging, Balanced", "halcyon": 48.4, "per_frame_ms": 1.61, "cosmic_comp": 39.3},
+      {"case": "Snow, Balanced", "halcyon": 52.7, "per_frame_ms": 1.76, "cosmic_comp": 38.6},
+      {"case": "Fog, Balanced", "halcyon": 50.2, "per_frame_ms": 1.67, "cosmic_comp": 39.1},
+      {"case": "Cloud shadows, Balanced", "halcyon": 48.6, "per_frame_ms": 1.62, "cosmic_comp": 38.6},
+      {"case": "Cloud shadows, Eco", "halcyon": 43.8, "per_frame_ms": 1.52, "cosmic_comp": 45.2},
+      {"case": "Snow, Smooth (60 fps)", "halcyon": 77.1, "per_frame_ms": 1.28, "cosmic_comp": 74.1},
+      {"case": "Cloud shadows, Smooth (trace-counted 630 frames, 60.6 fps)", "halcyon": 69.1, "per_frame_ms": 1.14, "cosmic_comp": 75.1},
+      {"case": "Snow at 0% speed", "halcyon": 0.0, "cosmic_comp": 0.46},
+      {"case": "Reduce motion", "halcyon": 0.0, "cosmic_comp": 0.61},
+      {"case": "Locked / preparing for sleep / on battery", "halcyon": 0.0, "cosmic_comp": 0.5}
+    ]
+  },
+  "nested_clipping": "Not reproduced on the real desktop and no EGL errors were logged by the app. Xvfb is no longer installed, so the nested run could not be repeated; the earlier observation is attributed to the nested compositor's EGL surface failures.",
+  "limits": "One 1080p output. No multi-monitor, HiDPI, battery-powered device, energy or packaged-artifact qualification. Not a release."
+}

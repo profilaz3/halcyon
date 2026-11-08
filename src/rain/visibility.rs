@@ -105,6 +105,7 @@ mod tests {
                 preferences: Default::default(),
                 running: true,
                 fixed_time: None,
+                fade: Default::default(),
             })
             .width(100.)
             .height(100.)

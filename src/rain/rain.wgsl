@@ -3,7 +3,7 @@
 struct Params {
     frame: vec4<f32>, // aspect, time, intensity, size
     motion: vec4<f32>, // speed, wind, mist, refraction
-    style: vec4<f32>, // mode, opacity, trails, unused
+    style: vec4<f32>, // mode, opacity, trails, fade
     crop: vec4<f32>, // visible UV origin/extent; scroll clipping keeps the image fixed
     atmosphere: vec4<f32>, // opacity, height, softness, reserved
     tint: vec4<f32>,
@@ -94,7 +94,7 @@ struct DropVertex {
     if p.style.x >= 2. {
         let clean=textureSampleLevel(background,linear_sampler,v.uv,0.).rgb;
         let effect=textureSampleLevel(dynamic_field,linear_sampler,v.uv,0.);
-        return vec4(mix(clean,p.tint.rgb,clamp(effect.r,0.,1.)),1.);
+        return vec4(mix(clean,p.tint.rgb,clamp(effect.r,0.,1.)*p.style.w),1.);
     }
     let small=textureSample(beads,linear_sampler,v.uv);
     let live=textureSample(dynamic_field,linear_sampler,v.uv);
@@ -111,6 +111,10 @@ struct DropVertex {
     // the lens. No tint, vignette, flashes or fake scene lights are imposed.
     let shine=pow(max(0.,dot(normal,normalize(vec2(-0.6,-0.8))))*1.9,4.)*0.16*mask;
     rgb=rgb*(1.-mask*0.10)+vec3(shine);
+    // A scene change fades toward the plain wallpaper, then back.
+    if p.style.w<1. {
+        rgb=mix(textureSampleLevel(background,linear_sampler,v.uv,0.).rgb,rgb,p.style.w);
+    }
     return vec4(rgb,p.style.y);
 }
 // Downsampling is done only when the wallpaper changes, into cached mipmaps.

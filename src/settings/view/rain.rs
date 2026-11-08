@@ -1,13 +1,61 @@
 //! Wallpaper and effects share one local preview and Apply action.
 use super::*;
-use crate::rain::{Effect, FogColor, Mode, Quality};
+use crate::rain::weather::{self, Source};
+use crate::rain::{Effect, FogColor, Mode, Preferences, Quality};
 use crate::settings::rain::Edit;
 fn edit(e: Edit) -> Message {
     Message::Rain(e)
 }
 impl Settings {
+    /// What the desktop shows for `p`, the same way it decides: the Weather
+    /// widget's cached reading while Match the weather is on.
+    pub(super) fn effect_scene(&self, p: &Preferences) -> weather::Scene {
+        let reading = (self.config.data_visible(Widget::Weather))
+            .then_some(self.rain.weather.as_ref())
+            .flatten();
+        weather::resolve(
+            p,
+            reading,
+            chrono::Local::now(),
+            weather::cutoff(self.config.refresh_intervals.duration(Widget::Weather)),
+        )
+    }
+    /// Match the weather's state line: what the weather shows now, or why
+    /// Moving effect plays instead.
+    fn weather_state(&self, p: &Preferences, scene: &weather::Scene) -> String {
+        if !p.weather {
+            return "Rain, snow, fog and cloud shadows follow the Weather widget".into();
+        }
+        match scene.source {
+            Source::Weather { code, play } => {
+                let sky = crate::data::weather_description(code);
+                match play {
+                    Some((effect, _)) => {
+                        format!("{sky}: showing {}", effect.title().to_lowercase())
+                    }
+                    None => format!("{sky}: no effect"),
+                }
+            }
+            Source::NoReading if !self.config.data_visible(Widget::Weather) => {
+                "Turn on the Weather widget to use this".into()
+            }
+            Source::NoReading => "No weather reading yet: using Moving effect".into(),
+            Source::Stale => "Weather reading is out of date: using Moving effect".into(),
+            Source::Unknown(_) => "Unrecognized weather: using Moving effect".into(),
+            Source::Manual => String::new(),
+        }
+    }
     pub(super) fn rain_controls(&self) -> Element<'_, Message> {
         let p = self.wallpaper.effect().unwrap_or(&self.config.rain);
+        let scene = self.effect_scene(p);
+        // The controls adjust what plays: the weather's effect while it
+        // chooses (its strength is a share of these), otherwise Moving effect.
+        let weather_plays = scene.from_weather() && scene.preferences.enabled;
+        let effect = if weather_plays {
+            scene.preferences.effect
+        } else {
+            p.effect
+        };
         const EFFECTS: &[Effect] = &[Effect::Rain, Effect::Snow, Effect::Fog, Effect::Clouds];
         const TITLES: &[&str] = &[
             "None",
@@ -24,7 +72,14 @@ impl Settings {
             Some(0)
         };
         let mut rows = vec![split(
-            detail("Moving effect", "Plays behind windows and widgets"),
+            detail(
+                "Moving effect",
+                if p.weather {
+                    "Plays behind windows and widgets when there’s no current weather reading"
+                } else {
+                    "Plays behind windows and widgets"
+                },
+            ),
             cosmic::widget::dropdown(TITLES, chosen, move |i| {
                 let mut p = next.clone();
                 p.enabled = i > 0;
@@ -36,6 +91,17 @@ impl Settings {
             .width(160)
             .into(),
         )];
+        let next = p.clone();
+        rows.push(split(
+            detail_state("Match the weather", self.weather_state(p, &scene)),
+            container(toggler(p.weather).on_toggle(move |on| {
+                let mut p = next.clone();
+                p.weather = on;
+                edit(Edit::Set(p))
+            }))
+            .id(cosmic::widget::Id::new("rain-weather"))
+            .into(),
+        ));
         if self.wallpaper.effect_conflict() {
             rows.push(label(
                 "Effects changed elsewhere. Choose which version to keep.",
@@ -59,8 +125,8 @@ impl Settings {
                 .into(),
             );
         }
-        if p.enabled || self.rain.preview {
-            if p.effect == Effect::Rain {
+        if p.enabled || weather_plays || self.rain.preview {
+            if effect == Effect::Rain {
                 let style_help=self.help("rain-style-help","Droplet motion","Flowing uses a procedural GPU shader. Merging simulates large drops that join and leave small trails. Both use your wallpaper and stay behind widgets, windows and the dock.");
                 let style_choices = segmented(
                     [(Mode::Procedural, "Flowing"), (Mode::Hybrid, "Merging")]
@@ -80,7 +146,7 @@ impl Settings {
                 );
             }
             let mut adjustments = Vec::new();
-            let controls = match p.effect {
+            let controls = match effect {
                 Effect::Rain => vec![
                     ("intensity", "Density", p.intensity),
                     ("trails", "Trails", p.trails),
@@ -121,7 +187,7 @@ impl Settings {
                     container(
                         slider(0..=100, value, move |value| {
                             let mut p = next.clone();
-                            match p.effect {
+                            match effect {
                                 Effect::Rain=>match key { "intensity"=>p.intensity=value, "trails"=>p.trails=value, "size"=>p.size=value, "speed"=>p.speed=value,"mist"=>p.mist=value,_=>p.refraction=value },
                                 Effect::Snow=>match key { "intensity"=>p.snow.density=value,"size"=>p.snow.size=value,"speed"=>p.snow.speed=value,_=>p.snow.opacity=value },
                                 Effect::Fog=>match key { "opacity"=>p.fog.opacity=value,"height"=>p.fog.height=value,_=>p.fog.speed=value },
@@ -139,14 +205,14 @@ impl Settings {
                 .spacing(5)
                 .into();
                 if matches!(key, "intensity" | "trails" | "opacity" | "height")
-                    || (p.effect == Effect::Snow && key == "size")
+                    || (effect == Effect::Snow && key == "size")
                 {
                     rows.push(control);
                 } else {
                     adjustments.push(control);
                 }
             }
-            if p.effect == Effect::Fog {
+            if effect == Effect::Fog {
                 rows.push(self.help("fog-color-help","Color", "A neutral, cool or warm tint for the drifting fog. The wallpaper stays unchanged."));
                 rows.push(segmented(
                     [
@@ -168,7 +234,7 @@ impl Settings {
                     self.settings_accent(),
                 ));
             }
-            let wind = match p.effect {
+            let wind = match effect {
                 Effect::Rain => p.wind,
                 Effect::Snow => p.snow.wind,
                 Effect::Fog => p.fog.wind,
@@ -195,7 +261,7 @@ impl Settings {
                     ),
                     slider(-100..=100, i16::from(wind), move |value| {
                         let mut p = next.clone();
-                        match p.effect {
+                        match effect {
                             Effect::Rain => p.wind = value as i8,
                             Effect::Snow => p.snow.wind = value as i8,
                             Effect::Fog => p.fog.wind = value as i8,
@@ -243,7 +309,7 @@ impl Settings {
             ));
             rows.push(self.disclosure(
                 "rain-adjust",
-                if p.effect == Effect::Rain {
+                if effect == Effect::Rain {
                     "Adjust rain"
                 } else {
                     "Adjust effect"
@@ -264,7 +330,9 @@ impl Settings {
             .into()
     }
     pub(super) fn rain_preview(&self, height: f32) -> Option<Element<'_, Message>> {
-        let p = self.wallpaper.effect().unwrap_or(&self.config.rain);
+        // The preview shows what the desktop shows, weather included.
+        let scene = self.effect_scene(self.wallpaper.effect().unwrap_or(&self.config.rain));
+        let p = &scene.preferences;
         if !p.enabled && !self.rain.preview {
             self.rain.release_image();
             return None;
@@ -283,6 +351,7 @@ impl Settings {
                 preferences: p.clone(),
                 running: self.config.material_motion,
                 fixed_time: None,
+                fade: Default::default(),
             })
             .width(Length::Fill)
             .height(height)

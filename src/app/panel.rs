@@ -60,6 +60,7 @@ impl Cards {
             .into_iter()
             .chain(self.tools_wake())
             .chain(self.automation_wake())
+            .chain(self.effect_wake())
             .min()
     }
     /// Deadlines are monotonic, and the monotonic clock stops in suspend.

@@ -10,6 +10,7 @@ pub mod simulation;
 #[cfg(test)]
 mod tests;
 pub mod visibility;
+pub mod weather;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,6 +40,10 @@ impl Quality {
 #[serde(default, deny_unknown_fields)]
 pub struct Preferences {
     pub enabled: bool,
+    /// Match the weather: while the Weather widget's reading is current, it
+    /// picks the effect. Off by default; `weather::resolve` has the rules.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub weather: bool,
     pub mode: Mode,
     #[serde(skip_serializing_if = "Effect::is_default")]
     pub effect: Effect,
@@ -62,6 +67,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             enabled: false,
+            weather: false,
             mode: Mode::Procedural,
             effect: Effect::Rain,
             snow: Snow::default(),
@@ -132,14 +138,21 @@ impl Preferences {
     pub fn hybrid(&self) -> bool {
         self.effect == Effect::Rain && self.mode == Mode::Hybrid
     }
+    /// An effect may play: one is chosen, or the weather may pick one.
+    pub fn wanted(&self) -> bool {
+        self.enabled || self.weather
+    }
+    /// Reduce motion, an unknown session, lock, sleep or (when asked) battery
+    /// stop every effect at once, whoever chose it.
+    pub fn paused(&self, motion: bool, state: lifecycle::State) -> bool {
+        !state.ready
+            || !motion
+            || state.locked
+            || state.sleeping
+            || (self.pause_on_battery && state.on_battery)
+    }
     pub fn active(&self, motion: bool, state: lifecycle::State) -> bool {
-        self.enabled
-            && state.ready
-            && motion
-            && self.has_visible_effect()
-            && !state.locked
-            && !state.sleeping
-            && (!self.pause_on_battery || !state.on_battery)
+        self.enabled && self.has_visible_effect() && !self.paused(motion, state)
     }
 }
 
@@ -154,6 +167,19 @@ mod preferences_tests {
         p.intensity = 101;
         assert!(p.validate().is_err());
         assert!(serde_json::from_str::<Preferences>(r#"{"video":"/tmp/a"}"#).is_err());
+    }
+    #[test]
+    fn weather_matching_is_opt_in_and_omitted_until_chosen() {
+        let p = Preferences::default();
+        assert!(!p.weather && !p.wanted());
+        assert!(!serde_json::to_string(&p).unwrap().contains("weather"));
+        let p: Preferences = serde_json::from_str(r#"{"weather":true}"#).unwrap();
+        assert!(p.weather && p.wanted() && !p.enabled);
+        assert!(
+            serde_json::to_string(&p)
+                .unwrap()
+                .contains(r#""weather":true"#)
+        );
     }
     #[test]
     fn rain_trails_default_for_existing_preferences_and_validate() {

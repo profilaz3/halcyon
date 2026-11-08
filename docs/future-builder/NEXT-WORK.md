@@ -2,7 +2,9 @@
 
 Accepted 2026-11-01. Baseline: 0.5.6. Target version is unassigned.
 FB31 has a [local first native version](ACTIVITY-ISLAND-IMPLEMENTATION.md); further
-interaction policies and release qualification remain. The other five features are **planned**.
+interaction policies and release qualification remain. FB33 has a
+[local first version](WEATHER-SCENES.md), validated on the real desktop and
+unreleased. The other four features are **planned**.
 [tracker.json](tracker.json) owns task status.
 
 The user accepted research ideas 1–4 and 6–7. Idea 5, synchronizing Halcyon
@@ -49,6 +51,13 @@ relaunch, keyboard use and compact/wide native views. Hidden content adds no
 duplicate polling or permanent animation loop.
 
 ## FB33 — Weather-connected scenes
+
+**Status:** first version implemented and validated locally on 2026-11-08
+([design and decisions](WEATHER-SCENES.md),
+[evidence](evidence/fb33-weather-scenes-20261108.json)). It settles the mapping,
+40/70/100% intensity caps, a stale cutoff of two refresh intervals (at most 3 h)
+and 1.5 s fades. A per-effect allow list, separate limits and a timed manual
+override are not in this version; turning Match the weather off is the override.
 
 **Experience:** rain, snow, fog and cloud shadows follow the Weather widget's
 city. Settings offer Follow weather, allowed effects, intensity limits and a

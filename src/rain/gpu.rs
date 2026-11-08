@@ -1,7 +1,7 @@
 //! Persistent, per-surface GPU resources; the pipeline/device are Iced's own.
 //! The effect field is smaller than the wallpaper. Static beads and background
 //! mipmaps are cached; moving drops never trigger image decoding or readbacks.
-use super::{Effect, Mode, Preferences, simulation::Simulation};
+use super::{Effect, Mode, Preferences, simulation::Simulation, weather::Level};
 use crate::desktop::wallpaper::media::Pixels;
 use cosmic::iced::widget::shader::{self, Action, Viewport};
 use cosmic::iced::{Event, Rectangle, mouse, wgpu, window};
@@ -38,6 +38,57 @@ pub struct Program {
     pub running: bool,
     /// Fixed time supports deterministic native screenshots and comparisons.
     pub fixed_time: Option<f32>,
+    pub fade: Fade,
+}
+/// How long one half of a scene change takes on the desktop: the old scene
+/// fades out, then the new one fades in.
+pub const FADE: Duration = Duration::from_millis(1500);
+/// Desktop scene changes fade instead of switching at once. The Settings
+/// preview leaves this off, so edits show immediately; fixed-time captures and
+/// a stopped program never fade.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Fade {
+    pub enabled: bool,
+    /// The surface is about to be removed: fade the scene out.
+    pub hidden: bool,
+    /// The weather's level, so a lighter or heavier sky fades too.
+    pub level: Option<Level>,
+}
+/// What a viewer would call a different scene.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Look {
+    effect: Effect,
+    hybrid: bool,
+    level: Option<Level>,
+}
+impl Program {
+    fn look(&self) -> Option<Look> {
+        (!self.fade.hidden && self.preferences.has_visible_effect()).then_some(Look {
+            effect: self.preferences.effect,
+            hybrid: self.preferences.hybrid(),
+            level: self.fade.level,
+        })
+    }
+    fn fades(&self) -> bool {
+        self.fade.enabled && self.running && self.fixed_time.is_none()
+    }
+    /// The scene on screen: the outgoing one until it has faded out.
+    fn shown<'a>(&'a self, state: &'a State) -> &'a Preferences {
+        match &state.drawn {
+            Some(drawn) if self.fades() && state.shown != self.look() => drawn,
+            _ => &self.preferences,
+        }
+    }
+    /// The opacity of the scene on screen.
+    fn opacity(&self, state: &State) -> f32 {
+        if self.fades() {
+            state.fade
+        } else if self.fade.hidden {
+            0.
+        } else {
+            1.
+        }
+    }
 }
 #[derive(Default)]
 pub struct State {
@@ -47,6 +98,36 @@ pub struct State {
     seeded: bool,
     density: Option<u8>,
     scene: usize,
+    /// The look on screen, the preferences it was drawn with and its
+    /// opacity. A new surface starts with nothing shown and fades in.
+    shown: Option<Look>,
+    drawn: Option<Preferences>,
+    fade: f32,
+}
+impl State {
+    /// Advance a fade by `dt` seconds. True while a change is in progress.
+    fn step(&mut self, program: &Program, dt: f32) -> bool {
+        let target = program.look();
+        if !program.fades() {
+            self.shown = target;
+            self.fade = if target.is_some() { 1. } else { 0. };
+            return false;
+        }
+        let step = dt / FADE.as_secs_f32();
+        if self.shown == target {
+            self.drawn = Some(program.preferences.clone());
+            if target.is_some() {
+                self.fade = (self.fade + step).min(1.);
+            }
+        } else {
+            self.fade = (self.fade - step).max(0.);
+            if self.fade == 0. {
+                self.shown = target;
+                self.drawn = Some(program.preferences.clone());
+            }
+        }
+        self.shown != target || (target.is_some() && self.fade < 1.)
+    }
 }
 impl<M> shader::Program<M> for Program {
     type State = State;
@@ -66,14 +147,25 @@ impl<M> shader::Program<M> for Program {
                     ..Default::default()
                 };
             }
-            if !self.running || self.fixed_time.is_some() || !self.preferences.animates() {
+            // Nothing left on screen: the surface is about to be removed.
+            if self.fades() && state.shown.is_none() && self.look().is_none() {
+                state.last = None;
+                return None;
+            }
+            let changing = self.fades() && (state.shown != self.look() || state.fade < 1.);
+            if !self.running
+                || self.fixed_time.is_some()
+                || !(changing || self.shown(state).animates())
+            {
+                state.step(self, 0.);
                 state.last = None;
                 return None;
             }
             if self.scene.trace && state.last.is_none() {
                 eprintln!("Rain update: running={} bounds={bounds:?}", self.running);
             }
-            let cadence = Duration::from_secs_f64(1. / f64::from(self.preferences.quality.fps()));
+            let fps = self.shown(state).quality.fps();
+            let cadence = Duration::from_secs_f64(1. / f64::from(fps));
             if let Some(last) = state.last
                 && now.saturating_duration_since(last) < cadence
             {
@@ -84,54 +176,64 @@ impl<M> shader::Program<M> for Program {
                 .map(|last| now.saturating_duration_since(last).as_secs_f32())
                 .unwrap_or(0.);
             state.last = Some(*now);
+            // A fade follows the clock, but a long gap (a stopped frame
+            // callback) finishes it rather than replaying it.
+            let changing = state.step(self, dt);
+            let p = self.shown(state).clone();
             // A compositor can suppress frame callbacks for hours. Resume with
             // one small step, never a catch-up loop or a wall-clock time jump.
-            state.time = (state.time + dt.min(0.05)) % 3600.;
-            if self.preferences.hybrid() {
+            if p.animates() {
+                state.time = (state.time + dt.min(0.05)) % 3600.;
+            }
+            if p.hybrid() {
                 let aspect = (bounds.width / bounds.height.max(1.)).clamp(0.1, 10.);
-                if state.density != Some(self.preferences.intensity) {
+                if state.density != Some(p.intensity) {
                     state.simulation = Simulation::default();
                     state.seeded = false;
-                    state.density = Some(self.preferences.intensity);
+                    state.density = Some(p.intensity);
                 }
                 if !state.seeded {
-                    state.simulation.seed(aspect, &self.preferences);
+                    state.simulation.seed(aspect, &p);
                     state.seeded = true;
                 }
-                state.simulation.step(dt, aspect, &self.preferences);
+                state.simulation.step(dt, aspect, &p);
+            }
+            if !(changing || p.animates()) {
+                state.last = None;
+                return None;
             }
             return Some(Action::request_redraw_at(
-                *now + Duration::from_secs_f64(1. / f64::from(self.preferences.quality.fps())),
+                *now + Duration::from_secs_f64(1. / f64::from(p.quality.fps())),
             ));
         }
         None
     }
     fn draw(&self, state: &State, _: mouse::Cursor, bounds: Rectangle) -> Primitive {
-        let mut drops = if self.preferences.hybrid() {
-            state.simulation.instances(self.preferences.trails)
+        let p = self.shown(state);
+        let mut drops = if p.hybrid() {
+            state.simulation.instances(p.trails)
         } else {
             Vec::new()
         };
-        if self.preferences.hybrid()
-            && (!state.seeded || state.density != Some(self.preferences.intensity))
-        {
+        if p.hybrid() && (!state.seeded || state.density != Some(p.intensity)) {
             let mut sim = Simulation::default();
             let aspect = (bounds.width / bounds.height.max(1.)).clamp(0.1, 10.);
-            sim.seed(aspect, &self.preferences);
+            sim.seed(aspect, p);
             for _ in 0..self
                 .fixed_time
                 .map(|t| 60 + (t.clamp(0., 60.) * 30.) as u32)
                 .unwrap_or(0)
             {
-                sim.step(1. / 30., aspect, &self.preferences);
+                sim.step(1. / 30., aspect, p);
             }
-            drops = sim.instances(self.preferences.trails);
+            drops = sim.instances(p.trails);
         }
         Primitive {
             scene: self.scene.clone(),
-            preferences: self.preferences.clone(),
+            preferences: p.clone(),
             time: self.fixed_time.unwrap_or(state.time),
             drops,
+            fade: self.opacity(state),
         }
     }
 }
@@ -141,6 +243,8 @@ pub struct Primitive {
     pub preferences: Preferences,
     pub time: f32,
     pub drops: Vec<[f32; 5]>,
+    /// The scene's opacity over the plain wallpaper, from 0 to 1.
+    pub fade: f32,
 }
 pub struct Pipeline {
     background_format: wgpu::TextureFormat,
@@ -750,6 +854,8 @@ impl shader::Primitive for Primitive {
         r.dynamic_dirty |= r.last_drops != self.drops || r.last_field.as_ref() != Some(&values);
         r.last_drops.clone_from(&self.drops);
         r.last_field = Some(values);
+        // So does a fade: only composition reads it.
+        values[11] = self.fade.clamp(0., 1.);
         values[12..16].copy_from_slice(&crop);
         let mut bytes = [0u8; 96];
         for (chunk, value) in bytes.chunks_exact_mut(4).zip(values) {
@@ -925,6 +1031,7 @@ mod optimization_tests {
             },
             time: 2.,
             drops: Vec::new(),
+            fade: 1.,
         };
         let viewport = Viewport::with_physical_size(cosmic::iced::Size::new(1280, 720), 1.);
         let mut bounds = Rectangle {

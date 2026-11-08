@@ -1,5 +1,5 @@
 use super::*;
-use cosmic::iced::{Length, Size};
+use cosmic::iced::{Event, Length, Rectangle, Size, mouse, window};
 #[test]
 fn rain_gpu_modes_render_distinct_native_pixels() {
     if std::env::var_os("HALCYON_RAIN_GPU_TEST").is_none() {
@@ -32,6 +32,7 @@ fn rain_gpu_modes_render_distinct_native_pixels() {
             },
             running: false,
             fixed_time: Some(0.),
+            fade: Default::default(),
         })
         .width(Length::Fill)
         .height(Length::Fill)
@@ -63,6 +64,7 @@ fn rain_gpu_modes_render_distinct_native_pixels() {
                     preferences: p.clone(),
                     running: false,
                     fixed_time: Some(time),
+                    fade: Default::default(),
                 })
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -96,6 +98,7 @@ fn rain_gpu_modes_render_distinct_native_pixels() {
                     },
                     running: false,
                     fixed_time: Some(6.),
+                    fade: Default::default(),
                 })
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -128,6 +131,7 @@ fn rain_widget_does_not_advance_or_request_frames_when_paused() {
         preferences: Preferences::default(),
         running: false,
         fixed_time: None,
+        fade: Default::default(),
     };
     let mut state = gpu::State::default();
     let event = cosmic::iced::Event::Window(cosmic::iced::window::Event::RedrawRequested(
@@ -171,6 +175,7 @@ fn rain_density_changes_update_existing_live_widget_without_waiting_for_expiry()
         },
         running: true,
         fixed_time: None,
+        fade: Default::default(),
     };
     let mut state = gpu::State::default();
     let event = cosmic::iced::Event::Window(cosmic::iced::window::Event::RedrawRequested(
@@ -380,6 +385,7 @@ fn atmosphere_gpu_render_controls_motion_and_zero_effect() {
                 preferences: p,
                 running: false,
                 fixed_time: Some(time),
+                fade: Default::default(),
             })
             .width(Length::Fill)
             .height(Length::Fill)
@@ -495,6 +501,7 @@ fn atmosphere_zero_speed_does_not_request_animation_frames() {
             preferences,
             running: true,
             fixed_time: None,
+            fade: Default::default(),
         };
         let mut state = gpu::State::default();
         let event = cosmic::iced::Event::Window(cosmic::iced::window::Event::RedrawRequested(
@@ -544,7 +551,6 @@ fn atmosphere_setups_preserve_all_effects_and_independent_controls() {
 #[test]
 fn effect_quality_caps_simulation_cadence_during_unrelated_redraws() {
     use cosmic::iced::widget::shader::Program as _;
-    use cosmic::iced::{Event, Rectangle, mouse, window};
     let p = gpu::Program {
         scene: gpu::Scene::new(crate::desktop::wallpaper::media::Pixels {
             width: 1,
@@ -554,6 +560,7 @@ fn effect_quality_caps_simulation_cadence_during_unrelated_redraws() {
         preferences: Preferences::default(),
         running: true,
         fixed_time: None,
+        fade: Default::default(),
     };
     let mut state = gpu::State::default();
     let start = std::time::Instant::now();
@@ -583,4 +590,166 @@ fn effect_quality_caps_simulation_cadence_during_unrelated_redraws() {
     assert_eq!(&times[..4], &[0.; 4]);
     assert!(times[4] > 0.03);
     assert_eq!(times[4], times[5]);
+}
+
+/// A desktop surface's program, stepped frame by frame.
+struct Fading {
+    program: gpu::Program,
+    state: gpu::State,
+    now: std::time::Instant,
+}
+impl Fading {
+    fn new(preferences: Preferences) -> Self {
+        Self {
+            program: gpu::Program {
+                scene: gpu::Scene::new(crate::desktop::wallpaper::media::Pixels {
+                    width: 1,
+                    height: 1,
+                    rgba: vec![0, 0, 0, 255],
+                }),
+                preferences,
+                running: true,
+                fixed_time: None,
+                fade: gpu::Fade {
+                    enabled: true,
+                    ..Default::default()
+                },
+            },
+            state: gpu::State::default(),
+            now: std::time::Instant::now(),
+        }
+    }
+    const BOUNDS: Rectangle = Rectangle {
+        x: 0.,
+        y: 0.,
+        width: 640.,
+        height: 360.,
+    };
+    /// One frame 34 ms after the last; true if another frame was asked for.
+    fn frame(&mut self) -> bool {
+        use cosmic::iced::widget::shader::Program as _;
+        self.now += std::time::Duration::from_millis(34);
+        let event = Event::Window(window::Event::RedrawRequested(self.now));
+        let action: Option<cosmic::iced::widget::shader::Action<()>> = self.program.update(
+            &mut self.state,
+            &event,
+            Self::BOUNDS,
+            mouse::Cursor::Unavailable,
+        );
+        action.is_some()
+    }
+    fn shown(&self) -> gpu::Primitive {
+        <gpu::Program as cosmic::iced::widget::shader::Program<()>>::draw(
+            &self.program,
+            &self.state,
+            mouse::Cursor::Unavailable,
+            Self::BOUNDS,
+        )
+    }
+    /// Frames until the fade settles, checking that no frame jumps and that
+    /// a new scene always starts from nothing.
+    fn settle(&mut self) -> Vec<(Effect, f32)> {
+        let mut seen = vec![(self.shown().preferences.effect, self.shown().fade)];
+        for _ in 0..200 {
+            let more = self.frame();
+            let now = (self.shown().preferences.effect, self.shown().fade);
+            let (effect, fade) = *seen.last().unwrap();
+            assert!((now.1 - fade).abs() <= 0.03, "{seen:?} then {now:?}");
+            assert!(effect == now.0 || now.1 == 0., "{seen:?} then {now:?}");
+            seen.push(now);
+            if !more || (now.1 == 1. && self.program.preferences.animates()) {
+                return seen;
+            }
+        }
+        panic!("the fade never settled: {seen:?}");
+    }
+}
+
+#[test]
+fn desktop_effects_fade_in_change_and_fade_out_without_popping() {
+    let snow = Preferences {
+        enabled: true,
+        effect: Effect::Snow,
+        ..Default::default()
+    };
+    let mut f = Fading::new(snow.clone());
+    // A new surface starts as the plain wallpaper and fades in over FADE.
+    assert_eq!(f.shown().fade, 0.);
+    let seen = f.settle();
+    assert_eq!(seen.last().unwrap(), &(Effect::Snow, 1.));
+    let frames = seen.len() as f32 * 0.034;
+    assert!((1.4..1.8).contains(&frames), "{frames} s");
+    // A different effect: snow fades out, then rain fades in.
+    f.program.preferences = Preferences {
+        effect: Effect::Rain,
+        ..snow.clone()
+    };
+    assert_eq!(f.shown().preferences.effect, Effect::Snow);
+    assert_eq!(f.shown().fade, 1.);
+    let seen = f.settle();
+    let switch = seen.iter().position(|(e, _)| *e == Effect::Rain).unwrap();
+    assert!(
+        seen[switch - 1].1 <= 0.03 && seen[switch].1 == 0.,
+        "{seen:?}"
+    );
+    assert!(
+        seen[..switch].windows(2).all(|w| w[1].1 < w[0].1),
+        "{seen:?}"
+    );
+    assert_eq!(seen.last().unwrap(), &(Effect::Rain, 1.));
+    // A heavier sky with the same effect fades too.
+    f.program.fade.level = Some(weather::Level::Heavy);
+    let seen = f.settle();
+    assert!(seen.iter().any(|(_, fade)| *fade == 0.), "{seen:?}");
+    assert_eq!(seen.last().unwrap(), &(Effect::Rain, 1.));
+    // Other edits within the same scene show at once.
+    f.program.preferences.intensity = 90;
+    assert_eq!(f.shown().preferences.intensity, 90);
+    assert_eq!(f.shown().fade, 1.);
+    // A retiring surface fades out and then stops asking for frames.
+    f.program.fade.hidden = true;
+    let seen = f.settle();
+    assert_eq!(seen.last().unwrap().1, 0.);
+    assert!(!f.frame(), "nothing on screen asks for no frames");
+}
+
+#[test]
+fn frozen_effects_finish_their_fade_then_stop_drawing() {
+    let mut frozen = Preferences {
+        enabled: true,
+        effect: Effect::Fog,
+        ..Default::default()
+    };
+    frozen.fog.speed = 0;
+    let mut f = Fading::new(frozen);
+    let seen = f.settle();
+    assert_eq!(seen.last().unwrap(), &(Effect::Fog, 1.));
+    assert!(!f.frame(), "a finished fade of a frozen effect stops");
+    let time = f.shown().time;
+    f.frame();
+    assert_eq!(f.shown().time, time, "a frozen field never advances");
+}
+
+#[test]
+fn settings_previews_captures_and_paused_surfaces_never_fade() {
+    let rain = Preferences {
+        enabled: true,
+        ..Default::default()
+    };
+    // The Settings preview: edits show at once.
+    let mut f = Fading::new(rain.clone());
+    f.program.fade.enabled = false;
+    assert_eq!(f.shown().fade, 1.);
+    f.program.preferences.effect = Effect::Clouds;
+    assert_eq!(f.shown().preferences.effect, Effect::Clouds);
+    assert_eq!(f.shown().fade, 1.);
+    // Fixed-time captures and a stopped program show the scene as it is.
+    let mut f = Fading::new(rain.clone());
+    f.program.fixed_time = Some(2.);
+    f.frame();
+    assert_eq!(f.shown().fade, 1.);
+    let mut f = Fading::new(rain);
+    f.program.running = false;
+    assert!(!f.frame());
+    assert_eq!(f.shown().fade, 1.);
 }

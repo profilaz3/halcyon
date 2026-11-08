@@ -2,13 +2,12 @@
   "title": "Halcyon future builder",
   "working_target": "next release (version unassigned)",
   "target_is_release_commitment": false,
-  "updated": "2026-11-04",
+  "updated": "2026-11-08",
   "phase": "FB31 reactive Activity island implemented and validated locally, including shared system adapters, quiet-policy-gated reveals and native keyboard focus. Remaining placement, stationary-hover and packaged-artifact qualification stay open. No release assigned.",
   "implementation_started": true,
   "status_source": "This file is the canonical task status; roadmap and archived proposals do not override it.",
   "next": [
     "FB31",
-    "FB33",
     "FB34",
     "FB32",
     "FB35",
@@ -495,7 +494,7 @@
     {
       "id": "FB30",
       "title": "Manual snow, fog and cloud shadows",
-      "status": "in_progress",
+      "status": "validated",
       "depends_on": [
         "FB29"
       ],
@@ -503,10 +502,11 @@
       "evidence": [
         "WALLPAPER-EFFECTS.md",
         "../../.task-wallpaper-effects-20261030/result.json",
-        "../../.task-effects-optimization-20261031/result.json"
+        "../../.task-effects-optimization-20261031/result.json",
+        "evidence/fb30-native-20261108.json"
       ],
       "owner": null,
-      "validation": "Implementation complete. Initial 22 regressions, native control captures, setup round trips, 15 hardware GPU cases and two private desktop runs passed. Optimization pass: 26 regressions, 25 hardware stress cases, 22 before/after pixel comparisons and a rebuilt-app desktop behavior run passed; smaller atmosphere textures, reusable backgrounds and simulation storage, cached stationary fields and hidden-preview redraw suppression. Native visual confirmation remains open after intermittent Clock clipping in a nested compositor logging EGL failures. Local only; no release."
+      "validation": "Implementation complete. Initial 22 regressions, native control captures, setup round trips, 15 hardware GPU cases and two private desktop runs passed. Optimization pass: 26 regressions, 25 hardware stress cases, 22 before/after pixel comparisons and a rebuilt-app desktop behavior run passed. Real desktop review (2026-11-08, release build of b27fc19bc on the owner's COSMIC session, 1080p): all four effects reviewed in 25 screenshots; no Clock clipping at three Clock sizes/positions or across a minute rollover, so the nested-compositor clipping is attributed to its EGL failures; speed 0, Reduce motion, lock, sleep and battery pauses stop GPU work and resume correctly; fdinfo GPU busy 1.6–1.9 ms per frame at 30 fps plus about 39 ms/s compositor work. Local only; multi-monitor, HiDPI, battery device, energy and package qualification remain separate. No release."
     },
     {
       "id": "FB31",
@@ -594,17 +594,21 @@
     {
       "id": "FB33",
       "title": "Weather-connected scenes",
-      "status": "planned",
+      "status": "validated",
       "depends_on": [
         "FB07",
         "FB21",
         "FB30"
       ],
-      "plan": "NEXT-WORK.md",
+      "plan": "WEATHER-SCENES.md",
       "accepted_research_idea": 3,
       "exit": "Opt-in weather mapping drives existing effects with intensity limits, stale-data fallback, explicit override policy and preserved solar/power/reduced-motion behaviour; native transitions and resource checks pass.",
-      "evidence": [],
-      "owner": null
+      "evidence": [
+        "WEATHER-SCENES.md",
+        "evidence/fb33-weather-scenes-20261108.json"
+      ],
+      "owner": null,
+      "validation": "First version implemented and validated locally (2026-11-08). Opt-in Match the weather maps WMO codes to Rain, Snow, Fog and Cloud shadows at 40/70/100% of the person's own setting; clear and overcast skies show no effect. Stale (two refresh intervals, at most 3 h), missing, future, other-city and unknown readings fall back to Moving effect, with an expiry wake. Pauses, Reduce motion and speed 0 still win. Scene changes fade (1.5 s each way) through one uniform; quiet scenes fade out before their surface is removed. The toggle uses the existing Wallpaper staging, Apply, Recent changes and Undo. 13 focused regressions, light/dark Settings captures at 820x600 and 1280x800, and a real COSMIC desktop run with a faked, expiring reading and no network passed: rain faded to the chosen Snow at expiry and Snow faded out before removal. fdinfo GPU busy 1.19–1.25 ms per frame at about 30 fps; 0 when off. No allow list, separate limits or timed override; one 1080p output; no release."
     },
     {
       "id": "FB34",
@@ -767,6 +771,14 @@
     {
       "date": "2026-11-03",
       "change": "Accepted Opus Activity Island improvements after parent source/visual review and one animated Escape fix. 35 focused tests and final private COSMIC playback/Focus/Settings/restart/dismissal checks passed. Five-second unentered-popup timeout and pinned-hover wallpaper-click behavior remain open interaction issues; prior placement/device/package qualification limits remain. No installation or release."
+    },
+    {
+      "date": "2026-11-08",
+      "change": "Validated FB30 on the real COSMIC desktop with a release build of origin/main: Rain, Snow, Fog and Cloud shadows, Clock never clipped, speed 0, Reduce motion and lock/sleep/battery pauses (private logind/UPower stand-in), and fdinfo GPU cost for Halcyon and the compositor. The service and config were restored untouched. No installation or release."
+    },
+    {
+      "date": "2026-11-08",
+      "change": "Implemented FB33 weather-connected scenes: opt-in Match the weather with capped levels, stale-data fallback, explicit precedence, fades and the existing Undo path. Validated with focused regressions, Settings captures and a real COSMIC desktop transition using a faked reading without network. The service and config were restored untouched. No installation or release."
     }
   ],
   "foundation_probe_code_added": true,
