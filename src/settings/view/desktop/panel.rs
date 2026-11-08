@@ -25,19 +25,17 @@ impl Settings {
         if let Some(region) = editor.picker {
             return section(vec![self.panel_picker(draft, region)]);
         }
-        let mut blocks = vec![split(
-            label("Contents", 16., FG),
+        // The heading sits above the card, like the dock's Items; the hint
+        // to drag is at the card's foot.
+        let header = split(
+            text::heading("Contents").into(),
             button::text("Add items")
                 .id("panel-add-applets".into())
                 .leading_icon(icon::from_name("list-add-symbolic").size(16))
                 .on_press_maybe(idle.then_some(edit(Edit::Picker(Some(Region::End)))))
                 .into(),
-        )];
-        blocks.push(label(
-            "Drag to reorder.",
-            11.,
-            MUTED,
-        ));
+        );
+        let mut blocks = Vec::new();
         if let Some(add) = self.add_activity_island(draft, &regions) {
             blocks.push(add);
         }
@@ -194,7 +192,7 @@ impl Settings {
             blocks.push(self.activity_preferences());
         }
         // What's new and search open the Activity island here.
-        container(section(blocks))
+        container(column::with_children(vec![header, section(blocks)]).spacing(8))
             .id(cosmic::widget::Id::new("panel-items"))
             .width(Length::Fill)
             .into()
