@@ -2141,9 +2141,35 @@ fn ux_native_tour() {
                     theme,
                     &format!("{name}-{label}-{mode}"),
                 );
-                if let Some(title) = app.back_title() {
-                    let bounds =
-                        native.text_bounds(app.settings_view(), &format!("Back to {title}"));
+                // The header's one way up is a button named settings-back,
+                // labelled with its destination after a Back arrow. The same
+                // title can also be a sidebar entry, so find the label inside
+                // the button.
+                if let Some((title, _)) = app.up_link() {
+                    let button = native.bounds(app.settings_view(), "settings-back");
+                    let inside: Vec<_> = native
+                        .text_all(app.settings_view(), &title)
+                        .into_iter()
+                        .filter(|text| {
+                            text.x >= button.x
+                                && text.y >= button.y
+                                && text.x + text.width <= button.x + button.width + 0.5
+                                && text.y + text.height <= button.y + button.height + 0.5
+                        })
+                        .collect();
+                    assert_eq!(
+                        inside.len(),
+                        1,
+                        "Back label {title} inside {button:?}: {name} {label} {mode}"
+                    );
+                    let bounds = inside[0];
+                    assert!(
+                        bounds.x >= 0.
+                            && bounds.y >= 0.
+                            && bounds.x + bounds.width <= native.size.width
+                            && bounds.y + bounds.height <= native.size.height,
+                        "Back label on screen: {name} {label} {mode}: {bounds:?}"
+                    );
                     let path = std::path::PathBuf::from(
                         std::env::var_os("DESKTOP_CARDS_LAYOUT_EVIDENCE").unwrap(),
                     )
@@ -2153,8 +2179,8 @@ fn ux_native_tour() {
                         theme.cosmic().background(theme.transparent).base.into();
                     let rgb = [base.r * 255., base.g * 255., base.b * 255.];
                     let mut ink = 0;
-                    // The first 40 px contain "Back to". A clipped prefix can
-                    // leave the destination visible and still pass bounds tests.
+                    // The label's first 40 px must be drawn. A clipped start
+                    // still passes bounds tests but leaves a partial word.
                     for y in bounds.y.max(0.).ceil() as u32
                         ..(bounds.y + bounds.height)
                             .min(pixels.height() as f32)

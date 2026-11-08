@@ -153,10 +153,13 @@ impl Settings {
                 })
                 .on_press_maybe((!editor.loading).then_some(message(Account::Check)))
                 .into(),
-                button::text("Disconnect")
-                    .id(cosmic::widget::Id::new("calendar-disconnect"))
-                    .on_press(message(Account::ConfirmDisconnect(true)))
-                    .into(),
+                // "Open calendar" comes and goes in front of it with the backend.
+                slot(
+                    button::text("Disconnect")
+                        .id(cosmic::widget::Id::new("calendar-disconnect"))
+                        .on_press(message(Account::ConfirmDisconnect(true)))
+                        .into(),
+                ),
             ];
             if editor.connection.backend != Backend::Subscription {
                 actions.insert(
@@ -271,16 +274,19 @@ impl Settings {
                 );
             } else {
                 // Both ways to connect sit together in one row.
+                // Google sign-in can become available while this page is open,
+                // which puts a named Connect button in front of the named link
+                // button. Unnamed slots keep both on the right widget state.
                 let mut actions: Vec<Element<'_, Message>> = Vec::new();
                 if editor.client_ready && !editor.connection.connected() {
-                    actions.push(
+                    actions.push(slot(
                         button::suggested("Connect Google Calendar")
                             .id(cosmic::widget::Id::new("calendar-connect"))
                             .on_press(message(Account::Connect))
                             .into(),
-                    );
+                    ));
                 }
-                actions.push(
+                actions.push(slot(
                     button::standard(if editor.connection.connected() {
                         "Add calendar link"
                     } else {
@@ -289,7 +295,7 @@ impl Settings {
                     .id(cosmic::widget::Id::new("calendar-subscription-open"))
                     .on_press(message(Account::SubscriptionForm(true)))
                     .into(),
-                );
+                ));
                 let actions = row::with_children(actions).spacing(8).wrap();
                 if editor.connection.connected() {
                     rows.push(actions.into());

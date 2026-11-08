@@ -167,6 +167,39 @@ fn fresh_user_setup_routes_to_weather_calendar_and_local_widgets() {
     }
 }
 
+/// Google sign-in can become available while the Calendar page is open. The
+/// Connect button then appears in front of the link button in the same row,
+/// and the next frame must lay out both instead of panicking.
+#[test]
+fn calendar_page_survives_google_sign_in_becoming_available() {
+    if child("calendar_page_survives_google_sign_in_becoming_available") {
+        return;
+    }
+    for size in [Size::new(820., 600.), Size::new(1024., 720.)] {
+        let (mut app, _) = Settings::init(Core::default(), Page::Calendar);
+        app.calendar.connection = crate::calendar::Connection::default();
+        app.calendar.client_ready = false;
+        let _ = app.update(Message::Resized(size));
+        let mut native = Native::new(size);
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "calendar-connect")
+                .is_none()
+        );
+        let link = native.bounds(app.settings_view(), "calendar-subscription-open");
+        app.calendar.client_ready = true;
+        let connect = native.bounds(app.settings_view(), "calendar-connect");
+        let moved = native.bounds(app.settings_view(), "calendar-subscription-open");
+        assert!(
+            connect.width > 0. && moved.width >= link.width,
+            "{connect:?} {moved:?}"
+        );
+        click(&mut app, &mut native, "calendar-connect");
+        assert!(app.calendar.busy && app.calendar.connecting);
+        let _ = app.update(Message::Calendar(calendar::Message::Cancel));
+    }
+}
+
 #[test]
 fn connected_account_selector_and_errors_fit_and_reject_old_responses() {
     if child("connected_account_selector_and_errors_fit_and_reject_old_responses") {

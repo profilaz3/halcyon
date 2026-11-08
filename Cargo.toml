@@ -68,3 +68,29 @@ rrule = { path = "vendor/rrule" }
 [profile.release]
 # Release packages ship without symbols.
 strip = true
+
+# Picture decoding, PNG encoding and software rasterizing touch every pixel
+# and are about ten times slower unoptimized. The sandboxed preview workers
+# have a 2 s CPU limit, and in a debug build a 4K bundled wallpaper alone
+# used it up, so `cargo test` failed where `cargo test --release` passed.
+# Optimize just these crates; Halcyon's own code stays debuggable.
+[profile.dev.package.image]
+opt-level = 3
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+[profile.dev.package.zune-core]
+opt-level = 3
+[profile.dev.package.png]
+opt-level = 3
+[profile.dev.package.fdeflate]
+opt-level = 3
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+[profile.dev.package.simd-adler32]
+opt-level = 3
+[profile.dev.package.crc32fast]
+opt-level = 3
+[profile.dev.package.tiny-skia]
+opt-level = 3
+[profile.dev.package.tiny-skia-path]
+opt-level = 3
