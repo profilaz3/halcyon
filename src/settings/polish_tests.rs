@@ -1603,4 +1603,100 @@ fn windows_rows_match_the_other_pages() {
     );
     let mut native = crate::native_test::Native::new(size);
     native.text_bounds(app.settings_view(), "Arrange windows side by side for you");
+
+    // The folded corners, outline color and shadows section uses the same
+    // rows, and its Effects disclosure the same title as the dock's.
+    send_settings(
+        &mut app,
+        Message::Explain(view::explain::key("Tile windows automatically")),
+    );
+    send_settings(
+        &mut app,
+        Message::ToggleSection("appearance-window-details"),
+    );
+    let advanced = [
+        "Corners, outline color and shadows",
+        "Active window outline",
+        "Outline width",
+        "Window corners",
+        "Round floating window corners",
+        "Round tiled window corners",
+        "Shadows on tiled windows",
+        "Effects",
+    ];
+    let effects = [
+        "Panel and dock",
+        "Applet popups",
+        "System interface",
+        "App windows",
+        "Blur strength",
+        "Glass opacity",
+    ];
+    for open in [false, true] {
+        app.system_appearance.effects = open;
+        for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+            send_settings(&mut app, Message::Resized(size));
+            let mut native = crate::native_test::Native::new(size);
+            native_reveal(&app, &mut native, "window-corners");
+            let name = if open { "-effects" } else { "" };
+            capture_both(
+                &app,
+                &mut native,
+                &format!("windows-advanced-{}{name}", size.width),
+            );
+            // Only what is in view is drawn: scroll the page through.
+            let mut heights = std::collections::HashMap::new();
+            // Where the page puts the Effects row at the top of the view.
+            let mut effects_at = None;
+            for step in 0..60 {
+                let offset = step as f32 * 150.;
+                native.scroll(app.settings_view(), "settings-content", offset);
+                for title in advanced
+                    .iter()
+                    .chain(&effects)
+                    .chain(["Frosted surfaces and blur"].iter())
+                {
+                    let found = native.text_all(app.settings_view(), title);
+                    assert!(found.len() <= 1, "{title} is drawn once");
+                    if let Some(found) = found.first() {
+                        heights.insert(*title, found.height);
+                        if *title == "Effects" && effects_at.is_none() {
+                            effects_at = Some(offset + found.y - 120.);
+                        }
+                    }
+                }
+            }
+            for title in advanced.iter().chain(effects.iter().filter(|_| open)) {
+                assert_eq!(
+                    heights.get(title),
+                    Some(&floating),
+                    "{title} uses the same title size"
+                );
+            }
+            for title in effects.iter().filter(|_| !open) {
+                assert!(!heights.contains_key(title), "{title} stays folded");
+            }
+            // Search names the Effects section by this line, so it stays shown.
+            assert!(heights.contains_key("Frosted surfaces and blur"));
+            if open {
+                native.scroll(app.settings_view(), "settings-content", effects_at.unwrap());
+                capture_both(
+                    &app,
+                    &mut native,
+                    &format!("windows-advanced-{}{name}-lower", size.width),
+                );
+            }
+        }
+    }
+    // Search still opens the folded rows by their ids.
+    for (query, id) in [
+        ("window corners", "window-corners"),
+        ("blur", "appearance-effects"),
+    ] {
+        let hit = crate::settings::navigation::search(query)
+            .into_iter()
+            .find(|hit| hit.page == Page::DesktopWindows)
+            .unwrap_or_else(|| panic!("{query}"));
+        assert_eq!(hit.anchor(), id, "{query}");
+    }
 }

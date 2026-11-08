@@ -178,11 +178,15 @@ impl Settings {
             items.push(self.disclosure(
                 "appearance-window-details",
                 "Corners, outline color and shadows",
+                // One card, like the dock's folded section: its rows,
+                // then Effects folded inside it.
                 column::with_children(vec![
                     self.appearance_window(look),
+                    // Inset like the dividers between its rows.
+                    container(separator()).padding([0, 10]).into(),
                     self.search_target("appearance-effects", self.appearance_effects(look)),
                 ])
-                .spacing(16)
+                .spacing(10)
                 .into(),
             ));
         }
