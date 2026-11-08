@@ -300,12 +300,8 @@ impl Settings {
         items.push(self.islands_section(draft));
         items.push(self.bar_style(draft));
         items.push(self.bar_position(draft));
-        if draft.kind() == PanelKind::Panel {
-            items.push(self.panel_contents(draft));
-        } else {
-            // Each region's Add already lists every installed item.
-            items.push(self.applets_section(draft));
-        }
+        // Both bars edit their items with the same editor.
+        items.push(self.bar_items(draft));
         items.push(self.advanced_section(draft));
         items.push(group(None, vec![self.cosmic_link(editor.selected.system_page())]));
         column::with_children(items).spacing(16).into()

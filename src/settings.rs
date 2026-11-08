@@ -8094,7 +8094,6 @@ mod tests {
                 Edit::Drop,
                 Edit::Picker(Some(Region::Center)),
                 Edit::AppletGroup(crate::desktop::applets::AppletGroup::Media),
-                Edit::PickerRegion(Region::End),
                 Edit::Picker(None),
                 Edit::Starter(true),
                 Edit::Starter(false),

@@ -35,7 +35,6 @@ pub enum Message {
     KeepStyle(bool),
     Advanced(bool),
     Picker(Option<Region>),
-    PickerRegion(Region),
     AppletGroup(AppletGroup),
     SelectApplet(Option<Slot>),
     MoveTo(Slot, Region),
@@ -551,7 +550,6 @@ impl DesktopEditor {
                 self.applet_group = AppletGroup::All;
                 self.starter_open = false;
             }
-            Message::PickerRegion(region) => self.picker = Some(region),
             Message::AppletGroup(group) => self.applet_group = group,
             Message::SelectApplet(slot) => {
                 self.focus = slot.filter(|s| {
@@ -655,9 +653,8 @@ impl DesktopEditor {
             }
             Message::Add(region, id) => {
                 self.edit_applets(|regions| Some(regions.add(region, id)));
-                if self.selected == PanelKind::Panel {
-                    self.picker = None;
-                }
+                // Both bars close the picker and show the new row.
+                self.picker = None;
             }
             Message::Remove(slot) => {
                 self.edit_applets(|regions| {
