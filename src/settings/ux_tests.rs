@@ -1114,7 +1114,7 @@ fn review_r1_gallery_keyboard_actions_are_reachable() {
                 "Profiles(ThemeColors(true))",
                 "Profiles(ThemeColors(false))",
                 "Profiles(Color(Mode(Dark)))",
-                "WidgetCorners(16)",
+                "Corners(VeryRound)",
             ] {
                 if !reached.contains(expected) {
                     missing.push(format!("{size:?}: keyboard cannot activate {expected}"));

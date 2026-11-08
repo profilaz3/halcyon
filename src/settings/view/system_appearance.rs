@@ -744,7 +744,7 @@ impl Settings {
                 "Window corners",
                 choice(
                     &draft.roundness(variant),
-                    // The same words and order as every other corners choice.
+                    // Appearance's Corners steps; windows have no Pill.
                     &[
                         ("Square", Roundness::Square),
                         ("Rounded", Roundness::SlightlyRound),
@@ -762,11 +762,6 @@ impl Settings {
                 MUTED,
             ));
         }
-        items.push(label(
-            "The dock and panel keep their own corners.",
-            11.,
-            MUTED,
-        ));
         items.push(separator());
         for effect in WindowEffect::ALL {
             items.push(match draft.window(effect) {

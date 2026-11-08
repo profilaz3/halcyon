@@ -178,12 +178,13 @@ impl Settings {
                 ],
             ));
         }
-        // The older widget finish only matters until a glass style is chosen.
+        // Widget cards' own corners; the older widget finish only matters
+        // until a glass style is chosen.
+        let mut advanced = vec![self.widget_corners()];
         if self.config.materials.effective(Target::Widgets).is_none() {
-            rows.push(
-                self.page_settings_advanced(Page::Appearance, vec![self.legacy_widget_style()]),
-            );
+            advanced.push(self.legacy_widget_style());
         }
+        rows.push(self.page_settings_advanced(Page::Appearance, advanced));
         let controls = column::with_children(rows).spacing(12).into();
         column::with_children(vec![
             heading(
@@ -198,6 +199,35 @@ impl Settings {
             controls,
         ])
         .spacing(16)
+        .width(Length::Fill)
+        .into()
+    }
+    /// Widget cards' corners alone, in the steps Appearance's Corners uses.
+    /// A size set some other way is kept and shown as Custom.
+    fn widget_corners(&self) -> Element<'_, Message> {
+        use crate::settings::corners::Step;
+        let radius = self.config.appearance.corner_radius;
+        let mut steps: Vec<(String, bool, Option<Message>)> = Step::ALL
+            .into_iter()
+            .map(|step| {
+                (
+                    step.title().to_string(),
+                    radius == step.widget(),
+                    Some(Message::WidgetCorners(step.widget())),
+                )
+            })
+            .collect();
+        if !Step::ALL.iter().any(|step| step.widget() == radius) {
+            steps.push((format!("Custom · {radius} px"), true, None));
+        }
+        container(group_row(
+            "Widget corners",
+            "",
+            row::with_children(vec![segmented(steps, self.settings_accent())])
+                .wrap()
+                .into(),
+        ))
+        .id(cosmic::widget::Id::new("widget-corners"))
         .width(Length::Fill)
         .into()
     }

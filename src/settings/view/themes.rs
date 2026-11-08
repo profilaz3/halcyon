@@ -277,7 +277,7 @@ impl Settings {
         group(Some("Color"), rows)
     }
 
-    /// The shared material and widget corners; details open on a subpage.
+    /// The shared material and corners; details open on a subpage.
     fn appearance_surfaces(&self) -> Element<'_, Message> {
         use crate::materials::Target;
         let accent = self.settings_accent();
@@ -299,26 +299,23 @@ impl Settings {
             Message::Page(Page::Appearance),
             "appearance-surfaces".into(),
         )];
-        let radius = self.config.appearance.corner_radius;
-        rows.push(group_row(
-            "Widget corners",
-            "",
-            container(choice_row(segmented(
-                [("Square", 0u16), ("Rounded", 8), ("Very round", 16)]
-                    .into_iter()
-                    .map(|(title, value)| {
-                        let on = match value {
-                            0 => radius < 4,
-                            8 => (4..12).contains(&radius),
-                            _ => radius >= 12,
-                        };
-                        (title.into(), on, Some(Message::WidgetCorners(value)))
-                    })
-                    .collect(),
-                accent,
-            )))
-            .id(cosmic::widget::Id::new("appearance-corners"))
-            .into(),
+        // One choice for every surface. Each surface's own corners wait in
+        // its advanced settings; when they differ, Mixed says so.
+        let shown = self.corner_step;
+        let mut steps: Vec<(String, bool, Option<Message>)> = crate::settings::corners::Step::ALL
+            .into_iter()
+            .map(|step| (step.title().into(), shown == Some(step), Some(Message::Corners(step))))
+            .collect();
+        if shown.is_none() {
+            steps.push(("Mixed".into(), true, None));
+        }
+        rows.push(self.search_target(
+            "appearance-corners",
+            group_row(
+                "Corners",
+                "Windows, widgets, the dock and the panel. Windows can’t be pill-shaped, so Pill makes them very round",
+                choice_row(segmented(steps, accent)),
+            ),
         ));
         // A day or night widget style overrides the style above, so while
         // one shows, say so; choosing them lives on Looks › Time of day.
@@ -330,7 +327,7 @@ impl Settings {
                 "appearance-moments".into(),
             ));
         }
-        group(Some("Widgets and bars"), rows)
+        group(Some("Surfaces"), rows)
     }
 
     /// Window outline and density; fonts and icons open on a subpage.

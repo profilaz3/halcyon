@@ -2258,6 +2258,47 @@ fn an_outline_only_the_derived_theme_colors_stays_customized_until_windows_reset
 }
 
 #[test]
+fn styles_set_corners_until_corners_are_chosen() {
+    use crate::desktop::panels::{MAX_RADIUS, PanelDraft, PanelKind, Setting};
+    use crate::desktop_theme::Family;
+    use crate::settings::corners::{self, Step};
+    let desk = Desk::new("corners-and-styles");
+    let store = desk.store();
+    let bar = |kind| PanelDraft::load(&store, kind).unwrap().radius();
+    let card = || desk.widget_config()["appearance"]["corner_radius"].clone();
+    let apply = |family: Family| {
+        let mut editor = desk.editor();
+        editor.update(Message::Select(Selection::Preset(family.preset())));
+        finish_theme(&mut editor);
+        assert_eq!(editor.update(Message::Apply), Outcome::Changed, "{:?}", editor.notice);
+    };
+    // A style sets the corners of widget cards and both bars. It leaves
+    // windows as they are, so Corners reads one step only when windows
+    // already have it.
+    apply(Family::Outline);
+    let (_, widget, _) = Family::Outline.geometry();
+    let (_, radius, _, _) = Family::Outline.bar();
+    assert_eq!(card(), serde_json::json!(widget));
+    assert_eq!(bar(PanelKind::Dock), Setting::Known(radius));
+    assert_eq!(bar(PanelKind::Panel), Setting::Known(radius));
+    let windows = crate::desktop::appearance::AppearanceDraft::load(&store).unwrap();
+    let windows = windows.roundness(windows.active_variant()).known().copied();
+    assert_eq!(
+        corners::current(&store, widget),
+        Step::shown(widget, &[radius, radius], windows)
+    );
+    assert_eq!(Step::shown(widget, &[radius, radius], None), Some(Step::Rounded));
+    // Chosen corners are the person's own, like any surface setting chosen
+    // by hand: the next style keeps them.
+    corners::apply(&store, Step::Pill).unwrap();
+    apply(Family::Soft);
+    assert_eq!(card(), serde_json::json!(Step::Pill.widget()));
+    assert_eq!(bar(PanelKind::Dock), Setting::Known(MAX_RADIUS));
+    assert_eq!(bar(PanelKind::Panel), Setting::Known(MAX_RADIUS));
+    assert_eq!(corners::current(&store, Step::Pill.widget()), Some(Step::Pill));
+}
+
+#[test]
 fn a_style_leaves_the_dock_and_panel_alone_when_asked() {
     let desk = Desk::new("style-bars");
     let mut editor = desk.editor();

@@ -264,7 +264,7 @@ impl cosmic::iced::advanced::widget::Operation for ScrollTargets {
 }
 
 /// The dock and panel’s folded section, as its toggle and search name it.
-pub(super) const BAR_ADVANCED: &str = "Spacing and timing";
+pub(super) const BAR_ADVANCED: &str = "Corners, spacing and timing";
 /// The Windows page’s folded section, as its toggle and search name it.
 const WINDOW_DETAILS: &str = "Corners, outline color and shadows";
 
@@ -359,8 +359,8 @@ const SEARCH: &[SearchHit] = &[
     .at("colors-scope"),
     hit(
         Page::Themes,
-        "Widget corners",
-        "widget corners roundness rounded square radius card",
+        "Corners",
+        "corners roundness rounded square pill radius windows widgets dock panel",
         false,
     )
     .at("appearance-corners"),
@@ -472,7 +472,15 @@ const SEARCH: &[SearchHit] = &[
         true,
     )
     .section("How often it updates"),
+    // Before the widget corners: transparency is what someone searching it wants.
     SEE_THROUGH,
+    hit(
+        Page::Appearance,
+        "Widget corners",
+        "appearance widget card corners radius rounded square opacity border outline style finish",
+        true,
+    )
+    .at("widget-corners"),
     hit(
         Page::Overview,
         "Arrange widgets",
@@ -634,20 +642,22 @@ const SEARCH: &[SearchHit] = &[
     .section(BAR_ADVANCED),
     hit(
         Page::DesktopDock,
-        "Corners",
+        "Dock corners",
         "dock corners radius rounded square pill",
-        false,
+        true,
     )
     .at("dock-corners")
-    .bar(crate::desktop::panels::PanelKind::Dock),
+    .bar(crate::desktop::panels::PanelKind::Dock)
+    .section(BAR_ADVANCED),
     hit(
         Page::DesktopDock,
-        "Corners",
+        "Panel corners",
         "panel corners radius rounded square pill",
-        false,
+        true,
     )
     .at("dock-corners")
-    .bar(crate::desktop::panels::PanelKind::Panel),
+    .bar(crate::desktop::panels::PanelKind::Panel)
+    .section(BAR_ADVANCED),
     hit(
         Page::DesktopWallpaper,
         "Moving effect",
@@ -684,17 +694,10 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::DesktopDock,
         "Background",
-        "dock panel background match style dark light color",
+        "dock panel background match style follow look dark light color",
         false,
     )
     .at("dock-background"),
-    hit(
-        Page::DesktopDock,
-        "Follow the look’s style",
-        "dock panel bars follow look style color restyle",
-        false,
-    )
-    .at("dock-style-bars"),
     hit(
         Page::DesktopDock,
         "Visibility",

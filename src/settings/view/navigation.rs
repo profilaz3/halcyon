@@ -34,7 +34,16 @@ impl Settings {
             Page::Calendar => "Sync and sign-in setup",
             Page::Weather => "Dew point and how often it updates",
             Page::Clock | Page::Projects | Page::Devbox => "How often it updates",
-            Page::Appearance => "Card opacity and outline",
+            Page::Appearance
+                if self
+                    .config
+                    .materials
+                    .effective(crate::materials::Target::Widgets)
+                    .is_none() =>
+            {
+                "Widget corners, opacity and outline"
+            }
+            Page::Appearance => "Widget corners",
             _ => "More options",
         };
         let mut rows = vec![

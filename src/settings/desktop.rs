@@ -152,6 +152,10 @@ pub struct DesktopEditor {
     /// The applet occurrence last moved, kept highlighted for keyboard users.
     pub focus: Option<Slot>,
     recovery: Option<Result<Journal, String>>,
+    /// “Match style” was chosen: Apply also lets styles restyle the bars
+    /// again (the former “Follow the look’s style” switch), in the same
+    /// change.
+    follow_style: bool,
 }
 
 impl DesktopEditor {
@@ -177,6 +181,7 @@ impl DesktopEditor {
             drag: self.drag.clone(),
             focus: self.focus,
             recovery: self.recovery.clone(),
+            follow_style: self.follow_style,
         }
     }
     /// First visit: choose the store and read current values. Later visits
@@ -541,7 +546,10 @@ impl DesktopEditor {
                 self.edit(|draft| draft.set_output(output));
                 self.check_islands();
             }
-            Message::Background(value) => self.edit(|draft| draft.set_background(value)),
+            Message::Background(value) => {
+                self.follow_style = value == Background::ThemeDefault;
+                self.edit(|draft| draft.set_background(value));
+            }
             Message::KeepStyle(value) => self.edit(|draft| draft.set_keep_style(value)),
             Message::Advanced(open) => self.advanced = open,
             Message::Picker(region) => {
@@ -697,6 +705,7 @@ impl DesktopEditor {
                 for draft in self.drafts.values_mut() {
                     draft.discard();
                 }
+                self.follow_style = false;
                 self.picker = None;
                 self.focus = None;
                 self.starter_open = false;
@@ -760,6 +769,7 @@ impl DesktopEditor {
             .drafts
             .values()
             .any(|d| d.edited().any(|n| n == "islands"));
+        let follow_style = std::mem::take(&mut self.follow_style);
         let Some(store) = self.store() else {
             return;
         };
@@ -770,10 +780,25 @@ impl DesktopEditor {
                 return;
             }
         }
-        if patch.is_empty() {
+        // Match style also brings back styles restyling the bars, merged
+        // into the preferences so nothing else in them changes.
+        let mut widgets = crate::desktop::store::WidgetPatch::new();
+        if follow_style
+            && let Ok((raw, config)) = crate::desktop::wallpaper::automatic::read_config(store)
+            && !config.appearance.style_bars
+            && let Err(error) = widgets.set(
+                "/appearance/style_bars",
+                crate::desktop::store::widget::get(&raw, "/appearance/style_bars"),
+                Some(true.into()),
+            )
+        {
+            self.notice = Some(Notice::Error(error));
             return;
         }
-        match store.apply_owned(&patch, None, Owner::DockPanel, "Dock & Panel") {
+        if patch.is_empty() && widgets.is_empty() {
+            return;
+        }
+        match store.apply_owned(&patch, Some(&widgets), Owner::DockPanel, "Dock & Panel") {
             Ok(change) => {
                 self.undo = Some(change);
                 // Immediate saves must retain the selected occurrence and its

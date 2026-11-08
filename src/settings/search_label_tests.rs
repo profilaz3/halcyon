@@ -59,7 +59,7 @@ fn search_result_paths_never_repeat_a_step() {
     assert_eq!(crumb("dock", "Dock"), "Dock and panel");
     assert_eq!(
         crumb("dock spacing", "Spacing"),
-        "Dock and panel › Dock › Spacing and timing"
+        "Dock and panel › Dock › Corners, spacing and timing"
     );
     assert_eq!(
         crumb("window corners", "Window corners"),

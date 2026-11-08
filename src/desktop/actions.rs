@@ -135,12 +135,14 @@ pub fn commit(
         let mut overrides = config.appearance.overrides | PROPERTY.with(|v| v.get());
         for (key, entry) in patch.iter() {
             let bit = override_for_native(key);
+            let desired = entry.desired.as_ref().map(|raw| raw.as_str().trim());
+            // A bar background of Match style follows the look's style, so
+            // choosing it is not a choice a style must keep.
+            let follows_style = key.key() == "background" && desired == Some("ThemeDefault");
             if bit != 0
-                && super::appearance::ThemeVariant::of(key).is_some()
-                && entry
-                    .desired
-                    .as_ref()
-                    .is_none_or(|raw| raw.as_str().trim() == "None")
+                && (follows_style
+                    || (super::appearance::ThemeVariant::of(key).is_some()
+                        && desired.is_none_or(|raw| raw == "None")))
             {
                 overrides &= !bit;
             } else {
