@@ -38,7 +38,7 @@ Idle wakeups left with an island connected (fixed build, from `strace`):
 | What | How often | |
 |---|---|---|
 | Clock depth worker (`--depth-worker`) | once a minute | Redraws the depth layer for the new time. By design. |
-| Two `watch::read_only_files` fallbacks | every 30 s each | Both include the wallpaper picture, so each reads all of it (615 KB here) and keeps a copy to compare. `watch::image_files` compares metadata instead. Not changed. |
+| Two `watch::read_only_files` fallbacks | every 30 s each | Both include the wallpaper picture, and each read all of it (615 KB here) and kept a copy to compare. Fixed: files over 256 KiB are now compared by size, modification time and inode, never read; smaller settings files still compare contents. |
 | Lock safety net, bus observers’ fallback reads, camera rescan | every 30 s | One logind query, one read each of UPower, NetworkManager and PackageKit, one `/sys/class/video4linux` scan. |
 | Network observer | about every 6 s here | Follows NetworkManager signals; reads stay 200 ms apart. |
 
