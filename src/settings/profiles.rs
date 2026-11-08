@@ -2536,7 +2536,7 @@ pub fn read_import(path: &Path) -> Result<Vec<u8>, String> {
         .open(path)
         .map_err(unreadable)?;
     if !file.metadata().map_err(unreadable)?.is_file() {
-        return Err("Choose a regular setup file.".into());
+        return Err("Choose a regular look file.".into());
     }
     let mut bytes = Vec::new();
     file.take(profiles::packages::MAX_BYTES as u64 + 1)

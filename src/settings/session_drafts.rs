@@ -70,7 +70,7 @@ impl Kind {
             Self::Canvas => "Desktop canvas",
             Self::Automation => "Schedules",
             Self::Preset => "Presets",
-            Self::Previews => "Theme and setup previews",
+            Self::Previews => "Theme and look previews",
             Self::Recipe => "Widget design preview",
         }
     }

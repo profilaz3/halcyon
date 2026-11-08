@@ -96,7 +96,7 @@ impl ProfilesEditor {
                 let draft = draft.clone();
                 if self.profile() != Some(&draft.profile) || !draft.picture_current() {
                     self.notice = Some(Notice::Error(
-                        "The setup or wallpaper changed. Reopen the package review.".into(),
+                        "The look or wallpaper changed. Reopen the package review.".into(),
                     ));
                     return Outcome::None;
                 }

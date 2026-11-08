@@ -1651,7 +1651,7 @@ impl Settings {
             items.push(label(if !editor.included(Domain::Panel) {
                 "Panel is excluded, so your current arrangement stays."
             } else if customized {
-                "This display keeps its custom island positions. The setup changes the default arrangement."
+                "This display keeps its custom island positions. The look changes the default arrangement."
             } else if !self.desktop.islands.installation.installed() {
                 "The standard panel is used until Islands is installed and enabled."
             } else if preview_panel.and_then(|p| p.islands().known().cloned()).is_some_and(|s| !s.enabled) {
@@ -1681,7 +1681,7 @@ impl Settings {
                 if self.page == Page::Themes {
                     "themes"
                 } else {
-                    "setups"
+                    "looks"
                 }
             ),
             WARN,

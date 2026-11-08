@@ -618,7 +618,7 @@ impl ProfilePlan {
     ) -> Result<(), String> {
         self.widget
             .merge(extra)
-            .map_err(|keys| format!("Overlapping setup choices: {}", keys.join(", ")))
+            .map_err(|keys| format!("Overlapping look choices: {}", keys.join(", ")))
     }
     /// Whether two plans would write exactly the same values over the same
     /// starting values. Notes and warnings may still differ.

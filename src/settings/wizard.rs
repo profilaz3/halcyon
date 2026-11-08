@@ -1356,7 +1356,7 @@ impl Wizard {
     pub fn summary_lines(&self, config: &crate::config::Config) -> Vec<String> {
         let mut lines = Vec::new();
         if let Some(preset) = self.look.and_then(profiles::preset) {
-            lines.push(format!("Setup: {}", preset.profile.name));
+            lines.push(format!("Look: {}", preset.profile.name));
         }
         if self.touched.any() {
             lines.push(format!(

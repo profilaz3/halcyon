@@ -57,7 +57,7 @@ impl Settings {
                     let kind = match &source {
                         Selection::Current => "Captured now",
                         Selection::Preset(_) => "Built-in",
-                        Selection::Saved(_) => "Saved setup",
+                        Selection::Saved(_) => "Saved look",
                     };
                     let selected = draft.sources[draft.picking.index()]
                         .as_ref()

@@ -365,7 +365,7 @@ impl Settings {
                 } else if matches!(edit, profiles::Message::Package(_)) {
                     self.status = "Preparing package…".into();
                 } else if matches!(edit, profiles::Message::Imported(..)) {
-                    self.status = "Importing setup…".into();
+                    self.status = "Importing look…".into();
                 }
                 Some(task(move || {
                     let result = editor.update(edit);

@@ -5375,7 +5375,7 @@ fn profile_dialog(request: profiles::Request) -> Task<Message> {
     use cosmic::dialog::ashpd::desktop::ResponseError;
     use cosmic::dialog::file_chooser::{self, FileFilter};
     let filter = || {
-        FileFilter::new("Halcyon setup or profile")
+        FileFilter::new("Halcyon look or profile")
             .glob("*.json")
             .glob("*.halcyon")
     };

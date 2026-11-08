@@ -859,7 +859,7 @@ impl Page {
             Self::Overview => "Edit layout to preview changes before applying",
             Self::Themes => "Choose a theme to preview it here",
             Self::DesktopWallpaper => "Choose a wallpaper to preview it here",
-            Self::DesktopProfiles => "Choose a setup to see what it includes",
+            Self::DesktopProfiles => "Choose a look to see what it includes",
             Self::Notes => "",
             _ => "",
         }
@@ -1844,7 +1844,7 @@ impl Settings {
             let (title, root, target) = match self.profiles.owner() {
                 PreviewKind::Theme => ("Appearance", Page::Themes, KeptTarget::Colors),
                 PreviewKind::Setup => (
-                    self.profiles.profile().map_or("Setup", |p| p.name.as_str()),
+                    self.profiles.profile().map_or("Look", |p| p.name.as_str()),
                     Page::DesktopProfiles,
                     KeptTarget::Setup(self.profiles.selection().clone()),
                 ),

@@ -505,7 +505,7 @@ impl AutomationEditor {
                         .join(", ")
                 )
             })
-            .unwrap_or_else(|| "The chosen setup is unavailable.".into())
+            .unwrap_or_else(|| "The chosen look is unavailable.".into())
     }
 
     /// The profile name to show for a rule (the saved name when it's gone).

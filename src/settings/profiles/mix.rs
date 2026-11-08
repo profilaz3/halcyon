@@ -38,7 +38,7 @@ impl ProfilesEditor {
         let frozen = Component::ALL.map(|part| Source::freeze(&profile, part, kind, id.clone()));
         let [Ok(picture), Ok(style), Ok(layout)] = frozen else {
             self.notice = Some(Notice::Error(
-                "This setup could not be prepared for remixing".into(),
+                "This look could not be prepared for remixing".into(),
             ));
             return;
         };

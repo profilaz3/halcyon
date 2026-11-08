@@ -45,12 +45,12 @@ pub(super) const RELEASES: &[Release] = &[
                 place: Some(navigation::ACTIVITY_ISLAND),
             },
             Note {
-                title: "Rain, snow and fog setups",
-                body: "Three new setups, each with its own wallpaper, colors and weather effect.",
+                title: "Rain, snow and fog looks",
+                body: "Three new looks, each with its own wallpaper, colors and weather effect.",
                 place: Some(navigation::LOOKS),
             },
             Note {
-                title: "Tidier built-in setups",
+                title: "Tidier built-in looks",
                 body: "Time and weather together top left; system monitor and music on the right.",
                 place: Some(navigation::LOOKS),
             },

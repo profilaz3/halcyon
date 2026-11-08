@@ -28,7 +28,7 @@ impl PreviewKind {
     pub fn title(self) -> &'static str {
         match self {
             Self::Theme => "Theme",
-            Self::Setup => "Setup",
+            Self::Setup => "Look",
             Self::Adaptive => "Adaptive look",
         }
     }

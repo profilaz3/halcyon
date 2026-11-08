@@ -290,7 +290,7 @@ impl Package {
             {
                 Some(SourceLook::Image(path)) => path,
                 _ => return Err(
-                    "Choose a saved setup with a single personal wallpaper to include its picture"
+                    "Choose a saved look with a single personal wallpaper to include its picture"
                         .into(),
                 ),
             };
