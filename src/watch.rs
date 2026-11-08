@@ -70,7 +70,7 @@ fn changes_with(
                 }
                 _ = fallback.tick() => {}
             }
-            let current: Vec<_> = paths.iter().map(|path| std::fs::read(path).ok()).collect();
+            let current: Vec<_> = paths.iter().map(|path| snapshot(path)).collect();
             if previous.as_ref() != Some(&current) {
                 previous = Some(current);
                 if output.send(()).await.is_err() {
@@ -79,6 +79,27 @@ fn changes_with(
             }
         }
     })
+}
+
+/// Files up to this size are compared by contents; larger ones by metadata.
+/// Settings and state files sit well below it; wallpaper pictures above it.
+const CONTENTS_LIMIT: u64 = 256 * 1024;
+
+/// What a file watch compares between wakes. Small files compare contents,
+/// so rewriting a setting with the same value stays quiet. Larger files,
+/// such as the wallpaper picture in the wallpaper and depth watches, compare
+/// metadata, so the 30 s fallback never rereads or holds megabytes of pixels.
+#[derive(Debug, PartialEq, Eq)]
+enum Snapshot {
+    Contents(Vec<u8>),
+    Stamp(FileStamp),
+}
+fn snapshot(path: &std::path::Path) -> Option<Snapshot> {
+    let stamp = file_stamp(path)?;
+    if stamp.len > CONTENTS_LIMIT {
+        return Some(Snapshot::Stamp(stamp));
+    }
+    std::fs::read(path).ok().map(Snapshot::Contents)
 }
 
 /// Image watches compare metadata, never reread multi-megabyte pixels. The
@@ -234,6 +255,49 @@ mod tests {
                 .is_err()
         );
         std::fs::remove_file(&path).unwrap();
+        assert_eq!(
+            tokio::time::timeout(deadline, events.next()).await.unwrap(),
+            Some(())
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// The wallpaper and depth watches include the picture itself; reading
+    /// it whole on every 30 s fallback cost 615 KB a pass on a plain 1080p
+    /// wallpaper, and far more on a 4K one.
+    #[tokio::test]
+    async fn pictures_are_compared_by_metadata_and_replacements_still_wake() {
+        let directory = std::env::temp_dir().join(format!(
+            "desktop-cards-picture-watch-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let picture = directory.join("wallpaper.jpg");
+        let setting = directory.join("setting");
+        std::fs::write(&picture, vec![1u8; CONTENTS_LIMIT as usize + 1]).unwrap();
+        std::fs::write(&setting, "same").unwrap();
+        assert!(matches!(snapshot(&picture), Some(Snapshot::Stamp(_))));
+        assert!(matches!(snapshot(&setting), Some(Snapshot::Contents(_))));
+        assert_eq!(snapshot(&directory.join("absent")), None);
+
+        let events = changes_with(vec![picture.clone(), setting.clone()], false);
+        pin_mut!(events);
+        let deadline = Duration::from_secs(2);
+        assert_eq!(
+            tokio::time::timeout(deadline, events.next()).await.unwrap(),
+            Some(())
+        );
+        // Reading the picture changes nothing a watch compares.
+        std::fs::read(&picture).unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(150), events.next())
+                .await
+                .is_err()
+        );
+        // Replacing it, as a wallpaper change does, wakes the watch.
+        let replacement = directory.join("replacement.tmp");
+        std::fs::write(&replacement, vec![2u8; CONTENTS_LIMIT as usize + 1]).unwrap();
+        std::fs::rename(replacement, &picture).unwrap();
         assert_eq!(
             tokio::time::timeout(deadline, events.next()).await.unwrap(),
             Some(())
