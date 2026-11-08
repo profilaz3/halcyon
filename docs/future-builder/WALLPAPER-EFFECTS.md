@@ -9,7 +9,8 @@ No new renderer, decoder, video, network source or generic plugin engine.
 One selected effect at a time: Rain, Snow, Fog or Cloud shadows. Each retains its
 own settings. The existing rain mode and controls remain intact. Old preferences
 without an effect selector mean Rain. Default rain drop size is 30%; explicit saved
-sizes are preserved. Manual selection only; automatic Weather mapping is separate.
+sizes are preserved. Selection is manual; [Match the weather](WEATHER-SCENES.md)
+can let the Weather widget pick the effect instead.
 
 - Snow: density, flake size, speed, wind and opacity. Three analytic layers.
 - Fog: opacity, height, speed, wind and neutral/cool/warm color.

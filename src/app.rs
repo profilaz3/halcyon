@@ -155,6 +155,8 @@ pub enum Message {
     DesktopPaletteChanged,
     WallpaperColorsChanged,
     RainLifecycle(crate::rain::lifecycle::State),
+    /// A quiet scene finished fading out; its surfaces can go.
+    RainRetired(u64),
     RainReady(
         window::Id,
         u64,
@@ -455,7 +457,7 @@ impl cosmic::Application for Cards {
                 .subscription(self.config.activity_island)
                 .map(Message::Activity),
         ];
-        if self.config.rain.enabled {
+        if self.config.rain.wanted() {
             subscriptions.push(crate::rain::lifecycle::watch().map(Message::RainLifecycle));
             let paths = self.rain.paths();
             if !paths.is_empty() {
@@ -492,7 +494,7 @@ impl cosmic::Application for Cards {
                 .color_subscription()
                 .map(|_| Message::DesktopPaletteChanged),
         );
-        if (self.config.rain.enabled
+        if (self.config.rain.wanted()
             || self.config.clock.depth
             || self.config.appearance.wallpaper_colors
             || self.config.appearance.family.is_some())
@@ -924,6 +926,7 @@ impl Cards {
                 self.rain.lifecycle = state;
                 Task::none()
             }
+            Message::RainRetired(generation) => self.rain.retired(generation),
             Message::RainReady(id, generation, entry, pixels, stamp) => {
                 self.rain.ready(id, generation, entry, pixels, stamp);
                 Task::none()

@@ -8,7 +8,6 @@
   "status_source": "This file is the canonical task status; roadmap and archived proposals do not override it.",
   "next": [
     "FB31",
-    "FB33",
     "FB34",
     "FB32",
     "FB35",
@@ -595,17 +594,21 @@
     {
       "id": "FB33",
       "title": "Weather-connected scenes",
-      "status": "planned",
+      "status": "validated",
       "depends_on": [
         "FB07",
         "FB21",
         "FB30"
       ],
-      "plan": "NEXT-WORK.md",
+      "plan": "WEATHER-SCENES.md",
       "accepted_research_idea": 3,
       "exit": "Opt-in weather mapping drives existing effects with intensity limits, stale-data fallback, explicit override policy and preserved solar/power/reduced-motion behaviour; native transitions and resource checks pass.",
-      "evidence": [],
-      "owner": null
+      "evidence": [
+        "WEATHER-SCENES.md",
+        "evidence/fb33-weather-scenes-20261108.json"
+      ],
+      "owner": null,
+      "validation": "First version implemented and validated locally (2026-11-08). Opt-in Match the weather maps WMO codes to Rain, Snow, Fog and Cloud shadows at 40/70/100% of the person's own setting; clear and overcast skies show no effect. Stale (two refresh intervals, at most 3 h), missing, future, other-city and unknown readings fall back to Moving effect, with an expiry wake. Pauses, Reduce motion and speed 0 still win. Scene changes fade (1.5 s each way) through one uniform; quiet scenes fade out before their surface is removed. The toggle uses the existing Wallpaper staging, Apply, Recent changes and Undo. 13 focused regressions, light/dark Settings captures at 820x600 and 1280x800, and a real COSMIC desktop run with a faked, expiring reading and no network passed: rain faded to the chosen Snow at expiry and Snow faded out before removal. fdinfo GPU busy 1.19–1.25 ms per frame at about 30 fps; 0 when off. No allow list, separate limits or timed override; one 1080p output; no release."
     },
     {
       "id": "FB34",
@@ -772,6 +775,10 @@
     {
       "date": "2026-11-08",
       "change": "Validated FB30 on the real COSMIC desktop with a release build of origin/main: Rain, Snow, Fog and Cloud shadows, Clock never clipped, speed 0, Reduce motion and lock/sleep/battery pauses (private logind/UPower stand-in), and fdinfo GPU cost for Halcyon and the compositor. The service and config were restored untouched. No installation or release."
+    },
+    {
+      "date": "2026-11-08",
+      "change": "Implemented FB33 weather-connected scenes: opt-in Match the weather with capped levels, stale-data fallback, explicit precedence, fades and the existing Undo path. Validated with focused regressions, Settings captures and a real COSMIC desktop transition using a faked reading without network. The service and config were restored untouched. No installation or release."
     }
   ],
   "foundation_probe_code_added": true,

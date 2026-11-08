@@ -685,8 +685,9 @@ fn keep_widget_content(preset: &mut Preset, config: &crate::config::Config) {
     }
 }
 
-/// A weather setup keeps the person's quality and battery choices; every
-/// other setup turns a running effect off, keeping its tuning for later.
+/// A weather setup keeps the person's quality, battery and Match the weather
+/// choices; every other setup turns a running effect off, keeping its tuning
+/// (and Match the weather) for later.
 fn follow_atmosphere(preset: &mut Preset, config: &crate::config::Config) {
     let Some(style) = preset.profile.widget_style.as_mut() else {
         return;
@@ -699,6 +700,8 @@ fn follow_atmosphere(preset: &mut Preset, config: &crate::config::Config) {
             };
             rain.quality = config.rain.quality;
             rain.pause_on_battery = config.rain.pause_on_battery;
+            // Match the weather is the person's choice, not the look's.
+            rain.weather = config.rain.weather;
             rain
         }
         None if config.rain.enabled => crate::rain::Preferences {
@@ -1718,18 +1721,21 @@ mod tests {
         config.rain.enabled = true;
         config.rain.intensity = 90;
         config.rain.quality = crate::rain::Quality::Eco;
+        config.rain.weather = true;
         let p = fitted(preset("halcyon").unwrap(), &config, &dir, false).profile;
         p.validate().unwrap();
         let rain: crate::rain::Preferences =
             serde_json::from_value(p.widget_style.as_ref().unwrap()["rain"].clone()).unwrap();
         assert!(!rain.enabled);
         assert_eq!(rain.intensity, 90);
+        assert!(rain.weather, "Match the weather is the person's choice");
         // A weather setup starts its own, at the person's quality.
         let p = fitted(preset("snow").unwrap(), &config, &dir, false).profile;
         let rain: crate::rain::Preferences =
             serde_json::from_value(p.widget_style.as_ref().unwrap()["rain"].clone()).unwrap();
         assert!(rain.enabled && rain.effect == crate::rain::Effect::Snow);
         assert_eq!(rain.quality, crate::rain::Quality::Eco);
+        assert!(rain.weather);
         let installed = Installed::discover(&store);
         let plan = plan(&store, &installed, &p, &p.domains().into_iter().collect());
         assert!(plan.can_apply(), "{:?}", plan.blocking_reasons());

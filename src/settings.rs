@@ -1210,6 +1210,9 @@ impl cosmic::Application for Settings {
             app.wallpaper.open();
             app.system_appearance.open();
         }
+        if page == Page::DesktopWallpaper {
+            app.rain.refresh_weather(&app.config);
+        }
         if page == Page::AdaptiveLooks {
             app.adaptive_source = if app.automation.solar.weather_enabled {
                 crate::automation::solar::Source::Weather
@@ -1301,6 +1304,8 @@ impl cosmic::Application for Settings {
             .chain(crate::calendar::account_path())
             .chain(crate::calendar::client_path())
             .chain(crate::tools::focus::Session::path())
+            // A new weather reading updates Match the weather's state.
+            .chain(crate::data::WeatherSnapshot::path())
             .collect();
         let mut subscriptions = vec![
             cosmic::iced::event::listen_with(|event, _, _| match event {
@@ -1318,7 +1323,12 @@ impl cosmic::Application for Settings {
                 .map(|_| Message::DesktopPaletteChanged),
         ];
         if self.page == Page::DesktopWallpaper
-            && (self.wallpaper.effect().unwrap_or(&self.config.rain).enabled || self.rain.preview)
+            && (self
+                .wallpaper
+                .effect()
+                .unwrap_or(&self.config.rain)
+                .wanted()
+                || self.rain.preview)
         {
             subscriptions.push(
                 crate::rain::lifecycle::watch().map(|s| Message::Rain(rain::Edit::Lifecycle(s))),
@@ -2820,6 +2830,9 @@ impl Settings {
                 }
                 self.placement.refresh(&self.config);
                 self.refresh_canvas();
+                if self.page == Page::DesktopWallpaper {
+                    self.rain.refresh_weather(&self.config);
+                }
                 if let Some(wizard) = self.wizard.as_mut() {
                     wizard.refresh_widgets(&self.config, &self.displays);
                 }
@@ -3282,6 +3295,9 @@ impl Settings {
                 self.placement.refresh(&self.config);
                 self.refresh_canvas();
                 self.page = page;
+                if page == Page::DesktopWallpaper {
+                    self.rain.refresh_weather(&self.config);
+                }
                 self.search_open = false;
                 if !(capture_dir().is_some() && !preview())
                     && let Ok(store) = crate::desktop::DesktopStore::from_env()
@@ -6619,8 +6635,11 @@ mod tests {
         if env.fixture {
             command.env(crate::desktop::store::FIXTURE_ENV, &root);
         }
-        if name == "rain_native_settings_preview_commit_undo_and_clipping"
-            && std::env::var_os("VK_DRIVER_FILES").is_none()
+        if matches!(
+            name,
+            "rain_native_settings_preview_commit_undo_and_clipping"
+                | "weather_scenes_native_toggle_apply_undo_and_status"
+        ) && std::env::var_os("VK_DRIVER_FILES").is_none()
             && std::env::var_os("VK_ICD_FILENAMES").is_none()
         {
             // XDG_DATA_DIRS above deliberately isolates desktop settings, but
@@ -10125,6 +10144,183 @@ mod tests {
     /// Runs the Wallpaper page's background work synchronously and hands
     /// the results to the editor, like the app's task runner does (`update`
     /// turns pending work into tasks a test can't run).
+    /// The Weather widget's cached reading for the fixture city.
+    fn weather_reading(code: u32, at: chrono::DateTime<chrono::Local>) {
+        let path = crate::data::WeatherSnapshot::path().unwrap();
+        assert!(path.starts_with(isolated_root()));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            path,
+            serde_json::to_vec(&json!({
+                "location": weather_city(),
+                "updated_at": at.to_rfc3339(),
+                "weather": {
+                    "current": {
+                        "temperature_2m": -1.0, "apparent_temperature": -4.0,
+                        "weather_code": code, "wind_speed_10m": 9.0,
+                        "relative_humidity_2m": 85.0, "dew_point_2m": null, "is_day": 1
+                    },
+                    "daily": {
+                        "time": [at.format("%Y-%m-%d").to_string()],
+                        "temperature_2m_max": [1.0], "temperature_2m_min": [-4.0],
+                        "weather_code": [code], "precipitation_probability_max": [80.0]
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+    fn weather_city() -> serde_json::Value {
+        json!({"name": "Weather scene fixture", "latitude": 45.0, "longitude": 16.0})
+    }
+
+    #[test]
+    fn weather_scenes_native_toggle_apply_undo_and_status() {
+        if desktop_test_child(
+            "weather_scenes_native_toggle_apply_undo_and_status",
+            DesktopEnv {
+                app_config: true,
+                fixture: true,
+                icons: Icons::Shown,
+                ..Default::default()
+            },
+        ) {
+            return;
+        }
+        use crate::desktop::wallpaper::{BgEntry, BgSource, shared_key};
+        let store = crate::desktop::DesktopStore::from_env().unwrap();
+        let path = store.user_path(&shared_key());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            path,
+            ron::to_string(&BgEntry::new(
+                "all",
+                BgSource::Path(
+                    concat!(
+                        env!("CARGO_MANIFEST_DIR"),
+                        "/assets/looks/evening-wallpaper.jpg"
+                    )
+                    .into(),
+                ),
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        Config::save_changes(json!({
+            "location": weather_city(),
+            "enabled_widgets": ["weather"]
+        }))
+        .unwrap();
+        // Moderate snow, observed just now. Nothing is fetched by Settings.
+        weather_reading(73, chrono::Local::now());
+        let raw_before = raw_preferences();
+        let snowing = format!("{}: showing snow", crate::data::weather_description(73));
+        for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+            let (mut app, initial) = Settings::init(Core::default(), Page::DesktopWallpaper);
+            settle_settings(&mut app, initial);
+            drive_wallpaper(&mut app);
+            send_settings(&mut app, Message::Resized(size));
+            app.rain.lifecycle = crate::rain::lifecycle::State {
+                ready: true,
+                ..Default::default()
+            };
+            let mut native = crate::native_test::Native::with_backend(size, "wgpu");
+            let before = Config::load().rain;
+            assert!(!before.weather && !before.enabled, "off by default");
+            native_reveal(&app, &mut native, "rain-weather");
+            native.text_bounds(
+                app.settings_view(),
+                "Rain, snow, fog and cloud shadows follow the Weather widget",
+            );
+            native.capture(
+                app.settings_view(),
+                &controls_theme(&app.config),
+                &format!("weather-off-{}", size.width),
+            );
+            // Turning it on is one applied wallpaper change.
+            native_click(&mut app, &mut native, "rain-weather");
+            drive_wallpaper(&mut app);
+            let on = Config::load().rain;
+            assert!(on.weather);
+            assert_eq!(
+                on,
+                crate::rain::Preferences {
+                    weather: true,
+                    ..before.clone()
+                },
+                "Moving effect is kept as it was"
+            );
+            app.rain.lifecycle = crate::rain::lifecycle::State {
+                ready: true,
+                ..Default::default()
+            };
+            // The state says what plays, and the controls adjust snow.
+            native_reveal(&app, &mut native, "rain-weather");
+            native.text_bounds(app.settings_view(), &snowing);
+            native.text_bounds(app.settings_view(), "Flake size");
+            native.bounds(app.settings_view(), "rain-intensity");
+            assert!(native.duplicate_ids(app.settings_view()).is_empty());
+            assert!(
+                native.overflowing_text(app.settings_view()).is_empty(),
+                "{:?}",
+                native.overflowing_text(app.settings_view())
+            );
+            for (theme, mode) in [
+                (cosmic::Theme::light(), "light"),
+                (cosmic::Theme::dark(), "dark"),
+            ] {
+                native.capture(
+                    app.settings_view(),
+                    &theme,
+                    &format!("weather-on-{}-{mode}", size.width),
+                );
+            }
+            // Adjusting snow while it snows keeps Moving effect as it was.
+            let mut denser = on.clone();
+            denser.snow.density = 80;
+            send_settings(&mut app, Message::Rain(rain::Edit::Set(denser.clone())));
+            drive_wallpaper(&mut app);
+            assert_eq!(Config::load().rain, denser);
+            assert!(!denser.enabled && denser.effect == before.effect);
+            send_settings(&mut app, Message::UndoDesktop);
+            assert_eq!(Config::load().rain, on);
+            // An old reading hands back to Moving effect, and says so.
+            weather_reading(73, chrono::Local::now() - chrono::Duration::hours(5));
+            send_settings(&mut app, Message::Tick);
+            native_reveal(&app, &mut native, "rain-weather");
+            native.text_bounds(
+                app.settings_view(),
+                "Weather reading is out of date: using Moving effect",
+            );
+            native.capture(
+                app.settings_view(),
+                &controls_theme(&app.config),
+                &format!("weather-stale-{}", size.width),
+            );
+            weather_reading(73, chrono::Local::now());
+            // Reduce motion still pauses a weather scene.
+            Config::save_changes(json!({"material_motion": false})).unwrap();
+            send_settings(&mut app, Message::Tick);
+            native_reveal(&app, &mut native, "rain-controls");
+            native.text_bounds(app.settings_view(), "Paused while Reduce motion is on");
+            Config::save_changes(json!({"material_motion": true})).unwrap();
+            send_settings(&mut app, Message::Tick);
+            assert!(
+                native
+                    .text_all(app.settings_view(), "Paused while Reduce motion is on")
+                    .is_empty()
+            );
+            // Undo turns it off again, leaving everything else as it was.
+            send_settings(&mut app, Message::UndoDesktop);
+            assert_eq!(Config::load().rain, before);
+            assert_eq!(
+                raw_preferences().get("future_field"),
+                raw_before.get("future_field")
+            );
+        }
+    }
+
     fn drive_wallpaper(app: &mut Settings) {
         for _ in 0..32 {
             let jobs = app.wallpaper.take_jobs();

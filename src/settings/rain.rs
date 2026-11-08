@@ -5,9 +5,20 @@ use std::{cell::RefCell, sync::Arc};
 pub(super) struct State {
     pub preview: bool,
     pub lifecycle: crate::rain::lifecycle::State,
+    /// The Weather widget's last reading for its city, from its cache. The
+    /// Settings window never fetches weather itself.
+    pub weather: Option<crate::rain::weather::Observation>,
     image: RefCell<Option<(Handle, Arc<gpu::Scene>)>>,
 }
 impl State {
+    pub fn refresh_weather(&mut self, config: &crate::config::Config) {
+        self.weather = config
+            .location
+            .as_ref()
+            .and_then(crate::data::WeatherSnapshot::cached)
+            .as_ref()
+            .and_then(crate::rain::weather::Observation::from_snapshot);
+    }
     pub fn scene(&self, handle: &Handle) -> Option<Arc<gpu::Scene>> {
         let mut cache = self.image.borrow_mut();
         if let Some((old, scene)) = &*cache

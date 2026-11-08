@@ -1,0 +1,86 @@
+{
+  "task": "FB33",
+  "date": "2026-11-08",
+  "status": "validated",
+  "release_eligible": false,
+  "base": "f48aedfd4",
+  "design": "WEATHER-SCENES.md",
+  "build": "cargo build --release --bin halcyon (feature/weather-scenes working tree)",
+  "decisions": {
+    "mapping": "Open-Meteo WMO codes: partly cloudy to Cloud shadows; fog to Fog; drizzle, rain, showers and thunderstorms to Rain; snow to Snow; clear, mostly clear and overcast to no effect; unknown codes fall back to Moving effect.",
+    "intensity_cap": "Light, Moderate and Heavy are 40%, 70% and 100% of the person's own Density, Opacity or Coverage, rounded up. The weather never exceeds that setting.",
+    "stale_cutoff": "Two Weather refresh intervals (30 min at the default 15 min), never more than 3 h. Readings more than 5 min in the future are ignored. A wake at the expiry hands control back to Moving effect.",
+    "precedence": "Pauses (Reduce motion, lock, sleep, battery, unknown session, Arrange, speed 0) win; then a current weather reading; otherwise Moving effect.",
+    "override": "No timed manual override in this version: the person's setting is the cap, and turning Match the weather off is the override.",
+    "transitions": "1.5 s fade out to the plain wallpaper, then 1.5 s fade in. Quiet scenes fade out before their surface is removed; pauses remove surfaces at once. The Settings preview and fixed-time captures never fade.",
+    "data": "The desktop reads FB07's shared weather hub only while the Weather widget is shown; Settings reads the widget's cache file and watches it. No request is made for the effect."
+  },
+  "tests": {
+    "full_suite": "cargo test --quiet --bin halcyon",
+    "focused": [
+      "rain::weather::tests::weather_mapping_table_covers_every_reported_code",
+      "rain::weather::tests::weather_intensity_never_exceeds_the_persons_setting",
+      "rain::weather::tests::weather_stale_missing_and_future_readings_fall_back_to_the_choice",
+      "rain::weather::tests::weather_precedence_is_explicit_and_the_choice_is_kept",
+      "rain::weather::tests::weather_scenes_keep_pause_and_reduced_motion",
+      "rain::tests::weather_matching_is_opt_in_and_omitted_until_chosen",
+      "rain::tests::desktop_effects_fade_in_change_and_fade_out_without_popping",
+      "rain::tests::frozen_effects_finish_their_fade_then_stop_drawing",
+      "rain::tests::settings_previews_captures_and_paused_surfaces_never_fade",
+      "app::rain::tests::weather_scenes_follow_the_weather_widget_and_fall_back_to_the_choice",
+      "app::rain::tests::calm_weather_fades_out_before_surfaces_go_and_pauses_stop_at_once",
+      "settings::tests::weather_scenes_native_toggle_apply_undo_and_status",
+      "desktop::profiles::presets::tests::switching_setups_starts_or_stops_the_wallpaper_effect_and_keeps_its_tuning"
+    ],
+    "coverage": "Every mapped code and the unknown fallback; cap and rounding; stale, missing, future and different-city readings; precedence including Moving effect None; Reduce motion, pause and speed 0; desktop fades in, between scenes and out without regenerating the effect field; frozen effects finish their fade then stop; the Weather widget hidden, a city change and reading expiry on the desktop; calm weather fading out before the surface goes; the Settings toggle by native click, Apply, state text, effect controls following the weather, a density edit that keeps Moving effect, stale text, Reduce motion label, Undo, duplicate IDs and overflow."
+  },
+  "captures": {
+    "tool": "Settings native-render test (weather_scenes_native_toggle_apply_undo_and_status), real GPU",
+    "files": [
+      "weather-on-820-light.png",
+      "weather-on-820-dark.png",
+      "weather-on-1280-light.png",
+      "weather-on-1280-dark.png",
+      "weather-off-820.png",
+      "weather-off-1280.png",
+      "weather-stale-820.png",
+      "weather-stale-1280.png"
+    ],
+    "kept": "Private scratch only.",
+    "review": "Each capture reviewed: the Match the weather row and its state line fit at 820 and 1280 in light and dark, with no clipping or overlap; the snow controls follow the weather's effect; the stale state names the fallback."
+  },
+  "desktop_run": {
+    "environment": {
+      "desktop": "Real COSMIC session (cosmic-comp 1.0.0), not nested",
+      "output": "DP-1 1920x1080 at 75 Hz, scale 100%",
+      "gpu": "AMD Radeon integrated graphics (RADV RENOIR)",
+      "method": "halcyon.service stopped; release build run with DESKTOP_CARDS_CONFIG and XDG_CONFIG_HOME/XDG_STATE_HOME/XDG_DATA_HOME/XDG_CACHE_HOME pointing at temporary copies; the service was started again by the same bounded command (it ended active). The user's config was never written."
+    },
+    "fake_weather": "A cached Weather widget reading of code 63 (moderate rain) for the temporary config's city, dated 28 min 45 s old so it went stale 75 s into the run. The app ran under unshare --map-current-user -n, a network namespace with only loopback (the live process's namespace was confirmed different from the host's), so no weather API was called; the Weather widget showed “Refresh failed”.",
+    "config": "Weather widget shown, Moving effect Snow, Match the weather on.",
+    "sequence": [
+      "Startup: rain faded in from the plain wallpaper (captures at 1 s and 2 s).",
+      "Weather rain played at the Moderate level: rain density 35, 70% of the person's 50.",
+      "At the reading's expiry the wake fired with no other event: rain faded out and Snow (Moving effect) faded in; the frame trace shows the switch about 1.5 s after the expiry; ten captures across the window.",
+      "Moving effect set to None: the snow faded out over five captures (mean difference from the clean wallpaper 150 → 136 → 122 → 105 → 94; visible flakes 427 → 59), then the surface was removed.",
+      "App log: no warnings or errors (RUST_LOG=warn)."
+    ],
+    "screenshots": {
+      "tool": "cosmic-screenshot --interactive=false --modal=false --notify=false",
+      "count": 21,
+      "kept": "Private scratch only; they show the owner's open windows."
+    }
+  },
+  "gpu": {
+    "source": "/proc/<pid>/fdinfo drm-engine-gfx, summed over unique drm-client-id, for halcyon and cosmic-comp, over about 10.5 s per case",
+    "note": "Busy time at about 29.7 fps (frame trace). The DPM clock was not recorded, so these are not directly comparable with the FB30 run. Includes all Halcyon surfaces.",
+    "cases_ms_per_second": [
+      {"case": "Weather rain (moderate, capped)", "halcyon": 35.4, "per_frame_ms": 1.19, "cosmic_comp": 90.7},
+      {"case": "Snow (Moving effect after expiry)", "halcyon": 37.2, "per_frame_ms": 1.25, "cosmic_comp": 88.6},
+      {"case": "Off after the fade-out and removal", "halcyon": 0.0, "cosmic_comp": 3.4}
+    ],
+    "fade_cost": "The fade is one uniform in the existing composite pass; it adds no pass and never regenerates the effect field."
+  },
+  "limits": "One 1080p output. No multi-monitor, HiDPI, battery-powered device, energy, suspend/resume on hardware or packaged-artifact qualification. Rapid weather updates and resume are covered by deterministic tests, not on the desktop. No allow list, separate limits or timed override. Not a release.",
+  "observed_outside_scope": "The installed 0.6.1 halcyon.service process used about 90% CPU before it was stopped for the run; not investigated here."
+}

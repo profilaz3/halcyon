@@ -1,7 +1,7 @@
 //! Per-output rain surfaces, below desktop widgets and with empty input regions.
 use super::*;
 use crate::desktop::wallpaper::{BgEntry, BgSource, media};
-use crate::rain::{gpu, lifecycle};
+use crate::rain::{Preferences, gpu, lifecycle, weather};
 use cosmic::iced::platform_specific::shell::commands::layer_surface::destroy_layer_surface;
 use std::sync::Arc;
 #[derive(Default)]
@@ -10,6 +10,11 @@ pub(super) struct State {
     next: u64,
     native_state: Option<(std::path::PathBuf, Option<crate::watch::FileStamp>)>,
     pub lifecycle: lifecycle::State,
+    /// The scene the surfaces show. When it goes quiet (calm weather, or the
+    /// effect turned off) it fades out before the surfaces are removed; a
+    /// pause removes them at once.
+    shown: Option<(Preferences, Option<weather::Level>)>,
+    retiring: Option<u64>,
 }
 struct Surface {
     output: crate::displays::Output,
@@ -30,10 +35,19 @@ impl State {
         self.surfaces.iter().any(|s| s.id == id)
     }
     pub fn invalidate(&mut self) -> Task<Message> {
+        self.shown = None;
+        self.retiring = None;
         if let Some((path, stamp)) = &mut self.native_state {
             *stamp = crate::watch::file_stamp(path);
         }
         Task::batch(self.surfaces.drain(..).map(|s| destroy_layer_surface(s.id)))
+    }
+    /// The fade-out that `generation` waited for has finished.
+    pub fn retired(&mut self, generation: u64) -> Task<Message> {
+        if self.retiring != Some(generation) {
+            return Task::none();
+        }
+        self.invalidate()
     }
     pub fn paths(&self) -> Vec<(std::path::PathBuf, Option<crate::watch::FileStamp>)> {
         self.surfaces
@@ -114,36 +128,96 @@ async fn background(
     (entry, pixels, stamp)
 }
 impl Cards {
+    /// The effect to show now: the person's choice, or the weather's while
+    /// Match the weather is on and the Weather widget has a current reading
+    /// for its city. Weather scenes read only that widget's data: without a
+    /// visible Weather widget nothing is fetched and the choice plays.
+    pub(super) fn effect_scene(&self) -> weather::Scene {
+        let rain = &self.config.rain;
+        let snapshot = rain
+            .weather
+            .then(|| self.config.location.as_ref())
+            .flatten()
+            .filter(|_| self.provider_visible(Widget::Weather))
+            .and_then(crate::providers::weather::Key::new)
+            .and_then(|key| self.weather_hub.snapshot(&key, Local::now()).data);
+        let reading = snapshot
+            .as_deref()
+            .and_then(weather::Observation::from_snapshot);
+        weather::resolve(
+            rain,
+            reading.as_ref(),
+            Local::now(),
+            weather::cutoff(self.config.refresh_intervals.duration(Widget::Weather)),
+        )
+    }
+    /// When the weather's reading stops being current, so the person's choice
+    /// takes over even if nothing else wakes the app. Anchored to the last
+    /// wake, so the deadline stays the same between wakes.
+    pub(super) fn effect_wake(&self) -> Option<Instant> {
+        let until = self.effect_scene().until?;
+        let (then, then_wall) = self.woke_at;
+        let ahead = until
+            .signed_duration_since(chrono::DateTime::<Local>::from(then_wall))
+            .to_std()
+            .unwrap_or_default();
+        Some(then + ahead + Duration::from_secs(1))
+    }
     pub(super) fn rain_view(&self, id: window::Id) -> Option<Element<'_, Message>> {
         let surface = self.rain.surfaces.iter().find(|s| s.id == id)?;
-        Some(if let Some(scene) = &surface.image {
-            crate::rain::visibility::visible(
-                cosmic::iced::widget::Shader::new(gpu::Program {
-                    scene: scene.clone(),
-                    preferences: self.config.rain.clone(),
-                    running: true,
-                    fixed_time: None,
-                })
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into(),
-            )
-        } else {
-            empty_surface()
-        })
+        Some(
+            if let Some(scene) = &surface.image
+                && let Some((preferences, level)) = &self.rain.shown
+            {
+                crate::rain::visibility::visible(
+                    cosmic::iced::widget::Shader::new(gpu::Program {
+                        scene: scene.clone(),
+                        preferences: preferences.clone(),
+                        running: true,
+                        fixed_time: None,
+                        fade: gpu::Fade {
+                            enabled: true,
+                            hidden: self.rain.retiring.is_some(),
+                            level: *level,
+                        },
+                    })
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into(),
+                )
+            } else {
+                empty_surface()
+            },
+        )
     }
     pub(super) fn rain_sync(&mut self) -> Task<Message> {
-        if !self.config.rain.enabled {
+        if !self.config.rain.wanted() {
             self.rain.lifecycle = Default::default();
         }
-        if self.layout_editor.active
-            || !self
-                .config
-                .rain
-                .active(self.config.material_motion, self.rain.lifecycle)
-        {
-            return self.rain.invalidate();
+        let scene = self.effect_scene();
+        let level = scene.level();
+        let p = scene.preferences;
+        let paused =
+            self.layout_editor.active || p.paused(self.config.material_motion, self.rain.lifecycle);
+        if paused || !p.enabled || !p.has_visible_effect() {
+            let drawn =
+                self.rain.shown.is_some() && self.rain.surfaces.iter().any(|s| s.image.is_some());
+            if paused || !drawn {
+                return self.rain.invalidate();
+            }
+            if self.rain.retiring.is_some() {
+                return Task::none();
+            }
+            self.rain.next = self.rain.next.wrapping_add(1);
+            let generation = self.rain.next;
+            self.rain.retiring = Some(generation);
+            return cosmic::task::future(async move {
+                tokio::time::sleep(gpu::FADE + Duration::from_millis(250)).await;
+                Message::RainRetired(generation)
+            });
         }
+        self.rain.retiring = None;
+        self.rain.shown = Some((p, level));
         if self.rain.native_state.is_none()
             && let Ok(store) = crate::desktop::DesktopStore::from_env()
             && let Some(path) = media::state_path(&store)
@@ -295,5 +369,220 @@ mod tests {
         assert!(state.surfaces.is_empty());
         state.ready(id, 12, None, pixels(), None);
         assert!(state.surfaces.is_empty());
+    }
+
+    use crate::displays::{OutputEvent, test_support::info};
+    use crate::providers::weather::{Completion, Key};
+    use crate::rain::{Effect, weather::Source};
+
+    /// The Weather widget for one city, with Match the weather on, shown on
+    /// one output in an unlocked session.
+    fn weather_desktop(choice: Option<Effect>) -> (Cards, crate::displays::test_support::Wire) {
+        let mut config = Config {
+            enabled_widgets: vec!["weather".into()],
+            location: Some(crate::config::Location {
+                name: "Weather scene fixture".into(),
+                latitude: 45.,
+                longitude: 16.,
+                timezone: None,
+            }),
+            ..Default::default()
+        };
+        config.rain.weather = true;
+        if let Some(effect) = choice {
+            config.rain.enabled = true;
+            config.rain.effect = effect;
+        }
+        let (mut cards, _) = Cards::init(Core::default(), config);
+        let wire = crate::displays::test_support::Wire::new();
+        cards.displays.update(
+            OutputEvent::Created(Some(info(Some("DP-1"), (1920, 1080)))),
+            wire.output(1),
+        );
+        let _ = cards.reconcile_output();
+        let _ = cards.update(Message::RainLifecycle(lifecycle::State {
+            ready: true,
+            ..Default::default()
+        }));
+        (cards, wire)
+    }
+    /// The Weather widget's own request finishing with `code`, observed `at`.
+    /// No network: the request is answered here.
+    fn deliver(cards: &mut Cards, code: u32, at: chrono::DateTime<Local>) {
+        let now = Instant::now();
+        cards.weather_hub.due_now(now);
+        let _ = cards.refresh_weather(now);
+        let location = cards.config.location.clone().unwrap();
+        let token = cards
+            .weather_hub
+            .token_for_test(&Key::new(&location).unwrap())
+            .expect("the Weather widget's request");
+        let mut weather = crate::app::settings_preview::weather_sample(Local::now().date_naive());
+        weather.current.weather_code = code;
+        let _ = cards.update(Message::Weather(Completion {
+            token,
+            result: Some(Ok(crate::data::WeatherSnapshot {
+                location,
+                updated_at: at.to_rfc3339(),
+                weather,
+            })),
+        }));
+    }
+    /// Gives each surface its wallpaper, as the background worker would.
+    fn draw(cards: &mut Cards) {
+        for (id, generation) in cards
+            .rain
+            .surfaces
+            .iter()
+            .map(|s| (s.id, s.generation))
+            .collect::<Vec<_>>()
+        {
+            cards.rain.ready(
+                id,
+                generation,
+                None,
+                Some(media::Pixels {
+                    width: 1,
+                    height: 1,
+                    rgba: vec![1, 2, 3, 255],
+                }),
+                None,
+            );
+        }
+    }
+
+    #[test]
+    fn weather_scenes_follow_the_weather_widget_and_fall_back_to_the_choice() {
+        if crate::displays::test_support::isolated(
+            "app::rain::tests::weather_scenes_follow_the_weather_widget_and_fall_back_to_the_choice",
+        ) {
+            return;
+        }
+        let (mut cards, _wire) = weather_desktop(Some(Effect::Fog));
+        // No reading yet: Moving effect plays.
+        assert_eq!(cards.effect_scene().source, Source::NoReading);
+        assert_eq!(cards.rain.shown.as_ref().unwrap().0.effect, Effect::Fog);
+        assert_eq!(cards.effect_wake(), None);
+        deliver(&mut cards, 73, Local::now());
+        let scene = cards.effect_scene();
+        assert_eq!(
+            scene.source,
+            Source::Weather {
+                code: 73,
+                play: Some((Effect::Snow, crate::rain::weather::Level::Moderate))
+            }
+        );
+        let (shown, level) = cards.rain.shown.clone().unwrap();
+        assert_eq!(shown.effect, Effect::Snow);
+        assert_eq!(shown.snow.density, 39, "70% of the person's 55%");
+        assert_eq!(level, Some(crate::rain::weather::Level::Moderate));
+        assert_eq!(cards.rain.surfaces.len(), 1, "the same surface fades over");
+        // A wake when the reading stops being current, two refreshes on, the
+        // same between wakes.
+        let wake = cards.effect_wake().unwrap();
+        assert_eq!(cards.effect_wake(), Some(wake));
+        let cutoff =
+            crate::rain::weather::cutoff(cards.config.refresh_intervals.duration(Widget::Weather))
+                .to_std()
+                .unwrap();
+        let ahead = wake.saturating_duration_since(Instant::now());
+        assert!(
+            ahead > cutoff - Duration::from_secs(60) && ahead <= cutoff + Duration::from_secs(2),
+            "{ahead:?}"
+        );
+        assert!(cards.wake_deadline().is_some_and(|d| d <= wake));
+        // Another city: the old city's reading never describes its sky.
+        let home = cards.config.clone();
+        let mut moved = home.clone();
+        moved.location.as_mut().unwrap().name = "Another fixture city".into();
+        moved.location.as_mut().unwrap().latitude = -33.;
+        let _ = cards.apply_config(moved);
+        let _ = cards.update(Message::Tick);
+        assert_eq!(cards.effect_scene().source, Source::NoReading);
+        assert_eq!(cards.rain.shown.as_ref().unwrap().0.effect, Effect::Fog);
+        let _ = cards.apply_config(home);
+        // An old reading hands back to Moving effect.
+        deliver(&mut cards, 73, Local::now() - chrono::Duration::hours(4));
+        assert_eq!(cards.effect_scene().source, Source::Stale);
+        assert_eq!(cards.rain.shown.as_ref().unwrap().0.effect, Effect::Fog);
+        assert_eq!(cards.effect_wake(), None);
+        // Off: Moving effect, whatever the weather.
+        deliver(&mut cards, 65, Local::now());
+        assert_eq!(cards.rain.shown.as_ref().unwrap().0.effect, Effect::Rain);
+        let mut off = cards.config.clone();
+        off.rain.weather = false;
+        let _ = cards.apply_config(off);
+        let _ = cards.update(Message::Tick);
+        assert_eq!(cards.effect_scene().source, Source::Manual);
+        assert_eq!(cards.rain.shown.as_ref().unwrap().0.effect, Effect::Fog);
+        // Without a visible Weather widget there is no reading to match, and
+        // nothing is fetched for the effect.
+        let mut hidden = cards.config.clone();
+        hidden.rain.weather = true;
+        hidden.widgets_visible = false;
+        let _ = cards.apply_config(hidden);
+        let _ = cards.update(Message::Tick);
+        assert_eq!(cards.effect_scene().source, Source::NoReading);
+        assert!(cards.refresh_weather(Instant::now()).is_empty());
+        assert_eq!(cards.rain.shown.as_ref().unwrap().0.effect, Effect::Fog);
+    }
+
+    #[test]
+    fn calm_weather_fades_out_before_surfaces_go_and_pauses_stop_at_once() {
+        if crate::displays::test_support::isolated(
+            "app::rain::tests::calm_weather_fades_out_before_surfaces_go_and_pauses_stop_at_once",
+        ) {
+            return;
+        }
+        // No effect chosen: only the weather plays one.
+        let (mut cards, _wire) = weather_desktop(None);
+        assert!(cards.rain.surfaces.is_empty());
+        deliver(&mut cards, 63, Local::now());
+        assert_eq!(cards.rain.surfaces.len(), 1);
+        draw(&mut cards);
+        let id = cards.rain.surfaces[0].id;
+        // Clear skies: the rain fades out on the same surface, then it goes.
+        deliver(&mut cards, 0, Local::now());
+        let generation = cards.rain.retiring.expect("a fade-out");
+        assert_eq!(cards.rain.surfaces.len(), 1);
+        assert!(cards.rain_view(id).is_some());
+        let _ = cards.update(Message::Tick);
+        assert_eq!(cards.rain.retiring, Some(generation), "one fade-out");
+        let _ = cards.update(Message::RainRetired(generation));
+        assert!(cards.rain.surfaces.is_empty() && cards.rain.shown.is_none());
+        // Rain again before the fade-out ends keeps the surface, and the old
+        // fade-out's end changes nothing.
+        deliver(&mut cards, 63, Local::now());
+        draw(&mut cards);
+        let id = cards.rain.surfaces[0].id;
+        deliver(&mut cards, 0, Local::now());
+        let generation = cards.rain.retiring.unwrap();
+        deliver(&mut cards, 61, Local::now());
+        assert_eq!(cards.rain.retiring, None);
+        let _ = cards.update(Message::RainRetired(generation));
+        assert_eq!(cards.rain.surfaces.len(), 1);
+        assert_eq!(cards.rain.surfaces[0].id, id);
+        assert_eq!(
+            cards.rain.shown.as_ref().unwrap().1,
+            Some(crate::rain::weather::Level::Light)
+        );
+        // Lock, sleep and Reduce motion stop a weather scene at once.
+        let _ = cards.update(Message::RainLifecycle(lifecycle::State {
+            ready: true,
+            locked: true,
+            ..Default::default()
+        }));
+        assert!(cards.rain.surfaces.is_empty() && cards.rain.retiring.is_none());
+        let _ = cards.update(Message::RainLifecycle(lifecycle::State {
+            ready: true,
+            ..Default::default()
+        }));
+        assert_eq!(cards.rain.surfaces.len(), 1);
+        draw(&mut cards);
+        let mut still = cards.config.clone();
+        still.material_motion = false;
+        let _ = cards.apply_config(still);
+        let _ = cards.update(Message::Tick);
+        assert!(cards.rain.surfaces.is_empty() && cards.rain.retiring.is_none());
     }
 }
