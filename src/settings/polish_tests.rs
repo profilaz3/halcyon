@@ -1207,9 +1207,410 @@ fn dock_headings_corners_note_and_panel_regions_read_plainly() {
             .text_all(app.settings_view(), "Only the dock. Window corners are in Windows")
             .is_empty()
     );
-    native_reveal(&app, &mut native, "panel-add-applets");
+    native_reveal(&app, &mut native, "panel-items");
     capture(&app, &mut native, "panel-tab-contents");
     // A bar's middle region has one name, across or down the screen.
     assert_eq!(Region::Center.title(true), "Middle");
     assert_eq!(Region::Center.title(false), "Middle");
+}
+
+
+/// Captures `name` in light and dark at the window size `native` was made for.
+fn capture_both(app: &Settings, native: &mut crate::native_test::Native, name: &str) {
+    for (theme, mode) in [
+        (cosmic::Theme::light(), "light"),
+        (cosmic::Theme::dark(), "dark"),
+    ] {
+        native.capture(app.settings_view(), &theme, &format!("{name}-{mode}"));
+    }
+}
+
+#[test]
+fn dock_and_panel_edit_items_with_one_editor() {
+    let name = "dock_and_panel_edit_items_with_one_editor";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::desktop::panels::{PanelKind, Region};
+    let root = isolated_root();
+    let fixture = root.join("cosmic-root");
+    let apps = fixture.join("applications");
+    std::fs::create_dir_all(&apps).unwrap();
+    for (id, label) in [
+        ("clock", "Time"),
+        ("sound", "Sound"),
+        ("network", "Network"),
+    ] {
+        std::fs::write(
+            apps.join(format!("{id}.desktop")),
+            format!("[Desktop Entry]\nName={label}\nComment=Fixture item\nX-CosmicApplet=true\n"),
+        )
+        .unwrap();
+    }
+    for kind in [PanelKind::Panel, PanelKind::Dock] {
+        let dir = fixture
+            .join("config/cosmic")
+            .join(kind.namespace())
+            .join("v1");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("plugins_wings"), "Some(([], []))").unwrap();
+        std::fs::write(dir.join("plugins_center"), "Some([])").unwrap();
+    }
+    let empty = "Empty. Drag an item here or use Add";
+    let mut app = open_isolated_editor(&root);
+    send_settings(&mut app, Message::Page(Page::DesktopDock));
+    for kind in [PanelKind::Dock, PanelKind::Panel] {
+        let bar = kind.title().to_lowercase();
+        let anchor = match kind {
+            PanelKind::Dock => "dock-items",
+            PanelKind::Panel => "panel-items",
+        };
+        send_settings(&mut app, Message::OpenBar(kind));
+        for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+            send_settings(&mut app, Message::Resized(size));
+            let mut native = crate::native_test::Native::new(size);
+            native_reveal(&app, &mut native, "applets-add-start");
+            // The same heading, regions, Add buttons and empty text on both bars.
+            native.bounds(app.settings_view(), anchor);
+            native.text_bounds(app.settings_view(), "Items");
+            for gone in [
+                "Contents",
+                "Add items",
+                "Empty · drop here",
+                "Centre · 0",
+                "Middle · 0",
+            ] {
+                assert!(
+                    native.text_all(app.settings_view(), gone).is_empty(),
+                    "{bar}: {gone}"
+                );
+            }
+            for region in ["Left", "Middle", "Right"] {
+                assert!(
+                    !native.text_all(app.settings_view(), region).is_empty(),
+                    "{bar}: {region}"
+                );
+            }
+            for region in Region::ALL {
+                native.bounds(
+                    app.settings_view(),
+                    &format!("applets-add-{}", region.key()),
+                );
+            }
+            assert_eq!(
+                native.text_all(app.settings_view(), "Add").len(),
+                3,
+                "{bar}"
+            );
+            assert_eq!(
+                native.text_all(app.settings_view(), empty).len(),
+                3,
+                "{bar}"
+            );
+            native.text_bounds(
+                app.settings_view(),
+                "Nothing here yet. Use Add to put items on this bar.",
+            );
+            // Only the panel offers a starter layout.
+            assert_eq!(
+                native
+                    .text_all(app.settings_view(), "Starter layout…")
+                    .len(),
+                usize::from(kind == PanelKind::Panel),
+                "{bar}"
+            );
+            // The editor sits near the foot of the page.
+            native.scroll(app.settings_view(), "settings-content", 100_000.);
+            capture_both(
+                &app,
+                &mut native,
+                &format!("items-{bar}-empty-{}", size.width),
+            );
+        }
+        // The same rows once there are items.
+        for (region, id) in [(Region::Start, "clock"), (Region::Center, "sound")] {
+            send_settings(
+                &mut app,
+                Message::DesktopEditor(desktop::Message::Add(region, id.into())),
+            );
+        }
+        assert_eq!(app.desktop.picker, None, "{bar}: Add closes the picker");
+        send_settings(
+            &mut app,
+            Message::DesktopEditor(desktop::Message::SelectApplet(None)),
+        );
+        for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+            send_settings(&mut app, Message::Resized(size));
+            let mut native = crate::native_test::Native::new(size);
+            native_reveal(&app, &mut native, "applets-add-start");
+            for control in ["drag", "select", "up", "down", "remove"] {
+                for slot in ["start-0", "center-0"] {
+                    native.bounds(app.settings_view(), &format!("applet-{slot}-{control}"));
+                }
+            }
+            native.text_bounds(app.settings_view(), "Time");
+            native.text_bounds(app.settings_view(), "Sound");
+            assert_eq!(
+                native.text_all(app.settings_view(), empty).len(),
+                1,
+                "{bar}"
+            );
+            native.text_bounds(
+                app.settings_view(),
+                "Drag to reorder. Press a name to move it to another region.",
+            );
+            assert!(native.duplicate_ids(app.settings_view()).is_empty());
+            // The editor sits near the foot of the page.
+            native.scroll(app.settings_view(), "settings-content", 100_000.);
+            capture_both(
+                &app,
+                &mut native,
+                &format!("items-{bar}-items-{}", size.width),
+            );
+        }
+        // Pressing a name shows where else it can go, on either bar.
+        send_settings(&mut app, Message::Resized(Size::new(820., 600.)));
+        let mut native = crate::native_test::Native::new(Size::new(820., 600.));
+        applet_press(&mut app, &mut native, "applet-start-0-select");
+        assert_eq!(
+            app.desktop.focus,
+            Some(crate::desktop::panels::Slot {
+                region: Region::Start,
+                index: 0
+            })
+        );
+        native.text_bounds(app.settings_view(), "Move to");
+        // The region's picker opens in place and offers every installed item.
+        send_settings(
+            &mut app,
+            Message::DesktopEditor(desktop::Message::Picker(Some(Region::End))),
+        );
+        native_reveal(&app, &mut native, "applet-picker-add-network");
+        native.text_bounds(app.settings_view(), "Add to the Right");
+        native.bounds(app.settings_view(), "applet-picker-add-clock");
+        capture_both(&app, &mut native, &format!("items-{bar}-picker-820"));
+        send_settings(
+            &mut app,
+            Message::DesktopEditor(desktop::Message::Picker(None)),
+        );
+    }
+}
+
+fn applet_press(app: &mut Settings, native: &mut crate::native_test::Native, id: &str) {
+    use cosmic::iced::{Event, mouse};
+    let at = native_reveal(app, native, id).center();
+    for event in [
+        mouse::Event::CursorMoved { position: at },
+        mouse::Event::ButtonPressed(mouse::Button::Left),
+        mouse::Event::ButtonReleased(mouse::Button::Left),
+    ] {
+        for message in native.event(app.settings_view(), Event::Mouse(event), at).0 {
+            send_settings(app, message);
+        }
+    }
+}
+
+#[test]
+fn time_of_day_without_a_city_asks_for_it_once() {
+    let name = "time_of_day_without_a_city_asks_for_it_once";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    send_settings(&mut app, Message::Page(Page::DesktopAutomation));
+    let line = "Sunrise and sunset there decide when your look switches";
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        // One first step: the city search and one line.
+        native.bounds(app.settings_view(), "time-of-day-first-step");
+        native.bounds(app.settings_view(), "solar-city-search");
+        native.text_bounds(app.settings_view(), line);
+        for gone in [
+            "Add where you are to begin",
+            "Add your city to pick a look for each part of the day",
+            "Ready once your city is added",
+            "Day",
+            "Evening",
+            "Night",
+        ] {
+            assert!(
+                native.text_all(app.settings_view(), gone).is_empty(),
+                "{gone}"
+            );
+        }
+        for id in ["automation-enable", "automation-shades"] {
+            assert!(native.try_bounds(app.settings_view(), id).is_none(), "{id}");
+        }
+        // Widget styles work without a city, so the choice that leads to
+        // them stays.
+        native.bounds(app.settings_view(), "time-of-day-mode");
+        // Set times and screens work without a city, so they stay.
+        assert!(
+            !native
+                .text_all(app.settings_view(), "Set times and screens")
+                .is_empty()
+        );
+        capture_both(
+            &app,
+            &mut native,
+            &format!("time-of-day-no-city-{}", size.width),
+        );
+    }
+    let city = City {
+        name: "Sydney".into(),
+        latitude: -33.87,
+        longitude: 151.21,
+        timezone: Some("Australia/Sydney".into()),
+        admin1: "NSW".into(),
+        country: "Australia".into(),
+    };
+    send_settings(
+        &mut app,
+        Message::Automation(automation::Message::ManualCity(city.location())),
+    );
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "time-of-day-first-step")
+                .is_none()
+        );
+        for id in ["time-of-day-mode", "automation-shades"] {
+            native.bounds(app.settings_view(), id);
+        }
+        native.text_bounds(app.settings_view(), "Evening");
+        assert!(native.text_all(app.settings_view(), line).is_empty());
+        capture_both(
+            &app,
+            &mut native,
+            &format!("time-of-day-city-{}", size.width),
+        );
+    }
+}
+
+#[test]
+fn windows_rows_match_the_other_pages() {
+    let name = "windows_rows_match_the_other_pages";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::desktop::panels::PanelKind;
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    let size = Size::new(1280., 800.);
+    send_settings(&mut app, Message::Resized(size));
+    let mut native = crate::native_test::Native::new(size);
+    // A row title elsewhere: the dock's Floating.
+    send_settings(&mut app, Message::OpenBar(PanelKind::Dock));
+    native_reveal(&app, &mut native, "dock-style-bars");
+    let floating = native.text_bounds(app.settings_view(), "Floating").height;
+    send_settings(&mut app, Message::Page(Page::DesktopWindows));
+    let titles = [
+        "Tile windows automatically",
+        "Snap to screen edges",
+        "Outline the active window",
+        "Minimize button",
+        "Maximize button",
+        "Select a window by pointing at it",
+        "Move the pointer to the window you switch to",
+    ];
+    let notes = [
+        "Arrange windows side by side for you",
+        "Dragged windows stick to the display edges",
+        "A thin line in your accent color",
+        "Handy when switching with the keyboard",
+    ];
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        for title in titles {
+            let found = native.text_bounds(app.settings_view(), title);
+            assert_eq!(found.height, floating, "{title} uses the same title size");
+        }
+        // Notes sit behind "?", like every other page; the shortest is cut.
+        for note in notes.into_iter().chain(["No click needed"]) {
+            assert!(
+                native.text_all(app.settings_view(), note).is_empty(),
+                "{note}"
+            );
+        }
+        capture_both(&app, &mut native, &format!("windows-rows-{}", size.width));
+        native.scroll(app.settings_view(), "settings-content", 100_000.);
+        capture_both(
+            &app,
+            &mut native,
+            &format!("windows-rows-{}-lower", size.width),
+        );
+    }
+    // Rows that appear with tiling, snapping and pointer focus match too.
+    use crate::desktop::windows::Behavior;
+    for message in [
+        windows::Message::Autotile(true),
+        windows::Message::EdgeSnap(true),
+        windows::Message::Flag(Behavior::FocusFollowsCursor, true),
+    ] {
+        send_settings(&mut app, Message::Windows(message));
+    }
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        for title in ["Workspaces", "Snap distance", "Delay"] {
+            // "Workspaces" is also a section title further down; the row is first.
+            let found = native.text_all(app.settings_view(), title)[0];
+            assert_eq!(found.height, floating, "{title} uses the same title size");
+        }
+        assert!(
+            native
+                .text_all(
+                    app.settings_view(),
+                    "How close a window gets before it snaps"
+                )
+                .is_empty()
+        );
+        native.scroll(app.settings_view(), "settings-content", 260.);
+        capture_both(
+            &app,
+            &mut native,
+            &format!("windows-rows-{}-on", size.width),
+        );
+        native.scroll(app.settings_view(), "settings-content", 100_000.);
+        capture_both(
+            &app,
+            &mut native,
+            &format!("windows-rows-{}-on-lower", size.width),
+        );
+    }
+    send_settings(
+        &mut app,
+        Message::Explain(view::explain::key("Tile windows automatically")),
+    );
+    let mut native = crate::native_test::Native::new(size);
+    native.text_bounds(app.settings_view(), "Arrange windows side by side for you");
 }

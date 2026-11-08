@@ -122,12 +122,30 @@ impl Settings {
         // One switch, then what changes, where you are and the three parts
         // of the day; choosing what a part of the day uses turns it on.
         let widgets = self.time_widget_mode(&settings);
-        items.push(self.automation_status(&settings));
-        items.push(self.time_mode(&settings, widgets));
-        items.push(self.automation_day(&settings, widgets));
+        let source = self.day_source(&settings);
+        if self.automation.solar.city(source).is_err() {
+            // Sun times need a city, so finding it is the one first step.
+            // A switch with nothing to switch would only repeat that. What
+            // works without a city stays: the widget styles (set and shown
+            // by hand) and, below, set times and screens.
+            if !settings.rules.is_empty() {
+                items.push(self.automation_status(&settings));
+            }
+            items.push(
+                container(group(None, vec![self.schedule_city_controls(source)]))
+                    .id(cosmic::widget::Id::new("time-of-day-first-step"))
+                    .into(),
+            );
+            items.push(self.time_mode(&settings, widgets));
+        } else {
+            items.push(self.automation_status(&settings));
+            items.push(self.time_mode(&settings, widgets));
+            items.push(self.automation_day(&settings, widgets));
+        }
         if widgets {
             items.push(self.moment_style_section());
-        } else if let Some(active) = self.config.moments.active {
+        }
+        if let (false, Some(active)) = (widgets, self.config.moments.active) {
             // A widget style left on from before would hide the look's own.
             items.push(group(
                 None,
@@ -191,17 +209,11 @@ impl Settings {
         )
     }
 
-    /// Day, evening and night as three sky tiles, each with its look
-    /// picker, then where you are (the times depend on it).
-    fn automation_day(
-        &self,
-        settings: &crate::automation::Automation,
-        widgets: bool,
-    ) -> Element<'_, Message> {
-        use crate::desktop::profiles::adaptive::Phase;
-        let editor = &self.automation;
-        let context = &editor.solar;
-        let source = settings
+    /// The city the daily switches use: the one a sun rule already names,
+    /// else Weather's when it has one, else the schedule's own.
+    fn day_source(&self, settings: &crate::automation::Automation) -> Source {
+        let context = &self.automation.solar;
+        settings
             .rules
             .iter()
             .find_map(|rule| match rule.when {
@@ -212,11 +224,22 @@ impl Settings {
                 Source::Weather
             } else {
                 Source::Manual
-            });
+            })
+    }
+
+    /// Day, evening and night as three sky tiles, each with its look
+    /// picker, then where you are (the times depend on it).
+    fn automation_day(
+        &self,
+        settings: &crate::automation::Automation,
+        widgets: bool,
+    ) -> Element<'_, Message> {
+        use crate::desktop::profiles::adaptive::Phase;
+        let editor = &self.automation;
+        let context = &editor.solar;
+        let source = self.day_source(settings);
         let now = chrono::Utc::now();
-        // Sun times need a city: until there is one, it comes first and the
-        // choices that depend on it wait.
-        let has_city = context.city(source).is_ok();
+        // The page shows this only once there is a city (see automation_page).
         let mut tiles: Vec<Element<'_, Message>> = Vec::new();
         for phase in Phase::ALL {
             let event = phase.event();
@@ -272,44 +295,30 @@ impl Settings {
                 Phase::Evening => ((0.45, 0.33, 0.62), (0.96, 0.62, 0.42), Color::WHITE),
                 Phase::Night => ((0.05, 0.07, 0.16), (0.16, 0.18, 0.36), Color::WHITE),
             };
-            // Faded until there is a city, since the looks can't be picked yet.
-            let fade = |(r, g, b): (f32, f32, f32)| {
-                if has_city {
-                    (r, g, b)
-                } else {
-                    (0.18 + (r - 0.18) * 0.45, 0.18 + (g - 0.18) * 0.45, 0.19 + (b - 0.19) * 0.45)
-                }
-            };
-            let (top, bottom) = (fade(top), fade(bottom));
-            let ink = if has_city { ink } else { Color { a: 0.7, ..ink } };
             tiles.push(
                 container(
                     column::with_children(vec![
                         label(phase.title(), 17., ink),
                         label(starts, 12., Color { a: 0.8, ..ink }),
                         cosmic::iced::widget::space().height(Length::Fill).into(),
-                        if has_city {
-                            // A theme-coloured plate keeps the picker's text
-                            // readable on every sky, in light and dark.
-                            container(picker)
-                                .class(cosmic::theme::Container::custom(|theme| {
-                                    let base: Color = theme.cosmic().background(theme.transparent).base.into();
-                                    cosmic::iced::widget::container::Style {
-                                        background: Some(Background::Color(Color {
-                                            a: 0.82,
-                                            ..base
-                                        })),
-                                        border: Border {
-                                            radius: 8.into(),
-                                            ..Default::default()
-                                        },
+                        // A theme-coloured plate keeps the picker's text
+                        // readable on every sky, in light and dark.
+                        container(picker)
+                            .class(cosmic::theme::Container::custom(|theme| {
+                                let base: Color = theme.cosmic().background(theme.transparent).base.into();
+                                cosmic::iced::widget::container::Style {
+                                    background: Some(Background::Color(Color {
+                                        a: 0.82,
+                                        ..base
+                                    })),
+                                    border: Border {
+                                        radius: 8.into(),
                                         ..Default::default()
-                                    }
-                                }))
-                                .into()
-                        } else {
-                            cosmic::iced::widget::space().height(0).into()
-                        },
+                                    },
+                                    ..Default::default()
+                                }
+                            }))
+                            .into(),
                     ])
                     .spacing(2),
                 )
@@ -348,7 +357,7 @@ impl Settings {
                 })
             })
         });
-        let ready = has_city && editor.writable() && !self.native_busy;
+        let ready = editor.writable() && !self.native_busy;
         let accent = self.settings_accent();
         // Where you are sets the times, so it comes before them.
         let mut items = vec![group(None, vec![self.schedule_city_controls(source)])];
@@ -372,22 +381,13 @@ impl Settings {
         ))
         .id(cosmic::widget::Id::new("automation-shades"))
         .into();
-        // Without a city the line is the reason it can't be picked yet.
         items.push(group(
             None,
-            vec![if has_city {
-                group_row(
-                    "Or one look that shifts through the day",
-                    "Its own lighter and darker shades fill all three",
-                    shifting,
-                )
-            } else {
-                group_row_state(
-                    "Or one look that shifts through the day",
-                    "Ready once your city is added",
-                    shifting,
-                )
-            }],
+            vec![group_row(
+                "Or one look that shifts through the day",
+                "Its own lighter and darker shades fill all three",
+                shifting,
+            )],
         ));
         column::with_children(items)
         .spacing(16)
@@ -763,7 +763,7 @@ impl Settings {
             Ok(city) => detail_state("Where you are", city.name.clone()),
             Err(reason) if reason.starts_with("Choose a city") => detail_state(
                 "Where you are",
-                "Add your city to pick a look for each part of the day",
+                "Sunrise and sunset there decide when your look switches",
             ),
             Err(reason) => detail_state("Where you are", reason),
         };
