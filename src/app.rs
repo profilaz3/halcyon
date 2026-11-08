@@ -662,7 +662,7 @@ impl Cards {
         if id == self.ids[12] {
             return self.spectrum_view();
         }
-        if self.extra_probes.iter().any(|p| p.id == id) {
+        if self.extra_probes.iter().any(|p| p.owns(id)) {
             return empty_surface();
         }
         if id == self.ids[5] {
@@ -859,11 +859,7 @@ impl Cards {
             {
                 continue;
             }
-            self.extra_probes.push(monitors::Probe {
-                output: output.clone(),
-                id: window::Id::unique(),
-                size: None,
-            });
+            self.extra_probes.push(monitors::Probe::new(output.clone()));
         }
         self.cancel_layout_drag();
         if self.layout_editor.active {
@@ -895,7 +891,8 @@ impl Cards {
         self.forget_tool_surfaces();
         let old_ids =
             std::mem::replace(&mut self.ids, std::array::from_fn(|_| window::Id::unique()));
-        let destroy = Task::batch(old_ids.into_iter().chain(old_probes.into_iter().map(|p|p.id)).map(
+        let old_probes = old_probes.into_iter().flat_map(|p| p.ids);
+        let destroy = Task::batch(old_ids.into_iter().chain(old_probes).map(
             cosmic::iced::platform_specific::shell::commands::layer_surface::destroy_layer_surface,
         ));
         destroy
@@ -1062,21 +1059,18 @@ impl Cards {
                 if self.rain.owns(id) {
                     return Task::none();
                 }
-                // A previously queued Create can finish after migration's
-                // Destroy. Its fresh ID cannot impersonate the new epoch;
-                // close that late surface as well as ignoring its geometry.
-                if let Some(probe) = self.extra_probes.iter_mut().find(|p| p.id == id) {
-                    if size.width.is_finite()
-                        && size.height.is_finite()
-                        && size.width > 0.
-                        && size.height > 0.
-                    {
-                        probe.size = Some([size.width, size.height]);
+                // Another display's strips: widgets there wait for both its
+                // usable width and height, and move when a panel changes it.
+                if let Some(probe) = self.extra_probes.iter_mut().find(|p| p.owns(id)) {
+                    if probe.measured(id, size) {
                         self.surface_geometry = None;
                         return self.sync_widget_surfaces();
                     }
                     return Task::none();
                 }
+                // A previously queued Create can finish after migration's
+                // Destroy. Its fresh ID cannot impersonate the new epoch;
+                // close that late surface as well as ignoring its geometry.
                 if !self.ids.contains(&id) && id != window::Id::NONE {
                     return cosmic::iced::platform_specific::shell::commands::layer_surface::destroy_layer_surface(id);
                 }

@@ -51,6 +51,20 @@ fn ready(cards: &mut Cards, size: [f32; 2]) -> Vec<SctkLayerSurfaceSettings> {
         Message::SurfaceResized(cards.ids[5], cosmic::iced::Size::new(size[0], size[1])),
     )
 }
+/// The compositor sizes another display's probe: the strip along the top to
+/// its usable width, then the strip along the left to its usable height.
+fn measure_other(cards: &mut Cards, size: [f32; 2]) -> Vec<SctkLayerSurfaceSettings> {
+    let [width, height] = cards.extra_probes[0].ids;
+    let mut created = send(
+        cards,
+        Message::SurfaceResized(width, cosmic::iced::Size::new(size[0], 1.)),
+    );
+    created.extend(send(
+        cards,
+        Message::SurfaceResized(height, cosmic::iced::Size::new(1., size[1])),
+    ));
+    created
+}
 fn bound(builders: &[SctkLayerSurfaceSettings], handle: &crate::displays::WlOutput) {
     for builder in builders {
         assert!(
@@ -619,11 +633,7 @@ fn multi_monitor_widget_surfaces_measure_independently_and_restore_after_hotplug
     assert!(!cards.widget_available(Widget::Weather));
     // Weather would draw nothing until its display is measured: no window yet.
     assert!(built.iter().all(|b| b.namespace != "halcyon-weather"));
-    let probe = cards.extra_probes[0].id;
-    let built = send(
-        &mut cards,
-        Message::SurfaceResized(probe, cosmic::iced::Size::new(2560., 1440.)),
-    );
+    let built = measure_other(&mut cards, [2560., 1440.]);
     assert!(
         built
             .iter()
@@ -650,11 +660,7 @@ fn multi_monitor_widget_surfaces_measure_independently_and_restore_after_hotplug
     );
     send(&mut cards, Message::LayoutFinish(true));
     ready(&mut cards, [1280., 720.]);
-    let probe = cards.extra_probes[0].id;
-    send(
-        &mut cards,
-        Message::SurfaceResized(probe, cosmic::iced::Size::new(2560., 1440.)),
-    );
+    measure_other(&mut cards, [2560., 1440.]);
     assert!(!cards.layout_editor.active);
     assert_eq!(cards.selected_output.as_ref().unwrap().handle, laptop);
     // A synthetic card resize must never become the monitor's screen budget.
@@ -679,11 +685,7 @@ fn multi_monitor_widget_surfaces_measure_independently_and_restore_after_hotplug
         ),
     );
     ready(&mut cards, [1280., 720.]);
-    let probe = cards.extra_probes[0].id;
-    send(
-        &mut cards,
-        Message::SurfaceResized(probe, cosmic::iced::Size::new(2560., 1440.)),
-    );
+    measure_other(&mut cards, [2560., 1440.]);
     assert_eq!(cards.placed_position(Widget::Weather), original);
     assert_eq!(cards.config.widget_positions["weather"], [0.8, 0.3]);
     let mut config = cards.config.clone();
@@ -736,20 +738,13 @@ fn review030_arrange_reconciles_other_display_in_both_probe_orders() {
         );
         ready(&mut cards, [1920., 1080.]);
         let _ = cards.arrange_on_display("DP-2".into());
-        let extra = cards.extra_probes[0].id;
         let mut created = Vec::new();
         if primary_first {
             ready(&mut cards, [1280., 720.]);
             assert!(cards.layout_editor.active);
-            created.extend(send(
-                &mut cards,
-                Message::SurfaceResized(extra, cosmic::iced::Size::new(1920., 1080.)),
-            ));
+            created.extend(measure_other(&mut cards, [1920., 1080.]));
         } else {
-            send(
-                &mut cards,
-                Message::SurfaceResized(extra, cosmic::iced::Size::new(1920., 1080.)),
-            );
+            measure_other(&mut cards, [1920., 1080.]);
             created.extend(ready(&mut cards, [1280., 720.]));
         }
         assert!(cards.layout_editor.active);
