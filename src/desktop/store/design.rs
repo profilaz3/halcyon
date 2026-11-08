@@ -478,6 +478,7 @@ impl DesktopStore {
                             entries: vec![],
                         },
                         widget: None,
+                        item: None,
                     }
                     .to_file();
                     file.source = Source::Derived;

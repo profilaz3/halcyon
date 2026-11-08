@@ -80,6 +80,92 @@ impl Applied {
         }
     }
 }
+/// What an item edit did on the Dock or Panel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemAction {
+    Added,
+    Removed,
+    /// To another region of the same bar.
+    Moved,
+    /// Within its region; the whole bar's order is named.
+    Reordered,
+}
+/// Which bar an item edit changed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemBar {
+    Dock,
+    Panel,
+}
+impl ItemBar {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Dock => "Dock",
+            Self::Panel => "Panel",
+        }
+    }
+}
+/// The regions a moved item can go to, as their headers read.
+const ITEM_REGIONS: &[&str] = &["Left", "Top", "Middle", "Right", "Bottom"];
+/// The longest item name a record keeps.
+const ITEM_NAME: usize = 64;
+/// An item added, removed or moved on the Dock or Panel, named as the item
+/// editor shows it. Only these bounded names are kept: an applet's name
+/// and a region header, never the applet's id or other content.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ItemChange {
+    pub action: ItemAction,
+    pub bar: ItemBar,
+    /// The item's name; Reordered names none.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    /// The region a Moved item went to.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub to: String,
+}
+impl ItemChange {
+    /// A record with `name` cut to the length a record keeps.
+    pub fn new(action: ItemAction, bar: ItemBar, name: &str, to: Option<&str>) -> Option<Self> {
+        let name: String = if action == ItemAction::Reordered {
+            String::new()
+        } else if name.chars().count() > ITEM_NAME {
+            name.chars().take(ITEM_NAME - 1).chain(['…']).collect()
+        } else {
+            name.into()
+        };
+        let change = Self {
+            action,
+            bar,
+            name,
+            to: to
+                .filter(|_| action == ItemAction::Moved)
+                .unwrap_or_default()
+                .into(),
+        };
+        change.valid().then_some(change)
+    }
+    /// "Added Sound", "Moved Sound to Right", "Reordered Dock items": the
+    /// Undo label and the Changes title alike.
+    pub fn title(&self) -> String {
+        match self.action {
+            ItemAction::Added => format!("Added {}", self.name),
+            ItemAction::Removed => format!("Removed {}", self.name),
+            ItemAction::Moved => format!("Moved {} to {}", self.name, self.to),
+            ItemAction::Reordered => format!("Reordered {} items", self.bar.title()),
+        }
+    }
+    pub fn valid(&self) -> bool {
+        let named = !self.name.trim().is_empty()
+            && self.name.chars().count() <= ITEM_NAME
+            && !self.name.chars().any(char::is_control);
+        match self.action {
+            ItemAction::Added | ItemAction::Removed => named && self.to.is_empty(),
+            ItemAction::Moved => named && ITEM_REGIONS.contains(&self.to.as_str()),
+            ItemAction::Reordered => self.name.is_empty() && self.to.is_empty(),
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Summary {
     pub id: String,
@@ -100,6 +186,14 @@ pub struct Summary {
     /// whole change.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub partial: bool,
+    /// The Dock or Panel item a change added, removed or moved; older
+    /// records and other changes have none.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_item",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub item: Option<ItemChange>,
 }
 /// The widget setting groups a change can name, in display order.
 pub const WIDGET_GROUPS: &[&str] = &[
@@ -208,6 +302,9 @@ impl Summary {
             return "Updated colors from the wallpaper".into();
         }
         let owner = Owner::parse(&self.owner);
+        if let Some(item) = self.item_title() {
+            return item;
+        }
         if let Some(line) = self.value_line() {
             return line;
         }
@@ -264,6 +361,19 @@ impl Summary {
             && safe_scalar(&detail.before)
             && safe_scalar(&detail.after))
         .then(|| detail.line())
+    }
+    /// The Dock or Panel item change, as the item editor named it.
+    pub fn item_title(&self) -> Option<String> {
+        if self.action != Action::Changed
+            || self.cause != Cause::You
+            || Owner::parse(&self.owner) != Some(Owner::DockPanel)
+        {
+            return None;
+        }
+        self.item
+            .as_ref()
+            .filter(|item| item.valid())
+            .map(ItemChange::title)
     }
     /// The one or two widget setting groups a widget change touched.
     pub fn widget_names(&self) -> Option<String> {
@@ -444,6 +554,9 @@ pub(super) fn summarize(file: &UndoFile, display: bool) -> Summary {
     let applied = (Owner::parse(&file.owner) == Some(Owner::Profile))
         .then(|| Applied::of_label(&file.label))
         .flatten();
+    let item = (Owner::parse(&file.owner) == Some(Owner::DockPanel))
+        .then(|| file.item.clone().filter(ItemChange::valid))
+        .flatten();
     Summary {
         id: file.id.clone(),
         at: file.created.clone(),
@@ -455,6 +568,7 @@ pub(super) fn summarize(file: &UndoFile, display: bool) -> Summary {
         widgets,
         applied,
         partial,
+        item,
     }
 }
 impl super::LatestChange {
@@ -469,6 +583,10 @@ pub(super) fn append(recent: &mut Vec<Summary>, mut summary: Summary) {
         .widgets
         .retain(|w| WIDGET_GROUPS.contains(&w.as_str()));
     summary.widgets.truncate(WIDGET_GROUPS.len());
+    // Likewise an item this version can't read.
+    if summary.item.as_ref().is_some_and(|item| !item.valid()) {
+        summary.item = None;
+    }
     if !summary.valid() || recent.iter().any(|s| s.id == summary.id) {
         return;
     }
@@ -538,7 +656,9 @@ impl DesktopStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::desktop::store::{ConfigKey, DesktopPatch, Fault, RawValue, tests::Fixture};
+    use crate::desktop::store::{
+        ConfigKey, DesktopPatch, Fault, LatestChange, RawValue, tests::Fixture,
+    };
     fn apply(
         store: &DesktopStore,
         value: u32,
@@ -556,6 +676,139 @@ mod tests {
         store
             .apply_action(&patch, None, Owner::DockPanel, "PRIVATE_SENTINEL", source)
             .unwrap()
+    }
+    fn apply_item(store: &DesktopStore, value: u32, item: Option<ItemChange>) -> LatestChange {
+        let key = ConfigKey::new("com.system76.CosmicPanel.Dock", 1, "spacing").unwrap();
+        let mut patch = DesktopPatch::new();
+        patch.activity_item = item;
+        patch.set(
+            key.clone(),
+            store.read_user(&key).unwrap(),
+            Some(RawValue::parse(value.to_string()).unwrap()),
+        );
+        store
+            .apply_action(
+                &patch,
+                None,
+                Owner::DockPanel,
+                "Dock and panel",
+                Source::Manual,
+            )
+            .unwrap()
+    }
+    /// Removes every `item` field, as a record written before items were named.
+    fn strip_items(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(map) => {
+                map.remove("item");
+                map.values_mut().for_each(strip_items);
+            }
+            serde_json::Value::Array(list) => list.iter_mut().for_each(strip_items),
+            _ => {}
+        }
+    }
+    #[test]
+    fn item_changes_keep_their_names_and_older_records_still_load() {
+        use ItemAction::*;
+        for (item, title) in [
+            (
+                ItemChange::new(Added, ItemBar::Dock, "Sound", None),
+                "Added Sound",
+            ),
+            (
+                ItemChange::new(Removed, ItemBar::Panel, "Time", None),
+                "Removed Time",
+            ),
+            (
+                ItemChange::new(Moved, ItemBar::Dock, "Sound", Some("Right")),
+                "Moved Sound to Right",
+            ),
+            (
+                ItemChange::new(Moved, ItemBar::Panel, "Time", Some("Bottom")),
+                "Moved Time to Bottom",
+            ),
+            (
+                ItemChange::new(Reordered, ItemBar::Dock, "Sound", None),
+                "Reordered Dock items",
+            ),
+            (
+                ItemChange::new(Reordered, ItemBar::Panel, "", None),
+                "Reordered Panel items",
+            ),
+        ] {
+            assert_eq!(item.unwrap().title(), title);
+        }
+        // Only bounded names: a region header, a short applet name.
+        assert!(ItemChange::new(Moved, ItemBar::Dock, "Sound", Some("Elsewhere")).is_none());
+        assert!(ItemChange::new(Moved, ItemBar::Dock, "Sound", None).is_none());
+        assert!(ItemChange::new(Added, ItemBar::Dock, " ", None).is_none());
+        assert!(ItemChange::new(Added, ItemBar::Dock, "A\nB", None).is_none());
+        let long = ItemChange::new(Added, ItemBar::Dock, &"x".repeat(200), None).unwrap();
+        assert_eq!(long.name.chars().count(), ITEM_NAME);
+        assert!(long.name.ends_with('…'));
+
+        let f = Fixture::new("activity-items");
+        let store = f.store();
+        let added = ItemChange::new(Added, ItemBar::Dock, "Sound", None).unwrap();
+        let latest = apply_item(&store, 3, Some(added.clone()));
+        assert_eq!(latest.item.as_ref(), Some(&added));
+        assert_eq!(latest.summary().title(), "Added Sound");
+        // Kept across a restart, for Changes and the footer alike.
+        let entry = f.store().recent_changes().unwrap().entries.pop().unwrap();
+        assert_eq!(entry.title(), "Added Sound");
+        assert_eq!(
+            f.store().latest_change().unwrap().unwrap().item,
+            Some(added.clone())
+        );
+        // Only your own change is named for its item.
+        let mut other = entry.clone();
+        other.cause = Cause::Schedule;
+        assert_eq!(other.item_title(), None);
+        other = entry.clone();
+        other.action = Action::Undone;
+        assert_eq!(other.title(), "Undid a desktop change");
+        other = entry.clone();
+        other.owner = Owner::Profile.key().into();
+        assert_eq!(other.item_title(), None);
+        // Other changes keep their value titles.
+        apply_item(&store, 4, None);
+        let entry = f.store().recent_changes().unwrap().entries.pop().unwrap();
+        assert_eq!(entry.item, None);
+        assert!(
+            entry.title().starts_with("Between items: "),
+            "{}",
+            entry.title()
+        );
+
+        // A record written before items were named still loads and undoes.
+        let path = store.recent_change_path();
+        let mut file: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(serde_json::to_string(&file).unwrap().contains("\"added\""));
+        let mut legacy = file.clone();
+        strip_items(&mut legacy);
+        std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let recent = f.store().recent_changes().unwrap();
+        assert_eq!(recent.entries.len(), 2);
+        assert!(recent.entries.iter().all(|e| e.item.is_none()));
+        assert!(recent.entries[0].title().starts_with("Between items: "));
+        assert!(f.store().latest_change().unwrap().unwrap().item.is_none());
+
+        // An item record this version can't read drops the item, not the change.
+        let renamed = serde_json::json!({"action": "renamed", "bar": "dock", "name": "Sound"});
+        let elsewhere = serde_json::json!({"action": "moved", "bar": "dock", "to": "Elsewhere"});
+        file["history"][0]["item"] = renamed;
+        file["recent"][0]["item"] = elsewhere;
+        std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
+        let recent = f.store().recent_changes().unwrap();
+        assert_eq!(recent.entries.len(), 2);
+        assert_eq!(recent.entries[0].item, None);
+        assert!(recent.entries[0].title().starts_with("Between items: "));
+        let latest = f.store().latest_change().unwrap().unwrap();
+        f.store().undo_latest(&latest.id).unwrap();
+        let undone = f.store().latest_change().unwrap().unwrap();
+        assert_eq!(undone.item, None);
+        assert_eq!(undone.summary().title(), recent.entries[0].title());
     }
     #[test]
     fn polish050_history_titles_keep_safe_detail_and_legacy_fallback() {
@@ -663,6 +916,18 @@ mod tests {
         assert_eq!(recent.entries.len(), 2);
         assert_eq!(recent.entries.last().unwrap().action, Action::Undone);
     }
+}
+
+/// An item record this version can't read is left out, not the change
+/// that carries it.
+pub(super) fn deserialize_item<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<ItemChange>, D::Error> {
+    Ok(
+        serde_json::from_value(serde_json::Value::deserialize(deserializer)?)
+            .ok()
+            .filter(ItemChange::valid),
+    )
 }
 
 pub(super) fn deserialize_partial<'de, D: serde::Deserializer<'de>>(

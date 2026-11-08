@@ -1700,3 +1700,177 @@ fn windows_rows_match_the_other_pages() {
         assert_eq!(hit.anchor(), id, "{query}");
     }
 }
+
+#[test]
+fn dock_and_panel_item_changes_are_named() {
+    let name = "dock_and_panel_item_changes_are_named";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::desktop::panels::{PanelKind, Region, Slot};
+    use desktop::Message as Edit;
+    let root = isolated_root();
+    let fixture = root.join("cosmic-root");
+    let apps = fixture.join("applications");
+    std::fs::create_dir_all(&apps).unwrap();
+    for (id, label) in [("clock", "Time"), ("sound", "Sound")] {
+        std::fs::write(
+            apps.join(format!("{id}.desktop")),
+            format!("[Desktop Entry]\nName={label}\nComment=Fixture item\nX-CosmicApplet=true\n"),
+        )
+        .unwrap();
+    }
+    for kind in [PanelKind::Panel, PanelKind::Dock] {
+        let dir = fixture
+            .join("config/cosmic")
+            .join(kind.namespace())
+            .join("v1");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("plugins_wings"), "Some(([], []))").unwrap();
+        std::fs::write(dir.join("plugins_center"), "Some([])").unwrap();
+    }
+    let mut app = open_isolated_editor(&root);
+    send_settings(&mut app, Message::Page(Page::DesktopDock));
+    let items = |app: &Settings| {
+        app.desktop
+            .current()
+            .unwrap()
+            .applets()
+            .known()
+            .cloned()
+            .unwrap()
+    };
+    let at = |region, index| Slot { region, index };
+    let sizes = [Size::new(820., 600.), Size::new(1280., 800.)];
+    for kind in [PanelKind::Dock, PanelKind::Panel] {
+        let bar = kind.title();
+        send_settings(&mut app, Message::OpenBar(kind));
+        let steps = [
+            (
+                "add",
+                Edit::Add(Region::Start, "sound".into()),
+                "Added Sound".to_string(),
+            ),
+            (
+                "add-time",
+                Edit::Add(Region::Start, "clock".into()),
+                "Added Time".into(),
+            ),
+            (
+                "reorder",
+                Edit::Step(at(Region::Start, 0), 1),
+                format!("Reordered {bar} items"),
+            ),
+            // Past the region's end, the arrow moves it to the next one.
+            (
+                "step-across",
+                Edit::Step(at(Region::Start, 1), 1),
+                "Moved Sound to Middle".into(),
+            ),
+            (
+                "move",
+                Edit::MoveTo(at(Region::Start, 0), Region::End),
+                "Moved Time to Right".into(),
+            ),
+            (
+                "remove",
+                Edit::Remove(at(Region::End, 0)),
+                "Removed Time".into(),
+            ),
+        ];
+        for (step, edit, title) in steps {
+            let before = items(&app);
+            send_settings(&mut app, Message::DesktopEditor(edit.clone()));
+            assert!(!app.error, "{bar} {step}: {}", app.status);
+            let after = items(&app);
+            assert_ne!(after, before, "{bar} {step}");
+            // The footer, its Undo and Changes all use the same words.
+            let summary = app.last_desktop_summary.clone().unwrap();
+            assert_eq!(summary.title(), title, "{bar} {step}");
+            assert_eq!(
+                app.last_desktop_change.as_ref().map(|c| c.1.as_str()),
+                Some(title.as_str()),
+                "{bar} {step}"
+            );
+            send_settings(&mut app, Message::Support(support::Message::Changed));
+            assert_eq!(
+                app.support.local.recent.entries.last().map(|e| e.title()),
+                Some(title.clone()),
+                "{bar} {step}"
+            );
+            for size in sizes {
+                send_settings(&mut app, Message::Resized(size));
+                let mut native = crate::native_test::Native::new(size);
+                native.text_bounds(app.settings_view(), &format!("Saved · {title}"));
+                native.text_bounds(app.settings_view(), &format!("Undo {title}"));
+                assert!(
+                    native
+                        .text_all(app.settings_view(), "Dock and panel change")
+                        .is_empty(),
+                    "{bar} {step}"
+                );
+                // The item editor sits near the foot of the page.
+                native.scroll(app.settings_view(), "settings-content", 100_000.);
+                capture_both(
+                    &app,
+                    &mut native,
+                    &format!("item-footer-{}-{step}-{}", bar.to_lowercase(), size.width),
+                );
+            }
+            // Its Undo puts back exactly that change, then it is made again.
+            let mut native = crate::native_test::Native::new(sizes[1]);
+            native_click(&mut app, &mut native, "settings-undo");
+            assert!(!app.error, "{bar} {step}: {}", app.status);
+            assert_eq!(items(&app), before, "{bar} {step}: undo");
+            send_settings(&mut app, Message::DesktopEditor(edit));
+            assert_eq!(items(&app), after, "{bar} {step}: again");
+            assert_eq!(app.last_desktop_summary.as_ref().unwrap().title(), title);
+        }
+    }
+    // Other edits keep their own names.
+    let spacing = app
+        .desktop
+        .current()
+        .unwrap()
+        .spacing()
+        .known()
+        .copied()
+        .unwrap_or(0);
+    send_settings(&mut app, Message::DesktopEditor(Edit::Spacing(spacing + 4)));
+    send_settings(&mut app, Message::DesktopEditor(Edit::Apply));
+    assert!(
+        app.last_desktop_summary
+            .as_ref()
+            .unwrap()
+            .title()
+            .starts_with("Between items: ")
+    );
+    assert!(app.last_desktop_summary.as_ref().unwrap().item.is_none());
+
+    // Changes lists them by the same names.
+    send_settings(&mut app, Message::Page(Page::Changes));
+    send_settings(&mut app, Message::Support(support::Message::Changed));
+    for size in sizes {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        for title in [
+            "Removed Time",
+            "Moved Time to Right",
+            "Moved Sound to Middle",
+        ] {
+            assert!(
+                !native.text_all(app.settings_view(), title).is_empty(),
+                "{title}"
+            );
+        }
+        capture_both(&app, &mut native, &format!("item-changes-{}", size.width));
+    }
+}

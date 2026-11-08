@@ -168,6 +168,10 @@ pub fn commit(
         }
     }
     let mut patch = patch.clone();
+    // Item names belong to the Dock and panel's own item edits.
+    if owner != Owner::DockPanel || source != Source::Manual {
+        patch.activity_item = None;
+    }
     if source == Source::Scheduled {
         // Missing scope is a programming error, not permission to overwrite a
         // newer manual choice. Some(None) is the valid empty-history baseline.
@@ -197,6 +201,11 @@ pub fn commit(
 }
 
 fn action_label(patch: &DesktopPatch, owner: Owner, fallback: &str) -> String {
+    // An item added, removed or moved is named for it: "Added Sound", the
+    // same words Changes uses.
+    if let Some(item) = &patch.activity_item {
+        return item.title();
+    }
     let input: Vec<_> = patch
         .keys()
         .filter(|key| !matches!(super::appearance::ThemeVariant::of(key), Some((_, false))))
