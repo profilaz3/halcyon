@@ -1,3 +1,50 @@
+## Windows that show nothing — 2026-11-08
+
+Every open layer-shell window holds its own swapchain buffers and iced
+renderer, whatever it draws. Halcyon used to keep a window for every widget
+and move hidden ones to x = −10000, so a desktop with two widgets on screen
+still held 12 windows. Now a window is open only while it shows something:
+
+- **Hidden widgets** (turned off, combined into Glance, `widgets_visible` off,
+  or a profile or schedule that hides them) have no window. Showing one
+  creates its window again, in its saved place; its data, position and timers
+  live in the app and are untouched (a running focus round keeps running).
+- **Music** has no window while nothing is playing; **Notes** and **Focus**
+  have none while off. Before, each kept a 16×16 window off screen.
+- **The fixed columns** open only the columns that hold a card. Devbox and
+  Projects are drawn in the right-hand column and never had content in their
+  own windows there.
+- **The edge menu** has a window only while it is on screen, sliding, or
+  holding a drag. It opens when the reveal starts (after the one-second hover
+  on the edge), not when the edge is touched.
+- **The arrange surface** covers the display only while arranging. Otherwise
+  it is a strip one pixel tall along the top that measures the usable width.
+  The edge strip, two pixels wide and already open, measures the usable height.
+  Before, this was an invisible 1920×1080 window.
+
+Two windows stay open for a real reason: the edge strip, which has to take the
+pointer to reveal the edge menu and which measures the height, and the
+one-pixel arrange strip, which tracks panels and docks that change the usable
+area. Displays with widgets on a second monitor still measure that monitor
+with a full-size `halcyon-display-probe` window.
+
+Measured on the same Ryzen 7 5700G with the same user configuration (Clock and
+Focus on screen, everything else off), read from `/proc/<pid>/fdinfo` 40 s
+after start:
+
+| | Before | After |
+|---|---|---|
+| Layer-shell windows open | 12 | 4 (arrange, edge, clock, focus) |
+| `drm-total-vram` | 87,436 KiB | 43,112 KiB |
+| `drm-resident-vram` | 87,436 KiB | 43,112 KiB |
+| `drm-resident-gtt` | 11,800 KiB | 10,456 KiB |
+
+Showing a hidden card now creates its window, and its first frame arrives
+about 45 ms later (measured at startup), against about one frame for the old
+margin change. Tools already worked this way.
+
+---
+
 ## Video memory per window — 2026-11-08
 
 Halcyon draws each desktop widget in its own layer-shell window, and each

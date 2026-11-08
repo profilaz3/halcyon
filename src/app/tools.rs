@@ -49,8 +49,8 @@ pub(super) struct Tools {
     pub note_problem: Option<String>,
     checking_note: bool,
     pub focus: focus::Session,
-    /// The size each tool surface was created with.
-    geometry: BTreeMap<Widget, [u32; 2]>,
+    /// Each tool's surface size as last synced; `None`: closed.
+    geometry: BTreeMap<Widget, Option<[u32; 2]>>,
     /// Whether the Music card is on the desktop now.
     pub music_shown: bool,
     pub spectrum_key: Option<String>,
@@ -658,15 +658,14 @@ impl Cards {
         focus.into_iter().chain(music).min()
     }
 
-    /// A hidden tool keeps a tiny offscreen surface, like hidden cards.
-    fn tool_surface_size(&self, widget: Widget) -> [u32; 2] {
-        if self.tool_shown(widget) {
+    /// A shown tool's surface size. A hidden tool has no surface: an open
+    /// window that draws nothing still holds its buffers and renderer.
+    fn tool_surface_size(&self, widget: Widget) -> Option<[u32; 2]> {
+        self.tool_shown(widget).then(|| {
             let (_, mu) = self.shadow_px();
             self.widget_size(widget)
                 .map(|value| value.ceil() as u32 + mu)
-        } else {
-            [16, 16]
-        }
+        })
     }
 
     fn tool_input_zone(&self, widget: Widget) -> Vec<cosmic::iced::Rectangle> {
@@ -683,8 +682,7 @@ impl Cards {
         }]
     }
 
-    fn tool_surface(&self, widget: Widget) -> Task<Message> {
-        let size = self.tool_surface_size(widget);
+    fn tool_surface(&self, widget: Widget, size: [u32; 2]) -> Task<Message> {
         let position = if self.tool_shown(widget)
             && !(self.layout_editor.active && self.arranging_widget(widget))
         {
@@ -723,6 +721,15 @@ impl Cards {
         self.tools.geometry.contains_key(&widget)
     }
 
+    /// Whether a tool's surface is open, as last synced.
+    #[cfg(test)]
+    pub(super) fn tool_surface_open(&self, widget: Widget) -> bool {
+        self.tools
+            .geometry
+            .get(&widget)
+            .is_some_and(Option::is_some)
+    }
+
     /// The next sync recreates every tool surface (above newer card surfaces).
     pub(super) fn forget_tool_surfaces(&mut self) {
         self.tools.geometry.clear();
@@ -751,11 +758,15 @@ impl Cards {
             };
             if self.tools.geometry.get(&widget) != Some(&size) {
                 self.tools.geometry.insert(widget, size);
-                tasks.push(
-                    release
-                        .chain(destroy_layer_surface(self.widget_id(widget)))
-                        .chain(self.tool_surface(widget)),
-                );
+                let destroy = release.chain(destroy_layer_surface(self.widget_id(widget)));
+                tasks.push(match size {
+                    Some(size) => destroy.chain(self.tool_surface(widget, size)),
+                    None => destroy,
+                });
+                continue;
+            }
+            if size.is_none() {
+                tasks.push(release);
                 continue;
             }
             let point = if self.tool_shown(widget)
@@ -1242,7 +1253,7 @@ mod tests {
         // Stopped with nothing loaded: still nothing to show.
         let _ = cards.update(feed(music::Playback::Stopped));
         assert!(!cards.tool_shown(Widget::Music));
-        assert_eq!(cards.tool_surface_size(Widget::Music), [16, 16]);
+        assert_eq!(cards.tool_surface_size(Widget::Music), None);
         // Playing: the card is there.
         let _ = cards.update(feed(music::Playback::Playing));
         assert!(cards.tool_shown(Widget::Music) && cards.tools.music_shown);

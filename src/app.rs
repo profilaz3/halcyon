@@ -19,6 +19,8 @@ mod display_tests;
 mod glance;
 mod monitors;
 mod recipe;
+#[cfg(test)]
+mod surface_lifecycle_tests;
 
 pub(crate) fn settings_clock_preview(
     config: &Config,
@@ -272,6 +274,13 @@ pub struct Cards {
     updating: bool,
     /// The card surfaces need rebuilding at the end of this update.
     rebuild_pending: bool,
+    /// The edge menu's surface is open. It is closed while the menu is
+    /// fully out of sight.
+    controls_open: bool,
+    /// The usable area of the widget display as the probes last reported
+    /// it: the width from the arrange surface, the height from the edge
+    /// strip (or both from the arrange surface while arranging).
+    work_area: [Option<f32>; 2],
     screen_size: [f32; 2],
     output_known: bool,
     sidebar: Sidebar,
@@ -373,6 +382,8 @@ impl cosmic::Application for Cards {
             surface_inputs: None,
             updating: false,
             rebuild_pending: false,
+            controls_open: false,
+            work_area: [None; 2],
             screen_size: [1920., 1080.],
             output_known: false,
             sidebar,
@@ -621,10 +632,13 @@ impl cosmic::Application for Cards {
         let pending = std::mem::take(&mut self.rebuild_pending);
         let surfaces = if !self.output_known || self.selected_output.is_none() {
             Task::none()
-        } else if pending && self.surface_geometry.as_ref() != Some(&self.surface_geometry()) {
-            self.rebuild_cards()
         } else {
-            self.sync_music_shown()
+            let cards = if pending && self.cards_need_rebuild() {
+                self.rebuild_cards()
+            } else {
+                Task::batch([self.sync_open_cards(), self.sync_music_shown()])
+            };
+            Task::batch([cards, self.sync_controls_surface()])
         };
         let depth = self.depth_sync();
         let spectrum = self.sync_spectrum();
@@ -717,7 +731,31 @@ impl Cards {
             ..Default::default()
         })
     }
-    /// The thin screen-edge strip that opens the edge menu.
+    /// Opens the edge menu's surface while the menu is on screen, sliding or
+    /// holding a drag, and closes it once it is fully out of sight.
+    /// Hovering the edge strip doesn't open it: the reveal waits a second
+    /// anyway, and brushing past the edge shouldn't create a window.
+    fn sync_controls_surface(&mut self) -> Task<Message> {
+        if !self.output_known || self.selected_output.is_none() {
+            return Task::none();
+        }
+        let needed = self.sidebar.needs_surface();
+        if needed == self.controls_open {
+            return Task::none();
+        }
+        self.controls_open = needed;
+        let destroy =
+            cosmic::iced::platform_specific::shell::commands::layer_surface::destroy_layer_surface(
+                self.ids[2],
+            );
+        if needed {
+            destroy.chain(self.controls_surface(self.ids[2], self.sidebar.margin()))
+        } else {
+            destroy
+        }
+    }
+    /// The thin screen-edge strip that opens the edge menu. It also measures
+    /// the usable height of the display (see `Message::SurfaceResized`).
     fn edge_surface(&self, id: window::Id) -> Task<Message> {
         get_layer_surface(SctkLayerSurfaceSettings {
             id,
@@ -852,6 +890,8 @@ impl Cards {
         self.surface_geometry = None;
         self.surface_inputs = None;
         self.rebuild_pending = false;
+        self.controls_open = false;
+        self.work_area = [None; 2];
         self.forget_tool_surfaces();
         let old_ids =
             std::mem::replace(&mut self.ids, std::array::from_fn(|_| window::Id::unique()));
@@ -1041,20 +1081,34 @@ impl Cards {
                     return cosmic::iced::platform_specific::shell::commands::layer_surface::destroy_layer_surface(id);
                 }
                 // libcosmic's layer Size action emits a synthetic square resize
-                // using width twice. The output probe is compositor-sized, so
-                // only its dimensions are authoritative for the desktop budget.
-                if id == self.ids[5]
+                // using width twice. The probes are compositor-sized, so only
+                // their dimensions are authoritative for the desktop budget.
+                // Outside Arrange the arrange surface is a one-pixel strip
+                // along the top that measures the usable width, and the edge
+                // strip measures the usable height; a full-size window just
+                // to measure the screen would hold full-screen buffers.
+                if (id == self.ids[5] || id == self.ids[3])
                     && self.selected_output.is_some()
                     && size.width.is_finite()
                     && size.height.is_finite()
                     && size.width > 0.
                     && size.height > 0.
                 {
-                    let screen = [size.width, size.height];
-                    self.desktop_height = (size.height - 96.).max(1.);
+                    if id == self.ids[5] {
+                        self.work_area[0] = Some(size.width);
+                    }
+                    // The strip along the top is a pixel tall; the full-size
+                    // Arrange overlay reports the height as well.
+                    if id == self.ids[3] || size.height > layout::PROBE_THICKNESS as f32 {
+                        self.work_area[1] = Some(size.height);
+                    }
+                    let [Some(width), Some(height)] = self.work_area else {
+                        return Task::none();
+                    };
+                    let screen = [width, height];
+                    self.desktop_height = (height - 96.).max(1.);
                     self.calendar_height = self.desktop_height;
                     if self.screen_size != screen || !self.output_known {
-                        let first = !self.output_known;
                         self.output_known = true;
                         self.screen_size = screen;
                         let widgets = self.sync_widget_surfaces();
@@ -1069,16 +1123,7 @@ impl Cards {
                         } else {
                             Task::none()
                         };
-                        let widgets = Task::batch([widgets, arrange]);
-                        return if first {
-                            Task::batch([
-                                self.controls_surface(self.ids[2], self.sidebar.margin()),
-                                self.edge_surface(self.ids[3]),
-                                widgets,
-                            ])
-                        } else {
-                            widgets
-                        };
+                        return Task::batch([widgets, arrange]);
                     }
                 }
                 Task::none()
@@ -1429,6 +1474,7 @@ impl Cards {
                 }
                 Task::batch([
                     self.layout_probe(self.ids[5], false),
+                    self.edge_surface(self.ids[3]),
                     self.extra_probe_tasks(),
                 ])
             }

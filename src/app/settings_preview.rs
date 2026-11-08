@@ -186,6 +186,8 @@ impl SettingsSamples {
             surface_inputs: None,
             updating: false,
             rebuild_pending: false,
+            controls_open: false,
+            work_area: [None; 2],
             screen_size: [1920., 1080.],
             output_known: false,
             sidebar,
