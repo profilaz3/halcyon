@@ -12933,7 +12933,7 @@ if not presence:
         std::fs::write(
             root.join("slow-islands-probe.py"),
             format!(
-                "import time,pathlib\ntime.sleep(0.6)\nprint(pathlib.Path({:?}).read_text())\n",
+                "import time,pathlib\ntime.sleep(3)\nprint(pathlib.Path({:?}).read_text())\n",
                 root.join("islands-installation.json").to_str().unwrap()
             ),
         )
@@ -12957,8 +12957,10 @@ if not presence:
         for message in messages {
             let start = Instant::now();
             pending.push(app.update(message));
+            // The helper sleeps 3s; a busy test machine can still take a
+            // few hundred milliseconds for the update itself.
             assert!(
-                start.elapsed() < Duration::from_millis(250),
+                start.elapsed() < Duration::from_millis(1500),
                 "native navigation waited for the helper"
             );
         }
@@ -12986,7 +12988,7 @@ if not presence:
             let start = Instant::now();
             let task = app.update(message);
             assert!(
-                start.elapsed() < Duration::from_millis(250),
+                start.elapsed() < Duration::from_millis(1500),
                 "native style action waited for pre-write discovery"
             );
             // Another ordinary control must not enter the config lock while
@@ -12994,7 +12996,7 @@ if not presence:
             let before = Config::load().clock.show_date;
             let start = Instant::now();
             let preference = app.update(Message::ClockDate(!before));
-            assert!(start.elapsed() < Duration::from_millis(250));
+            assert!(start.elapsed() < Duration::from_millis(1500));
             assert_eq!(
                 Config::load().clock.show_date,
                 before,
