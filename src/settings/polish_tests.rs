@@ -1417,3 +1417,92 @@ fn applet_press(app: &mut Settings, native: &mut crate::native_test::Native, id:
         }
     }
 }
+
+#[test]
+fn time_of_day_without_a_city_asks_for_it_once() {
+    let name = "time_of_day_without_a_city_asks_for_it_once";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    send_settings(&mut app, Message::Page(Page::DesktopAutomation));
+    let line = "Sunrise and sunset there decide when your look switches";
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        // One first step: the city search and one line.
+        native.bounds(app.settings_view(), "time-of-day-first-step");
+        native.bounds(app.settings_view(), "solar-city-search");
+        native.text_bounds(app.settings_view(), line);
+        for gone in [
+            "Add where you are to begin",
+            "Add your city to pick a look for each part of the day",
+            "Ready once your city is added",
+            "Day",
+            "Evening",
+            "Night",
+        ] {
+            assert!(
+                native.text_all(app.settings_view(), gone).is_empty(),
+                "{gone}"
+            );
+        }
+        for id in ["automation-enable", "automation-shades"] {
+            assert!(native.try_bounds(app.settings_view(), id).is_none(), "{id}");
+        }
+        // Widget styles work without a city, so the choice that leads to
+        // them stays.
+        native.bounds(app.settings_view(), "time-of-day-mode");
+        // Set times and screens work without a city, so they stay.
+        assert!(
+            !native
+                .text_all(app.settings_view(), "Set times and screens")
+                .is_empty()
+        );
+        capture_both(
+            &app,
+            &mut native,
+            &format!("time-of-day-no-city-{}", size.width),
+        );
+    }
+    let city = City {
+        name: "Sydney".into(),
+        latitude: -33.87,
+        longitude: 151.21,
+        timezone: Some("Australia/Sydney".into()),
+        admin1: "NSW".into(),
+        country: "Australia".into(),
+    };
+    send_settings(
+        &mut app,
+        Message::Automation(automation::Message::ManualCity(city.location())),
+    );
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "time-of-day-first-step")
+                .is_none()
+        );
+        for id in ["time-of-day-mode", "automation-shades"] {
+            native.bounds(app.settings_view(), id);
+        }
+        native.text_bounds(app.settings_view(), "Evening");
+        assert!(native.text_all(app.settings_view(), line).is_empty());
+        capture_both(
+            &app,
+            &mut native,
+            &format!("time-of-day-city-{}", size.width),
+        );
+    }
+}
