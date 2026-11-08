@@ -34,7 +34,16 @@ impl Settings {
             Page::Calendar => "Sync and sign-in setup",
             Page::Weather => "Dew point and how often it updates",
             Page::Clock | Page::Projects | Page::Devbox => "How often it updates",
-            Page::Appearance => "Card opacity and outline",
+            Page::Appearance
+                if self
+                    .config
+                    .materials
+                    .effective(crate::materials::Target::Widgets)
+                    .is_none() =>
+            {
+                "Widget corners, opacity and outline"
+            }
+            Page::Appearance => "Widget corners",
             _ => "More options",
         };
         let mut rows = vec![
@@ -273,19 +282,7 @@ impl Settings {
                 button::custom(split(
                     row::with_children(vec![
                         dot(area_tint(hit.page.area(), self.settings_accent()), 8.),
-                        detail_state(
-                            hit.label,
-                            format!(
-                                "{} › {}{}",
-                                hit.page.area().label(),
-                                if hit.page == Page::General {
-                                    hit.app_destination().tab_title()
-                                } else {
-                                    hit.page.nav_title()
-                                },
-                                if hit.advanced { " › Advanced" } else { "" }
-                            ),
-                        ),
+                        detail_state(hit.label, hit.crumb()),
                     ])
                     .spacing(12)
                     .align_y(Alignment::Center)

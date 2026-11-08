@@ -87,7 +87,6 @@ fn message_scope(config: &Config, message: &Message) -> Vec<String> {
                 add(&["glance", key]);
             }
         }
-        Message::StyleBars(_) => add(&["appearance", "style_bars"]),
         Message::ClockFollowStyle(true) => {
             for key in ["face", "weight", "italic", "surface"] {
                 add(&["clock", key]);

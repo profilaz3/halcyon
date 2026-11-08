@@ -692,19 +692,14 @@ fn polish_e_dock_shape_follow_style_and_looks_header() {
         assert_eq!(app.desktop.current().unwrap().extend(), Setting::Known(false));
         assert_eq!(app.desktop.current().unwrap().floating(), floating);
         assert!(native.text_all(app.settings_view(), "Full width").len() == 1, "only the Shape option");
-        native_reveal(&app, &mut native, "dock-style-bars");
+        native_reveal(&app, &mut native, "dock-background");
         capture(&app, &mut native, "polish-e-dock");
     }
-    // Whether looks color the bars is set here now, not on Appearance.
-    let before = app.config.appearance.style_bars;
+    // Following the look's style is Background's Match style now; no
+    // separate switch says it on the dock or on Appearance.
     let mut native = crate::native_test::Native::new(Size::new(1280., 800.));
-    // The switch changes only itself: the rest of the widget appearance stays.
-    Config::save_appearance(json!({"opacity": 61, "corner_radius": 9})).unwrap();
-    send_settings(&mut app, Message::Page(Page::DesktopDock));
-    native_click(&mut app, &mut native, "dock-style-bars");
-    let saved = Config::load().appearance;
-    assert_eq!(saved.style_bars, !before);
-    assert_eq!((saved.opacity, saved.corner_radius), (61, 9));
+    assert!(native.try_bounds(app.settings_view(), "dock-style-bars").is_none());
+    assert!(native.text_all(app.settings_view(), "Follow the look’s style").is_empty());
     send_settings(&mut app, Message::Page(Page::Themes));
     assert!(native.text_all(app.settings_view(), "Style the dock and panel").is_empty());
     // Clock: following the look hides its own style choices.
@@ -1152,8 +1147,8 @@ fn footer_undo_stays_on_the_page_that_made_the_change() {
 }
 
 #[test]
-fn dock_headings_corners_note_and_panel_regions_read_plainly() {
-    let name = "dock_headings_corners_note_and_panel_regions_read_plainly";
+fn dock_headings_corners_and_panel_regions_read_plainly() {
+    let name = "dock_headings_corners_and_panel_regions_read_plainly";
     if desktop_test_child(
         name,
         DesktopEnv {
@@ -1188,25 +1183,20 @@ fn dock_headings_corners_note_and_panel_regions_read_plainly() {
     native.text_bounds(app.settings_view(), "Hide timing");
     native.text_bounds(app.settings_view(), "Spacing");
     assert!(native.text_all(app.settings_view(), "SPACING").is_empty());
-    // The corners note sits behind its "?"; open it.
-    send_settings(&mut app, Message::Explain(view::explain::key("Corners")));
-    native_reveal(&app, &mut native, "dock-style-bars");
+    // Each bar's own corners are named for the bar, in its folded section.
+    native.text_bounds(app.settings_view(), "Dock corners");
+    native_reveal(&app, &mut native, "dock-background");
     capture(&app, &mut native, "dock-tab-style");
-    native.text_bounds(app.settings_view(), "Only the dock. Window corners are in Windows");
 
-    // The panel's corners note speaks of the panel.
     send_settings(
         &mut app,
         Message::DesktopEditor(desktop::Message::Select(PanelKind::Panel)),
     );
-    native_reveal(&app, &mut native, "dock-style-bars");
+    native_reveal(&app, &mut native, "dock-corners");
+    native.text_bounds(app.settings_view(), "Panel corners");
+    assert!(native.text_all(app.settings_view(), "Dock corners").is_empty());
+    native_reveal(&app, &mut native, "dock-background");
     capture(&app, &mut native, "panel-tab-style");
-    native.text_bounds(app.settings_view(), "Only the panel. Window corners are in Windows");
-    assert!(
-        native
-            .text_all(app.settings_view(), "Only the dock. Window corners are in Windows")
-            .is_empty()
-    );
     native_reveal(&app, &mut native, "panel-items");
     capture(&app, &mut native, "panel-tab-contents");
     // A bar's middle region has one name, across or down the screen.
@@ -1529,7 +1519,7 @@ fn windows_rows_match_the_other_pages() {
     let mut native = crate::native_test::Native::new(size);
     // A row title elsewhere: the dock's Floating.
     send_settings(&mut app, Message::OpenBar(PanelKind::Dock));
-    native_reveal(&app, &mut native, "dock-style-bars");
+    native_reveal(&app, &mut native, "dock-background");
     let floating = native.text_bounds(app.settings_view(), "Floating").height;
     send_settings(&mut app, Message::Page(Page::DesktopWindows));
     let titles = [

@@ -4,7 +4,7 @@ use super::pages::section;
 use super::*;
 use crate::desktop::applets::AppletCatalog;
 use crate::desktop::panels::{
-    Anchor, AutoHide, Background as PanelBackground, MAX_MARGIN, MAX_PADDING, MAX_RADIUS,
+    Anchor, AutoHide, Background as PanelBackground, MAX_MARGIN, MAX_PADDING,
     MAX_SPACING, Output, PanelDraft, PanelKind, PanelSize, Region, Setting, Slot, Timing,
 };
 use crate::settings::desktop::Message as Edit;
@@ -342,16 +342,19 @@ impl Settings {
                 "Screen edge",
                 choice(&draft.anchor(), anchors, Edit::Anchor, accent),
             ),
-            field(
-                "Visibility",
-                choice(
-                    &draft.autohide(),
-                    AutoHide::ALL
-                        .into_iter()
-                        .map(|mode| (mode.title().to_string(), mode))
-                        .collect(),
-                    Edit::AutoHide,
-                    accent,
+            self.search_target(
+                "dock-visibility",
+                field(
+                    "Visibility",
+                    choice(
+                        &draft.autohide(),
+                        AutoHide::ALL
+                            .into_iter()
+                            .map(|mode| (mode.title().to_string(), mode))
+                            .collect(),
+                        Edit::AutoHide,
+                        accent,
+                    ),
                 ),
             ),
         ]);
@@ -408,67 +411,49 @@ impl Settings {
             ),
         });
         style.extend(toggle_items);
-        style.push(split(
-            // Each bar has its own corners; this tab sets only this bar's.
-            detail(
-                "Corners",
-                if draft.kind() == PanelKind::Panel {
-                    "Only the panel. Window corners are in Windows"
+        // “Match style” is the bar following the look’s style; any other
+        // background is the bar’s own. Only while bars follow styles at all
+        // (the former switch) is the theme’s background “Match style”.
+        let following = self.config.appearance.style_bars;
+        let background = draft.background();
+        let mut options = vec![
+            ("Match style".to_string(), PanelBackground::ThemeDefault),
+            ("Dark".into(), PanelBackground::Dark),
+            ("Light".into(), PanelBackground::Light),
+        ];
+        if let Setting::Known(color @ PanelBackground::Color(_)) = &background {
+            options.push(("Custom color".into(), color.clone()));
+        }
+        let mut control = vec![segmented(
+            options
+                .into_iter()
+                .map(|(title, value)| {
+                    let selected = background.known() == Some(&value)
+                        && (following || value != PanelBackground::ThemeDefault);
+                    (title, selected, Some(edit(Edit::Background(value))))
+                })
+                .collect(),
+            accent,
+        )];
+        if let Setting::Unsupported(raw) = &background {
+            control.push(kept(raw));
+        }
+        style.push(self.search_target(
+            "dock-background",
+            split(
+                if following {
+                    label("Background", 14., FG)
                 } else {
-                    "Only the dock. Window corners are in Windows"
+                    detail_state(
+                        "Background",
+                        "Choosing a style leaves the dock and panel as they are",
+                    )
                 },
-            ),
-            choice(
-                // The same words as Appearance; a size set elsewhere shows
-                // as the nearest of them.
-                &match draft.radius() {
-                    Setting::Known(value) => Setting::Known(
-                        [0, 12, 24, MAX_RADIUS]
-                            .into_iter()
-                            .min_by_key(|choice: &u32| choice.abs_diff(value))
-                            .unwrap_or(value),
-                    ),
-                    other => other,
-                },
-                vec![
-                    ("Square".into(), 0),
-                    ("Rounded".into(), 12),
-                    ("Very round".into(), 24),
-                    ("Pill".into(), MAX_RADIUS),
-                ],
-                Edit::RadiusChoice,
-                accent,
-            ),
-        ));
-        // Whether looks and styles color the bars; Background sets them here.
-        style.push(split(
-            detail(
-                "Follow the look’s style",
-                "Applying a look or style also colors the dock and panel. Off keeps what you set here",
-            ),
-            container(
-                toggler(self.config.appearance.style_bars).on_toggle(Message::StyleBars),
-            )
-            .id(cosmic::widget::Id::new("dock-style-bars"))
-            .into(),
-        ));
-        style.push(field(
-            "Background",
-            choice(
-                &draft.background(),
-                {
-                    let mut options = vec![
-                        ("Match style".into(), PanelBackground::ThemeDefault),
-                        ("Dark".into(), PanelBackground::Dark),
-                        ("Light".into(), PanelBackground::Light),
-                    ];
-                    if let Setting::Known(color @ PanelBackground::Color(_)) = draft.background() {
-                        options.push(("Custom color".into(), color));
-                    }
-                    options
-                },
-                Edit::Background,
-                accent,
+                row::with_children(control)
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .wrap()
+                    .into(),
             ),
         ));
         style.push(self.penumbra_controls(draft));
@@ -498,7 +483,7 @@ impl Settings {
         let open = self.desktop.advanced;
         let toggle = button::custom(
             row::with_children(vec![
-                label("Spacing and timing", 14., FG),
+                label(crate::settings::navigation::BAR_ADVANCED, 14., FG),
                 container(text::body("")).width(Length::Fill).into(),
                 icon::from_name(if open {
                     "go-up-symbolic"
@@ -606,7 +591,6 @@ impl Settings {
         );
         items.push(
             row::with_children(vec![
-                number(draft.radius(), "Corner radius", MAX_RADIUS, Edit::Radius),
                 if floating {
                     number(margin, "Edge gap", u32::from(MAX_MARGIN), |value| {
                         Edit::Margin(value as u16)
@@ -622,10 +606,35 @@ impl Settings {
                     .width(Length::FillPortion(1))
                     .into()
                 },
+                container(text::body("")).width(Length::FillPortion(1)).into(),
             ])
             .spacing(20)
             .into(),
         );
+        items.push(separator());
+        // This bar's own corners, in the steps Appearance's Corners uses. A
+        // size set some other way is kept and shown as Custom.
+        let radius = draft.radius();
+        let mut steps: Vec<(String, u32)> = crate::settings::corners::Step::ALL
+            .into_iter()
+            .map(|step| (step.title().to_string(), step.bar()))
+            .collect();
+        if let Setting::Known(value) = radius
+            && !steps.iter().any(|(_, step)| *step == value)
+        {
+            steps.push((format!("Custom · {value} px"), value));
+        }
+        items.push(self.search_target(
+            "dock-corners",
+            field(
+                if draft.kind() == PanelKind::Panel {
+                    "Panel corners"
+                } else {
+                    "Dock corners"
+                },
+                choice(&radius, steps, Edit::RadiusChoice, accent),
+            ),
+        ));
         items.push(separator());
         items.push(self.desktop_switch(
             "Keep style when maximized",

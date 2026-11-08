@@ -287,6 +287,12 @@ pub(super) fn segmented<'a>(
                 Some(Message::DesktopEditor(crate::settings::desktop::Message::PanelStyle(
                     crate::settings::desktop::PanelStyle::FullWidth,
                 ))) => cosmic::widget::Id::new("native-shape-full"),
+                Some(Message::Corners(step)) => {
+                    cosmic::widget::Id::new(format!("corners-{}", step.key()))
+                }
+                Some(Message::DesktopEditor(crate::settings::desktop::Message::Background(
+                    crate::desktop::panels::Background::ThemeDefault,
+                ))) => cosmic::widget::Id::new("native-background-match"),
                 _ => cosmic::widget::Id::unique(),
             };
             // An option that can't be picked right now is dimmed.

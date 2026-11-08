@@ -58,6 +58,9 @@ pub struct SearchHit {
     destination: AppSettingsPage,
     pub(super) bar: Option<crate::desktop::panels::PanelKind>,
     pub(super) open: SearchOpen,
+    /// The folded section that holds an advanced control, as the screen
+    /// names it. Left out when its name depends on the page’s state.
+    section: Option<&'static str>,
 }
 
 impl SearchHit {
@@ -67,7 +70,8 @@ impl SearchHit {
     /// Which object tab holds this control.
     pub(super) fn object_tab(self) -> ObjectTab {
         match self.anchor {
-            "widget-design" | "dock-advanced" | "music-visualizers" | "music-spectrum" => {
+            "widget-design" | "dock-advanced" | "dock-corners" | "music-visualizers"
+            | "music-spectrum" => {
                 ObjectTab::Design
             }
             _ => ObjectTab::Content,
@@ -91,6 +95,32 @@ impl SearchHit {
     const fn bar(mut self, bar: crate::desktop::panels::PanelKind) -> Self {
         self.bar = Some(bar);
         self
+    }
+    const fn section(mut self, section: &'static str) -> Self {
+        self.section = Some(section);
+        self
+    }
+    /// Where the result is, as the sidebar, tab and section name it. A
+    /// step that repeats the one before it is left out.
+    pub(super) fn crumb(self) -> String {
+        let page = if self.page == Page::General {
+            self.destination.tab_title()
+        } else if let Some(bar) = self.bar {
+            bar.title()
+        } else {
+            self.page.nav_title()
+        };
+        let section = self.section.filter(|_| self.advanced);
+        let mut steps: Vec<&str> = Vec::new();
+        for step in [Some(self.page.area().label()), Some(page), section]
+            .into_iter()
+            .flatten()
+        {
+            if steps.last() != Some(&step) && step != self.label {
+                steps.push(step);
+            }
+        }
+        steps.join(" › ")
     }
 }
 
@@ -233,10 +263,17 @@ impl cosmic::iced::advanced::widget::Operation for ScrollTargets {
     }
 }
 
+/// The dock and panel’s folded section, as its toggle and search name it.
+pub(super) const BAR_ADVANCED: &str = "Corners, spacing and timing";
+/// The Windows page’s folded section, as its toggle and search name it.
+const WINDOW_DETAILS: &str = "Corners, outline color and shadows";
+
+// Every label is the name its screen shows for the row or heading a result
+// opens; other words people may use belong in the terms.
 pub(super) const WIDGET_READABILITY: SearchHit = hit(
     Page::Appearance,
-    "Widget readability",
-    "contrast readability bright wallpaper readable text",
+    "Easier to read",
+    "widget readability contrast readable bright busy wallpaper small text",
     true,
 )
 .at("contrast-assist")
@@ -250,8 +287,8 @@ pub(super) const LOOKS: SearchHit = hit(
 );
 pub(super) const STARTUP: SearchHit = hit(
     Page::General,
-    "Startup and background",
-    "general halcyon app settings startup login background service setup again",
+    "Startup",
+    "general halcyon app settings startup login sign in background service running setup again",
     false,
 );
 pub(super) const ACTIVITY_ISLAND: SearchHit = hit(
@@ -264,8 +301,8 @@ pub(super) const ACTIVITY_ISLAND: SearchHit = hit(
 .bar(crate::desktop::panels::PanelKind::Panel);
 pub(super) const SEE_THROUGH: SearchHit = hit(
     Page::Appearance,
-    "See-through widgets",
-    "transparent transparency see-through see through opacity clear glass",
+    "Glass and transparency",
+    "see-through widgets transparent transparency see through opacity clear glass frosted",
     false,
 )
 .at("material-scope")
@@ -273,7 +310,7 @@ pub(super) const SEE_THROUGH: SearchHit = hit(
 
 pub(super) const PRIVACY: SearchHit = hit(
     Page::General,
-    "Privacy and usage reporting",
+    "Share usage data",
     "privacy usage reporting anonymous telemetry",
     false,
 )
@@ -282,8 +319,8 @@ pub(super) const PRIVACY: SearchHit = hit(
 const SEARCH: &[SearchHit] = &[
     hit(
         Page::General,
-        "Help and diagnostics",
-        "help diagnostics support problem report status troubleshoot",
+        "Help",
+        "help diagnostics support problem report status troubleshoot how things are running",
         false,
     )
     .destination(AppSettingsPage::Help),
@@ -295,14 +332,49 @@ const SEARCH: &[SearchHit] = &[
     ),
     hit(
         Page::Themes,
-        "Shared desktop themes",
-        "theme soft outline paper bare colors widgets save share",
+        "Mode",
+        "dark light automatic night sunset theme",
+        false,
+    )
+    .at("appearance-mode"),
+    hit(
+        Page::Themes,
+        "Style",
+        "shared desktop themes theme look soft outline paper bare frosted widgets save share",
         false,
     ),
+    hit(
+        Page::Themes,
+        "Accent color",
+        "accent colour colors highlight buttons wallpaper custom",
+        false,
+    )
+    .at("appearance-accent"),
+    hit(
+        Page::Themes,
+        "Use these colors in apps",
+        "colors colours apps applications cosmic sync",
+        false,
+    )
+    .at("colors-scope"),
+    hit(
+        Page::Themes,
+        "Corners",
+        "corners roundness rounded square pill radius windows widgets dock panel",
+        false,
+    )
+    .at("appearance-corners"),
+    hit(
+        Page::Themes,
+        "Density",
+        "density compact standard spacious spacing apps",
+        false,
+    )
+    .at("appearance-density"),
     WIDGET_READABILITY,
     hit(
         Page::General,
-        "Settings animations",
+        "Animate settings",
         "settings animations motion transitions disclosure",
         false,
     )
@@ -318,18 +390,24 @@ const SEARCH: &[SearchHit] = &[
     .destination(AppSettingsPage::Interface),
     hit(
         Page::Devbox,
-        "Reorder readings",
+        "Reorder",
         "system monitor devbox reorder readings drag move order",
         false,
     )
     .at("devbox-reorder-anchor"),
     hit(
         Page::Weather,
-        "City and forecast",
-        "weather location city forecast belgrade",
+        "Location",
+        "weather location city forecast belgrade search",
         false,
     )
     .open(SearchOpen::City),
+    hit(
+        Page::Weather,
+        "Units",
+        "weather units celsius fahrenheit temperature wind speed",
+        false,
+    ),
     hit(
         Page::Weather,
         "Dew point",
@@ -338,48 +416,50 @@ const SEARCH: &[SearchHit] = &[
         // often it updates" section; search opens it.
         true,
     )
-    .at("weather-dew-point"),
+    .at("weather-dew-point")
+    .section("Dew point and how often it updates"),
     hit(
         Page::Weather,
-        "Weather update interval",
-        "weather refresh update interval frequency",
+        "Update every",
+        "weather refresh update interval frequency how often",
         true,
-    ),
+    )
+    .section("Dew point and how often it updates"),
     hit(
         Page::Devbox,
-        "CPU and temperature",
-        "system monitor devbox cpu temperature readings history graph sparkline",
+        "Processor (CPU)",
+        "system monitor devbox cpu processor temperature readings history graph sparkline",
         false,
     )
     .at("devbox-cpu")
     .open(SearchOpen::Metric(crate::config::DevboxSection::Cpu)),
     hit(
         Page::Devbox,
-        "Memory usage",
-        "system monitor devbox ram memory cache swap readings history graph sparkline",
+        "Memory",
+        "system monitor devbox ram memory usage cache swap readings history graph sparkline",
         false,
     )
     .at("devbox-memory")
     .open(SearchOpen::Metric(crate::config::DevboxSection::Memory)),
     hit(
         Page::Devbox,
-        "Disk usage",
-        "system monitor devbox disk storage readings history graph sparkline",
+        "Disk",
+        "system monitor devbox disk usage storage readings history graph sparkline",
         false,
     )
     .at("devbox-disk")
     .open(SearchOpen::Metric(crate::config::DevboxSection::Disk)),
     hit(
         Page::Devbox,
-        "Network activity",
-        "system monitor devbox network speed readings history graph sparkline",
+        "Network",
+        "system monitor devbox network activity speed readings history graph sparkline",
         false,
     )
     .at("devbox-network")
     .open(SearchOpen::Metric(crate::config::DevboxSection::Network)),
     hit(
         Page::Devbox,
-        "GPU readings",
+        "Graphics (GPU)",
         "system monitor devbox gpu graphics readings history graph sparkline",
         false,
     )
@@ -387,18 +467,20 @@ const SEARCH: &[SearchHit] = &[
     .open(SearchOpen::Metric(crate::config::DevboxSection::Gpu)),
     hit(
         Page::Devbox,
-        "System monitor update interval",
-        "system monitor devbox refresh update interval",
+        "Update every",
+        "system monitor devbox refresh update interval how often",
         true,
-    ),
-    // Before the card finish: transparency is what someone searching it wants.
+    )
+    .section("How often it updates"),
+    // Before the widget corners: transparency is what someone searching it wants.
     SEE_THROUGH,
     hit(
         Page::Appearance,
-        "Widget card finish",
-        "appearance widget opacity corners border outline card style finish",
-        false,
-    ),
+        "Widget corners",
+        "appearance widget card corners radius rounded square opacity border outline style finish",
+        true,
+    )
+    .at("widget-corners"),
     hit(
         Page::Overview,
         "Arrange widgets",
@@ -408,16 +490,17 @@ const SEARCH: &[SearchHit] = &[
     .at("canvas-start"),
     hit(
         Page::Calendar,
-        "Today, tomorrow and meetings",
-        "calendar today tomorrow meetings join highlights",
+        "Calendars",
+        "calendar today tomorrow meetings join highlights add link",
         false,
     ),
     hit(
         Page::Calendar,
-        "Calendar update interval",
-        "calendar sync refresh update interval account",
+        "Update every",
+        "calendar sync refresh update interval account how often",
         true,
-    ),
+    )
+    .section("Sync and sign-in setup"),
     hit(
         Page::Clock,
         "Time and date",
@@ -426,8 +509,8 @@ const SEARCH: &[SearchHit] = &[
     ),
     hit(
         Page::Clock,
-        "Face and typography",
-        "clock size scale alignment center analog digital face typography weight italic surface design font depth landscape follow look style",
+        "Face",
+        "clock face typography size scale alignment center analog digital weight italic surface design font depth landscape follow look style",
         false,
     )
     .at("widget-design"),
@@ -439,33 +522,33 @@ const SEARCH: &[SearchHit] = &[
     ),
     hit(
         Page::Glance,
-        "Overview design",
-        "at a glance daily overview font background surface layout density opacity design follow look style",
+        "Look",
+        "at a glance daily overview font background surface layout spacing opacity design follow look style",
         false,
     )
     .at("widget-design"),
     hit(
         Page::Projects,
-        "Project folders and servers",
-        "projects branches repositories worktrees folders servers",
+        "Project folders",
+        "projects folders servers branches repositories worktrees",
         false,
     ),
     hit(
         Page::Music,
-        "Music player",
+        "Player",
         "music audio media player artwork progress",
         false,
     ),
     hit(
         Page::Music,
-        "Audio visualizers",
-        "music audio visualizer visualiser radial bars orbit dots pulse rings",
+        "Animation",
+        "music audio visualizer visualiser radial bars orbit dots pulse rings around the cover",
         false,
     )
     .at("music-visualizers"),
     hit(
         Page::Music,
-        "Spectrum",
+        "Bars along the bottom",
         "music audio spectrum analyzer bars sound visualizer",
         false,
     )
@@ -479,8 +562,8 @@ const SEARCH: &[SearchHit] = &[
     .at("desktop-widgets"),
     hit(
         Page::Notes,
-        "Notes and checklists",
-        "notes notebook text checklist",
+        "Notes",
+        "notes notebook text checklists checklist",
         false,
     ),
     hit(
@@ -490,71 +573,101 @@ const SEARCH: &[SearchHit] = &[
         false,
     ),
     hit(
-        Page::Themes,
-        "Desktop theme",
-        "system appearance desktop theme dark light automatic",
-        false,
-    ),
-    hit(
         Page::DesktopAppearance,
-        "Fonts and icon theme",
-        "desktop font typeface typography icons icon theme",
+        "Fonts and icons",
+        "desktop font fonts typeface typography interface fixed width icons icon theme",
         false,
     )
     .at("appearance-fonts"),
     hit(
-        Page::DesktopAppearance,
-        "Custom surface colors",
-        "desktop surface background window color",
+        Page::DesktopWindows,
+        "Window corners",
+        "window corners roundness rounded outline shadows",
         true,
     )
-    .at("appearance-colors"),
+    .at("window-corners")
+    .open(SearchOpen::Effects)
+    .section(WINDOW_DETAILS),
     hit(
         Page::DesktopWindows,
-        "Window corners, outline and shadows",
-        "desktop effects blur frosted glass window corners outline shadows roundness",
+        "Frosted surfaces and blur",
+        "desktop effects blur frosted glass shadows",
         true,
     )
     .at("appearance-effects")
-    .open(SearchOpen::Effects),
-    hit(
-        Page::Clock,
-        "Clock update interval",
-        "clock refresh update interval frequency",
-        true,
-    ),
+    .open(SearchOpen::Effects)
+    .section(WINDOW_DETAILS),
     hit(
         Page::Projects,
-        "Projects update interval",
-        "projects refresh update interval frequency",
+        "Update every",
+        "projects refresh update interval frequency how often",
         true,
-    ),
+    )
+    .section("How often it updates"),
     hit(
         Page::DesktopDock,
-        "Dock timing and spacing",
-        "dock timing padding spacing corners hide delay slide speed",
+        "Spacing",
+        "dock padding spacing gap between items inner edge",
         true,
     )
     .at("dock-advanced")
-    .bar(crate::desktop::panels::PanelKind::Dock),
+    .bar(crate::desktop::panels::PanelKind::Dock)
+    .section(BAR_ADVANCED),
     hit(
         Page::DesktopDock,
-        "Panel timing and spacing",
-        "panel timing padding spacing corners hide delay slide speed",
+        "Spacing",
+        "panel padding spacing gap between items inner edge",
         true,
     )
     .at("dock-advanced")
-    .bar(crate::desktop::panels::PanelKind::Panel),
+    .bar(crate::desktop::panels::PanelKind::Panel)
+    .section(BAR_ADVANCED),
+    hit(
+        Page::DesktopDock,
+        "Hide timing",
+        "dock timing hide delay slide speed duration reveal autohide",
+        true,
+    )
+    .at("dock-advanced")
+    .bar(crate::desktop::panels::PanelKind::Dock)
+    .section(BAR_ADVANCED),
+    hit(
+        Page::DesktopDock,
+        "Hide timing",
+        "panel timing hide delay slide speed duration reveal autohide",
+        true,
+    )
+    .at("dock-advanced")
+    .bar(crate::desktop::panels::PanelKind::Panel)
+    .section(BAR_ADVANCED),
+    hit(
+        Page::DesktopDock,
+        "Dock corners",
+        "dock corners radius rounded square pill",
+        true,
+    )
+    .at("dock-corners")
+    .bar(crate::desktop::panels::PanelKind::Dock)
+    .section(BAR_ADVANCED),
+    hit(
+        Page::DesktopDock,
+        "Panel corners",
+        "panel corners radius rounded square pill",
+        true,
+    )
+    .at("dock-corners")
+    .bar(crate::desktop::panels::PanelKind::Panel)
+    .section(BAR_ADVANCED),
     hit(
         Page::DesktopWallpaper,
-        "Wallpaper effects",
-        "rain snow fog cloud shadows living wallpaper droplets flakes opacity mist wind refraction animation",
+        "Moving effect",
+        "wallpaper effects rain snow fog cloud shadows living droplets flakes opacity mist wind refraction animation",
         false,
     )
     .at("rain-controls"),
     hit(
         Page::DesktopWallpaper,
-        "Wallpaper and colors",
+        "Wallpaper",
         "wallpaper background pictures slideshow gradient widget color colors palette accent sync automatic follow desktop pop os",
         false,
     ),
@@ -567,22 +680,36 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::DesktopDock,
         "Dock",
-        "dock applets position size autohide penumbra gradient shape compact full width floating background follow look style bars",
+        "dock applets position size autohide penumbra gradient shape compact full width floating",
         false,
     )
     .bar(crate::desktop::panels::PanelKind::Dock),
     hit(
         Page::DesktopDock,
-        "Panel and Islands",
+        "Panel",
         "top bar panel islands applets position size autohide shape compact full width",
         false,
     )
     .bar(crate::desktop::panels::PanelKind::Panel),
+    hit(
+        Page::DesktopDock,
+        "Background",
+        "dock panel background match style follow look dark light color",
+        false,
+    )
+    .at("dock-background"),
+    hit(
+        Page::DesktopDock,
+        "Visibility",
+        "dock panel autohide auto-hide hide behind windows always visible",
+        false,
+    )
+    .at("dock-visibility"),
     ACTIVITY_ISLAND,
     hit(
         Page::DesktopWindows,
-        "Windows and tiling",
-        "windows tiling gaps focus controls snapping",
+        "Tile windows automatically",
+        "windows tiling tile arranging gaps focus controls snapping",
         false,
     ),
     hit(
@@ -605,15 +732,15 @@ const SEARCH: &[SearchHit] = &[
     ),
     hit(
         Page::DesktopMotion,
-        "Animations in supported apps",
-        "accessibility motion animations gtk reduced",
+        "Reduce motion",
+        "accessibility motion animations supported apps gtk reduced",
         false,
     ),
     LOOKS,
     hit(
         Page::Builder,
-        "Make your own widget",
-        "recipe custom clock weather calendar agenda cpu memory disk network gpu uptime system readings native parts compose widget builder",
+        "Widget builder",
+        "make your own widget recipe custom clock weather calendar agenda cpu memory disk network gpu uptime system readings native parts compose",
         false,
     ),
     hit(
@@ -633,8 +760,8 @@ const SEARCH: &[SearchHit] = &[
     PRIVACY,
     hit(
         Page::General,
-        "Updates and installation",
-        "update version installation islands addon add-on diagnostics check",
+        "Updates",
+        "updates installation version islands addon add-on diagnostics check",
         false,
     )
     .destination(AppSettingsPage::Updates),
@@ -647,12 +774,25 @@ const SEARCH: &[SearchHit] = &[
     .destination(AppSettingsPage::WhatsNew),
     hit(
         Page::Changes,
-        "Restore previous desktop",
-        "recovery restore reset previous wallpaper hide widgets earlier setups before halcyon",
+        "Desktop from before Halcyon",
+        "recovery restore reset previous desktop wallpaper hide widgets earlier setups before halcyon",
         false,
     )
     .at("changes-earlier"),
 ];
+
+/// Every search result, for tests that open each one.
+#[cfg(test)]
+pub(super) fn all_search_hits() -> &'static [SearchHit] {
+    SEARCH
+}
+/// Labels the screen draws only in a state the test fixture lacks, and why.
+#[cfg(test)]
+pub(super) const UNCHECKED_LABELS: &[(&str, &str)] = &[(
+    "Activity island",
+    "named by its item in the panel’s Contents or by the Add Activity island button, \
+     and the fixture has no Halcyon panel to offer either",
+)];
 
 const fn hit(page: Page, label: &'static str, terms: &'static str, advanced: bool) -> SearchHit {
     SearchHit {
@@ -668,6 +808,7 @@ const fn hit(page: Page, label: &'static str, terms: &'static str, advanced: boo
         destination: AppSettingsPage::Operation,
         open: SearchOpen::None,
         bar: None,
+        section: None,
     }
 }
 
@@ -1152,22 +1293,17 @@ mod tests {
 
     #[test]
     fn search_ranks_specific_controls_and_common_page_options_first() {
-        assert_eq!(search("memory usage")[0].label, "Memory usage");
-        assert_eq!(search("calendar")[0].label, "Today, tomorrow and meetings");
-        assert_eq!(search("weather")[0].label, "City and forecast");
+        assert_eq!(search("memory usage")[0].label, "Memory");
+        assert_eq!(search("calendar")[0].label, "Calendars");
+        assert_eq!(search("weather")[0].label, "Location");
         assert_eq!(search("clock")[0].label, "Time and date");
         assert_eq!(search("time")[0].label, "Time and date");
-        assert_eq!(
-            search("calendar update")[0].label,
-            "Calendar update interval"
-        );
+        let update = search("calendar update")[0];
+        assert_eq!((update.page, update.label), (Page::Calendar, "Update every"));
         let colors = search("colors");
-        assert_eq!(colors[0].page, Page::DesktopWallpaper);
-        assert!(
-            colors
-                .iter()
-                .any(|hit| hit.label == "Custom surface colors")
-        );
+        assert_eq!(colors[0].label, "Use these colors in apps");
+        assert!(colors.iter().any(|hit| hit.label == "Accent color"));
+        assert!(colors.iter().any(|hit| hit.page == Page::DesktopWallpaper));
         assert_eq!(colors, search("colors"));
     }
 
@@ -1176,15 +1312,13 @@ mod tests {
         for query in ["calender", "calndar", "calendarr", "clalendar", "claendar"] {
             assert_eq!(
                 search(query)[0].label,
-                "Today, tomorrow and meetings",
+                "Calendars",
                 "{query}"
             );
         }
-        assert_eq!(search("netwrok")[0].label, "Network activity");
-        assert_eq!(
-            search("calender updat")[0].label,
-            "Calendar update interval"
-        );
+        assert_eq!(search("netwrok")[0].label, "Network");
+        let update = search("calender updat")[0];
+        assert_eq!((update.page, update.label), (Page::Calendar, "Update every"));
         for query in [
             "cpx",
             "gpx",
@@ -1221,7 +1355,7 @@ mod tests {
             );
             assert!(!hit.advanced);
         }
-        assert_eq!(search("autostart")[0].label, "Startup and background");
+        assert_eq!(search("autostart")[0].label, "Startup");
         assert_eq!(search("hotkeys")[0].page, Page::DesktopShortcuts);
         let hit = search("memory cache")[0];
         assert_eq!(hit.anchor(), "devbox-memory");
@@ -1235,8 +1369,8 @@ mod tests {
 
     #[test]
     fn search_handles_punctuation_and_multiple_words_without_dropping_terms() {
-        assert_eq!(search("GPU-readings")[0].label, "GPU readings");
-        assert_eq!(search("  MEMORY / cache  ")[0].label, "Memory usage");
+        assert_eq!(search("GPU-readings")[0].label, "Graphics (GPU)");
+        assert_eq!(search("  MEMORY / cache  ")[0].label, "Memory");
         assert_eq!(
             search("calendar update"),
             search("calendar calendar update")

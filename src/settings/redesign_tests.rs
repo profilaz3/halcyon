@@ -268,7 +268,7 @@ fn auditfix_reorder_search_scrolls_the_button_into_view() {
     native.scroll(app.settings_view(), "settings-content", 10000.);
     let hit = navigation::search("reorder readings")
         .into_iter()
-        .find(|h| h.label == "Reorder readings")
+        .find(|h| h.label == "Reorder")
         .unwrap();
     native_send(&mut app, &mut native, Message::SearchResult(hit));
     native_send(&mut app, &mut native, Message::RevealSearch(hit));

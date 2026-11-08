@@ -11,7 +11,6 @@ pub(super) fn theme_preview(message: &Message) -> Option<profiles::Message> {
         Message::SystemAppearance(system_appearance::Message::Mode(mode)) => {
             Preview::Color(Edit::Mode(*mode))
         }
-        Message::StyleBars(on) => Preview::Color(Edit::StyleBars(*on)),
         Message::Theme(key) => Preview::Color(Edit::Palette(key.clone())),
         Message::Wallpaper(Paper::Palette(key)) => Preview::Color(Edit::Palette(key.clone())),
         Message::Wallpaper(Paper::Accent(rgb)) => Preview::ThemeAccent(*rgb),
@@ -223,7 +222,6 @@ pub(super) fn label(message: &Message) -> String {
         | Message::GlanceStyle(_)
         | Message::GlanceDensity(_)
         | Message::GlanceFollowStyle(_) => "Daily overview",
-        Message::StyleBars(_) => "Dock and panel style",
         Message::Desktop(_) => "Show widgets",
         _ => "Settings",
     }

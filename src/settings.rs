@@ -16,6 +16,7 @@ mod canvas;
 mod city_search;
 mod color_well;
 mod colors;
+mod corners;
 mod depth;
 mod design;
 mod desktop;
@@ -220,7 +221,7 @@ impl Page {
             Self::Overview => "Widgets",
             Self::Widgets => "Widgets",
             Self::WidgetLayout => "Layout",
-            Self::Appearance => "Surfaces and transparency",
+            Self::Appearance => "Glass and transparency",
             Self::DesktopAppearance => "Fonts and icons",
             Self::DesktopWallpaper => "Wallpaper",
             Self::Themes => "Appearance",
@@ -310,7 +311,7 @@ impl Page {
             Self::Overview => "Widgets",
             Self::WidgetLayout => "Arrange widgets",
             Self::PendingChanges => "Recover unfinished work",
-            Self::Appearance => "Surfaces and transparency",
+            Self::Appearance => "Glass and transparency",
             Self::Widgets => "Widgets",
             Self::Glance => "Daily overview",
             Self::Calendar => "Calendar",
@@ -519,8 +520,6 @@ pub enum Message {
     WidgetFont(FontTarget, Option<String>),
     /// At a glance uses the widget style's surface again.
     GlanceMatchWidgets,
-    /// Whether choosing a widget style also styles the dock and panel.
-    StyleBars(bool),
     /// Read-only sample cards never perform desktop actions.
     Preview,
     Tick,
@@ -644,6 +643,8 @@ pub enum Message {
     MaterialSave,
     /// Widget corner radius, chosen on Appearance; applies directly.
     WidgetCorners(u16),
+    /// One Corners step for windows, widgets and both bars.
+    Corners(corners::Step),
     MaterialMotion(bool),
     ContrastAssist(bool),
     WidgetSurface(Option<crate::desktop_theme::Surface>),
@@ -836,6 +837,8 @@ pub struct Settings {
     material_target: crate::materials::Target,
     material_adjust: bool,
     material_draft: Option<crate::materials::Finish>,
+    /// The Corners step every surface reads as; `None` when they differ.
+    corner_step: Option<corners::Step>,
     material_baseline: Option<crate::materials::Materials>,
     material_native: bool,
     appearance_draft: crate::config::Appearance,
@@ -1091,6 +1094,7 @@ impl cosmic::Application for Settings {
             material_target: Default::default(),
             material_adjust: false,
             material_draft: None,
+            corner_step: None,
             material_baseline: None,
             material_native: false,
             appearance_draft: config.appearance.clone(),
@@ -3289,6 +3293,9 @@ impl Settings {
                 self.search_query.clear();
                 self.search_selected = None;
                 self.refresh_latest_change();
+                if page == Page::Themes {
+                    self.refresh_corners();
+                }
                 self.desktop.drag.cancel();
                 if page == Page::DesktopDock {
                     self.desktop.open();
@@ -3593,13 +3600,6 @@ impl Settings {
                     }
                 }
             }
-            Message::StyleBars(on) => {
-                // Merged into the section: the other widget appearance
-                // settings stay as they are.
-                self.save_appearance(json!({"style_bars": on}));
-                self.profiles
-                    .set_style_bars(self.config.appearance.style_bars);
-            }
             Message::GlanceDensity(value) => self.save_glance(json!({"density": value})),
             Message::GlanceOpacity(value) => self.save_glance(json!({"opacity": value})),
 
@@ -3736,6 +3736,22 @@ impl Settings {
             Message::WidgetCorners(radius) => {
                 self.flush_edits();
                 self.save_appearance(json!({"corner_radius": radius}));
+                self.refresh_corners();
+            }
+            Message::Corners(step) => {
+                self.flush_edits();
+                if self.error {
+                    return Task::none();
+                }
+                let result = crate::desktop::actions::history_store()
+                    .map_err(|error| error.to_string())
+                    .and_then(|store| corners::apply(&store, step));
+                // A write advances the store revision, which refreshes every
+                // page and the Undo target once this message is done.
+                match result {
+                    Ok(_) => self.saved(),
+                    Err(error) => self.failed(error),
+                }
             }
             Message::Rain(edit) => match edit {
                 rain::Edit::Lifecycle(state) => self.rain.lifecycle = state,
@@ -4388,6 +4404,7 @@ fn desktop_write_message(message: &Message) -> bool {
         Message::Shortcuts(message) => message.writes(),
         Message::Canvas(canvas::Message::Apply(_))
         | Message::CommandDone(..)
+        | Message::Corners(_)
         | Message::UndoDesktop
         | Message::UndoDesktopShown(..)
         | Message::ResolveUndoShown(..)
@@ -4702,6 +4719,11 @@ impl Settings {
         if let Ok(config) = Config::try_load() {
             self.config = config;
         }
+        self.refresh_corners();
+        // Match style on the dock or panel can turn styles restyling the
+        // bars back on.
+        self.profiles
+            .set_style_bars(self.config.appearance.style_bars);
         if !self.appearance_editing {
             self.appearance_draft = self.config.appearance.clone();
         }
@@ -5161,6 +5183,12 @@ impl Settings {
             }
             Err(error) => self.failed(error),
         }
+    }
+    /// Re-reads the step the Corners row shows. Reads only.
+    fn refresh_corners(&mut self) {
+        self.corner_step = crate::desktop::DesktopStore::from_env()
+            .ok()
+            .and_then(|store| corners::current(&store, self.config.appearance.corner_radius));
     }
     fn saved(&mut self) {
         self.status = "Saved".into();
@@ -6378,6 +6406,8 @@ mod tests {
     include!("settings/solar_tests.rs");
     include!("settings/adaptive_tests.rs");
     include!("settings/polish_tests.rs");
+    include!("settings/search_label_tests.rs");
+    include!("settings/corners_tests.rs");
 
     /// What Wallpaper & colors recommends for a solid color background.
     fn recommended_color(rgb: [f32; 3]) -> [u8; 3] {
@@ -7080,12 +7110,8 @@ mod tests {
         assert!(app.search_query.is_empty());
         for (query, page, anchor) in [
             ("weather update", Page::Weather, "settings-advanced"),
-            (
-                "custom surface colors",
-                Page::DesktopAppearance,
-                "appearance-colors",
-            ),
             // Window corners, outline and shadows now live on Windows.
+            ("window corners", Page::DesktopWindows, "window-corners"),
             (
                 "desktop effects",
                 Page::DesktopWindows,
@@ -7099,7 +7125,7 @@ mod tests {
             assert_eq!(app.search_selected.unwrap().anchor(), anchor);
             assert!(app.advanced_open(page));
         }
-        assert!(app.system_appearance.advanced_colors && app.system_appearance.effects);
+        assert!(app.system_appearance.effects);
         assert!(app.desktop.advanced);
         assert!(app.pending_pages().is_empty());
         assert_eq!(raw_preferences(), preferences);
@@ -12164,6 +12190,8 @@ mod tests {
             let _ = app.update(Message::ObjectTab(
                 crate::settings::navigation::ObjectTab::Design,
             ));
+            // Each bar's own corners wait in its folded section.
+            send_settings(&mut app, Message::DesktopEditor(desktop::Message::Advanced(true)));
             let mut native = crate::native_test::Native::new(Size::new(1024., 1400.));
             for (label, radius) in
                 [("Square", 0), ("Rounded", 12), ("Pill", MAX_RADIUS)].into_iter()
@@ -12432,6 +12460,7 @@ mod tests {
         let _ = app.update(Message::ObjectTab(
             crate::settings::navigation::ObjectTab::Design,
         ));
+        send_settings(&mut app, Message::DesktopEditor(desktop::Message::Advanced(true)));
         let mut native = crate::native_test::Native::new(Size::new(1024., 1400.));
         let old = PanelDraft::load(&store, PanelKind::Panel)
             .unwrap()

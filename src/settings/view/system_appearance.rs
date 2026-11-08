@@ -738,18 +738,21 @@ impl Settings {
             Setting::Unsupported(raw) => field("Outline width", kept(&raw)),
         });
         items.push(separator());
-        items.push(inline_field(
-            "Window corners",
-            choice(
-                &draft.roundness(variant),
-                // The same words and order as every other corners choice.
-                &[
-                    ("Square", Roundness::Square),
-                    ("Rounded", Roundness::SlightlyRound),
-                    ("Very round", Roundness::Round),
-                ],
-                Edit::Roundness,
-                accent,
+        items.push(self.search_target(
+            "window-corners",
+            inline_field(
+                "Window corners",
+                choice(
+                    &draft.roundness(variant),
+                    // Appearance's Corners steps; windows have no Pill.
+                    &[
+                        ("Square", Roundness::Square),
+                        ("Rounded", Roundness::SlightlyRound),
+                        ("Very round", Roundness::Round),
+                    ],
+                    Edit::Roundness,
+                    accent,
+                ),
             ),
         ));
         if draft.custom_radii(variant) && !draft.edited(domain::Control::Roundness) {
@@ -759,11 +762,6 @@ impl Settings {
                 MUTED,
             ));
         }
-        items.push(label(
-            "The dock and panel keep their own corners.",
-            11.,
-            MUTED,
-        ));
         items.push(separator());
         for effect in WindowEffect::ALL {
             items.push(match draft.window(effect) {
