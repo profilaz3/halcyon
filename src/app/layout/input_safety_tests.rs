@@ -573,14 +573,21 @@ fn recovery_pin_before_watcher(path: u8) {
         !cards.output_known,
         "B must get its own measurement before widgets appear"
     );
+    // The arrange strip measures B's width and the edge strip its height.
+    let mut names: Vec<_> = created.iter().map(|s| s.namespace.as_str()).collect();
+    names.sort();
     assert_eq!(
-        created.len(),
-        1,
-        "one fresh migration probe, no stale Arrange replacement"
+        names,
+        ["halcyon-arrange", "halcyon-edge"],
+        "fresh migration probes, no stale Arrange replacement"
     );
-    assert_eq!(created[0].id, cards.ids[5]);
-    assert_eq!(created[0].namespace, "halcyon-arrange");
-    assert!(created[0].input_zone.as_ref().is_some_and(Vec::is_empty));
+    let probe = created
+        .iter()
+        .find(|s| s.namespace == "halcyon-arrange")
+        .unwrap();
+    assert_eq!(probe.id, cards.ids[5]);
+    assert_eq!(probe.keyboard_interactivity, KeyboardInteractivity::None);
+    assert!(probe.input_zone.as_ref().is_some_and(Vec::is_empty));
     let current_ids = cards.ids;
     let task = cards.update(Message::SurfaceResized(
         cards.ids[5],
@@ -609,7 +616,11 @@ fn recovery_pin_before_watcher(path: u8) {
     for epoch in stale_epochs {
         let task = cards.update(Message::ArrangeSurface(epoch));
         let (destroyed, created) = emitted(&mut cards, task);
-        assert!(destroyed.is_empty() && created.is_empty());
+        assert!(
+            destroyed.is_empty() && created.is_empty(),
+            "stale epoch {epoch}: destroyed {destroyed:?}, created {:?}",
+            created.iter().map(|s| &s.namespace).collect::<Vec<_>>()
+        );
     }
     let task = cards.update(Message::SurfaceMessage(
         old_epoch,
@@ -914,7 +925,13 @@ fn auditfix_run04_failed_completed_gesture_survives_geometry_and_reentry() {
     auditfix_measure_outputs(&mut cards);
     drop(holder);
     let task = cards.update(Message::ArrangeDisplay("test-output".into()));
-    assert!(emitted(&mut cards, task).1.is_empty());
+    // No Arrange surface: only the edge menu opens, to offer Resume.
+    assert!(
+        emitted(&mut cards, task)
+            .1
+            .iter()
+            .all(|s| s.namespace == "halcyon-controls")
+    );
     let paused = cards.paused_layout.as_ref().unwrap();
     assert!(paused.exit_failed && !paused.active);
     assert_eq!(paused.draft, draft);

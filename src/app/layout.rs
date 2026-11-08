@@ -24,10 +24,26 @@ const PLACEMENT_ORDER: [Widget; 9] = [
     Widget::Music,
 ];
 
+/// The card surfaces as built (`Widget::BASE` order). `None`: that card's
+/// surface is closed, because it would draw nothing.
 #[derive(PartialEq, Eq)]
 pub(super) struct SurfaceGeometry {
     custom: bool,
-    sizes: [[u32; 2]; 6],
+    sizes: [Option<[u32; 2]>; 6],
+}
+
+impl SurfaceGeometry {
+    /// Whether going from `self` to `next` changes a surface that stays
+    /// open, or the layout mode. Opening or closing a card alone does not
+    /// rebuild the others.
+    fn needs_rebuild(&self, next: &Self) -> bool {
+        self.custom != next.custom
+            || self
+                .sizes
+                .iter()
+                .zip(&next.sizes)
+                .any(|(a, b)| matches!((a, b), (Some(a), Some(b)) if a != b))
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -116,7 +132,15 @@ impl LayoutEditor {
     }
 }
 
+/// How tall the arrange surface is outside Arrange, in pixels: a strip
+/// along the top of the display that only measures its usable width.
+pub(super) const PROBE_THICKNESS: u32 = 1;
+
 impl Cards {
+    /// The arrange surface. While arranging it covers the display and takes
+    /// the keyboard. Otherwise it draws nothing and stays open only to
+    /// measure the display's usable width (the edge strip measures the
+    /// height), so it is a strip a pixel tall.
     pub(super) fn layout_probe(&self, id: window::Id, editing: bool) -> Task<Message> {
         get_layer_surface(SctkLayerSurfaceSettings {
             id,
@@ -131,8 +155,12 @@ impl Cards {
             } else {
                 KeyboardInteractivity::None
             },
-            anchor: Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
-            size: Some((Some(0), Some(0))),
+            anchor: if editing {
+                Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT
+            } else {
+                Anchor::TOP | Anchor::LEFT | Anchor::RIGHT
+            },
+            size: Some((Some(0), Some(if editing { 0 } else { PROBE_THICKNESS }))),
             exclusive_zone: 0,
             input_zone: if editing { None } else { Some(Vec::new()) },
             namespace: "halcyon-arrange".into(),
@@ -489,18 +517,92 @@ impl Cards {
         SurfaceGeometry {
             custom: self.custom_layout(),
             sizes: Widget::BASE.map(|widget| {
-                if self.custom_layout() || widget == Widget::Glance {
-                    self.widget_size(widget)
-                        .map(|value| value.ceil() as u32 + mu)
+                if !self.card_surface_needed(widget) {
+                    None
+                } else if self.custom_layout() || widget == Widget::Glance {
+                    Some(
+                        self.widget_size(widget)
+                            .map(|value| value.ceil() as u32 + mu),
+                    )
                 } else {
-                    match widget {
+                    Some(match widget {
                         Widget::Clock => [490 + mu, 250 + mu],
-                        Widget::Weather | Widget::Calendar => [360 + mu, 0],
-                        _ => [16, 16],
-                    }
+                        _ => [360 + mu, 0],
+                    })
                 }
             }),
         }
+    }
+    /// Whether a card's surface draws anything. One that would draw nothing
+    /// is closed rather than parked off screen: every open window holds its
+    /// own swapchain buffers and renderer. Arranging doesn't count, so
+    /// entering and leaving Arrange never reopens a card.
+    pub(super) fn card_surface_needed(&self, widget: Widget) -> bool {
+        if self.custom_layout() || widget == Widget::Glance {
+            return self.config.widget_visible(widget) && self.widget_available(widget);
+        }
+        // The fixed columns: Clock and Calendar on the left, the other cards
+        // stacked in the right-hand column (the Weather surface).
+        match widget {
+            Widget::Clock => self.config.widget_visible(widget) && self.widget_available(widget),
+            Widget::Calendar => self.config.widget_visible(widget),
+            Widget::Weather => !self.visible_cards().is_empty(),
+            _ => false,
+        }
+    }
+    /// The card surfaces that are open, as last built.
+    pub(super) fn card_surface_open(&self, widget: Widget) -> bool {
+        let index = Widget::BASE.iter().position(|w| *w == widget);
+        self.surface_geometry
+            .as_ref()
+            .zip(index)
+            .is_some_and(|(geometry, index)| geometry.sizes[index].is_some())
+    }
+    /// Whether the card surfaces must all be built again: none are built
+    /// yet, or one that stays open changed size, or the layout mode changed.
+    pub(super) fn cards_need_rebuild(&self) -> bool {
+        self.surface_geometry
+            .as_ref()
+            .is_none_or(|known| known.needs_rebuild(&self.surface_geometry()))
+    }
+    /// Opens the card surfaces that draw something again and closes the
+    /// ones that stopped, leaving the others alone. Runs at the end of each
+    /// update, once, for its final state: an open and a close of the same
+    /// surface queued within one update could reach the compositor in
+    /// either order.
+    pub(super) fn sync_open_cards(&mut self) -> Task<Message> {
+        if !self.output_known || self.selected_output.is_none() {
+            return Task::none();
+        }
+        let Some(open) = self
+            .surface_geometry
+            .as_ref()
+            .map(|known| known.sizes.map(|size| size.is_some()))
+        else {
+            return Task::none();
+        };
+        let needed = Widget::BASE.map(|widget| self.card_surface_needed(widget));
+        if needed == open {
+            return Task::none();
+        }
+        if self.cards_need_rebuild() {
+            return self.rebuild_cards();
+        }
+        let mut tasks = Vec::new();
+        for (index, widget) in Widget::BASE.into_iter().enumerate() {
+            if needed[index] == open[index] {
+                continue;
+            }
+            let id = self.widget_id(widget);
+            tasks.push(if needed[index] {
+                destroy_layer_surface(id).chain(get_layer_surface(self.card_surface(widget)))
+            } else {
+                destroy_layer_surface(id)
+            });
+        }
+        self.surface_geometry = Some(self.surface_geometry());
+        self.surface_inputs = Some(Widget::BASE.map(|widget| self.card_input_rects(widget)));
+        Task::batch(tasks)
     }
     pub(super) fn sync_widget_surfaces(&mut self) -> Task<Message> {
         if !self.output_known || self.selected_output.is_none() {
@@ -570,7 +672,7 @@ impl Cards {
         // The pinned layer-shell Size action corrupts the renderer's height.
         // Keep stable surfaces for ordinary edits; recreate only on real size
         // or layout-mode changes, using the correct initial protocol geometry.
-        if self.surface_geometry.as_ref() != Some(&self.surface_geometry()) {
+        if self.cards_need_rebuild() {
             if self.updating {
                 // Once, at the end of this update, for its final geometry
                 // (see `update`): two rebuilds at once race each other.
@@ -581,6 +683,11 @@ impl Cards {
         }
         let tools = Task::batch(self.sync_tool_surfaces());
         let mut tasks = vec![tools];
+        // Inside an update, cards open and close once at its end (see
+        // `update`).
+        if !self.updating {
+            tasks.push(self.sync_open_cards());
+        }
         // Cards that grew or moved inside their surface take clicks where
         // they are now.
         let inputs = Widget::BASE.map(|widget| self.card_input_rects(widget));
@@ -1377,7 +1484,9 @@ impl Cards {
         }
         self.surface_geometry = Some(self.surface_geometry());
         self.surface_inputs = Some(Widget::BASE.map(|widget| self.card_input_rects(widget)));
+        // Clock last, so it stacks above the other cards.
         let mut create = Vec::new();
+        let mut clock = Task::none();
         for widget in [
             Widget::Calendar,
             Widget::Weather,
@@ -1386,92 +1495,103 @@ impl Cards {
             Widget::Glance,
             Widget::Clock,
         ] {
-            let id = self.widget_id(widget);
-            let size = self.widget_size(widget);
-            // The surface reaches past the card by the style's shadow margin
-            // so a shadow isn't clipped; the card keeps its size and place.
-            let (mi, mu) = self.shadow_px();
-            let mut surface = SctkLayerSurfaceSettings {
-                id,
-                output: self.widget_layer_output(widget),
-                layer: Layer::Bottom,
-                keyboard_interactivity: KeyboardInteractivity::None,
-                anchor: Anchor::TOP | Anchor::LEFT,
-                exclusive_zone: 0,
-                input_zone: Some(zone(&self.card_input_rects(widget))),
-                namespace: format!("halcyon-{}", widget.key()),
-                size: Some((
-                    Some(size[0].ceil() as u32 + mu),
-                    Some(size[1].ceil() as u32 + mu),
-                )),
-                ..Default::default()
-            };
-            if self.custom_layout() || widget == Widget::Glance {
-                let position = if self.config.widget_visible(widget) {
-                    self.placed_position(widget)
-                } else {
-                    [-10000., 0.]
-                };
-                surface.margin = IcedMargin {
-                    top: position[1].round() as i32 - mi,
-                    left: position[0].round() as i32 - mi,
-                    ..Default::default()
-                };
+            if !self.card_surface_open(widget) {
+                continue;
+            }
+            let surface = get_layer_surface(self.card_surface(widget));
+            if widget == Widget::Clock {
+                clock = surface;
             } else {
-                match widget {
-                    Widget::Clock => {
-                        surface.size = Some((Some(490 + mu), Some(250 + mu)));
-                        surface.margin = IcedMargin {
-                            top: 88 - mi,
-                            left: self.config.clock_margin() - mi,
-                            ..Default::default()
-                        };
-                    }
-                    Widget::Weather => {
-                        surface.anchor = Anchor::TOP | Anchor::BOTTOM | Anchor::RIGHT;
-                        surface.size = Some((Some(360 + mu), Some(0)));
-                        surface.margin = IcedMargin {
-                            top: 48 - mi,
-                            bottom: 48 - mi,
-                            right: 42 - mi,
-                            ..Default::default()
-                        };
-                    }
-                    Widget::Calendar => {
-                        surface.anchor = Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT;
-                        surface.size = Some((Some(360 + mu), Some(0)));
-                        surface.margin = IcedMargin {
-                            top: 48 - mi,
-                            bottom: 48 - mi,
-                            left: self.config.calendar_margin() - mi,
-                            ..Default::default()
-                        };
-                    }
-                    _ => {
-                        surface.size = Some((Some(16), Some(16)));
-                        surface.margin = IcedMargin {
-                            left: -10000,
-                            ..Default::default()
-                        };
-                    }
-                }
+                create.push(surface);
             }
-            if self.layout_editor.active && self.arranging_widget(widget) {
-                if !self.custom_layout() && widget == Widget::Weather {
-                    surface.margin.right = -10000;
-                } else {
-                    surface.margin.left = -10000;
-                }
-            }
-            create.push(get_layer_surface(surface));
         }
-        let clock = create.pop().unwrap();
         let destroy =
             Task::batch([0, 1, 4, 6, 7, 8].map(|index| destroy_layer_surface(self.ids[index])));
         destroy
             .chain(Task::batch(create))
             .chain(clock)
             .chain(self.blur_surfaces())
+    }
+    /// A card's surface as it should be created now.
+    fn card_surface(&self, widget: Widget) -> SctkLayerSurfaceSettings {
+        let id = self.widget_id(widget);
+        let size = self.widget_size(widget);
+        // The surface reaches past the card by the style's shadow margin
+        // so a shadow isn't clipped; the card keeps its size and place.
+        let (mi, mu) = self.shadow_px();
+        let mut surface = SctkLayerSurfaceSettings {
+            id,
+            output: self.widget_layer_output(widget),
+            layer: Layer::Bottom,
+            keyboard_interactivity: KeyboardInteractivity::None,
+            anchor: Anchor::TOP | Anchor::LEFT,
+            exclusive_zone: 0,
+            input_zone: Some(zone(&self.card_input_rects(widget))),
+            namespace: format!("halcyon-{}", widget.key()),
+            size: Some((
+                Some(size[0].ceil() as u32 + mu),
+                Some(size[1].ceil() as u32 + mu),
+            )),
+            ..Default::default()
+        };
+        if self.custom_layout() || widget == Widget::Glance {
+            let position = if self.config.widget_visible(widget) {
+                self.placed_position(widget)
+            } else {
+                [-10000., 0.]
+            };
+            surface.margin = IcedMargin {
+                top: position[1].round() as i32 - mi,
+                left: position[0].round() as i32 - mi,
+                ..Default::default()
+            };
+        } else {
+            match widget {
+                Widget::Clock => {
+                    surface.size = Some((Some(490 + mu), Some(250 + mu)));
+                    surface.margin = IcedMargin {
+                        top: 88 - mi,
+                        left: self.config.clock_margin() - mi,
+                        ..Default::default()
+                    };
+                }
+                Widget::Weather => {
+                    surface.anchor = Anchor::TOP | Anchor::BOTTOM | Anchor::RIGHT;
+                    surface.size = Some((Some(360 + mu), Some(0)));
+                    surface.margin = IcedMargin {
+                        top: 48 - mi,
+                        bottom: 48 - mi,
+                        right: 42 - mi,
+                        ..Default::default()
+                    };
+                }
+                Widget::Calendar => {
+                    surface.anchor = Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT;
+                    surface.size = Some((Some(360 + mu), Some(0)));
+                    surface.margin = IcedMargin {
+                        top: 48 - mi,
+                        bottom: 48 - mi,
+                        left: self.config.calendar_margin() - mi,
+                        ..Default::default()
+                    };
+                }
+                _ => {
+                    surface.size = Some((Some(16), Some(16)));
+                    surface.margin = IcedMargin {
+                        left: -10000,
+                        ..Default::default()
+                    };
+                }
+            }
+        }
+        if self.layout_editor.active && self.arranging_widget(widget) {
+            if !self.custom_layout() && widget == Widget::Weather {
+                surface.margin.right = -10000;
+            } else {
+                surface.margin.left = -10000;
+            }
+        }
+        surface
     }
     pub(super) fn layout_key(&mut self, key: keyboard::Key, shift: bool) -> Task<Message> {
         if !self.layout_editor.active {

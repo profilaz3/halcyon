@@ -41,7 +41,7 @@ impl Widget {
     ];
     pub const CARDS: [Self; 4] = [Self::Calendar, Self::Projects, Self::Devbox, Self::Weather];
     /// Tools keep their visibility in their own config section (like Glance)
-    /// and always have a surface of their own, placed freely.
+    /// and have a surface of their own while shown, placed freely.
     pub const TOOLS: [Self; 3] = [Self::Music, Self::Notes, Self::Focus];
     pub fn is_tool(self) -> bool {
         Self::TOOLS.contains(&self)
@@ -179,6 +179,11 @@ impl Sidebar {
         {
             self.dismiss_at = Some(now + Duration::from_millis(400));
         }
+    }
+    /// Whether the rail needs its surface: shown, sliding, or holding a
+    /// drag. Fully hidden, it draws nothing.
+    pub fn needs_surface(&self) -> bool {
+        self.visible || self.progress > 0. || self.drag.is_some()
     }
     pub fn animating(&self) -> bool {
         (self.progress - if self.visible { 1. } else { 0. }).abs() > 0.001

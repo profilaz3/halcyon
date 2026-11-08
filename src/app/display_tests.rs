@@ -32,6 +32,15 @@ fn actions(cards: &mut Cards, task: Task<Message>) -> Vec<SctkLayerSurfaceSettin
     }
     created
 }
+/// The surfaces created, by name and sorted.
+fn names(created: &[SctkLayerSurfaceSettings]) -> Vec<&str> {
+    let mut names: Vec<&str> = created.iter().map(|s| s.namespace.as_str()).collect();
+    names.sort();
+    names
+}
+/// What a display measurement creates: the arrange strip (the usable width)
+/// and the edge strip (the usable height).
+const PROBES: [&str; 2] = ["halcyon-arrange", "halcyon-edge"];
 fn send(cards: &mut Cards, message: Message) -> Vec<SctkLayerSurfaceSettings> {
     let task = cards.update(message);
     actions(cards, task)
@@ -161,10 +170,23 @@ fn monitor_pinning_lifecycle_actions() {
             a.clone(),
         ),
     );
-    assert_eq!(created.len(), 1);
+    assert_eq!(names(&created), PROBES);
     assert!(!cards.output_known);
     created.extend(ready(&mut cards, [1920., 1080.]));
-    assert_eq!(created.len(), 12);
+    // Only the windows that show something: the edge menu is folded away,
+    // Glance is off and no tool is shown.
+    assert_eq!(
+        names(&created),
+        [
+            "halcyon-arrange",
+            "halcyon-calendar",
+            "halcyon-clock",
+            "halcyon-devbox",
+            "halcyon-edge",
+            "halcyon-projects",
+            "halcyon-weather",
+        ]
+    );
     assert!(cards.tool_geometry_known(Widget::Notes));
     bound(&created, &a);
     cards.tools.draft = Some(tools::NoteDraft {
@@ -183,7 +205,7 @@ fn monitor_pinning_lifecycle_actions() {
             b.clone(),
         ),
     );
-    assert_eq!(created.len(), 1);
+    assert_eq!(names(&created), PROBES);
     bound(&created, &b);
     assert!(cards.ids.iter().all(|id| !old_ids.contains(id)));
     assert!(!cards.output_known);
@@ -358,7 +380,12 @@ fn monitor_pinning_restart_and_order() {
             );
         }
         let created = ready(&mut cards, [1920., 1080.]);
-        assert_eq!(created.len(), 11);
+        // The fixed columns: Clock and Calendar on the left, the other
+        // cards in the right-hand column (the Weather surface).
+        assert_eq!(
+            names(&created),
+            ["halcyon-calendar", "halcyon-clock", "halcyon-weather"]
+        );
         bound(&created, &b);
         let mut cfg = cards.config.clone();
         cfg.widget_display = Some("DP-1".into());
@@ -473,9 +500,9 @@ fn monitor_migration_cancels_sidebar_preview_before_replacement_geometry() {
         assert!(cards.sidebar.drag.is_none());
         assert!(!cards.output_known);
         assert_eq!(
-            created.len(),
-            1,
-            "only the fresh budget probe may be created"
+            names(&created),
+            PROBES,
+            "only the fresh budget probes may be created"
         );
         let expected_output = if disconnect { &fallback } else { &selected };
         bound(&created, expected_output);
@@ -590,16 +617,18 @@ fn multi_monitor_widget_surfaces_measure_independently_and_restore_after_hotplug
     let built = ready(&mut cards, [1280., 720.]);
     assert_eq!(cards.extra_probes.len(), 1);
     assert!(!cards.widget_available(Widget::Weather));
+    // Weather would draw nothing until its display is measured: no window yet.
+    assert!(built.iter().all(|b| b.namespace != "halcyon-weather"));
+    let probe = cards.extra_probes[0].id;
+    let built = send(
+        &mut cards,
+        Message::SurfaceResized(probe, cosmic::iced::Size::new(2560., 1440.)),
+    );
     assert!(
         built
             .iter()
             .find(|b| b.namespace == "halcyon-weather")
             .is_some_and(|b| matches!(&b.output,IcedOutput::Output(o) if *o==external))
-    );
-    let probe = cards.extra_probes[0].id;
-    send(
-        &mut cards,
-        Message::SurfaceResized(probe, cosmic::iced::Size::new(2560., 1440.)),
     );
     assert!(cards.widget_available(Widget::Weather));
     assert_eq!(cards.widget_screen(Widget::Weather), [2560., 1440.]);
