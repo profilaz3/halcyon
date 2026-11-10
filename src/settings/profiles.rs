@@ -731,6 +731,10 @@ impl ProfilesEditor {
         self.retire_backdrop_jobs();
     }
     /// The current shared background's picture, when it has one.
+    /// The wallpaper the Home picture shows, drawn or not yet.
+    pub fn home_entry(&self) -> Option<&BgEntry> {
+        Some(&self.home_background.as_ref()?.entry)
+    }
     pub fn home_image(&self) -> Option<&Handle> {
         let entry = self.home_background.as_ref()?;
         self.backdrops

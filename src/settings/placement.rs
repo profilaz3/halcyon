@@ -434,6 +434,47 @@ impl PlacementEditor {
         &self.snapshot
     }
 
+    /// Where a visible card sits now, draft included.
+    pub(super) fn widget_position(&self, key: &str) -> Option<[f32; 2]> {
+        self.position(key)
+    }
+    /// Where a visible card sits in the automatic layout.
+    pub(super) fn default_position(&self, key: &str) -> Option<[f32; 2]> {
+        self.geometry(key)?;
+        self.defaults
+            .widgets
+            .iter()
+            .find(|widget| widget.key == key)
+            .map(|widget| widget.position)
+    }
+    /// Moves one card back to its automatic place; Save keeps the others.
+    pub(super) fn reset_widget(&mut self, key: &str) -> bool {
+        let (Some(widget), Some(point), Some(size)) = (
+            Widget::parse(key),
+            self.default_position(key),
+            self.size(key),
+        ) else {
+            return false;
+        };
+        if self.dragging() {
+            return false;
+        }
+        self.materialize();
+        self.positions.insert(
+            key.into(),
+            crate::layout_state::encode_position(widget, point, size, self.snapshot.screen),
+        );
+        true
+    }
+    /// Arrow-key movement of one card, outside the arrangement editor.
+    pub(super) fn nudge_widget(&mut self, key: &str, direction: [i8; 2], large: bool) {
+        if self.dragging() || self.geometry(key).is_none() {
+            return;
+        }
+        self.selected = Some(key.into());
+        self.nudge(direction, large);
+    }
+
     fn geometry(&self, key: &str) -> Option<&WidgetGeometry> {
         if !self.visible.contains(key) {
             return None;

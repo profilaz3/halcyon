@@ -3,6 +3,7 @@ mod automation;
 mod calendar;
 mod canvas;
 mod changes;
+mod clock_stage;
 mod color_well;
 mod colors;
 mod design;

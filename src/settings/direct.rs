@@ -207,7 +207,7 @@ pub(super) fn label(message: &Message) -> String {
         Message::MaterialChoose(_) | Message::MaterialSave => "Glass material",
         Message::MaterialMotion(_) => "Liquid widget motion",
         Message::Widget(_, _) => "Widget visibility",
-        Message::Placement(_) => "Widget arrangement",
+        Message::Placement(_) | Message::ClockStage(_) => "Widget arrangement",
         Message::ChooseCity(_) => "Weather city",
         Message::AppearanceValue(_, _) | Message::SaveAppearance => "Widget style",
         Message::ClockScale(_)
