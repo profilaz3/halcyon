@@ -1155,6 +1155,8 @@ pub struct ClockPreferences {
     pub surface: Option<crate::widget_style::resolver::ClockSurface>,
     /// Prepared wallpaper occlusion; unsupported contexts keep the plain clock.
     pub depth: bool,
+    /// How the scene lights a clock that stands behind the ridge.
+    pub lighting: crate::depth::Lighting,
 }
 impl Default for ClockPreferences {
     fn default() -> Self {
@@ -1169,6 +1171,7 @@ impl Default for ClockPreferences {
             italic: None,
             surface: None,
             depth: false,
+            lighting: Default::default(),
         }
     }
 }

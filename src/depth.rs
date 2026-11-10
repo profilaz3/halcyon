@@ -10,6 +10,8 @@ use std::io::Read;
 
 pub const PICTURE: &[u8] = include_bytes!("../assets/wallpapers/halcyon-ridge.png");
 const MATTE: &[u8] = include_bytes!("../assets/depth/halcyon-ridge.png");
+mod lighting;
+pub use lighting::Lighting;
 pub const MAX_INPUT: usize = 270_336;
 pub const MAX_RASTER: [u32; 2] = [2048, 1024];
 
@@ -190,6 +192,11 @@ fn mask() -> Option<image::GrayImage> {
     }
     Some(image)
 }
+/// The compiled Ridge picture, decoded only when scene lighting is on.
+fn picture() -> Option<image::RgbImage> {
+    let image = image::load_from_memory_with_format(PICTURE, image::ImageFormat::Png).ok()?;
+    (image.width() == 1672 && image.height() == 941).then(|| image.to_rgb8())
+}
 
 fn apply_mask(
     pixels: &mut Pixels,
@@ -317,6 +324,12 @@ fn render_clock(request: &Request) -> Option<Pixels> {
             .sum()
     };
     let before = face_ink(&pixels);
+    let recipe = config.clock.lighting.recipe();
+    let glyph: Vec<u8> = if recipe.is_some() {
+        pixels.rgba.chunks_exact(4).map(|p| p[3]).collect()
+    } else {
+        Vec::new()
+    };
     apply_mask(
         &mut pixels,
         &request.frame,
@@ -329,6 +342,22 @@ fn render_clock(request: &Request) -> Option<Pixels> {
     // its plain presentation instead of becoming an invisible widget.
     if before == 0 || after * 100 < before * 55 {
         return None;
+    }
+    // Lighting only recolours what the matte left visible. If it cannot run,
+    // the plain masked clock is still correct.
+    if let Some(recipe) = recipe
+        && let Some(picture) = picture()
+    {
+        let _ = lighting::apply(
+            &mut pixels,
+            &glyph,
+            &request.frame,
+            &request.background.scaling_mode,
+            &picture,
+            &mask,
+            face,
+            &recipe,
+        );
     }
     Some(pixels)
 }

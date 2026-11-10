@@ -666,6 +666,10 @@ pub enum Message {
     ClockVertical(bool),
     DepthPreviewReady(u64, Option<crate::desktop::wallpaper::media::Pixels>),
     ClockDepth(bool),
+    /// How the scene lights a clock behind the ridge.
+    ClockLighting(crate::depth::Lighting),
+    /// Opens Wallpaper with Ridge chosen, so the hills can cover the clock.
+    UseRidgeWallpaper,
     Moment(moments::Message),
     Recipe(recipes::Message),
     OpenRecipe(crate::recipes::Kind),
@@ -3913,6 +3917,15 @@ impl Settings {
             Message::Recipe(edit) => self.update_recipe(edit),
             Message::Design(edit) => return self.update_design(edit),
             Message::ClockDepth(value) => self.save_clock(json!({"depth": value})),
+            Message::ClockLighting(value) => self.save_clock(json!({"lighting": value})),
+            Message::UseRidgeWallpaper => {
+                // Applied on Wallpaper, where the change shows and its Undo lives.
+                let page = self.update(Message::Page(Page::DesktopWallpaper));
+                let select = self.update(Message::Wallpaper(wallpaper::Message::Select(
+                    wallpaper::Pick::Bundled("halcyon-ridge".into()),
+                )));
+                return Task::batch([page, select]);
+            }
             edit @ (Message::ClockFace(_)
             | Message::ClockWeight(_)
             | Message::ClockItalic(_)
@@ -10536,6 +10549,171 @@ mod tests {
             send_settings(&mut app, Message::Page(Page::Themes));
             assert_eq!(app.rain.adjust, None);
         }
+    }
+
+    /// The hills switch says why it can't work and offers the one fix; once
+    /// nothing blocks it, Scene lighting appears under it.
+    #[test]
+    fn scene_lighting_row_reasons_and_fix_buttons() {
+        if desktop_test_child(
+            "scene_lighting_row_reasons_and_fix_buttons",
+            DesktopEnv {
+                app_config: true,
+                fixture: true,
+                icons: Icons::Shown,
+                ..Default::default()
+            },
+        ) {
+            return;
+        }
+        use crate::depth::Lighting;
+        use crate::desktop::wallpaper::{BgEntry, BgSource, bundled_dir, bundled_path};
+        use crate::native_test::Native;
+        use crate::widget_style::resolver::{ClockFace, ClockSurface};
+        use cosmic::iced::{Event, mouse};
+        let root = isolated_root();
+        let fixture = root.join("cosmic-root");
+        let (probe, _) = Settings::init(Core::default(), Page::DesktopWallpaper);
+        let bundled = bundled_dir(probe.wallpaper.store().unwrap());
+        drop(probe);
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/wallpapers");
+        let teal = bundled_path(&bundled, "teal");
+        let ridge = bundled_path(&bundled, "halcyon-ridge");
+        std::fs::create_dir_all(&bundled).unwrap();
+        std::fs::copy(assets.join("teal.jpg"), &teal).unwrap();
+        std::fs::copy(assets.join("halcyon-ridge.png"), &ridge).unwrap();
+        seed(
+            &fixture.join("config/cosmic"),
+            &[(
+                "com.system76.CosmicBackground",
+                "all",
+                &ron::to_string(&BgEntry::new("all", BgSource::Path(teal.clone()))).unwrap(),
+            )],
+        );
+        Config::save_clock(json!({"depth": true, "face": "digital", "surface": "none"})).unwrap();
+        let (mut app, initial) = Settings::init(Core::default(), Page::Clock);
+        settle_settings(&mut app, initial);
+        drive_wallpaper(&mut app);
+        let size = Size::new(820., 600.);
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = Native::new(size);
+        let lighting = |app: &Settings, native: &mut Native| {
+            native.try_bounds(app.settings_view(), "clock-lighting").is_some()
+        };
+        let reason = |app: &Settings, native: &mut Native, text: &str| {
+            native.text_all(app.settings_view(), text).len() == 1
+        };
+
+        // Not the Ridge wallpaper: one reason, one fix, no lighting choice.
+        assert!(reason(&app, &mut native, "Needs the Ridge wallpaper"));
+        assert!(!lighting(&app, &mut native));
+        native_click(&mut app, &mut native, "clock-depth-fix");
+        drive_wallpaper(&mut app);
+        // Any later update applies the picture once its colors are ready.
+        send_settings(&mut app, Message::Resized(size));
+        assert_eq!(app.page, Page::DesktopWallpaper);
+        assert!(!app.error, "{}", app.status);
+        assert_eq!(app.wallpaper.shown().image.as_deref(), Some(ridge.as_path()));
+        assert!(!app.wallpaper.dirty());
+        assert!(app.ridge_wallpaper());
+        send_settings(&mut app, Message::Page(Page::Clock));
+
+        // Nothing blocks it: no reason line, and the choice is Soft.
+        assert!(app.depth_block().is_none());
+        assert!(native.try_bounds(app.settings_view(), "clock-depth-fix").is_none());
+        assert!(lighting(&app, &mut native));
+        assert_eq!(Config::load().clock.lighting, Lighting::Soft);
+        native_reveal(&app, &mut native, "clock-lighting");
+        let rich = native.text_bounds(app.settings_view(), "Rich").center();
+        for event in [
+            mouse::Event::CursorMoved { position: rich },
+            mouse::Event::ButtonPressed(mouse::Button::Left),
+            mouse::Event::ButtonReleased(mouse::Button::Left),
+        ] {
+            for message in native.event(app.settings_view(), Event::Mouse(event), rich).0 {
+                send_settings(&mut app, message);
+            }
+        }
+        assert_eq!(Config::load().clock.lighting, Lighting::Rich);
+        let others = Config::load();
+        assert!(others.clock.depth && !others.glance.enabled && !others.appearance.contrast_assist);
+        for (theme, name) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
+            for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+                send_settings(&mut app, Message::Resized(size));
+                let mut native = Native::new(size);
+                native_reveal(&app, &mut native, "clock-lighting");
+                assert!(native.overflowing_text(app.settings_view()).is_empty());
+                assert!(native.duplicate_ids(app.settings_view()).is_empty());
+                native.capture(
+                    app.settings_view(),
+                    &theme,
+                    &format!("scene-lighting-{name}-{}", size.width),
+                );
+            }
+        }
+        send_settings(&mut app, Message::Resized(size));
+
+        // Each block names itself; its button removes exactly that block.
+        let cases: [(Message, &str, fn(&Config) -> bool); 4] = [
+            (
+                Message::Widget(Widget::Glance, true),
+                "Daily overview shows the time instead",
+                |c| !c.glance.enabled,
+            ),
+            (
+                Message::ClockFace(Some(ClockFace::Analog)),
+                "Needs the digital type",
+                |c| c.clock.face == Some(ClockFace::Digital),
+            ),
+            (
+                Message::ClockSurface(Some(ClockSurface::Panel)),
+                "Needs no background card",
+                |c| c.clock.surface == Some(ClockSurface::None),
+            ),
+            (
+                Message::ContrastAssist(true),
+                "Off while Easier to read is on",
+                |c| !c.appearance.contrast_assist,
+            ),
+        ];
+        for (block, text, fixed) in cases {
+            send_settings(&mut app, block);
+            assert!(!app.error, "{}", app.status);
+            let mut native = Native::new(size);
+            assert!(reason(&app, &mut native, text), "{text}: {:?}", app.depth_block().map(|b| b.0));
+            assert!(!lighting(&app, &mut native), "{text}");
+            if text == "Needs no background card" {
+                for (theme, name) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
+                    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+                        send_settings(&mut app, Message::Resized(size));
+                        let mut native = Native::new(size);
+                        native_reveal(&app, &mut native, "clock-depth-fix");
+                        assert!(native.overflowing_text(app.settings_view()).is_empty());
+                        native.capture(
+                            app.settings_view(),
+                            &theme,
+                            &format!("scene-lighting-blocked-{name}-{}", size.width),
+                        );
+                    }
+                }
+                send_settings(&mut app, Message::Resized(size));
+            }
+            native_click(&mut app, &mut native, "clock-depth-fix");
+            assert!(!app.error, "{}", app.status);
+            let config = Config::load();
+            assert!(fixed(&config), "{text}");
+            assert!(config.clock.depth && config.clock.lighting == Lighting::Rich, "{text}");
+            assert!(app.depth_block().is_none(), "{text}");
+            assert!(lighting(&app, &mut Native::new(size)), "{text}");
+        }
+
+        // Your own design: the fix opens it rather than throwing it away.
+        app.config.recipes.clock = Some(crate::recipes::Recipe::starter(crate::recipes::Kind::Clock));
+        let mut native = Native::new(size);
+        assert!(reason(&app, &mut native, "Your own design replaces this clock"));
+        native_click(&mut app, &mut native, "clock-depth-fix");
+        assert_eq!(app.page, Page::Builder);
+        assert!(Config::load().recipes.clock.is_none());
     }
 
     fn drive_wallpaper(app: &mut Settings) {

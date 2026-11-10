@@ -510,7 +510,7 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::Clock,
         "Face",
-        "clock face typography size scale alignment center analog digital weight italic surface design font depth landscape follow look style",
+        "clock face typography size scale alignment center analog digital weight italic surface design font depth landscape lighting light ridge hills follow look style",
         false,
     )
     .at("widget-design"),

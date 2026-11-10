@@ -156,7 +156,7 @@ macro_rules! fields {
 }
 
 /// Every member a profile, its Undo or its recovery may write.
-pub static FIELDS: [WidgetField; 108] = fields![
+pub static FIELDS: [WidgetField; 109] = fields![
     "/recipes/music", "Music recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Music);
     "/recipes/focus", "Focus recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Focus);
     "/recipes/devbox", "System recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::System);
@@ -201,6 +201,7 @@ pub static FIELDS: [WidgetField; 108] = fields![
     "/clock/alignment", "Clock alignment", Style, clock_alignment;
     "/clock/scale", "Clock text size", Style, clock_scale;
     "/clock/depth", "Clock depth", Style, boolean;
+    "/clock/lighting", "Clock scene lighting", Style, |v| matches!(v.as_str(), Some("off" | "soft" | "rich"));
     "/clock/face", "Clock face", Style, |v| v.is_null() || matches!(v.as_str(), Some("digital" | "analog"));
     "/clock/weight", "Clock weight", Style, |v| v.is_null() || matches!(v.as_str(), Some("light" | "normal" | "bold"));
     "/clock/italic", "Clock italic", Style, |v| v.is_null() || v.is_boolean();

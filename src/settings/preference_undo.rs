@@ -107,6 +107,7 @@ fn message_scope(config: &Config, message: &Message) -> Vec<String> {
         Message::ClockScale(_) => add(&["clock", "scale"]),
         Message::ClockVertical(_) => add(&["clock", "center_vertically"]),
         Message::ClockDepth(_) => add(&["clock", "depth"]),
+        Message::ClockLighting(_) => add(&["clock", "lighting"]),
         edit if super::moments::clock_style_edit(edit).is_some() => {
             let (key, _) = super::moments::clock_style_edit(edit).unwrap();
             add(&["clock", key]);
@@ -516,6 +517,30 @@ mod tests {
         assert!(!app.error, "{}", app.status);
         let clock = Config::load().clock;
         assert!(!clock.depth && !clock.show_date);
+    }
+
+    #[test]
+    fn scene_lighting_undo_restores_only_lighting() {
+        if isolated("scene_lighting_undo_restores_only_lighting") {
+            return;
+        }
+        use crate::depth::Lighting;
+        let (mut app, _) = Settings::init(Core::default(), super::super::Page::Clock);
+        super::super::tests::send_settings(&mut app, Message::ClockDepth(true));
+        assert_eq!(Config::load().clock.lighting, Lighting::Soft);
+        super::super::tests::send_settings(&mut app, Message::ClockLighting(Lighting::Rich));
+        assert!(!app.error, "{}", app.status);
+        assert_eq!(Config::load().clock.lighting, Lighting::Rich);
+        Config::save_clock(serde_json::json!({"show_date":false})).unwrap();
+        super::super::tests::send_settings(&mut app, Message::UndoPreferences);
+        assert!(!app.error, "{}", app.status);
+        let clock = Config::load().clock;
+        assert_eq!(clock.lighting, Lighting::Soft);
+        assert!(clock.depth && !clock.show_date);
+        assert_eq!(
+            message_scope(&Config::load(), &Message::ClockLighting(Lighting::Off)),
+            ["/clock/lighting"]
+        );
     }
 
     #[test]
