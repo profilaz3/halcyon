@@ -287,6 +287,9 @@ pub(super) fn segmented<'a>(
                 Some(Message::DesktopEditor(crate::settings::desktop::Message::PanelStyle(
                     crate::settings::desktop::PanelStyle::FullWidth,
                 ))) => cosmic::widget::Id::new("native-shape-full"),
+                Some(Message::Rain(crate::settings::rain::Edit::Adjust(effect))) => {
+                    cosmic::widget::Id::new(format!("rain-adjusting-{effect:?}").to_lowercase())
+                }
                 Some(Message::Corners(step)) => {
                     cosmic::widget::Id::new(format!("corners-{}", step.key()))
                 }

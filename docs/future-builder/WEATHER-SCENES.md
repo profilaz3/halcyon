@@ -24,11 +24,26 @@ reading for its city, that reading picks the effect:
 | Clear (0), mostly clear (1), overcast (3) | No effect | — |
 | Any other code | Moving effect plays | — |
 
-Light, Moderate and Heavy are 40%, 70% and 100% of the person's own setting
-for that effect: rain Density, snow Density, fog Opacity or cloud Coverage.
-Their setting is the cap; the weather never makes an effect stronger. Rounding
-goes up, so a visible setting stays visible. Every other control (speed, size,
-wind, color, Rendering, Pause on battery) is the person's own.
+Light, Moderate and Heavy are a share of the person's own setting for that
+effect: rain Density, snow Density, fog Opacity or cloud Coverage. **Weather
+strength** chooses the shares; Natural is the default, so configs written
+before it behave as before:
+
+| Weather strength | Light | Moderate | Heavy |
+| --- | --- | --- | --- |
+| Subtle | 25% | 50% | 100% |
+| Natural (default) | 40% | 70% | 100% |
+| Strong | 70% | 85% | 100% |
+
+Their setting is the cap; the weather never makes an effect stronger, and heavy
+weather is always the full setting. Rounding goes up, so a visible setting stays
+visible. Every other control (speed, size, wind, color, Rendering, Pause on
+battery) is the person's own.
+
+Weather strength is saved with the effect settings as `weather_strength`
+(`subtle`, `natural` or `strong`), left out while it is Natural. It goes through
+the same staging, Apply, Recent changes and Undo as Match the weather, and looks
+keep the person's choice.
 
 ## Precedence
 
@@ -82,22 +97,34 @@ immediately. Edits that keep the same scene, such as a slider, apply at once.
 The Match the weather row shows what is happening in plain words:
 
 - Off: “Rain, snow, fog and cloud shadows follow the Weather widget”.
-- On: “Snow: showing snow”, “Partly cloudy: showing cloud shadows”,
-  “Clear skies: no effect”.
+- On: how strong, in the effect's own slider name: “Rain: rain at 40% of your
+  density”, “Foggy: fog at 70% of your opacity”, “Partly cloudy: cloud shadows
+  at 70% of your coverage”, “Snow: snow at your full density”, “Clear skies:
+  no effect”.
 - Falling back: “No weather reading yet: using Moving effect”, “Weather
   reading is out of date: using Moving effect”, “Unrecognized weather: using
   Moving effect” or “Turn on the Weather widget to use this”.
 
-While the weather picks an effect, the controls below adjust that effect's own
-settings (its cap), without changing Moving effect. Moving effect's explanation
-says it plays when there's no current weather reading. The preview shows what
-the desktop shows.
+While Match the weather is on, **Weather strength** (Subtle, Natural, Strong)
+sits under it, and **Adjust** (Rain, Snow, Fog, Cloud shadows) chooses which
+effect's controls show, so snow can be tuned before it snows. Adjust starts on
+the effect the weather plays now, else Moving effect. It is only this window's
+view: it is not saved, and it changes neither what plays on the desktop nor
+Moving effect. Turning Match the weather off or on, or leaving the page, starts
+it again from what plays. The controls set each effect's own settings (its cap).
+Moving effect's explanation says it plays when there's no current weather
+reading.
+
+The preview shows what the desktop shows. When Adjust names an effect that
+isn't playing, the preview shows that effect at its own settings instead. That
+is how heavy weather plays it at every Weather strength, so there is one
+honest picture of the cap being tuned rather than a level the weather may never
+reach.
 
 ## Not in this version
 
-A per-effect allow list, separate intensity limits, a temporary manual override
-with a timed return, and blending two effects at once. The person's own setting
-is the limit, and turning Match the weather off is the override.
+A per-effect allow list, a temporary manual override with a timed return, and
+blending two effects at once. Turning Match the weather off is the override.
 
 ## Validation
 
