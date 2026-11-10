@@ -926,7 +926,7 @@ fn windows_workspaces_profile_roundtrip_and_legacy_import() {
         let expected = if preset.id == "presentation" {
             format::VERSION_4
         } else if matches!(preset.id, "rain" | "snow" | "fog") {
-            format::VERSION
+            format::VERSION_19
         } else if matches!(preset.id, "tidal" | "paper-studio" | "carbon") {
             format::VERSION_9
         } else {

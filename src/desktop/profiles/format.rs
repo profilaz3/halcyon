@@ -50,7 +50,9 @@ pub use super::desktop_look::{
 pub const FORMAT: &str = "desktop-cards-profile";
 /// Frozen composition provenance requires version 10.
 /// Clock face, weight, italic and surface choices retain version 9.
-pub const VERSION: u32 = 19;
+/// Clock scene lighting requires version 20; wallpaper rain keeps 19.
+pub const VERSION: u32 = 20;
+pub const VERSION_19: u32 = 19;
 pub const VERSION_18: u32 = 18;
 pub const VERSION_17: u32 = 17;
 pub const VERSION_16: u32 = 16;
@@ -990,8 +992,11 @@ impl Profile {
     }
     /// The version this record is written as.
     pub fn written_version(&self) -> u32 {
-        if self.has_rain() {
+        if self.has_lighting() {
             return VERSION;
+        }
+        if self.has_rain() {
+            return VERSION_19;
         }
         if self.has_visualizer() {
             return VERSION_18;
@@ -1094,6 +1099,11 @@ impl Profile {
             }
         }
         (profile, omitted)
+    }
+    fn has_lighting(&self) -> bool {
+        self.widget_style
+            .as_ref()
+            .is_some_and(|v| v.pointer("/clock/lighting").is_some())
     }
     fn has_rain(&self) -> bool {
         self.widget_style
@@ -1251,7 +1261,12 @@ impl Profile {
                 ));
             }
         }
-        if self.has_rain() && self.version < VERSION {
+        if self.has_lighting() && self.version < VERSION {
+            return Err(ProfileError::Invalid(
+                "Clock scene lighting requires profile version 20".into(),
+            ));
+        }
+        if self.has_rain() && self.version < VERSION_19 {
             return Err(ProfileError::Invalid(
                 "Wallpaper rain requires profile version 19".into(),
             ));

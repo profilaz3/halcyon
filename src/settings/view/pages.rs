@@ -1236,14 +1236,7 @@ impl Settings {
             }))
             .into()
         };
-        // The hills only exist in the Ridge wallpaper; elsewhere the switch means nothing.
-        let ridge = clock.depth
-            || matches!(
-                self.wallpaper.entry(),
-                Some(crate::desktop::panels::Setting::Known(entry)) if matches!(&entry.source,
-                    crate::desktop::wallpaper::BgSource::Path(path)
-                        if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.contains("ridge")))
-            );
+        let ridge = clock.depth || self.ridge_wallpaper();
         let mut face_rows: Vec<Element<'_, Message>> = Vec::new();
         if self.clock_moment_target().is_none() {
             face_rows.push(split(
@@ -1275,10 +1268,47 @@ impl Settings {
             ]);
         }
         if ridge {
-            face_rows.push(split(
-                detail("Let the hills cover the clock", "With the Ridge wallpaper"),
-                toggler(clock.depth).on_toggle(Message::ClockDepth).into(),
-            ));
+            let switch = toggler(clock.depth).on_toggle(Message::ClockDepth);
+            // Once it's on, a blocked switch says why and offers the one fix.
+            let block = clock.depth.then(|| self.depth_block()).flatten();
+            let lighting = clock.depth && block.is_none();
+            face_rows.push(match block {
+                Some((reason, fix, message)) => split(
+                    detail_state("Let the hills cover the clock", reason),
+                    row![
+                        container(button::standard(fix).on_press(message))
+                            .id(cosmic::widget::Id::new("clock-depth-fix")),
+                        switch,
+                    ]
+                    .spacing(12)
+                    .align_y(Alignment::Center)
+                    .into(),
+                ),
+                None => split(
+                    detail("Let the hills cover the clock", "With the Ridge wallpaper"),
+                    switch.into(),
+                ),
+            });
+            if lighting {
+                face_rows.push(split(
+                    label("Scene lighting", 14., FG),
+                    container(segmented(
+                        crate::depth::Lighting::ALL
+                            .into_iter()
+                            .map(|value| {
+                                (
+                                    value.label().into(),
+                                    clock.lighting == value,
+                                    Some(Message::ClockLighting(value)),
+                                )
+                            })
+                            .collect(),
+                        self.settings_accent(),
+                    ))
+                    .id(cosmic::widget::Id::new("clock-lighting"))
+                    .into(),
+                ));
+            }
         }
         let face = self.search_target("clock-face", group(Some("Face"), face_rows));
         self.widget_template(

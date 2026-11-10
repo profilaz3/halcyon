@@ -268,7 +268,7 @@ fn record(look: &Look) -> Value {
         );
     }
     if let Some(rain) = atmosphere(look.id) {
-        value["version"] = super::format::VERSION.into();
+        value["version"] = super::format::VERSION_19.into();
         value["widget_style"]["rain"] = rain;
         if look.id == "rain" {
             // Drops run behind every card and bar, so cards are nearly bare
@@ -713,7 +713,7 @@ fn follow_atmosphere(preset: &mut Preset, config: &crate::config::Config) {
         None => return,
     };
     style["rain"] = serde_json::to_value(rain).expect("rain serializes");
-    preset.profile.version = super::format::VERSION;
+    preset.profile.version = preset.profile.version.max(super::format::VERSION_19);
 }
 
 /// `preset` adapted to this person: Projects joins only when there are

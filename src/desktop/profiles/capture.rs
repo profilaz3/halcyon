@@ -421,7 +421,9 @@ fn capture_widgets(
         if field.pointer.starts_with("/moments/") && raw.get("moments").is_none() {
             continue;
         }
-        if field.pointer == "/clock/depth" && raw.pointer(field.pointer).is_none() {
+        if matches!(field.pointer, "/clock/depth" | "/clock/lighting")
+            && raw.pointer(field.pointer).is_none()
+        {
             continue;
         }
         // Never-configured new choices do not make legacy captures require a

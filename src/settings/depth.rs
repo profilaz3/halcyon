@@ -111,6 +111,69 @@ impl Settings {
             )
         })
     }
+    /// The hills only exist in the Ridge wallpaper; elsewhere the switch means nothing.
+    pub(super) fn ridge_wallpaper(&self) -> bool {
+        matches!(
+            self.wallpaper.entry(),
+            Some(crate::desktop::panels::Setting::Known(entry)) if matches!(&entry.source,
+                crate::desktop::wallpaper::BgSource::Path(path)
+                    if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.contains("ridge")))
+        )
+    }
+    /// Why the hills can't cover the clock right now (see
+    /// [`crate::depth::eligible`]), with the one change that fixes it.
+    pub(super) fn depth_block(&self) -> Option<(&'static str, &'static str, Message)> {
+        use crate::widget_style::resolver::{ClockFace, ClockSurface, Surface};
+        let config = &self.config;
+        if !self.ridge_wallpaper() {
+            return Some((
+                "Needs the Ridge wallpaper",
+                "Use Ridge",
+                Message::UseRidgeWallpaper,
+            ));
+        }
+        if config.recipes.clock.is_some() {
+            return Some((
+                "Your own design replaces this clock",
+                "Open design",
+                Message::OpenRecipe(crate::recipes::Kind::Clock),
+            ));
+        }
+        if config.glance.enabled {
+            return Some((
+                "Daily overview shows the time instead",
+                "Turn off Daily overview",
+                Message::Widget(Widget::Glance, false),
+            ));
+        }
+        // Easier to read puts a card behind the clock, so it goes before the card.
+        if config.appearance.contrast_assist {
+            return Some((
+                "Off while Easier to read is on",
+                "Turn off Easier to read",
+                Message::ContrastAssist(false),
+            ));
+        }
+        let style = {
+            let _scope = crate::widget_style::scope(config);
+            crate::widget_style::presentation(config, config.wallpaper_palette(), true)
+        };
+        if style.clock_face.value != ClockFace::Digital {
+            return Some((
+                "Needs the digital type",
+                "Use digital",
+                self.clock_moment_edit(Message::ClockFace(Some(ClockFace::Digital))),
+            ));
+        }
+        if style.surface.value != Surface::None {
+            return Some((
+                "Needs no background card",
+                "Remove the card",
+                self.clock_moment_edit(Message::ClockSurface(Some(ClockSurface::None))),
+            ));
+        }
+        None
+    }
 }
 
 #[cfg(test)]

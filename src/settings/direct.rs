@@ -216,6 +216,7 @@ pub(super) fn label(message: &Message) -> String {
         | Message::ClockDate(_)
         | Message::ClockVertical(_)
         | Message::ClockDepth(_)
+        | Message::ClockLighting(_)
         | Message::ClockFollowStyle(_) => "Clock",
         edit if moments::clock_style_edit(edit).is_some() => "Clock",
         Message::GlanceOpacity(_)
