@@ -14,6 +14,16 @@ impl Settings {
         let mut parts = vec![self.widget_heading(widget, title)];
         if self.canvas_visible() {
             parts.push(self.canvas_body());
+        } else if widget == Widget::Clock
+            && let Some(stage) = preview
+        {
+            // The clock's stage is the screen itself, not a card on a strip.
+            parts.push(
+                container(stage)
+                    .id(cosmic::widget::Id::new("desktop-scene"))
+                    .width(Length::Fill)
+                    .into(),
+            );
         } else if let Some(preview) = preview {
             // Every widget is shown the same way: centered, at card size.
             let preview = container(preview).max_width(420.).into();

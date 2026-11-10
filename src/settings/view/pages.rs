@@ -1052,11 +1052,6 @@ impl Settings {
             );
             now.clock == look.clock && now.clock_font == look.clock_font
         };
-        let preview_height = if self.config.moment_clock().face == Some(ClockFace::Analog) {
-            176.
-        } else {
-            112.
-        };
         let mut controls: Vec<Element<'_, Message>> = Vec::new();
         if !follows {
             controls.push(self.widget_font_row(
@@ -1213,29 +1208,6 @@ impl Settings {
             switch("24-hour time", "Show 14:00 instead of 2:00 PM", clock.format_24h, Message::ClockFormat),
             switch("Show the date", "", clock.show_date, Message::ClockDate),
         ];
-        // A faint outline of the clock's box, so its alignment inside the
-        // box reads as a choice rather than as off-centre.
-        let preview = || -> Element<'_, Message> {
-            container(
-                cosmic::widget::responsive(move |bounds| {
-                    crate::app::settings_clock_preview(&self.config, [bounds.width, preview_height])
-                        .map(|_| Message::Preview)
-                })
-                .height(preview_height),
-            )
-            .padding([10, 16])
-            .class(cosmic::theme::Container::custom(|_| {
-                cosmic::iced::widget::container::Style {
-                    border: Border {
-                        color: Color { a: 0.22, ..FG },
-                        width: 1.,
-                        radius: 12.into(),
-                    },
-                    ..Default::default()
-                }
-            }))
-            .into()
-        };
         let ridge = clock.depth || self.ridge_wallpaper();
         let mut face_rows: Vec<Element<'_, Message>> = Vec::new();
         if self.clock_moment_target().is_none() {
@@ -1314,7 +1286,7 @@ impl Settings {
         self.widget_template(
             Widget::Clock,
             "Clock",
-            Some(preview()),
+            Some(self.clock_stage_view()),
             vec![
                 self.moment_clock_target_view(),
                 group(Some("Time and date"), content),

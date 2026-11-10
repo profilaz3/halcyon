@@ -14,6 +14,7 @@ mod automation;
 mod calendar;
 mod canvas;
 mod city_search;
+mod clock_stage;
 mod color_well;
 mod colors;
 mod corners;
@@ -665,6 +666,8 @@ pub enum Message {
     ClockScale(u16),
     ClockVertical(bool),
     DepthPreviewReady(u64, Option<crate::desktop::wallpaper::media::Pixels>),
+    /// The Clock page's stage: the clock on its screen, dragged to move it.
+    ClockStage(clock_stage::Edit),
     ClockDepth(bool),
     /// How the scene lights a clock behind the ridge.
     ClockLighting(crate::depth::Lighting),
@@ -750,6 +753,7 @@ pub enum Message {
 
 pub struct Settings {
     depth_preview: depth::Cache,
+    clock_stage: clock_stage::Stage,
     rain: rain::State,
     design: design::State,
     moment_preview: crate::moments::Phase,
@@ -1033,6 +1037,7 @@ impl cosmic::Application for Settings {
         let usage = crate::usage::preference();
         let mut app = Self {
             depth_preview: Default::default(),
+            clock_stage: Default::default(),
             rain: Default::default(),
             design,
             moment_preview: crate::moments::Phase::Day,
@@ -1453,6 +1458,20 @@ impl cosmic::Application for Settings {
             subscriptions.push(cosmic::iced::event::listen_with(|event, status, _| {
                 placement::input(event, status).map(Message::Placement)
             }));
+        }
+        if self.clock_stage_open() {
+            subscriptions.push(cosmic::iced::event::listen_with(|event, status, _| {
+                clock_stage::arrow_input(event, status).map(Message::ClockStage)
+            }));
+        }
+        if self.clock_stage.dragging() {
+            subscriptions.push(cosmic::iced::event::listen_with(|event, status, _| {
+                clock_stage::drag_input(event, status).map(Message::ClockStage)
+            }));
+            subscriptions.push(
+                cosmic::iced::time::every(Duration::from_millis(100))
+                    .map(|_| Message::ClockStage(clock_stage::Edit::Settle)),
+            );
         }
 
         if self.desktop.arranging() {
@@ -1936,6 +1955,7 @@ impl cosmic::Application for Settings {
                 | Message::Placement(
                     placement::Message::Press(_) | placement::Message::ResizePress(_)
                 )
+                | Message::ClockStage(clock_stage::Edit::Press)
         );
         if starts_gesture && self.gesture_config.is_none() {
             self.gesture_config = Config::path()
@@ -1950,6 +1970,11 @@ impl cosmic::Application for Settings {
                 | Message::FlushEdits
                 | Message::Page(_)
                 | Message::Placement(placement::Message::Release | placement::Message::Save)
+                | Message::ClockStage(
+                    clock_stage::Edit::Release
+                        | clock_stage::Edit::Nudge(..)
+                        | clock_stage::Edit::Reset
+                )
         );
         let baseline = finishes_gesture
             .then(|| self.gesture_config.clone())
@@ -2027,10 +2052,11 @@ impl cosmic::Application for Settings {
             self.automation.sync_hold(parts);
         }
         let depth = self.depth_preview_sync();
+        let stage = self.clock_stage_sync();
         let instant = self.instant_theme_apply();
         let wallpaper = self.instant_wallpaper_apply();
         Task::batch(
-            [task, depth, instant, wallpaper]
+            [task, depth, stage, instant, wallpaper]
                 .into_iter()
                 .chain(std::mem::take(&mut self.native_tasks)),
         )
@@ -3889,6 +3915,7 @@ impl Settings {
 
             Message::ClockVertical(value) => self.save_clock(json!({"center_vertically": value})),
             Message::DepthPreviewReady(id, pixels) => self.depth_preview.ready(id, pixels),
+            Message::ClockStage(edit) => return self.update_clock_stage(edit),
             Message::Moment(edit) => self.update_moment(edit),
             Message::OpenRecipe(kind) => {
                 let task = self.update(Message::Page(Page::Builder));
@@ -4477,6 +4504,13 @@ fn checkpoint_message(message: &Message) -> bool {
             | Message::Profiles(profiles::Message::Collection(..) | profiles::Message::Compare(..))
             | Message::ContentScrolled(..)
             | Message::Preview
+            | Message::ClockStage(
+                clock_stage::Edit::Pointer(..)
+                    | clock_stage::Edit::Settle
+                    | clock_stage::Edit::Arrow(..)
+                    | clock_stage::Edit::Backdrop(..)
+                    | clock_stage::Edit::Rendered(..)
+            )
             | Message::EditCity(..)
             | Message::DevboxDetails(..)
             | Message::Capture
@@ -4851,7 +4885,8 @@ impl Settings {
             Page::DesktopMotion => self.motion.open(),
             Page::DesktopWindowRules => self.window_rules.open(),
             Page::DesktopShortcuts => self.shortcuts.open(),
-            Page::DesktopWallpaper | Page::Appearance => self.wallpaper.open(),
+            // Clock reads it too: the hills and its stage need the picture.
+            Page::DesktopWallpaper | Page::Appearance | Page::Clock => self.wallpaper.open(),
             Page::DesktopIcons => self.desktop_icons.open(),
             _ => {}
         }
@@ -5291,6 +5326,7 @@ impl Settings {
     /// analysis) and the Profiles page (its backdrop) asked for.
     fn media_tasks(&mut self) -> Task<Message> {
         let depth = self.depth_preview_sync();
+        let stage = self.clock_stage_sync();
         let wallpaper = self
             .wallpaper
             .take_jobs()
@@ -5317,7 +5353,7 @@ impl Settings {
                 .chain(profiles)
                 .chain(themes)
                 .chain(shares)
-                .chain(std::iter::once(depth))
+                .chain([depth, stage])
                 .collect::<Vec<_>>(),
         )
     }
@@ -6455,6 +6491,7 @@ mod tests {
     include!("settings/polish_tests.rs");
     include!("settings/search_label_tests.rs");
     include!("settings/corners_tests.rs");
+    include!("settings/clock_stage_tests.rs");
 
     /// What Wallpaper & colors recommends for a solid color background.
     fn recommended_color(rgb: [f32; 3]) -> [u8; 3] {
