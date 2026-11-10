@@ -172,7 +172,6 @@ async fn run_kind(
             input,
             kind,
             shared: false,
-            depth: false,
             stalled: entry.output == "fixture-stall",
         },
         cancel,
@@ -186,7 +185,6 @@ struct Work {
     input: Vec<u8>,
     kind: Kind,
     shared: bool,
-    depth: bool,
     stalled: bool,
 }
 
@@ -200,7 +198,6 @@ pub(crate) async fn render_share(input: Vec<u8>, cancel: watch::Receiver<bool>) 
             input,
             kind: Kind::Scene,
             shared: true,
-            depth: false,
             stalled: false,
         },
         cancel,
@@ -210,23 +207,135 @@ pub(crate) async fn render_share(input: Vec<u8>, cancel: watch::Receiver<bool>) 
     .await
 }
 
-pub(crate) async fn render_depth(input: Vec<u8>, cancel: watch::Receiver<bool>) -> Option<Pixels> {
+/// The clock cut by its picture's foreground, and what the worker found.
+pub(crate) async fn render_scene(
+    input: Vec<u8>,
+    cancel: watch::Receiver<bool>,
+) -> Option<crate::depth::Rendered> {
     if input.len() > crate::depth::MAX_INPUT {
         return None;
     }
-    run_work(
-        Work {
-            input,
-            kind: Kind::Scene,
-            shared: false,
-            depth: true,
-            stalled: false,
+    let bytes = run_child(
+        Child {
+            flag: "--depth-worker",
+            test: "depth::tests::worker_entry",
+            slots: 1,
+            deadline: Duration::from_secs(4),
+            max: 64 * 1024
+                + 8
+                + u64::from(crate::depth::MAX_RASTER[0])
+                    * u64::from(crate::depth::MAX_RASTER[1])
+                    * 4,
+            stall: false,
         },
+        input,
         cancel,
-        Duration::from_secs(4),
         |_| {},
     )
-    .await
+    .await?;
+    crate::depth::read_rendered(&bytes)
+}
+
+/// The cut clock alone, for previews that only ever use the Ridge picture.
+pub(crate) async fn render_depth(input: Vec<u8>, cancel: watch::Receiver<bool>) -> Option<Pixels> {
+    render_scene(input, cancel).await?.pixels
+}
+
+/// A private child run of this program: which entry, how many of the two
+/// image slots it holds, how long it may take and how much it may answer.
+pub(crate) struct Child {
+    pub flag: &'static str,
+    pub test: &'static str,
+    pub slots: u32,
+    pub deadline: Duration,
+    pub max: u64,
+    /// Tests only: the child stops after saying it started.
+    pub stall: bool,
+}
+
+/// Runs `child` with `input` on its stdin and returns everything it wrote
+/// after MAGIC, if it exits cleanly in time. Cancelling, a dropped caller or
+/// the deadline kill and reap that exact child before its slots are freed.
+pub(crate) async fn run_child(
+    child: Child,
+    input: Vec<u8>,
+    mut cancel: watch::Receiver<bool>,
+    started: impl FnOnce(u32) + Send + 'static,
+) -> Option<Vec<u8>> {
+    let (owner, mut gone) = tokio::sync::oneshot::channel::<()>();
+    let task = tokio::spawn(async move {
+        if *cancel.borrow() || cancel.has_changed().is_err() {
+            return None;
+        }
+        let _slot = tokio::select! {
+            biased;
+            _ = &mut gone => return None,
+            _ = cancel.changed() => return None,
+            slot = SLOTS.acquire_many(child.slots) => slot.ok()?,
+        };
+        if *cancel.borrow() {
+            return None;
+        }
+        let mut command = tokio::process::Command::new(std::env::current_exe().ok()?);
+        #[cfg(not(test))]
+        command.arg(child.flag);
+        #[cfg(test)]
+        command.args(["--exact", child.test, "--ignored", "--nocapture"]);
+        #[cfg(test)]
+        if child.stall {
+            command.env("HALCYON_BACKDROP_WORKER_STALL", "1");
+        }
+        let mut process = command
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .ok()?;
+        let pid = process.id()?;
+        let mut stdin = process.stdin.take()?;
+        let mut stdout = process.stdout.take()?;
+        let run = async {
+            stdin.write_all(&input).await.ok()?;
+            drop(stdin);
+            // libtest writes a short preamble. Production begins with MAGIC.
+            let mut prefix = Vec::new();
+            loop {
+                prefix.push(stdout.read_u8().await.ok()?);
+                if prefix.ends_with(MAGIC) {
+                    break;
+                }
+                if prefix.len() > 256 {
+                    return None;
+                }
+            }
+            started(pid);
+            let mut bytes = Vec::new();
+            (&mut stdout)
+                .take(child.max + 1)
+                .read_to_end(&mut bytes)
+                .await
+                .ok()?;
+            if bytes.len() as u64 > child.max {
+                return None;
+            }
+            process.wait().await.ok()?.success().then_some(bytes)
+        };
+        let result = tokio::select! {
+            biased;
+            _ = &mut gone => None,
+            _ = cancel.changed() => None,
+            result = tokio::time::timeout(child.deadline, run) => result.ok().flatten(),
+        };
+        if result.is_none() {
+            let _ = process.kill().await;
+            let _ = process.wait().await;
+        }
+        result
+    });
+    let result = task.await.ok().flatten();
+    drop(owner);
+    result
 }
 
 async fn run_work(
@@ -266,14 +375,11 @@ async fn run_owned(
         input,
         kind,
         shared,
-        depth,
         stalled: _stalled,
     } = work;
     let mut command = tokio::process::Command::new(std::env::current_exe().ok()?);
     #[cfg(not(test))]
-    command.arg(if depth {
-        "--depth-worker"
-    } else if shared {
+    command.arg(if shared {
         "--share-worker"
     } else {
         "--backdrop-worker"
@@ -281,9 +387,7 @@ async fn run_owned(
     #[cfg(test)]
     command.args([
         "--exact",
-        if depth {
-            "depth::tests::worker_entry"
-        } else if shared {
+        if shared {
             "settings::sharing::tests::worker_entry"
         } else {
             "desktop::wallpaper::media::worker::tests::worker_entry"
@@ -326,33 +430,23 @@ async fn run_owned(
             started(pid);
             let width = stdout.read_u32_le().await.ok()?;
             let height = stdout.read_u32_le().await.ok()?;
-            let bounds = if depth {
-                (crate::depth::MAX_RASTER[0], crate::depth::MAX_RASTER[1])
-            } else {
-                match kind {
-                    Kind::Scene => SCENE,
-                    Kind::Thumbnail => super::THUMB,
-                    Kind::Wallpaper(size) => (size[0], size[1]),
-                }
+            let bounds = match kind {
+                Kind::Scene => SCENE,
+                Kind::Thumbnail => super::THUMB,
+                Kind::Wallpaper(size) => (size[0], size[1]),
             };
             if width == 0
                 || height == 0
                 || width > bounds.0
                 || height > bounds.1
-                || !depth
-                    && matches!(kind, Kind::Scene | Kind::Wallpaper(_))
-                    && (width, height) != bounds
+                || matches!(kind, Kind::Scene | Kind::Wallpaper(_)) && (width, height) != bounds
             {
                 return None;
             }
             let length = (width * height * 4) as usize;
             let mut rgba = Vec::new();
             stdout
-                .take(if depth {
-                    (crate::depth::MAX_RASTER[0] * crate::depth::MAX_RASTER[1] * 4) as u64 + 1
-                } else {
-                    u64::from(bounds.0) * u64::from(bounds.1) * 4 + 1
-                })
+                .take(u64::from(bounds.0) * u64::from(bounds.1) * 4 + 1)
                 .read_to_end(&mut rgba)
                 .await
                 .ok()?;
@@ -499,4 +593,4 @@ pub(crate) fn main() -> ! {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

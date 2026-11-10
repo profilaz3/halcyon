@@ -59,6 +59,11 @@ sha2 = "=0.11.0"
 getrandom = "=0.4.3"
 ical = "=0.11.0"
 rrule = "=0.14.0"
+# The scene model (Depth Anything V2 Small, downloaded on request) runs in
+# a bounded child with tract, pure Rust, so packages need no ONNX Runtime.
+# See docs/future-builder/FB14.md for the comparison with ort.
+tract-onnx = "=0.23.10"
+tract-linalg = { version = "=0.23.10", features = ["multithread-mm"] }
 
 [patch.crates-io]
 # Generated DST gaps must be skipped before COUNT is consumed. See the patch
@@ -114,4 +119,23 @@ opt-level = 3
 [profile.dev.package.tiny-skia]
 opt-level = 3
 [profile.dev.package.tiny-skia-path]
+opt-level = 3
+# The scene model: an unoptimized tract takes minutes per picture.
+[profile.dev.package.tract-core]
+opt-level = 3
+[profile.dev.package.tract-linalg]
+opt-level = 3
+[profile.dev.package.tract-data]
+opt-level = 3
+[profile.dev.package.tract-onnx]
+opt-level = 3
+[profile.dev.package.tract-hir]
+opt-level = 3
+[profile.dev.package.tract-onnx-opl]
+opt-level = 3
+[profile.dev.package.tract-nnef]
+opt-level = 3
+[profile.dev.package.ndarray]
+opt-level = 3
+[profile.dev.package.sha2]
 opt-level = 3

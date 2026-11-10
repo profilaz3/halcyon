@@ -1,7 +1,8 @@
 //! The Clock page's stage: the screen the clock is on, scaled down, with the
-//! clock where it really sits. With the hills on, the clock is the desktop's
-//! own masked and lit render for that place. Dragging it moves the clock and
-//! saves through the arrangement's save, one Undo step per move.
+//! clock where it really sits. With the scene on, the clock is the desktop's
+//! own masked and lit render for that place, and the stage offers the spot
+//! where the picture's foreground would cover it. Dragging it moves the
+//! clock and saves through the arrangement's save, one Undo step per move.
 use super::*;
 use crate::desktop::wallpaper::BgEntry;
 use crate::desktop::wallpaper::media::{Pixels, SCENE};
@@ -26,10 +27,12 @@ pub enum Edit {
     Arrow([i8; 2], bool),
     Nudge([i8; 2], bool),
     Reset,
+    /// Moves the clock to where the scene covers it.
+    Suggested,
     /// A mid-drag tick: once the pointer rests, the lit clock is drawn again.
     Settle,
     Backdrop(u64, Option<Pixels>),
-    Rendered(u64, Option<Pixels>),
+    Rendered(u64, Option<crate::depth::Rendered>),
 }
 
 /// One cancelable background picture: the newest request wins and the
@@ -79,15 +82,18 @@ impl<T: Clone> Job<T> {
         self.cancel = Some(send);
         Some((self.id, cancel))
     }
-    fn ready(&mut self, id: u64, pixels: Option<Pixels>) {
+    /// Shows the newest result; an older one is dropped and says so.
+    fn ready(&mut self, id: u64, pixels: Option<Pixels>) -> bool {
         if id != self.id {
-            return;
+            return false;
         }
         self.cancel = None;
-        if let Some(meta) = self.pending.take() {
-            let image = pixels.map(|p| Handle::from_rgba(p.width, p.height, p.rgba));
-            self.shown = Some((meta, image));
-        }
+        let Some(meta) = self.pending.take() else {
+            return false;
+        };
+        let image = pixels.map(|p| Handle::from_rgba(p.width, p.height, p.rgba));
+        self.shown = Some((meta, image));
+        true
     }
 }
 
@@ -98,6 +104,8 @@ pub(super) struct Stage {
     moved: Option<Instant>,
     backdrop: Job<[u32; 2]>,
     lit: Job<crate::depth::Request>,
+    /// What the worker found for the shown lit clock's picture.
+    found: Option<crate::depth::Found>,
 }
 impl Stage {
     pub(super) fn dragging(&self) -> bool {
@@ -114,6 +122,29 @@ impl Stage {
             .then_some(image.as_ref())
             .flatten()
     }
+    /// What the newest finished render found: Ridge, a picture nobody has
+    /// analysed, or the verdict for the clock where it was drawn.
+    pub(super) fn found(&self) -> Option<&crate::depth::Found> {
+        self.lit.shown.as_ref().and(self.found.as_ref())
+    }
+    /// The spot the scene suggests, only for the clock where it is now.
+    pub(super) fn suggested(&self, frame: &crate::depth::Frame) -> Option<[f32; 2]> {
+        let (request, _) = self.lit.shown.as_ref()?;
+        match self.found.as_ref()? {
+            crate::depth::Found::Judged { judgement, .. }
+                if request.frame == *frame
+                    && judgement.verdict == crate::depth::scene::Verdict::NeedsNudge =>
+            {
+                judgement.suggested
+            }
+            _ => None,
+        }
+    }
+    /// Draws the lit clock again for the same request, after its picture
+    /// was analysed or forgotten. The shown one stays until then.
+    pub(super) fn redraw(&mut self) {
+        self.lit.key = None;
+    }
     /// The newest lit clock asked of the worker.
     #[cfg(test)]
     pub(super) fn requested(&self) -> Option<&crate::depth::Request> {
@@ -126,7 +157,9 @@ impl Stage {
     pub(super) fn show_lit(&mut self, request: crate::depth::Request, pixels: Option<Pixels>) {
         self.lit.key = serde_json::to_vec(&request).ok();
         self.lit.pending = Some(request);
-        self.lit.ready(self.lit.id, pixels);
+        if self.lit.ready(self.lit.id, pixels) {
+            self.found = Some(crate::depth::Found::Ridge);
+        }
     }
 }
 
@@ -228,9 +261,10 @@ impl Settings {
             crate::desktop::panels::Setting::Unsupported(_) => None,
         }
     }
-    /// The lit clock the desktop would show at the clock's current place.
+    /// The lit clock the desktop would show at the clock's current place,
+    /// allowed to use this computer's analysed pictures.
     fn clock_stage_request(&self) -> Option<crate::depth::Request> {
-        if !crate::depth::eligible(&self.config) || !self.ridge_wallpaper() {
+        if !crate::depth::eligible(&self.config) || !self.picture_wallpaper() {
             return None;
         }
         let background = self.clock_stage_entry()?;
@@ -245,12 +279,14 @@ impl Settings {
             background,
             chrono::Local::now().naive_local(),
         )
+        .map(|request| request.with_scenes(crate::depth::cache::root()))
     }
     /// Keeps the stage's pictures in step: the wallpaper at the screen's
     /// shape, and the lit clock once a drag rests or ends.
     pub(super) fn clock_stage_sync(&mut self) -> Task<Message> {
         if !self.clock_stage_open() {
             self.clock_stage.lit.want(None, None);
+            self.clock_stage.found = None;
             return Task::none();
         }
         self.clock_stage_display();
@@ -288,12 +324,15 @@ impl Settings {
         let key = request
             .as_ref()
             .and_then(|request| serde_json::to_vec(request).ok());
+        if key.is_none() {
+            self.clock_stage.found = None;
+        }
         let lit = match self.clock_stage.lit.want(key, request.clone()) {
             Some((id, cancel)) => match request.and_then(|r| serde_json::to_vec(&r).ok()) {
                 Some(bytes) => cosmic::task::future(async move {
                     Message::ClockStage(Edit::Rendered(
                         id,
-                        crate::desktop::wallpaper::media::worker::render_depth(bytes, cancel).await,
+                        crate::desktop::wallpaper::media::worker::render_scene(bytes, cancel).await,
                     ))
                 }),
                 None => Task::none(),
@@ -306,8 +345,24 @@ impl Settings {
     pub(super) fn update_clock_stage(&mut self, event: Edit) -> Task<Message> {
         let clock = Widget::Clock.key();
         match event {
-            Edit::Backdrop(id, pixels) => self.clock_stage.backdrop.ready(id, pixels),
-            Edit::Rendered(id, pixels) => self.clock_stage.lit.ready(id, pixels),
+            Edit::Backdrop(id, pixels) => {
+                self.clock_stage.backdrop.ready(id, pixels);
+            }
+            Edit::Rendered(id, rendered) => {
+                let (found, pixels) = match rendered {
+                    Some(rendered) => (Some(rendered.found), rendered.pixels),
+                    None => (None, None),
+                };
+                if self.clock_stage.lit.ready(id, pixels) {
+                    if let Some(crate::depth::Found::Judged { key, .. }) = &found
+                        && let Some(root) = crate::depth::cache::root()
+                    {
+                        crate::depth::cache::touch(&root, key);
+                    }
+                    self.clock_stage.found = found;
+                    return self.scene_analyse();
+                }
+            }
             Edit::Settle => {}
             _ if !self.clock_stage_open() || self.busy => {
                 if self.clock_stage.dragging {
@@ -368,6 +423,21 @@ impl Settings {
                 }
                 self.clock_stage_display();
                 if self.placement.reset_widget(clock) {
+                    return self.update_placement(placement::Message::Save);
+                }
+            }
+            Edit::Suggested => {
+                if self.clock_stage.dragging {
+                    return Task::none();
+                }
+                self.clock_stage_display();
+                let screen = self.placement.preview_snapshot().screen;
+                let spot = self
+                    .clock_stage_place()
+                    .and_then(|(at, size)| self.clock_stage.suggested(&frame(at, size, screen)));
+                if let Some(spot) = spot
+                    && self.placement.place_widget(clock, spot)
+                {
                     return self.update_placement(placement::Message::Save);
                 }
             }

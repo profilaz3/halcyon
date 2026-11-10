@@ -112,9 +112,16 @@ cutouts and manually edited masks. Define supported layer roles and which widget
 can be masked before building the editor. Start with static composition; optional
 subtle movement follows only after alignment and resource checks pass.
 
-**Boundary:** automatic subject segmentation is not included. Layers belong to
-the desktop and must not obscure application windows or swallow their input.
-Use the existing bounded media workers, immutable assets and setup transport.
+**Boundary:** the clock already finds a foreground in the user's own pictures
+(FB14, “Your own pictures”): an opt-in, verified download of a depth model that
+runs only on this computer, in a bounded child, with a per-picture mask cached
+by content. It says plainly when a picture works, needs a nudge or has no
+usable foreground, and then shows the plain clock rather than guess. Layers
+reuse that mask and its verdicts; they add no other segmentation, never upload
+a picture and never carry masks or local paths in setups or shares. Layers
+belong to the desktop and must not obscure application windows or swallow
+their input. Use the existing bounded media workers, immutable assets and
+setup transport.
 
 **Acceptance:** preview/runtime agreement for Fill/Fit, mixed scaling, portrait
 outputs and display changes; deterministic ordering; Apply/Cancel/Undo and

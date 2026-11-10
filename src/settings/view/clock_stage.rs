@@ -1,5 +1,7 @@
 //! The Clock page's stage: the screen the clock is on, with the clock where
-//! it sits. Dragging the clock moves it on the desktop.
+//! it sits. Dragging the clock moves it on the desktop. When the scene would
+//! cover it a little way off, an outline marks that spot and a button moves
+//! it there.
 use super::*;
 use crate::settings::clock_stage::{self as stage, Edit};
 use cosmic::iced::widget::{pin, stack};
@@ -10,6 +12,45 @@ fn action(edit: Edit) -> Message {
 }
 
 impl Settings {
+    /// The scene model: what it is, its size, that it stays on this
+    /// computer, and the one thing to do with it now.
+    pub(super) fn scene_model_row(&self) -> Element<'_, Message> {
+        use crate::depth::model::{Error, SIZE};
+        use crate::settings::depth::{ModelState, Scene};
+        let mb = |bytes: u64| bytes / 1_000_000;
+        let (state, button, event) = match self.scenes.model {
+            ModelState::Missing => (
+                "Finds the foreground in your own pictures. About 99 MB, and it runs only on this computer.".into(),
+                "Download",
+                Scene::Download,
+            ),
+            ModelState::Downloading(bytes) => (
+                format!("Downloading… {} of {} MB", mb(bytes), mb(SIZE)),
+                "Cancel",
+                Scene::Cancel,
+            ),
+            ModelState::Failed(Error::Cancelled) => (
+                "Download cancelled. About 99 MB, and it runs only on this computer.".into(),
+                "Download",
+                Scene::Download,
+            ),
+            ModelState::Failed(error) => (error.sentence().into(), "Try again", Scene::Download),
+            ModelState::Ready => (
+                "On this computer. Removing it also forgets the pictures it looked at.".into(),
+                "Remove",
+                Scene::Remove,
+            ),
+        };
+        split(
+            detail_state("Scene model", state),
+            container(
+                button::standard(button)
+                    .on_press_maybe((!self.busy).then_some(Message::SceneModel(event))),
+            )
+            .id(cosmic::widget::Id::new("clock-scene-model"))
+            .into(),
+        )
+    }
     pub(super) fn clock_stage_view(&self) -> Element<'_, Message> {
         let screen = stage::known(self.placement.preview_snapshot().screen);
         let cap = stage::stage_size([self.content_width(), f32::INFINITY], screen);
@@ -67,6 +108,32 @@ impl Settings {
             {
                 let frame = stage::frame(position, clock, screen);
                 let shown = clock.map(|v| v * scale);
+                if let Some(spot) = self.clock_stage.suggested(&frame)
+                    && !self.clock_stage.dragging()
+                {
+                    let at = stage::to_stage(spot, scale);
+                    layers.push(
+                        pin(container(cosmic::iced::widget::space())
+                            .width(shown[0])
+                            .height(shown[1])
+                            .class(cosmic::theme::Container::custom(move |_| {
+                                cosmic::iced::widget::container::Style {
+                                    background: Some(Background::Color(Color {
+                                        a: 0.12,
+                                        ..accent
+                                    })),
+                                    border: Border {
+                                        color: accent,
+                                        width: 1.5,
+                                        radius: 5.into(),
+                                    },
+                                    ..Default::default()
+                                }
+                            })))
+                        .position(Point::new(at[0], at[1]))
+                        .into(),
+                    );
+                }
                 let (content, at): (Element<'_, Message>, _) = match self.clock_stage.lit(&frame) {
                     Some(handle) => (
                         cosmic::widget::image(handle.clone())
@@ -127,21 +194,41 @@ impl Settings {
         .height(cap[1]);
         let mut parts = vec![picture.into()];
         if self.config.widget_visible(Widget::Clock) {
-            parts.push(
-                row::with_children(vec![
-                    container(label("Drag the clock to move it", 12., MUTED))
-                        .width(Length::Fill)
-                        .into(),
-                    button::text("Reset position")
-                        .id(cosmic::widget::Id::new("clock-stage-reset"))
+            let suggested = self.clock_stage_place().and_then(|(position, clock)| {
+                self.clock_stage
+                    .suggested(&stage::frame(position, clock, screen))
+            });
+            let mut buttons: Vec<Element<'_, Message>> = vec![
+                container(label("Drag the clock to move it", 12., MUTED))
+                    .width(Length::Fill)
+                    .into(),
+            ];
+            if suggested.is_some() {
+                buttons.push(
+                    button::suggested("Move to suggested spot")
+                        .id(cosmic::widget::Id::new("clock-stage-suggested"))
                         .on_press_maybe(
-                            (self.clock_stage_moved()
-                                && !self.clock_stage.dragging()
-                                && !self.busy)
-                                .then_some(action(Edit::Reset)),
+                            (!self.clock_stage.dragging() && !self.busy)
+                                .then_some(action(Edit::Suggested)),
                         )
                         .into(),
-                ])
+                );
+            }
+            parts.push(
+                row::with_children(
+                    buttons
+                        .into_iter()
+                        .chain([button::text("Reset position")
+                            .id(cosmic::widget::Id::new("clock-stage-reset"))
+                            .on_press_maybe(
+                                (self.clock_stage_moved()
+                                    && !self.clock_stage.dragging()
+                                    && !self.busy)
+                                    .then_some(action(Edit::Reset)),
+                            )
+                            .into()])
+                        .collect::<Vec<_>>(),
+                )
                 .spacing(8)
                 .align_y(Alignment::Center)
                 .width(cap[0])

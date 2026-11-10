@@ -1208,7 +1208,7 @@ impl Settings {
             switch("24-hour time", "Show 14:00 instead of 2:00 PM", clock.format_24h, Message::ClockFormat),
             switch("Show the date", "", clock.show_date, Message::ClockDate),
         ];
-        let ridge = clock.depth || self.ridge_wallpaper();
+        let scene_row = clock.depth || self.picture_wallpaper();
         let mut face_rows: Vec<Element<'_, Message>> = Vec::new();
         if self.clock_moment_target().is_none() {
             face_rows.push(split(
@@ -1239,14 +1239,18 @@ impl Settings {
                         .collect(), self.settings_accent())),
             ]);
         }
-        if ridge {
+        if scene_row {
             let switch = toggler(clock.depth).on_toggle(Message::ClockDepth);
             // Once it's on, a blocked switch says why and offers the one fix.
             let block = clock.depth.then(|| self.depth_block()).flatten();
             let lighting = clock.depth && block.is_none();
+            const TITLE: &str = "Let the scene cover the clock";
             face_rows.push(match block {
-                Some((reason, fix, message)) => split(
-                    detail_state("Let the hills cover the clock", reason),
+                Some(super::depth::Block {
+                    reason,
+                    fix: Some((fix, message)),
+                }) => split(
+                    detail_state(TITLE, reason),
                     row![
                         container(button::standard(fix).on_press(message))
                             .id(cosmic::widget::Id::new("clock-depth-fix")),
@@ -1256,11 +1260,22 @@ impl Settings {
                     .align_y(Alignment::Center)
                     .into(),
                 ),
+                Some(super::depth::Block { reason, fix: None }) => {
+                    split(detail_state(TITLE, reason), switch.into())
+                }
                 None => split(
-                    detail("Let the hills cover the clock", "With the Ridge wallpaper"),
+                    detail(
+                        TITLE,
+                        "The picture’s foreground covers the bottom of the time",
+                    ),
                     switch.into(),
                 ),
             });
+            if (clock.depth && !self.ridge_wallpaper())
+                || self.scenes.model != super::depth::ModelState::Missing
+            {
+                face_rows.push(self.scene_model_row());
+            }
             if lighting {
                 face_rows.push(split(
                     label("Scene lighting", 14., FG),
