@@ -9,7 +9,7 @@ fn edit(e: Edit) -> Message {
 impl Settings {
     /// What the desktop shows for `p`, the same way it decides: the Weather
     /// widget's cached reading while Match the weather is on.
-    pub(super) fn effect_scene(&self, p: &Preferences) -> weather::Scene {
+    pub(in crate::settings) fn effect_scene(&self, p: &Preferences) -> weather::Scene {
         let reading = (self.config.data_visible(Widget::Weather))
             .then_some(self.rain.weather.as_ref())
             .flatten();
@@ -29,11 +29,19 @@ impl Settings {
         match scene.source {
             Source::Weather { code, play } => {
                 let sky = crate::data::weather_description(code);
-                match play {
-                    Some((effect, _)) => {
-                        format!("{sky}: showing {}", effect.title().to_lowercase())
-                    }
-                    None => format!("{sky}: no effect"),
+                let Some((effect, level)) = play else {
+                    return format!("{sky}: no effect");
+                };
+                // The slider the weather turns down, named as on screen.
+                let setting = match effect {
+                    Effect::Rain | Effect::Snow => "density",
+                    Effect::Fog => "opacity",
+                    Effect::Clouds => "coverage",
+                };
+                let name = effect.title().to_lowercase();
+                match p.weather_strength.percent(level) {
+                    100 => format!("{sky}: {name} at your full {setting}"),
+                    percent => format!("{sky}: {name} at {percent}% of your {setting}"),
                 }
             }
             Source::NoReading if !self.config.data_visible(Widget::Weather) => {
@@ -45,17 +53,21 @@ impl Settings {
             Source::Manual => String::new(),
         }
     }
+    /// Which effect's controls show: while Match the weather is on, the one
+    /// picked under Adjust, else the weather's effect while it plays one
+    /// (its strength is a share of these), otherwise Moving effect.
+    fn adjusting(&self, p: &Preferences, scene: &weather::Scene) -> Effect {
+        let playing =
+            (scene.from_weather() && scene.preferences.enabled).then_some(scene.preferences.effect);
+        match self.rain.adjust {
+            Some(effect) if p.weather => effect,
+            _ => playing.unwrap_or(p.effect),
+        }
+    }
     pub(super) fn rain_controls(&self) -> Element<'_, Message> {
         let p = self.wallpaper.effect().unwrap_or(&self.config.rain);
         let scene = self.effect_scene(p);
-        // The controls adjust what plays: the weather's effect while it
-        // chooses (its strength is a share of these), otherwise Moving effect.
-        let weather_plays = scene.from_weather() && scene.preferences.enabled;
-        let effect = if weather_plays {
-            scene.preferences.effect
-        } else {
-            p.effect
-        };
+        let effect = self.adjusting(p, &scene);
         const EFFECTS: &[Effect] = &[Effect::Rain, Effect::Snow, Effect::Fog, Effect::Clouds];
         const TITLES: &[&str] = &[
             "None",
@@ -102,6 +114,31 @@ impl Settings {
             .id(cosmic::widget::Id::new("rain-weather"))
             .into(),
         ));
+        if p.weather {
+            let strength = segmented(
+                weather::Strength::ALL
+                    .into_iter()
+                    .map(|strength| {
+                        let mut next = p.clone();
+                        next.weather_strength = strength;
+                        (
+                            strength.title().into(),
+                            p.weather_strength == strength,
+                            Some(edit(Edit::Set(next))),
+                        )
+                    })
+                    .collect(),
+                self.settings_accent(),
+            );
+            rows.push(
+                container(
+                    column::with_children(vec![label("Weather strength", 14., FG), strength])
+                        .spacing(8),
+                )
+                .id(cosmic::widget::Id::new("rain-weather-strength"))
+                .into(),
+            );
+        }
         if self.wallpaper.effect_conflict() {
             rows.push(label(
                 "Effects changed elsewhere. Choose which version to keep.",
@@ -125,7 +162,31 @@ impl Settings {
                 .into(),
             );
         }
-        if p.enabled || weather_plays || self.rain.preview {
+        if p.weather {
+            // Picks which effect's controls show. It never changes what
+            // plays on the desktop or Moving effect.
+            let adjust = segmented(
+                EFFECTS
+                    .iter()
+                    .map(|&choice| {
+                        (
+                            choice.title().into(),
+                            effect == choice,
+                            Some(edit(Edit::Adjust(choice))),
+                        )
+                    })
+                    .collect(),
+                self.settings_accent(),
+            );
+            rows.push(
+                column::with_children(vec![label("Adjust", 14., FG), adjust])
+                    .spacing(8)
+                    .into(),
+            );
+        }
+        // Match the weather on: the weather's effect, or the one picked
+        // under Adjust, always has controls.
+        if p.enabled || p.weather || self.rain.preview {
             if effect == Effect::Rain {
                 let style_help=self.help("rain-style-help","Droplet motion","Flowing uses a procedural GPU shader. Merging simulates large drops that join and leave small trails. Both use your wallpaper and stay behind widgets, windows and the dock.");
                 let style_choices = segmented(
@@ -329,10 +390,27 @@ impl Settings {
             .id(cosmic::widget::Id::new("rain-controls"))
             .into()
     }
+    /// What the preview plays: what the desktop shows, weather included.
+    /// While Match the weather is on and the effect picked under Adjust
+    /// isn't the one playing, that effect at its own settings instead: how
+    /// heavy weather plays it at every Weather strength.
+    pub(in crate::settings) fn previewed(&self) -> Preferences {
+        let manual = self.wallpaper.effect().unwrap_or(&self.config.rain);
+        let scene = self.effect_scene(manual);
+        let effect = self.adjusting(manual, &scene);
+        if manual.weather && !(scene.preferences.enabled && scene.preferences.effect == effect) {
+            Preferences {
+                enabled: true,
+                effect,
+                ..manual.clone()
+            }
+        } else {
+            scene.preferences
+        }
+    }
     pub(super) fn rain_preview(&self, height: f32) -> Option<Element<'_, Message>> {
-        // The preview shows what the desktop shows, weather included.
-        let scene = self.effect_scene(self.wallpaper.effect().unwrap_or(&self.config.rain));
-        let p = &scene.preferences;
+        let shown = self.previewed();
+        let p = &shown;
         if !p.enabled && !self.rain.preview {
             self.rain.release_image();
             return None;

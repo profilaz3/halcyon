@@ -3280,6 +3280,7 @@ impl Settings {
                 if self.page != page && self.page == Page::DesktopWallpaper {
                     // Keep values and transaction baselines; only stop rendering.
                     self.rain.preview = false;
+                    self.rain.adjust = None;
                     self.rain.release_image();
                 }
                 self.devbox_reordering = false;
@@ -3781,12 +3782,10 @@ impl Settings {
                     }
                 }
                 rain::Edit::Set(p) if self.page == Page::DesktopWallpaper => {
-                    let before = self.wallpaper.snapshot();
-                    if let Err(error) = self.wallpaper.stage_effect(p) {
-                        self.failed(error);
-                    }
-                    self.wallpaper.record_step(before);
+                    self.set_effect(p);
                 }
+                // Only which controls show; nothing is staged or saved.
+                rain::Edit::Adjust(effect) => self.rain.adjust = Some(effect),
                 rain::Edit::Preview(on) => self.rain.preview = on,
                 // Finishes a preview gesture; Apply owns the write.
                 rain::Edit::Commit => self.wallpaper.finish_gesture(),
@@ -4430,6 +4429,22 @@ fn desktop_write_message(message: &Message) -> bool {
         | Message::UndoDesktopRestore(..)
         | Message::DesktopRestoreDone(..) => true,
         _ => false,
+    }
+}
+
+impl Settings {
+    /// One staged Wallpaper effect change, a step for Undo.
+    fn set_effect(&mut self, p: crate::rain::Preferences) {
+        let staged = self.wallpaper.effect().unwrap_or(&self.config.rain);
+        if staged.weather != p.weather {
+            // Turning Match the weather on or off starts from what plays.
+            self.rain.adjust = None;
+        }
+        let before = self.wallpaper.snapshot();
+        if let Err(error) = self.wallpaper.stage_effect(p) {
+            self.failed(error);
+        }
+        self.wallpaper.record_step(before);
     }
 }
 
@@ -6639,6 +6654,7 @@ mod tests {
             name,
             "rain_native_settings_preview_commit_undo_and_clipping"
                 | "weather_scenes_native_toggle_apply_undo_and_status"
+                | "weather_strength_and_adjust_native_controls"
         ) && std::env::var_os("VK_DRIVER_FILES").is_none()
             && std::env::var_os("VK_ICD_FILENAMES").is_none()
         {
@@ -10175,19 +10191,9 @@ mod tests {
         json!({"name": "Weather scene fixture", "latitude": 45.0, "longitude": 16.0})
     }
 
-    #[test]
-    fn weather_scenes_native_toggle_apply_undo_and_status() {
-        if desktop_test_child(
-            "weather_scenes_native_toggle_apply_undo_and_status",
-            DesktopEnv {
-                app_config: true,
-                fixture: true,
-                icons: Icons::Shown,
-                ..Default::default()
-            },
-        ) {
-            return;
-        }
+    /// A wallpaper, the Weather widget on for the fixture city, and moderate
+    /// snow observed just now. Nothing is fetched by Settings.
+    fn weather_fixture() {
         use crate::desktop::wallpaper::{BgEntry, BgSource, shared_key};
         let store = crate::desktop::DesktopStore::from_env().unwrap();
         let path = store.user_path(&shared_key());
@@ -10212,10 +10218,28 @@ mod tests {
             "enabled_widgets": ["weather"]
         }))
         .unwrap();
-        // Moderate snow, observed just now. Nothing is fetched by Settings.
         weather_reading(73, chrono::Local::now());
+    }
+
+    #[test]
+    fn weather_scenes_native_toggle_apply_undo_and_status() {
+        if desktop_test_child(
+            "weather_scenes_native_toggle_apply_undo_and_status",
+            DesktopEnv {
+                app_config: true,
+                fixture: true,
+                icons: Icons::Shown,
+                ..Default::default()
+            },
+        ) {
+            return;
+        }
+        weather_fixture();
         let raw_before = raw_preferences();
-        let snowing = format!("{}: showing snow", crate::data::weather_description(73));
+        let snowing = format!(
+            "{}: snow at 70% of your density",
+            crate::data::weather_description(73)
+        );
         for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
             let (mut app, initial) = Settings::init(Core::default(), Page::DesktopWallpaper);
             settle_settings(&mut app, initial);
@@ -10302,7 +10326,8 @@ mod tests {
             // Reduce motion still pauses a weather scene.
             Config::save_changes(json!({"material_motion": false})).unwrap();
             send_settings(&mut app, Message::Tick);
-            native_reveal(&app, &mut native, "rain-controls");
+            // The pause line sits under the controls' last row.
+            native_reveal(&app, &mut native, "rain-adjust");
             native.text_bounds(app.settings_view(), "Paused while Reduce motion is on");
             Config::save_changes(json!({"material_motion": true})).unwrap();
             send_settings(&mut app, Message::Tick);
@@ -10318,6 +10343,198 @@ mod tests {
                 raw_preferences().get("future_field"),
                 raw_before.get("future_field")
             );
+        }
+    }
+
+    #[test]
+    fn weather_strength_and_adjust_native_controls() {
+        if desktop_test_child(
+            "weather_strength_and_adjust_native_controls",
+            DesktopEnv {
+                app_config: true,
+                fixture: true,
+                icons: Icons::Shown,
+                ..Default::default()
+            },
+        ) {
+            return;
+        }
+        use crate::rain::Effect;
+        use crate::rain::weather::Strength;
+        weather_fixture();
+        let sky = crate::data::weather_description;
+        let ready = crate::rain::lifecycle::State {
+            ready: true,
+            ..Default::default()
+        };
+        for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+            let (mut app, initial) = Settings::init(Core::default(), Page::DesktopWallpaper);
+            settle_settings(&mut app, initial);
+            drive_wallpaper(&mut app);
+            send_settings(&mut app, Message::Resized(size));
+            app.rain.lifecycle = ready;
+            let mut native = crate::native_test::Native::with_backend(size, "wgpu");
+            weather_reading(73, chrono::Local::now());
+            let off = Config::load().rain;
+            assert!(!off.weather);
+            // Off: neither Weather strength nor Adjust shows.
+            native_reveal(&app, &mut native, "rain-weather");
+            for id in ["rain-weather-strength", "rain-adjusting-snow"] {
+                assert!(native.try_bounds(app.settings_view(), id).is_none(), "{id}");
+            }
+            assert!(
+                native
+                    .text_all(app.settings_view(), "Weather strength")
+                    .is_empty()
+            );
+            native_click(&mut app, &mut native, "rain-weather");
+            drive_wallpaper(&mut app);
+            app.rain.lifecycle = ready;
+            let on = Config::load().rain;
+            assert!(on.weather && on.weather_strength == Strength::Natural);
+            assert!(!raw_preferences().to_string().contains("weather_strength"));
+            native_reveal(&app, &mut native, "rain-weather-strength");
+            native.text_bounds(app.settings_view(), "Weather strength");
+            native.text_bounds(app.settings_view(), "Adjust");
+            // Each choice is one applied change, worded in the status line.
+            for (title, strength, percent) in [
+                ("Subtle", Strength::Subtle, 50),
+                ("Strong", Strength::Strong, 85),
+            ] {
+                native_reveal(&app, &mut native, "rain-weather-strength");
+                native_click_text(&mut app, &mut native, title);
+                drive_wallpaper(&mut app);
+                assert_eq!(Config::load().rain.weather_strength, strength);
+                assert_eq!(
+                    Config::load().rain,
+                    crate::rain::Preferences {
+                        weather_strength: strength,
+                        ..on.clone()
+                    }
+                );
+                native.text_bounds(
+                    app.settings_view(),
+                    &format!("{}: snow at {percent}% of your density", sky(73)),
+                );
+            }
+            assert_eq!(
+                raw_preferences()["rain"]["weather_strength"],
+                json!("strong")
+            );
+            // Undo steps back through them.
+            send_settings(&mut app, Message::UndoDesktop);
+            assert_eq!(Config::load().rain.weather_strength, Strength::Subtle);
+            send_settings(&mut app, Message::UndoDesktop);
+            assert_eq!(Config::load().rain, on);
+            // The status line names each effect's own slider.
+            for (code, line) in [
+                (61, format!("{}: rain at 40% of your density", sky(61))),
+                (45, format!("{}: fog at 70% of your opacity", sky(45))),
+                (
+                    2,
+                    format!("{}: cloud shadows at 70% of your coverage", sky(2)),
+                ),
+                (75, format!("{}: snow at your full density", sky(75))),
+                (0, format!("{}: no effect", sky(0))),
+            ] {
+                weather_reading(code, chrono::Local::now());
+                send_settings(&mut app, Message::Tick);
+                native_reveal(&app, &mut native, "rain-weather");
+                native.text_bounds(app.settings_view(), &line);
+            }
+            weather_reading(73, chrono::Local::now());
+            send_settings(&mut app, Message::Tick);
+            // Adjust starts on the effect the weather plays.
+            native_reveal(&app, &mut native, "rain-adjusting-snow");
+            native.text_bounds(app.settings_view(), "Flake size");
+            assert_eq!(app.previewed().effect, Effect::Snow);
+            // The desktop's own snow: 70% of the density, rounded up.
+            assert_eq!(
+                u16::from(app.previewed().snow.density),
+                (u16::from(on.snow.density) * 70).div_ceil(100)
+            );
+            for (theme, mode) in [
+                (cosmic::Theme::light(), "light"),
+                (cosmic::Theme::dark(), "dark"),
+            ] {
+                native_reveal(&app, &mut native, "rain-weather");
+                native.capture(
+                    app.settings_view(),
+                    &theme,
+                    &format!("weather-strength-{}-{mode}", size.width),
+                );
+            }
+            // Picking fog shows fog's controls and preview, and changes
+            // nothing that plays or is saved.
+            native_click(&mut app, &mut native, "rain-adjusting-fog");
+            drive_wallpaper(&mut app);
+            assert_eq!(Config::load().rain, on);
+            assert_eq!(app.wallpaper.effect().unwrap_or(&app.config.rain), &on);
+            assert_eq!(
+                app.effect_scene(&app.config.rain).preferences.effect,
+                Effect::Snow,
+                "the desktop still shows snow"
+            );
+            assert!(
+                !on.enabled && on.effect == Effect::Rain,
+                "Moving effect is None"
+            );
+            native_reveal(&app, &mut native, "rain-height");
+            native.text_bounds(app.settings_view(), "Height");
+            assert!(
+                native
+                    .text_all(app.settings_view(), "Flake size")
+                    .is_empty()
+            );
+            let preview = app.previewed();
+            assert!(preview.enabled && preview.effect == Effect::Fog);
+            assert_eq!(preview.fog, on.fog, "at the fog settings themselves");
+            assert!(native.duplicate_ids(app.settings_view()).is_empty());
+            assert!(
+                native.overflowing_text(app.settings_view()).is_empty(),
+                "{:?}",
+                native.overflowing_text(app.settings_view())
+            );
+            for (theme, mode) in [
+                (cosmic::Theme::light(), "light"),
+                (cosmic::Theme::dark(), "dark"),
+            ] {
+                native_reveal(&app, &mut native, "rain-adjusting-fog");
+                native.capture(
+                    app.settings_view(),
+                    &theme,
+                    &format!("weather-adjust-fog-{}-{mode}", size.width),
+                );
+            }
+            // A fog slider while it snows saves fog only.
+            native_click(&mut app, &mut native, "rain-opacity");
+            drive_wallpaper(&mut app);
+            let tuned = Config::load().rain;
+            assert_ne!(tuned.fog, on.fog);
+            assert_eq!(
+                tuned,
+                crate::rain::Preferences {
+                    fog: tuned.fog.clone(),
+                    ..on.clone()
+                }
+            );
+            assert_eq!(app.rain.adjust, Some(Effect::Fog), "the pick stays");
+            send_settings(&mut app, Message::UndoDesktop);
+            assert_eq!(Config::load().rain, on);
+            // Off and on again starts from what plays; leaving the page forgets it.
+            native_click(&mut app, &mut native, "rain-weather");
+            drive_wallpaper(&mut app);
+            assert_eq!(Config::load().rain, off);
+            assert_eq!(app.rain.adjust, None);
+            native_reveal(&app, &mut native, "rain-weather");
+            assert!(
+                native
+                    .try_bounds(app.settings_view(), "rain-adjusting-fog")
+                    .is_none()
+            );
+            send_settings(&mut app, Message::Rain(rain::Edit::Adjust(Effect::Clouds)));
+            send_settings(&mut app, Message::Page(Page::Themes));
+            assert_eq!(app.rain.adjust, None);
         }
     }
 
@@ -11523,6 +11740,20 @@ mod tests {
         bounds
     }
 
+    /// Clicks the on-screen text `text`, such as a segmented choice.
+    fn native_click_text(app: &mut Settings, native: &mut crate::native_test::Native, text: &str) {
+        use cosmic::iced::{Event, mouse};
+        let at = native.text_bounds(app.settings_view(), text).center();
+        for event in [
+            mouse::Event::CursorMoved { position: at },
+            mouse::Event::ButtonPressed(mouse::Button::Left),
+            mouse::Event::ButtonReleased(mouse::Button::Left),
+        ] {
+            for message in native.event(app.settings_view(), Event::Mouse(event), at).0 {
+                send_settings(app, message);
+            }
+        }
+    }
     pub(super) fn native_click(
         app: &mut Settings,
         native: &mut crate::native_test::Native,

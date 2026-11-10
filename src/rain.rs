@@ -44,6 +44,10 @@ pub struct Preferences {
     /// picks the effect. Off by default; `weather::resolve` has the rules.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub weather: bool,
+    /// Weather strength: the share of the setting light and moderate
+    /// weather play at. Natural (40/70/100%) unless chosen.
+    #[serde(skip_serializing_if = "weather::Strength::is_default")]
+    pub weather_strength: weather::Strength,
     pub mode: Mode,
     #[serde(skip_serializing_if = "Effect::is_default")]
     pub effect: Effect,
@@ -68,6 +72,7 @@ impl Default for Preferences {
         Self {
             enabled: false,
             weather: false,
+            weather_strength: weather::Strength::Natural,
             mode: Mode::Procedural,
             effect: Effect::Rain,
             snow: Snow::default(),

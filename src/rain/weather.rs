@@ -5,6 +5,7 @@
 //! control back to the person's own choice.
 use super::{Effect, Preferences};
 use chrono::{DateTime, Duration, FixedOffset, Local};
+use serde::{Deserialize, Serialize};
 
 /// How strong the reported weather is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -13,14 +14,40 @@ pub enum Level {
     Moderate,
     Heavy,
 }
-impl Level {
+
+/// Weather strength: how far light and moderate weather turn the person's
+/// own setting down. Heavy weather is always their full setting.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Strength {
+    Subtle,
+    #[default]
+    Natural,
+    Strong,
+}
+impl Strength {
+    pub const ALL: [Self; 3] = [Self::Subtle, Self::Natural, Self::Strong];
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::Subtle => "Subtle",
+            Self::Natural => "Natural",
+            Self::Strong => "Strong",
+        }
+    }
     /// The share of the person's own setting. Their setting is the ceiling:
     /// weather never makes an effect stronger than they chose.
-    pub const fn percent(self) -> u16 {
-        match self {
-            Self::Light => 40,
-            Self::Moderate => 70,
-            Self::Heavy => 100,
+    pub const fn percent(self, level: Level) -> u16 {
+        match (self, level) {
+            (_, Level::Heavy) => 100,
+            (Self::Subtle, Level::Light) => 25,
+            (Self::Subtle, Level::Moderate) => 50,
+            (Self::Natural, Level::Light) => 40,
+            (Self::Natural, Level::Moderate) => 70,
+            (Self::Strong, Level::Light) => 70,
+            (Self::Strong, Level::Moderate) => 85,
         }
     }
 }
@@ -125,10 +152,12 @@ impl Scene {
     }
 }
 
-/// `manual` with `effect` playing at `level` of the person's own setting.
+/// `manual` with `effect` playing at `level` of the person's own setting,
+/// as their Weather strength sets it.
 pub fn apply(manual: &Preferences, effect: Effect, level: Level) -> Preferences {
+    let percent = manual.weather_strength.percent(level);
     // Rounded up, so a visible setting stays visible; never above the setting.
-    let scale = |value: u8| (u16::from(value) * level.percent()).div_ceil(100) as u8;
+    let scale = |value: u8| (u16::from(value) * percent).div_ceil(100) as u8;
     let mut p = manual.clone();
     p.enabled = true;
     p.effect = effect;
@@ -284,6 +313,101 @@ mod tests {
             assert_eq!(clouds.pause_on_battery, manual.pause_on_battery);
             assert!(clouds.validate().is_ok());
         }
+    }
+
+    #[test]
+    fn weather_strength_sets_the_share_for_each_level() {
+        use Level::*;
+        use Strength::*;
+        let expected = [
+            (Subtle, [25, 50, 100]),
+            (Natural, [40, 70, 100]),
+            (Strong, [70, 85, 100]),
+        ];
+        for (strength, percents) in expected {
+            let mut manual = opted_in();
+            manual.weather_strength = strength;
+            manual.intensity = 100;
+            manual.snow.density = 100;
+            manual.fog.opacity = 100;
+            manual.clouds.coverage = 100;
+            for (level, percent) in [Light, Moderate, Heavy].into_iter().zip(percents) {
+                assert_eq!(strength.percent(level), percent, "{strength:?} {level:?}");
+                let at = |effect| apply(&manual, effect, level);
+                assert_eq!(u16::from(at(Effect::Rain).intensity), percent);
+                assert_eq!(u16::from(at(Effect::Snow).snow.density), percent);
+                assert_eq!(u16::from(at(Effect::Fog).fog.opacity), percent);
+                assert_eq!(u16::from(at(Effect::Clouds).clouds.coverage), percent);
+            }
+            // Heavy weather is always the person's full setting.
+            assert_eq!(apply(&manual, Effect::Rain, Heavy).intensity, 100);
+        }
+    }
+
+    #[test]
+    fn weather_strength_rounds_up_and_never_exceeds_the_setting() {
+        use Level::*;
+        use Strength::*;
+        for strength in Strength::ALL {
+            let mut manual = opted_in();
+            manual.weather_strength = strength;
+            for value in 0..=100u8 {
+                manual.intensity = value;
+                for level in [Light, Moderate, Heavy] {
+                    let scaled = apply(&manual, Effect::Rain, level).intensity;
+                    assert!(scaled <= value, "{strength:?} {level:?} {value}");
+                    // A visible setting stays visible; zero stays zero.
+                    assert_eq!(scaled == 0, value == 0, "{strength:?} {level:?} {value}");
+                    let exact = u32::from(value) * u32::from(strength.percent(level));
+                    assert_eq!(u32::from(scaled), exact.div_ceil(100));
+                }
+            }
+        }
+        // 45 at 25% is 11.25, rounded up to 12; at 85% 38.25 is 39.
+        let mut manual = opted_in();
+        manual.intensity = 45;
+        manual.weather_strength = Subtle;
+        assert_eq!(apply(&manual, Effect::Rain, Light).intensity, 12);
+        manual.weather_strength = Strong;
+        assert_eq!(apply(&manual, Effect::Rain, Moderate).intensity, 39);
+        manual.intensity = 1;
+        manual.weather_strength = Subtle;
+        assert_eq!(apply(&manual, Effect::Rain, Light).intensity, 1);
+    }
+
+    #[test]
+    fn weather_strength_defaults_to_natural_and_round_trips() {
+        // Configs written before Weather strength load as Natural, and
+        // Natural is left out so they're written back unchanged.
+        let old: Preferences = serde_json::from_str(r#"{"weather":true,"intensity":60}"#).unwrap();
+        assert_eq!(old.weather_strength, Strength::Natural);
+        assert!(
+            !serde_json::to_string(&old)
+                .unwrap()
+                .contains("weather_strength")
+        );
+        assert_eq!(Preferences::default().weather_strength, Strength::Natural);
+        for (strength, key) in [(Strength::Subtle, "subtle"), (Strength::Strong, "strong")] {
+            let p = Preferences {
+                weather_strength: strength,
+                ..old.clone()
+            };
+            let encoded = serde_json::to_string(&p).unwrap();
+            assert!(encoded.contains(&format!(r#""weather_strength":"{key}""#)));
+            assert_eq!(serde_json::from_str::<Preferences>(&encoded).unwrap(), p);
+        }
+        assert!(serde_json::from_str::<Preferences>(r#"{"weather_strength":"wild"}"#).is_err());
+        // Resolving the scene uses it.
+        let mut manual = old;
+        manual.weather_strength = Strength::Subtle;
+        let scene = resolve(
+            &manual,
+            Some(&reading(61, 1)),
+            Local::now(),
+            cutoff(HALF_HOUR),
+        );
+        assert_eq!(scene.preferences.intensity, 15);
+        assert_eq!(scene.level(), Some(Level::Light));
     }
 
     #[test]

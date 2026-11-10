@@ -55,9 +55,12 @@ duplicate polling or permanent animation loop.
 **Status:** first version implemented and validated locally on 2026-11-08
 ([design and decisions](WEATHER-SCENES.md),
 [evidence](evidence/fb33-weather-scenes-20261108.json)). It settles the mapping,
-40/70/100% intensity caps, a stale cutoff of two refresh intervals (at most 3 h)
-and 1.5 s fades. A per-effect allow list, separate limits and a timed manual
-override are not in this version; turning Match the weather off is the override.
+a stale cutoff of two refresh intervals (at most 3 h) and 1.5 s fades.
+Intensity limits are now chosen with Weather strength: Subtle (25/50/100%),
+Natural (40/70/100%, the default) or Strong (70/85/100%) of the person's own
+setting. The status line says how strong, and Adjust tunes any effect while
+Match the weather is on. A per-effect allow list and a timed manual override
+remain out; turning Match the weather off is the override.
 
 **Experience:** rain, snow, fog and cloud shadows follow the Weather widget's
 city. Settings offer Follow weather, allowed effects, intensity limits and a
