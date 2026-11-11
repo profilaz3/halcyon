@@ -2562,7 +2562,7 @@ impl Settings {
         }
         if self.automation.dirty() {
             push(
-                "Schedule",
+                Page::DesktopAutomation.title(),
                 Page::DesktopProfiles,
                 false,
                 KeptTarget::Page(Page::DesktopAutomation),
@@ -2570,7 +2570,7 @@ impl Settings {
         }
         if self.window_rules.dirty() {
             push(
-                "Floating apps",
+                Page::DesktopWindowRules.title(),
                 Page::Overview,
                 false,
                 KeptTarget::Page(Page::DesktopWindowRules),
@@ -2594,7 +2594,7 @@ impl Settings {
         }
         if self.desktop_icons.dirty() {
             push(
-                "Desktop icons",
+                Page::DesktopIcons.title(),
                 Page::Overview,
                 false,
                 KeptTarget::Page(Page::DesktopIcons),

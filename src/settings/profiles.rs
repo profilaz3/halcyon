@@ -2158,7 +2158,7 @@ impl ProfilesEditor {
             profiles::import(&bytes).and_then(|profile| {
                 if themes_only && !profile.appearance_only {
                     return Err(profiles::ProfileError::Invalid(
-                        "This file is a layout preset. Import it in Presets & schedules.".into(),
+                        "This file is a whole look. Import it in Looks › Import a look….".into(),
                     ));
                 }
                 ProfileLibrary::new(store)

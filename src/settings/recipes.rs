@@ -300,7 +300,9 @@ impl Editor {
             Message::Apply | Message::UseBuiltin => {
                 let path = Config::path().ok_or("No settings directory")?;
                 if !crate::design::storage::managed(&path) {
-                    return Err("Migrate widgets in App settings → Recovery before applying a personal widget".into());
+                    return Err(
+                        "Get your widgets ready first: “Get ready…” in Halcyon › Updates.".into(),
+                    );
                 }
                 let value = if matches!(edit, Message::Apply) {
                     self.draft.validate()?;

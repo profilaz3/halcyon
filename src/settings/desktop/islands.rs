@@ -589,10 +589,10 @@ impl State {
                 compatible: Some(false),
                 ..
             } => Some(
-                "Islands is installed but unavailable for this desktop. The standard dock and panel remain available. Check diagnostics in App settings.",
+                "Islands is installed but unavailable for this desktop. The standard dock and panel remain available. See Halcyon › Updates for details.",
             ),
             Installation::Installed { enabled: false, .. } => Some(
-                "Islands is installed but disabled. Manage it in App settings. The standard dock and panel remain available.",
+                "Islands is installed but disabled. Choose Islands in Dock and panel to use it. The standard dock and panel remain available.",
             ),
             Installation::Installed {
                 status: Some(CompatibilityStatus::LogoutRequired),

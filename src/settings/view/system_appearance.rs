@@ -404,7 +404,7 @@ impl Settings {
         );
         if open {
             items.push(label(
-                "Surface overrides for the theme preview above. Choose the accent in Theme and colors.",
+                "Surface overrides for the style preview above. Choose the accent in Accent color.",
                 11.,
                 MUTED,
             ));

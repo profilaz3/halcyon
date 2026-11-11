@@ -244,7 +244,7 @@ fn check_penumbra(value: &RawValue) -> Result<(), String> {
             || !effect.maximized_opacity.is_finite()
             || !(0.0..=1.0).contains(&effect.maximized_opacity))
     {
-        return Err("Unsupported Penumbra gradient settings".into());
+        return Err("Unsupported blend into wallpaper settings".into());
     }
     Ok(())
 }
@@ -445,7 +445,7 @@ pub fn key_label(name: &str) -> &'static str {
         "autohide" | "exclusive_zone" => "hiding",
         "autohide_behavior" => "hide timing",
         "opacity" => "opacity",
-        "top_edge_gradient" => "Penumbra gradient",
+        "top_edge_gradient" => "blend into wallpaper",
         "border_radius" => "corners",
         "spacing" => "spacing",
         "padding" => "padding",

@@ -166,7 +166,7 @@ pub(super) fn completion(message: &Message) -> Option<Message> {
 pub(super) fn label(message: &Message) -> String {
     match message {
         Message::Rain(_) => "Wallpaper effect",
-        Message::Moment(_) => "Moment",
+        Message::Moment(_) => "Time of day",
         Message::WidgetDisplay(_) | Message::WidgetMonitor(..) | Message::WidgetMonitorHide(..) => {
             "Widget display"
         }
@@ -174,7 +174,7 @@ pub(super) fn label(message: &Message) -> String {
             desktop::Message::Opacity(_) => "Dock opacity",
             desktop::Message::Penumbra(_)
             | desktop::Message::PenumbraHeight(_)
-            | desktop::Message::PenumbraMaximizedOpacity(_) => "Penumbra gradient",
+            | desktop::Message::PenumbraMaximizedOpacity(_) => "Blend into wallpaper",
             desktop::Message::Anchor(_) => "Dock position",
             // The control's own name; a change of one key says more (see
             // `actions::action_label`).

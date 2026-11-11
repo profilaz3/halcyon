@@ -6510,6 +6510,8 @@ mod ux_tests;
 #[cfg(test)]
 mod wizard_tests;
 #[cfg(test)]
+mod wording_tests;
+#[cfg(test)]
 mod tests {
     use super::*;
     use cosmic::Application;

@@ -1815,8 +1815,7 @@ impl DesktopStore {
             pointer.starts_with("/recipes/") && entry.desired.as_ref().is_some_and(|v| !v.is_null())
         }) {
             return Err(invalid(
-                "Migrate widgets in App settings → Recovery before applying a personal widget"
-                    .into(),
+                "Get your widgets ready first: “Get ready…” in Halcyon › Updates.".into(),
             ));
         }
         let before = config::read_raw_config_text(path).map_err(invalid)?;

@@ -176,7 +176,7 @@ impl Settings {
                 Message::Profiles(Edit::MixStart),
             ),
             tab(
-                "Schedules",
+                Page::DesktopAutomation.title(),
                 "destination-desktop-automation",
                 !on_list,
                 waiting(&|t| {
