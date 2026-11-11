@@ -427,7 +427,7 @@ impl Settings {
             .flatten()
             .or_else(|| self.page_error())
         {
-            content.push(label(error, 12., desktop::ERROR));
+            content.push(self.error_line(error));
         }
         content.push(actions);
         column::with_children(content).spacing(6).into()

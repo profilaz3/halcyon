@@ -2186,9 +2186,12 @@ fn apply_with_source(
         for (panel, expected) in islands {
             if let Err(error) = c.request(&dock_islands_core::Request::Activate { panel, expected })
             {
-                return Err(DesktopError::Io(format!(
-                    "Preset saved. {error}. Undo is available."
-                )));
+                eprintln!("Islands did not take the look's layout: {error}");
+                return Err(DesktopError::Io(
+                    "The look was applied, but the panel didn’t pick up its layout. It shows \
+                     after you log out and back in. Undo is available."
+                        .into(),
+                ));
             }
         }
     }

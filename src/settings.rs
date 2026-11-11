@@ -537,6 +537,8 @@ pub enum Message {
     ObjectTab(navigation::ObjectTab),
     /// Returns to a retained preview.
     ResumeKept(navigation::KeptTarget),
+    /// Shows or hides the technical text behind the footer's error.
+    ToggleErrorDetails,
     /// Undoes one step of the preview on this screen, and nothing else.
     UndoPreviewStep,
     /// Reveals the unresolved values inside the page's preview review.
@@ -793,6 +795,9 @@ pub struct Settings {
     quiet_navigation: bool,
     /// What leaving just kept, and how to return to it.
     kept_note: Option<(String, navigation::KeptTarget)>,
+    /// The technical text shown under the footer's error; a new error
+    /// starts hidden.
+    error_details: Option<String>,
     /// Setup choices wait to be resumed from Recovery.
     setup_kept: bool,
     collapsed_scenes: Vec<Page>,
@@ -1122,6 +1127,7 @@ impl cosmic::Application for Settings {
             search_open: false,
             quiet_navigation: false,
             kept_note: None,
+            error_details: None,
             setup_kept: false,
             collapsed_scenes: Vec::new(),
             scene_objects_open: false,
@@ -2589,6 +2595,15 @@ impl Settings {
             Message::BrowseSetups => return self.leave_review_to_browse(),
             Message::ObjectTab(tab) => return self.select_object_tab(tab),
             Message::ResumeKept(target) => return self.resume_kept(target),
+            Message::ToggleErrorDetails => {
+                let shown = self.page_error_details().map(str::to_owned);
+                self.error_details = match shown {
+                    Some(details) if self.error_details.as_ref() != Some(&details) => {
+                        Some(details)
+                    }
+                    _ => None,
+                };
+            }
             Message::UndoPreviewStep => return self.undo_preview_step(),
             Message::ReviewPreviewConflicts => return navigation::reveal("preview-conflicts"),
             Message::Placement(message) => {
@@ -6497,6 +6512,8 @@ fn service_task() -> Task<Message> {
     })
 }
 
+#[cfg(test)]
+mod feedback_tests;
 #[cfg(test)]
 mod future_builder_probe;
 #[cfg(test)]

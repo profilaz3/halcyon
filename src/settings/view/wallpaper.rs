@@ -1029,18 +1029,22 @@ impl Settings {
     pub(super) fn wallpaper_actions(&self) -> Element<'_, Message> {
         let editor = &self.wallpaper;
         let failed = matches!(editor.notice(), Some(Notice::Error(_)));
+        let waiting = matches!(editor.notice(), Some(Notice::Busy(_)));
         // Clicked choices apply on their own; the bar is only for a typed
-        // value or a change that could not apply.
-        if !editor.preview_open() || (!failed && (!editor.dirty() || self.wallpaper_instant)) {
+        // value, a change that could not apply, or one still being prepared.
+        if !editor.preview_open()
+            || (!failed && !waiting && (!editor.dirty() || self.wallpaper_instant))
+        {
             return self.simple_status();
         }
-        let status = match editor.notice() {
-            Some(Notice::Error(error)) => error.as_str(),
-            _ if self.native_busy => "Saving…",
-            _ => "Not applied yet",
+        let status: Element<'_, Message> = match editor.notice() {
+            Some(notice @ Notice::Error(_)) => self.error_line(notice.text()),
+            Some(notice @ Notice::Busy(_)) => label(notice.text(), 12., MUTED).into(),
+            _ if self.native_busy => label("Saving…", 12., MUTED).into(),
+            _ => label("Not applied yet", 12., MUTED).into(),
         };
         self.preview_bar(
-            label(status, 12., if failed { ERROR } else { MUTED }),
+            status,
             editor.can_undo_step(),
             Vec::new(),
             edit(Edit::Discard),

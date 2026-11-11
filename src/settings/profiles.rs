@@ -12,7 +12,9 @@ use crate::desktop::profiles::{
 use crate::desktop::store::{Journal, KeyEntry, Snapshot, widget};
 use crate::desktop::wallpaper::media::{self, Pixels};
 use crate::desktop::wallpaper::{self, BgEntry, BgSource};
-use crate::desktop::{DesktopError, DesktopPatch, DesktopStore, LatestChange, Owner};
+use crate::desktop::{
+    DesktopError, DesktopPatch, DesktopStore, LatestChange, Owner, UserMessage,
+};
 use crate::settings::desktop::Notice;
 use cosmic::widget::image::Handle;
 use std::collections::BTreeSet;
@@ -977,7 +979,7 @@ impl ProfilesEditor {
         };
         let library = ProfileLibrary::new(store)
             .list()
-            .map_err(|error| error.to_string());
+            .map_err(|error| error.user_message());
         self.library = Some(library);
         self.read_last_applied();
         self.refresh_recovery();
@@ -1068,7 +1070,7 @@ impl ProfilesEditor {
         let loaded = match self.store() {
             Some(store) => ProfileLibrary::new(store)
                 .load(id)
-                .map_err(|error| error.to_string()),
+                .map_err(|error| error.user_message()),
             None => Err("Desktop settings unavailable".into()),
         };
         self.loaded = Some(loaded);
@@ -1279,8 +1281,8 @@ impl ProfilesEditor {
                     self.theme_override = Some(p);
                 }
                 Err(error) => {
-                    self.loaded = Some(Err(error.to_string()));
-                    self.notice = Some(Notice::Error(error.to_string()));
+                    self.loaded = Some(Err(error.user_message()));
+                    self.notice = Some(Notice::failed(&error));
                     // Never fall back to an unmodified record on a failed read.
                     self.selection = Selection::Current;
                     self.replan();
@@ -1708,7 +1710,7 @@ impl ProfilesEditor {
             self.library = Some(
                 ProfileLibrary::new(store)
                     .list()
-                    .map_err(|error| error.to_string()),
+                    .map_err(|error| error.user_message()),
             );
         }
     }
@@ -1812,7 +1814,7 @@ impl ProfilesEditor {
                             self.session_review = false;
                             self.replan();
                         }
-                        Err(error) => self.notice = Some(Notice::Error(error.to_string())),
+                        Err(error) => self.notice = Some(Notice::failed(&error)),
                     }
                 }
             }
@@ -2046,7 +2048,7 @@ impl ProfilesEditor {
                 }));
             }
             // The name field stays open with the text for another try.
-            Err(error) => self.notice = Some(Notice::Error(error.to_string())),
+            Err(error) => self.notice = Some(Notice::failed(&error)),
         }
     }
 
@@ -2087,7 +2089,7 @@ impl ProfilesEditor {
                     None => "Removed a saved look that couldn’t be read".into(),
                 }));
             }
-            Err(error) => self.notice = Some(Notice::Error(error.to_string())),
+            Err(error) => self.notice = Some(Notice::failed(&error)),
         }
     }
 
@@ -2120,7 +2122,7 @@ impl ProfilesEditor {
                 })
             }
             Err(error) => {
-                self.notice = Some(Notice::Error(error.to_string()));
+                self.notice = Some(Notice::failed(&error));
                 Outcome::None
             }
         }
@@ -2325,7 +2327,7 @@ impl ProfilesEditor {
             }
             Err(error) => {
                 self.refresh_recovery();
-                self.notice = Some(Notice::Error(error.to_string()));
+                self.notice = Some(Notice::failed(&error));
                 Outcome::None
             }
         }
@@ -2338,7 +2340,7 @@ impl ProfilesEditor {
             DesktopError::FieldConflict { keys, fields } => changed(&keys, fields),
             error => {
                 self.refresh_recovery();
-                self.notice = Some(Notice::Error(error.to_string()));
+                self.notice = Some(Notice::failed(&error));
                 return;
             }
         };
@@ -2372,7 +2374,7 @@ impl ProfilesEditor {
                 Outcome::Changed
             }
             Err(error) => {
-                self.notice = Some(Notice::Error(error.to_string()));
+                self.notice = Some(Notice::failed(&error));
                 Outcome::None
             }
         }

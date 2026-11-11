@@ -117,6 +117,26 @@ impl fmt::Display for ProfileError {
 
 impl std::error::Error for ProfileError {}
 
+impl crate::desktop::UserMessage for ProfileError {
+    fn user_message(&self) -> String {
+        use crate::desktop::store::message::{leaks, plain};
+        let shown = |text: &str, fallback: &str| {
+            if leaks(text) { fallback } else { text }.to_string()
+        };
+        match self {
+            Self::Invalid(message) => {
+                shown(message, "This file isn’t a Halcyon look, or it’s damaged.")
+            }
+            Self::Unsupported(message) => shown(
+                message,
+                "This look was made by a newer version of Halcyon. Update Halcyon to use it.",
+            ),
+            Self::NotFound(message) => shown(message, "That look isn’t there anymore."),
+            Self::Storage(message) => plain(message),
+        }
+    }
+}
+
 impl From<DesktopError> for ProfileError {
     fn from(error: DesktopError) -> Self {
         Self::Storage(error.to_string())

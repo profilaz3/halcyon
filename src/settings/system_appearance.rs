@@ -454,7 +454,7 @@ impl AppearanceEditor {
             },
             Err(error) => {
                 if self.draft().is_some() {
-                    self.notice = Some(Notice::Error(error.to_string()));
+                    self.notice = Some(Notice::failed(&error));
                 } else {
                     self.draft = Some(Err(error.to_string()));
                 }
@@ -626,7 +626,7 @@ impl AppearanceEditor {
                         }
                         self.notice = Some(Notice::Done(super::drafts::KEEPING.into()));
                     }
-                    Err(error) => self.notice = Some(Notice::Error(error.to_string())),
+                    Err(error) => self.notice = Some(Notice::failed(&error)),
                 }
                 self.settle_hex(false, false);
             }
@@ -646,7 +646,7 @@ impl AppearanceEditor {
                     self.notice = Some(Notice::Done("Using the current values".into()));
                 }
             }
-            Err(error) => self.notice = Some(Notice::Error(error.to_string())),
+            Err(error) => self.notice = Some(Notice::failed(&error)),
         }
     }
 
@@ -695,7 +695,7 @@ impl AppearanceEditor {
                 } else {
                     self.refresh_recovery();
                 }
-                self.notice = Some(Notice::Error(error.to_string()));
+                self.notice = Some(Notice::failed(&error));
             }
         }
     }
@@ -728,7 +728,7 @@ impl AppearanceEditor {
                 } else {
                     self.refresh_recovery();
                 }
-                self.notice = Some(Notice::Error(error.to_string()));
+                self.notice = Some(Notice::failed(&error));
             }
         }
     }
@@ -753,7 +753,7 @@ impl AppearanceEditor {
                 self.settle_hex(false, false);
                 self.notice = Some(Notice::Done(message));
             }
-            Err(error) => self.notice = Some(Notice::Error(error.to_string())),
+            Err(error) => self.notice = Some(Notice::failed(&error)),
         }
     }
 }

@@ -1226,7 +1226,7 @@ impl WallpaperEditor {
             match AppearanceDraft::load(store) {
                 Ok(draft) => self.accent = Some(draft),
                 Err(error) => {
-                    self.set_notice(Notice::Error(error.to_string()));
+                    self.set_notice(Notice::failed(&error));
                     return;
                 }
             }
@@ -1285,7 +1285,7 @@ impl WallpaperEditor {
                 true
             }
             Err(error) => {
-                self.core.notice = Some(Notice::Error(error.to_string()));
+                self.core.notice = Some(Notice::failed(&error));
                 false
             }
         }
@@ -1322,7 +1322,7 @@ impl WallpaperEditor {
         }
         let current = automatic::source(store, draft).stamp;
         if self.automatic_source.as_ref().map(|source| source.stamp) != Some(current) {
-            return Err("The wallpaper changed. Finding its new colors before Apply…".into());
+            return Err(FINDING_COLORS.into());
         }
         let (raw, config) = automatic::read_config(store)?;
         let light = automatic::light(suggestion);
@@ -1344,7 +1344,7 @@ impl WallpaperEditor {
         let mut polarity = match self.polarity() {
             Ok(polarity) => polarity,
             Err(reason) => {
-                self.set_notice(Notice::Error(reason));
+                self.set_notice(polarity_notice(reason));
                 return;
             }
         };
@@ -1414,9 +1414,7 @@ impl WallpaperEditor {
             let current = automatic::source(self.store().expect("open"), draft);
             if current.stamp != colors.stamp {
                 self.automatic_source = None;
-                self.set_notice(Notice::Error(
-                    "The wallpaper changed. Finding its new colors before Apply…".into(),
-                ));
+                self.set_notice(Notice::Busy(FINDING_COLORS.into()));
                 return;
             }
             for key in draft.watch_keys() {
@@ -1426,7 +1424,7 @@ impl WallpaperEditor {
         if let Some(accent) = self.accent_patch()
             && let Err(error) = patch.merge(accent)
         {
-            self.set_notice(Notice::Error(error.to_string()));
+            self.set_notice(Notice::failed(&error));
             return;
         }
         let mut widgets = match self.colors.as_ref().map(Colors::patch).transpose() {
@@ -1467,7 +1465,7 @@ impl WallpaperEditor {
                 }
                 Ok(None) => {}
                 Err(reason) => {
-                    self.set_notice(Notice::Error(reason));
+                    self.set_notice(polarity_notice(reason));
                     return;
                 }
             }
@@ -1968,6 +1966,10 @@ impl WallpaperEditor {
                 if self.automatic_analysis == Some((id, stamp)) {
                     self.automatic_analysis = None;
                     self.automatic_suggestion = Some(suggestion);
+                    // The colors Apply waited for are ready.
+                    if matches!(self.core.notice, Some(Notice::Busy(_))) {
+                        self.core.notice = None;
+                    }
                 }
             }
             Message::Stop(index, text) => {
@@ -2106,7 +2108,7 @@ impl WallpaperEditor {
                             self.stage_colors();
                         }
                         (Err(error), _) => self.set_notice(Notice::Error(error)),
-                        (_, Err(error)) => self.set_notice(Notice::Error(error.to_string())),
+                        (_, Err(error)) => self.set_notice(Notice::failed(&error)),
                     }
                 }
             }
@@ -2908,6 +2910,17 @@ impl WallpaperEditor {
             colors.stamp = source.stamp;
             self.stage_colors();
         }
+    }
+}
+
+/// Apply waits for the new wallpaper's colors; it is progress, not a failure.
+pub(crate) const FINDING_COLORS: &str = "Finding colors for the new wallpaper…";
+
+fn polarity_notice(reason: String) -> Notice {
+    if reason == FINDING_COLORS {
+        Notice::Busy(reason)
+    } else {
+        Notice::Error(reason)
     }
 }
 

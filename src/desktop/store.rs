@@ -48,6 +48,8 @@ pub mod activity;
 mod design;
 mod history;
 pub use design::DesignWrite;
+pub mod message;
+pub use message::UserMessage;
 mod ownership;
 pub use history::UndoReview;
 mod undo;

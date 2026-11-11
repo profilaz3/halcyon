@@ -445,10 +445,20 @@ impl Settings {
         let error = self.page_error();
         let mut items: Vec<Element<'_, Message>> = Vec::new();
         let mut empty = true;
+        let progress = self
+            .page_notice()
+            .filter(|notice| {
+                use crate::settings::desktop::Notice;
+                matches!(notice, Notice::Busy(_) | Notice::Warning(_))
+            });
         if let Some(error) = error {
             empty = false;
+            items.push(self.error_line(error));
+        } else if let Some(notice) = progress {
+            empty = false;
             items.push(
-                container(label(error, 12., desktop::ERROR))
+                container(label(notice.text(), 12., MUTED))
+                    .id("settings-progress")
                     .width(Length::Fill)
                     .into(),
             );
@@ -505,6 +515,35 @@ impl Settings {
         .padding([8, 22])
         .width(Length::Fill)
         .into()
+    }
+
+    /// A failure in plain words, with its technical text one click away.
+    pub(super) fn error_line<'a>(&'a self, error: &'a str) -> Element<'a, Message> {
+        let line = label(error, 12., desktop::ERROR);
+        let Some(details) = self.page_error_details() else {
+            return container(line).width(Length::Fill).into();
+        };
+        let open = self.error_details.as_deref() == Some(details);
+        let mut lines = vec![
+            row::with_children(vec![
+                container(line).width(Length::Fill).into(),
+                button::text(if open { "Hide details" } else { "Details" })
+                    .id(cosmic::widget::Id::new("settings-error-details"))
+                    .class(cosmic::theme::Button::Text)
+                    .padding([2, 4])
+                    .on_press(Message::ToggleErrorDetails)
+                    .into(),
+            ])
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into(),
+        ];
+        if open {
+            lines.push(label(details, 11., MUTED));
+        }
+        container(column::with_children(lines).spacing(4))
+            .width(Length::Fill)
+            .into()
     }
 
     /// The latest change's summary, when it is the change Undo targets.
@@ -636,7 +675,9 @@ impl Settings {
             .into()
     }
 
-    pub(super) fn page_error(&self) -> Option<&str> {
+    /// The notice the footer shows: a failure, work in progress or a
+    /// warning. Done notices are said by the Saved line instead.
+    fn page_notice(&self) -> Option<&crate::settings::desktop::Notice> {
         use crate::settings::desktop::Notice;
         let notices = match self.page {
             Page::DesktopDock => [self.desktop.notice.as_ref(), None, None],
@@ -661,13 +702,24 @@ impl Settings {
             Page::DesktopWallpaper | Page::Appearance => [self.wallpaper.notice(), None, None],
             _ => [None, None, None],
         };
+        let mut notices = notices.into_iter().flatten();
+        // A failure on any part of the page comes before progress.
         notices
-            .into_iter()
-            .flatten()
-            .find_map(|notice| match notice {
-                Notice::Error(error) => Some(error.as_str()),
-                Notice::Done(_) => None,
-            })
-            .or_else(|| self.error.then_some(self.status.as_str()))
+            .clone()
+            .find(|notice| matches!(notice, Notice::Error(_)))
+            .or_else(|| notices.find(|notice| !matches!(notice, Notice::Done(_))))
+    }
+    /// The failure the footer shows, as a plain sentence.
+    pub(super) fn page_error(&self) -> Option<&str> {
+        use crate::settings::desktop::Notice;
+        match self.page_notice() {
+            Some(notice @ Notice::Error(_)) => Some(notice.text()),
+            _ => None,
+        }
+        .or_else(|| self.error.then_some(self.status.as_str()))
+    }
+    /// The technical text behind the footer's error, for Details.
+    pub(in crate::settings) fn page_error_details(&self) -> Option<&str> {
+        self.page_notice()?.details()
     }
 }
