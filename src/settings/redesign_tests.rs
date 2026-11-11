@@ -509,7 +509,7 @@ fn polish_primary_content_actions_fit_without_collapsing_or_scrolling() {
     let size = Size::new(820., 552.);
     send_settings(&mut app, Message::Resized(size));
     for (page, ids) in [
-        // Notes save as you type; Save and Throw away only appear for
+        // Notes save as you type; Save and Discard only appear for
         // edits restored from last time.
         (Page::Notes, vec!["note-editor"]),
         (Page::Calendar, vec!["calendar-subscription-open"]),

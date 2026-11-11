@@ -1146,43 +1146,50 @@ impl Settings {
             .align_y(Alignment::Center)
             .into()
         };
+        let mut actions = vec![
+            label(widget.title(), 13., accent),
+            button::text(if self.canvas.is_some() {
+                "Content settings"
+            } else {
+                "Customize"
+            })
+            .id(cosmic::widget::Id::new("layout-content-settings"))
+            .on_press(if self.page == super::view::home::widget_page(widget) {
+                super::Message::ObjectTab(super::navigation::ObjectTab::Content)
+            } else {
+                super::Message::Page(super::view::home::widget_page(widget))
+            })
+            .into(),
+            button::text(if editor.resize_mode {
+                "Move with arrows"
+            } else {
+                "Resize with arrows"
+            })
+            .id(cosmic::widget::Id::new("layout-resize-mode"))
+            .on_press(message(Message::ResizeMode(!editor.resize_mode)))
+            .into(),
+        ];
+        // On the canvas its own Done applies the moves; clicking empty space
+        // or Escape ends the selection.
+        if self.canvas.is_none() {
+            actions.push(
+                button::text("Done")
+                    .id(cosmic::widget::Id::new("layout-done"))
+                    .on_press(message(Message::ClearSelection))
+                    .into(),
+            );
+        }
         column::with_children(vec![
             if self.canvas.is_none() {
                 self.widget_display_controls(widget)
             } else {
                 text::caption("Local draft · arrows move the selection").into()
             },
-            row::with_children(vec![
-                label(widget.title(), 13., accent),
-                button::text(if self.canvas.is_some() {
-                    "Content settings"
-                } else {
-                    "Customize"
-                })
-                .id(cosmic::widget::Id::new("layout-content-settings"))
-                .on_press(if self.page == super::view::home::widget_page(widget) {
-                    super::Message::ObjectTab(super::navigation::ObjectTab::Content)
-                } else {
-                    super::Message::Page(super::view::home::widget_page(widget))
-                })
+            row::with_children(actions)
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .wrap()
                 .into(),
-                button::text(if editor.resize_mode {
-                    "Move with arrows"
-                } else {
-                    "Resize with arrows"
-                })
-                .id(cosmic::widget::Id::new("layout-resize-mode"))
-                .on_press(message(Message::ResizeMode(!editor.resize_mode)))
-                .into(),
-                button::text("Done")
-                    .id(cosmic::widget::Id::new("layout-done"))
-                    .on_press(message(Message::ClearSelection))
-                    .into(),
-            ])
-            .spacing(8)
-            .align_y(Alignment::Center)
-            .wrap()
-            .into(),
             row::with_children(vec![
                 dimensions(0, "W"),
                 dimensions(1, "H"),

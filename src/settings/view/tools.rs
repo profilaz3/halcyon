@@ -330,7 +330,7 @@ impl Settings {
                         .id(cosmic::widget::Id::new("note-save"))
                         .on_press_maybe((!tools.saving()).then(|| edit(Edit::NoteSave)))
                         .into(),
-                    button::text("Throw away")
+                    button::text("Discard")
                         .id(cosmic::widget::Id::new("note-revert"))
                         .on_press_maybe((!tools.saving()).then(|| edit(Edit::NoteRevert)))
                         .into(),

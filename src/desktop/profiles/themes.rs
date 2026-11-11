@@ -272,7 +272,7 @@ pub fn repair_matching(store: &DesktopStore) -> Result<Profile, ProfileError> {
     let family = config
         .appearance
         .family
-        .ok_or_else(|| ProfileError::Invalid("Choose a theme first".into()))?;
+        .ok_or_else(|| ProfileError::Invalid("Choose a style first".into()))?;
     let mut profile = Profile::new("Repair theme matching").expect("fixed valid name");
     profile.appearance_only = true;
     profile.version = super::format::VERSION_7;

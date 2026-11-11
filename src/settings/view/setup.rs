@@ -152,9 +152,9 @@ impl Settings {
                 },
                 self.config.appearance.family.is_some(),
                 if self.config.appearance.family.is_some() {
-                    "Change theme"
+                    "Change style"
                 } else {
-                    "Choose a theme"
+                    "Choose a style"
                 },
                 Some(Message::Page(Page::Themes)),
             ),

@@ -904,7 +904,6 @@ const ROWS: &[SearchHit] = &[
     hit(Page::Calendar, "Tomorrow", "", false),
     hit(Page::Clock, "24-hour time", "", false),
     hit(Page::Clock, "Alignment", "", false),
-    hit(Page::Clock, "Follow the look’s style", "", false),
     hit(Page::Clock, "Let the scene cover the clock", "", false),
     hit(Page::Clock, "Show the date", "", false),
     hit(Page::Clock, "Text", "", false),
@@ -913,6 +912,7 @@ const ROWS: &[SearchHit] = &[
     hit(Page::DesktopAppearance, "Icon theme", "", false),
     hit(Page::DesktopAppearance, "Interface font", "", false),
     hit(Page::DesktopAppearance, "Match style", "", false),
+    hit(Page::Clock, "Match the desktop style", "", false),
     hit(Page::DesktopAppearance, "Widget font", "", false),
     hit(Page::DesktopAutomation, "Set times and screens", "", false),
     hit(Page::Moments, "Showing now", "", false),
@@ -1484,7 +1484,7 @@ impl Page {
     pub(super) fn save_hint(self) -> &'static str {
         match self {
             Self::Overview => "Edit layout to preview changes before applying",
-            Self::Themes => "Choose a theme to preview it here",
+            Self::Themes => "Choose a style to preview it here",
             Self::DesktopWallpaper => "Choose a wallpaper to preview it here",
             Self::DesktopProfiles => "Choose a look to see what it includes",
             Self::Notes => "",

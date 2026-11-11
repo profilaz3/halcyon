@@ -334,7 +334,7 @@ impl Settings {
         ));
         blocks.push(
             row::with_children(vec![
-                button::suggested("Use starter layout")
+                button::suggested("Apply starter layout")
                     .on_press_maybe(
                         (idle && starter != Regions::default()).then_some(edit(Edit::UseStarter)),
                     )
