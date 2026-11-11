@@ -883,13 +883,13 @@ fn motion_preference_ignores_stale_reads_and_can_be_undone() {
     }
     let (mut app, _) = Settings::init(Core::default(), Page::General);
     let generation = app.motion_generation;
-    let _ = app.update(Message::SystemMotion(generation, true));
+    let _ = app.update(Message::SystemMotion(generation, Some(true)));
     assert!(app.system_animations);
     let _ = app.update(Message::ReadSystemMotion);
-    let _ = app.update(Message::SystemMotion(generation, true));
-    let _ = app.update(Message::SystemMotion(app.motion_generation, false));
+    let _ = app.update(Message::SystemMotion(generation, Some(true)));
+    let _ = app.update(Message::SystemMotion(app.motion_generation, Some(false)));
     assert!(!app.system_animations);
-    let _ = app.update(Message::SystemMotion(generation, true));
+    let _ = app.update(Message::SystemMotion(generation, Some(true)));
     assert!(!app.system_animations);
     let _ = app.update(Message::SettingsAnimations(false));
     assert!(!Config::load().settings_animations);

@@ -245,7 +245,35 @@ impl Cards {
         self.weather_hub.resumed(lost, now);
         self.automator.resumed(lost, now);
     }
+    /// Reads the system's “enable animations” off the update thread. A
+    /// setting that can't be read leaves motion to Halcyon's own switches.
+    pub(super) fn read_system_motion() -> Task<Message> {
+        cosmic::task::future(async {
+            let on = tokio::task::spawn_blocking(|| {
+                crate::desktop::DesktopStore::from_env()
+                    .ok()
+                    .and_then(|store| {
+                        crate::desktop::motion::AppAnimations::for_store(&store)
+                            .read()
+                            .ok()
+                    })
+                    .unwrap_or(true)
+            })
+            .await
+            .unwrap_or(true);
+            Message::SystemMotion(on)
+        })
+    }
+    /// Every motion switch the desktop reads, off.
+    pub(super) fn still(cfg: &mut Config) {
+        cfg.material_motion = false;
+        cfg.settings_animations = false;
+        cfg.sidebar_slide = false;
+    }
     pub(super) fn apply_config(&mut self, mut cfg: Config) -> Task<Message> {
+        if !self.system_animations {
+            Self::still(&mut cfg);
+        }
         let mut tasks = Vec::new();
         let now = Instant::now();
         if self.sidebar.drag.is_some() {

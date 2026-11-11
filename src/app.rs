@@ -154,6 +154,10 @@ pub enum Message {
     /// monotonic clock reached it (time lost in suspend).
     Woke(Instant, Duration),
     FilesChanged,
+    /// The system's “enable animations” setting may have changed.
+    ReadSystemMotion,
+    /// Whether the system asks apps to animate.
+    SystemMotion(bool),
     DesktopPaletteChanged,
     WallpaperColorsChanged,
     RainLifecycle(crate::rain::lifecycle::State),
@@ -338,6 +342,11 @@ pub struct Cards {
     all_projects: bool,
     expanded_projects: std::collections::BTreeSet<String>,
     config: Config,
+    /// The system's “enable animations” (Accessibility › Reduce motion off).
+    /// While it is off, the loaded config is read with every motion
+    /// switch off, so rain, the visualizer, the island and the drawer stay
+    /// still, whatever Halcyon's own switches say.
+    system_animations: bool,
     sampler: Sampler,
     metrics: Metrics,
     histories: history::MetricHistories,
@@ -414,6 +423,7 @@ impl cosmic::Application for Cards {
         let calendar_refresh = config.refresh_intervals.duration(Widget::Calendar);
         let mut app = Self {
             activity: Default::default(),
+            system_animations: true,
             core,
             ids,
             layout_editor: layout::LayoutEditor::default(),
@@ -494,6 +504,7 @@ impl cosmic::Application for Cards {
         tasks.extend(app.refresh_visible_data());
         tasks.push(app.wallpaper_colors_changed());
         tasks.push(app.publish_display_state());
+        tasks.push(Self::read_system_motion());
         app.publish_activity();
         tasks.push(cosmic::task::future(async {
             tokio::time::sleep(std::time::Duration::from_secs(20)).await;
@@ -539,6 +550,16 @@ impl cosmic::Application for Cards {
             .chain(self.automator.paths())
             .collect();
         subscriptions.push(crate::watch::files(paths).map(|_| Message::FilesChanged));
+        // The same files Settings watches for Accessibility › Reduce motion.
+        if let Some(dir) = dirs::config_dir() {
+            subscriptions.push(
+                crate::watch::read_only_files(vec![
+                    dir.join("dconf/user"),
+                    dir.join("dconf/cosmic"),
+                ])
+                .map(|_| Message::ReadSystemMotion),
+            );
+        }
         subscriptions.push(
             self.config
                 .color_subscription()
@@ -724,6 +745,7 @@ impl cosmic::Application for Cards {
                 | Message::Calendar(..)
                 | Message::PreviewCalendar(_)
                 | Message::FilesChanged
+                | Message::SystemMotion(_)
                 | Message::Woke(..)
         );
         let outer = !self.updating;
@@ -1101,6 +1123,27 @@ impl Cards {
                 tasks.extend(self.refresh_visible_data());
                 tasks.push(self.capture_if_changed());
                 Task::batch(tasks)
+            }
+            Message::ReadSystemMotion => Self::read_system_motion(),
+            Message::SystemMotion(on) => {
+                if on == self.system_animations {
+                    return Task::none();
+                }
+                self.system_animations = on;
+                // Stopping needs nothing new from disk; motion comes back
+                // with Halcyon's own switches as saved.
+                let config = if on {
+                    match Config::try_load() {
+                        Ok(config) => config,
+                        Err(error) => {
+                            eprintln!("Keeping last valid widget settings: {error}");
+                            return Task::none();
+                        }
+                    }
+                } else {
+                    self.config.clone()
+                };
+                self.apply_config(config)
             }
             Message::DesktopPaletteChanged => {
                 if let Err(error) = self.config.refresh_desktop_palette() {
@@ -2850,6 +2893,33 @@ mod tests {
         cards.next_clock = Instant::now();
         let _ = cards.update(Message::Woke(cards.next_clock, Duration::ZERO));
         assert_eq!(cards.wake_generation, generation + 1);
+    }
+    #[test]
+    fn system_reduce_motion_stops_rain_visualizer_island_and_drawer() {
+        use cosmic::Application;
+        let moving = Config {
+            material_motion: true,
+            settings_animations: true,
+            sidebar_slide: true,
+            ..Config::default()
+        };
+        let (mut cards, _) = Cards::init(Core::default(), moving.clone());
+        assert!(cards.config.material_motion && cards.config.sidebar_slide);
+        // Accessibility › Reduce motion on: “enable animations” is off.
+        let _ = cards.update(Message::SystemMotion(false));
+        let still = |cards: &Cards| {
+            !cards.config.material_motion
+                && !cards.config.settings_animations
+                && !cards.config.sidebar_slide
+        };
+        assert!(still(&cards));
+        // A reload while it is off keeps everything still.
+        let _ = cards.apply_config(moving.clone());
+        assert!(still(&cards));
+        // Halcyon's own switches still decide once the system allows motion.
+        cards.system_animations = true;
+        let _ = cards.apply_config(moving);
+        assert!(cards.config.material_motion && cards.config.sidebar_slide);
     }
     #[test]
     fn timer_does_not_reload_preferences_or_revert_the_in_memory_selection() {

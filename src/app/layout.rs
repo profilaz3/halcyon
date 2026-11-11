@@ -991,8 +991,11 @@ impl Cards {
         });
         self.layout_editor.session_actions.extend(receipts);
         match result {
-            Ok(config) => {
+            Ok(mut config) => {
                 self.layout_editor.error = None;
+                if !self.system_animations {
+                    Self::still(&mut config);
+                }
                 self.config = config;
                 self.refresh_display_layouts();
                 self.layout_editor.baseline = self.layout_editor.draft.clone();
@@ -1262,7 +1265,10 @@ impl Cards {
                 serde_json::json!({"widget_positions": {}, "widget_sizes": {}, "monitor_layouts": {}}),
             )
         }) {
-            Ok(config) => {
+            Ok(mut config) => {
+                if !self.system_animations {
+                    Self::still(&mut config);
+                }
                 self.config = config;
                 self.refresh_display_layouts();
             }

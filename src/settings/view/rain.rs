@@ -388,8 +388,10 @@ impl Settings {
                 column::with_children(adjustments).spacing(14).into(),
             ));
             let state = self.rain.lifecycle;
-            if !self.config.material_motion {
+            if self.system_reduce_motion {
                 rows.push(label("Paused while Reduce motion is on", 12., MUTED));
+            } else if !self.config.material_motion {
+                rows.push(label("Paused because Liquid motion is off", 12., MUTED));
             } else if !state.ready {
                 rows.push(label("Waiting for the desktop session", 12., MUTED));
             } else if p.pause_on_battery && state.on_battery {
@@ -427,7 +429,8 @@ impl Settings {
         }
         let mut active = p.clone();
         active.enabled = true;
-        if !active.active(self.config.material_motion, self.rain.lifecycle) {
+        let motion = self.config.material_motion && !self.system_reduce_motion;
+        if !active.active(motion, self.rain.lifecycle) {
             self.rain.release_image();
             return None;
         }
@@ -437,7 +440,7 @@ impl Settings {
             cosmic::iced::widget::Shader::new(crate::rain::gpu::Program {
                 scene,
                 preferences: p.clone(),
-                running: self.config.material_motion,
+                running: motion,
                 fixed_time: None,
                 fade: Default::default(),
             })
