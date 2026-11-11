@@ -58,7 +58,7 @@ impl DesktopStore {
                 .cloned()
         });
         let mut file = file.ok_or_else(|| {
-            DesktopError::UndoUnavailable("This change is no longer kept, so it can't be put back".into())
+            DesktopError::UndoUnavailable("This change is no longer kept, so it can’t be undone".into())
         })?;
         file.history.clear();
         file.recent.clear();
@@ -141,7 +141,12 @@ impl DesktopStore {
                 let current = self.read_user(&entry.key)?;
                 if !exact_equal(&current, &entry.after) {
                     if let Some(conflicts) = conflicts.as_deref_mut() {
-                        conflicts.push(entry.key.to_string());
+                        conflicts.push(activity::native_conflict(
+                            &entry.key.namespace,
+                            &entry.key.key,
+                            current.as_ref().map(RawValue::as_str),
+                            entry.before.as_ref().map(RawValue::as_str),
+                        ));
                         patch.guard(entry.key.clone(), current);
                         continue;
                     }
@@ -170,7 +175,11 @@ impl DesktopStore {
                                 fields: vec![widget::label(pointer)],
                             });
                         };
-                        conflicts.push(widget::label(pointer));
+                        conflicts.push(activity::widget_conflict(
+                            pointer,
+                            current.as_ref(),
+                            entry.original.as_ref(),
+                        ));
                         widgets
                             .set(pointer, current.clone(), current)
                             .map_err(DesktopError::Io)?;
@@ -228,11 +237,11 @@ impl DesktopStore {
                     let Some(conflicts) = conflicts.as_deref_mut() else {
                         return Err(DesktopError::Conflict(vec![entry.key.clone()]));
                     };
-                    conflicts.push(format!(
-                        "{} · current {} · previous {}",
-                        entry.key,
-                        short(current.as_ref().map(RawValue::as_str)),
-                        short(entry.before.as_ref().map(RawValue::as_str))
+                    conflicts.push(activity::native_conflict(
+                        &entry.key.namespace,
+                        &entry.key.key,
+                        current.as_ref().map(RawValue::as_str),
+                        entry.before.as_ref().map(RawValue::as_str),
                     ));
                     patch.guard(entry.key.clone(), current);
                 }
@@ -311,11 +320,10 @@ impl DesktopStore {
                             fields: vec![widget::label(&pointer)],
                         });
                     };
-                    conflicts.push(format!(
-                        "{} · current {} · previous {}",
-                        widget::label(&pointer),
-                        short(current.as_ref().map(Value::to_string).as_deref()),
-                        short(entry.desired.as_ref().map(Value::to_string).as_deref())
+                    conflicts.push(activity::widget_conflict(
+                        &pointer,
+                        current.as_ref(),
+                        entry.desired.as_ref(),
                     ));
                     widgets
                         .set(&pointer, current.clone(), current)
@@ -564,18 +572,6 @@ fn reverse_overrides(
     })
 }
 
-fn short(value: Option<&str>) -> String {
-    value
-        .map(|v| {
-            v.split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-                .chars()
-                .take(80)
-                .collect()
-        })
-        .unwrap_or_else(|| "system default".into())
-}
 
 /// Merge only members changed by the action. An external change to one of
 /// those members is a conflict; unrelated members of a native container stay.
@@ -1814,8 +1810,17 @@ mod tests {
             "unreviewed Undo writes nothing on shared native conflict"
         );
         let review = store.review_undo(&action.id).unwrap();
+        // Named by its page, never by its config key.
         assert!(
             review
+                .conflicts
+                .iter()
+                .any(|v| v.starts_with("Appearance · a setting")),
+            "{:?}",
+            review.conflicts
+        );
+        assert!(
+            !review
                 .conflicts
                 .iter()
                 .any(|v| v.contains("transparent_primary"))

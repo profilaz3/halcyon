@@ -1,6 +1,6 @@
 //! Changes: every recorded change on one page, pinned at the bottom of the
-//! sidebar. The latest manual change offers Undo; older ones offer Put back
-//! while their record is kept; every entry opens the setting it changed. Older
+//! sidebar. Your changes offer Undo while their record is kept (older ones
+//! undo only themselves); every entry opens the setting it changed. Older
 //! setups to go back to, and work left unfinished by an update, live here too.
 use super::desktop::{WARN, banner};
 use super::*;
@@ -242,7 +242,7 @@ impl Settings {
     pub(super) fn changes_page(&self) -> Element<'_, Message> {
         let mut items = vec![heading(
             "Changes",
-            "What changed on your desktop and widgets, and why. Undo the latest change, put back an older one, or open any change where it was made.",
+            "What changed on your desktop and widgets, and why. Undo any change of yours, or open it where it was made.",
         )];
         let unfinished = self.recovery_sheet.rows.len();
         if unfinished > 0 {
@@ -419,7 +419,8 @@ impl Settings {
             && entry.action == Action::Changed
             && entry.cause == Cause::You
             && self.support.local.recent.undo_id.as_deref() == Some(&entry.id);
-        // Older changes of yours can be put back while their record is kept.
+        // Older changes of yours can be undone on their own while their
+        // record is kept.
         let yours = elsewhere && entry.action == Action::Changed && entry.cause == Cause::You;
         let put_back = yours
             && !undo
@@ -455,8 +456,8 @@ impl Settings {
         }
         if put_back {
             actions.push(
-                button::standard("Put back")
-                    .id(cosmic::widget::Id::new(format!("change-put-back-{}", entry.id)))
+                button::standard("Undo")
+                    .id(cosmic::widget::Id::new(format!("change-undo-{}", entry.id)))
                     .on_press(Message::PutBackChange(entry.id.clone()))
                     .into(),
             );
@@ -466,6 +467,13 @@ impl Settings {
             meta,
             row::with_children(actions).spacing(8).wrap().into(),
         )];
+        if put_back {
+            rows.push(label(
+                "Undoes only this change. Later changes stay.",
+                12.,
+                MUTED,
+            ));
+        }
         if open {
             if entry.details.is_empty() {
                 rows.push(label(
@@ -478,11 +486,7 @@ impl Settings {
                 rows.push(label(d.line(), 14., FG));
             }
             if yours && !undo && !put_back {
-                rows.push(label(
-                    "Already undone or put back, or too old to put back.",
-                    12.,
-                    MUTED,
-                ));
+                rows.push(label("Already undone, or too old to undo.", 12., MUTED));
             }
         }
         column::with_children(rows).spacing(6).into()

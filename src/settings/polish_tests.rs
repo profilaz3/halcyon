@@ -791,17 +791,18 @@ fn history_f_changes_names_widgets_and_puts_back_older_changes() {
         send_settings(&mut app, Message::Resized(size));
         let mut native = crate::native_test::Native::new(size);
         assert!(native.duplicate_ids(app.settings_view()).is_empty());
-        // The latest keeps Undo; older ones offer Put back.
+        // The latest keeps Undo; older ones offer their own Undo.
         assert!(native.try_bounds(app.settings_view(), "history-review-undo").is_some());
-        assert!(native.try_bounds(app.settings_view(), &format!("change-put-back-{}", glance.id)).is_none());
-        native_reveal(&app, &mut native, &format!("change-put-back-{}", date.id));
+        assert!(native.try_bounds(app.settings_view(), &format!("change-undo-{}", glance.id)).is_none());
+        native_reveal(&app, &mut native, &format!("change-undo-{}", date.id));
         assert!(!native.text_all(app.settings_view(), "Changed Daily overview").is_empty());
+        assert!(!native.text_all(app.settings_view(), "Undoes only this change. Later changes stay.").is_empty());
         for (theme, mode) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
             native.capture(app.settings_view(), &theme, &format!("history-f-changes-{}-{mode}", size.width));
         }
     }
     let mut native = crate::native_test::Native::new(Size::new(1280., 800.));
-    native_click(&mut app, &mut native, &format!("change-put-back-{}", date.id));
+    native_click(&mut app, &mut native, &format!("change-undo-{}", date.id));
     assert_eq!(Config::load().clock.show_date, date_before, "the clock date is back");
     assert_eq!(
         Config::load().glance.density,
@@ -809,17 +810,20 @@ fn history_f_changes_names_widgets_and_puts_back_older_changes() {
         "newer changes stay"
     );
     send_settings(&mut app, Message::Support(support::Message::Changed));
-    assert!(native.try_bounds(app.settings_view(), &format!("change-put-back-{}", date.id)).is_none());
+    assert!(native.try_bounds(app.settings_view(), &format!("change-undo-{}", date.id)).is_none());
     assert!(native.try_bounds(app.settings_view(), "history-review-undo").is_some());
 
-    // The dock spacing changed again since: Put back opens the review.
+    // The dock spacing changed again since: its Undo opens the review.
     spacing(&store, 9);
     send_settings(&mut app, Message::Support(support::Message::Changed));
-    native_reveal(&app, &mut native, &format!("change-put-back-{dock}"));
-    native_click(&mut app, &mut native, &format!("change-put-back-{dock}"));
+    native_reveal(&app, &mut native, &format!("change-undo-{dock}"));
+    native_click(&mut app, &mut native, &format!("change-undo-{dock}"));
     let review = app.undo_review.clone().expect("the review opens");
     assert!(review.puts_back());
-    assert!(!native.text_all(app.settings_view(), "Put back the rest").is_empty());
+    assert!(!native.text_all(app.settings_view(), "Undo the rest anyway").is_empty());
+    // Each conflict in the page's words, never its config key.
+    assert_eq!(review.conflicts, ["Between items: now 9 px, was Default"]);
+    native.text_bounds(app.settings_view(), "Between items: now 9 px, was Default");
     for (theme, mode) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
         native.capture(app.settings_view(), &theme, &format!("history-f-review-1280-{mode}"));
     }

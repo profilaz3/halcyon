@@ -2489,7 +2489,7 @@ impl Settings {
             }
             Message::PutBackChange(id) => {
                 if !self.appearance_pending.is_empty() || self.notice_editing {
-                    self.failed("Finish the current edit before putting back a change.".into());
+                    self.failed("Finish the current edit before undoing a change.".into());
                     return Task::none();
                 }
                 return self.put_back_change(id);

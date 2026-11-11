@@ -382,17 +382,17 @@ impl Settings {
 
     pub(super) fn simple_status(&self) -> Element<'_, Message> {
         if let Some(review) = &self.undo_review {
-            let verb = if review.puts_back() { "Put back" } else { "Undo" };
             // Names keep their case: "Undo look “Paper”", not "paper".
             let summary = self.latest_summary().filter(|s| s.id == review.id());
             let mut lines = vec![label(
                 &format!(
-                    "{verb} {} · some values changed since",
+                    "Some of these settings were changed after {}. Choose what to keep.",
                     crate::settings::support::change_name(summary, &review.label)
                 ),
                 13.,
-                desktop::ERROR,
+                desktop::WARN,
             )];
+            // Each in its page's words: "Between items: now 9 px, was 4 px".
             lines.extend(
                 review
                     .conflicts
@@ -402,15 +402,11 @@ impl Settings {
             );
             lines.push(
                 row::with_children(vec![
-                    button::text("Keep all current values")
+                    button::text("Keep today’s values")
                         .id("undo-keep-current".into())
                         .on_press(Message::ResolveUndoShown(review.clone(), false))
                         .into(),
-                    button::suggested(if review.puts_back() {
-                        "Put back the rest"
-                    } else {
-                        "Undo other changes"
-                    })
+                    button::suggested("Undo the rest anyway")
                         .id("undo-reviewed".into())
                         .on_press(Message::ResolveUndoShown(review.clone(), true))
                         .into(),
