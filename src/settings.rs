@@ -10426,13 +10426,14 @@ mod tests {
             assert!(!denser.enabled && denser.effect == before.effect);
             send_settings(&mut app, Message::UndoDesktop);
             assert_eq!(Config::load().rain, on);
-            // An old reading hands back to Moving effect, and says so.
+            // An old reading hands back to Moving effect, and says so. With
+            // Moving effect off, it says no effect shows.
             weather_reading(73, chrono::Local::now() - chrono::Duration::hours(5));
             send_settings(&mut app, Message::Tick);
             native_reveal(&app, &mut native, "rain-weather");
             native.text_bounds(
                 app.settings_view(),
-                "Weather reading is out of date: using Moving effect",
+                "Weather is out of date. No effect shows until it updates.",
             );
             native.capture(
                 app.settings_view(),

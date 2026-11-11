@@ -220,3 +220,31 @@ fn fb11_an_installed_update_offers_restart_settings() {
     click(&mut app, &mut native, "updates-restart");
     assert!(restart_requested(), "main opens Settings again once it closes");
 }
+
+#[test]
+fn dt13_the_weather_preview_says_it_is_an_example() {
+    if child("dt13_the_weather_preview_says_it_is_an_example") {
+        return;
+    }
+    let (mut app, _) = Settings::init(Core::default(), Page::Weather);
+    let size = Size::new(820., 600.);
+    let _ = app.update(Message::Resized(size));
+    let mut native = Native::new(size);
+    assert!(app.config.location.is_none());
+    let before = "Example weather. Choose your city below to see yours.";
+    assert_eq!(native.text_all(app.settings_view(), before).len(), 1);
+    // In view without scrolling, right under the preview.
+    let note = native.bounds(app.settings_view(), "weather-preview-note");
+    assert!(note.y + note.height < size.height);
+    capture(&mut app, "dt13-no-city");
+    app.config.location = Some(crate::config::Location {
+        name: "Zagreb".into(),
+        latitude: 45.8,
+        longitude: 16.0,
+        timezone: None,
+    });
+    let _ = app.update(Message::Resized(size));
+    assert!(native.text_all(app.settings_view(), before).is_empty());
+    assert_eq!(native.text_all(app.settings_view(), "Example weather").len(), 1);
+    capture(&mut app, "dt13-city");
+}

@@ -482,6 +482,22 @@ impl Settings {
         ];
         let preview = crate::app::settings_weather_preview(&self.config).map(|_| Message::Preview);
         let preview = Some(super::sample::fit(preview, 220.));
+        // The preview's conditions are made up; say so, and before a city is
+        // chosen say how to see real ones.
+        let note = if self.config.location.is_none() {
+            "Example weather. Choose your city below to see yours."
+        } else {
+            "Example weather"
+        };
+        let mut controls = controls;
+        controls.insert(
+            0,
+            container(label(note, 12., MUTED))
+                .id(cosmic::widget::Id::new("weather-preview-note"))
+                .width(Length::Fill)
+                .align_x(Alignment::Center)
+                .into(),
+        );
         self.widget_template(Widget::Weather, "Weather", preview, controls)
     }
 
