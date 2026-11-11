@@ -678,6 +678,8 @@ pub enum Message {
     ClockLighting(crate::depth::Lighting),
     /// Opens Wallpaper with Ridge chosen, so the hills can cover the clock.
     UseRidgeWallpaper,
+    /// Opens Wallpaper and its picture chooser, for a picture the scene can use.
+    ChooseScenePicture,
     /// The scene model and the analysis of your own pictures.
     SceneModel(depth::Scene),
     Moment(moments::Message),
@@ -3982,7 +3984,10 @@ impl Settings {
             }
             Message::Recipe(edit) => self.update_recipe(edit),
             Message::Design(edit) => return self.update_design(edit),
-            Message::ClockDepth(value) => self.save_clock(json!({"depth": value})),
+            Message::ClockDepth(value) => {
+                self.scenes.resume = false;
+                self.save_clock(json!({"depth": value}));
+            }
             Message::SceneModel(event) => return self.update_scene(event),
             Message::ClockLighting(value) => self.save_clock(json!({"lighting": value})),
             Message::UseRidgeWallpaper => {
@@ -3992,6 +3997,11 @@ impl Settings {
                     wallpaper::Pick::Bundled("halcyon-ridge".into()),
                 )));
                 return Task::batch([page, select]);
+            }
+            Message::ChooseScenePicture => {
+                let page = self.update(Message::Page(Page::DesktopWallpaper));
+                let choose = self.update(Message::Wallpaper(wallpaper::Message::AddPicture));
+                return Task::batch([page, choose]);
             }
             edit @ (Message::ClockFace(_)
             | Message::ClockWeight(_)

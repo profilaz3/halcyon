@@ -1281,9 +1281,35 @@ impl Settings {
             let lighting = clock.depth && block.is_none();
             const TITLE: &str = "Let the scene cover the clock";
             face_rows.push(match block {
+                // Two ways out get a row of their own under the switch.
                 Some(super::depth::Block {
                     reason,
                     fix: Some((fix, message)),
+                    alternative: Some((other, instead)),
+                }) => column::with_children(vec![
+                    split(detail_state(TITLE, reason), switch.into()),
+                    container(
+                        row::with_children(vec![
+                            container(button::standard(fix).on_press(message))
+                                .id(cosmic::widget::Id::new("clock-depth-fix"))
+                                .into(),
+                            container(button::standard(other).on_press(instead))
+                                .id(cosmic::widget::Id::new("clock-depth-alternative"))
+                                .into(),
+                        ])
+                        .spacing(8)
+                        .wrap(),
+                    )
+                    .width(Length::Fill)
+                    .align_x(Alignment::End)
+                    .into(),
+                ])
+                .spacing(8)
+                .into(),
+                Some(super::depth::Block {
+                    reason,
+                    fix: Some((fix, message)),
+                    alternative: None,
                 }) => split(
                     detail_state(TITLE, reason),
                     cosmic::widget::row![
@@ -1295,7 +1321,7 @@ impl Settings {
                     .align_y(Alignment::Center)
                     .into(),
                 ),
-                Some(super::depth::Block { reason, fix: None }) => {
+                Some(super::depth::Block { reason, fix: None, .. }) => {
                     split(detail_state(TITLE, reason), switch.into())
                 }
                 None => split(
