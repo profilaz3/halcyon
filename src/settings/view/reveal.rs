@@ -110,6 +110,21 @@ impl Widget<Message, Theme, Renderer> for Reveal<'_> {
             );
         }
     }
+    fn a11y_nodes(
+        &self,
+        layout: Layout<'_>,
+        tree: &Tree,
+        cursor: mouse::Cursor,
+    ) -> iced_accessibility::A11yTree {
+        if !self.open {
+            return iced_accessibility::A11yTree::default();
+        }
+        self.child.as_widget().a11y_nodes(
+            layout.children().next().unwrap(),
+            &tree.children[0],
+            cursor,
+        )
+    }
     fn update(
         &mut self,
         tree: &mut Tree,

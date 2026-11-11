@@ -11,6 +11,7 @@ mod desktop;
 pub(super) use desktop::host::Host;
 mod desktop_icons;
 pub(super) mod explain;
+pub(super) mod focus;
 pub(super) mod home;
 mod layered;
 mod materials;
@@ -31,10 +32,11 @@ mod setup;
 pub(super) mod sharing;
 mod shortcuts;
 mod sidebar;
-mod slider_completion;
+pub(super) mod slider_completion;
 mod support;
 mod system_appearance;
 mod themes;
+mod tip;
 mod tools;
 mod updates;
 mod wallpaper;
@@ -44,17 +46,18 @@ mod window_rules;
 mod windows;
 mod wizard;
 mod workspaces;
+mod wrap;
 
 use super::*;
 use crate::config::Palette;
 pub(super) use automation::time_id as automation_time_id;
 use cosmic::Apply;
 use cosmic::iced::{Alignment, Background, Border, Color};
-use cosmic::widget::{
-    button, column, container, icon, mouse_area, row, scrollable, slider, text, text_input, toggler,
-};
+use cosmic::widget::{button, column, container, icon, mouse_area, scrollable, text, text_input};
+use focus::{slider, toggler};
 pub(super) use pages::AppSettingsPage;
 pub(super) use slider_completion::completed_slider;
+use wrap::row;
 
 const FG: Color = Color::from_rgb(0.94, 0.93, 0.97);
 const MUTED: Color = Color::from_rgb(0.65, 0.64, 0.71);
@@ -173,7 +176,18 @@ fn detail_state<'a>(
         .into()
 }
 fn split<'a>(left: Element<'a, Message>, right: Element<'a, Message>) -> Element<'a, Message> {
-    adaptive::field(left, right)
+    field(None, None, left, right)
+}
+/// A row with its control on the right. The control takes keyboard focus
+/// when it has none of its own, and `name` is what a screen reader calls
+/// it.
+fn field<'a>(
+    name: Option<String>,
+    checked: Option<bool>,
+    left: Element<'a, Message>,
+    right: Element<'a, Message>,
+) -> Element<'a, Message> {
+    adaptive::field(left, focus::control(name, checked, right))
 }
 fn switch<'a>(
     title: &'static str,
@@ -181,7 +195,9 @@ fn switch<'a>(
     value: bool,
     message: impl Fn(bool) -> Message + 'a,
 ) -> Element<'a, Message> {
-    split(
+    field(
+        Some(title.to_owned()),
+        Some(value),
         detail(title, description),
         toggler(value).on_toggle(message).into(),
     )
@@ -221,8 +237,11 @@ pub(super) fn group_row<'a>(
     description: impl Into<String>,
     control: Element<'a, Message>,
 ) -> Element<'a, Message> {
+    let title = title.into();
     // A wrapping row keeps segmented controls sized to their labels.
-    split(
+    field(
+        Some(title.clone()),
+        None,
         detail(title, description),
         row::with_children(vec![control])
             .align_y(Alignment::Center)
@@ -236,7 +255,10 @@ pub(super) fn group_row_state<'a>(
     state: impl Into<String>,
     control: Element<'a, Message>,
 ) -> Element<'a, Message> {
-    split(
+    let title = title.into();
+    field(
+        Some(title.clone()),
+        None,
         detail_state(title, state),
         row::with_children(vec![control])
             .align_y(Alignment::Center)
@@ -807,9 +829,8 @@ impl Settings {
         let rail = self.rail();
         let kept = self.kept_previews();
         let entry = |id: cosmic::widget::segmented_button::Entity| -> Element<'_, Message> {
-            // The pinned Changes entry has no place in the model.
-            let active =
-                self.nav_model.is_active(id) && self.page.sidebar() != Page::PINNED;
+            // The Changes entry has no place in the model.
+            let active = self.nav_model.is_active(id) && self.page.sidebar() != Page::PINNED;
             let page = self.nav_model.data::<Page>(id).copied();
             let waiting = page.is_some_and(|page| kept.iter().any(|item| item.root == page));
             let name = match page {
@@ -864,7 +885,6 @@ impl Settings {
                 )))
                 .class(nav_style(active, self.settings_accent()))
                 .selected(active)
-                // Eight roots and the pinned Changes fit the rail at 820×552.
                 .padding(if rail { [5, 2] } else { [11, 12] })
                 .width(Length::Fill)
                 .on_press(Message::NavSelected(id))
@@ -976,19 +996,23 @@ impl Settings {
                 column::with_children(rows).spacing(2).into()
             });
         }
-        let pinned = container(self.changes_entry(rail))
-            .padding(if rail { [4, 6, 6, 6] } else { [6, 8, 12, 8] })
-            .width(Length::Fill);
-        let content = container(column::with_children(vec![
+        // Changes comes last in the same list, so at large scaling it
+        // scrolls with the rest instead of covering the selected entry. The
+        // rail keeps it close enough to fit at 820×552.
+        let list = column::with_children(vec![
+            column::with_children(groups).spacing(14).into(),
+            self.changes_entry(rail),
+        ])
+        .spacing(if rail { 4 } else { 14 });
+        let content = container(
             scrollable(
-                container(column::with_children(groups).spacing(14))
-                    .padding(if rail { [10, 6, 10, 6] } else { [12, 8, 12, 8] })
+                container(list)
+                    .padding(if rail { [10, 6, 6, 6] } else { [12, 8, 12, 8] })
                     .width(Length::Fill),
             )
-            .height(Length::Fill)
-            .into(),
-            pinned.into(),
-        ]))
+            .id(cosmic::widget::Id::new(super::navigation::SIDEBAR))
+            .height(Length::Fill),
+        )
         .width(self.sidebar_width())
         .height(Length::Fill)
         .class(cosmic::theme::Container::Primary)
@@ -1005,7 +1029,7 @@ impl Settings {
                 })
             })
             .collect();
-        // Arrows continue from the last group into the pinned Changes.
+        // Arrows continue from the last group into Changes.
         entries.push((
             cosmic::widget::Id::new("nav-changes"),
             Message::OpenRoot(Page::PINNED),

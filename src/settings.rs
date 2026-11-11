@@ -26,6 +26,7 @@ mod direct;
 #[cfg(test)]
 mod display_tests;
 mod drafts;
+mod escape;
 mod legacy;
 mod moments;
 mod monitors;
@@ -548,6 +549,8 @@ pub enum Message {
     SearchResult(navigation::SearchHit),
     RevealSearch(navigation::SearchHit),
     FocusSearch,
+    /// Closes the innermost open panel, list, explanation or search.
+    Escape,
     /// Returns to the named history destination (Alt+Left).
     Back,
     /// Home: preview a built-in look on the Presets page. Nothing applies.
@@ -990,7 +993,7 @@ pub fn run(page: &str) -> cosmic::iced::Result {
             .min_height(size.height)
             .max_height(size.height)
     } else {
-        cosmic::iced::Limits::NONE.min_width(820.).min_height(600.)
+        cosmic::iced::Limits::NONE.min_width(820.).min_height(480.)
     };
     let settings = cosmic::app::Settings::default()
         .size(size)
@@ -1410,9 +1413,7 @@ impl cosmic::Application for Settings {
                     Event::Keyboard(keyboard::Event::KeyPressed {
                         key: keyboard::Key::Named(keyboard::key::Named::Escape),
                         ..
-                    }) if status == cosmic::iced::event::Status::Ignored => {
-                        Some(Message::SearchSettings(String::new()))
-                    }
+                    }) if status == cosmic::iced::event::Status::Ignored => Some(Message::Escape),
                     _ => None,
                 }
             }));
@@ -2375,6 +2376,7 @@ impl Settings {
                     return navigation::reveal(hit.anchor());
                 }
             }
+            Message::Escape => return self.escape(),
             Message::FocusSearch => {
                 if self.rail() {
                     self.search_open = true;
@@ -3481,6 +3483,7 @@ impl Settings {
                 return Task::batch([
                     scroll,
                     reveal,
+                    navigation::reveal_in_sidebar(page),
                     changes,
                     if matches!(page, Page::General | Page::Overview) {
                         service_task()
@@ -4545,6 +4548,7 @@ fn checkpoint_message(message: &Message) -> bool {
             | Message::Placement(placement::Message::Pointer(..))
             | Message::SearchSettings(..)
             | Message::FocusSearch
+            | Message::Escape
             | Message::RevealSearch(..)
             | Message::ReviewPreviewConflicts
             | Message::RefreshService
@@ -6499,6 +6503,8 @@ mod future_builder_probe;
 mod onboarding_tests;
 #[cfg(test)]
 mod theme_journey_tests;
+#[cfg(test)]
+mod keyboard_tests;
 #[cfg(test)]
 mod ux_tests;
 #[cfg(test)]

@@ -4,6 +4,7 @@ use super::*;
 use crate::desktop::applets::AppletGroup;
 use crate::desktop::panels::Regions;
 use crate::settings::desktop::{AppletControl, control_id};
+use cosmic::Apply;
 
 /// The picker and the installed list offer search from this many applets.
 const SEARCH_FROM: usize = 8;
@@ -436,22 +437,19 @@ impl Settings {
             // Stable per-occurrence ids let focus follow a keyboard move.
             button::icon(icon::from_name("go-up-symbolic"))
                 .padding(6)
-                .tooltip("Move up")
                 .id(control_id(slot, AppletControl::Up))
                 .on_press_maybe((!first && idle).then_some(edit(Edit::Step(slot, -1))))
-                .into(),
+                .apply(|control| super::super::tip::tip(control, "Move up")),
             button::icon(icon::from_name("go-down-symbolic"))
                 .padding(6)
-                .tooltip("Move down")
                 .id(control_id(slot, AppletControl::Down))
                 .on_press_maybe((!last && idle).then_some(edit(Edit::Step(slot, 1))))
-                .into(),
+                .apply(|control| super::super::tip::tip(control, "Move down")),
             button::icon(icon::from_name("window-close-symbolic"))
                 .padding(6)
-                .tooltip("Remove")
                 .id(control_id(slot, AppletControl::Remove))
                 .on_press_maybe(idle.then_some(edit(Edit::Remove(slot))))
-                .into(),
+                .apply(|control| super::super::tip::tip(control, "Remove")),
         ];
         let content = container(
             row::with_children(parts)

@@ -10,6 +10,7 @@ use crate::automation::status::{self as words, Tone};
 use crate::automation::{Change, Days, Effect, Rule, Trigger};
 use crate::settings::automation::{DraftEdit, Kind, Message as Edit, PauseFor, RuleDraft};
 use chrono::Local;
+use cosmic::Apply;
 use cosmic::widget::Space;
 
 fn edit(message: Edit) -> Message {
@@ -44,6 +45,7 @@ pub fn time_id() -> cosmic::widget::Id {
 
 /// A labelled row in the rule editor.
 fn field<'a>(title: &'static str, control: Element<'a, Message>) -> Element<'a, Message> {
+    let control = super::focus::control(Some(title.to_owned()), None, control);
     column::with_children(vec![label(title, 12., MUTED), control])
         .spacing(6)
         .width(Length::Fill)
@@ -62,14 +64,18 @@ fn chip<'a>(title: String, on: bool, accent: Color, message: Message) -> Element
 fn small_icon<'a>(name: &'static str, message: Option<Message>) -> Element<'a, Message> {
     button::icon(icon::from_name(name))
         .extra_small()
-        .tooltip(match name {
-            "go-up-symbolic" => "Move rule up in priority",
-            "go-down-symbolic" => "Move rule down in priority",
-            "edit-delete-symbolic" => "Remove rule",
-            _ => "Rule action",
-        })
         .on_press_maybe(message)
-        .into()
+        .apply(|control| {
+            super::tip::tip(
+                control,
+                match name {
+                    "go-up-symbolic" => "Move rule up in priority",
+                    "go-down-symbolic" => "Move rule down in priority",
+                    "edit-delete-symbolic" => "Remove rule",
+                    _ => "Rule action",
+                },
+            )
+        })
 }
 
 impl Settings {
@@ -303,7 +309,11 @@ impl Settings {
                         cosmic::iced::widget::space().height(Length::Fill).into(),
                         // A theme-coloured plate keeps the picker's text
                         // readable on every sky, in light and dark.
-                        container(picker)
+                        container(super::focus::control(
+                            Some(phase.title().to_owned()),
+                            None,
+                            picker.into(),
+                        ))
                             .class(cosmic::theme::Container::custom(|theme| {
                                 let base: Color = theme.cosmic().background(theme.transparent).base.into();
                                 cosmic::iced::widget::container::Style {

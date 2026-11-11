@@ -418,6 +418,7 @@ impl Settings {
             );
         }
         button::custom(column::with_children(parts).spacing(3))
+            .name(tile.name())
             .class(nav_style(false, accent))
             .padding(0)
             .on_press_maybe(enabled.then(|| edit(Edit::Select(tile.pick.clone()))))

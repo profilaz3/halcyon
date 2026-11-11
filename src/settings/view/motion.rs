@@ -58,6 +58,7 @@ impl Settings {
                     ),
                 ],
             ),
+            group(Some("Keyboard"), keyboard_rows()),
             group(
                 None,
                 vec![
@@ -83,4 +84,40 @@ impl Settings {
         .spacing(16)
         .into()
     }
+}
+
+/// The keys that work everywhere in Settings, each with what it does.
+pub(super) const KEYS: [(&[&str], &str, &str); 5] = [
+    (&["Ctrl", "F"], "Search settings", "Find a setting by name"),
+    (&["Ctrl", "Z"], "Undo", "Put back the last change"),
+    (&["Alt", "←"], "Go back", "Return to the page you were on"),
+    (
+        &["Tab"],
+        "Move between controls",
+        "Shift+Tab moves the other way",
+    ),
+    (
+        &["Esc"],
+        "Close",
+        "Closes the open color panel, list, explanation or search",
+    ),
+];
+
+fn keyboard_rows<'a>() -> Vec<Element<'a, Message>> {
+    KEYS.iter()
+        .map(|(caps, title, description)| {
+            let caps: Vec<_> = caps
+                .iter()
+                .map(|cap| super::shortcuts::keycap(*cap, false))
+                .collect();
+            group_row(
+                *title,
+                *description,
+                row::with_children(caps)
+                    .spacing(3)
+                    .align_y(Alignment::Center)
+                    .into(),
+            )
+        })
+        .collect()
 }

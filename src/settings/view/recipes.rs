@@ -112,7 +112,9 @@ impl Settings {
             container(
                 text_input("My widget", &recipe.name)
                     .id(cosmic::widget::Id::new("recipe-name"))
-                    .on_input(|value| edit(Edit::Name(value))),
+                    .on_input(|value| edit(Edit::Name(value)))
+                    // Enter saves, like Save below.
+                    .on_submit_maybe((!busy).then_some(|_| edit(Edit::Save))),
             )
             .width(240)
             .into(),
@@ -303,6 +305,7 @@ impl Settings {
                 parts.push(
                     text_input("Caption text", &recipe.caption)
                         .on_input(|value| edit(Edit::Caption(value)))
+                        .on_submit_maybe((!busy).then_some(|_| edit(Edit::Save)))
                         .into(),
                 );
             }

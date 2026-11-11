@@ -1,4 +1,5 @@
 use super::*;
+use cosmic::Apply;
 
 /// Transient App settings navigation, independent of saved configuration.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -256,6 +257,7 @@ impl Settings {
     pub(super) fn calendar_page(&self) -> Element<'_, Message> {
         let notice = row::with_children(vec![
             slider(1u16..=60, self.notice, Message::Notice)
+                .name("Highlight meetings")
                 .on_release(Message::SaveNotice)
                 .step(1u16)
                 .width(Length::Fill)
@@ -352,9 +354,8 @@ impl Settings {
             if !state.query.is_empty() {
                 search_row.push(
                     button::icon(icon::from_name("edit-clear-symbolic"))
-                        .tooltip("Clear search")
                         .on_press(Message::ClearCitySearch)
-                        .into(),
+                        .apply(|control| super::tip::tip(control, "Clear search")),
                 );
             }
             if self.config.location.is_none()
@@ -822,15 +823,19 @@ impl Settings {
                             "devbox-move-{}-{direction}",
                             section.key()
                         )))
-                        .tooltip(if direction < 0 {
-                            "Move up"
-                        } else {
-                            "Move down"
-                        })
                         .on_press_maybe(
                             (enabled && idle).then_some(Message::DevboxMove(section, direction)),
                         )
-                        .into(),
+                        .apply(|control| {
+                            super::tip::tip(
+                                control,
+                                if direction < 0 {
+                                    "Move up"
+                                } else {
+                                    "Move down"
+                                },
+                            )
+                        }),
                 );
             }
         }
@@ -1097,6 +1102,11 @@ impl Settings {
                 ),
                 container(
                     slider(50u16..=200, clock.scale.clamp(50, 200), Message::ClockScale)
+                        .name(if clock.face == Some(ClockFace::Analog) {
+                            "Face size"
+                        } else {
+                            "Text size"
+                        })
                         .step(10u16)
                         .width(Length::Fill),
                 )
@@ -1251,7 +1261,7 @@ impl Settings {
                     fix: Some((fix, message)),
                 }) => split(
                     detail_state(TITLE, reason),
-                    row![
+                    cosmic::widget::row![
                         container(button::standard(fix).on_press(message))
                             .id(cosmic::widget::Id::new("clock-depth-fix")),
                         switch,

@@ -5,9 +5,23 @@ use super::windows::{recovery_banner, store_pill};
 use super::*;
 use crate::desktop::shortcuts::{Ask, Binding, KEYCODE_NOTE, Kind, Row};
 use crate::settings::shortcuts::{Answer, Category, CommandForm, Filter, Message as Edit};
+use cosmic::Apply;
 
 fn edit(message: Edit) -> Message {
     Message::Shortcuts(message)
+}
+
+/// One key drawn as a small keycap.
+pub(super) fn keycap<'a>(cap: impl Into<String>, muted: bool) -> Element<'a, Message> {
+    fill(
+        label(cap.into(), 11., if muted { MUTED } else { FG }),
+        SURFACE,
+        LINE,
+        1.,
+        5.,
+    )
+    .padding([1, 6])
+    .into()
 }
 
 /// The combination as a row of small keycaps.
@@ -15,17 +29,7 @@ fn keycaps<'a>(binding: &Binding, muted: bool) -> Element<'a, Message> {
     let caps: Vec<Element<'a, Message>> = binding
         .keycaps()
         .into_iter()
-        .map(|cap| {
-            fill(
-                label(cap, 11., if muted { MUTED } else { FG }),
-                SURFACE,
-                LINE,
-                1.,
-                5.,
-            )
-            .padding([1, 6])
-            .into()
-        })
+        .map(|cap| keycap(cap, muted))
         .collect();
     row::with_children(caps)
         .spacing(3)
@@ -34,16 +38,19 @@ fn keycaps<'a>(binding: &Binding, muted: bool) -> Element<'a, Message> {
         .into()
 }
 
+/// A labelled text field; Enter sends `submit`, like the form's main button.
 fn field<'a>(
     title: &'static str,
     placeholder: &'static str,
     value: &str,
     message: impl Fn(String) -> Edit + 'a,
+    submit: Option<Message>,
 ) -> Element<'a, Message> {
     column::with_children(vec![
         label(title, 12., FG),
         text_input(placeholder, value.to_string())
             .on_input(move |text| edit(message(text)))
+            .on_submit_maybe(submit.map(|submit| move |_| submit.clone()))
             .width(Length::Fill)
             .into(),
     ])
@@ -391,10 +398,9 @@ impl Settings {
                 }
                 controls.push(
                     button::icon(icon::from_name("list-remove-symbolic"))
-                        .tooltip("Remove shortcut")
                         .extra_small()
                         .on_press_maybe(free.then_some(edit(Edit::Remove(target))))
-                        .into(),
+                        .apply(|control| super::tip::tip(control, "Remove shortcut")),
                 );
             }
             Kind::Builtin {
@@ -467,14 +473,18 @@ impl Settings {
                 } else {
                     "go-down-symbolic"
                 }))
-                .tooltip(if expanded {
-                    "Hide shortcut details"
-                } else {
-                    "Show shortcut details"
-                })
                 .extra_small()
                 .on_press(edit(Edit::Expand((!expanded).then_some(ident))))
-                .into(),
+                .apply(|control| {
+                    super::tip::tip(
+                        control,
+                        if expanded {
+                            "Hide shortcut details"
+                        } else {
+                            "Show shortcut details"
+                        },
+                    )
+                }),
             );
         }
         let summary = row::with_children(vec![
@@ -515,10 +525,9 @@ impl Settings {
                 .into()
         } else {
             button::icon(icon::from_name("list-remove-symbolic"))
-                .tooltip("Remove shortcut")
                 .extra_small()
                 .on_press_maybe(free.then_some(edit(Edit::Remove(row.target()))))
-                .into()
+                .apply(|control| super::tip::tip(control, "Remove shortcut"))
         }
     }
 }
@@ -529,6 +538,8 @@ fn command_form<'a>(
     recording_error: Option<&str>,
 ) -> Element<'a, Message> {
     let editing = form.editing.is_some();
+    // Enter in a field does what the Add or Save button does, when it can.
+    let save = (!recording && form.ask.is_none()).then_some(edit(Edit::Save));
     let mut items = Vec::new();
     // The question goes first, so it is in view without scrolling.
     if let Some(ask) = &form.ask
@@ -536,10 +547,18 @@ fn command_form<'a>(
     {
         items.push(question);
     }
-    items.push(field("Name", "Open notes", &form.name, Edit::Name));
+    items.push(field(
+        "Name",
+        "Open notes",
+        &form.name,
+        Edit::Name,
+        save.clone(),
+    ));
     let mut combination_input = text_input("Super+Shift+K", form.combo.clone()).width(Length::Fill);
     if !recording {
-        combination_input = combination_input.on_input(|text| edit(Edit::Combo(text)));
+        combination_input = combination_input
+            .on_input(|text| edit(Edit::Combo(text)))
+            .on_submit_maybe(save.clone().map(|save| move |_| save.clone()));
     }
     items.push(
         column::with_children(vec![
@@ -586,6 +605,7 @@ fn command_form<'a>(
         "notes --new",
         &form.command,
         Edit::Command,
+        save.clone(),
     ));
     items.push(label(
         "Runs when you press the combination after saving.",
@@ -600,7 +620,7 @@ fn command_form<'a>(
             container(text::body("")).width(Length::Fill).into(),
             button::text("Cancel").on_press(edit(Edit::Cancel)).into(),
             button::suggested(if editing { "Save" } else { "Add" })
-                .on_press_maybe((!recording && form.ask.is_none()).then_some(edit(Edit::Save)))
+                .on_press_maybe(save)
                 .into(),
         ])
         .spacing(10)

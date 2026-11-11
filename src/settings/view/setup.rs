@@ -1,5 +1,6 @@
 use super::pages::section;
 use super::*;
+use cosmic::Apply;
 
 impl Settings {
     pub(in crate::settings) fn needs_setup(&self) -> bool {
@@ -40,9 +41,8 @@ impl Settings {
                             "setup-task-dismiss-{}",
                             task.key()
                         )))
-                        .tooltip("Dismiss this reminder")
                         .on_press(Message::DismissSetupTask(task))
-                        .into(),
+                        .apply(|control| super::tip::tip(control, "Dismiss this reminder")),
                 ])
                 .spacing(6)
                 .align_y(Alignment::Center)
@@ -217,9 +217,8 @@ impl Settings {
                         .into(),
                     button::icon(icon::from_name("window-close-symbolic").size(14))
                         .id(cosmic::widget::Id::new("setup-dismiss"))
-                        .tooltip("Dismiss setup")
                         .on_press(Message::SetupDismissed(true))
-                        .into(),
+                        .apply(|control| super::tip::tip(control, "Dismiss setup")),
                 ])
                 .spacing(6)
                 .align_y(Alignment::Center)

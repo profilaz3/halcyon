@@ -5,6 +5,7 @@ use super::windows::{recovery_banner, store_pill};
 use super::*;
 use crate::desktop::window_rules::{ListState, Match, RuleRow, WindowRulesDraft, classify};
 use crate::settings::window_rules::{Message as Edit, RuleForm};
+use cosmic::Apply;
 
 const APP_ICON: &str = "application-x-executable-symbolic";
 
@@ -12,7 +13,8 @@ fn edit(message: Edit) -> Message {
     Message::WindowRules(message)
 }
 
-/// A labelled text field that keeps its label above narrow inputs.
+/// A labelled text field that keeps its label above narrow inputs. Enter
+/// saves the rule, like the form's Add or Save button.
 fn field<'a>(
     title: &'static str,
     placeholder: &'static str,
@@ -23,6 +25,7 @@ fn field<'a>(
         label(title, 12., FG),
         text_input(placeholder, value.to_string())
             .on_input(move |text| edit(message(text)))
+            .on_submit(|_| edit(Edit::Save))
             .width(Length::Fill)
             .into(),
     ])
@@ -412,14 +415,18 @@ impl Settings {
                 } else {
                     "go-down-symbolic"
                 }))
-                .tooltip(if expanded {
-                    "Hide matching windows"
-                } else {
-                    "Show matching windows"
-                })
                 .extra_small()
                 .on_press(edit(Edit::Expand((!expanded).then(|| pair.clone()))))
-                .into(),
+                .apply(|control| {
+                    super::tip::tip(
+                        control,
+                        if expanded {
+                            "Hide matching windows"
+                        } else {
+                            "Show matching windows"
+                        },
+                    )
+                }),
             );
         }
         let (appid, title) = pair.clone();
@@ -450,12 +457,11 @@ impl Settings {
             );
             controls.push(
                 button::icon(icon::from_name("list-remove-symbolic"))
-                    .tooltip("Remove window rule")
                     .extra_small()
                     .on_press_maybe(
                         editable.then(|| edit(Edit::Remove(pair.0.clone(), pair.1.clone()))),
                     )
-                    .into(),
+                    .apply(|control| super::tip::tip(control, "Remove window rule")),
             );
         }
         let summary = row::with_children(vec![

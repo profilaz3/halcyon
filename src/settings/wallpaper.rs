@@ -629,6 +629,31 @@ impl Tile {
             Pick::Color(color) => BgSource::Color(color.clone()),
         }
     }
+
+    /// What a screen reader calls the tile: "Wallpaper: aurora.jpg", or
+    /// the tile's own words when it has no file.
+    pub fn name(&self) -> String {
+        let file = match &self.pick {
+            Pick::Bundled(name) => Some(name.clone()),
+            Pick::Image(path) | Pick::Folder(path) => path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned()),
+            Pick::Color(_) => None,
+        };
+        let what = file
+            .filter(|file| !file.is_empty())
+            .unwrap_or_else(|| self.label.clone());
+        let kind = if matches!(self.pick, Pick::Folder(_)) {
+            "Wallpaper folder"
+        } else {
+            "Wallpaper"
+        };
+        if what.is_empty() {
+            kind.to_owned()
+        } else {
+            format!("{kind}: {what}")
+        }
+    }
 }
 
 /// What the header preview shows for the selected display.

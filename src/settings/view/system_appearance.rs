@@ -316,11 +316,13 @@ impl Settings {
                         .map(|preset| {
                             let selected = !automatic
                                 && domain::hex(preset, false) == domain::hex(current, false);
-                            button::custom(swatch(color(preset), 16))
+                            let code = domain::hex(preset, false);
+                            let control = button::custom(swatch(color(preset), 16))
+                                .name(format!("Color: {code}"))
                                 .class(chip_style(selected, accent))
                                 .padding(3)
-                                .on_press(edit(Edit::Color(role, Some(preset))))
-                                .into()
+                                .on_press(edit(Edit::Color(role, Some(preset))));
+                            super::tip::tip(control, &code)
                         })
                         .collect::<Vec<_>>(),
                 )
