@@ -1036,3 +1036,102 @@ fn clock_stage_corner_resizes_the_clock_as_one_undo_step() {
         std::fs::write(dir.join("clock-stage-render-soft-sizes.txt"), log).unwrap();
     }
 }
+
+/// White digits straight on a white picture: the stage says so in words,
+/// and its button gives the clock a card, which settles it.
+#[test]
+fn clock_stage_warns_when_the_clock_is_hard_to_read_on_the_picture() {
+    if desktop_test_child(
+        "clock_stage_warns_when_the_clock_is_hard_to_read_on_the_picture",
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::desktop::wallpaper::{BgEntry, BgSource};
+    use crate::native_test::Native;
+    const LOW_CONTRAST_WARNING: &str =
+        "Hard to read on this picture. Set Background to Card, or move the clock.";
+    use crate::widget_style::resolver::ClockSurface;
+    use cosmic::iced::{Event, mouse};
+    let root = isolated_root();
+    let fixture = root.join("cosmic-root");
+    let picture = root.join("white.png");
+    image::RgbImage::from_pixel(64, 36, image::Rgb([250, 250, 250]))
+        .save(&picture)
+        .unwrap();
+    seed(
+        &fixture.join("config/cosmic"),
+        &[(
+            "com.system76.CosmicBackground",
+            "all",
+            &ron::to_string(&BgEntry::new("all", BgSource::Path(picture))).unwrap(),
+        )],
+    );
+    Config::save_clock(json!({"face": "digital", "surface": "none"})).unwrap();
+    let (mut app, initial) = Settings::init(Core::default(), Page::Clock);
+    settle_settings(&mut app, initial);
+    drive_wallpaper(&mut app);
+    let size = Size::new(1280., 800.);
+    send_settings(&mut app, Message::Resized(size));
+    assert!(app.clock_stage_open());
+    assert!(
+        app.clock_stage
+            .backdrop()
+            .or(app.profiles.home_image())
+            .is_some(),
+        "the picture is on the stage"
+    );
+    let ratio = app.clock_stage_contrast().expect("a clock on the picture");
+    assert!(ratio < 1.5, "{ratio}");
+
+    let mut native = Native::new(size);
+    native_reveal(&app, &mut native, "clock-stage-contrast");
+    assert!(
+        !native
+            .text_all(app.settings_view(), LOW_CONTRAST_WARNING)
+            .is_empty(),
+        "the warning is said in words"
+    );
+    native.capture(
+        app.settings_view(),
+        &cosmic::Theme::dark(),
+        "clock-stage-low-contrast-dark-1280",
+    );
+    native.capture(
+        app.settings_view(),
+        &cosmic::Theme::light(),
+        "clock-stage-low-contrast-light-1280",
+    );
+    let use_card = native.bounds(app.settings_view(), "clock-stage-use-card");
+    let mut messages = Vec::new();
+    for event in [
+        mouse::Event::CursorMoved {
+            position: use_card.center(),
+        },
+        mouse::Event::ButtonPressed(mouse::Button::Left),
+        mouse::Event::ButtonReleased(mouse::Button::Left),
+    ] {
+        messages.extend(
+            native
+                .event(app.settings_view(), Event::Mouse(event), use_card.center())
+                .0,
+        );
+    }
+    // The same edit as Background › Card, for the clock's look.
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    for message in messages {
+        send_settings(&mut app, message);
+    }
+    assert_eq!(app.config.moment_clock().surface, Some(ClockSurface::Panel));
+    assert_eq!(app.clock_stage_contrast(), None);
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "clock-stage-contrast")
+            .is_none()
+    );
+}

@@ -385,7 +385,7 @@ pub fn on_accent(palette: Palette) -> Color {
     }
 }
 
-fn luminance(c: Color) -> f32 {
+pub(crate) fn luminance(c: Color) -> f32 {
     let linear = |v: f32| {
         if v <= 0.04045 {
             v / 12.92

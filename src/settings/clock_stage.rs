@@ -7,7 +7,7 @@
 use super::*;
 use crate::desktop::wallpaper::BgEntry;
 use crate::desktop::wallpaper::media::{Pixels, SCENE};
-use cosmic::iced::Point;
+use cosmic::iced::{Color, Point};
 use cosmic::widget::image::Handle;
 
 /// The widest the stage gets; a wider window only adds margin around it.
@@ -236,6 +236,43 @@ pub(super) fn backdrop_size(screen: [f32; 2]) -> [u32; 2] {
     };
     size.map(|v| (v.round() as u32).max(1))
 }
+/// Below this, the stage says the clock is hard to read where it sits.
+pub(super) const LOW_CONTRAST: f32 = 3.;
+/// How `ink` stands out from the picture under `area` (fractions of the
+/// picture: left, top, right, bottom): its contrast ratio with the middle
+/// brightness there, so a few bright or dark spots don't decide it. `None`
+/// when the area misses the picture.
+pub(super) fn picture_contrast(
+    ink: Color,
+    rgba: &[u8],
+    size: [u32; 2],
+    area: [f32; 4],
+) -> Option<f32> {
+    let [w, h] = size.map(|v| v as usize);
+    if w == 0 || h == 0 || rgba.len() < w * h * 4 {
+        return None;
+    }
+    let span = |from: f32, to: f32, n: usize| {
+        let from = (from.clamp(0., 1.) * n as f32).floor() as usize;
+        let to = ((to.clamp(0., 1.) * n as f32).ceil() as usize).min(n);
+        (from < to).then_some((from, to))
+    };
+    let (x0, x1) = span(area[0], area[2], w)?;
+    let (y0, y1) = span(area[1], area[3], h)?;
+    // About 64 samples a side is plenty to find the middle.
+    let step = ((x1 - x0).max(y1 - y0) / 64).max(1);
+    let mut light: Vec<f32> = (y0..y1)
+        .step_by(step)
+        .flat_map(|y| (x0..x1).step_by(step).map(move |x| (y * w + x) * 4))
+        .map(|i| {
+            crate::widget_style::luminance(Color::from_rgb8(rgba[i], rgba[i + 1], rgba[i + 2]))
+        })
+        .collect();
+    light.sort_by(f32::total_cmp);
+    let middle = *light.get(light.len() / 2)?;
+    let ink = crate::widget_style::luminance(ink);
+    Some((ink.max(middle) + 0.05) / (ink.min(middle) + 0.05))
+}
 /// The desktop's depth frame for a clock at `position`: whole pixels, kept
 /// on the screen.
 pub(super) fn frame(position: [f32; 2], size: [f32; 2], screen: [f32; 2]) -> crate::depth::Frame {
@@ -264,6 +301,38 @@ impl Settings {
             self.placement.widget_position(Widget::Clock.key())?,
             self.placement.display_size(Widget::Clock.key())?,
         ))
+    }
+    /// The clock's contrast with the picture behind it, when it is drawn
+    /// straight on the picture and the picture is loaded.
+    pub(super) fn clock_stage_contrast(&self) -> Option<f32> {
+        if !self.config.widget_visible(Widget::Clock) {
+            return None;
+        }
+        let style = {
+            let _scope = crate::widget_style::scope(&self.config);
+            crate::widget_style::presentation(&self.config, self.config.wallpaper_palette(), true)
+        };
+        if style.surface.value != crate::widget_style::resolver::Surface::None {
+            return None;
+        }
+        let Handle::Rgba {
+            width,
+            height,
+            pixels,
+            ..
+        } = self.clock_stage.backdrop().or(self.profiles.home_image())?
+        else {
+            return None;
+        };
+        let (position, size) = self.clock_stage_place()?;
+        let screen = known(self.placement.preview_snapshot().screen);
+        let area = [
+            position[0] / screen[0],
+            position[1] / screen[1],
+            (position[0] + size[0]) / screen[0],
+            (position[1] + size[1]) / screen[1],
+        ];
+        picture_contrast(style.ink.value, pixels, [*width, *height], area)
     }
     /// The stage edits the display the clock is on.
     fn clock_stage_display(&mut self) {
@@ -621,6 +690,42 @@ mod tests {
     use super::*;
     use crate::desktop::wallpaper::ScalingMode;
     use crate::desktop::wallpaper::media::fit_preview;
+
+    /// The middle brightness under the clock decides: white digits on a
+    /// white sky fail, on a dark one they pass, and a few bright stars or
+    /// a strip beside the clock don't change that.
+    #[test]
+    fn picture_contrast_reads_the_picture_under_the_clock() {
+        let white = Color::WHITE;
+        // Left half white, right half black, with a white dot in the black.
+        let (w, h) = (40u32, 20u32);
+        let mut rgba = Vec::new();
+        for y in 0..h {
+            for x in 0..w {
+                let v = if x < w / 2 || (x == 30 && y == 10) {
+                    255
+                } else {
+                    0
+                };
+                rgba.extend([v, v, v, 255]);
+            }
+        }
+        let left = picture_contrast(white, &rgba, [w, h], [0., 0., 0.5, 1.]).unwrap();
+        let right = picture_contrast(white, &rgba, [w, h], [0.5, 0., 1., 1.]).unwrap();
+        assert!(left < LOW_CONTRAST, "{left}");
+        assert!(right > 15., "{right}");
+        // Dark digits read the other way round.
+        let black = Color::BLACK;
+        assert!(picture_contrast(black, &rgba, [w, h], [0., 0., 0.5, 1.]).unwrap() > 15.);
+        // Mostly on the black side, the middle is black.
+        assert!(picture_contrast(white, &rgba, [w, h], [0.3, 0., 1., 1.]).unwrap() > 15.);
+        // Off the picture, or a picture without pixels, says nothing.
+        assert_eq!(
+            picture_contrast(white, &rgba, [w, h], [1.2, 0., 1.5, 1.]),
+            None
+        );
+        assert_eq!(picture_contrast(white, &[], [w, h], [0., 0., 1., 1.]), None);
+    }
 
     fn black(width: u32, height: u32) -> Pixels {
         Pixels {

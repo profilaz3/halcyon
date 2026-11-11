@@ -19,6 +19,11 @@ const HANDLE: f32 = 16.;
 pub(crate) const STAGE_HINT: &str = "Drag the clock to move it, or drag its corner to resize. \
 With the keyboard, Tab selects the clock, arrow keys move it, + and − resize it, and Esc cancels a drag.";
 
+/// What the stage says when the clock, drawn straight on the picture, is
+/// hard to tell from what's behind it.
+pub(crate) const LOW_CONTRAST_WARNING: &str =
+    "Hard to read on this picture. Set Background to Card, or move the clock.";
+
 /// The stage clock's resize handle: a small chip at its lower-right corner,
 /// with the resize cursor. It is always there, faint until the pointer or
 /// keyboard is on the clock, so the corner reads as something to grab.
@@ -300,6 +305,34 @@ impl Settings {
                 self.clock_stage
                     .suggested(&stage::frame(position, clock, screen))
             });
+            if self
+                .clock_stage_contrast()
+                .is_some_and(|ratio| ratio < stage::LOW_CONTRAST)
+            {
+                use crate::widget_style::resolver::ClockSurface;
+                parts.push(
+                    container(
+                        row::with_children(vec![
+                            container(label(LOW_CONTRAST_WARNING, 14., desktop::WARN))
+                                .width(Length::Fill)
+                                .into(),
+                            button::text("Use a card")
+                                .id(cosmic::widget::Id::new("clock-stage-use-card"))
+                                .on_press_maybe((!self.busy).then(|| {
+                                    self.clock_moment_edit(Message::ClockSurface(Some(
+                                        ClockSurface::Panel,
+                                    )))
+                                }))
+                                .into(),
+                        ])
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                    )
+                    .id(cosmic::widget::Id::new("clock-stage-contrast"))
+                    .width(cap[0])
+                    .into(),
+                );
+            }
             parts.push(
                 container(label(STAGE_HINT, CAPTION, MUTED))
                     .id(cosmic::widget::Id::new("clock-stage-hint"))
