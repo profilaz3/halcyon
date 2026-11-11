@@ -2081,3 +2081,68 @@ fn on03_look_names_style_and_accent(size: Size) {
         );
     }
 }
+
+/// ON-04: Done says where the way back lives once it closes, and Show
+/// Changes finishes setup there.
+#[test]
+fn on04_done_points_to_changes_at_820() {
+    if child("on04_done_points_to_changes_at_820") {
+        return;
+    }
+    on04_done_points_to_changes(Size::new(820., 600.));
+}
+
+#[test]
+fn on04_done_points_to_changes_at_1280() {
+    if child("on04_done_points_to_changes_at_1280") {
+        return;
+    }
+    on04_done_points_to_changes(Size::new(1280., 800.));
+}
+
+fn on04_done_points_to_changes(size: Size) {
+    seed_desktop();
+    let themes = [
+        (cosmic::Theme::light(), "light"),
+        (cosmic::Theme::dark(), "dark"),
+    ];
+    let (mut app, mut native) = open(size);
+    click(&mut app, &mut native, "wizard-start");
+    reveal(&mut app, &mut native, "wizard-look-calm");
+    click(&mut app, &mut native, "wizard-look-calm");
+    let _ = app.update(Message::Wizard(wizard::Message::Show(wizard::Step::Ready)));
+    click(&mut app, &mut native, "wizard-apply");
+    assert_eq!(step(&app), wizard::Step::Done);
+    native.text_bounds(app.settings_view(), "Changed your mind later?");
+    native.text_bounds(
+        app.settings_view(),
+        "Undo this setup from Changes. You can also go back to your desktop from before Halcyon there.",
+    );
+    // Done has Finish where the other steps have Next.
+    native.scroll(app.settings_view(), "wizard-body", 0.);
+    let footer = native.bounds(app.settings_view(), "wizard-finish");
+    let bounds = native.bounds(app.settings_view(), "wizard-done-changes");
+    let overflow = bounds.y + bounds.height - (footer.y - 60.);
+    if overflow > 0. {
+        native.scroll(app.settings_view(), "wizard-body", overflow);
+    }
+    for (theme, name) in &themes {
+        native.capture(
+            app.settings_view(),
+            theme,
+            &format!("on04-done-{}-{name}", size.width),
+        );
+    }
+    click(&mut app, &mut native, "wizard-done-changes");
+    assert!(app.wizard.is_none());
+    assert_eq!(app.page, Page::Changes);
+    assert!(Config::load().onboarded);
+    native.bounds(app.settings_view(), "restore-desktop");
+    for (theme, name) in &themes {
+        native.capture(
+            app.settings_view(),
+            theme,
+            &format!("on04-changes-{}-{name}", size.width),
+        );
+    }
+}

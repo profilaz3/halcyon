@@ -1136,6 +1136,23 @@ impl Settings {
                 SOFT,
             ));
         }
+        if applied.is_some_and(|applied| applied.changed) {
+            // Undo setup on this screen goes away when it closes; say where
+            // the way back lives afterwards.
+            parts.push(group(
+                None,
+                vec![group_row(
+                    "Changed your mind later?",
+                    "Undo this setup from Changes. You can also go back to your desktop from before Halcyon there.",
+                    button::standard("Show Changes")
+                        .id("wizard-done-changes".into())
+                        .on_press_maybe(
+                            (!self.native_busy).then_some(Message::FinishSetupTo(Page::Changes)),
+                        )
+                        .into(),
+                )],
+            ));
+        }
         let pending: Vec<Element<'a, Message>> = crate::settings::wizard::follow_up::Task::ALL
             .into_iter()
             .filter(|task| task.needed(&self.config, self.calendar.connection.connected()))
