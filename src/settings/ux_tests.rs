@@ -2466,9 +2466,13 @@ fn ux_native_undo_target_is_one_thing_for_button_and_keyboard() {
     assert_eq!(app.undo_target(), UndoTarget::Preview(None));
     let _ = app.update(Message::KeyboardUndo(false));
     assert_eq!(Config::load().clock.format_24h, !before);
-    // Explicitly closing the preview restores the named desktop Undo.
+    // Closing the preview makes the desktop change the target again, but
+    // like the footer's Undo, Ctrl+Z only undoes it on the page that made it.
     let _ = app.update(Message::Wallpaper(wallpaper::Message::Discard));
     assert!(matches!(app.undo_target(), UndoTarget::Desktop(..)));
+    let _ = app.update(Message::KeyboardUndo(false));
+    assert_eq!(Config::load().clock.format_24h, !before);
+    let _ = app.update(Message::Page(Page::Clock));
     let _ = app.update(Message::KeyboardUndo(false));
     assert_eq!(Config::load().clock.format_24h, before);
 }

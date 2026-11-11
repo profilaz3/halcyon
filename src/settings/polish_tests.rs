@@ -260,13 +260,17 @@ fn polish050_prior_page_undo_does_not_label_calendar_but_remains_available() {
     send_settings(&mut app, Message::ClockFormat(!before));
     assert!(app.page_undo_button().is_some());
     send_settings(&mut app, Message::Page(Page::Calendar));
-    // Calendar didn't make it, so its footer has no Undo for it; Ctrl+Z
-    // still reaches it from here.
+    // Calendar didn't make it, so neither its footer nor Ctrl+Z undoes it
+    // here. It stays available on Clock and in Changes.
     assert!(app.page_undo_button().is_none());
     assert!(matches!(
         app.undo_target(),
         crate::settings::navigation::UndoTarget::Desktop(..)
     ));
+    send_settings(&mut app, Message::KeyboardUndo(false));
+    assert_eq!(app.config.clock.format_24h, !before);
+    send_settings(&mut app, Message::Page(Page::Clock));
+    assert!(app.page_undo_button().is_some());
     send_settings(&mut app, Message::KeyboardUndo(false));
     assert_eq!(app.config.clock.format_24h, before);
 }
@@ -1050,9 +1054,23 @@ fn footer_undo_stays_on_the_page_that_made_the_change() {
     // Its own page offers it again, though it was made on an earlier visit.
     send_settings(&mut app, Message::Page(Page::DesktopDock));
     native.text_bounds(app.settings_view(), &format!("Undo {title}"));
-    // Ctrl+Z still undoes it from anywhere.
+    // Ctrl+Z on another page does nothing, like the footer: the change
+    // stays, and its own page still offers to undo it.
     send_settings(&mut app, Message::Page(Page::Overview));
     let id = app.last_desktop_change.as_ref().unwrap().2.clone();
+    let spacing_now = app.desktop.current().unwrap().spacing().known().copied();
+    send_settings(&mut app, Message::KeyboardUndo(false));
+    assert!(!app.error, "{}", app.status);
+    assert_eq!(app.last_desktop_change.as_ref().map(|c| &c.2), Some(&id));
+    assert_eq!(
+        app.desktop.current().unwrap().spacing().known().copied(),
+        spacing_now
+    );
+    assert!(native.try_bounds(app.settings_view(), "settings-undo").is_none());
+    capture(&app, &mut native, "footer-other-page-ctrl-z");
+    send_settings(&mut app, Message::Page(Page::DesktopDock));
+    native.text_bounds(app.settings_view(), &format!("Undo {title}"));
+    // On its own page, Ctrl+Z undoes it, as the button would.
     send_settings(&mut app, Message::KeyboardUndo(false));
     assert!(!app.error, "{}", app.status);
     assert_ne!(app.last_desktop_change.as_ref().map(|c| &c.2), Some(&id));

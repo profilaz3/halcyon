@@ -563,7 +563,8 @@ impl Settings {
             .is_some_and(|(_, _, id)| self.undo_baseline.as_ref() != Some(id))
     }
     /// Whether this page made the latest change: made here since it opened,
-    /// or recorded for this page. Elsewhere Ctrl+Z and Changes undo it.
+    /// or recorded for this page. Only here do Ctrl+Z and the footer undo
+    /// it; elsewhere Changes does.
     pub(in crate::settings) fn owns_latest_change(&self) -> bool {
         let Some((owner, label, _)) = &self.last_desktop_change else {
             return false;

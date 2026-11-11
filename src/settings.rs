@@ -1850,6 +1850,17 @@ impl cosmic::Application for Settings {
                 }
                 (_, true) => Task::none(),
                 (navigation::UndoTarget::Preview(_), false) => self.undo_preview_step(),
+                // Like the footer's Undo: only the page that made the latest
+                // change undoes it. Elsewhere it stays, for Changes to undo.
+                (navigation::UndoTarget::Desktop(..), false)
+                    if !self.owns_latest_change()
+                        && !self
+                            .wizard
+                            .as_ref()
+                            .is_some_and(|w| w.step == wizard::Step::Arrange) =>
+                {
+                    Task::none()
+                }
                 (_, false) => self.update(Message::UndoDesktop),
             };
         }
