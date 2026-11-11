@@ -1664,7 +1664,8 @@ impl cosmic::Application for Settings {
                     .map(|_| Message::Tools(tools::Message::Redraw)),
             );
         }
-        if self.page == Page::Notes && self.tools.autosave_pending() {
+        // Typing saves itself when it pauses, also after leaving Notes.
+        if self.tools.autosave_pending() {
             subscriptions.push(
                 cosmic::iced::time::every(Duration::from_millis(500))
                     .map(|_| Message::Tools(tools::Message::NoteAutosave)),

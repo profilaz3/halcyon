@@ -218,7 +218,7 @@ impl Settings {
         let on = self.config.widget_selected(widget);
         let inside = self.config.glance.enabled
             && matches!(widget, Widget::Clock | Widget::Weather | Widget::Calendar);
-        let readiness = if widget == Widget::Notes && self.tools.dirty() {
+        let readiness = if widget == Widget::Notes && self.tools.unsaved() {
             "Unsaved note"
         } else if widget == Widget::Calendar && !self.calendar.connection.connected() {
             "Connect your calendar"

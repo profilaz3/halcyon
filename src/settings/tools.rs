@@ -159,6 +159,11 @@ impl ToolsEditor {
     pub fn autosave_pending(&self) -> bool {
         self.edited.is_some()
     }
+    /// Edits that won't save on their own: no save is running or waiting
+    /// for typing to pause (a conflict or failed save waits for a choice).
+    pub fn unsaved(&self) -> bool {
+        self.dirty() && !self.saving() && !self.autosave_pending()
+    }
     pub fn can_undo_note(&self) -> bool {
         self.history.can_undo()
     }

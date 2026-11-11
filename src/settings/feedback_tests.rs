@@ -142,3 +142,42 @@ fn fb03_notices_split_the_sentence_from_the_technical_text() {
     assert_eq!(desktop::Notice::failed(&plain).details(), None);
     assert_eq!(desktop::Notice::Busy("Saving…".into()).details(), None);
 }
+
+#[test]
+fn fb10_a_note_that_is_saving_is_not_reported_as_unsaved() {
+    if child("fb10_a_note_that_is_saving_is_not_reported_as_unsaved") {
+        return;
+    }
+    use cosmic::widget::text_editor::{Action, Edit};
+    let (mut app, _) = Settings::init(Core::default(), Page::Notes);
+    for c in "Buy bread".chars() {
+        let _ = app.update(Message::Tools(tools::Message::Note(Action::Edit(
+            Edit::Insert(c),
+        ))));
+    }
+    assert!(app.tools.dirty());
+    // Typing saves itself when it pauses, so leaving keeps nothing back.
+    assert!(!app.tools.unsaved());
+    let _ = app.update(Message::Page(Page::Overview));
+    assert!(app.kept_note.is_none(), "{:?}", app.kept_note);
+    assert!(app.tools.autosave_pending(), "autosave continues off Notes");
+    std::thread::sleep(std::time::Duration::from_millis(1300));
+    super::tests::send_settings(&mut app, Message::Tools(tools::Message::NoteAutosave));
+    assert!(!app.tools.dirty());
+    assert_eq!(crate::tools::notes::load().unwrap().text, "Buy bread");
+    // A note the desktop changed meanwhile waits for a choice: that one is
+    // unsaved, and says so.
+    let _ = app.update(Message::Page(Page::Notes));
+    let _ = app.update(Message::Tools(tools::Message::Note(Action::Edit(
+        Edit::Insert('!'),
+    ))));
+    crate::tools::notes::save("Buy bread", "Buy rye bread").unwrap();
+    let _ = app.update(Message::Tick);
+    std::thread::sleep(std::time::Duration::from_millis(1300));
+    super::tests::send_settings(&mut app, Message::Tools(tools::Message::NoteAutosave));
+    assert!(app.tools.conflict.is_some());
+    assert!(app.tools.unsaved());
+    let _ = app.update(Message::Page(Page::Overview));
+    assert!(app.kept_note.is_some());
+}
+
