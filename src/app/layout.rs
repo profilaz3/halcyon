@@ -2204,10 +2204,17 @@ mod tests {
                 let pixels = native.render(cards.individual_widget(widget), &theme);
                 let index =
                     (((size[1] as usize - 6) * size[0] as usize) + size[0] as usize / 2) * 4;
-                assert!(
-                    pixels[index + 3] > 150,
-                    "{widget:?} {name}: frame must fill its native surface"
-                );
+                if widget == Widget::Music {
+                    // Nothing plays here: one line at the top, the rest clear (DT-14).
+                    let top = ((40 * size[0] as usize) + size[0] as usize / 2) * 4;
+                    assert!(pixels[top + 3] > 150, "Music {name}: idle line drawn");
+                    assert!(pixels[index + 3] < 10, "Music {name}: idle card shrinks");
+                } else {
+                    assert!(
+                        pixels[index + 3] > 150,
+                        "{widget:?} {name}: frame must fill its native surface"
+                    );
+                }
                 native.capture(
                     cards.individual_widget(widget),
                     &theme,
