@@ -1959,7 +1959,7 @@ impl cosmic::Application for Settings {
                 | Message::Placement(
                     placement::Message::Press(_) | placement::Message::ResizePress(_)
                 )
-                | Message::ClockStage(clock_stage::Edit::Press)
+                | Message::ClockStage(clock_stage::Edit::Press | clock_stage::Edit::ResizePress)
         );
         if starts_gesture && self.gesture_config.is_none() {
             self.gesture_config = Config::path()
@@ -1977,6 +1977,7 @@ impl cosmic::Application for Settings {
                 | Message::ClockStage(
                     clock_stage::Edit::Release
                         | clock_stage::Edit::Nudge(..)
+                        | clock_stage::Edit::Step(..)
                         | clock_stage::Edit::Reset
                         | clock_stage::Edit::Suggested
                 )
@@ -2165,7 +2166,15 @@ impl Settings {
             Message::FinishSetupTo(page) => return self.update(Message::FinishSetupTo(page)),
             Message::Updates(message) => return self.update_updates(message),
             Message::Support(message) => return self.update_support(message),
-            Message::KeyboardFocus(backwards) => return navigation::keyboard_focus(backwards),
+            Message::KeyboardFocus(backwards) => {
+                let focus = navigation::keyboard_focus(backwards);
+                // The stage clock shows its resize handle while it has focus.
+                return if self.clock_stage_open() {
+                    focus.chain(clock_stage::focus_check())
+                } else {
+                    focus
+                };
+            }
             Message::Fullscreen => return self.core.toggle_maximize(None),
             Message::ShareUsage(enabled) => return self.change_usage(enabled),
             Message::UsageSaved(result) => {
@@ -4514,6 +4523,10 @@ fn checkpoint_message(message: &Message) -> bool {
                 clock_stage::Edit::Pointer(..)
                     | clock_stage::Edit::Settle
                     | clock_stage::Edit::Arrow(..)
+                    | clock_stage::Edit::Grow(..)
+                    | clock_stage::Edit::Hover(..)
+                    | clock_stage::Edit::CheckFocus
+                    | clock_stage::Edit::Focus(..)
                     | clock_stage::Edit::Backdrop(..)
                     | clock_stage::Edit::Rendered(..)
             )

@@ -83,6 +83,8 @@ struct Drag {
     offset: [f32; 2],
     before: EditState,
     resize: bool,
+    /// A resize that keeps the box's shape, as the Clock stage's corner does.
+    kept: bool,
     origin: [f32; 2],
     size: [f32; 2],
 }
@@ -525,8 +527,12 @@ impl PlacementEditor {
         if self.inside {
             if let Some(drag) = &self.drag {
                 let key = drag.key.clone();
-                if drag.resize {
-                    let size = [0, 1].map(|axis| drag.size[axis] + point[axis] - drag.origin[axis]);
+                let size = [0, 1].map(|axis| drag.size[axis] + point[axis] - drag.origin[axis]);
+                if drag.kept {
+                    let top_left = [0, 1].map(|axis| drag.origin[axis] - drag.offset[axis]);
+                    let start = drag.size;
+                    self.put_kept(&key, top_left, start, size);
+                } else if drag.resize {
                     self.put_size(&key, size);
                 } else {
                     let next = [point[0] - drag.offset[0], point[1] - drag.offset[1]];
@@ -569,6 +575,7 @@ impl PlacementEditor {
             offset: [pointer[0] - position[0], pointer[1] - position[1]],
             before: self.state(),
             resize: false,
+            kept: false,
             origin: pointer,
             size,
         });
@@ -704,6 +711,70 @@ impl PlacementEditor {
         if let Some(drag) = &mut self.drag {
             drag.resize = true;
         }
+    }
+    /// Whether the pointer is over a visible card.
+    pub(super) fn pointer_over(&self, key: &str) -> bool {
+        let (Some(pointer), Some(at), Some(size)) =
+            (self.pointer, self.position(key), self.display_size(key))
+        else {
+            return false;
+        };
+        self.inside && (0..2).all(|i| pointer[i] >= at[i] && pointer[i] <= at[i] + size[i])
+    }
+    /// Turns the resize just pressed into one that keeps the box's shape.
+    pub(super) fn keep_shape(&mut self) {
+        if let Some(drag) = self.drag.as_mut().filter(|drag| drag.resize) {
+            drag.kept = true;
+        }
+    }
+    /// Whether the drag in progress resizes rather than moves.
+    pub(super) fn resizing(&self) -> bool {
+        self.drag.as_ref().is_some_and(|drag| drag.resize)
+    }
+    /// One card's box scaled from `start`, its shape kept; see
+    /// [`crate::layout::resize_kept`].
+    fn put_kept(&mut self, key: &str, top_left: [f32; 2], start: [f32; 2], requested: [f32; 2]) {
+        let Some(widget) = Widget::parse(key) else {
+            return;
+        };
+        let screen = self.screen();
+        let (point, size) = crate::layout::resize_kept(widget, top_left, start, requested, screen);
+        self.materialize();
+        self.sizes.insert(key.into(), size);
+        self.positions.insert(
+            key.into(),
+            crate::layout_state::encode_position(widget, point, size, screen),
+        );
+    }
+    /// Keyboard resizing of one card outside the arrangement editor:
+    /// `steps` tenths of its automatic size, shape kept. False at a limit.
+    pub(super) fn step_widget_size(&mut self, key: &str, steps: i8) -> bool {
+        if self.dragging() || self.geometry(key).is_none() {
+            return false;
+        }
+        let natural = self
+            .defaults
+            .widgets
+            .iter()
+            .find(|widget| widget.key == key)
+            .map(|widget| widget.size);
+        let (Some(point), Some(size), Some(natural)) =
+            (self.position(key), self.size(key), natural)
+        else {
+            return false;
+        };
+        let (Some(widget), requested) = (
+            Widget::parse(key),
+            crate::layout::step_kept(size, natural, steps),
+        ) else {
+            return false;
+        };
+        let next = crate::layout::resize_kept(widget, point, size, requested, self.screen());
+        if next == (point, size) {
+            return false;
+        }
+        self.put_kept(key, point, size, requested);
+        true
     }
     fn put_size(&mut self, key: &str, requested: [f32; 2]) {
         let Some(widget) = Widget::parse(key) else {

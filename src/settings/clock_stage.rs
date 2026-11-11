@@ -2,7 +2,8 @@
 //! clock where it really sits. With the scene on, the clock is the desktop's
 //! own masked and lit render for that place, and the stage offers the spot
 //! where the picture's foreground would cover it. Dragging it moves the
-//! clock and saves through the arrangement's save, one Undo step per move.
+//! clock and its corner resizes it, shape kept; both save through the
+//! arrangement's save, one Undo step each.
 use super::*;
 use crate::desktop::wallpaper::BgEntry;
 use crate::desktop::wallpaper::media::{Pixels, SCENE};
@@ -21,11 +22,22 @@ pub enum Edit {
     /// The pointer over the stage, in stage pixels, and the stage's scale.
     Pointer(Point, f32),
     Press,
+    /// A press on the corner handle: the drag resizes the clock's box.
+    ResizePress,
     Release,
     Cancel,
     /// An arrow key; it moves the clock only while the stage clock has focus.
     Arrow([i8; 2], bool),
     Nudge([i8; 2], bool),
+    /// `+` or `-`; it resizes the clock only while the stage clock has focus.
+    Grow(i8),
+    /// Tenths of the clock's automatic size, larger or smaller.
+    Step(i8),
+    /// The pointer left the stage (or, in tests, came over the clock).
+    Hover(bool),
+    /// Keyboard focus may have moved; asks whether the stage clock has it.
+    CheckFocus,
+    Focus(bool),
     Reset,
     /// Moves the clock to where the scene covers it.
     Suggested,
@@ -100,6 +112,10 @@ impl<T: Clone> Job<T> {
 #[derive(Default)]
 pub(super) struct Stage {
     dragging: bool,
+    /// The pointer is over the clock, or the clock has keyboard focus: the
+    /// corner handle shows.
+    hover: bool,
+    focus: bool,
     /// The last pointer move of a drag; the lit clock waits for it to rest.
     moved: Option<Instant>,
     backdrop: Job<[u32; 2]>,
@@ -110,6 +126,16 @@ pub(super) struct Stage {
 impl Stage {
     pub(super) fn dragging(&self) -> bool {
         self.dragging
+    }
+    /// Whether the corner handle shows: pointer over the clock, keyboard
+    /// focus on it, or a drag in progress.
+    pub(super) fn handle(&self) -> bool {
+        self.hover || self.focus || self.dragging
+    }
+    /// The newest lit clock, whatever frame it was drawn for; a resize
+    /// shows it scaled until the new size is drawn.
+    pub(super) fn last_lit(&self) -> Option<&Handle> {
+        self.lit.shown.as_ref()?.1.as_ref()
     }
     /// The wallpaper fitted to the screen's shape, when it is ready.
     pub(super) fn backdrop(&self) -> Option<&Handle> {
@@ -364,6 +390,9 @@ impl Settings {
                 }
             }
             Edit::Settle => {}
+            // Kept even while busy, so the handle never sticks.
+            Edit::Hover(over) => self.clock_stage.hover = over,
+            Edit::Focus(focused) => self.clock_stage.focus = focused,
             _ if !self.clock_stage_open() || self.busy => {
                 if self.clock_stage.dragging {
                     self.clock_stage.dragging = false;
@@ -372,6 +401,7 @@ impl Settings {
             }
             Edit::Pointer(point, scale) => {
                 let task = self.update_placement(placement::Message::Pointer(point, scale));
+                self.clock_stage.hover = self.placement.pointer_over(clock);
                 if self.clock_stage.dragging {
                     self.clock_stage.moved = Some(Instant::now());
                 }
@@ -383,6 +413,17 @@ impl Settings {
                 }
                 self.clock_stage_display();
                 let task = self.update_placement(placement::Message::Press(clock.into()));
+                self.clock_stage.dragging = self.placement.dragging();
+                self.clock_stage.moved = None;
+                return task;
+            }
+            Edit::ResizePress => {
+                if self.clock_stage.dragging {
+                    return Task::none();
+                }
+                self.clock_stage_display();
+                let task = self.update_placement(placement::Message::ResizePress(clock.into()));
+                self.placement.keep_shape();
                 self.clock_stage.dragging = self.placement.dragging();
                 self.clock_stage.moved = None;
                 return task;
@@ -417,6 +458,23 @@ impl Settings {
                 self.placement.nudge_widget(clock, direction, large);
                 return self.update_placement(placement::Message::Save);
             }
+            Edit::Grow(steps) => {
+                if self.clock_stage.dragging {
+                    return Task::none();
+                }
+                return cosmic::iced::runtime::task::widget(Focused::default())
+                    .map(move |_| cosmic::Action::App(Message::ClockStage(Edit::Step(steps))));
+            }
+            Edit::Step(steps) => {
+                if self.clock_stage.dragging {
+                    return Task::none();
+                }
+                self.clock_stage_display();
+                if self.placement.step_widget_size(clock, steps) {
+                    return self.update_placement(placement::Message::Save);
+                }
+            }
+            Edit::CheckFocus => return focus_check(),
             Edit::Reset => {
                 if self.clock_stage.dragging {
                     return Task::none();
@@ -475,37 +533,56 @@ pub(super) fn drag_input(
         _ => None,
     }
 }
-/// Arrow keys nobody else used; they move the clock only when the stage
-/// clock has keyboard focus.
+/// Keys nobody else used: arrows move the clock, `+` and `-` (or Ctrl with
+/// an arrow) resize it, only when the stage clock has keyboard focus. A
+/// click may move focus, so it asks again where focus is.
 pub(super) fn arrow_input(
     event: cosmic::iced::Event,
     status: cosmic::iced::event::Status,
 ) -> Option<Edit> {
-    use cosmic::iced::{Event, keyboard};
+    use cosmic::iced::{Event, keyboard, mouse};
     use keyboard::key::Named;
-    let Event::Keyboard(keyboard::Event::KeyPressed {
-        key: keyboard::Key::Named(key),
-        modifiers,
-        ..
-    }) = event
-    else {
-        return None;
+    let (key, modifiers) = match event {
+        Event::Mouse(mouse::Event::ButtonPressed(_)) => return Some(Edit::CheckFocus),
+        Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => (key, modifiers),
+        _ => return None,
     };
-    if status != cosmic::iced::event::Status::Ignored
-        || modifiers.alt()
-        || modifiers.control()
-        || modifiers.logo()
-    {
+    if status != cosmic::iced::event::Status::Ignored || modifiers.alt() || modifiers.logo() {
+        return None;
+    }
+    let grow = match &key {
+        keyboard::Key::Character(c) if !modifiers.control() => match c.as_str() {
+            "+" | "=" => Some(1),
+            "-" | "_" => Some(-1),
+            _ => None,
+        },
+        keyboard::Key::Named(Named::ArrowUp | Named::ArrowRight) if modifiers.control() => Some(1),
+        keyboard::Key::Named(Named::ArrowDown | Named::ArrowLeft) if modifiers.control() => {
+            Some(-1)
+        }
+        _ => None,
+    };
+    if let Some(steps) = grow {
+        return Some(Edit::Grow(steps));
+    }
+    if modifiers.control() {
         return None;
     }
     let direction = match key {
-        Named::ArrowLeft => [-1, 0],
-        Named::ArrowRight => [1, 0],
-        Named::ArrowUp => [0, -1],
-        Named::ArrowDown => [0, 1],
+        keyboard::Key::Named(Named::ArrowLeft) => [-1, 0],
+        keyboard::Key::Named(Named::ArrowRight) => [1, 0],
+        keyboard::Key::Named(Named::ArrowUp) => [0, -1],
+        keyboard::Key::Named(Named::ArrowDown) => [0, 1],
         _ => return None,
     };
     Some(Edit::Arrow(direction, modifiers.shift()))
+}
+
+/// Asks whether the stage clock holds keyboard focus, for its handle.
+pub(super) fn focus_check() -> Task<Message> {
+    cosmic::iced::runtime::task::widget(Focused::default())
+        .collect()
+        .map(|found| cosmic::Action::App(Message::ClockStage(Edit::Focus(!found.is_empty()))))
 }
 
 pub(super) const CLOCK_ID: &str = "clock-stage-clock";
