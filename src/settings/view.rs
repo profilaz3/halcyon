@@ -839,7 +839,7 @@ impl Settings {
     /// Names the current screen's shape, so a change of shape starts a new tree.
     fn screen_key(&self) -> String {
         format!(
-            "screen-{}-{:?}-{:?}-{}-{}-{}-{}-{}-{}-{}-{}-{}-{}-{:?}",
+            "screen-{}-{:?}-{:?}-{}-{}-{}-{}-{}-{}-{}-{}-{}-{:?}",
             self.page.key(),
             self.object_tab,
             self.app_settings_page,
@@ -847,10 +847,7 @@ impl Settings {
             self.profiles.mix.is_some(),
             self.profiles.package.is_some(),
             self.profiles.review_open(),
-            self.setup_requested,
-            self.setup_followups
-                .pending(&self.config, self.calendar.connection.connected())
-                .len(),
+            self.needs_setup(),
             self.profiles.name.is_some(),
             self.profiles.conflicts().len(),
             self.profiles.mix.as_ref().is_some_and(|mix| mix.choosing),

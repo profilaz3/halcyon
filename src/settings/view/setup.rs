@@ -1,224 +1,31 @@
-use super::pages::section;
+//! First run has one path: the setup wizard. Until it is finished, Home
+//! offers it in one card; a stopped widgets service says so with a way out.
+use super::desktop::{WARN, banner};
 use super::*;
-use cosmic::Apply;
 
 impl Settings {
+    /// Home offers setup until it is finished or put off with “Not now”.
     pub(in crate::settings) fn needs_setup(&self) -> bool {
-        self.setup_requested
-            || self.config.onboarded
-                && !self
-                    .setup_followups
-                    .pending(&self.config, self.calendar.connection.connected())
-                    .is_empty()
-            || !self.config.setup_dismissed
-                && !self.config.onboarded
-                && (!self.calendar.connection.connected()
-                    || self.config.location.is_none()
-                    || (self.service_known && !self.service.running))
-    }
-    /// Short, optional content tasks; no provider request or preference write on view.
-    pub(super) fn widget_followups(&self) -> Element<'_, Message> {
-        let pending = self
-            .setup_followups
-            .pending(&self.config, self.calendar.connection.connected());
-        let mut rows = vec![detail_state(
-            "Finish your widgets",
-            "Optional · add your own content",
-        )];
-        for task in pending {
-            rows.push(split(
-                label(task.title(), 14., FG),
-                row::with_children(vec![
-                    button::standard(task.action())
-                        .id(cosmic::widget::Id::new(format!(
-                            "setup-task-{}",
-                            task.key()
-                        )))
-                        .on_press(Message::Page(task.page()))
-                        .into(),
-                    button::icon(icon::from_name("window-close-symbolic").size(14))
-                        .id(cosmic::widget::Id::new(format!(
-                            "setup-task-dismiss-{}",
-                            task.key()
-                        )))
-                        .on_press(Message::DismissSetupTask(task))
-                        .apply(|control| super::tip::tip(control, "Dismiss this reminder")),
-                ])
-                .spacing(6)
-                .align_y(Alignment::Center)
-                .into(),
-            ));
-        }
-        section(rows)
+        !self.config.onboarded && !self.config.setup_dismissed
     }
 
+    /// The one way into first-run setup from Home.
     pub(super) fn setup_card(&self) -> Element<'_, Message> {
-        let accent = self.settings_accent();
-        let mut startup = toggler(self.service.startup);
-        if self.service_known && !self.busy && !preview() {
-            startup = startup.on_toggle(Message::Startup);
-        }
-        let step = |number: &str,
-                    title: &str,
-                    description: String,
-                    ready: bool,
-                    button_text: &str,
-                    action: Option<Message>| {
-            split(
-                row::with_children(vec![
-                    pill(
-                        if ready { "✓" } else { number },
-                        if ready { accent } else { MUTED },
-                    ),
-                    detail_state(title.to_string(), description),
-                ])
-                .spacing(10)
-                .align_y(Alignment::Center)
-                .into(),
-                button::standard(button_text.to_string())
-                    .id(cosmic::widget::Id::new(format!("setup-step-{number}")))
-                    .on_press_maybe(action)
-                    .into(),
-            )
-        };
-        section(vec![
-            split(
-                detail_state(
-                    "Getting started",
-                    "Make the desktop yours. Every step is optional.",
-                ),
-                button::text("Skip setup")
-                    .id(cosmic::widget::Id::new("setup-skip"))
-                    .on_press(Message::SetupDismissed(true))
-                    .into(),
-            ),
-            step(
-                "1",
-                "Desktop · Widgets",
-                if self.service.running {
-                    "Running".into()
-                } else {
-                    "Choose which widgets to show.".into()
-                },
-                self.service.running,
-                if self.service.running {
-                    "Choose widgets"
-                } else if !self.service_known {
-                    "Checking…"
-                } else {
-                    "Show widgets"
-                },
-                if self.service.running {
-                    Some(Message::Page(Page::Widgets))
-                } else {
-                    (self.service_known && !self.busy && !preview())
-                        .then_some(Message::Desktop(true))
-                },
-            ),
-            separator(),
-            split(
-                detail_state("Halcyon · Startup", "Run Halcyon when you sign in."),
-                startup.into(),
-            ),
-            separator(),
-            step(
-                "2",
-                "Widgets · Weather",
-                self.config
-                    .location
-                    .as_ref()
-                    .map(|location| location.name.clone())
-                    .unwrap_or_else(|| "Choose a city. No account or API key needed.".into()),
-                self.config.location.is_some(),
-                if self.config.location.is_some() {
-                    "Change city"
-                } else {
-                    "Choose city"
-                },
-                Some(Message::Page(Page::Weather)),
-            ),
-            separator(),
-            step(
-                "3",
-                "Appearance · Accent color",
-                match self.config.appearance.family {
-                    Some(family) if self.config.appearance.wallpaper_colors => {
-                        format!("{} · colors from your wallpaper", family.title())
-                    }
-                    Some(family) => format!("{} theme", family.title()),
-                    None => {
-                        "Style widgets, dock and panel together, in your wallpaper’s colors.".into()
-                    }
-                },
-                self.config.appearance.family.is_some(),
-                if self.config.appearance.family.is_some() {
-                    "Change style"
-                } else {
-                    "Choose a style"
-                },
-                Some(Message::Page(Page::Themes)),
-            ),
-            separator(),
-            step(
-                "4",
-                "Widgets · Calendar",
-                if self.calendar.connection.connected() {
-                    self.calendar.connection.account.clone()
-                } else {
-                    "Connect Google Calendar or add a read-only calendar link.".into()
-                },
-                self.calendar.connection.connected(),
-                if self.calendar.connection.connected() {
-                    "Manage"
-                } else {
-                    "Set up calendar"
-                },
-                Some(Message::Page(Page::Calendar)),
-            ),
-            separator(),
-            row::with_children(vec![
-                button::text("Add project folders")
-                    .on_press(Message::Page(Page::Projects))
-                    .into(),
-                button::text("More widgets")
-                    .on_press(Message::Page(Page::Widgets))
-                    .into(),
-            ])
-            .spacing(8)
-            .wrap()
-            .into(),
-            label(
-                "Move and resize widgets in Widgets › Arrange widgets. For quick controls, hold the pointer at the far-right screen edge for one second.",
-                11.,
-                MUTED,
-            ),
-        ])
-    }
-
-    pub(super) fn setup_prompt(&self) -> Element<'_, Message> {
-        if self.config.onboarded
-            && !self
-                .setup_followups
-                .pending(&self.config, self.calendar.connection.connected())
-                .is_empty()
-        {
-            return self.widget_followups();
-        }
         frame(
             split(
                 detail_state(
-                    "Getting started",
-                    "Choose a weather city and connect your calendar.",
+                    "Set up your desktop",
+                    "Pick a look, your dock and panel, and widgets in four short steps. Nothing changes until you apply.",
                 ),
                 row::with_children(vec![
-                    button::standard("Continue setup")
-                        .id(cosmic::widget::Id::new("setup-open"))
-                        .on_press(Message::SetupOpen(true))
-                        .into(),
-                    button::icon(icon::from_name("window-close-symbolic").size(14))
+                    button::text("Not now")
                         .id(cosmic::widget::Id::new("setup-dismiss"))
                         .on_press(Message::SetupDismissed(true))
-                        .apply(|control| super::tip::tip(control, "Dismiss setup")),
+                        .into(),
+                    button::suggested("Start")
+                        .id(cosmic::widget::Id::new("setup-open"))
+                        .on_press(Message::OpenWizard)
+                        .into(),
                 ])
                 .spacing(6)
                 .align_y(Alignment::Center)
@@ -228,5 +35,37 @@ impl Settings {
             LINE,
             12,
         )
+    }
+
+    /// Whether the widgets service is known to be stopped.
+    pub(in crate::settings) fn widgets_stopped(&self) -> bool {
+        self.service_known && !self.service.running
+    }
+
+    /// Shown on Widgets and Looks while the widgets service is stopped.
+    /// `offer_setup` adds Set up… where Home's setup card isn't already shown.
+    pub(super) fn widgets_stopped_banner(&self, offer_setup: bool) -> Option<Element<'_, Message>> {
+        if !self.widgets_stopped() {
+            return None;
+        }
+        let mut actions = vec![
+            button::standard("Start widgets")
+                .id(cosmic::widget::Id::new("widgets-start"))
+                .on_press_maybe((!self.busy).then_some(Message::Background(true)))
+                .into(),
+        ];
+        if offer_setup {
+            actions.push(
+                button::text("Set up…")
+                    .id(cosmic::widget::Id::new("widgets-setup"))
+                    .on_press(Message::OpenWizard)
+                    .into(),
+            );
+        }
+        Some(banner(
+            "Widgets aren’t running. Start them to see your desktop widgets.",
+            WARN,
+            actions,
+        ))
     }
 }

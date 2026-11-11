@@ -70,8 +70,8 @@ fn click(app: &mut Settings, native: &mut Native, id: &str) {
 }
 
 #[test]
-fn fresh_user_setup_routes_to_weather_calendar_and_local_widgets() {
-    if child("fresh_user_setup_routes_to_weather_calendar_and_local_widgets") {
+fn fresh_user_home_offers_setup_once_and_says_when_widgets_are_stopped() {
+    if child("fresh_user_home_offers_setup_once_and_says_when_widgets_are_stopped") {
         return;
     }
     for size in [Size::new(820., 600.), Size::new(1024., 720.)] {
@@ -92,29 +92,73 @@ fn fresh_user_setup_routes_to_weather_calendar_and_local_widgets() {
             &controls_theme(&app.config),
             &format!("new-user-home-{}", size.width),
         );
+        // One card, no checklist, and no banner while the widgets run.
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "setup-open")
+                .is_some()
+        );
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "setup-step-1")
+                .is_none()
+        );
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "widgets-start")
+                .is_none()
+        );
         let canvas = native.bounds(app.settings_view(), "desktop-scene");
         assert!(canvas.y >= 0. && canvas.y + canvas.height <= size.height);
-        click(&mut app, &mut native, "setup-open");
         assert!(!app.placement_active());
+
+        // Stopped: Home says so. Set up… is the card right above it.
+        let _ = app.update(Message::Service(Ok(ServiceState {
+            running: false,
+            startup: false,
+        })));
         native.capture(
             app.settings_view(),
             &controls_theme(&app.config),
-            &format!("new-user-setup-{}", size.width),
+            &format!("new-user-stopped-{}", size.width),
         );
-        click(&mut app, &mut native, "setup-step-2");
-        assert_eq!(app.page, Page::Weather);
-        let _ = app.update(Message::Page(Page::Overview));
-        click(&mut app, &mut native, "setup-open");
-        click(&mut app, &mut native, "setup-step-3");
-        assert_eq!(
-            app.page,
-            Page::Themes,
-            "setup opens Appearance's theme choices"
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "widgets-start")
+                .is_some()
         );
-        let _ = app.update(Message::Page(Page::Overview));
-        click(&mut app, &mut native, "setup-open");
-        click(&mut app, &mut native, "setup-step-4");
-        assert_eq!(app.page, Page::Calendar);
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "widgets-setup")
+                .is_none()
+        );
+        let before = std::fs::read(Config::path().unwrap()).unwrap();
+        // Tests never start the real service: the preview seam turns it away.
+        click(&mut app, &mut native, "widgets-start");
+        assert!(!app.busy, "{}", app.status);
+        assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
+
+        // Looks says the same and offers setup.
+        let _ = app.update(Message::Page(Page::DesktopProfiles));
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "widgets-start")
+                .is_some()
+        );
+        click(&mut app, &mut native, "widgets-setup");
+        assert!(app.wizard.is_some());
+        // Skipping leaves setup unfinished, so Home still offers it.
+        click(&mut app, &mut native, "wizard-leave");
+        assert!(app.wizard.is_none());
+        assert_eq!(app.page, Page::Overview);
+        assert!(!Config::load().onboarded);
+        assert!(app.needs_setup());
+        let _ = app.update(Message::Service(Ok(ServiceState {
+            running: true,
+            startup: false,
+        })));
+
+        let _ = app.update(Message::Page(Page::Calendar));
         native.capture(
             app.settings_view(),
             &controls_theme(&app.config),
@@ -137,9 +181,6 @@ fn fresh_user_setup_routes_to_weather_calendar_and_local_widgets() {
         let _ = app.update(Message::Calendar(calendar::Message::Cancel));
         assert!(!app.calendar.busy);
         let _ = app.update(Message::Page(Page::Overview));
-        click(&mut app, &mut native, "setup-open");
-        click(&mut app, &mut native, "setup-back");
-        assert_eq!(app.page, Page::Overview);
         assert!(
             !app.placement_active(),
             "Returning to the overview must not start an edit"
@@ -158,12 +199,19 @@ fn fresh_user_setup_routes_to_weather_calendar_and_local_widgets() {
             "Opening and cancelling the layout editor must preserve saved preferences"
         );
         assert!(!Config::load().setup_dismissed);
-        click(&mut app, &mut native, "setup-open");
-        click(&mut app, &mut native, "setup-skip");
+        click(&mut app, &mut native, "setup-dismiss");
         assert!(!app.needs_setup());
         assert!(Config::load().setup_dismissed);
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "setup-open")
+                .is_none()
+        );
         let _ = app.update(Message::SetupDismissed(false));
         assert!(app.needs_setup());
+        click(&mut app, &mut native, "setup-open");
+        assert!(app.wizard.is_some(), "Start opens the setup wizard");
+        let _ = app.update(Message::Wizard(wizard::Message::Leave));
     }
 }
 
@@ -283,9 +331,17 @@ fn connected_account_selector_and_errors_fit_and_reject_old_responses() {
     }
 }
 
+/// The tasks the Done step lists for widgets that still need content.
+fn pending(app: &Settings) -> Vec<wizard::follow_up::Task> {
+    wizard::follow_up::Task::ALL
+        .into_iter()
+        .filter(|task| task.needed(&app.config, false))
+        .collect()
+}
+
 #[test]
-fn polish050_saved_selection_and_optional_followups_survive_hiding_and_restart() {
-    if child("polish050_saved_selection_and_optional_followups_survive_hiding_and_restart") {
+fn polish050_saved_selection_survives_hiding_and_restart() {
+    if child("polish050_saved_selection_survives_hiding_and_restart") {
         return;
     }
     Config::save_changes(json!({
@@ -300,48 +356,25 @@ fn polish050_saved_selection_and_optional_followups_survive_hiding_and_restart()
     app.calendar.connection = crate::calendar::Connection::default();
     let _ = app.update(Message::Resized(size));
     let mut native = Native::new(size);
-    assert!(
-        app.needs_setup(),
-        "Finish must not erase selected missing-content tasks"
-    );
-    assert_eq!(app.setup_followups.pending(&app.config, false).len(), 3);
+    // Finished setup offers nothing more on Home.
+    assert!(!app.needs_setup());
+    assert_eq!(pending(&app).len(), 3);
     assert!(native.duplicate_ids(app.settings_view()).is_empty());
     native.capture(
         app.settings_view(),
         &controls_theme(&app.config),
         "polish050-widget-followups-820",
     );
-    // Onboarded users no longer get a reminder card on the Widgets page, so
-    // the reminders are driven through the same messages its buttons sent.
-    let _ = app.update(Message::DismissSetupTask(wizard::follow_up::Task::Weather));
-    assert!(
-        !app.error,
-        "Dismissal must save through the production dispatcher: {}",
-        app.status
-    );
-    assert!(
-        !app.setup_followups
-            .pending(&app.config, false)
-            .contains(&wizard::follow_up::Task::Weather)
-    );
-    let raw = wizard::widgets::raw().unwrap();
-    assert_eq!(raw["future_preference"]["keep"], 42);
-    assert_eq!(raw["notes"]["text"], "keep my note");
-    assert_eq!(raw["setup_followup_weather_dismissed"], true);
     let (mut app, _) = Settings::init(Core::default(), Page::Widgets);
     app.calendar.connection = crate::calendar::Connection::default();
     let _ = app.update(Message::Resized(size));
-    assert_eq!(
-        app.setup_followups.pending(&app.config, false),
-        vec![
-            wizard::follow_up::Task::Calendar,
-            wizard::follow_up::Task::Projects
-        ]
-    );
     click(&mut app, &mut native, "widgets-show-all");
     assert!(app.config.widget_selected(Widget::Weather));
     assert!(!app.config.data_visible(Widget::Weather));
-    assert!(app.setup_followups.pending(&app.config, false).is_empty());
+    assert!(pending(&app).is_empty());
+    let raw = wizard::widgets::raw().unwrap();
+    assert_eq!(raw["future_preference"]["keep"], 42);
+    assert_eq!(raw["notes"]["text"], "keep my note");
     native.capture(
         app.settings_view(),
         &controls_theme(&app.config),
@@ -355,8 +388,11 @@ fn polish050_saved_selection_and_optional_followups_survive_hiding_and_restart()
     );
     click(&mut app, &mut native, "widgets-show-all");
     assert_eq!(
-        app.setup_followups.pending(&app.config, false),
-        vec![wizard::follow_up::Task::Projects]
+        pending(&app),
+        vec![
+            wizard::follow_up::Task::Weather,
+            wizard::follow_up::Task::Projects
+        ]
     );
     let _ = app.update(Message::Page(wizard::follow_up::Task::Projects.page()));
     assert_eq!(app.page, Page::Projects);

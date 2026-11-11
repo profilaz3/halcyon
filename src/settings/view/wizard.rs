@@ -399,7 +399,7 @@ impl Settings {
                     "wizard-start",
                     (!self.native_busy).then_some(go(Step::Start)),
                 ),
-                quiet("Set up later", "wizard-leave", go(Step::Leave)),
+                quiet("Skip for now", "wizard-leave", go(Step::Leave)),
             ]
         };
         let intro = column::with_children(vec![

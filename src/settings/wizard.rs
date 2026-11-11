@@ -316,7 +316,8 @@ pub enum Message {
     /// The identity of the page which rendered a control; survives worker queues.
     Rendered(Step, u64, Box<Message>),
     Start,
-    /// Leaves the wizard as it is now (on Welcome: before anything changed).
+    /// Skips setup from Welcome, before anything changed. Setup stays
+    /// unfinished, so Home keeps offering it.
     Leave,
     Next,
     Back,
@@ -422,6 +423,8 @@ pub enum Outcome {
     /// `startup`); otherwise nothing more happens.
     /// Setup closes with its choices saved for later; nothing was written.
     Left,
+    /// Skipped from Welcome: nothing chosen, and setup isn't finished.
+    Skipped,
     Done {
         finish: bool,
         startup: bool,
@@ -798,12 +801,7 @@ impl Wizard {
                 self.capture_insets(store);
                 self.go(Step::Look);
             }
-            Message::Leave => {
-                return Outcome::Done {
-                    finish: false,
-                    startup: false,
-                };
-            }
+            Message::Leave => return Outcome::Skipped,
             Message::Back => {
                 self.widgets.cancel_drag();
                 if let Some(step) = self.visited.pop().or_else(|| self.step.back()) {

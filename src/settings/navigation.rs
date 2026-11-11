@@ -2083,7 +2083,6 @@ pub(super) struct Route {
     arranging: bool,
     saved_collection: bool,
     setup_review: Option<super::profiles::Selection>,
-    setup_requested: bool,
     report: Option<String>,
 }
 const MAX_HISTORY: usize = 40;
@@ -2181,7 +2180,6 @@ impl Settings {
             saved_collection: self.profiles.saved_collection,
             setup_review: (self.page == Page::DesktopProfiles && self.profiles.review_open())
                 .then(|| self.profiles.selection().clone()),
-            setup_requested: self.setup_requested,
             report: self.support.report.clone(),
         }
     }
@@ -2247,7 +2245,6 @@ impl Settings {
             {
                 Some(Page::DesktopProfiles)
             }
-            Page::Overview if self.setup_requested => Some(Page::Overview),
             _ => None,
         };
         if let Some(page) = inside {
@@ -2326,7 +2323,6 @@ impl Settings {
         self.app_settings_page = route.app;
         self.object_tab = route.tab;
         self.arranging = route.arranging && self.canvas.is_some();
-        self.setup_requested = route.setup_requested;
         self.support.report = route.report;
         if route.page == Page::DesktopProfiles {
             if let Some(selection) = route.setup_review {

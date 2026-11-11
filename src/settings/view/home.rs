@@ -42,18 +42,6 @@ impl Settings {
         if self.canvas_visible() {
             return self.canvas_page();
         }
-        if self.setup_requested {
-            return column::with_children(vec![
-                button::text("Back to Desktop")
-                    .leading_icon(icon::from_name("go-previous-symbolic").size(14))
-                    .id(cosmic::widget::Id::new("setup-back"))
-                    .on_press(Message::SetupOpen(false))
-                    .into(),
-                self.setup_card(),
-            ])
-            .spacing(12)
-            .into();
-        }
         if self.legacy_layout_recovery() {
             return column::with_children(vec![
                 heading(
@@ -96,6 +84,11 @@ impl Settings {
             None => self.placement_picture(height, false),
         };
         let mut parts = vec![header];
+        let setup = self.needs_setup();
+        if setup {
+            parts.push(self.setup_card());
+        }
+        parts.extend(self.widgets_stopped_banner(!setup));
         if self.displays.outputs().len() > 1 {
             parts.push(self.monitor_overview());
         }
@@ -105,9 +98,6 @@ impl Settings {
                 .width(Length::Fill)
                 .into(),
         );
-        if self.needs_setup() && !self.config.onboarded {
-            parts.push(self.setup_prompt());
-        }
         parts.push(self.widgets_page());
         column::with_children(parts).spacing(20).into()
     }

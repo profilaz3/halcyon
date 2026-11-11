@@ -1920,6 +1920,9 @@ impl Settings {
                 .into(),
             )]
         };
+        if !reviewing {
+            items.extend(self.widgets_stopped_banner(true));
+        }
         if !reviewing && self.help_open == Some("looks-more") {
             items.push(
                 row::with_children(vec![

@@ -725,9 +725,8 @@ pub enum Message {
     CommandDone(String, Result<(), String>),
     OpenCalendar,
     Calendar(calendar::Message),
+    /// Hides the Home card that offers setup ("Not now").
     SetupDismissed(bool),
-    SetupOpen(bool),
-    DismissSetupTask(wizard::follow_up::Task),
     /// Close the finished setup and open a page for a follow-up task.
     FinishSetupTo(Page),
     OpenWeatherSource,
@@ -809,8 +808,6 @@ pub struct Settings {
     /// First-run setup, shown instead of the pages while it runs.
     wizard: Option<wizard::Wizard>,
     search_query: String,
-    setup_requested: bool,
-    setup_followups: wizard::follow_up::State,
     search_selected: Option<navigation::SearchHit>,
     /// The explanation opened with its "?", on the page it belongs to.
     explained: Option<(Page, u64)>,
@@ -1083,8 +1080,6 @@ impl cosmic::Application for Settings {
             page,
             wizard,
             search_query: String::new(),
-            setup_requested: false,
-            setup_followups: wizard::follow_up::State::load(),
             search_selected: None,
             explained: None,
             advanced_pages: Vec::new(),
@@ -2299,25 +2294,7 @@ impl Settings {
                 self.setup_kept = false;
                 self.wizard = Some(open_wizard());
             }
-            Message::SetupOpen(open) => {
-                if open && !self.setup_requested && self.page == Page::Overview {
-                    self.remember_route();
-                }
-                let navigate = self.handle(Message::Page(Page::Overview));
-                self.setup_requested = open;
-                return navigate;
-            }
-            Message::SetupDismissed(on) => {
-                self.save(json!({"setup_dismissed":on}));
-                return self.handle(Message::SetupOpen(!on));
-            }
-            Message::DismissSetupTask(task) => match self.setup_followups.dismiss(task) {
-                Ok(config) => {
-                    self.config = config;
-                    self.saved();
-                }
-                Err(error) => self.failed(error),
-            },
+            Message::SetupDismissed(on) => self.save(json!({"setup_dismissed":on})),
             Message::SearchSettings(query) => {
                 if !query.trim().is_empty() {
                     self.placement.leave();
@@ -2438,9 +2415,6 @@ impl Settings {
                 {
                     // Leaving a review keeps it if it was changed.
                     return self.leave_review_to_browse();
-                }
-                if self.history.is_empty() && self.page == Page::Overview && self.setup_requested {
-                    return self.handle(Message::SetupOpen(false));
                 }
                 return self.go_back();
             }
@@ -2890,7 +2864,6 @@ impl Settings {
             Message::Tick => {
                 self.refresh_usage();
                 self.calendar.refresh();
-                self.setup_followups = wizard::follow_up::State::load();
                 match Config::try_load() {
                     Ok(config) => self.config = config,
                     Err(error)
@@ -3363,7 +3336,6 @@ impl Settings {
                 self.devbox_reorder.cancel();
                 self.help_open = None;
                 self.color_well = None;
-                self.setup_requested = false;
                 self.shortcuts.cancel_recording();
                 self.flush_edits();
                 // An unsaved layout draft survives a visit to a widget's own
@@ -4607,7 +4579,7 @@ impl Settings {
     /// The miniature editor lives on the Widgets page; pointer and arrow-key
     /// listeners run only while it is on screen.
     fn placement_active(&self) -> bool {
-        self.canvas_visible() && !self.setup_requested && self.search_query.trim().is_empty()
+        self.canvas_visible() && self.search_query.trim().is_empty()
     }
     /// The Motion page: the app-animation toggle writes off the UI thread
     /// and reports in the status line.
@@ -4827,6 +4799,15 @@ impl Settings {
                 ));
                 page
             }
+            wizard::Outcome::Skipped => {
+                // Setup stays unfinished: Home keeps offering it.
+                self.setup_kept = false;
+                self.wizard = None;
+                if let Some(store) = &store {
+                    wizard::Wizard::forget(store);
+                }
+                self.handle(Message::Page(Page::Overview))
+            }
             wizard::Outcome::Done { finish, startup } => {
                 self.setup_kept = false;
                 self.wizard = None;
@@ -4859,7 +4840,6 @@ impl Settings {
     /// preferences and the other editors' current values. Their drafts stay.
     /// Returns the Wallpaper page's media work the refresh started.
     fn after_desktop_change(&mut self) -> Task<Message> {
-        self.setup_followups = wizard::follow_up::State::load();
         if let Ok(config) = Config::try_load() {
             self.config = config;
         }

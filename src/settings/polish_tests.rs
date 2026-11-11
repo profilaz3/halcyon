@@ -53,53 +53,6 @@ fn polish050_recovered_legacy_layout_can_be_saved_or_cancelled() {
 }
 
 #[test]
-fn polish050_dismissed_reminder_tracks_exact_undo_and_external_refresh() {
-    let name = "polish050_dismissed_reminder_tracks_exact_undo_and_external_refresh";
-    if desktop_test_child(
-        name,
-        DesktopEnv {
-            app_config: true,
-            fixture: true,
-            ..Default::default()
-        },
-    ) {
-        return;
-    }
-    let root = isolated_root();
-    Config::save_changes(
-        json!({"widgets_visible":true,"enabled_widgets":["weather"],"location":null}),
-    )
-    .unwrap();
-    let mut app = open_isolated_editor(&root);
-    let task = wizard::follow_up::Task::Weather;
-    assert!(
-        app.setup_followups
-            .pending(&app.config, false)
-            .contains(&task)
-    );
-    send_settings(&mut app, Message::DismissSetupTask(task));
-    assert!(!app.error, "{}", app.status);
-    assert!(
-        !app.setup_followups
-            .pending(&app.config, false)
-            .contains(&task)
-    );
-    send_settings(&mut app, Message::UndoDesktop);
-    assert!(
-        app.setup_followups
-            .pending(&app.config, false)
-            .contains(&task)
-    );
-    Config::save_changes(json!({"setup_followup_weather_dismissed":true})).unwrap();
-    send_settings(&mut app, Message::Tick);
-    assert!(
-        !app.setup_followups
-            .pending(&app.config, false)
-            .contains(&task)
-    );
-}
-
-#[test]
 fn polish050_native_page_patterns_and_one_builder_footer() {
     let name = "polish050_native_page_patterns_and_one_builder_footer";
     if desktop_test_child(

@@ -561,9 +561,15 @@ fn finishing_keeps_the_look_and_skip_leaves_the_desktop_alone() {
     let (mut app, mut native) = open(size);
     click(&mut app, &mut native, "wizard-leave");
     assert!(app.wizard.is_none());
-    assert!(Config::load().onboarded);
+    // Skip for now isn't finishing: Home keeps offering setup.
+    assert!(!Config::load().onboarded);
+    assert!(app.needs_setup());
     assert_eq!(Config::load().appearance.family, None);
-    assert_eq!(user(DOCK, "border_radius"), None, "Not now changes nothing");
+    assert_eq!(
+        user(DOCK, "border_radius"),
+        None,
+        "Skip for now changes nothing"
+    );
 
     let (mut app, mut native) = open(size);
     click(&mut app, &mut native, "wizard-start");
@@ -586,7 +592,7 @@ fn finishing_keeps_the_look_and_skip_leaves_the_desktop_alone() {
     assert!(config.widget_visible(crate::drawer::Widget::Clock));
     assert!(!config.widget_visible(crate::drawer::Widget::Devbox));
     assert!(!config.glance.enabled && !config.glance.show_calendar);
-    // The old checklist doesn't follow the wizard.
+    // Finished setup isn't offered again on Home.
     assert!(!app.needs_setup());
 }
 

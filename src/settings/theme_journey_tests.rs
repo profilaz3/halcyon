@@ -195,7 +195,6 @@ fn journey_first_run_setup_and_themes() {
         let (mut app, _) = Settings::init(Core::default(), Page::Overview);
         let _ = app.update(Message::Resized(size));
         goto(&mut app, Page::Overview);
-        let _ = app.update(Message::SetupOpen(true));
         drive(&mut app);
         capture_page(&app, size, &cosmic::Theme::dark(), "setup", 2);
         goto(&mut app, Page::Themes);
