@@ -1281,6 +1281,11 @@ fn whats_new_opens_from_updates_and_each_note_leads_to_its_setting() {
     }
     // Reading the notes and following them changes nothing.
     assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
+    // Seeing them is remembered apart from settings: no change to undo.
+    assert_eq!(
+        crate::settings::release_notes::seen().as_deref(),
+        Some(env!("CARGO_PKG_VERSION"))
+    );
 }
 
 /// Choosing Islands shows the one step Halcyon's panel still needs, right

@@ -37,6 +37,60 @@ impl Settings {
         )
     }
 
+    /// After an update, Home names what is new since the notes last seen,
+    /// across every release in between. None on a first run: setup records
+    /// the running version instead.
+    pub(super) fn updated_card(&self) -> Option<Element<'_, Message>> {
+        let running = env!("CARGO_PKG_VERSION");
+        let seen = self.notes_recorded.as_deref();
+        if self.needs_setup() || seen == Some(running) {
+            return None;
+        }
+        let notes: Vec<_> = crate::settings::release_notes::since(seen)
+            .into_iter()
+            .flat_map(|release| release.notes)
+            .collect();
+        if notes.is_empty() {
+            return None;
+        }
+        const SHOWN: usize = 4;
+        let mut lines = vec![label(format!("Halcyon was updated to {running}"), 15., FG)];
+        lines.extend(
+            notes
+                .iter()
+                .take(SHOWN)
+                .map(|note| label(format!("• {}", note.title), 13., MUTED)),
+        );
+        if notes.len() > SHOWN {
+            lines.push(label(
+                format!("and {} more", notes.len() - SHOWN),
+                13.,
+                MUTED,
+            ));
+        }
+        Some(frame(
+            split(
+                column::with_children(lines).spacing(4).into(),
+                row::with_children(vec![
+                    button::text("Dismiss")
+                        .id(cosmic::widget::Id::new("updated-dismiss"))
+                        .on_press(Message::NotesSeen)
+                        .into(),
+                    button::suggested("See what’s new")
+                        .id(cosmic::widget::Id::new("updated-whats-new"))
+                        .on_press(Message::AppSettingsPage(AppSettingsPage::WhatsNew))
+                        .into(),
+                ])
+                .spacing(6)
+                .align_y(Alignment::Center)
+                .into(),
+            ),
+            SURFACE,
+            LINE,
+            12,
+        ))
+    }
+
     /// Whether the widgets service is known to be stopped.
     pub(in crate::settings) fn widgets_stopped(&self) -> bool {
         self.service_known && !self.service.running

@@ -727,6 +727,10 @@ pub enum Message {
     Calendar(calendar::Message),
     /// Hides the Home card that offers setup ("Not now").
     SetupDismissed(bool),
+    /// Hides the Home card about an update without opening its notes.
+    NotesSeen,
+    /// Opens a web page a release note names.
+    OpenNoteLink(&'static str),
     /// Close the finished setup and open a page for a follow-up task.
     FinishSetupTo(Page),
     OpenWeatherSource,
@@ -802,6 +806,11 @@ pub struct Settings {
     error_details: Option<String>,
     /// Setup choices wait to be resumed from Recovery.
     setup_kept: bool,
+    /// The release notes last seen when Settings opened: What’s new lists
+    /// every version after it, even once this visit records the new one.
+    notes_seen: Option<String>,
+    /// The release notes recorded as seen now; Home's update card reads it.
+    notes_recorded: Option<String>,
     collapsed_scenes: Vec<Page>,
     scene_objects_open: bool,
     page_scroll: std::collections::BTreeMap<String, f32>,
@@ -1136,6 +1145,8 @@ impl cosmic::Application for Settings {
             kept_note: None,
             error_details: None,
             setup_kept: false,
+            notes_seen: release_notes::seen(),
+            notes_recorded: release_notes::seen(),
             collapsed_scenes: Vec::new(),
             scene_objects_open: false,
             page_scroll: Default::default(),
@@ -2305,7 +2316,21 @@ impl Settings {
                 self.setup_kept = false;
                 self.wizard = Some(open_wizard());
             }
-            Message::SetupDismissed(on) => self.save(json!({"setup_dismissed":on})),
+            Message::SetupDismissed(on) => {
+                self.save(json!({"setup_dismissed": on}));
+                // Setup is the first visit: there is nothing new to tell yet.
+                if on {
+                    self.record_notes_seen();
+                }
+            }
+            Message::NotesSeen => self.record_notes_seen(),
+            Message::OpenNoteLink(url) => {
+                return run_command(
+                    "/usr/bin/xdg-open".into(),
+                    vec![url.into()],
+                    "Page opened",
+                );
+            }
             Message::SearchSettings(query) => {
                 if !query.trim().is_empty() {
                     self.placement.leave();
@@ -2836,6 +2861,9 @@ impl Settings {
                 };
                 self.app_settings_page = page;
                 self.support.report = None;
+                if page == AppSettingsPage::WhatsNew {
+                    self.record_notes_seen();
+                }
                 let support = if page == AppSettingsPage::Help {
                     self.load_support()
                 } else {
@@ -4803,6 +4831,7 @@ impl Settings {
                 self.wizard = None;
                 self.setup_kept = true;
                 self.save(json!({"onboarded": true}));
+                self.record_notes_seen();
                 let page = self.handle(Message::Page(Page::Overview));
                 self.kept_note = Some((
                     "Setup choices kept. Your desktop stays as it is.".into(),
@@ -4826,6 +4855,7 @@ impl Settings {
                     wizard::Wizard::forget(store);
                 }
                 self.save(json!({"onboarded": true}));
+                self.record_notes_seen();
                 let refresh = self.after_desktop_change();
                 let page = self.handle(Message::Page(Page::Overview));
                 // The cards appear now, and at every sign-in when chosen.
@@ -5337,6 +5367,19 @@ impl Settings {
         self.corner_step = crate::desktop::DesktopStore::from_env()
             .ok()
             .and_then(|store| corners::current(&store, self.config.appearance.corner_radius));
+    }
+    /// This version's notes were shown or set aside. Kept with Settings'
+    /// own state, not as a setting: reading notes is nothing to undo and
+    /// must not take Undo from the last real change.
+    fn record_notes_seen(&mut self) {
+        let running = env!("CARGO_PKG_VERSION");
+        if self.notes_recorded.as_deref() == Some(running) {
+            return;
+        }
+        // Unrecorded, the card simply returns next time.
+        if release_notes::record_seen().is_ok() {
+            self.notes_recorded = Some(running.into());
+        }
     }
     fn saved(&mut self) {
         self.status = "Saved".into();

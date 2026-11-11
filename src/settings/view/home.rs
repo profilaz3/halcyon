@@ -88,6 +88,7 @@ impl Settings {
         if setup {
             parts.push(self.setup_card());
         }
+        parts.extend(self.updated_card());
         parts.extend(self.widgets_stopped_banner(!setup));
         if self.displays.outputs().len() > 1 {
             parts.push(self.monitor_overview());

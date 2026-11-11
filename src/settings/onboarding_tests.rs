@@ -100,6 +100,11 @@ fn fresh_user_home_offers_setup_once_and_says_when_widgets_are_stopped() {
         );
         assert!(
             native
+                .try_bounds(app.settings_view(), "updated-whats-new")
+                .is_none()
+        );
+        assert!(
+            native
                 .try_bounds(app.settings_view(), "setup-step-1")
                 .is_none()
         );
@@ -205,6 +210,17 @@ fn fresh_user_home_offers_setup_once_and_says_when_widgets_are_stopped() {
         assert!(
             native
                 .try_bounds(app.settings_view(), "setup-open")
+                .is_none()
+        );
+        // A first run has nothing new to tell: setting setup aside records
+        // this version, so no update card follows it.
+        assert_eq!(
+            crate::settings::release_notes::seen().as_deref(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "updated-whats-new")
                 .is_none()
         );
         let _ = app.update(Message::SetupDismissed(false));
@@ -329,6 +345,129 @@ fn connected_account_selector_and_errors_fit_and_reject_old_responses() {
             "failure preserves the previous account"
         );
     }
+}
+
+#[test]
+fn upgrade_home_names_whats_new_since_the_last_version_seen() {
+    if child("upgrade_home_names_whats_new_since_the_last_version_seen") {
+        return;
+    }
+    let running = env!("CARGO_PKG_VERSION");
+    let open = |seen: Option<&str>, size: Size| {
+        Config::save_changes(json!({"onboarded": true, "setup_dismissed": true})).unwrap();
+        let store = crate::desktop::DesktopStore::from_env().unwrap();
+        std::fs::create_dir_all(store.state_dir()).unwrap();
+        let file = store.state_dir().join("release-notes-seen");
+        match seen {
+            Some(version) => std::fs::write(&file, version).unwrap(),
+            None => drop(std::fs::remove_file(&file)),
+        }
+        let (mut app, _) = Settings::init(Core::default(), Page::Overview);
+        app.calendar.connection = crate::calendar::Connection::default();
+        let _ = app.update(Message::Service(Ok(ServiceState {
+            running: true,
+            startup: false,
+        })));
+        let _ = app.update(Message::Resized(size));
+        app
+    };
+    // Upgraded from a version that never recorded its notes: this one's.
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        let mut app = open(None, size);
+        let mut native = Native::new(size);
+        let card = native.bounds(app.settings_view(), "updated-whats-new");
+        assert!(
+            card.y >= 0. && card.y + card.height <= size.height,
+            "{card:?}"
+        );
+        native.text_bounds(
+            app.settings_view(),
+            &format!("Halcyon was updated to {running}"),
+        );
+        let first = crate::settings::release_notes::current().unwrap().notes[0].title;
+        native.text_bounds(app.settings_view(), &format!("• {first}"));
+        for (theme, name) in [
+            (cosmic::Theme::light(), "light"),
+            (cosmic::Theme::dark(), "dark"),
+        ] {
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("on05-updated-card-{}-{name}", size.width),
+            );
+        }
+        click(&mut app, &mut native, "updated-whats-new");
+        assert_eq!(app.app_settings_page, AppSettingsPage::WhatsNew);
+        assert_eq!(
+            crate::settings::release_notes::seen().as_deref(),
+            Some(running)
+        );
+        native.text_bounds(app.settings_view(), &format!("Halcyon {running}"));
+        let _ = app.update(Message::Page(Page::Overview));
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "updated-whats-new")
+                .is_none()
+        );
+    }
+    // Several releases behind: every one in between, newest first.
+    let size = Size::new(1280., 800.);
+    let mut app = open(Some("0.5.0"), size);
+    let mut native = Native::new(size);
+    let all = crate::settings::release_notes::since(Some("0.5.0"));
+    assert!(all.len() >= 2);
+    let count: usize = all.iter().map(|release| release.notes.len()).sum();
+    native.text_bounds(app.settings_view(), &format!("and {} more", count - 4));
+    let _ = app.update(Message::AppSettingsPage(AppSettingsPage::WhatsNew));
+    let mut tops = Vec::new();
+    for release in &all {
+        let heading = format!("Halcyon {}", release.version);
+        tops.push(native.text_bounds(app.settings_view(), &heading).y);
+    }
+    assert!(tops.is_sorted(), "{tops:?}");
+    for (theme, name) in [
+        (cosmic::Theme::light(), "light"),
+        (cosmic::Theme::dark(), "dark"),
+    ] {
+        native.capture(
+            app.settings_view(),
+            &theme,
+            &format!("on05-whats-new-since-{name}"),
+        );
+    }
+    // The statistics address opens in the browser.
+    let linked = all
+        .iter()
+        .flat_map(|release| release.notes)
+        .position(|note| note.link.is_some())
+        .unwrap();
+    assert!(
+        native
+            .try_bounds(app.settings_view(), &format!("whats-new-link-{linked}"))
+            .is_some()
+    );
+    // Dismissing records the version without opening the notes.
+    let mut app = open(Some("0.5.0"), Size::new(820., 600.));
+    let mut native = Native::new(Size::new(820., 600.));
+    click(&mut app, &mut native, "updated-dismiss");
+    assert_eq!(app.page, Page::Overview);
+    assert_eq!(
+        crate::settings::release_notes::seen().as_deref(),
+        Some(running)
+    );
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "updated-whats-new")
+            .is_none()
+    );
+    // Already seen: nothing on Home.
+    let app = open(Some(running), size);
+    let mut native = Native::new(size);
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "updated-whats-new")
+            .is_none()
+    );
 }
 
 /// The tasks the Done step lists for widgets that still need content.

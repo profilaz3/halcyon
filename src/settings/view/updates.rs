@@ -177,47 +177,61 @@ impl Settings {
         column::with_children(groups).spacing(16).into()
     }
 
-    /// This version's release notes. A note with a place to set it up opens
-    /// that place, and Back returns here.
+    /// Release notes for every version since the ones last seen, newest
+    /// first; this version's alone when they were already seen. A note with
+    /// a place to set it up opens that place, and Back returns here.
     pub(in crate::settings) fn whats_new_page(&self) -> Element<'_, Message> {
-        let Some(release) = crate::settings::release_notes::current() else {
+        let mut releases = crate::settings::release_notes::since(self.notes_seen.as_deref());
+        if releases.is_empty() {
+            releases.extend(crate::settings::release_notes::current());
+        }
+        if releases.is_empty() {
             return label("There are no notes for this version.", 14., MUTED);
-        };
-        let rows = release
-            .notes
-            .iter()
-            .enumerate()
-            .map(|(index, note)| {
-                let text = column::with_children(vec![
-                    label(note.title, 15., FG),
-                    label(note.body, 13., MUTED),
-                ])
-                .spacing(4)
-                .width(Length::Fill);
-                let mut line = row::with_children(vec![text.into()])
-                    .spacing(16)
-                    .align_y(Alignment::Center);
-                if let Some(place) = note.place {
-                    line = line.push(
-                        button::standard(format!(
-                            "Open {}",
-                            if place.page == Page::General {
-                                place.app_destination().title()
-                            } else {
-                                place.page.title()
-                            }
-                        ))
+        }
+        let mut groups: Vec<Element<'_, Message>> = Vec::new();
+        let mut index = 0;
+        for release in releases {
+            let rows = release
+                .notes
+                .iter()
+                .map(|note| {
+                    let text = column::with_children(vec![
+                        label(note.title, 15., FG),
+                        label(note.body, 13., MUTED),
+                    ])
+                    .spacing(4)
+                    .width(Length::Fill);
+                    let mut line = row::with_children(vec![text.into()])
+                        .spacing(16)
+                        .align_y(Alignment::Center);
+                    if let Some(place) = note.place {
+                        line = line.push(
+                            button::standard(format!(
+                                "Open {}",
+                                if place.page == Page::General {
+                                    place.app_destination().title()
+                                } else {
+                                    place.page.title()
+                                }
+                            ))
                             .id(cosmic::widget::Id::new(format!("whats-new-open-{index}")))
                             .on_press(Message::SearchResult(place)),
-                    );
-                }
-                container(line).padding([6, 0]).into()
-            })
-            .collect();
-        let mut groups = vec![
-            text::heading(format!("Halcyon {}", release.version)).into(),
-            group(None, rows),
-        ];
+                        );
+                    }
+                    if let Some(link) = note.link {
+                        line = line.push(
+                            button::standard("Open page ↗")
+                                .id(cosmic::widget::Id::new(format!("whats-new-link-{index}")))
+                                .on_press(Message::OpenNoteLink(link)),
+                        );
+                    }
+                    index += 1;
+                    container(line).padding([6, 0]).into()
+                })
+                .collect();
+            groups.push(text::heading(format!("Halcyon {}", release.version)).into());
+            groups.push(group(None, rows));
+        }
         if self.updates.notes_url().is_some() {
             groups.push(
                 button::text("Release notes online ↗")
