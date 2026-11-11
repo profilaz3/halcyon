@@ -684,7 +684,7 @@ impl ProfilesEditor {
             previews::PreviewKind::Setup
         };
         self.replan();
-        self.notice = Some(Notice::Done("Recovered your preset selection. Review its current changes before applying; nothing has been applied.".into()));
+        self.notice = Some(Notice::Done("Your look selection that wasn’t applied is back. Review it before applying; nothing has changed yet.".into()));
         Ok(())
     }
 
@@ -2364,7 +2364,7 @@ impl ProfilesEditor {
         } else {
             store
                 .discard_recovery()
-                .map(|()| ("Current settings kept".to_string(), Vec::new()))
+                .map(|()| ("Kept what’s on screen".to_string(), Vec::new()))
         };
         match result {
             Ok((summary, details)) => {

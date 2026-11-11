@@ -248,8 +248,9 @@ impl Settings {
         if unfinished > 0 {
             items.push(banner(
                 format!(
-                    "{unfinished} unfinished {} from the previous version. Nothing changes until you choose.",
-                    if unfinished == 1 { "change" } else { "changes" }
+                    "{unfinished} {} from the previous version {} never applied. Nothing changes until you choose.",
+                    if unfinished == 1 { "change" } else { "changes" },
+                    if unfinished == 1 { "was" } else { "were" }
                 ),
                 WARN,
                 vec![

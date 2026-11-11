@@ -453,6 +453,30 @@ fn native_area(namespace: &str) -> &'static str {
         "Windows"
     }
 }
+/// What an interrupted change was doing, named by the pages it touched,
+/// for the banner that asks whether to keep it.
+pub fn interrupted(journal: &super::Journal) -> String {
+    let mut pages: Vec<&str> = Vec::new();
+    for entry in &journal.entries {
+        let page = native_area(&entry.namespace);
+        if !pages.contains(&page) {
+            pages.push(page);
+        }
+    }
+    if journal.widget.is_some() {
+        pages.push("Widgets");
+    }
+    let what = match pages.as_slice() {
+        [] => "your desktop".to_string(),
+        [one] => one.to_string(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    };
+    match journal.operation.as_str() {
+        "undo" | "undo_restore" => format!("Halcyon was closed while undoing a change to {what}."),
+        "restore" => format!("Halcyon was closed while restoring {what}."),
+        _ => format!("Halcyon was closed while changing {what}."),
+    }
+}
 /// The recorded name of a desktop setting that has one (see `SETTINGS`).
 fn native_setting(namespace: &str, key: &str) -> Option<&'static str> {
     if namespace.starts_with("com.system76.CosmicPanel.") {
@@ -890,6 +914,45 @@ mod tests {
         assert_eq!(undone.summary().title(), recent.entries[0].title());
     }
     #[test]
+    fn interrupted_banner_says_what_was_being_changed() {
+        let entry = |namespace: &str| super::super::JournalEntry {
+            namespace: namespace.into(),
+            version: 1,
+            key: "autotile".into(),
+            before: None,
+            after: None,
+        };
+        let mut journal = super::super::Journal {
+            format: String::new(),
+            version: 3,
+            id: "x".into(),
+            operation: "apply".into(),
+            created: String::new(),
+            entries: vec![entry("com.system76.CosmicComp")],
+            widget: None,
+            undo: None,
+            design: None,
+        };
+        assert_eq!(
+            interrupted(&journal),
+            "Halcyon was closed while changing Windows."
+        );
+        journal.entries.push(entry("com.system76.CosmicPanel.Dock"));
+        journal.entries.push(entry("com.system76.CosmicBackground"));
+        journal.operation = "undo".into();
+        assert_eq!(
+            interrupted(&journal),
+            "Halcyon was closed while undoing a change to Windows, Dock and panel and Wallpaper."
+        );
+        journal.entries.clear();
+        journal.operation = "restore".into();
+        assert_eq!(
+            interrupted(&journal),
+            "Halcyon was closed while restoring your desktop."
+        );
+    }
+
+    #[test]
     fn conflicts_read_in_the_pages_words_never_as_keys() {
         let (nine, four) = ("9", "4");
         assert_eq!(
@@ -902,12 +965,7 @@ mod tests {
             "Between items: now 9 px, was 4 px"
         );
         assert_eq!(
-            native_conflict(
-                "com.system76.CosmicPanel.Panel",
-                "margin",
-                Some(nine),
-                None
-            ),
+            native_conflict("com.system76.CosmicPanel.Panel", "margin", Some(nine), None),
             "Edge gap: now 9 px, was Default"
         );
         let on = "true";

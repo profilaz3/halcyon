@@ -142,30 +142,12 @@ impl Settings {
             items.push(label("Reading appearance settings…", 12., MUTED));
             return column::with_children(items).spacing(16).into();
         };
-        match editor.recovery() {
-            Some(Ok(_)) => items.push(banner(
-                "An earlier change was interrupted.",
-                WARN,
-                vec![
-                    button::text("Keep current")
-                        .on_press_maybe(editor.writable().then_some(edit(Edit::KeepRecovery)))
-                        .into(),
-                    button::standard("Restore previous")
-                        .on_press_maybe(editor.writable().then_some(edit(Edit::Recover)))
-                        .into(),
-                ],
-            )),
-            Some(Err(error)) => items.push(banner(
-                error.clone(),
-                ERROR,
-                vec![
-                    button::text("Keep current")
-                        .on_press_maybe(editor.writable().then_some(edit(Edit::KeepRecovery)))
-                        .into(),
-                ],
-            )),
-            None => {}
-        }
+        items.extend(super::windows::recovery_banner(
+            editor.recovery(),
+            editor.writable(),
+            edit(Edit::Recover),
+            edit(Edit::KeepRecovery),
+        ));
         if !draft.conflicts().is_empty() {
             items.push(conflict_banner(
                 crate::settings::system_appearance::describe(draft.conflicts()),

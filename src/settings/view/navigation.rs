@@ -313,9 +313,9 @@ impl Settings {
         let mut rows = vec![heading(
             "Unfinished changes",
             if self.recovery_sheet.rows.is_empty() {
-                "Changes left half-done by an update show up here."
+                "Changes you made in a previous version that were never applied show up here."
             } else {
-                "From the previous version. Nothing changes until you choose to use one."
+                "Changes you made in the previous version that were never applied. Nothing changes until you pick one."
             },
         )];
         for (index, proposal) in self.recovery_sheet.rows.iter().enumerate() {
@@ -338,7 +338,7 @@ impl Settings {
                 ));
             }
             let mut actions = vec![
-                button::text("Keep current")
+                button::text("Keep what’s on screen")
                     .on_press(Message::RecoveryDiscard(index))
                     .into(),
                 button::text("Use this choice")
@@ -366,8 +366,8 @@ impl Settings {
             rows.push(group(
                 None,
                 vec![detail_state(
-                    "Nothing to recover",
-                    "Nothing was left half-done when Halcyon updated.",
+                    "Nothing waiting",
+                    "Every change from the previous version was applied.",
                 )],
             ));
         } else {

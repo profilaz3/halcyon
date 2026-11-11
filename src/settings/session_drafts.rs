@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub(super) const RECOVERED: &str =
-    "Recovered your unapplied changes. Review or discard them; nothing has been applied.";
+    "Your changes that weren’t applied are back. Apply or discard them; nothing has changed yet.";
 const FORMAT: &str = "desktop-cards-settings-draft";
 const VERSION: u32 = 1;
 const MAX_BYTES: usize = 4 * 1024 * 1024;
@@ -376,12 +376,12 @@ impl Settings {
         }
         if session.recovered > 0 {
             self.status = format!(
-                "Recovered {} unfinished {} · continue where you left off",
+                "{} {} not applied yet came back · continue where you left off",
                 session.recovered,
                 if session.recovered == 1 {
-                    "draft"
+                    "change"
                 } else {
-                    "drafts"
+                    "changes"
                 }
             );
             self.error = false;
@@ -476,7 +476,7 @@ impl Settings {
         }
         if !errors.is_empty() {
             self.session_drafts.error = Some(format!(
-                "Could not keep unfinished work for next time: {}",
+                "Could not keep changes not applied yet for next time: {}",
                 errors.join(" · ")
             ));
             self.status = self.session_drafts.error.clone().unwrap();
@@ -484,7 +484,7 @@ impl Settings {
         } else if self.session_drafts.unreadable.is_empty() {
             self.session_drafts.error = None;
             if previous_error.as_deref() == Some(self.status.as_str()) {
-                self.status = "Unfinished work is kept for next time".into();
+                self.status = "Changes not applied yet are kept for next time".into();
                 self.error = false;
             }
         }

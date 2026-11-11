@@ -1907,3 +1907,65 @@ fn windows_page_saves_its_corner_and_effect_controls() {
     send_settings(&mut reopened, Message::Page(Page::DesktopWindows));
     assert_eq!(roundness(&reopened), Some(other));
 }
+
+/// FB-05: after Halcyon was closed in the middle of a change, the banner
+/// says what was being changed, and its choices say what they do.
+#[test]
+fn interrupted_change_banner_names_what_was_changing() {
+    let name = "interrupted_change_banner_names_what_was_changing";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::desktop::store::{Journal, JournalEntry};
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    let store = app.desktop.store().unwrap().clone();
+    let journal = Journal {
+        format: "desktop-cards-journal".into(),
+        version: 1,
+        id: "interrupted".into(),
+        operation: "apply".into(),
+        created: "2026-11-11T12:00:00Z".into(),
+        entries: vec![JournalEntry {
+            namespace: "com.system76.CosmicComp".into(),
+            version: 1,
+            key: "autotile".into(),
+            before: Some("false".into()),
+            after: Some("true".into()),
+        }],
+        widget: None,
+        undo: None,
+        design: None,
+    };
+    std::fs::create_dir_all(store.state_dir()).unwrap();
+    std::fs::write(
+        store.state_dir().join("desktop-journal.json"),
+        serde_json::to_vec(&journal).unwrap(),
+    )
+    .unwrap();
+    assert!(store.pending_recovery().unwrap().is_some());
+    send_settings(&mut app, Message::Page(Page::DesktopWindows));
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        native.text_bounds(
+            app.settings_view(),
+            "Halcyon was closed while changing Windows.",
+        );
+        native.text_bounds(app.settings_view(), "Keep what’s on screen");
+        native.text_bounds(app.settings_view(), "Go back to before");
+        capture_both(&app, &mut native, &format!("interrupted-windows-{}", size.width));
+    }
+    let mut native = crate::native_test::Native::new(Size::new(1280., 800.));
+    native_click(&mut app, &mut native, "recovery-keep");
+    assert!(store.pending_recovery().unwrap().is_none(), "keeping clears it");
+    assert!(native.try_bounds(app.settings_view(), "recovery-keep").is_none());
+    assert!(app.workspaces.recovery().is_none(), "Workspaces below follows");
+}

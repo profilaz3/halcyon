@@ -4951,7 +4951,15 @@ impl Settings {
     }
     /// Windows uses the same completion path as the other inspectors.
     fn update_windows(&mut self, message: windows::Message) {
+        let resolves = matches!(
+            message,
+            windows::Message::Recover | windows::Message::KeepRecovery
+        );
         self.windows.update(message);
+        // Workspaces shares this page and the same interrupted change.
+        if resolves {
+            self.workspaces.refresh();
+        }
     }
     /// Capture mode drives the Profiles page through its own messages. An
     /// import reads only a file inside the fixture root, without a dialog;

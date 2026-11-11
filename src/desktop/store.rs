@@ -351,7 +351,7 @@ impl fmt::Display for DesktopError {
             Self::UndoUnavailable(reason) => write!(f, "{reason}"),
             Self::RecoveryPending => write!(
                 f,
-                "An earlier change was interrupted. Restore or keep it before applying."
+                "Halcyon was closed in the middle of a change. Keep what’s on screen or go back to before, then try again."
             ),
             Self::Io(message) => write!(f, "{message}"),
             Self::RolledBack(error) => {
@@ -2034,7 +2034,7 @@ impl DesktopStore {
         };
         let journal: Journal = serde_json::from_slice(&bytes).map_err(|error| {
             DesktopError::Io(format!(
-                "The change journal {} is unreadable ({error}). Keep current settings to clear it.",
+                "The change journal {} is unreadable ({error}). Keep what’s on screen to clear it.",
                 path.display()
             ))
         })?;
@@ -2071,7 +2071,7 @@ impl DesktopStore {
             };
         if !supported {
             return Err(DesktopError::Io(format!(
-                "Unsupported change journal {}. Keep current settings to clear it.",
+                "Unsupported change journal {}. Keep what’s on screen to clear it.",
                 path.display()
             )));
         }
