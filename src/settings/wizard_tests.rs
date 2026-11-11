@@ -2012,3 +2012,72 @@ fn on07_on08_bars_and_review(size: Size) {
         }
     }
 }
+
+/// ON-03: the Look step says everything a look changes, and Review and Done
+/// name its light or dark style and COSMIC accent.
+#[test]
+fn on03_look_names_style_and_accent_at_820() {
+    if child("on03_look_names_style_and_accent_at_820") {
+        return;
+    }
+    on03_look_names_style_and_accent(Size::new(820., 600.));
+}
+
+#[test]
+fn on03_look_names_style_and_accent_at_1280() {
+    if child("on03_look_names_style_and_accent_at_1280") {
+        return;
+    }
+    on03_look_names_style_and_accent(Size::new(1280., 800.));
+}
+
+fn on03_look_names_style_and_accent(size: Size) {
+    seed_desktop();
+    let themes = [
+        (cosmic::Theme::light(), "light"),
+        (cosmic::Theme::dark(), "dark"),
+    ];
+    let colors = "Style: Dark · Accent: Teal (all COSMIC apps)";
+    let (mut app, mut native) = open(size);
+    click(&mut app, &mut native, "wizard-start");
+    assert_eq!(step(&app), wizard::Step::Look);
+    native.text_bounds(
+        app.settings_view(),
+        "A look sets your wallpaper, light or dark style, COSMIC accent colors, dock and panel shape, and a set of widgets. You can change the dock, panel and widgets next.",
+    );
+    reveal(&mut app, &mut native, "wizard-look-calm");
+    click(&mut app, &mut native, "wizard-look-calm");
+    for (theme, name) in &themes {
+        native.capture(
+            app.settings_view(),
+            theme,
+            &format!("on03-look-{}-{name}", size.width),
+        );
+    }
+    let _ = app.update(Message::Wizard(wizard::Message::Show(wizard::Step::Ready)));
+    native.text_bounds(app.settings_view(), &format!("Slow morning\n{colors}"));
+    for (theme, name) in &themes {
+        native.capture(
+            app.settings_view(),
+            theme,
+            &format!("on03-review-{}-{name}", size.width),
+        );
+    }
+    click(&mut app, &mut native, "wizard-apply");
+    assert_eq!(step(&app), wizard::Step::Done);
+    let lines = &app.wizard.as_ref().unwrap().applied.as_ref().unwrap().lines;
+    let look = lines.iter().position(|line| line == "Look: Slow morning");
+    assert_eq!(
+        look.map(|at| lines[at + 1].as_str()),
+        Some(colors),
+        "{lines:?}"
+    );
+    native.text_bounds(app.settings_view(), colors);
+    for (theme, name) in &themes {
+        native.capture(
+            app.settings_view(),
+            theme,
+            &format!("on03-done-{}-{name}", size.width),
+        );
+    }
+}

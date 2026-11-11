@@ -566,7 +566,7 @@ impl Settings {
             words(
                 match step {
                     Screen::Look => {
-                        "A look brings a wallpaper and a set of widgets. You can change the widgets next."
+                        "A look sets your wallpaper, light or dark style, COSMIC accent colors, dock and panel shape, and a set of widgets. You can change the dock, panel and widgets next."
                     }
                     Screen::Bars => "Keep your current dock and panel, or pick a new style.",
                     Screen::Widgets | Screen::Arrange | Screen::Weather => {
@@ -1184,7 +1184,10 @@ impl Settings {
                     .presets()
                     .iter()
                     .find(|preset| preset.id == id)
-                    .map(|preset| preset.profile.name.clone())
+                    .map(|preset| match crate::desktop::profiles::colors_line(id) {
+                        Some(colors) => format!("{}\n{colors}", preset.profile.name),
+                        None => preset.profile.name.clone(),
+                    })
             })
             .unwrap_or_else(|| "My current desktop".into());
         let panel = format!(

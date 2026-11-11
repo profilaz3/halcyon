@@ -494,6 +494,46 @@ fn composition(id: &str) -> Value {
     value
 }
 
+/// What a starter look changes beyond the wallpaper, in one line:
+/// “Style: Dark · Accent: Teal (all COSMIC apps)”. None for anything else.
+pub fn colors_line(id: &str) -> Option<String> {
+    let look = LOOKS.iter().find(|look| look.id == id)?;
+    Some(format!(
+        "Style: {} · Accent: {} (all COSMIC apps)",
+        if look.light { "Light" } else { "Dark" },
+        accent_name(look.seed)
+    ))
+}
+
+/// A plain color name for an accent, from its hue.
+fn accent_name([r, g, b]: [u8; 3]) -> &'static str {
+    let [r, g, b] = [r, g, b].map(|c| f32::from(c) / 255.);
+    let max = r.max(g).max(b);
+    let range = max - r.min(g).min(b);
+    if max == 0. || range / max < 0.15 {
+        return "Gray";
+    }
+    let hue = if max == r {
+        60. * ((g - b) / range)
+    } else if max == g {
+        60. * ((b - r) / range + 2.)
+    } else {
+        60. * ((r - g) / range + 4.)
+    }
+    .rem_euclid(360.);
+    match hue {
+        h if h < 15. => "Rose",
+        h if h < 45. => "Amber",
+        h if h < 70. => "Yellow",
+        h if h < 160. => "Green",
+        h if h < 195. => "Teal",
+        h if h < 240. => "Blue",
+        h if h < 290. => "Purple",
+        h if h < 345. => "Pink",
+        _ => "Rose",
+    }
+}
+
 /// Short, purpose-led labels for the setup browser; stable IDs are internal.
 pub fn occasion(id: &str) -> &'static str {
     match id {
@@ -883,6 +923,36 @@ mod tests {
 
     const DOCK: &str = "com.system76.CosmicPanel.Dock";
     const PANEL: &str = "com.system76.CosmicPanel.Panel";
+
+    #[test]
+    fn every_starter_look_names_its_style_and_accent() {
+        assert_eq!(
+            colors_line("calm").as_deref(),
+            Some("Style: Dark · Accent: Teal (all COSMIC apps)")
+        );
+        assert_eq!(
+            colors_line("paper").as_deref(),
+            Some("Style: Light · Accent: Amber (all COSMIC apps)")
+        );
+        for (id, accent) in [
+            ("halcyon", "Blue"),
+            ("evening", "Purple"),
+            ("rose", "Rose"),
+            ("rain", "Amber"),
+        ] {
+            assert!(
+                colors_line(id)
+                    .unwrap()
+                    .contains(&format!("Accent: {accent} ")),
+                "{id}"
+            );
+        }
+        for look in LOOKS {
+            assert_ne!(accent_name(look.seed), "Gray", "{}", look.id);
+        }
+        assert_eq!(accent_name([0x80, 0x80, 0x84]), "Gray");
+        assert_eq!(colors_line(CLEAN), None);
+    }
 
     fn desk(name: &str) -> (Fixture, crate::desktop::DesktopStore) {
         let fixture = Fixture::new(name);

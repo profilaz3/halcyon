@@ -1355,6 +1355,7 @@ impl Wizard {
         let mut lines = Vec::new();
         if let Some(preset) = self.look.and_then(profiles::preset) {
             lines.push(format!("Look: {}", preset.profile.name));
+            lines.extend(profiles::colors_line(preset.id));
         }
         if self.touched.any() {
             lines.push(format!(
