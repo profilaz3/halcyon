@@ -495,6 +495,11 @@ fn product_help_tabs_and_primary_actions_fit_compact_and_wide_windows() {
             primary.y + primary.height < size.height,
             "primary action visible on entry"
         );
+        // DT-11: the guides sit right under Report a problem.
+        for (title, _) in support::GUIDES {
+            let link = native.text_bounds(app.settings_view(), title);
+            assert!(link.x + link.width <= size.width && link.y + link.height < size.height);
+        }
         for (name, theme) in [
             ("dark", cosmic::Theme::dark()),
             ("light", cosmic::Theme::light()),

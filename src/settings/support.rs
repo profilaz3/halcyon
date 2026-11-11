@@ -115,7 +115,24 @@ pub enum Message {
     Saved(Result<bool, ()>),
     Open(Destination),
     ReportProblem,
+    /// Opens one of the project's own help pages in the browser.
+    Guide(&'static str),
 }
+/// The Help page links: label and an address the project already publishes.
+pub const GUIDES: [(&str, &str); 3] = [
+    (
+        "Guides and tips ↗",
+        "https://github.com/profilaz3/halcyon#readme",
+    ),
+    (
+        "Keyboard and command line ↗",
+        "https://github.com/profilaz3/halcyon#command-line-and-shortcuts",
+    ),
+    (
+        "Send feedback ↗",
+        "https://github.com/profilaz3/halcyon/issues",
+    ),
+];
 /// Which changes the Changes page lists.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Filter {
@@ -595,6 +612,13 @@ impl Settings {
                     "/usr/bin/xdg-open".into(),
                     vec!["https://github.com/profilaz3/halcyon/issues/new".into()],
                     "Issue page opened",
+                );
+            }
+            Message::Guide(url) => {
+                return super::run_command(
+                    "/usr/bin/xdg-open".into(),
+                    vec![url.into()],
+                    "Help page opened",
                 );
             }
             _ => {}
