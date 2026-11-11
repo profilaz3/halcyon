@@ -883,13 +883,13 @@ fn motion_preference_ignores_stale_reads_and_can_be_undone() {
     }
     let (mut app, _) = Settings::init(Core::default(), Page::General);
     let generation = app.motion_generation;
-    let _ = app.update(Message::SystemMotion(generation, true));
+    let _ = app.update(Message::SystemMotion(generation, Some(true)));
     assert!(app.system_animations);
     let _ = app.update(Message::ReadSystemMotion);
-    let _ = app.update(Message::SystemMotion(generation, true));
-    let _ = app.update(Message::SystemMotion(app.motion_generation, false));
+    let _ = app.update(Message::SystemMotion(generation, Some(true)));
+    let _ = app.update(Message::SystemMotion(app.motion_generation, Some(false)));
     assert!(!app.system_animations);
-    let _ = app.update(Message::SystemMotion(generation, true));
+    let _ = app.update(Message::SystemMotion(generation, Some(true)));
     assert!(!app.system_animations);
     let _ = app.update(Message::SettingsAnimations(false));
     assert!(!Config::load().settings_animations);
@@ -2511,6 +2511,34 @@ fn ux_native_setup_and_theme_previews_are_isolated_retained_and_conflict_safe() 
     assert_eq!(app.profiles.selection(), &Selection::Preset("theme-soft"));
     let _ = app.update(Message::Page(Page::General));
     assert_eq!(app.kept_previews().len(), 2);
+    // The sidebar says how many wait, in words, not only with a dot.
+    for size in [
+        cosmic::iced::Size::new(820., 600.),
+        cosmic::iced::Size::new(1280., 800.),
+    ] {
+        let _ = app.update(Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        let changes = native.bounds(app.settings_view(), "nav-changes");
+        let words = native.text_all(app.settings_view(), "2 waiting");
+        if size.width > 1000. {
+            assert!(
+                words.iter().any(|w| changes.contains(w.center())),
+                "{words:?} {changes:?}"
+            );
+        } else {
+            assert!(words.is_empty(), "the narrow rail keeps its dot");
+        }
+        for (theme, mode) in [
+            (cosmic::Theme::light(), "light"),
+            (cosmic::Theme::dark(), "dark"),
+        ] {
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("changes-waiting-{}-{mode}", size.width),
+            );
+        }
+    }
     let _ = app.update(Message::Page(Page::Themes));
     assert_eq!(app.profiles.selection(), &Selection::Preset("theme-soft"));
     let _ = app.update(Message::Profiles(Edit::Discard));

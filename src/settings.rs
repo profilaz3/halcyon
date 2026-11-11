@@ -595,7 +595,8 @@ pub enum Message {
     ActivityPreference(&'static str, bool),
     ActivityLead(usize),
     ReadSystemMotion,
-    SystemMotion(u64, bool),
+    /// The system's “enable animations”; `None` when it can't be read.
+    SystemMotion(u64, Option<bool>),
     WindowRules(window_rules::Message),
     Shortcuts(shortcuts::Message),
     Wallpaper(wallpaper::Message),
@@ -887,6 +888,9 @@ pub struct Settings {
     workspaces: workspaces::WorkspacesEditor,
     motion: motion::MotionEditor,
     system_animations: bool,
+    /// The system says not to animate (Accessibility › Reduce motion is
+    /// on), as read; not just unknown.
+    system_reduce_motion: bool,
     motion_generation: u64,
     window_rules: window_rules::WindowRulesEditor,
     shortcuts: shortcuts::ShortcutsEditor,
@@ -1159,6 +1163,7 @@ impl cosmic::Application for Settings {
             workspaces: workspaces::WorkspacesEditor::default(),
             motion: motion::MotionEditor::default(),
             system_animations: false,
+            system_reduce_motion: false,
             motion_generation: 0,
             window_rules: window_rules::WindowRulesEditor::default(),
             shortcuts: shortcuts::ShortcutsEditor::default(),
@@ -2691,16 +2696,17 @@ impl Settings {
                                     .read()
                                     .ok()
                             })
-                            .unwrap_or(false)
                     })
                     .await
-                    .unwrap_or(false);
+                    .ok()
+                    .flatten();
                     Message::SystemMotion(generation, on)
                 });
             }
             Message::SystemMotion(generation, on) => {
                 if generation == self.motion_generation {
-                    self.system_animations = on;
+                    self.system_animations = on.unwrap_or(false);
+                    self.system_reduce_motion = on == Some(false);
                 }
             }
             Message::WindowRules(message) => {
@@ -4627,6 +4633,7 @@ impl Settings {
                 self.busy = false;
                 self.motion_generation = self.motion_generation.wrapping_add(1);
                 self.system_animations = result.clone().unwrap_or(false);
+                self.system_reduce_motion = result == Ok(false);
                 match self.motion.written(result) {
                     Ok(status) => {
                         self.status = status;
@@ -6978,16 +6985,28 @@ mod tests {
                     &format!("clock-settings-{}-{combined}", size.width),
                 );
                 let saved_layout = raw_preferences();
-                // The Position tab is gone: "Move or resize" opens the
-                // arranging canvas; a combined clock moves as the Daily
-                // overview card, reached from its own page.
+                // A combined clock moves as the Daily overview card, reached
+                // from its own page. A clock on its own has the Clock stage,
+                // which moves and resizes it, so the page offers no second
+                // "Move or resize"; the canvas still opens from Desktop.
                 if combined {
                     click(&mut app, &mut native, "clock-open-glance");
                     assert_eq!(app.page, Page::Glance);
                     click(&mut app, &mut native, "glance-arrange");
                     assert_eq!(app.page, Page::Glance);
                 } else {
-                    click(&mut app, &mut native, "clock-arrange");
+                    assert!(
+                        native
+                            .try_bounds(app.settings_view(), "clock-arrange")
+                            .is_none(),
+                        "the Clock stage is the one place to move and resize the clock"
+                    );
+                    assert!(
+                        native
+                            .try_bounds(app.settings_view(), "clock-stage")
+                            .is_some()
+                    );
+                    send_settings(&mut app, Message::EditWidgetLayout(Widget::Clock));
                     assert_eq!(app.page, Page::Clock);
                 }
                 assert!(app.canvas_visible(), "Move or resize shows the arranging canvas");
@@ -10441,19 +10460,32 @@ mod tests {
                 &format!("weather-stale-{}", size.width),
             );
             weather_reading(73, chrono::Local::now());
-            // Reduce motion still pauses a weather scene.
+            // Liquid motion off still pauses a weather scene, and the line
+            // names the switch that did it.
             Config::save_changes(json!({"material_motion": false})).unwrap();
             send_settings(&mut app, Message::Tick);
             // The pause line sits under the controls' last row.
             native_reveal(&app, &mut native, "rain-adjust");
-            native.text_bounds(app.settings_view(), "Paused while Reduce motion is on");
+            native.text_bounds(app.settings_view(), "Paused because Liquid motion is off");
             Config::save_changes(json!({"material_motion": true})).unwrap();
             send_settings(&mut app, Message::Tick);
-            assert!(
-                native
-                    .text_all(app.settings_view(), "Paused while Reduce motion is on")
-                    .is_empty()
-            );
+            let paused = |app: &Settings, native: &mut crate::native_test::Native| {
+                [
+                    "Paused because Liquid motion is off",
+                    "Paused while Reduce motion is on",
+                ]
+                .iter()
+                .map(|line| native.text_all(app.settings_view(), line).len())
+                .collect::<Vec<_>>()
+            };
+            assert_eq!(paused(&app, &mut native), [0, 0]);
+            // Accessibility › Reduce motion pauses it too, and says so.
+            let generation = app.motion_generation;
+            send_settings(&mut app, Message::SystemMotion(generation, Some(false)));
+            assert_eq!(paused(&app, &mut native), [0, 1]);
+            // A setting that can't be read is not Reduce motion.
+            send_settings(&mut app, Message::SystemMotion(generation, None));
+            assert_eq!(paused(&app, &mut native), [0, 0]);
             // Undo turns it off again, leaving everything else as it was.
             send_settings(&mut app, Message::UndoDesktop);
             assert_eq!(Config::load().rain, before);

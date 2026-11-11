@@ -14,7 +14,7 @@ fn edit(message: Edit) -> Message {
 /// One key drawn as a small keycap.
 pub(super) fn keycap<'a>(cap: impl Into<String>, muted: bool) -> Element<'a, Message> {
     fill(
-        label(cap.into(), 11., if muted { MUTED } else { FG }),
+        label(cap.into(), CAPTION, if muted { MUTED } else { FG }),
         SURFACE,
         LINE,
         1.,
@@ -277,7 +277,7 @@ impl Settings {
             .filter(|row| matches(row, filter, &query))
             .collect();
         if !query.is_empty() {
-            items.push(label("Results across all shortcuts", 11., MUTED));
+            items.push(label("Results across all shortcuts", CAPTION, MUTED));
         }
         let custom: Vec<&Row> = matching
             .iter()
@@ -491,7 +491,7 @@ impl Settings {
             container(keycaps(&row.binding, !on)).width(156).into(),
             column::with_children(vec![
                 line(row.name.clone(), 13., if on { FG } else { MUTED }),
-                line(details.join(" · "), 11., MUTED),
+                line(details.join(" · "), CAPTION, MUTED),
             ])
             .spacing(1)
             .width(Length::Fill)
@@ -591,13 +591,13 @@ fn command_form<'a>(
             MUTED,
         ));
         if let Some(error) = recording_error {
-            items.push(label(error.to_owned(), 11., ERROR));
+            items.push(label(error.to_owned(), CAPTION, ERROR));
         }
     }
     if !form.combo.trim().is_empty() {
         items.push(match form.binding() {
             Ok(binding) => keycaps(&binding, false),
-            Err(error) => label(error, 11., ERROR),
+            Err(error) => label(error, CAPTION, ERROR),
         });
     }
     items.push(field(
@@ -613,7 +613,7 @@ fn command_form<'a>(
         MUTED,
     ));
     if let Some(error) = &form.error {
-        items.push(label(error.clone(), 11., ERROR));
+        items.push(label(error.clone(), CAPTION, ERROR));
     }
     items.push(
         row::with_children(vec![

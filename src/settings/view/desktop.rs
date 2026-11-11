@@ -601,7 +601,7 @@ impl Settings {
                     container(
                         column::with_children(vec![
                             label("Edge gap", 12., FG),
-                            label("Turn on Floating to set a gap.", 11., MUTED),
+                            label("Turn on Floating to set a gap.", CAPTION, MUTED),
                         ])
                         .spacing(7),
                     )

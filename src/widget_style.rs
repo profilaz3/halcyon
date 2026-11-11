@@ -385,7 +385,7 @@ pub fn on_accent(palette: Palette) -> Color {
     }
 }
 
-fn luminance(c: Color) -> f32 {
+pub(crate) fn luminance(c: Color) -> f32 {
     let linear = |v: f32| {
         if v <= 0.04045 {
             v / 12.92
@@ -402,7 +402,7 @@ fn blend(front: Color, back: Color, alpha: f32) -> Color {
         front.b * alpha + back.b * (1. - alpha),
     )
 }
-fn ratio(a: Color, b: Color) -> f32 {
+pub(crate) fn ratio(a: Color, b: Color) -> f32 {
     let a = luminance(a);
     let b = luminance(b);
     (a.max(b) + 0.05) / (a.min(b) + 0.05)
@@ -427,6 +427,40 @@ fn worst_ratio(ink: Color, background: Color, alpha: f32) -> f32 {
     } else {
         ratio(ink, dark).min(ratio(ink, light))
     }
+}
+/// A see-through card stays readable over any picture: it gets just
+/// enough fill that its text and accent, in their own colours, pass 4.5:1
+/// whether the wallpaper behind is white or black, keeping as much of the
+/// see-through look as that allows. Secondary text leans toward black or
+/// white at that fill until it passes too. Opaque and transparent cards are
+/// left alone. (Readability help, `readable`, also keeps secondary text's
+/// own colour.)
+pub fn legible(mut p: Palette) -> Palette {
+    let fill = p.background.a;
+    if fill <= 0. || fill >= 1. {
+        return p;
+    }
+    let start = (fill * 100. - 1e-3).ceil().max(0.) as u32;
+    let fill = (start..=100)
+        .map(|n| n as f32 / 100.)
+        .find(|&alpha| {
+            [p.foreground, p.accent]
+                .into_iter()
+                .all(|ink| worst_ratio(ink, p.background, alpha) >= 4.5)
+        })
+        .unwrap_or(1.)
+        .max(p.background.a);
+    p.background.a = fill;
+    let target = if luminance(p.foreground) > luminance(p.background) {
+        Color::WHITE
+    } else {
+        Color::BLACK
+    };
+    p.muted = (0..=100)
+        .map(|n| blend(target, p.muted, n as f32 / 100.))
+        .find(|candidate| worst_ratio(*candidate, p.background, fill) >= 4.5)
+        .unwrap_or(target);
+    p
 }
 pub fn readable(mut p: Palette) -> Palette {
     p.foreground = readable_ink(p.foreground, p.background);

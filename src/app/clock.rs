@@ -31,6 +31,9 @@ pub(super) struct Presentation {
     style: crate::widget_style::resolver::Style,
     body_ink: Color,
     legacy_bearing: bool,
+    /// A soft edge in the opposite tone behind clock text drawn straight on
+    /// the picture, so it stays readable where the picture matches its ink.
+    halo: Option<Color>,
 }
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct Geometry {
@@ -79,6 +82,8 @@ impl Presentation {
             legacy_bearing: config.moment_appearance().family.is_none()
                 && config.moment_clock().weight.is_none()
                 && config.moment_clock().italic.is_none(),
+            halo: (!grouped && style.surface.value == Surface::None)
+                .then(|| halo_for(style.ink.value)),
         }
     }
     pub fn metrics(self) -> crate::widget_presentation::Metrics {
@@ -102,13 +107,109 @@ fn clock_label(
     size: f32,
     color: Color,
     font: Font,
+    halo: Option<Color>,
 ) -> Element<'static, Message> {
-    text::body(value.into())
-        .size(size.max(crate::widget_style::META))
-        .line_height(1.25)
-        .font(font)
-        .class(cosmic::theme::Text::Color(color))
+    let value = value.into();
+    let size = size.max(crate::widget_style::META);
+    haloed(
+        |color| {
+            text::body(value.clone())
+                .size(size)
+                .line_height(1.25)
+                .font(font)
+                .class(cosmic::theme::Text::Color(color))
+                .into()
+        },
+        color,
+        halo,
+        size,
+    )
+}
+/// Black behind light ink and white behind dark ink, faint enough to read
+/// as a soft shadow rather than an outline.
+fn halo_for(ink: Color) -> Color {
+    let tone = if crate::widget_style::luminance(ink) > 0.18 {
+        Color::BLACK
+    } else {
+        Color::WHITE
+    };
+    Color { a: 0.22, ..tone }
+}
+/// `glyphs` in `ink`, over eight faint copies in `halo` nudged a few pixels
+/// out, scaled to the text. The text keeps its own size and place.
+fn haloed(
+    glyphs: impl Fn(Color) -> Element<'static, Message>,
+    ink: Color,
+    halo: Option<Color>,
+    size: f32,
+) -> Element<'static, Message> {
+    let Some(halo) = halo else {
+        return glyphs(ink);
+    };
+    let r = (size / 60.).clamp(1., 3.);
+    let edge = [
+        (1., 0.),
+        (-1., 0.),
+        (0., 1.),
+        (0., -1.),
+        (0.7, 0.7),
+        (-0.7, 0.7),
+        (0.7, -0.7),
+        (-0.7, -0.7),
+    ]
+    .map(|(x, y)| pin(glyphs(halo)).position(Point::new(x * r, y * r)).into());
+    stack(vec![glyphs(ink)])
+        .push_under(Element::new(Unread(stack(edge).into())))
         .into()
+}
+/// Draws its content but reports none of it to widget operations, so the
+/// halo's copies of the time are not found, focused or read aloud: only the
+/// ink text above them is.
+struct Unread(Element<'static, Message>);
+impl cosmic::iced::advanced::Widget<Message, cosmic::Theme, cosmic::Renderer> for Unread {
+    fn children(&self) -> Vec<cosmic::iced::advanced::widget::Tree> {
+        vec![cosmic::iced::advanced::widget::Tree::new(&self.0)]
+    }
+    fn diff(&mut self, tree: &mut cosmic::iced::advanced::widget::Tree) {
+        tree.diff_children(std::slice::from_mut(&mut self.0));
+    }
+    fn size(&self) -> Size<Length> {
+        self.0.as_widget().size()
+    }
+    fn layout(
+        &mut self,
+        tree: &mut cosmic::iced::advanced::widget::Tree,
+        renderer: &cosmic::Renderer,
+        limits: &cosmic::iced::advanced::layout::Limits,
+    ) -> cosmic::iced::advanced::layout::Node {
+        let child = self
+            .0
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits);
+        cosmic::iced::advanced::layout::Node::with_children(child.size(), vec![child])
+    }
+    fn draw(
+        &self,
+        tree: &cosmic::iced::advanced::widget::Tree,
+        renderer: &mut cosmic::Renderer,
+        theme: &cosmic::Theme,
+        style: &cosmic::iced::advanced::renderer::Style,
+        layout: cosmic::iced::advanced::Layout<'_>,
+        cursor: cosmic::iced::mouse::Cursor,
+        viewport: &cosmic::iced::Rectangle,
+    ) {
+        if let Some(child) = layout.children().next() {
+            self.0.as_widget().draw(
+                &tree.children[0],
+                renderer,
+                theme,
+                style,
+                child,
+                cursor,
+                viewport,
+            );
+        }
+    }
 }
 type NativeParagraph = <cosmic::Renderer as advanced_text::Renderer>::Paragraph;
 fn paragraph(value: &str, size: f32, font: Font) -> NativeParagraph {
@@ -240,15 +341,21 @@ impl Presentation {
         } else {
             0.
         };
-        let mut items = vec![
-            text::body(time)
-                .size(size)
-                .line_height(1.05)
-                .font(self.style.display.value)
-                .wrapping(advanced_text::Wrapping::None)
-                .class(cosmic::theme::Text::Color(p.foreground))
-                .into(),
-        ];
+        let display = self.style.display.value;
+        let mut items = vec![haloed(
+            |color| {
+                text::body(time.clone())
+                    .size(size)
+                    .line_height(1.05)
+                    .font(display)
+                    .wrapping(advanced_text::Wrapping::None)
+                    .class(cosmic::theme::Text::Color(color))
+                    .into()
+            },
+            p.foreground,
+            self.halo,
+            size,
+        )];
         if let Some(period) = period {
             if self.preferences.alignment == ClockAlignment::Center {
                 let period_ink = ink_edges(&period, period_size(size), self.style.body.value);
@@ -261,6 +368,7 @@ impl Presentation {
                     period_size(size),
                     self.body_ink,
                     self.style.body.value,
+                    self.halo,
                 ))
                 .padding([0., 0., size * 0.08, 0.])
                 .into(),
@@ -381,6 +489,7 @@ impl Frame {
                     date_size,
                     presentation.body_ink,
                     presentation.style.body.value,
+                    presentation.halo,
                 ))
                 .width(Length::Fill)
                 .align_x(presentation.preferences.alignment.layout())
@@ -602,5 +711,93 @@ mod tests {
             large[2] - large[0] > small[2] - small[0] + 40,
             "Text size changes visible glyphs"
         );
+    }
+
+    /// One size model: the box is the clock's size. Growing it at the
+    /// same shape, as the Clock stage corner and + do, grows the digits and
+    /// the dial with it; the Text size slider only fits them inside it.
+    #[test]
+    fn a_bigger_box_at_the_same_shape_means_bigger_digits() {
+        use crate::widget_style::resolver::ClockFace;
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 4)
+            .unwrap()
+            .and_hms_opt(10, 8, 0)
+            .unwrap();
+        let mut config = Config::default();
+        for face in [ClockFace::Digital, ClockFace::Analog] {
+            config.clock.face = Some(face);
+            let face_size = |config: &Config, size: [f32; 2]| {
+                let _style = crate::widget_style::scope(config);
+                Presentation::new(config)
+                    .frame(now, size)
+                    .geometry
+                    .face_size
+            };
+            let natural = face_size(&config, [490., 200.]);
+            let tenth = face_size(&config, [539., 220.]);
+            let larger = face_size(&config, [686., 280.]);
+            assert!(
+                natural < tenth && tenth < larger,
+                "{face:?}: {natural} -> {tenth} -> {larger}"
+            );
+            // The digits scale with the box; the dial, which also makes
+            // room for the date, grows at least as fast.
+            let least = if face == ClockFace::Digital { 0.98 } else { 1. };
+            assert!(
+                tenth / natural >= 1.1 * least,
+                "{face:?}: {natural} -> {tenth}"
+            );
+            assert!(
+                larger / natural >= 1.4 * least,
+                "{face:?}: {natural} -> {larger}"
+            );
+            if face == ClockFace::Digital {
+                assert!(tenth / natural <= 1.12 && larger / natural <= 1.43);
+            }
+        }
+    }
+
+    /// A clock drawn straight on the picture gets a faint edge in the
+    /// opposite tone, so light digits stay readable on a light patch of
+    /// wallpaper and dark ones on a dark patch. A clock on a card, or in a
+    /// group that owns its own card, doesn't need one.
+    #[test]
+    fn a_transparent_clock_has_a_soft_edge_in_the_opposite_tone() {
+        use crate::widget_style::resolver::ClockSurface;
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 4)
+            .unwrap()
+            .and_hms_opt(10, 8, 0)
+            .unwrap();
+        let theme = cosmic::Theme::dark();
+        let mut native = Native::new(Size::new(490., 200.));
+        let mut config = Config::default();
+        // Pixels darker than the ink: only the edge draws them.
+        let mut edge = |config: &Config| {
+            let pixels = native.render(view(config, now, [490., 200.]), &theme);
+            pixels
+                .chunks_exact(4)
+                .filter(|p| p[3] > 20 && p[0].max(p[1]).max(p[2]) < 90)
+                .count()
+        };
+        for light in [false, true] {
+            config.appearance.wallpaper_light = light;
+            let ink = config.wallpaper_palette().foreground;
+            let halo = Presentation::new(&config).halo.expect("transparent clock");
+            assert_eq!(
+                halo.r > 0.5,
+                crate::widget_style::luminance(ink) < 0.18,
+                "light: {light}"
+            );
+            assert!(halo.a > 0. && halo.a < 0.3, "{halo:?}");
+        }
+        config.appearance.wallpaper_light = false;
+        assert!(edge(&config) > 200, "light digits get a dark edge");
+        // The edge is drawn, not read: search and screen readers find the
+        // time once.
+        native.text_bounds(view(&config, now, [490., 200.]), "10:08");
+        let palette = config.wallpaper_palette();
+        assert!(Presentation::grouped(&config, palette).halo.is_none());
+        config.clock.surface = Some(ClockSurface::Panel);
+        assert!(Presentation::new(&config).halo.is_none());
     }
 }

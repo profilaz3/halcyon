@@ -66,7 +66,7 @@ impl Settings {
         let mut rows = Vec::new();
         for c in &snapshot.components {
             let color = match c.health {
-                Health::Healthy => Color::from_rgb(0.45, 0.80, 0.55),
+                Health::Healthy => super::HEALTHY,
                 Health::Attention => super::desktop::WARN,
                 _ => MUTED,
             };

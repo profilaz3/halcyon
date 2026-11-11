@@ -64,6 +64,12 @@ const MUTED: Color = Color::from_rgb(0.65, 0.64, 0.71);
 const SURFACE: Color = Color::from_rgb(0.13, 0.13, 0.16);
 const BASE: Color = Color::from_rgb(0.09, 0.09, 0.115);
 const LINE: Color = Color::from_rgb(0.22, 0.22, 0.27);
+/// The smallest size for text that means something: hints, counts and
+/// badges. Secondary text goes through this and `BODY`, never below 12 px,
+/// so one place can scale them later.
+pub(crate) const CAPTION: f32 = 12.;
+/// Ordinary row and body text.
+pub(crate) const BODY: f32 = 14.;
 
 pub(super) fn text_style(color: Color) -> cosmic::theme::Text {
     if color == FG {
@@ -172,9 +178,9 @@ fn detail_state<'a>(
     state: impl Into<String>,
 ) -> Element<'a, Message> {
     let state = state.into();
-    let mut lines = vec![label(title, 14., FG)];
+    let mut lines = vec![label(title, BODY, FG)];
     if !state.is_empty() {
-        lines.push(label(state, 12., MUTED));
+        lines.push(label(state, CAPTION, MUTED));
     }
     column::with_children(lines)
         .spacing(3)
@@ -291,7 +297,7 @@ pub(super) fn group_row_state<'a>(
     )
 }
 fn pill<'a>(value: impl Into<String>, color: Color) -> Element<'a, Message> {
-    container(label(value, 11., color))
+    container(label(value, CAPTION, color))
         .padding([4, 9])
         .class(cosmic::theme::Container::custom(move |theme| {
             cosmic::iced::widget::container::Style {
@@ -420,12 +426,29 @@ pub(super) fn nav_style(selected: bool, _accent: Color) -> cosmic::theme::Button
 pub(super) fn area_tint(_area: super::navigation::Area, accent: Color) -> Color {
     accent
 }
+/// A good status, drawn in the theme's success colour.
+pub(super) const HEALTHY: Color = Color::from_rgb(0.45, 0.80, 0.55);
+/// A dot's colour in `theme`: the named colours take the theme's own text
+/// colours, which stand out at least 3:1 from the page. A dot never says
+/// anything alone; whatever shows one also says it in words.
+pub(super) fn dot_color(theme: &cosmic::Theme, color: Color) -> Color {
+    if color == HEALTHY {
+        theme.cosmic().success_text_color().into()
+    } else if color == MUTED {
+        Color {
+            a: 0.6,
+            ..theme.cosmic().on_bg_color().into()
+        }
+    } else {
+        surface_color(theme, color)
+    }
+}
 /// A small filled dot.
 pub(super) fn dot<'a>(color: Color, size: f32) -> Element<'a, Message> {
     container(cosmic::iced::widget::space().width(size).height(size))
-        .class(cosmic::theme::Container::custom(move |_| {
+        .class(cosmic::theme::Container::custom(move |theme| {
             cosmic::iced::widget::container::Style {
-                background: Some(Background::Color(color)),
+                background: Some(Background::Color(dot_color(theme, color))),
                 border: Border {
                     radius: (size / 2.).into(),
                     ..Default::default()
@@ -974,7 +997,7 @@ impl Settings {
                 button::custom(
                     column::with_children(vec![
                         pill(kept.len().to_string(), self.settings_accent()),
-                        text::body("Not applied").size(10).into(),
+                        text::body("Not applied").size(CAPTION).into(),
                     ])
                     .spacing(2)
                     .width(Length::Fill)
@@ -988,7 +1011,7 @@ impl Settings {
                 .into()
             } else {
                 let mut rows = vec![
-                    container(label("NOT APPLIED", 11., MUTED))
+                    container(label("NOT APPLIED", CAPTION, MUTED))
                         .padding([0, 14, 2, 14])
                         .into(),
                 ];
@@ -1106,7 +1129,7 @@ impl Settings {
         column::with_children(vec![
             split(
                 label(title, 12., FG),
-                label(value_label, 11., self.settings_accent()),
+                label(value_label, CAPTION, self.settings_accent()),
             ),
             slider(range, value, move |value| {
                 Message::AppearanceValue(control.clone(), value)

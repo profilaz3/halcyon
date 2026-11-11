@@ -713,10 +713,54 @@ fn clock_stage_corner_resizes_the_clock_as_one_undo_step() {
     assert!(lit_at(&app, (start, natural)));
     assert_eq!(saved(), ((start, natural), None));
 
-    // The handle shows only with the pointer over the clock (or focus on it).
+    // The handle is always there, faint, so the corner reads as something
+    // to grab; it and the outline come up with the pointer over the clock
+    // (or focus on it).
     let mut native = Native::new(size);
     let body = native_reveal(&app, &mut native, stage::CLOCK_ID);
     let scale = body.width / natural[0];
+    assert!(!app.clock_stage.handle());
+    let handle = native
+        .try_bounds(app.settings_view(), "clock-stage-handle")
+        .expect("the resize handle shows before the pointer reaches it");
+    assert!((handle.x + handle.width - (body.x + body.width)).abs() < 1.);
+    assert!((handle.y + handle.height - (body.y + body.height)).abs() < 1.);
+    native.capture(
+        app.settings_view(),
+        &cosmic::Theme::light(),
+        "clock-stage-faint-handle-light-1280",
+    );
+    // Enter on the selected clock only selects it: no dead message.
+    native.operate(
+        app.settings_view(),
+        Box::new(cosmic::iced::advanced::widget::operation::focusable::focus(
+            cosmic::widget::Id::new(stage::CLOCK_ID),
+        )),
+    );
+    let enter = keyboard::Key::Named(keyboard::key::Named::Enter);
+    let (messages, _) = native.event(
+        app.settings_view(),
+        Event::Keyboard(keyboard::Event::KeyPressed {
+            key: enter.clone(),
+            modified_key: enter,
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Enter),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::empty(),
+            text: None,
+            repeat: false,
+        }),
+        Point::ORIGIN,
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|m| matches!(m, Message::ClockStage(Edit::Focus(true)))),
+        "{messages:?}"
+    );
+    for message in messages {
+        send_settings(&mut app, message);
+    }
+    send_settings(&mut app, Message::ClockStage(Edit::Focus(false)));
     assert!(!app.clock_stage.handle());
     let send = |app: &mut Settings, native: &mut Native, event: mouse::Event, at: Point| {
         for message in native.event(app.settings_view(), Event::Mouse(event), at).0 {
@@ -745,7 +789,9 @@ fn clock_stage_corner_resizes_the_clock_as_one_undo_step() {
                 native
                     .text_all(
                         app.settings_view(),
-                        "Drag the clock to move it, or its corner to resize"
+                        "Drag the clock to move it, or drag its corner to resize. \
+                         With the keyboard, Tab selects the clock, arrow keys move it, \
+                         + and − resize it, and Esc cancels a drag."
                     )
                     .len(),
                 1
@@ -816,7 +862,8 @@ fn clock_stage_corner_resizes_the_clock_as_one_undo_step() {
         "{:?}",
         app.clock_stage.requested()
     );
-    // The Text size slider is its own control.
+    // The box is the clock's size: the digits grew with it, and the
+    // Text size slider, which fits them inside it, is untouched.
     assert_eq!(app.config.clock.scale, text_size);
 
     // One Undo restores both size and place.
@@ -988,4 +1035,103 @@ fn clock_stage_corner_resizes_the_clock_as_one_undo_step() {
         }
         std::fs::write(dir.join("clock-stage-render-soft-sizes.txt"), log).unwrap();
     }
+}
+
+/// White digits straight on a white picture: the stage says so in words,
+/// and its button gives the clock a card, which settles it.
+#[test]
+fn clock_stage_warns_when_the_clock_is_hard_to_read_on_the_picture() {
+    if desktop_test_child(
+        "clock_stage_warns_when_the_clock_is_hard_to_read_on_the_picture",
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::desktop::wallpaper::{BgEntry, BgSource};
+    use crate::native_test::Native;
+    const LOW_CONTRAST_WARNING: &str =
+        "Hard to read on this picture. Set Background to Card, or move the clock.";
+    use crate::widget_style::resolver::ClockSurface;
+    use cosmic::iced::{Event, mouse};
+    let root = isolated_root();
+    let fixture = root.join("cosmic-root");
+    let picture = root.join("white.png");
+    image::RgbImage::from_pixel(64, 36, image::Rgb([250, 250, 250]))
+        .save(&picture)
+        .unwrap();
+    seed(
+        &fixture.join("config/cosmic"),
+        &[(
+            "com.system76.CosmicBackground",
+            "all",
+            &ron::to_string(&BgEntry::new("all", BgSource::Path(picture))).unwrap(),
+        )],
+    );
+    Config::save_clock(json!({"face": "digital", "surface": "none"})).unwrap();
+    let (mut app, initial) = Settings::init(Core::default(), Page::Clock);
+    settle_settings(&mut app, initial);
+    drive_wallpaper(&mut app);
+    let size = Size::new(1280., 800.);
+    send_settings(&mut app, Message::Resized(size));
+    assert!(app.clock_stage_open());
+    assert!(
+        app.clock_stage
+            .backdrop()
+            .or(app.profiles.home_image())
+            .is_some(),
+        "the picture is on the stage"
+    );
+    let ratio = app.clock_stage_contrast().expect("a clock on the picture");
+    assert!(ratio < 1.5, "{ratio}");
+
+    let mut native = Native::new(size);
+    native_reveal(&app, &mut native, "clock-stage-contrast");
+    assert!(
+        !native
+            .text_all(app.settings_view(), LOW_CONTRAST_WARNING)
+            .is_empty(),
+        "the warning is said in words"
+    );
+    native.capture(
+        app.settings_view(),
+        &cosmic::Theme::dark(),
+        "clock-stage-low-contrast-dark-1280",
+    );
+    native.capture(
+        app.settings_view(),
+        &cosmic::Theme::light(),
+        "clock-stage-low-contrast-light-1280",
+    );
+    let use_card = native.bounds(app.settings_view(), "clock-stage-use-card");
+    let mut messages = Vec::new();
+    for event in [
+        mouse::Event::CursorMoved {
+            position: use_card.center(),
+        },
+        mouse::Event::ButtonPressed(mouse::Button::Left),
+        mouse::Event::ButtonReleased(mouse::Button::Left),
+    ] {
+        messages.extend(
+            native
+                .event(app.settings_view(), Event::Mouse(event), use_card.center())
+                .0,
+        );
+    }
+    // The same edit as Background › Card, for the clock's look.
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    for message in messages {
+        send_settings(&mut app, message);
+    }
+    assert_eq!(app.config.moment_clock().surface, Some(ClockSurface::Panel));
+    assert_eq!(app.clock_stage_contrast(), None);
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "clock-stage-contrast")
+            .is_none()
+    );
 }

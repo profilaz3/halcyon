@@ -168,6 +168,7 @@ impl SettingsSamples {
         let config = config.clone();
         let cards = Cards {
             activity: Default::default(),
+            system_animations: true,
             calendar_details: None,
             core,
             ids,

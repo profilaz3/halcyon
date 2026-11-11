@@ -621,7 +621,7 @@ impl Settings {
                 if self.config.data_visible(widget) {
                     cosmic::iced::widget::space().height(0).into()
                 } else {
-                    label("Paused while hidden", 11., MUTED)
+                    label("Paused while hidden", CAPTION, MUTED)
                 },
             ],
         )
@@ -1153,6 +1153,18 @@ impl Settings {
                 )
                 .id(cosmic::widget::Id::new("clock-scale"))
                 .into(),
+                // One size model: the box is the clock's size, and the
+                // stage corner grows it with the digits. This only fits
+                // the time or face inside that box.
+                label(
+                    if clock.face == Some(ClockFace::Analog) {
+                        "Sizes the face inside its box. To make the whole clock bigger, drag its corner above."
+                    } else {
+                        "Sizes the time inside its box. To make the whole clock bigger, drag its corner above."
+                    },
+                    CAPTION,
+                    MUTED,
+                ),
             ])
             .spacing(6)
             .into(),

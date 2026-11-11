@@ -656,12 +656,10 @@ impl Settings {
                 },
             ));
         }
-        if !self.config.material_motion {
-            rows.push(label(
-                "Reduce motion is on. Audio visualization is paused.",
-                12.,
-                MUTED,
-            ));
+        if self.system_reduce_motion {
+            rows.push(label("Paused while Reduce motion is on", 12., MUTED));
+        } else if !self.config.material_motion {
+            rows.push(label("Paused because Liquid motion is off", 12., MUTED));
         }
         if !std::path::Path::new("/usr/bin/parec").exists() {
             rows.push(label(

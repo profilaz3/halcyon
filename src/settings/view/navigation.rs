@@ -398,7 +398,7 @@ impl Settings {
                     .conflicts
                     .iter()
                     .take(3)
-                    .map(|conflict| label(conflict, 11., Color::from_rgb8(170, 175, 184))),
+                    .map(|conflict| label(conflict, CAPTION, Color::from_rgb8(170, 175, 184))),
             );
             lines.push(
                 row::with_children(vec![

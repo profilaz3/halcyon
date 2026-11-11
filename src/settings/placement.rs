@@ -1630,14 +1630,17 @@ impl Settings {
                     if editor.resize_mode { "resize" } else { "move" }
                 )
             })
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                "Click a widget to select it, then arrow keys move it. Hold Shift for bigger steps."
+                    .into()
+            });
         let caption = row::with_children(vec![
-            container(label(hint, 11., MUTED))
+            container(label(hint, super::view::CAPTION, MUTED))
                 .width(Length::Fill)
                 .into(),
             label(
                 if editor.dragging() { "Moving…" } else { "" },
-                11.,
+                super::view::CAPTION,
                 self.settings_accent(),
             ),
         ])

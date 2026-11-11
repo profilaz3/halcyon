@@ -256,7 +256,7 @@ impl Settings {
         items.push(split(
             column::with_children(vec![
                 label("Use patterns", 13., FG),
-                label("For several apps or titles at once", 11., MUTED),
+                label("For several apps or titles at once", CAPTION, MUTED),
             ])
             .spacing(2)
             .into(),
@@ -265,7 +265,7 @@ impl Settings {
                 .into(),
         ));
         if let Some(error) = &form.error {
-            items.push(label(error.clone(), 11., ERROR));
+            items.push(label(error.clone(), CAPTION, ERROR));
         }
         items.push(
             row::with_children(vec![
@@ -309,7 +309,7 @@ impl Settings {
                             icon::from_name(symbol).size(20).icon().into(),
                             column::with_children(vec![
                                 line(app.name.clone(), 13., FG),
-                                line(app.app_id.clone(), 11., MUTED),
+                                line(app.app_id.clone(), CAPTION, MUTED),
                             ])
                             .spacing(1)
                             .width(Length::Fill)
@@ -327,7 +327,7 @@ impl Settings {
             }
         }
         if rows.is_empty() {
-            rows.push(label("No installed apps match.", 11., MUTED));
+            rows.push(label("No installed apps match.", CAPTION, MUTED));
         }
         fill(
             column::with_children(vec![
@@ -468,7 +468,7 @@ impl Settings {
             icon::from_name(symbol).size(22).icon().into(),
             column::with_children(vec![
                 line(name, 13., if row.enabled { FG } else { MUTED }),
-                line(condition, 11., MUTED),
+                line(condition, CAPTION, MUTED),
             ])
             .spacing(1)
             .width(Length::Fill)
@@ -485,7 +485,7 @@ impl Settings {
         }
         let detail = |title: &'static str, value: &str| -> Element<'a, Message> {
             column::with_children(vec![
-                label(title, 10., MUTED),
+                label(title, CAPTION, MUTED),
                 label(value.to_string(), 12., FG),
             ])
             .spacing(2)
