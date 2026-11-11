@@ -24,7 +24,7 @@ const niceMax = v => {
   return 40 * p;
 };
 const SLOTS = ['s1', 's2', 's3', 's4'];
-const METHOD_SLOT = {deb: 's1', rpm: 's2', source: 's3', unknown: 's4', other: 'gray'};
+const METHOD_SLOT = {deb: 's1', rpm: 's2', source: 's3', unknown: 'gray'};
 
 let data = null;
 const state = {range: 30, segment: 'all'};
@@ -209,15 +209,12 @@ function segbar(body, items, label) {
   body.appendChild(list);
 }
 
-// Feature shares: a withheld count (fewer than 5) is shown as such, never as a number.
-const shareRow = r => ({name: r.name, on: r.on, known: r.known, value: r.on === null || !r.known ? 0 : r.on / r.known,
-  muted: r.on === null, tipLabel: 'Installations'});
-const shareText = r => r.on === null ? (r.known < 5 ? 'not enough data' : 'fewer than 5') : `${pct(r.value)} · ${fmt(r.on)} of ${fmt(r.known)}`;
-const shareCells = r => [r.name, r.on === null ? (r.known < 5 ? 'not enough data' : 'fewer than 5') : fmt(r.on), r.on === null ? '' : pct(r.value)];
-function featureEmpty(body, f) {
-  const n = f ? f.reported : 0;
-  empty(body, `Shown once at least 5 installations have reported their settings${n ? ` (${fmt(n)} so far)` : ''}.`);
-}
+// Feature shares, out of the installations whose setting could be read.
+const shareRow = r => ({name: r.name, on: r.on, known: r.known, value: r.known ? r.on / r.known : 0,
+  muted: !r.known, tipLabel: 'Installations'});
+const shareText = r => r.known ? `${pct(r.value)} · ${fmt(r.on)} of ${fmt(r.known)}` : 'not reported';
+const shareCells = r => [r.name, r.known ? fmt(r.on) : 'not reported', r.known ? pct(r.value) : ''];
+const featureEmpty = body => empty(body, `Shown once an installation on ${data.since_version || 'a current version'} reports its settings.`);
 
 function kpis() {
   const s = seg(), w = s.windows[state.range];
@@ -232,8 +229,13 @@ function kpis() {
     note: 'first report received in this period'});
   tiles.push({label: 'Still active after 4 weeks', value: data.retention_4w === null ? 'n/a' : pct(data.retention_4w), delta: null,
     note: data.retention_4w === null ? 'needs five complete weeks of data' : 'of new installations, reporting in their fifth week'});
+  const baseline = data.latest_release && data.latest_release.version === data.since_version;
   tiles.push({label: 'On the latest version', value: s.latest_share === null ? 'n/a' : pct(s.latest_share), delta: null,
-    note: data.latest_release ? `${data.latest_release.version}, released ${fmtDay(data.latest_release.date)}; last 7 days` : 'no release data yet'});
+    note: baseline ? `counting starts at ${data.since_version}; shown from the next release`
+      : data.latest_release ? `${data.latest_release.version}, released ${fmtDay(data.latest_release.date)}; last 7 days` : 'no release data yet'});
+  const sharing = data.sharing, seen = sharing ? sharing.on + sharing.off : 0;
+  tiles.push({label: 'Turned sharing off', value: seen ? pct(sharing.off / seen) : 'n/a', delta: null,
+    note: seen ? `${fmt(sharing.off)} of ${fmt(seen)} installations seen in 90 days` : 'no choices received yet'});
   const box = $('kpis');
   box.replaceChildren();
   for (const t of tiles) {
@@ -281,7 +283,7 @@ const renderers = {
   },
   'c-speed'(body) {
     const s = seg();
-    const rows = data.releases.map(r => ({name: `${r.version} · ${fmtDay(r.date)}`, value: r.days_to_half ?? 0, days: r.days_to_half, tipLabel: 'Days to half'}));
+    const rows = data.releases.filter(r => !r.baseline).map(r => ({name: `${r.version} · ${fmtDay(r.date)}`, value: r.days_to_half ?? 0, days: r.days_to_half, tipLabel: 'Days to half'}));
     const text = r => r.days === null ? 'not yet' : r.days === 0 ? 'same day' : r.days + (r.days === 1 ? ' day' : ' days');
     if (tableMode['c-speed']) {
       body.appendChild(table(['Release', 'Days to half'], rows.map(r => [r.name, text(r)])));
@@ -291,7 +293,7 @@ const renderers = {
     if (rows.length) {
       hbars(body, rows, 'Days until half of installations updated', text);
       body.appendChild(html('div', 'note', 'Shorter is better.'));
-    } else empty(body, 'Shown from the first release after reporting began.');
+    } else empty(body, `Shown once a release after ${data.since_version || 'the first counted one'} is out.`);
     if (s.updates) {
       const sub = html('div', 'note', 'Signed updates through APT and DNF, DEB and RPM installs');
       sub.classList.add('spaced');
@@ -319,29 +321,29 @@ const renderers = {
       body.appendChild(html('div', 'note', `Reporting began ${fmtDay(data.history_start)}, so fewer than 28 days are possible so far.`));
   },
   'c-countries'(body) {
-    const rows = seg().countries.map(c => ({name: c.name, value: c.count, muted: c.key === 'other' || c.key === 'unknown'}));
+    const rows = seg().countries.map(c => ({name: c.name, value: c.count, muted: c.key === 'unknown'}));
     if (!rows.length) return empty(body, 'Not enough data yet.');
     if (tableMode['c-countries']) return body.appendChild(table(['Country', 'Installations'], rows.map(r => [r.name, fmt(r.value)])));
     hbars(body, rows, 'Installations by country', r => fmt(r.value));
   },
   'c-features'(body) {
     const f = data.features;
-    if (!f || !f.switches) return featureEmpty(body, f);
+    if (!f || !f.switches) return featureEmpty(body);
     const rows = f.switches.map(shareRow);
     if (tableMode['c-features']) return body.appendChild(table(['Feature', 'On', 'Share'], rows.map(shareCells)));
     hbars(body, rows, 'Share of installations with each feature on', shareText);
   },
   'c-widgets'(body) {
     const f = data.features;
-    if (!f || !f.widgets) return featureEmpty(body, f);
-    if (!f.widgets.items.length) return empty(body, 'Not enough installations reported their widgets yet.');
+    if (!f || !f.widgets) return featureEmpty(body);
+    if (!f.widgets.known) return empty(body, 'No installation could report its widgets yet.');
     const rows = f.widgets.items.map(w => shareRow({...w, known: f.widgets.known})).sort((a, b) => b.value - a.value);
     if (tableMode['c-widgets']) return body.appendChild(table(['Widget', 'Showing', 'Share'], rows.map(shareCells)));
     hbars(body, rows, 'Share of installations showing each widget', shareText);
   },
   'c-looks'(body) {
     const f = data.features;
-    if (!f || !f.switches) return featureEmpty(body, f);
+    if (!f || !f.switches) return featureEmpty(body);
     const parts = [['Theme style', f.theme_style], ['Wallpaper effect', f.wallpaper_effect]].filter(([, items]) => items && items.length);
     if (!parts.length) return empty(body, 'Not enough data yet.');
     if (tableMode['c-looks']) {
@@ -356,7 +358,7 @@ const renderers = {
       if (k) head.classList.add('spaced');
       body.appendChild(head);
       let slot = 0;
-      segbar(body, items.map(i => ({...i, slot: i.key === 'other' || slot >= SLOTS.length ? 'gray' : SLOTS[slot++]})), title);
+      segbar(body, items.map(i => ({...i, slot: i.key === 'unknown' || slot >= SLOTS.length ? 'gray' : SLOTS[slot++]})), title);
     });
   },
   'c-retention'(body) {
@@ -365,7 +367,7 @@ const renderers = {
     const weeks = Math.max(...cohorts.map(c => c.rates.length));
     if (tableMode['c-retention']) {
       return body.appendChild(table(['Week starting', 'New', ...Array.from({length: weeks}, (_, w) => 'Week ' + w)],
-        cohorts.map(c => [fmtDay(c.start), c.size === null ? 'fewer than 5' : fmt(c.size),
+        cohorts.map(c => [fmtDay(c.start), fmt(c.size),
           ...Array.from({length: weeks}, (_, w) => c.rates[w] === undefined || c.rates[w] === null ? '' : pct(c.rates[w]))])));
     }
     const W = Math.max(280, body.clientWidth), m = {l: W < 500 ? 96 : 128, t: 22}, gap = 2;
@@ -378,11 +380,7 @@ const renderers = {
     cohorts.forEach((c, r) => {
       const yy = m.t + r * (ch + gap);
       txt(svg, 0, yy + ch / 2 + 4, fmtDay(c.start), {class: 'lbl'});
-      txt(svg, m.l - 10, yy + ch / 2 + 4, c.size === null ? '<5' : fmt(c.size), {'text-anchor': 'end'});
-      if (c.size === null) {
-        txt(svg, m.l, yy + ch / 2 + 4, 'Hidden: fewer than 5 new installations', {class: 'hm-row-note'});
-        return;
-      }
+      txt(svg, m.l - 10, yy + ch / 2 + 4, fmt(c.size), {'text-anchor': 'end'});
       c.rates.forEach((v, w) => {
         const g = el('g', {tabindex: 0, 'aria-label': `Started week of ${fmtDay(c.start)}, week ${w}: ${pct(v)}`}, svg);
         el('rect', {x: m.l + w * (cw + gap), y: yy, width: cw, height: ch, rx: 4, fill: colorFor(v)}, g);
@@ -406,8 +404,6 @@ function renderAll() {
     fn(body);
     card.querySelector('.tbl-toggle').textContent = tableMode[id] ? 'Chart' : 'Table';
   }
-  const share = data.opt_out_share;
-  $('optout').textContent = share === null ? '' : `${pct(share)} of installations seen in the last 90 days have turned sharing off.`;
 }
 
 function setup() {
@@ -423,11 +419,23 @@ function setup() {
     tableMode[id] = !tableMode[id];
     renderAll();
   }));
-  document.querySelectorAll('#range button').forEach(b => b.addEventListener('click', () => {
+  // A range longer than the history repeats the shortest one that covers it.
+  const buttons = [...document.querySelectorAll('#range button')];
+  const covers = Math.min(...buttons.map(b => Number(b.dataset.v)).filter(v => v >= data.days.length), Infinity);
+  const choose = b => {
     state.range = Number(b.dataset.v);
-    document.querySelectorAll('#range button').forEach(o => o.setAttribute('aria-pressed', String(o === b)));
+    buttons.forEach(o => o.setAttribute('aria-pressed', String(o === b)));
     renderAll();
-  }));
+  };
+  for (const b of buttons) {
+    b.disabled = Number(b.dataset.v) > covers;
+    if (b.disabled && data.history_start) b.title = `Reporting began ${fmtDay(data.history_start)}`;
+    b.addEventListener('click', () => choose(b));
+  }
+  if (Number.isFinite(covers) && state.range > covers) {
+    state.range = covers;
+    buttons.forEach(o => o.setAttribute('aria-pressed', String(Number(o.dataset.v) === covers)));
+  }
   let timer;
   window.addEventListener('resize', () => { clearTimeout(timer); timer = setTimeout(renderAll, 120); });
 }

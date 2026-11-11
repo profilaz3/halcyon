@@ -43,13 +43,13 @@ test('the snapshot is stored with the day and counted only in aggregates', async
   assert.equal(f.reported, 7);
   const sw = Object.fromEntries(f.switches.map(s => [s.key, s]));
   assert.equal(sw.activity_island.on, 5);
-  assert.equal(sw.penumbra.on, null, 'zero is below the minimum group and withheld');
+  assert.equal(sw.penumbra.on, 0);
   assert.equal(sw.islands.known, 0);
-  assert.equal(sw.islands.on, null);
+  assert.equal(sw.islands.on, 0);
   assert.equal(sw.wallpaper_effect.on, 7);
   assert.equal(f.widgets.items.find(w => w.key === 'weather').on, 7);
-  assert.equal(f.widgets.items.find(w => w.key === 'music').on, null);
-  assert.deepEqual(f.theme_style.map(t => [t.key, t.count]), [['glass', 5], ['other', 2]], 'two neon fold into Other');
+  assert.equal(f.widgets.items.find(w => w.key === 'music').on, 0);
+  assert.deepEqual(f.theme_style.map(t => [t.key, t.count]), [['glass', 5], ['neon', 2]], 'two neon are shown as two');
   assert.ok(!JSON.stringify(summary).includes(tokenOf(0)));
 
   const rolled = rollupDay(env.DB.raw.prepare(`SELECT 1 AS n, day, version, package_format AS format, features FROM activity`).all().map(r => ({...r})), Math.floor(+now / 864e5));
@@ -61,11 +61,11 @@ test('the snapshot is stored with the day and counted only in aggregates', async
   assert.equal(get('feature_known', 'islands'), undefined);
 });
 
-test('nothing is published before five installations report a snapshot', () => {
-  const rows = [1, 2, 3, 4].map(n => ({n, day: 10, features: canonicalFeatures(features())}));
-  const f = featureSummary(rows, 0, 20);
-  assert.equal(f.reported, 4);
-  assert.equal(f.switches, null);
-  assert.equal(f.widgets, null);
-  assert.equal(f.theme_style, null);
+test('a single snapshot is published with exact counts', () => {
+  const f = featureSummary([{n: 1, day: 10, features: canonicalFeatures(features())}], 0, 20);
+  assert.equal(f.reported, 1);
+  assert.equal(f.switches.find(s => s.key === 'activity_island').on, 1);
+  assert.equal(f.widgets.items.find(w => w.key === 'clock').on, 1);
+  assert.deepEqual(f.theme_style.map(t => [t.key, t.count]), [['glass', 1]]);
+  assert.equal(featureSummary([], 0, 20).switches, null, 'nothing reported, nothing shown');
 });

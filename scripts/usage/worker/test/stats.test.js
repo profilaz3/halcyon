@@ -38,9 +38,9 @@ test('a day rolls up per install method and version', () => {
   assert.equal(get('source', 'active'), undefined);
 });
 
-test('end to end: hourly maintenance publishes aggregates only, with small groups folded', async () => {
+test('end to end: hourly maintenance publishes exact aggregates only', async () => {
   const env = {DB: createD1()};
-  // 12 deb installations every day for 21 days; 3 rpm ones (below the threshold).
+  // 12 deb installations every day for 21 days; 3 rpm ones.
   // From day 8 (after 0.6.0 is published on day 7) installations move to 0.6.0.
   for (let d = 0; d < 21; d++) {
     for (let i = 1; i <= 12; i++) {
@@ -57,7 +57,7 @@ test('end to end: hourly maintenance publishes aggregates only, with small group
   assert.equal(/[0-9a-f]{64}/.test(text), false, 'no installation hashes in the public summary');
   assert.equal(summary.history_start, '2026-10-26');
   assert.equal(summary.days.length, 21);
-  assert.deepEqual(summary.segments.map(s => s.id), ['all', 'deb']);
+  assert.deepEqual(summary.segments.map(s => s.id), ['all', 'deb', 'rpm'], 'every install method seen gets a filter');
 
   const all = summary.by_segment.all;
   assert.equal(all.active[0], 15);
@@ -68,9 +68,9 @@ test('end to end: hourly maintenance publishes aggregates only, with small group
   assert.equal(all.windows[30].complete, false);
   assert.equal(all.windows[7].previous, 16);
   assert.deepEqual(all.versions.names, ['0.6.0', '0.5.6']);
-  assert.deepEqual(all.install_methods.map(m => m.name), ['DEB package', 'Other']);
-  assert.deepEqual(all.countries.map(c => c.name), ['Croatia', 'Other']);
-  assert.equal(all.countries.find(c => c.name === 'Other').count, 8);
+  assert.deepEqual(all.install_methods.map(m => [m.name, m.count]), [['DEB package', 13], ['RPM package', 3]]);
+  assert.deepEqual(all.countries.map(c => [c.name, c.count]), [['Croatia', 8], ['Germany', 4], ['Brazil', 3], ['Japan', 1]],
+    'small groups are shown with their exact count');
   assert.ok(all.updates.total >= 13 && all.updates.on === 13);
   assert.equal(all.frequency.reduce((n, b) => n + b.count, 0), all.installs_28d);
 
@@ -83,8 +83,9 @@ test('end to end: hourly maintenance publishes aggregates only, with small group
   assert.equal(summary.cohorts[0].start, '2026-10-26');
   assert.equal(summary.cohorts[0].size, 15);
   assert.equal(summary.cohorts[0].rates[0], 1);
-  assert.equal(summary.cohorts.find(c => c.start === '2026-11-09').size, null, 'a cohort of one is hidden');
+  assert.equal(summary.cohorts.find(c => c.start === '2026-11-09').size, 1, 'a cohort of one is shown');
   assert.equal(summary.opt_out_share, 1 / 17);
+  assert.deepEqual(summary.sharing, {on: 16, off: 1});
 
   const response = await worker.fetch(new Request('https://reports.test/api/summary.json'), env);
   assert.equal(response.status, 200);
@@ -120,6 +121,10 @@ test('only direct reports count: older versions and days before the release are 
   assert.equal(summary.history_start, isoDay(dayOf(at(5))));
   assert.deepEqual(summary.by_segment.all.active, [6, 6, 6, 6, 6]);
   assert.deepEqual(summary.by_segment.all.versions.names, ['0.6.1']);
+  // Everything counted runs 0.6.1 or newer, so 0.6.1 is the baseline: no
+  // adoption time, no latest-version share, and 0.6.0 is not a release here.
+  assert.deepEqual(summary.releases, [{version: '0.6.1', date: isoDay(dayOf(at(5))), days_to_half: null, baseline: true}]);
+  assert.equal(summary.by_segment.all.latest_share, null);
   assert.equal(summary.by_segment.all.windows[7].active, 6);
   assert.equal(summary.opt_out_share, 0, 'an older version turning sharing off is not counted');
   const days = env.DB.raw.prepare(`SELECT MIN(day) AS first FROM daily`).get().first;

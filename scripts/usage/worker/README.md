@@ -32,9 +32,9 @@ timestamps are cleared. Turning reporting off deletes that installation's
 activity immediately. The hourly cron applies retention, freezes completed days
 into `daily`, refreshes release dates once a day and rebuilds the summary.
 
-Publishing rules (`src/stats.js`): no identifier leaves the database; any
-country, version or install method below 5 installations is folded into Other;
-weekly cohorts below 5 are hidden.
+Publishing rules (`src/stats.js`): no identifier leaves the database. Every
+other count is published exactly, however small: countries, versions, install
+methods, settings and weekly cohorts.
 
 Cost: each hourly run reads every retained activity row once. At 1,000 daily
 active installations that is about 2 million rows a day, within the free
