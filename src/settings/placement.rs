@@ -449,14 +449,15 @@ impl PlacementEditor {
     }
     /// Moves one card back to its automatic place; Save keeps the others.
     pub(super) fn reset_widget(&mut self, key: &str) -> bool {
-        let (Some(widget), Some(point), Some(size)) = (
-            Widget::parse(key),
-            self.default_position(key),
-            self.size(key),
-        ) else {
+        self.default_position(key)
+            .is_some_and(|point| self.place_widget(key, point))
+    }
+    /// Moves one card to `point` on the screen; Save keeps the others.
+    pub(super) fn place_widget(&mut self, key: &str, point: [f32; 2]) -> bool {
+        let (Some(widget), Some(size)) = (Widget::parse(key), self.size(key)) else {
             return false;
         };
-        if self.dragging() {
+        if self.dragging() || self.geometry(key).is_none() || !point.iter().all(|v| v.is_finite()) {
             return false;
         }
         self.materialize();

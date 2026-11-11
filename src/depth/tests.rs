@@ -6,6 +6,12 @@ fn worker_entry() {
     super::main();
 }
 
+#[test]
+#[ignore = "Owned private scene analysis worker subprocess"]
+fn scene_worker_entry() {
+    super::scene_main();
+}
+
 fn fixture() -> (std::path::PathBuf, Config, Request) {
     use crate::widget_style::resolver::{ClockFace, ClockSurface, ClockWeight};
     let root = std::env::temp_dir().join(format!(
@@ -93,7 +99,15 @@ fn fb14_mask_alignment_is_shared_across_scales_and_letterboxing() {
                 height,
                 rgba: [39, 80, 140, 255].repeat((width * height) as usize),
             };
-            apply_mask(&mut p, &frame, &mode, &mask, None).unwrap();
+            apply_mask(
+                &mut p,
+                &frame,
+                &mode,
+                [mask.width(), mask.height()],
+                &mask,
+                None,
+            )
+            .unwrap();
             for (i, pixel) in p.rgba.chunks_exact(4).enumerate() {
                 assert_eq!(&pixel[..3], &[39, 80, 140]);
                 let y = (i as u32 / width) as f32 / scale + origin[1];
@@ -117,7 +131,15 @@ fn fb14_mask_alignment_is_shared_across_scales_and_letterboxing() {
         height: 40,
         rgba: [255; 4].repeat(1600),
     };
-    apply_mask(&mut p, &frame, &ScalingMode::Fit([0.; 3]), &mask, None).unwrap();
+    apply_mask(
+        &mut p,
+        &frame,
+        &ScalingMode::Fit([0.; 3]),
+        [mask.width(), mask.height()],
+        &mask,
+        None,
+    )
+    .unwrap();
     assert!(
         p.rgba.chunks_exact(4).all(|p| p[3] == 255),
         "letterbox never occludes"
@@ -639,3 +661,108 @@ fn lighting_renders_inside_the_worker_limits() {
     assert!(pixels != render(&request).unwrap());
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// A font-free clock: rings and bars with soft edges, straight RGBA.
+fn synthetic_glyph(frame: &Frame) -> (Pixels, Vec<u8>) {
+    let [width, height] = frame.pixels().unwrap();
+    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let (fx, fy) = (x as f32 / frame.scale, y as f32 / frame.scale);
+            let ring = ((fx % 160. - 80.).hypot(fy - 150.) - 60.).abs();
+            let bar = (fx % 53. - 26.).abs().max((fy - 150.).abs() - 90.);
+            let d = ring.min(bar) - 9.;
+            let a = (0.5 - d).clamp(0., 1.);
+            rgba.extend_from_slice(&[242, 244, 245, (a * 255.).round() as u8]);
+        }
+    }
+    let glyph = rgba.chunks_exact(4).map(|p| p[3]).collect();
+    (
+        Pixels {
+            width,
+            height,
+            rgba,
+        },
+        glyph,
+    )
+}
+
+fn ridge_digest() -> Vec<String> {
+    let matte = mask().unwrap();
+    let picture = picture().unwrap();
+    let mut out = Vec::new();
+    for (scale, origin, mode) in [
+        (1., [560., 188.], ScalingMode::Zoom),
+        (2., [560., 260.], ScalingMode::Zoom),
+        (1.5, [300., 120.], ScalingMode::Fit([0.1, 0.2, 0.3])),
+    ] {
+        let frame = Frame {
+            screen: [1920., 1080.],
+            origin,
+            size: [800., 330.],
+            scale,
+        };
+        for lighting in Lighting::ALL {
+            let (mut pixels, glyph) = synthetic_glyph(&frame);
+            let face = [40., 260.];
+            let source = [matte.width(), matte.height()];
+            apply_mask(&mut pixels, &frame, &mode, source, &matte, Some(face)).unwrap();
+            if let Some(recipe) = lighting.recipe() {
+                lighting::apply(
+                    &mut pixels,
+                    &glyph,
+                    &frame,
+                    &mode,
+                    source,
+                    &picture,
+                    &matte,
+                    face,
+                    &recipe,
+                )
+                .unwrap();
+            }
+            out.push(
+                Sha256::digest(&pixels.rgba)[..12]
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect(),
+            );
+        }
+    }
+    out
+}
+
+/// The Ridge's drawn matte, masking and lighting give exactly the bytes they
+/// gave before pictures of any size could be used (recorded at 84d0cb0cd).
+#[test]
+fn ridge_matte_path_is_byte_identical() {
+    assert_eq!(
+        ridge_digest(),
+        [
+            "62ed364f49b8b0e798ba832b",
+            "89b433d015487603ef443f84",
+            "c54e350d6da2b332066cc0d3",
+            "cb737da1d9157b62325d16e3",
+            "2a731a01d5a9bfdb9063a47b",
+            "4143273e42c8955bbb5bf3df",
+            "f8cc341636b22a90089c306a",
+            "21e3501e7577cdcccda3fcc2",
+            "637a49d8f0ac912f30b0f300",
+        ]
+    );
+    // A mask stored at the picture's own size keeps the picture's transform exactly.
+    let frame = Frame {
+        screen: [1920., 1080.],
+        origin: [560., 188.],
+        size: [800., 330.],
+        scale: 1.5,
+    };
+    for mode in [ScalingMode::Zoom, ScalingMode::Fit([0.; 3])] {
+        assert_eq!(
+            transform_to(&frame, &mode, [1672, 941], [1672, 941]),
+            transform(&frame, &mode, [1672, 941])
+        );
+    }
+}
+
+pub(crate) mod own;

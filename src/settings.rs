@@ -673,6 +673,8 @@ pub enum Message {
     ClockLighting(crate::depth::Lighting),
     /// Opens Wallpaper with Ridge chosen, so the hills can cover the clock.
     UseRidgeWallpaper,
+    /// The scene model and the analysis of your own pictures.
+    SceneModel(depth::Scene),
     Moment(moments::Message),
     Recipe(recipes::Message),
     OpenRecipe(crate::recipes::Kind),
@@ -754,6 +756,7 @@ pub enum Message {
 pub struct Settings {
     depth_preview: depth::Cache,
     clock_stage: clock_stage::Stage,
+    scenes: depth::Scenes,
     rain: rain::State,
     design: design::State,
     moment_preview: crate::moments::Phase,
@@ -1038,6 +1041,7 @@ impl cosmic::Application for Settings {
         let mut app = Self {
             depth_preview: Default::default(),
             clock_stage: Default::default(),
+            scenes: Default::default(),
             rain: Default::default(),
             design,
             moment_preview: crate::moments::Phase::Day,
@@ -1974,6 +1978,7 @@ impl cosmic::Application for Settings {
                     clock_stage::Edit::Release
                         | clock_stage::Edit::Nudge(..)
                         | clock_stage::Edit::Reset
+                        | clock_stage::Edit::Suggested
                 )
         );
         let baseline = finishes_gesture
@@ -3944,6 +3949,7 @@ impl Settings {
             Message::Recipe(edit) => self.update_recipe(edit),
             Message::Design(edit) => return self.update_design(edit),
             Message::ClockDepth(value) => self.save_clock(json!({"depth": value})),
+            Message::SceneModel(event) => return self.update_scene(event),
             Message::ClockLighting(value) => self.save_clock(json!({"lighting": value})),
             Message::UseRidgeWallpaper => {
                 // Applied on Wallpaper, where the change shows and its Undo lives.
@@ -4511,6 +4517,7 @@ fn checkpoint_message(message: &Message) -> bool {
                     | clock_stage::Edit::Backdrop(..)
                     | clock_stage::Edit::Rendered(..)
             )
+            | Message::SceneModel(..)
             | Message::EditCity(..)
             | Message::DevboxDetails(..)
             | Message::Capture
@@ -4886,7 +4893,11 @@ impl Settings {
             Page::DesktopWindowRules => self.window_rules.open(),
             Page::DesktopShortcuts => self.shortcuts.open(),
             // Clock reads it too: the hills and its stage need the picture.
-            Page::DesktopWallpaper | Page::Appearance | Page::Clock => self.wallpaper.open(),
+            Page::DesktopWallpaper | Page::Appearance => self.wallpaper.open(),
+            Page::Clock => {
+                self.wallpaper.open();
+                self.scenes.refresh();
+            }
             Page::DesktopIcons => self.desktop_icons.open(),
             _ => {}
         }
@@ -10641,10 +10652,13 @@ mod tests {
             native.text_all(app.settings_view(), text).len() == 1
         };
 
-        // Not the Ridge wallpaper: one reason, one fix, no lighting choice.
-        assert!(reason(&app, &mut native, "Needs the Ridge wallpaper"));
+        // Your own picture without the scene model: the reason, the model's
+        // own row to download it, no lighting choice.
+        assert!(reason(&app, &mut native, "Download the scene model to use this on your own pictures"));
+        assert!(native.try_bounds(app.settings_view(), "clock-depth-fix").is_none());
+        native_reveal(&app, &mut native, "clock-scene-model");
         assert!(!lighting(&app, &mut native));
-        native_click(&mut app, &mut native, "clock-depth-fix");
+        send_settings(&mut app, Message::UseRidgeWallpaper);
         drive_wallpaper(&mut app);
         // Any later update applies the picture once its colors are ready.
         send_settings(&mut app, Message::Resized(size));
@@ -10717,7 +10731,7 @@ mod tests {
             send_settings(&mut app, block);
             assert!(!app.error, "{}", app.status);
             let mut native = Native::new(size);
-            assert!(reason(&app, &mut native, text), "{text}: {:?}", app.depth_block().map(|b| b.0));
+            assert!(reason(&app, &mut native, text), "{text}: {:?}", app.depth_block().map(|b| b.reason));
             assert!(!lighting(&app, &mut native), "{text}");
             if text == "Needs no background card" {
                 for (theme, name) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {

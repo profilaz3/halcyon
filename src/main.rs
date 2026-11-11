@@ -52,6 +52,9 @@ fn main() -> cosmic::iced::Result {
     if std::env::args().nth(1).as_deref() == Some("--depth-worker") {
         depth::main();
     }
+    if std::env::args().nth(1).as_deref() == Some("--depth-scene-worker") {
+        depth::scene_main();
+    }
     // Settings from before the rename move to the new folders, once.
     paths::migrate();
     let mut args = std::env::args().skip(1);

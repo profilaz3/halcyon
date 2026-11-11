@@ -10,7 +10,12 @@ use std::io::Read;
 
 pub const PICTURE: &[u8] = include_bytes!("../assets/wallpapers/halcyon-ridge.png");
 const MATTE: &[u8] = include_bytes!("../assets/depth/halcyon-ridge.png");
+pub mod analyse;
+pub mod cache;
+mod infer;
 mod lighting;
+pub mod model;
+pub mod scene;
 pub use lighting::Lighting;
 pub const MAX_INPUT: usize = 270_336;
 pub const MAX_RASTER: [u32; 2] = [2048, 1024];
@@ -48,6 +53,10 @@ pub struct Request {
     pub background: BgEntry,
     pub style: serde_json::Value,
     pub time: String,
+    /// Where analysed pictures are kept. Without it only the Ridge picture
+    /// is used, which is all a public preview may consult.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scenes: Option<std::path::PathBuf>,
 }
 impl Request {
     pub fn new(
@@ -72,7 +81,13 @@ impl Request {
             background,
             style,
             time: time.format("%Y-%m-%dT%H:%M:00").to_string(),
+            scenes: None,
         })
+    }
+    /// The same request, also allowed to use analysed pictures from `root`.
+    pub fn with_scenes(mut self, root: Option<std::path::PathBuf>) -> Self {
+        self.scenes = root;
+        self
     }
     fn config(&self) -> Option<Config> {
         if !self.style.is_object() {
@@ -119,6 +134,8 @@ fn observe_from(store: &DesktopStore, output: &str) -> Option<BgEntry> {
 
 /// Immutable identity, checked on one bounded regular-file descriptor. A renamed
 /// identical copy is valid; a replaced file, folder, device or other picture is not.
+/// [`render_scene`] checks the picture's content itself.
+#[cfg(test)]
 pub fn matches_picture(entry: &BgEntry) -> bool {
     use std::os::unix::fs::OpenOptionsExt;
     let BgSource::Path(path) = &entry.source else {
@@ -169,6 +186,25 @@ fn transform(frame: &Frame, mode: &ScalingMode, source: [u32; 2]) -> Option<([f6
     ))
 }
 
+/// [`transform`] for a mask stored at `raster` pixels for a picture of
+/// `source` pixels: screen pixels per mask pixel. A mask at the picture's
+/// own size (Ridge) keeps exactly the picture's transform.
+pub(crate) fn transform_to(
+    frame: &Frame,
+    mode: &ScalingMode,
+    source: [u32; 2],
+    raster: [u32; 2],
+) -> Option<([f64; 2], [f64; 2])> {
+    if raster.contains(&0) {
+        return None;
+    }
+    let (scale, offset) = transform(frame, mode, source)?;
+    Some((
+        [0, 1].map(|i| scale[i] * (f64::from(source[i]) / f64::from(raster[i]))),
+        offset,
+    ))
+}
+
 /// One-channel prepared mask; only antialiasing changes alpha. The generated
 /// asset's tiny near-black/white noise is normalized, not interpreted as texture.
 fn mask() -> Option<image::GrayImage> {
@@ -202,10 +238,11 @@ fn apply_mask(
     pixels: &mut Pixels,
     frame: &Frame,
     mode: &ScalingMode,
+    source: [u32; 2],
     mask: &image::GrayImage,
     face: Option<[f32; 2]>,
 ) -> Option<()> {
-    let (scale, offset) = transform(frame, mode, [mask.width(), mask.height()])?;
+    let (scale, offset) = transform_to(frame, mode, source, [mask.width(), mask.height()])?;
     let alpha = |x: f64, y: f64| -> f64 {
         if x < 0. || y < 0. || x >= f64::from(mask.width()) || y >= f64::from(mask.height()) {
             return 0.;
@@ -238,6 +275,8 @@ fn apply_mask(
     Some(())
 }
 
+/// The cut clock for the Ridge picture only; the worker uses [`render_scene`].
+#[cfg(test)]
 pub fn render(request: &Request) -> Option<Pixels> {
     if !matches_picture(&request.background) {
         return None;
@@ -256,19 +295,13 @@ pub(crate) fn public_clock(
     entry.scaling_mode = mode;
     render_clock(&Request::new(config, frame, entry, time)?)
 }
-fn render_clock(request: &Request) -> Option<Pixels> {
+
+/// The clock drawn alone, straight RGBA, and the rows of its time.
+fn draw(config: &Config, frame: &Frame, time: chrono::NaiveDateTime) -> Option<(Pixels, [f32; 2])> {
     use cosmic::iced::advanced::renderer::{Headless, Style};
     use cosmic::iced::runtime::user_interface::{Cache, UserInterface};
     use cosmic::iced::{Color, Size, mouse};
-    let size = request.frame.pixels()?;
-    let config = request.config()?;
-    let mask = mask()?;
-    transform(
-        &request.frame,
-        &request.background.scaling_mode,
-        [mask.width(), mask.height()],
-    )?;
-    let time = chrono::NaiveDateTime::parse_from_str(&request.time, "%Y-%m-%dT%H:%M:%S").ok()?;
+    let size = frame.pixels()?;
     crate::desktop_theme::load_installed_fonts();
     let mut renderer =
         cosmic::iced::futures::executor::block_on(<cosmic::Renderer as Headless>::new(
@@ -276,10 +309,10 @@ fn render_clock(request: &Request) -> Option<Pixels> {
             cosmic::iced::Pixels(14.),
             Some("tiny-skia"),
         ))?;
-    let view = crate::app::settings_clock_preview_at(&config, request.frame.size, time);
+    let view = crate::app::settings_clock_preview_at(config, frame.size, time);
     let mut ui = UserInterface::build(
         view,
-        Size::new(request.frame.size[0], request.frame.size[1]),
+        Size::new(frame.size[0], frame.size[1]),
         Cache::default(),
         &mut renderer,
     );
@@ -292,11 +325,7 @@ fn render_clock(request: &Request) -> Option<Pixels> {
     let mut pixels = Pixels {
         width: size[0],
         height: size[1],
-        rgba: renderer.screenshot(
-            Size::new(size[0], size[1]),
-            request.frame.scale,
-            Color::TRANSPARENT,
-        ),
+        rgba: renderer.screenshot(Size::new(size[0], size[1]), frame.scale, Color::TRANSPARENT),
     };
     // Tiny-skia's screenshot is premultiplied; native image handles consume
     // straight RGBA. Normalize before reducing alpha, so edges stay untinted.
@@ -310,7 +339,26 @@ fn render_clock(request: &Request) -> Option<Pixels> {
             };
         }
     }
-    let face = crate::app::settings_clock_face_rows(&config, request.frame.size, time);
+    let face = crate::app::settings_clock_face_rows(config, frame.size, time);
+    Some((pixels, face))
+}
+
+/// What the clock stands in front of: a mask for a picture of `source`
+/// pixels, and that picture at the mask's size for lighting.
+struct Matte<'a> {
+    source: [u32; 2],
+    mask: &'a image::GrayImage,
+    picture: &'a dyn Fn() -> Option<image::RgbImage>,
+}
+
+/// Cuts the drawn clock with the matte, keeps it readable, then lights it.
+fn cut(
+    request: &Request,
+    config: &Config,
+    drawn: (Pixels, [f32; 2]),
+    matte: &Matte,
+) -> Option<Pixels> {
+    let (mut pixels, face) = drawn;
     let face_ink = |pixels: &Pixels| -> u64 {
         pixels
             .rgba
@@ -334,7 +382,8 @@ fn render_clock(request: &Request) -> Option<Pixels> {
         &mut pixels,
         &request.frame,
         &request.background.scaling_mode,
-        &mask,
+        matte.source,
+        matte.mask,
         Some(face),
     )?;
     let after = face_ink(&pixels);
@@ -346,20 +395,212 @@ fn render_clock(request: &Request) -> Option<Pixels> {
     // Lighting only recolours what the matte left visible. If it cannot run,
     // the plain masked clock is still correct.
     if let Some(recipe) = recipe
-        && let Some(picture) = picture()
+        && let Some(picture) = (matte.picture)()
     {
         let _ = lighting::apply(
             &mut pixels,
             &glyph,
             &request.frame,
             &request.background.scaling_mode,
+            matte.source,
             &picture,
-            &mask,
+            matte.mask,
             face,
             &recipe,
         );
     }
     Some(pixels)
+}
+
+fn render_clock(request: &Request) -> Option<Pixels> {
+    request.frame.pixels()?;
+    let config = request.config()?;
+    let mask = mask()?;
+    let source = [mask.width(), mask.height()];
+    transform(&request.frame, &request.background.scaling_mode, source)?;
+    let time = chrono::NaiveDateTime::parse_from_str(&request.time, "%Y-%m-%dT%H:%M:%S").ok()?;
+    let drawn = draw(&config, &request.frame, time)?;
+    cut(
+        request,
+        &config,
+        drawn,
+        &Matte {
+            source,
+            mask: &mask,
+            picture: &picture,
+        },
+    )
+}
+
+/// What the render worker found for the request's picture.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum Found {
+    /// The Ridge picture and its drawn matte.
+    Ridge,
+    /// A picture nobody has analysed yet; `key` is its content.
+    Unknown { key: String },
+    /// An analysed picture and the verdict for this clock where it is.
+    Judged {
+        key: String,
+        judgement: scene::Judgement,
+    },
+}
+
+/// The render worker's answer: what it found, and the cut clock when the
+/// effect applies and the time stays readable.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Rendered {
+    pub found: Found,
+    pub pixels: Option<Pixels>,
+}
+
+/// The largest picture file read for its key, as the wallpaper decoder.
+pub const MAX_PICTURE: u64 = 64 << 20;
+
+/// Reads one regular picture file, bounded, without following it to a device.
+pub(crate) fn read_picture(path: &std::path::Path) -> Option<Vec<u8>> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+        .ok()?;
+    let meta = file.metadata().ok()?;
+    if !meta.is_file() || meta.len() > MAX_PICTURE {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_PICTURE + 1).read_to_end(&mut bytes).ok()?;
+    (bytes.len() as u64 <= MAX_PICTURE).then_some(bytes)
+}
+
+/// The time the verdict is judged at, so it does not change every minute:
+/// a wide, ordinary time on the request's day.
+fn judging_time(time: chrono::NaiveDateTime) -> chrono::NaiveDateTime {
+    time.date().and_hms_opt(10, 42, 0).unwrap_or(time)
+}
+
+/// The Ridge picture keeps its drawn matte; any other picture uses its
+/// analysis from `request.scenes`, if there is one.
+pub fn render_scene(request: &Request) -> Option<Rendered> {
+    let BgSource::Path(path) = &request.background.source else {
+        return None;
+    };
+    let bytes = read_picture(path)?;
+    if bytes.len() == PICTURE.len() && Sha256::digest(&bytes) == Sha256::digest(PICTURE) {
+        return Some(Rendered {
+            found: Found::Ridge,
+            pixels: render_clock(request),
+        });
+    }
+    let root = request.scenes.as_ref()?;
+    let key = cache::key(&bytes);
+    drop(bytes);
+    let Some(entry) = cache::load(root, &key) else {
+        return Some(Rendered {
+            found: Found::Unknown { key },
+            pixels: None,
+        });
+    };
+    let config = request.config()?;
+    let mode = &request.background.scaling_mode;
+    let time = chrono::NaiveDateTime::parse_from_str(&request.time, "%Y-%m-%dT%H:%M:%S").ok()?;
+    let judged = draw(&config, &request.frame, judging_time(time))?;
+    let glyph: Vec<u8> = judged.0.rgba.chunks_exact(4).map(|p| p[3]).collect();
+    let judgement = scene::judge(
+        &entry.stats,
+        &entry.mask,
+        &entry.edges,
+        &scene::Glyph {
+            alpha: &glyph,
+            width: judged.0.width,
+            height: judged.0.height,
+            frame: &request.frame,
+            face: judged.1,
+        },
+        mode,
+    )?;
+    let pixels = if judgement.verdict == scene::Verdict::Works {
+        let drawn = if judging_time(time) == time {
+            judged
+        } else {
+            draw(&config, &request.frame, time)?
+        };
+        let picture = entry.picture.clone();
+        cut(
+            request,
+            &config,
+            drawn,
+            &Matte {
+                source: entry.stats.source,
+                mask: &entry.mask,
+                picture: &move || Some(picture.clone()),
+            },
+        )
+    } else {
+        None
+    };
+    Some(Rendered {
+        found: Found::Judged { key, judgement },
+        pixels,
+    })
+}
+
+/// The render worker's reply: MAGIC, then a length-prefixed JSON [`Found`],
+/// then the pixels (0 by 0 when there are none).
+pub(crate) fn write_rendered(rendered: &Rendered) -> Option<()> {
+    use std::io::Write;
+    let found = serde_json::to_vec(&rendered.found).ok()?;
+    {
+        let mut out = std::io::stdout().lock();
+        out.write_all(&(found.len() as u32).to_le_bytes()).ok()?;
+        out.write_all(&found).ok()?;
+        out.flush().ok()?;
+    }
+    match &rendered.pixels {
+        Some(pixels) => worker::write_pixels(pixels),
+        None => worker::write_pixels(&Pixels {
+            width: 0,
+            height: 0,
+            rgba: Vec::new(),
+        }),
+    }
+}
+
+/// Reads [`write_rendered`]'s reply after MAGIC.
+pub(crate) fn read_rendered(bytes: &[u8]) -> Option<Rendered> {
+    let take = |at: usize, n: usize| bytes.get(at..at.checked_add(n)?);
+    let u32_at = |at: usize| Some(u32::from_le_bytes(take(at, 4)?.try_into().ok()?));
+    let length = u32_at(0)? as usize;
+    if length > 64 * 1024 {
+        return None;
+    }
+    let found: Found = serde_json::from_slice(take(4, length)?).ok()?;
+    let at = 4 + length;
+    let (width, height) = (u32_at(at)?, u32_at(at + 4)?);
+    let rgba = bytes.get(at + 8..)?;
+    let pixels = if width == 0 && height == 0 && rgba.is_empty() {
+        None
+    } else if width == 0
+        || height == 0
+        || width > MAX_RASTER[0]
+        || height > MAX_RASTER[1]
+        || rgba.len() != (width * height * 4) as usize
+    {
+        return None;
+    } else {
+        Some(Pixels {
+            width,
+            height,
+            rgba: rgba.to_vec(),
+        })
+    };
+    Some(Rendered { found, pixels })
+}
+
+pub(crate) fn scene_main() -> ! {
+    analyse::main()
 }
 
 pub(crate) fn main() -> ! {
@@ -375,10 +616,10 @@ pub(crate) fn main() -> ! {
         }
         let request: Request = serde_json::from_slice(&bytes).ok()?;
         worker::ready()?;
-        worker::write_pixels(&render(&request)?)
+        write_rendered(&render_scene(&request)?)
     })();
     std::process::exit(if result.is_some() { 0 } else { 2 });
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

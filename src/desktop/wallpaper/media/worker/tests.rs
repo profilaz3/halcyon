@@ -1,6 +1,7 @@
 use super::*;
 use crate::desktop::wallpaper::BgColor;
-static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+/// Every test that holds worker slots, so their counts stay exact.
+pub(crate) static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[test]
 #[ignore = "private child entry, started only by the bounded image worker fixture"]

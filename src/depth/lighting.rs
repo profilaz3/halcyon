@@ -430,12 +430,14 @@ pub(super) fn apply(
     glyph: &[u8],
     frame: &Frame,
     mode: &ScalingMode,
+    source: [u32; 2],
     picture: &image::RgbImage,
     matte: &image::GrayImage,
     face: [f32; 2],
     recipe: &Recipe,
 ) -> Option<()> {
-    let (scale, offset) = super::transform(frame, mode, [matte.width(), matte.height()])?;
+    let (scale, offset) =
+        super::transform_to(frame, mode, source, [matte.width(), matte.height()])?;
     if picture.dimensions() != matte.dimensions() {
         return None;
     }

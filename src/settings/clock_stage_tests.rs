@@ -330,3 +330,290 @@ fn clock_stage_drag_saves_one_undo_step_and_relights() {
         std::fs::write(dir.join("clock-stage-render-soft.txt"), log).unwrap();
     }
 }
+
+/// Your own picture, from no scene model to a verdict: the download's
+/// progress, cancel, a failed file and its retry, finding the foreground,
+/// a nudge with its one-step Undo, the cut clock, a picture with no
+/// foreground, and removing the model. Nothing here reaches the network:
+/// the download task is dropped unpolled and its results are sent by hand.
+#[test]
+fn own_wallpaper_clock_page_walks_every_scene_state() {
+    if desktop_test_child(
+        "own_wallpaper_clock_page_walks_every_scene_state",
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::depth::{Found, cache, model, scene::Verdict};
+    use crate::desktop::wallpaper::{BgEntry, BgSource};
+    use crate::native_test::Native;
+    use crate::settings::clock_stage as stage;
+    use crate::settings::depth::{ModelState, Scene};
+    let root = isolated_root();
+    let fixture = root.join("cosmic-root");
+    let pictures = root.join("pictures");
+    std::fs::create_dir_all(&pictures).unwrap();
+    let (hill, key, files) = crate::depth::tests::own::hill(&pictures, 300);
+    seed(
+        &fixture.join("config/cosmic"),
+        &[(
+            "com.system76.CosmicBackground",
+            "all",
+            &ron::to_string(&BgEntry::new("all", BgSource::Path(hill.clone()))).unwrap(),
+        )],
+    );
+    Config::save_clock(json!({"depth": true, "face": "digital", "surface": "none"})).unwrap();
+    let (mut app, initial) = Settings::init(Core::default(), Page::Clock);
+    app.scenes.hold = true;
+    settle_settings(&mut app, initial);
+    drive_wallpaper(&mut app);
+    let size = Size::new(1280., 800.);
+    send_settings(&mut app, Message::Resized(size));
+    assert!(app.picture_wallpaper() && !app.ridge_wallpaper());
+    let screen = stage::known(app.placement.preview_snapshot().screen);
+    assert_eq!(screen, [1920., 1080.]);
+
+    // The clock high in the sky, where the hill can't cover it.
+    let (_, clock) = app.clock_stage_place().unwrap();
+    let high = [(screen[0] - clock[0]) / 2., 60.];
+    assert!(app.placement.place_widget(Widget::Clock.key(), high));
+    send_settings(&mut app, Message::Placement(placement::Message::Save));
+    let saved = || {
+        let (mut fresh, initial) = Settings::init(Core::default(), Page::Clock);
+        fresh.scenes.hold = true;
+        settle_settings(&mut fresh, initial);
+        fresh.clock_stage_place().unwrap().0
+    };
+    let near = |a: [f32; 2], b: [f32; 2]| (0..2).all(|i| (a[i] - b[i]).abs() < 1.5);
+    assert!(near(saved(), high));
+
+    let has = |app: &Settings, text: &str| {
+        Native::new(size).text_all(app.settings_view(), text).len() == 1
+    };
+    let reason = |app: &Settings| app.depth_block().map(|b| b.reason.into_owned());
+    let present = |app: &Settings, id: &str| {
+        Native::new(size)
+            .try_bounds(app.settings_view(), id)
+            .is_some()
+    };
+    let shots = |app: &mut Settings, name: &str, reveal: &str| {
+        for (theme, mode) in [
+            (cosmic::Theme::light(), "light"),
+            (cosmic::Theme::dark(), "dark"),
+        ] {
+            for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+                send_settings(app, Message::Resized(size));
+                let mut native = Native::new(size);
+                native_reveal(app, &mut native, reveal);
+                assert!(
+                    native.overflowing_text(app.settings_view()).is_empty(),
+                    "{name}"
+                );
+                assert!(
+                    native.duplicate_ids(app.settings_view()).is_empty(),
+                    "{name}"
+                );
+                native.capture(
+                    app.settings_view(),
+                    &theme,
+                    &format!("own-depth-{name}-{mode}-{}", size.width),
+                );
+            }
+        }
+        send_settings(app, Message::Resized(size));
+    };
+
+    // No model: the reason, and the model's row explains it and offers it.
+    assert_eq!(app.scenes.model, ModelState::Missing);
+    assert_eq!(
+        app.clock_stage.found(),
+        Some(&Found::Unknown { key: key.clone() })
+    );
+    assert_eq!(
+        reason(&app).as_deref(),
+        Some("Download the scene model to use this on your own pictures")
+    );
+    assert!(has(&app, "Let the scene cover the clock"));
+    assert!(has(
+        &app,
+        "Finds the foreground in your own pictures. About 99 MB, and it runs only on this computer."
+    ));
+    assert!(has(&app, "Download"));
+    assert!(!present(&app, "clock-depth-fix") && !present(&app, "clock-lighting"));
+    shots(&mut app, "no-model", "clock-scene-model");
+
+    // Downloading, with honest progress, then cancelled.
+    drop(app.update(Message::SceneModel(Scene::Download)));
+    let first = app.scenes.generation();
+    assert_eq!(app.scenes.model, ModelState::Downloading(0));
+    send_settings(
+        &mut app,
+        Message::SceneModel(Scene::Progress(first, 42_500_000)),
+    );
+    assert!(has(&app, "Downloading… 42 of 99 MB"));
+    assert_eq!(
+        reason(&app).as_deref(),
+        Some("Downloading the scene model…")
+    );
+    assert!(has(&app, "Cancel"));
+    shots(&mut app, "downloading", "clock-scene-model");
+    send_settings(&mut app, Message::SceneModel(Scene::Cancel));
+    assert_eq!(
+        app.scenes.model,
+        ModelState::Failed(model::Error::Cancelled)
+    );
+    // The cancelled download's own ending changes nothing.
+    send_settings(
+        &mut app,
+        Message::SceneModel(Scene::Downloaded(first, Err(model::Error::Cancelled))),
+    );
+    send_settings(
+        &mut app,
+        Message::SceneModel(Scene::Progress(first, 60_000_000)),
+    );
+    assert_eq!(
+        app.scenes.model,
+        ModelState::Failed(model::Error::Cancelled)
+    );
+    assert!(has(
+        &app,
+        "Download cancelled. About 99 MB, and it runs only on this computer."
+    ));
+
+    // A file that isn't the model: said plainly, with a retry.
+    drop(app.update(Message::SceneModel(Scene::Download)));
+    let second = app.scenes.generation();
+    assert_ne!(second, first);
+    send_settings(
+        &mut app,
+        Message::SceneModel(Scene::Downloaded(second, Err(model::Error::Hash))),
+    );
+    let wrong = "The download wasn’t the expected file, so it was removed";
+    assert_eq!(
+        reason(&app).as_deref(),
+        Some("Download the scene model to use this on your own pictures")
+    );
+    assert!(has(&app, wrong), "said once, on the Scene model row");
+    assert!(has(&app, "Try again"));
+    shots(&mut app, "download-failed", "clock-scene-model");
+
+    // Retried and finished: finding the foreground starts by itself.
+    drop(app.update(Message::SceneModel(Scene::Download)));
+    let third = app.scenes.generation();
+    let path = model::path().unwrap();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::File::create(&path)
+        .unwrap()
+        .set_len(model::SIZE)
+        .unwrap();
+    send_settings(
+        &mut app,
+        Message::SceneModel(Scene::Downloaded(third, Ok(()))),
+    );
+    assert_eq!(app.scenes.model, ModelState::Ready);
+    assert_eq!(reason(&app).as_deref(), Some("Finding the foreground…"));
+    assert!(has(&app, "Remove"));
+    shots(&mut app, "analysing", "clock-scene-model");
+
+    // It failed: one reason, one button, and the button tries again.
+    send_settings(
+        &mut app,
+        Message::SceneModel(Scene::Analysed(
+            key.clone(),
+            Err(crate::depth::analyse::Failure::Stopped),
+        )),
+    );
+    assert_eq!(
+        reason(&app).as_deref(),
+        Some("Couldn’t find the foreground in this picture")
+    );
+    let mut native = Native::new(size);
+    native_reveal(&app, &mut native, "clock-depth-fix");
+    native_click(&mut app, &mut native, "clock-depth-fix");
+    assert_eq!(reason(&app).as_deref(), Some("Finding the foreground…"));
+
+    // Found: high in the sky it needs a nudge, shown on the stage.
+    let scenes = cache::root().unwrap();
+    cache::store(&scenes, &key, &files).unwrap();
+    send_settings(
+        &mut app,
+        Message::SceneModel(Scene::Analysed(key.clone(), Ok(key.clone()))),
+    );
+    let Some(Found::Judged { judgement, .. }) = app.clock_stage.found().cloned() else {
+        panic!("{:?}", app.clock_stage.found());
+    };
+    assert_eq!(judgement.verdict, Verdict::NeedsNudge, "{judgement:?}");
+    let spot = judgement.suggested.unwrap();
+    assert!(spot[1] > high[1] + 100., "{spot:?}");
+    assert_eq!(
+        reason(&app).as_deref(),
+        Some("The scene covers the clock a little lower down")
+    );
+    let frame = stage::frame(high, clock, screen);
+    assert!(
+        app.clock_stage.lit(&frame).is_none(),
+        "the plain clock until it moves"
+    );
+    assert!(present(&app, "clock-stage-suggested"));
+    shots(&mut app, "nudge", "clock-stage-suggested");
+
+    // One click moves it there, as one Undo step, and the scene covers it.
+    let mut native = Native::new(size);
+    native_reveal(&app, &mut native, "clock-stage-suggested");
+    native_click(&mut app, &mut native, "clock-stage-suggested");
+    assert!(!app.error, "{}", app.status);
+    let (moved, _) = app.clock_stage_place().unwrap();
+    assert!(near(moved, spot), "{moved:?} vs {spot:?}");
+    assert!(near(saved(), spot));
+    let frame = stage::frame(moved, clock, screen);
+    assert!(app.clock_stage.lit(&frame).is_some());
+    assert!(app.depth_block().is_none(), "{:?}", reason(&app));
+    assert!(present(&app, "clock-lighting"));
+    assert!(!present(&app, "clock-stage-suggested"));
+    shots(&mut app, "works", "clock-scene-model");
+    let mut native = Native::new(size);
+    native_click(&mut app, &mut native, "settings-undo");
+    assert!(near(app.clock_stage_place().unwrap().0, high));
+    assert!(near(saved(), high));
+    assert!(present(&app, "clock-stage-suggested"));
+    let mut native = Native::new(size);
+    native_click(&mut app, &mut native, "clock-stage-suggested");
+    assert!(near(saved(), spot));
+
+    // A picture with nothing in front: the plain clock and one sentence.
+    let (flat, flat_key, flat_files) = crate::depth::tests::own::flat(&pictures);
+    std::fs::copy(&flat, &hill).unwrap();
+    cache::store(&scenes, &flat_key, &flat_files).unwrap();
+    app.clock_stage.redraw();
+    send_settings(&mut app, Message::Resized(size));
+    assert!(matches!(
+        app.clock_stage.found(),
+        Some(Found::Judged { judgement, .. }) if judgement.verdict == Verdict::NotUseful
+    ));
+    assert_eq!(
+        reason(&app).as_deref(),
+        Some("This picture has no clear foreground")
+    );
+    assert!(has(&app, "Use Ridge"));
+    assert!(!present(&app, "clock-lighting"));
+    assert!(app.clock_stage.lit(&frame).is_none());
+    shots(&mut app, "not-useful", "clock-depth-fix");
+
+    // Removing the model forgets every analysed picture too.
+    let mut native = Native::new(size);
+    native_reveal(&app, &mut native, "clock-scene-model");
+    native_click(&mut app, &mut native, "clock-scene-model");
+    assert_eq!(app.scenes.model, ModelState::Missing);
+    assert!(!path.exists());
+    assert!(!cache::exists(&scenes, &flat_key) && !cache::exists(&scenes, &key));
+    assert_eq!(
+        reason(&app).as_deref(),
+        Some("Download the scene model to use this on your own pictures")
+    );
+    assert!(!app.error, "{}", app.status);
+}

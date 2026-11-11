@@ -1,5 +1,7 @@
 //! Runtime ownership for the prepared Clock frame. Observations and raster
 //! completions are fenced independently from ordinary widget/provider updates.
+//! A picture nobody has analysed yet shows the plain clock; once the scene
+//! model is installed, it is analysed once and the clock is drawn again.
 use super::*;
 use crate::desktop::wallpaper::{BgEntry, BgSource, media::worker};
 use cosmic::iced::widget::image::{Handle, Image};
@@ -14,6 +16,10 @@ pub(super) struct State {
     key: Option<Vec<u8>>,
     cancel: Option<watch::Sender<bool>>,
     pub image: Option<Handle>,
+    /// The picture being analysed, by content, and how to stop it.
+    analysing: Option<(String, watch::Sender<bool>)>,
+    /// Pictures whose analysis failed; not tried again until restart.
+    failed: std::collections::HashSet<String>,
 }
 fn trace(message: impl std::fmt::Display) {
     if std::env::var_os("HALCYON_DEPTH_TRACE").is_some()
@@ -62,19 +68,71 @@ impl State {
             self.entry = entry;
         }
     }
-    pub fn complete(&mut self, id: u64, pixels: Option<crate::desktop::wallpaper::media::Pixels>) {
+    /// Shows a finished render. Returns a picture to analyse when it is one
+    /// nobody has analysed yet.
+    pub fn complete(
+        &mut self,
+        id: u64,
+        rendered: Option<crate::depth::Rendered>,
+    ) -> Option<String> {
         trace(format!(
             "ready {id}/{} pixels={}",
             self.id,
-            pixels.is_some()
+            rendered.as_ref().is_some_and(|r| r.pixels.is_some())
         ));
-        if id == self.id {
-            self.cancel = None;
-            self.image = pixels.map(|p| Handle::from_rgba(p.width, p.height, p.rgba));
+        if id != self.id {
+            return None;
         }
+        self.cancel = None;
+        let rendered = rendered.unwrap_or(crate::depth::Rendered {
+            found: crate::depth::Found::Ridge,
+            pixels: None,
+        });
+        self.image = rendered
+            .pixels
+            .map(|p| Handle::from_rgba(p.width, p.height, p.rgba));
+        match rendered.found {
+            crate::depth::Found::Unknown { key }
+                if !self.failed.contains(&key)
+                    && self.analysing.as_ref().is_none_or(|(k, _)| *k != key) =>
+            {
+                Some(key)
+            }
+            // In use, so pruning keeps it.
+            crate::depth::Found::Judged { key, .. } => {
+                if let Some(root) = crate::depth::cache::root() {
+                    crate::depth::cache::touch(&root, &key);
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+    /// An analysis ended. Returns whether the clock should be drawn again.
+    pub fn analysed(&mut self, key: &str, ok: bool) -> bool {
+        if self.analysing.as_ref().is_none_or(|(k, _)| k != key) {
+            return false;
+        }
+        self.analysing = None;
+        if !ok {
+            if self.failed.len() >= 64 {
+                self.failed.clear();
+            }
+            self.failed.insert(key.to_owned());
+            return false;
+        }
+        self.key = None;
+        true
     }
     pub fn picture(&self) -> Option<std::path::PathBuf> {
         self.watched_picture.clone()
+    }
+    /// The picture file the clock is drawn over.
+    fn scene_picture(&self) -> Option<std::path::PathBuf> {
+        match &self.entry.as_ref()?.source {
+            BgSource::Path(path) => Some(path.clone()),
+            _ => None,
+        }
     }
 }
 impl Cards {
@@ -141,6 +199,7 @@ impl Cards {
         };
         let Some(request) =
             crate::depth::Request::new(&self.config, frame, entry, self.clock_at.naive_local())
+                .map(|r| r.with_scenes(crate::depth::cache::root()))
         else {
             self.depth.cancel();
             return Task::none();
@@ -158,7 +217,34 @@ impl Cards {
         let (send, cancel) = watch::channel(false);
         self.depth.cancel = Some(send);
         cosmic::task::future(async move {
-            Message::DepthReady(id, worker::render_depth(bytes, cancel).await)
+            Message::DepthReady(id, worker::render_scene(bytes, cancel).await)
+        })
+    }
+    /// Analyses the shown picture, whose content is `key`, when the scene
+    /// model is installed. Settings may be analysing it too; the cache's
+    /// claim makes one wait for the other.
+    pub(super) fn depth_analyse(&mut self, key: String) -> Task<Message> {
+        use crate::depth::{analyse, cache, model};
+        let source = model::pinned();
+        let (Some(path), Some(root), Some(picture)) =
+            (model::path(), cache::root(), self.depth.scene_picture())
+        else {
+            return Task::none();
+        };
+        if !model::installed(&path, &source) {
+            return Task::none();
+        }
+        if let Some((_, old)) = self.depth.analysing.take() {
+            old.send_replace(true);
+        }
+        let (send, cancel) = watch::channel(false);
+        self.depth.analysing = Some((key.clone(), send));
+        trace(format!("analyse {key}"));
+        cosmic::task::future(async move {
+            let ok = analyse::analyse_once(&key, &picture, &path, &source, root, cancel)
+                .await
+                .is_ok();
+            Message::DepthAnalysed(key, ok)
         })
     }
     pub(super) fn depth_view(&self) -> Option<Element<'static, Message>> {
@@ -180,6 +266,53 @@ impl Cards {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn lit() -> crate::depth::Rendered {
+        crate::depth::Rendered {
+            found: crate::depth::Found::Ridge,
+            pixels: Some(crate::desktop::wallpaper::media::Pixels {
+                width: 1,
+                height: 1,
+                rgba: vec![255; 4],
+            }),
+        }
+    }
+    fn unknown(key: &str) -> Option<crate::depth::Rendered> {
+        Some(crate::depth::Rendered {
+            found: crate::depth::Found::Unknown { key: key.into() },
+            pixels: None,
+        })
+    }
+    #[test]
+    fn own_wallpaper_desktop_analyses_each_unknown_picture_once() {
+        let mut state = State::default();
+        state.observe(
+            state.id,
+            Some(BgEntry::new("all", BgSource::Path("own.png".into()))),
+        );
+        assert_eq!(state.scene_picture(), Some("own.png".into()));
+        // An unknown picture shows the plain clock and asks for analysis.
+        assert_eq!(state.complete(state.id, unknown("a")), Some("a".into()));
+        assert!(state.image.is_none());
+        let (send, cancel) = watch::channel(false);
+        state.analysing = Some(("a".into(), send));
+        // Not again while it runs.
+        assert_eq!(state.complete(state.id, unknown("a")), None);
+        // An answer for a picture no longer analysed changes nothing.
+        assert!(!state.analysed("b", true));
+        // Done: the clock is drawn again from the kept analysis.
+        state.key = Some(vec![1]);
+        assert!(state.analysed("a", true));
+        assert!(state.key.is_none() && state.analysing.is_none());
+        assert!(!*cancel.borrow());
+        // A failed picture is not tried again.
+        let (send, _cancel) = watch::channel(false);
+        state.analysing = Some(("c".into(), send));
+        assert!(!state.analysed("c", false));
+        assert_eq!(state.complete(state.id, unknown("c")), None);
+        // Ridge and judged pictures never ask.
+        assert_eq!(state.complete(state.id, Some(lit())), None);
+        assert!(state.image.is_some());
+    }
     #[test]
     fn fb14_arrange_retires_depth_without_changing_clock_input() {
         if crate::displays::test_support::isolated(
@@ -192,14 +325,7 @@ mod tests {
         config.clock.surface = Some(crate::widget_style::resolver::ClockSurface::None);
         let (mut cards, _) = Cards::init(Core::default(), config);
         let _wire = cards.test_output_ready();
-        cards.depth.complete(
-            cards.depth.id,
-            Some(crate::desktop::wallpaper::media::Pixels {
-                width: 1,
-                height: 1,
-                rgba: vec![255; 4],
-            }),
-        );
+        cards.depth.complete(cards.depth.id, Some(lit()));
         assert!(cards.depth_view().is_some());
         assert!(cards.card_input_rects(Widget::Clock).is_empty());
         cards.layout_editor.active = true;
@@ -246,23 +372,9 @@ mod tests {
             id,
             Some(BgEntry::new("all", BgSource::Path("stale.png".into()))),
         );
-        state.complete(
-            id,
-            Some(crate::desktop::wallpaper::media::Pixels {
-                width: 1,
-                height: 1,
-                rgba: vec![255; 4],
-            }),
-        );
+        state.complete(id, Some(lit()));
         assert!(state.entry.is_none() && state.image.is_none());
-        state.complete(
-            state.id,
-            Some(crate::desktop::wallpaper::media::Pixels {
-                width: 1,
-                height: 1,
-                rgba: vec![255; 4],
-            }),
-        );
+        state.complete(state.id, Some(lit()));
         assert!(state.image.is_some());
         state.invalidate();
         assert!(state.image.is_none());

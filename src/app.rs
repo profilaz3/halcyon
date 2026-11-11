@@ -165,7 +165,9 @@ pub enum Message {
         Option<crate::watch::FileStamp>,
     ),
     DepthObserved(u64, Option<crate::desktop::wallpaper::BgEntry>),
-    DepthReady(u64, Option<crate::desktop::wallpaper::media::Pixels>),
+    DepthReady(u64, Option<crate::depth::Rendered>),
+    /// The picture with this content key was analysed, or failed.
+    DepthAnalysed(String, bool),
     WallpaperColorsReady(
         u64,
         Result<Option<crate::desktop::wallpaper::automatic::Prepared>, String>,
@@ -1004,9 +1006,16 @@ impl Cards {
                 self.depth.observe(id, entry);
                 Task::none()
             }
-            Message::DepthReady(id, pixels) => {
-                self.depth.complete(id, pixels);
-                Task::none()
+            Message::DepthReady(id, rendered) => match self.depth.complete(id, rendered) {
+                Some(key) => self.depth_analyse(key),
+                None => Task::none(),
+            },
+            Message::DepthAnalysed(key, ok) => {
+                if self.depth.analysed(&key, ok) {
+                    self.depth_sync()
+                } else {
+                    Task::none()
+                }
             }
             Message::WallpaperColorsReady(id, result) => self.wallpaper_colors_ready(id, result),
             Message::WallpaperColorsApplied(result) => {

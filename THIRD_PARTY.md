@@ -24,6 +24,14 @@ Release packages include the full license text of every dependency
 
 Artwork is described in `ASSETS.md`.
 
+The clock's scene model runs with [tract](https://github.com/sonos/tract)
+(`tract-onnx` 0.23.10, MIT OR Apache-2.0) and its dependencies, all under
+licenses in the table above. The model itself, Depth Anything V2 Small
+(`onnx-community/depth-anything-v2-small`, revision
+`4472b7362082ad9968fee890ca0f1e5aca36b93d`, Apache-2.0), is not part of any
+package: Settings downloads it only when asked, checks its size and SHA-256,
+and keeps it under `~/.local/share/halcyon/models/`.
+
 The optional Penumbra panel mod in `companion/patches/0002-penumbra-panel.patch`
 adapts the renderer and configuration schema from
 [motixo/penumbra-panel](https://github.com/motixo/penumbra-panel), revision
