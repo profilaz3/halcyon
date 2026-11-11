@@ -1,10 +1,9 @@
 // Daily rollups and the public summary. Everything published is an aggregate:
-// no installation identifier, hash or per-installation row leaves the database,
-// and any category with fewer than MIN_GROUP installations is folded into Other.
+// no installation identifier, hash or per-installation row leaves the database.
+// Counts are exact, however small.
 
 import {RETENTION_DAYS, WIDGETS, applyRetention, dayOf, isoDay} from './report.js';
 
-export const MIN_GROUP = 5;
 export const FORMATS = ['deb', 'rpm', 'source', 'unknown'];
 export const SEGMENT_NAMES = {
   all: 'All installations', deb: 'DEB package', rpm: 'RPM package',
@@ -96,30 +95,26 @@ const VALUE_NAMES = {
 };
 const valueName = v => VALUE_NAMES[v] || v.charAt(0).toUpperCase() + v.slice(1);
 
-// Latest settings of each installation active in the window. Counts below
-// MIN_GROUP are withheld; nothing is published until MIN_GROUP installations
-// have reported a snapshot.
+// Latest settings of each installation active in the window.
 export function featureSummary(rows, from, to) {
   const latest = new Map();
   for (const r of rows) if (r.day >= from && r.day <= to && r.features) latest.set(r.n, parseFeatures(r.features));
   const snapshots = [...latest.values()].filter(Boolean);
-  const out = {reported: snapshots.length, min_group: MIN_GROUP, switches: null, widgets: null, wallpaper_effect: null, theme_style: null};
-  if (snapshots.length < MIN_GROUP) return out;
-  const withheld = n => n >= MIN_GROUP ? n : null;
+  const out = {reported: snapshots.length, switches: null, widgets: null, wallpaper_effect: null, theme_style: null};
+  if (!snapshots.length) return out;
   const share = (key, test) => {
     const known = snapshots.filter(f => f[key] !== null && f[key] !== undefined);
-    return {known: known.length, on: known.length >= MIN_GROUP ? withheld(known.filter(test).length) : null};
+    return {known: known.length, on: known.filter(test).length};
   };
   out.switches = Object.keys(FEATURE_NAMES).map(key => ({key, name: FEATURE_NAMES[key],
     ...share(key, f => key === 'wallpaper_effect' ? f[key] !== 'off' : f[key] === true)}));
   const widgetKnown = snapshots.filter(f => Array.isArray(f.widgets));
-  out.widgets = {known: widgetKnown.length, items: widgetKnown.length < MIN_GROUP ? [] : WIDGETS.map(w => ({key: w, name: WIDGET_NAMES[w],
-    on: withheld(widgetKnown.filter(f => f.widgets.includes(w)).length)}))};
+  out.widgets = {known: widgetKnown.length, items: WIDGETS.map(w => ({key: w, name: WIDGET_NAMES[w],
+    on: widgetKnown.filter(f => f.widgets.includes(w)).length}))};
   const breakdown = key => {
     const counts = new Map();
     for (const f of snapshots) if (typeof f[key] === 'string') counts.set(f[key], (counts.get(f[key]) || 0) + 1);
-    const total = [...counts.values()].reduce((a, b) => a + b, 0);
-    return total < MIN_GROUP ? null : fold(counts, valueName);
+    return counts.size ? fold(counts, valueName) : null;
   };
   out.wallpaper_effect = breakdown('wallpaper_effect');
   out.theme_style = breakdown('theme_style');
@@ -200,13 +195,11 @@ export async function maintain(db, now, {fetchImpl = fetch, since = DIRECT_SINCE
   return summary;
 }
 
+// Every category with its exact count, largest first; unknown values last.
 function fold(counts, labels = k => k) {
-  const items = [...counts].map(([key, count]) => ({key, name: labels(key), count}))
-    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
-  const kept = items.filter(i => i.count >= MIN_GROUP && i.key !== 'other');
-  const other = items.filter(i => !kept.includes(i)).reduce((n, i) => n + i.count, 0);
-  if (other) kept.push({key: 'other', name: 'Other', count: other});
-  return kept;
+  const last = key => key === 'unknown' || key === null || key === undefined;
+  return [...counts].map(([key, count]) => ({key: last(key) ? 'unknown' : key, name: labels(key), count}))
+    .sort((a, b) => last(a.key) - last(b.key) || b.count - a.count || a.name.localeCompare(b.name));
 }
 
 const COUNTRY_NAMES = (() => {
@@ -241,7 +234,7 @@ export function buildSummary({rows, daily, releases, statuses, now, since = DIRE
   const recent = installsIn('all', today - 27, today);
   const formatCounts = new Map();
   for (const n of recent) formatCounts.set(latestFormat.get(n), (formatCounts.get(latestFormat.get(n)) || 0) + 1);
-  const segments = ['all', ...FORMATS.filter(f => (formatCounts.get(f) || 0) >= MIN_GROUP)];
+  const segments = ['all', ...FORMATS.filter(f => formatCounts.get(f))];
 
   const bySegment = {};
   for (const segment of segments) {
@@ -250,7 +243,6 @@ export function buildSummary({rows, daily, releases, statuses, now, since = DIRE
       for (const r of daily) if (r.segment === segment && r.metric === metric && dayIndex.has(r.day)) values[dayIndex.get(r.day)] += r.value;
       return values;
     };
-    // Versions with fewer than MIN_GROUP installations on every day fold into Other.
     const versionDays = new Map();
     for (const r of daily) {
       if (r.segment !== segment || r.metric !== 'version' || !dayIndex.has(r.day)) continue;
@@ -259,11 +251,11 @@ export function buildSummary({rows, daily, releases, statuses, now, since = DIRE
     }
     const versions = new Map(), other = days.map(() => 0);
     for (const [key, values] of versionDays) {
-      if (key !== 'unknown' && Math.max(...values) >= MIN_GROUP) versions.set(key, values);
+      if (key !== 'unknown') versions.set(key, values);
       else values.forEach((v, i) => { other[i] += v; });
     }
     const names = [...versions.keys()].sort((a, b) => compareVersions(b, a));
-    if (other.some(Boolean)) { names.push('Other or not reported'); versions.set('Other or not reported', other); }
+    if (other.some(Boolean)) { names.push('Not reported'); versions.set('Not reported', other); }
 
     const windows = {};
     for (const size of [7, 30, 90]) {
@@ -300,12 +292,14 @@ export function buildSummary({rows, daily, releases, statuses, now, since = DIRE
     for (const n of window28) method.set(n, latestFormat.get(n));
     let updates = null;
     const packaged = [...channels.values()].filter(([f]) => f === 'deb' || f === 'rpm');
-    if (packaged.length >= MIN_GROUP) {
+    if (packaged.length) {
       const on = packaged.filter(([, c]) => c === 'apt' || c === 'dnf').length;
       updates = {total: packaged.length, on, other: packaged.length - on};
     }
+    // Only installations on DIRECT_SINCE or newer are counted, so until a newer
+    // release is out every one of them is on the latest by definition.
     let latestShare = null;
-    if (latestRelease && lastVersion.size) {
+    if (latestRelease && compareVersions(latestRelease.version, since) > 0 && lastVersion.size) {
       const known = [...lastVersion.values()].filter(Boolean);
       if (known.length) latestShare = known.filter(v => compareVersions(v, latestRelease.version) >= 0).length / known.length;
     }
@@ -319,7 +313,7 @@ export function buildSummary({rows, daily, releases, statuses, now, since = DIRE
       week_earlier: dayIndex.has(yesterday - 7) ? series('active')[dayIndex.get(yesterday - 7)] : null,
       latest_share: latestShare,
       installs_28d: window28.size,
-      install_methods: fold(tally(method), k => SEGMENT_NAMES[k]),
+      install_methods: fold(tally(method), k => SEGMENT_NAMES[k] || SEGMENT_NAMES.unknown),
       updates,
       frequency,
       countries: fold(tally(country), countryName),
@@ -327,20 +321,24 @@ export function buildSummary({rows, daily, releases, statuses, now, since = DIRE
   }
 
   // Days until half the installations reporting a version ran that release or newer.
+  // Releases before DIRECT_SINCE were never counted here. DIRECT_SINCE itself is
+  // the baseline: every counted installation runs it or newer from the start.
   const allVersions = new Map();
   for (const r of daily) if (r.segment === 'all' && r.metric === 'version' && r.key !== 'unknown') {
     if (!allVersions.has(r.day)) allVersions.set(r.day, []);
     allVersions.get(r.day).push(r);
   }
-  const releaseStats = releaseList.filter(r => historyStart !== null && r.day >= historyStart && r.day <= today).slice(0, 4).map(r => {
+  const releaseStats = releaseList.filter(r => historyStart !== null && r.day >= historyStart && r.day <= today
+    && compareVersions(r.version, since) >= 0).slice(0, 4).map(r => {
+    const baseline = compareVersions(r.version, since) === 0;
     let reached = null;
-    for (let d = r.day; d <= yesterday && reached === null; d++) {
+    for (let d = r.day; d <= yesterday && reached === null && !baseline; d++) {
       const list = allVersions.get(d) || [];
       const total = list.reduce((n, x) => n + x.value, 0);
       const current = list.filter(x => compareVersions(x.key, r.version) >= 0).reduce((n, x) => n + x.value, 0);
-      if (total >= MIN_GROUP && current / total >= 0.5) reached = d - r.day;
+      if (total && current / total >= 0.5) reached = d - r.day;
     }
-    return {version: r.version, date: isoDay(r.day), days_to_half: reached};
+    return {version: r.version, date: isoDay(r.day), days_to_half: reached, baseline};
   });
 
   // Weekly cohorts by first report, among installations still sharing data.
@@ -359,10 +357,10 @@ export function buildSummary({rows, daily, releases, statuses, now, since = DIRE
     .map(c => {
       const size = cohortMembers.get(c).size;
       const rates = [];
-      for (let k = 0; c + k < thisWeek; k++) rates.push(size >= MIN_GROUP ? (cohortActive.get(c + ':' + k)?.size || 0) / size : null);
-      return {start: isoDay(weekStart(c)), size: size >= MIN_GROUP ? size : null, rates};
+      for (let k = 0; c + k < thisWeek; k++) rates.push((cohortActive.get(c + ':' + k)?.size || 0) / size);
+      return {start: isoDay(weekStart(c)), size, rates};
     });
-  const week4 = cohorts.filter(c => c.size && c.rates.length > 4);
+  const week4 = cohorts.filter(c => c.rates.length > 4);
   const retention4w = week4.length
     ? week4.reduce((n, c) => n + c.rates[4] * c.size, 0) / week4.reduce((n, c) => n + c.size, 0) : null;
 
@@ -382,8 +380,8 @@ export function buildSummary({rows, daily, releases, statuses, now, since = DIRE
     by_segment: bySegment,
     cohorts,
     retention_4w: retention4w,
-    opt_out_share: retained >= MIN_GROUP ? (statusCount.opted_out || 0) / retained : null,
+    opt_out_share: retained ? (statusCount.opted_out || 0) / retained : null,
+    sharing: {on: statusCount.enabled || 0, off: statusCount.opted_out || 0},
     features: featureSummary(rows, today - 27, today),
-    min_group: MIN_GROUP,
   };
 }
