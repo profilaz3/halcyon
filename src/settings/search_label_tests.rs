@@ -151,16 +151,41 @@ fn search_finds_every_title_the_pages_draw() {
                     .iter()
                     .any(|hit| hit.label == title && hit.opens(&screen));
             if !found {
-                missing.insert(format!(
-                    "{:?} {:?} {:?} {} {tab:?} “{title}”",
-                    screen.page,
-                    screen.app_destination(),
-                    screen.bar,
-                    screen.advanced,
-                ));
+                missing.insert(index_line(&screen, &title));
             }
         }
     }
-    assert!(missing.is_empty(), "not in search: {missing:#?}");
+    // A title drawn both with and without Advanced needs only the plain entry.
+    let missing: Vec<_> = missing
+        .iter()
+        .filter(|line| {
+            !line.contains(", true)") || !missing.contains(&line.replacen(", true)", ", false)", 1))
+        })
+        .cloned()
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "These titles are on screen but not in search. Add each line below to the \
+         index in src/settings/navigation.rs, or add the title to NOT_INDEXED \
+         there with the reason it stays out:\n{}",
+        missing.join("\n")
+    );
 }
 
+/// A search index entry for `title` on `screen`, ready to paste.
+fn index_line(screen: &navigation::SearchHit, title: &str) -> String {
+    let mut line = format!(
+        "hit(Page::{:?}, {title:?}, \"\", {})",
+        screen.page, screen.advanced
+    );
+    if screen.page == Page::General {
+        line += &format!(
+            ".destination(AppSettingsPage::{:?})",
+            screen.app_destination()
+        );
+    }
+    if let Some(bar) = screen.bar {
+        line += &format!(".bar(PanelKind::{bar:?})");
+    }
+    line + ","
+}
