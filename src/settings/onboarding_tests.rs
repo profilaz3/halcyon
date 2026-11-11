@@ -384,8 +384,12 @@ fn upgrade_home_names_whats_new_since_the_last_version_seen() {
             app.settings_view(),
             &format!("Halcyon was updated to {running}"),
         );
-        let first = crate::settings::release_notes::current().unwrap().notes[0].title;
-        native.text_bounds(app.settings_view(), &format!("• {first}"));
+        let notes = crate::settings::release_notes::current().unwrap().notes;
+        let summary = match notes.len() - 1 {
+            0 => notes[0].title.to_string(),
+            more => format!("{}, and {more} more", notes[0].title),
+        };
+        native.text_bounds(app.settings_view(), &summary);
         for (theme, name) in [
             (cosmic::Theme::light(), "light"),
             (cosmic::Theme::dark(), "dark"),
@@ -417,7 +421,10 @@ fn upgrade_home_names_whats_new_since_the_last_version_seen() {
     let all = crate::settings::release_notes::since(Some("0.5.0"));
     assert!(all.len() >= 2);
     let count: usize = all.iter().map(|release| release.notes.len()).sum();
-    native.text_bounds(app.settings_view(), &format!("and {} more", count - 4));
+    native.text_bounds(
+        app.settings_view(),
+        &format!("{}, and {} more", all[0].notes[0].title, count - 1),
+    );
     let _ = app.update(Message::AppSettingsPage(AppSettingsPage::WhatsNew));
     let mut tops = Vec::new();
     for release in &all {

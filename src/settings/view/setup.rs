@@ -53,21 +53,16 @@ impl Settings {
         if notes.is_empty() {
             return None;
         }
-        const SHOWN: usize = 4;
-        let mut lines = vec![label(format!("Halcyon was updated to {running}"), 15., FG)];
-        lines.extend(
-            notes
-                .iter()
-                .take(SHOWN)
-                .map(|note| label(format!("• {}", note.title), 13., MUTED)),
-        );
-        if notes.len() > SHOWN {
-            lines.push(label(
-                format!("and {} more", notes.len() - SHOWN),
-                13.,
-                MUTED,
-            ));
-        }
+        // One line, so the card never pushes the widgets below a small
+        // window; See what’s new has the whole list.
+        let summary = match notes.len() - 1 {
+            0 => notes[0].title.to_string(),
+            more => format!("{}, and {more} more", notes[0].title),
+        };
+        let lines = vec![
+            label(format!("Halcyon was updated to {running}"), BODY, FG),
+            label(summary, CAPTION, MUTED),
+        ];
         Some(frame(
             split(
                 column::with_children(lines).spacing(4).into(),
