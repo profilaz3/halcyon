@@ -133,6 +133,9 @@ impl Settings {
             // Always the same row; it says what to do first when it can't open.
             if self.canvas_visible() {
                 // The arranging canvas is already open above.
+            } else if widget == Widget::Clock && self.config.widget_selected(widget) {
+                // The Clock stage above moves it and resizes it, digits and
+                // all; a second editor for the same thing only confused.
             } else if self.config.widget_selected(widget) {
                 rows.push(self.link_row(
                     "Move or resize",

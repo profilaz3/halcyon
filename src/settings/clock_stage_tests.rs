@@ -713,10 +713,54 @@ fn clock_stage_corner_resizes_the_clock_as_one_undo_step() {
     assert!(lit_at(&app, (start, natural)));
     assert_eq!(saved(), ((start, natural), None));
 
-    // The handle shows only with the pointer over the clock (or focus on it).
+    // The handle is always there, faint, so the corner reads as something
+    // to grab; it and the outline come up with the pointer over the clock
+    // (or focus on it).
     let mut native = Native::new(size);
     let body = native_reveal(&app, &mut native, stage::CLOCK_ID);
     let scale = body.width / natural[0];
+    assert!(!app.clock_stage.handle());
+    let handle = native
+        .try_bounds(app.settings_view(), "clock-stage-handle")
+        .expect("the resize handle shows before the pointer reaches it");
+    assert!((handle.x + handle.width - (body.x + body.width)).abs() < 1.);
+    assert!((handle.y + handle.height - (body.y + body.height)).abs() < 1.);
+    native.capture(
+        app.settings_view(),
+        &cosmic::Theme::light(),
+        "clock-stage-faint-handle-light-1280",
+    );
+    // Enter on the selected clock only selects it: no dead message.
+    native.operate(
+        app.settings_view(),
+        Box::new(cosmic::iced::advanced::widget::operation::focusable::focus(
+            cosmic::widget::Id::new(stage::CLOCK_ID),
+        )),
+    );
+    let enter = keyboard::Key::Named(keyboard::key::Named::Enter);
+    let (messages, _) = native.event(
+        app.settings_view(),
+        Event::Keyboard(keyboard::Event::KeyPressed {
+            key: enter.clone(),
+            modified_key: enter,
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Enter),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::empty(),
+            text: None,
+            repeat: false,
+        }),
+        Point::ORIGIN,
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|m| matches!(m, Message::ClockStage(Edit::Focus(true)))),
+        "{messages:?}"
+    );
+    for message in messages {
+        send_settings(&mut app, message);
+    }
+    send_settings(&mut app, Message::ClockStage(Edit::Focus(false)));
     assert!(!app.clock_stage.handle());
     let send = |app: &mut Settings, native: &mut Native, event: mouse::Event, at: Point| {
         for message in native.event(app.settings_view(), Event::Mouse(event), at).0 {
@@ -745,7 +789,9 @@ fn clock_stage_corner_resizes_the_clock_as_one_undo_step() {
                 native
                     .text_all(
                         app.settings_view(),
-                        "Drag the clock to move it, or its corner to resize"
+                        "Drag the clock to move it, or drag its corner to resize. \
+                         With the keyboard, Tab selects the clock, arrow keys move it, \
+                         + and − resize it, and Esc cancels a drag."
                     )
                     .len(),
                 1
@@ -816,7 +862,8 @@ fn clock_stage_corner_resizes_the_clock_as_one_undo_step() {
         "{:?}",
         app.clock_stage.requested()
     );
-    // The Text size slider is its own control.
+    // The box is the clock's size: the digits grew with it, and the
+    // Text size slider, which fits them inside it, is untouched.
     assert_eq!(app.config.clock.scale, text_size);
 
     // One Undo restores both size and place.

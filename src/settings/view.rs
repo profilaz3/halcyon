@@ -64,6 +64,12 @@ const MUTED: Color = Color::from_rgb(0.65, 0.64, 0.71);
 const SURFACE: Color = Color::from_rgb(0.13, 0.13, 0.16);
 const BASE: Color = Color::from_rgb(0.09, 0.09, 0.115);
 const LINE: Color = Color::from_rgb(0.22, 0.22, 0.27);
+/// The smallest size for text that means something: hints, counts and
+/// badges. Secondary text goes through this and `BODY`, never below 12 px,
+/// so one place can scale them later.
+pub(crate) const CAPTION: f32 = 12.;
+/// Ordinary row and body text.
+pub(crate) const BODY: f32 = 14.;
 
 pub(super) fn text_style(color: Color) -> cosmic::theme::Text {
     if color == FG {

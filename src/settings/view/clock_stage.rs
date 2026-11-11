@@ -15,26 +15,47 @@ fn action(edit: Edit) -> Message {
 /// The corner handle's side, in stage pixels.
 const HANDLE: f32 = 16.;
 
+/// What the stage says under the picture: the pointer and the keys.
+pub(crate) const STAGE_HINT: &str = "Drag the clock to move it, or drag its corner to resize. \
+With the keyboard, Tab selects the clock, arrow keys move it, + and − resize it, and Esc cancels a drag.";
+
 /// The stage clock's resize handle: a small chip at its lower-right corner,
-/// with the resize cursor.
-fn resize_handle<'a>(accent: Color) -> Element<'a, Message> {
+/// with the resize cursor. It is always there, faint until the pointer or
+/// keyboard is on the clock, so the corner reads as something to grab.
+fn resize_handle<'a>(accent: Color, strong: bool) -> Element<'a, Message> {
+    let (fill, edge, mark) = if strong {
+        (1., 1., 1.)
+    } else {
+        (0.55, 0.6, 0.85)
+    };
     mouse_area(
-        container(label("◢", 11., Color::WHITE))
-            .width(HANDLE)
-            .height(HANDLE)
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center)
-            .class(cosmic::theme::Container::custom(move |_| {
-                cosmic::iced::widget::container::Style {
-                    background: Some(Background::Color(accent)),
-                    border: Border {
-                        color: Color::WHITE,
-                        width: 1.,
-                        radius: [4., 0., 4., 0.].into(),
+        container(label(
+            "◢",
+            CAPTION,
+            Color {
+                a: mark,
+                ..Color::WHITE
+            },
+        ))
+        .width(HANDLE)
+        .height(HANDLE)
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center)
+        .id(cosmic::widget::Id::new("clock-stage-handle"))
+        .class(cosmic::theme::Container::custom(move |_| {
+            cosmic::iced::widget::container::Style {
+                background: Some(Background::Color(Color { a: fill, ..accent })),
+                border: Border {
+                    color: Color {
+                        a: edge,
+                        ..Color::WHITE
                     },
-                    ..Default::default()
-                }
-            })),
+                    width: 1.,
+                    radius: [4., 0., 4., 0.].into(),
+                },
+                ..Default::default()
+            }
+        })),
     )
     .on_press(action(Edit::ResizePress))
     .interaction(mouse::Interaction::ResizingDiagonallyDown)
@@ -193,15 +214,17 @@ impl Settings {
                 };
                 // The button gives Tab focus, so arrow keys can move it;
                 // its child owns the pointer press that starts a drag.
+                // Enter or Space only selects it, which shows its outline.
                 let body = button::custom(mouse_area(content).on_press(action(Edit::Press)))
                     .class(home::hotspot(accent, 5.))
                     .id(cosmic::widget::Id::new(stage::CLOCK_ID))
-                    .on_press(Message::Preview)
+                    .on_press(action(Edit::Focus(true)))
                     .padding(0)
                     .width(shown[0])
                     .height(shown[1]);
                 let mut parts: Vec<Element<'_, Message>> = vec![body.into()];
-                if self.clock_stage.handle() {
+                let strong = self.clock_stage.handle();
+                if strong {
                     // The box the handle resizes; a clock with no surface
                     // has no edge of its own.
                     parts.push(
@@ -220,15 +243,15 @@ impl Settings {
                             }))
                             .into(),
                     );
-                    parts.push(
-                        pin(resize_handle(accent))
-                            .position(Point::new(
-                                (shown[0] - HANDLE).max(0.),
-                                (shown[1] - HANDLE).max(0.),
-                            ))
-                            .into(),
-                    );
                 }
+                parts.push(
+                    pin(resize_handle(accent, strong))
+                        .position(Point::new(
+                            (shown[0] - HANDLE).max(0.),
+                            (shown[1] - HANDLE).max(0.),
+                        ))
+                        .into(),
+                );
                 // Hover comes from the stage's own pointer: an enter handler
                 // here would swallow the move the stage needs.
                 let body = mouse_area(stack(parts).width(shown[0]).height(shown[1])).interaction(
@@ -277,15 +300,14 @@ impl Settings {
                 self.clock_stage
                     .suggested(&stage::frame(position, clock, screen))
             });
-            let mut buttons: Vec<Element<'_, Message>> = vec![
-                container(label(
-                    "Drag the clock to move it, or its corner to resize",
-                    12.,
-                    MUTED,
-                ))
-                .width(Length::Fill)
-                .into(),
-            ];
+            parts.push(
+                container(label(STAGE_HINT, CAPTION, MUTED))
+                    .id(cosmic::widget::Id::new("clock-stage-hint"))
+                    .width(cap[0])
+                    .into(),
+            );
+            let mut buttons: Vec<Element<'_, Message>> =
+                vec![cosmic::widget::space().width(Length::Fill).into()];
             if suggested.is_some() {
                 buttons.push(
                     button::suggested("Move to suggested spot")

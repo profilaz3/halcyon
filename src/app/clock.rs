@@ -603,4 +603,48 @@ mod tests {
             "Text size changes visible glyphs"
         );
     }
+
+    /// One size model: the box is the clock's size. Growing it at the
+    /// same shape, as the Clock stage corner and + do, grows the digits and
+    /// the dial with it; the Text size slider only fits them inside it.
+    #[test]
+    fn a_bigger_box_at_the_same_shape_means_bigger_digits() {
+        use crate::widget_style::resolver::ClockFace;
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 4)
+            .unwrap()
+            .and_hms_opt(10, 8, 0)
+            .unwrap();
+        let mut config = Config::default();
+        for face in [ClockFace::Digital, ClockFace::Analog] {
+            config.clock.face = Some(face);
+            let face_size = |config: &Config, size: [f32; 2]| {
+                let _style = crate::widget_style::scope(config);
+                Presentation::new(config)
+                    .frame(now, size)
+                    .geometry
+                    .face_size
+            };
+            let natural = face_size(&config, [490., 200.]);
+            let tenth = face_size(&config, [539., 220.]);
+            let larger = face_size(&config, [686., 280.]);
+            assert!(
+                natural < tenth && tenth < larger,
+                "{face:?}: {natural} -> {tenth} -> {larger}"
+            );
+            // The digits scale with the box; the dial, which also makes
+            // room for the date, grows at least as fast.
+            let least = if face == ClockFace::Digital { 0.98 } else { 1. };
+            assert!(
+                tenth / natural >= 1.1 * least,
+                "{face:?}: {natural} -> {tenth}"
+            );
+            assert!(
+                larger / natural >= 1.4 * least,
+                "{face:?}: {natural} -> {larger}"
+            );
+            if face == ClockFace::Digital {
+                assert!(tenth / natural <= 1.12 && larger / natural <= 1.43);
+            }
+        }
+    }
 }

@@ -6978,16 +6978,28 @@ mod tests {
                     &format!("clock-settings-{}-{combined}", size.width),
                 );
                 let saved_layout = raw_preferences();
-                // The Position tab is gone: "Move or resize" opens the
-                // arranging canvas; a combined clock moves as the Daily
-                // overview card, reached from its own page.
+                // A combined clock moves as the Daily overview card, reached
+                // from its own page. A clock on its own has the Clock stage,
+                // which moves and resizes it, so the page offers no second
+                // "Move or resize"; the canvas still opens from Desktop.
                 if combined {
                     click(&mut app, &mut native, "clock-open-glance");
                     assert_eq!(app.page, Page::Glance);
                     click(&mut app, &mut native, "glance-arrange");
                     assert_eq!(app.page, Page::Glance);
                 } else {
-                    click(&mut app, &mut native, "clock-arrange");
+                    assert!(
+                        native
+                            .try_bounds(app.settings_view(), "clock-arrange")
+                            .is_none(),
+                        "the Clock stage is the one place to move and resize the clock"
+                    );
+                    assert!(
+                        native
+                            .try_bounds(app.settings_view(), "clock-stage")
+                            .is_some()
+                    );
+                    send_settings(&mut app, Message::EditWidgetLayout(Widget::Clock));
                     assert_eq!(app.page, Page::Clock);
                 }
                 assert!(app.canvas_visible(), "Move or resize shows the arranging canvas");
