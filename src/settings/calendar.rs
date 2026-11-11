@@ -23,6 +23,8 @@ pub enum Message {
     SubscriptionName(String),
     SubscriptionUrl(account::SecretText),
     AddSubscription,
+    /// Asks before removing a subscription: its private link isn't kept.
+    ConfirmRemove(Option<String>),
     RemoveSubscription(String),
     ConfirmDisconnect(bool),
     Disconnect,
@@ -100,6 +102,8 @@ pub struct Editor {
     pub loading: bool,
     pub error: Option<String>,
     pub confirm_disconnect: bool,
+    /// The subscription whose removal is waiting for confirmation.
+    pub confirm_remove: Option<String>,
     pub publisher_help: bool,
     pub subscription_form: bool,
     pub subscription_help: bool,
@@ -120,6 +124,7 @@ impl Default for Editor {
             loading: false,
             error: None,
             confirm_disconnect: false,
+            confirm_remove: None,
             publisher_help: false,
             subscription_form: false,
             subscription_help: false,
@@ -145,6 +150,7 @@ impl Editor {
             self.choices.clear();
             self.loading = false;
             self.confirm_disconnect = false;
+            self.confirm_remove = None;
         }
         self.client_ready = account::load_client().is_ok();
     }
@@ -361,8 +367,15 @@ impl Settings {
                 self.calendar.subscription_url =
                     account::SecretText(secret.0.chars().take(8192).collect())
             }
+            Message::ConfirmRemove(id) => self.calendar.confirm_remove = id,
             Message::AddSubscription | Message::RemoveSubscription(_) => {
                 if self.calendar.busy || self.calendar.connection.cleanup_pending() {
+                    return Task::none();
+                }
+                // Removing only follows its confirmation.
+                if let Message::RemoveSubscription(id) = &message
+                    && self.calendar.confirm_remove.take().as_ref() != Some(id)
+                {
                     return Task::none();
                 }
                 self.calendar.busy = true;

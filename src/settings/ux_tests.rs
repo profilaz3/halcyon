@@ -1487,6 +1487,25 @@ fn calendar_subscription_form_and_selection_use_real_controls() {
         &cosmic::Theme::dark(),
         "calendar-subscriptions",
     );
+    // Removing a subscription asks first: its private link isn’t kept.
+    click(&mut app, &mut native, "calendar-remove-1");
+    assert_eq!(app.calendar.confirm_remove.as_deref(), Some("Personal"));
+    native.text_bounds(app.settings_view(), "Remove “Personal”?");
+    native.text_bounds(app.settings_view(), "You’ll need its private link to add it again.");
+    native.capture(app.settings_view(), &cosmic::Theme::dark(), "calendar-remove-confirm");
+    native.capture(app.settings_view(), &cosmic::Theme::light(), "calendar-remove-confirm-light");
+    click(&mut app, &mut native, "calendar-remove-cancel");
+    assert!(app.calendar.confirm_remove.is_none());
+    // Without its confirmation, a removal does nothing.
+    let _ = app.update(Message::Calendar(calendar::Message::RemoveSubscription(
+        "Personal".into(),
+    )));
+    assert!(!app.calendar.busy);
+    click(&mut app, &mut native, "calendar-remove-1");
+    click(&mut app, &mut native, "calendar-remove-confirm");
+    assert!(app.calendar.busy, "the confirmed removal starts");
+    assert!(app.calendar.confirm_remove.is_none());
+    app.calendar.busy = false;
     let _ = app.update(Message::CalendarPrivacy(true));
     assert!(Config::load().calendar_private);
     native.capture(
