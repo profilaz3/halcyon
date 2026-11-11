@@ -953,6 +953,12 @@ fn startup_enabled() -> bool {
 /// Set by `run` for first-run setup (`setup`), read once by `init`.
 static OPEN_PANEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static OPEN_WIZARD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Set when someone chooses Restart Settings; `main` opens Settings again
+/// once this window has closed.
+static RESTART: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub fn restart_requested() -> bool {
+    RESTART.load(std::sync::atomic::Ordering::Relaxed)
+}
 pub fn run(page: &str) -> cosmic::iced::Result {
     let remembered = if page.is_empty() {
         crate::desktop::DesktopStore::from_env()

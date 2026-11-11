@@ -6,6 +6,8 @@ pub(in crate::settings) struct Summary {
     pub title: String,
     pub detail: String,
     pub system_action: bool,
+    /// Settings runs an older copy than the one installed; reopening it fixes that.
+    pub restart: bool,
 }
 impl Summary {
     pub fn new(identity: &Identity, check: &Check, islands: &Installation) -> Self {
@@ -13,21 +15,25 @@ impl Summary {
             title: title.into(),
             detail,
             system_action,
+            restart: false,
         };
         if identity
             .installed_version
             .as_ref()
             .is_some_and(|v| *v != identity.running_version)
         {
-            return result(
-                "Update installed",
-                format!(
-                    "Settings is still running {}. Close and reopen it to use {}.",
-                    identity.running_version,
-                    identity.installed_version.as_deref().unwrap()
-                ),
-                false,
-            );
+            return Self {
+                restart: true,
+                ..result(
+                    "Update installed",
+                    format!(
+                        "Settings is still running {}. Restart Settings to use {}.",
+                        identity.running_version,
+                        identity.installed_version.as_deref().unwrap()
+                    ),
+                    false,
+                )
+            };
         }
         if matches!(
             identity.islands_match,
@@ -51,7 +57,10 @@ impl Summary {
                 "Your desktop’s package service is checking the configured sources.".into(),
                 false,
             ),
-            Check::Failed(error) => result("Update check failed", error.label().into(), false),
+            Check::Failed(error) => Self {
+                restart: *error == super::Failure::InstallationChanged,
+                ..result("Update check failed", error.label().into(), false)
+            },
             Check::Available(version) => result(
                 &format!("Update {version} available"),
                 if identity.islands_version.is_some() {
@@ -151,6 +160,17 @@ mod tests {
             )
             .title,
             "Update check failed"
+        );
+        // Only a newer installed copy, or one that changed meanwhile, offers a restart.
+        let failed = |failure| Summary::new(&id, &Check::Failed(failure), &Installation::Absent);
+        assert!(!failed(super::super::Failure::Offline).restart);
+        assert!(failed(super::super::Failure::InstallationChanged).restart);
+        id.installed_version = Some("0.5.0".into());
+        let installed = Summary::new(&id, &Check::Current, &Installation::Absent);
+        assert!(installed.restart);
+        assert_eq!(
+            installed.detail,
+            "Settings is still running 0.4.1. Restart Settings to use 0.5.0."
         );
     }
 }

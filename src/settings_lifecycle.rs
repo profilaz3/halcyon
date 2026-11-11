@@ -49,6 +49,29 @@ pub fn independent_scope() -> io::Result<Option<ExitStatus>> {
         .map(Some)
 }
 
+/// The installed program behind this one. An update replaces the file, and
+/// Linux then names the running copy “<path> (deleted)”.
+fn installed(executable: &Path) -> std::path::PathBuf {
+    let text = executable.to_string_lossy();
+    let path = Path::new(text.strip_suffix(" (deleted)").unwrap_or(&text));
+    if path.is_file() {
+        path.to_path_buf()
+    } else {
+        "halcyon".into()
+    }
+}
+
+/// Replaces this process with Settings from the installed program, opened on
+/// `page`. It only returns when that fails.
+pub fn restart(page: &str) -> io::Error {
+    use std::os::unix::process::CommandExt;
+    let executable = match std::env::current_exe() {
+        Ok(executable) => installed(&executable),
+        Err(_) => "halcyon".into(),
+    };
+    Command::new(executable).args(["--settings", page]).exec()
+}
+
 fn lock_file(path: &Path) -> io::Result<File> {
     OpenOptions::new()
         .read(true)
@@ -168,6 +191,22 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn restart_runs_the_installed_program() {
+        let fixture = Fixture::new();
+        let program = fixture.0.join("halcyon");
+        fs::write(&program, "").unwrap();
+        // An update replaced the file under the running copy.
+        let replaced = fixture.0.join("halcyon (deleted)");
+        assert_eq!(installed(&replaced), program);
+        assert_eq!(installed(&program), program);
+        // Gone altogether: the one on PATH.
+        assert_eq!(
+            installed(&fixture.0.join("missing (deleted)")),
+            Path::new("halcyon")
+        );
     }
 
     #[test]

@@ -211,7 +211,17 @@ fn run_settings(page: &str) -> cosmic::iced::Result {
         settings_lifecycle::prepare(&config, &request)
     })();
     match launch {
-        Ok(Some(_owner)) => return settings::run(&page),
+        Ok(Some(owner)) => {
+            let result = settings::run(page);
+            if settings::restart_requested() {
+                // Let the new window take ownership, then run what's installed now.
+                drop(owner);
+                let error = settings_lifecycle::restart(page);
+                eprintln!("Could not restart Settings: {error}");
+                std::process::exit(1);
+            }
+            result
+        }
         Ok(None) => return Ok(()),
         Err(error) => {
             eprintln!("Could not open Settings: {error}");

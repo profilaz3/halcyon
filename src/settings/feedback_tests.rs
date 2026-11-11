@@ -181,3 +181,42 @@ fn fb10_a_note_that_is_saving_is_not_reported_as_unsaved() {
     assert!(app.kept_note.is_some());
 }
 
+#[test]
+fn fb11_an_installed_update_offers_restart_settings() {
+    if child("fb11_an_installed_update_offers_restart_settings") {
+        return;
+    }
+    let (mut app, _) = Settings::init(Core::default(), Page::General);
+    let _ = app.update(Message::AppSettingsPage(AppSettingsPage::Updates));
+    app.updates.identity = Some(updates::Identity {
+        channel: updates::UpdateChannel::Apt,
+        running_version: "0.4.1".into(),
+        installed_version: Some("0.5.0".into()),
+        ..Default::default()
+    });
+    let size = Size::new(820., 600.);
+    let _ = app.update(Message::Resized(size));
+    let mut native = Native::new(size);
+    assert_eq!(
+        native
+            .text_all(
+                app.settings_view(),
+                "Settings is still running 0.4.1. Restart Settings to use 0.5.0."
+            )
+            .len(),
+        1
+    );
+    capture(&mut app, "fb11-update-installed");
+    // A failure says what to do next.
+    app.updates.identity.as_mut().unwrap().installed_version = Some("0.4.1".into());
+    app.updates.check = updates::Check::Failed(updates::Failure::MissingPackageKit);
+    let _ = app.update(Message::Resized(size));
+    assert!(native.try_bounds(app.settings_view(), "updates-restart").is_none());
+    assert!(updates::Failure::MissingPackageKit.label().contains("Restart your computer"));
+    capture(&mut app, "fb11-service-missing");
+    app.updates.check = updates::Check::Failed(updates::Failure::InstallationChanged);
+    let _ = app.update(Message::Resized(size));
+    assert!(!restart_requested());
+    click(&mut app, &mut native, "updates-restart");
+    assert!(restart_requested(), "main opens Settings again once it closes");
+}
