@@ -2082,6 +2082,56 @@ fn on03_look_names_style_and_accent(size: Size) {
     }
 }
 
+/// ON-14: a fresh wizard starts on My current desktop, and going on without
+/// picking a look keeps the desktop's own colors.
+#[test]
+fn on14_look_step_starts_on_the_current_desktop_at_820() {
+    if child("on14_look_step_starts_on_the_current_desktop_at_820") {
+        return;
+    }
+    on14_look_step_starts_on_the_current_desktop(Size::new(820., 600.));
+}
+
+#[test]
+fn on14_look_step_starts_on_the_current_desktop_at_1280() {
+    if child("on14_look_step_starts_on_the_current_desktop_at_1280") {
+        return;
+    }
+    on14_look_step_starts_on_the_current_desktop(Size::new(1280., 800.));
+}
+
+fn on14_look_step_starts_on_the_current_desktop(size: Size) {
+    seed_desktop();
+    let themes = [
+        (cosmic::Theme::light(), "light"),
+        (cosmic::Theme::dark(), "dark"),
+    ];
+    let (mut app, mut native) = open(size);
+    click(&mut app, &mut native, "wizard-start");
+    assert_eq!(step(&app), wizard::Step::Look);
+    assert_eq!(app.wizard.as_ref().unwrap().look, None);
+    native.bounds(app.settings_view(), "wizard-look-current");
+    for (theme, name) in &themes {
+        native.capture(
+            app.settings_view(),
+            theme,
+            &format!("on14-look-{}-{name}", size.width),
+        );
+    }
+    click(&mut app, &mut native, "wizard-next");
+    assert_eq!(step(&app), wizard::Step::Bars);
+    assert_eq!(app.wizard.as_ref().unwrap().look, None);
+    let _ = app.update(Message::Wizard(wizard::Message::Show(wizard::Step::Ready)));
+    native.text_bounds(app.settings_view(), "My current desktop");
+    for (theme, name) in &themes {
+        native.capture(
+            app.settings_view(),
+            theme,
+            &format!("on14-review-{}-{name}", size.width),
+        );
+    }
+}
+
 /// ON-04: Done says where the way back lives once it closes, and Show
 /// Changes finishes setup there.
 #[test]
