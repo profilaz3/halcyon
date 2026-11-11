@@ -402,7 +402,7 @@ fn blend(front: Color, back: Color, alpha: f32) -> Color {
         front.b * alpha + back.b * (1. - alpha),
     )
 }
-fn ratio(a: Color, b: Color) -> f32 {
+pub(crate) fn ratio(a: Color, b: Color) -> f32 {
     let a = luminance(a);
     let b = luminance(b);
     (a.max(b) + 0.05) / (a.min(b) + 0.05)

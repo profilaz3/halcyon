@@ -56,6 +56,19 @@ fn day_title(date: Option<chrono::DateTime<chrono::Local>>) -> String {
     }
 }
 
+/// The rail's count badge: the theme's accent with black or white on it,
+/// whichever reads better, so the number passes 4.5:1 in any theme.
+fn badge_colors(theme: &cosmic::Theme) -> [Color; 2] {
+    let fill: Color = theme.cosmic().accent_color().into();
+    let ink = [Color::BLACK, Color::WHITE]
+        .into_iter()
+        .max_by(|a, b| {
+            crate::widget_style::ratio(*a, fill).total_cmp(&crate::widget_style::ratio(*b, fill))
+        })
+        .unwrap_or(Color::WHITE);
+    [fill, ink]
+}
+
 impl Settings {
     /// Recorded changes and automatic switches, newest first.
     pub(in crate::settings) fn change_timeline(&self) -> Vec<(i64, Row<'_>)> {
@@ -147,10 +160,13 @@ impl Settings {
             .size(18)
             .icon()
             .into();
-        let mark: Element<'_, Message> = if waiting {
-            dot(WARN, 7.)
-        } else {
-            cosmic::iced::widget::space().width(0).into()
+        // In words beside the name; the narrow rail keeps a dot, and its
+        // tooltip says what waits.
+        let waiting_count = self.recovery_sheet.rows.len() + self.kept_previews().len();
+        let mark: Element<'_, Message> = match (waiting, rail) {
+            (true, true) => dot(WARN, 7.),
+            (true, false) => label(format!("{waiting_count} waiting"), CAPTION, WARN),
+            _ => cosmic::iced::widget::space().width(0).into(),
         };
         let count: Element<'_, Message> = if today > 0 {
             label(today.to_string(), 12., MUTED)
@@ -161,12 +177,13 @@ impl Settings {
             // Today's count is a small badge beside the icon, so the one-line
             // label never reads as "Changes 2".
             let badge: Element<'_, Message> = if today > 0 {
-                container(text::body(today.to_string()).size(10).line_height(1.0))
+                container(text::body(today.to_string()).size(CAPTION).line_height(1.0))
                     .padding([2, 5])
                     .class(cosmic::theme::Container::custom(move |theme| {
+                        let [fill, ink] = badge_colors(theme);
                         cosmic::iced::widget::container::Style {
-                            background: Some(Background::Color(accent)),
-                            text_color: Some(theme.cosmic().on_accent_color().into()),
+                            background: Some(Background::Color(fill)),
+                            text_color: Some(ink),
                             border: Border {
                                 radius: 8.0.into(),
                                 ..Default::default()
@@ -494,4 +511,44 @@ fn day_group<'a>(day: String, rows: Vec<Element<'a, Message>>) -> Element<'a, Me
         .title(day)
         .extend(rows)
         .into()
+}
+
+#[cfg(test)]
+mod badge_tests {
+    use super::*;
+    use crate::widget_style::ratio;
+
+    /// The count reads on its badge, and every status dot stands out from
+    /// the page, in the light and dark themes and their high-contrast forms.
+    #[test]
+    fn badge_and_status_dots_stand_out_in_every_theme() {
+        for theme in [
+            cosmic::Theme::light(),
+            cosmic::Theme::dark(),
+            cosmic::Theme::light_hc(),
+            cosmic::Theme::dark_hc(),
+        ] {
+            let [fill, ink] = badge_colors(&theme);
+            assert!(ratio(ink, fill) >= 4.5, "{fill:?} {ink:?}");
+            let pages: [Color; 2] = [
+                theme.cosmic().bg_color().into(),
+                theme.cosmic().primary(theme.transparent).base.into(),
+            ];
+            for color in [WARN, HEALTHY, MUTED, super::super::desktop::ERROR] {
+                let dot = dot_color(&theme, color);
+                for page in pages {
+                    let shown = Color::from_rgb(
+                        dot.r * dot.a + page.r * (1. - dot.a),
+                        dot.g * dot.a + page.g * (1. - dot.a),
+                        dot.b * dot.a + page.b * (1. - dot.a),
+                    );
+                    assert!(
+                        ratio(shown, page) >= 3.,
+                        "{color:?} -> {shown:?} on {page:?}: {}",
+                        ratio(shown, page)
+                    );
+                }
+            }
+        }
+    }
 }

@@ -426,12 +426,29 @@ pub(super) fn nav_style(selected: bool, _accent: Color) -> cosmic::theme::Button
 pub(super) fn area_tint(_area: super::navigation::Area, accent: Color) -> Color {
     accent
 }
+/// A good status, drawn in the theme's success colour.
+pub(super) const HEALTHY: Color = Color::from_rgb(0.45, 0.80, 0.55);
+/// A dot's colour in `theme`: the named colours take the theme's own text
+/// colours, which stand out at least 3:1 from the page. A dot never says
+/// anything alone; whatever shows one also says it in words.
+pub(super) fn dot_color(theme: &cosmic::Theme, color: Color) -> Color {
+    if color == HEALTHY {
+        theme.cosmic().success_text_color().into()
+    } else if color == MUTED {
+        Color {
+            a: 0.6,
+            ..theme.cosmic().on_bg_color().into()
+        }
+    } else {
+        surface_color(theme, color)
+    }
+}
 /// A small filled dot.
 pub(super) fn dot<'a>(color: Color, size: f32) -> Element<'a, Message> {
     container(cosmic::iced::widget::space().width(size).height(size))
-        .class(cosmic::theme::Container::custom(move |_| {
+        .class(cosmic::theme::Container::custom(move |theme| {
             cosmic::iced::widget::container::Style {
-                background: Some(Background::Color(color)),
+                background: Some(Background::Color(dot_color(theme, color))),
                 border: Border {
                     radius: (size / 2.).into(),
                     ..Default::default()
