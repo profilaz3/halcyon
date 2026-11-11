@@ -329,7 +329,34 @@ impl Settings {
             .into(),
         );
         let connected = self.calendar.connection.connected();
-        let mut sections = vec![self.calendar_connection()];
+        let mut sections = Vec::new();
+        if !connected {
+            // The preview shows made-up events until a calendar is
+            // connected; say so beside it, with the way to connect.
+            let editor = &self.calendar;
+            sections.push(
+                container(split(
+                    label(
+                        "Sample · connect a calendar to see your events.",
+                        13.,
+                        MUTED,
+                    ),
+                    button::text("Connect")
+                        .id(cosmic::widget::Id::new("calendar-sample-connect"))
+                        .on_press_maybe((!editor.busy).then(|| {
+                            Message::Calendar(if editor.client_ready {
+                                crate::settings::calendar::Message::Connect
+                            } else {
+                                crate::settings::calendar::Message::SubscriptionForm(true)
+                            })
+                        }))
+                        .into(),
+                ))
+                .id(cosmic::widget::Id::new("calendar-sample-note"))
+                .into(),
+            );
+        }
+        sections.push(self.calendar_connection());
         if connected {
             sections.push(group(Some("Agenda"), events));
         }

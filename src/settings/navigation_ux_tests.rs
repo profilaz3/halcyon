@@ -637,3 +637,80 @@ fn builder_first_visit_opens_widget_update_review_once() {
     assert!(!app.design.managed);
     assert!(native.try_bounds(app.settings_view(), "design-review").is_some());
 }
+
+#[test]
+fn on16_sample_events_say_they_are_samples() {
+    if isolated("settings::navigation::ux_regressions::on16_sample_events_say_they_are_samples") {
+        return;
+    }
+    use crate::settings::calendar::Message as Account;
+    let note = "Sample · connect a calendar to see your events.";
+    let mut app = app(Page::Calendar);
+    app.calendar.connection = crate::calendar::Connection::default();
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        send_settings(&mut app, Message::Resized(size));
+        app.calendar.client_ready = false;
+        app.calendar.subscription_form = false;
+        let mut native = Native::new(size);
+        // The note sits right under the sample, above the ways to connect.
+        let scene = native.bounds(app.settings_view(), "desktop-scene");
+        let label = native.text_bounds(app.settings_view(), note);
+        let connect = native.bounds(app.settings_view(), "calendar-sample-connect");
+        let add = native.bounds(app.settings_view(), "calendar-subscription-open");
+        assert!(scene.y + scene.height <= label.y, "{scene:?} {label:?}");
+        assert!(connect.y < add.y, "{connect:?} {add:?}");
+        assert!((connect.center().y - label.center().y).abs() < 20.);
+        for (theme, name) in [
+            (cosmic::Theme::light(), "light"),
+            (cosmic::Theme::dark(), "dark"),
+        ] {
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("on16-calendar-sample-{}-{name}", size.width),
+            );
+        }
+        // Without Google sign-in, Connect opens the calendar link form.
+        click(&mut app, &mut native, "calendar-sample-connect");
+        assert!(app.calendar.subscription_form);
+        // With it, Connect starts the sign-in. Only check the message: the
+        // sign-in itself opens a browser.
+        app.calendar.subscription_form = false;
+        app.calendar.client_ready = true;
+        let press = |app: &Settings, native: &mut Native| {
+            let at = native
+                .bounds(app.settings_view(), "calendar-sample-connect")
+                .center();
+            let mut sent = Vec::new();
+            for event in [
+                mouse::Event::CursorMoved { position: at },
+                mouse::Event::ButtonPressed(mouse::Button::Left),
+                mouse::Event::ButtonReleased(mouse::Button::Left),
+            ] {
+                sent.extend(native.event(app.settings_view(), Event::Mouse(event), at).0);
+            }
+            sent
+        };
+        let sent = press(&app, &mut native);
+        assert!(
+            matches!(sent.as_slice(), [Message::Calendar(Account::Connect)]),
+            "{sent:?}"
+        );
+        // Busy: nothing to press twice.
+        app.calendar.busy = true;
+        let sent = press(&app, &mut native);
+        assert!(sent.is_empty(), "{sent:?}");
+        app.calendar.busy = false;
+    }
+    // Connected: real events, no note.
+    app.calendar.connection.backend = crate::calendar::Backend::Subscription;
+    app.calendar.connection.account = "Calendar links".into();
+    let size = Size::new(1280., 800.);
+    let mut native = Native::new(size);
+    assert!(native.text_all(app.settings_view(), note).is_empty());
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "calendar-sample-connect")
+            .is_none()
+    );
+}

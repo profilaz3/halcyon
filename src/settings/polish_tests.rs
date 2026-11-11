@@ -1400,7 +1400,8 @@ fn time_of_day_without_a_city_asks_for_it_once() {
     let root = isolated_root();
     let mut app = open_isolated_editor(&root);
     send_settings(&mut app, Message::Page(Page::DesktopAutomation));
-    let line = "Sunrise and sunset there decide when your look switches";
+    let line =
+        "Choose a city so Halcyon knows when sunrise and sunset are. Until then, nothing switches.";
     for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
         send_settings(&mut app, Message::Resized(size));
         let mut native = crate::native_test::Native::new(size);
@@ -1438,6 +1439,40 @@ fn time_of_day_without_a_city_asks_for_it_once() {
             &mut native,
             &format!("time-of-day-no-city-{}", size.width),
         );
+    }
+    // Set times and screens still switch without a city, so the line says
+    // that instead when one of them is on.
+    {
+        use crate::automation::{Days, ProfileRef, Rule, Time, Trigger};
+        let settings = app.automation.settings_mut().expect("automation read");
+        settings.enabled = true;
+        settings.rules.push(Rule {
+            id: "on16-evening".into(),
+            enabled: true,
+            since: 0,
+            profile: ProfileRef::Preset("calm".into()),
+            name: "Slow morning".into(),
+            when: Trigger::Schedule {
+                time: Time::new(19, 0).unwrap(),
+                days: Days::EVERY,
+            },
+        });
+    }
+    let qualified = "Choose a city so Halcyon knows when sunrise and sunset are. Until then, only set times and screens switch.";
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        native.text_bounds(app.settings_view(), qualified);
+        assert!(native.text_all(app.settings_view(), line).is_empty());
+        capture_both(
+            &app,
+            &mut native,
+            &format!("on16-time-of-day-set-times-{}", size.width),
+        );
+    }
+    {
+        let settings = app.automation.settings_mut().expect("automation read");
+        settings.rules.retain(|rule| rule.id != "on16-evening");
     }
     let city = City {
         name: "Sydney".into(),
