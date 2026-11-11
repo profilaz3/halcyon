@@ -6500,6 +6500,8 @@ mod onboarding_tests;
 #[cfg(test)]
 mod theme_journey_tests;
 #[cfg(test)]
+mod keyboard_tests;
+#[cfg(test)]
 mod ux_tests;
 #[cfg(test)]
 mod wizard_tests;

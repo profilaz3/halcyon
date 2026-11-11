@@ -225,6 +225,27 @@ impl Widget<Message, Theme, Renderer> for Columns<'_> {
         });
     }
 
+    fn a11y_nodes(
+        &self,
+        layout: Layout<'_>,
+        tree: &Tree,
+        cursor: mouse::Cursor,
+    ) -> iced_accessibility::A11yTree {
+        let mut trees: Vec<_> = self
+            .children
+            .iter()
+            .zip(&tree.children)
+            .zip(layout.children())
+            .map(|((child, state), layout)| child.as_widget().a11y_nodes(layout, state, cursor))
+            .collect();
+        // A row's title names its one control when nothing else did.
+        if self.field
+            && let [title, control] = &mut trees[..]
+        {
+            super::focus::name_from_title(title, control);
+        }
+        iced_accessibility::A11yTree::join(trees.into_iter())
+    }
     fn update(
         &mut self,
         tree: &mut Tree,

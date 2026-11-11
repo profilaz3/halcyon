@@ -320,7 +320,9 @@ impl Settings {
     }
     fn calendar_subscription_guide(&self) -> Element<'_, Message> {
         let provider = self.calendar.subscription_provider;
-        let mut rows = vec![
+        let mut rows = vec![super::focus::control(
+            Some("Calendar provider".to_owned()),
+            None,
             cosmic::widget::dropdown(
                 &SubscriptionProvider::LABELS,
                 SubscriptionProvider::ALL
@@ -336,7 +338,7 @@ impl Settings {
                 },
             )
             .into(),
-        ];
+        )];
         rows.extend(provider.steps().iter().map(|step| label(*step, 13., FG)));
         rows.push(label(provider.privacy(), 12., MUTED));
         container(column::with_children(rows).spacing(8))

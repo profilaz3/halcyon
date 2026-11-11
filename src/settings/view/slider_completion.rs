@@ -62,6 +62,16 @@ impl Widget<Message, Theme, Renderer> for Completion<'_> {
             .as_widget_mut()
             .operate(&mut tree.children[0], layout, renderer, operation);
     }
+    fn a11y_nodes(
+        &self,
+        layout: Layout<'_>,
+        tree: &Tree,
+        cursor: mouse::Cursor,
+    ) -> iced_accessibility::A11yTree {
+        self.content
+            .as_widget()
+            .a11y_nodes(layout, &tree.children[0], cursor)
+    }
     fn update(
         &mut self,
         tree: &mut Tree,
@@ -92,7 +102,10 @@ impl Widget<Message, Theme, Renderer> for Completion<'_> {
             Event::Keyboard(keyboard::Event::KeyPressed {
                 key:
                     keyboard::Key::Named(
-                        keyboard::key::Named::ArrowUp | keyboard::key::Named::ArrowDown,
+                        keyboard::key::Named::ArrowUp
+                        | keyboard::key::Named::ArrowDown
+                        | keyboard::key::Named::ArrowLeft
+                        | keyboard::key::Named::ArrowRight,
                     ),
                 physical_key,
                 ..

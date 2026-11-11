@@ -20,6 +20,7 @@ dock-islands-core = { path = "companion/dock-islands-core" }
 # Reuse libcosmic's already locked icon resolver for selected-theme specimens.
 freedesktop-icons = { package = "cosmic-freedesktop-icons", git = "https://github.com/pop-os/freedesktop-icons" }
 cosmic = { package = "libcosmic", git = "https://github.com/pop-os/libcosmic", default-features = false, features = [
+    "a11y",
     "applet",
     "autosize",
     "multi-window",
@@ -29,7 +30,10 @@ cosmic = { package = "libcosmic", git = "https://github.com/pop-os/libcosmic", d
     "winit",
     "xdg-portal",
 ] }
-serde = { version = "1", features = ["derive"] }
+# The accessibility tree types that `a11y` builds iced with; the same
+# patched iced as below, so no new crates are compiled.
+iced_accessibility = { git = "https://github.com/profilaz3/iced", rev = "22c073b9e305d1d4738fd21547763cfcdf852b74" }
+serde ={ version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 toml = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }

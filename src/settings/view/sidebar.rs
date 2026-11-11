@@ -80,6 +80,16 @@ impl Widget<Message, Theme, Renderer> for Navigation<'_> {
             .as_widget_mut()
             .operate(&mut tree.children[0], layout, renderer, operation);
     }
+    fn a11y_nodes(
+        &self,
+        layout: Layout<'_>,
+        tree: &Tree,
+        cursor: mouse::Cursor,
+    ) -> iced_accessibility::A11yTree {
+        self.content
+            .as_widget()
+            .a11y_nodes(layout, &tree.children[0], cursor)
+    }
     fn update(
         &mut self,
         tree: &mut Tree,

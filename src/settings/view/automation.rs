@@ -44,6 +44,7 @@ pub fn time_id() -> cosmic::widget::Id {
 
 /// A labelled row in the rule editor.
 fn field<'a>(title: &'static str, control: Element<'a, Message>) -> Element<'a, Message> {
+    let control = super::focus::control(Some(title.to_owned()), None, control);
     column::with_children(vec![label(title, 12., MUTED), control])
         .spacing(6)
         .width(Length::Fill)
@@ -303,7 +304,11 @@ impl Settings {
                         cosmic::iced::widget::space().height(Length::Fill).into(),
                         // A theme-coloured plate keeps the picker's text
                         // readable on every sky, in light and dark.
-                        container(picker)
+                        container(super::focus::control(
+                            Some(phase.title().to_owned()),
+                            None,
+                            picker.into(),
+                        ))
                             .class(cosmic::theme::Container::custom(|theme| {
                                 let base: Color = theme.cosmic().background(theme.transparent).base.into();
                                 cosmic::iced::widget::container::Style {

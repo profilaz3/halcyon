@@ -11,6 +11,8 @@ mod desktop;
 pub(super) use desktop::host::Host;
 mod desktop_icons;
 pub(super) mod explain;
+pub(super) mod focus;
+mod wrap;
 pub(super) mod home;
 mod layered;
 mod materials;
@@ -31,7 +33,7 @@ mod setup;
 pub(super) mod sharing;
 mod shortcuts;
 mod sidebar;
-mod slider_completion;
+pub(super) mod slider_completion;
 mod support;
 mod system_appearance;
 mod themes;
@@ -50,9 +52,9 @@ use crate::config::Palette;
 pub(super) use automation::time_id as automation_time_id;
 use cosmic::Apply;
 use cosmic::iced::{Alignment, Background, Border, Color};
-use cosmic::widget::{
-    button, column, container, icon, mouse_area, row, scrollable, slider, text, text_input, toggler,
-};
+use cosmic::widget::{button, column, container, icon, mouse_area, scrollable, text, text_input};
+use focus::{slider, toggler};
+use wrap::row;
 pub(super) use pages::AppSettingsPage;
 pub(super) use slider_completion::completed_slider;
 
@@ -173,7 +175,18 @@ fn detail_state<'a>(
         .into()
 }
 fn split<'a>(left: Element<'a, Message>, right: Element<'a, Message>) -> Element<'a, Message> {
-    adaptive::field(left, right)
+    field(None, None, left, right)
+}
+/// A row with its control on the right. The control takes keyboard focus
+/// when it has none of its own, and `name` is what a screen reader calls
+/// it.
+fn field<'a>(
+    name: Option<String>,
+    checked: Option<bool>,
+    left: Element<'a, Message>,
+    right: Element<'a, Message>,
+) -> Element<'a, Message> {
+    adaptive::field(left, focus::control(name, checked, right))
 }
 fn switch<'a>(
     title: &'static str,
@@ -181,7 +194,9 @@ fn switch<'a>(
     value: bool,
     message: impl Fn(bool) -> Message + 'a,
 ) -> Element<'a, Message> {
-    split(
+    field(
+        Some(title.to_owned()),
+        Some(value),
         detail(title, description),
         toggler(value).on_toggle(message).into(),
     )
@@ -221,8 +236,11 @@ pub(super) fn group_row<'a>(
     description: impl Into<String>,
     control: Element<'a, Message>,
 ) -> Element<'a, Message> {
+    let title = title.into();
     // A wrapping row keeps segmented controls sized to their labels.
-    split(
+    field(
+        Some(title.clone()),
+        None,
         detail(title, description),
         row::with_children(vec![control])
             .align_y(Alignment::Center)
@@ -236,7 +254,10 @@ pub(super) fn group_row_state<'a>(
     state: impl Into<String>,
     control: Element<'a, Message>,
 ) -> Element<'a, Message> {
-    split(
+    let title = title.into();
+    field(
+        Some(title.clone()),
+        None,
         detail_state(title, state),
         row::with_children(vec![control])
             .align_y(Alignment::Center)

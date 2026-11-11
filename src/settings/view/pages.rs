@@ -256,6 +256,7 @@ impl Settings {
     pub(super) fn calendar_page(&self) -> Element<'_, Message> {
         let notice = row::with_children(vec![
             slider(1u16..=60, self.notice, Message::Notice)
+                .name("Highlight meetings")
                 .on_release(Message::SaveNotice)
                 .step(1u16)
                 .width(Length::Fill)
@@ -1097,6 +1098,11 @@ impl Settings {
                 ),
                 container(
                     slider(50u16..=200, clock.scale.clamp(50, 200), Message::ClockScale)
+                        .name(if clock.face == Some(ClockFace::Analog) {
+                            "Face size"
+                        } else {
+                            "Text size"
+                        })
                         .step(10u16)
                         .width(Length::Fill),
                 )
@@ -1251,7 +1257,7 @@ impl Settings {
                     fix: Some((fix, message)),
                 }) => split(
                     detail_state(TITLE, reason),
-                    row![
+                    cosmic::widget::row![
                         container(button::standard(fix).on_press(message))
                             .id(cosmic::widget::Id::new("clock-depth-fix")),
                         switch,

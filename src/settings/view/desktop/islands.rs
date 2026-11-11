@@ -60,7 +60,7 @@ impl Settings {
                 "Minimum space"
             },
             row::with_children(vec![
-                cosmic::widget::slider(0..=64, settings.gap, |n| change(IslandEdit::Gap(n)))
+                super::super::focus::slider(0..=64, settings.gap, |n| change(IslandEdit::Gap(n)))
                     .on_release(edit(Edit::Apply))
                     .width(Length::Fill)
                     .apply(|control| completed_slider(control.into(), edit(Edit::Apply))),

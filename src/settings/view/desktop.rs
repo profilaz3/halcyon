@@ -39,7 +39,9 @@ pub(super) fn line<'a>(value: impl Into<String>, size: f32, color: Color) -> Ele
 
 /// Label left, control right; the control wraps under at compact widths.
 fn field<'a>(title: &'static str, control: Element<'a, Message>) -> Element<'a, Message> {
-    split(
+    super::field(
+        Some(title.to_owned()),
+        None,
         label(title, 14., FG),
         row::with_children(vec![control])
             .align_y(Alignment::Center)

@@ -99,6 +99,20 @@ impl Widget<Message, Theme, Renderer> for Layered<'_> {
         });
     }
 
+    fn a11y_nodes(
+        &self,
+        layout: Layout<'_>,
+        tree: &Tree,
+        cursor: mouse::Cursor,
+    ) -> iced_accessibility::A11yTree {
+        iced_accessibility::A11yTree::join(
+            self.children
+                .iter()
+                .zip(&tree.children)
+                .zip(layout.children())
+                .map(|((child, state), layout)| child.as_widget().a11y_nodes(layout, state, cursor)),
+        )
+    }
     fn update(
         &mut self,
         tree: &mut Tree,

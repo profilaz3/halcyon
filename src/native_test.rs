@@ -43,8 +43,20 @@ impl Native {
     }
     /// Like `bounds`, for a control that may be absent.
     pub fn try_bounds<M>(&mut self, view: cosmic::Element<'_, M>, id: &str) -> Option<Rectangle> {
+        self.find(view, Some(cosmic::widget::Id::new(id.to_string())))
+    }
+    /// Where keyboard focus is, on screen, if anything has it.
+    pub fn focused<M>(&mut self, view: cosmic::Element<'_, M>) -> Option<Rectangle> {
+        self.find(view, None)
+    }
+    /// The widget named `id`, or the focused one when `id` is `None`.
+    fn find<M>(
+        &mut self,
+        view: cosmic::Element<'_, M>,
+        id: Option<cosmic::widget::Id>,
+    ) -> Option<Rectangle> {
         struct Find {
-            id: cosmic::widget::Id,
+            id: Option<cosmic::widget::Id>,
             found: Option<Rectangle>,
             offset: cosmic::iced::Vector,
             pending: cosmic::iced::Vector,
@@ -67,7 +79,7 @@ impl Native {
                 self.pending = translation;
             }
             fn container(&mut self, id: Option<&cosmic::widget::Id>, bounds: Rectangle) {
-                if id == Some(&self.id) {
+                if self.id.is_some() && id == self.id.as_ref() {
                     self.found = Some(bounds - self.offset);
                 }
             }
@@ -75,9 +87,13 @@ impl Native {
                 &mut self,
                 id: Option<&cosmic::widget::Id>,
                 bounds: Rectangle,
-                _: &mut dyn Focusable,
+                state: &mut dyn Focusable,
             ) {
-                if id == Some(&self.id) {
+                let hit = match &self.id {
+                    Some(target) => id == Some(target),
+                    None => state.is_focused(),
+                };
+                if hit {
                     self.found = Some(bounds - self.offset);
                 }
             }
@@ -89,7 +105,7 @@ impl Native {
             &mut self.renderer,
         );
         let mut find = Find {
-            id: cosmic::widget::Id::new(id.to_string()),
+            id,
             found: None,
             offset: Default::default(),
             pending: Default::default(),
@@ -97,6 +113,41 @@ impl Native {
         ui.operate(&self.renderer, &mut find);
         self.cache = ui.into_cache();
         find.found
+    }
+    /// What a screen reader is told about every node: its role, name and
+    /// bounds, in window coordinates.
+    pub fn a11y<M>(
+        &mut self,
+        view: cosmic::Element<'_, M>,
+    ) -> Vec<(
+        iced_accessibility::accesskit::Role,
+        Option<String>,
+        Rectangle,
+    )> {
+        let ui = UserInterface::build(
+            view,
+            self.size,
+            std::mem::take(&mut self.cache),
+            &mut self.renderer,
+        );
+        let tree = ui.a11y_nodes(mouse::Cursor::Unavailable);
+        let nodes = tree
+            .root()
+            .iter()
+            .chain(tree.children())
+            .map(|node| {
+                let node = node.node();
+                let bounds = node.bounds().map_or(Rectangle::default(), |b| Rectangle {
+                    x: b.x0 as f32,
+                    y: b.y0 as f32,
+                    width: (b.x1 - b.x0) as f32,
+                    height: (b.y1 - b.y0) as f32,
+                });
+                (node.role(), node.label().map(str::to_owned), bounds)
+            })
+            .collect();
+        self.cache = ui.into_cache();
+        nodes
     }
     pub fn operate<M>(&mut self, view: cosmic::Element<'_, M>, mut operation: Box<dyn Operation>) {
         let mut ui = UserInterface::build(
