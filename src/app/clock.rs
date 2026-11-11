@@ -147,8 +147,7 @@ fn haloed(
         return glyphs(ink);
     };
     let r = (size / 60.).clamp(1., 3.);
-    let mut layers = stack(vec![glyphs(ink)]);
-    for (x, y) in [
+    let edge = [
         (1., 0.),
         (-1., 0.),
         (0., 1.),
@@ -157,10 +156,60 @@ fn haloed(
         (-0.7, 0.7),
         (0.7, -0.7),
         (-0.7, -0.7),
-    ] {
-        layers = layers.push_under(pin(glyphs(halo)).position(Point::new(x * r, y * r)));
+    ]
+    .map(|(x, y)| pin(glyphs(halo)).position(Point::new(x * r, y * r)).into());
+    stack(vec![glyphs(ink)])
+        .push_under(Element::new(Unread(stack(edge).into())))
+        .into()
+}
+/// Draws its content but reports none of it to widget operations, so the
+/// halo's copies of the time are not found, focused or read aloud: only the
+/// ink text above them is.
+struct Unread(Element<'static, Message>);
+impl cosmic::iced::advanced::Widget<Message, cosmic::Theme, cosmic::Renderer> for Unread {
+    fn children(&self) -> Vec<cosmic::iced::advanced::widget::Tree> {
+        vec![cosmic::iced::advanced::widget::Tree::new(&self.0)]
     }
-    layers.into()
+    fn diff(&mut self, tree: &mut cosmic::iced::advanced::widget::Tree) {
+        tree.diff_children(std::slice::from_mut(&mut self.0));
+    }
+    fn size(&self) -> Size<Length> {
+        self.0.as_widget().size()
+    }
+    fn layout(
+        &mut self,
+        tree: &mut cosmic::iced::advanced::widget::Tree,
+        renderer: &cosmic::Renderer,
+        limits: &cosmic::iced::advanced::layout::Limits,
+    ) -> cosmic::iced::advanced::layout::Node {
+        let child = self
+            .0
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits);
+        cosmic::iced::advanced::layout::Node::with_children(child.size(), vec![child])
+    }
+    fn draw(
+        &self,
+        tree: &cosmic::iced::advanced::widget::Tree,
+        renderer: &mut cosmic::Renderer,
+        theme: &cosmic::Theme,
+        style: &cosmic::iced::advanced::renderer::Style,
+        layout: cosmic::iced::advanced::Layout<'_>,
+        cursor: cosmic::iced::mouse::Cursor,
+        viewport: &cosmic::iced::Rectangle,
+    ) {
+        if let Some(child) = layout.children().next() {
+            self.0.as_widget().draw(
+                &tree.children[0],
+                renderer,
+                theme,
+                style,
+                child,
+                cursor,
+                viewport,
+            );
+        }
+    }
 }
 type NativeParagraph = <cosmic::Renderer as advanced_text::Renderer>::Paragraph;
 fn paragraph(value: &str, size: f32, font: Font) -> NativeParagraph {
@@ -743,6 +792,9 @@ mod tests {
         }
         config.appearance.wallpaper_light = false;
         assert!(edge(&config) > 200, "light digits get a dark edge");
+        // The edge is drawn, not read: search and screen readers find the
+        // time once.
+        native.text_bounds(view(&config, now, [490., 200.]), "10:08");
         let palette = config.wallpaper_palette();
         assert!(Presentation::grouped(&config, palette).halo.is_none());
         config.clock.surface = Some(ClockSurface::Panel);
