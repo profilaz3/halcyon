@@ -736,7 +736,7 @@ impl Settings {
         let applied = self.config.appearance.family == Some(family);
         let selected = selected || applied;
         let marker: Element<'_, Message> = if applied {
-            label("Current", 11., self.settings_accent())
+            label("Current", CAPTION, self.settings_accent())
         } else {
             cosmic::iced::widget::space().into()
         };

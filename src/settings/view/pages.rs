@@ -621,7 +621,7 @@ impl Settings {
                 if self.config.data_visible(widget) {
                     cosmic::iced::widget::space().height(0).into()
                 } else {
-                    label("Paused while hidden", 11., MUTED)
+                    label("Paused while hidden", CAPTION, MUTED)
                 },
             ],
         )

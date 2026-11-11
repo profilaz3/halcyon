@@ -745,7 +745,7 @@ impl Settings {
                 event.title().to_lowercase()
             ),
         };
-        label(text, 11., MUTED)
+        label(text, CAPTION, MUTED)
     }
 
     fn solar_rule_controls(&self, draft: &RuleDraft) -> Element<'_, Message> {
@@ -896,9 +896,9 @@ impl Settings {
                             11.,
                             MUTED,
                         ),
-                        Some(_) => label("Local time", 11., MUTED),
-                        None if draft.time.trim().is_empty() => label("e.g. 19:00", 11., MUTED),
-                        None => label("Use a time like 19:00 or 7 pm", 11., WARN),
+                        Some(_) => label("Local time", CAPTION, MUTED),
+                        None if draft.time.trim().is_empty() => label("e.g. 19:00", CAPTION, MUTED),
+                        None => label("Use a time like 19:00 or 7 pm", CAPTION, WARN),
                     };
                     items.push(field(
                         "At",
@@ -1061,7 +1061,7 @@ impl Settings {
         items.push(
             row::with_children(vec![
                 container(match missing {
-                    Some(missing) => label(missing, 11., MUTED),
+                    Some(missing) => label(missing, CAPTION, MUTED),
                     None => label(
                         match draft.kind {
                             Kind::Schedule => {
@@ -1130,9 +1130,9 @@ impl Settings {
                 &Local,
                 crate::automation::clock::from_unix(outcome.at),
             );
-            let mut lines = vec![line(what, 13., FG), line(cause, 11., MUTED)];
+            let mut lines = vec![line(what, 13., FG), line(cause, CAPTION, MUTED)];
             if let Some(why) = why {
-                lines.push(label(why, 11., if tone == ERROR { ERROR } else { WARN }));
+                lines.push(label(why, CAPTION, if tone == ERROR { ERROR } else { WARN }));
             }
             rows.push(
                 row::with_children(vec![
@@ -1140,7 +1140,7 @@ impl Settings {
                     container(column::with_children(lines).spacing(2))
                         .width(Length::Fill)
                         .into(),
-                    label(words::stamp(at, now_local, self.h24()), 11., MUTED),
+                    label(words::stamp(at, now_local, self.h24()), CAPTION, MUTED),
                 ])
                 .spacing(10)
                 .align_y(Alignment::Center)

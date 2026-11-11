@@ -103,7 +103,7 @@ fn framed<'a>(
         layers.push(
             // Dimmed, with a quiet note, rather than a warning on every tile.
             // Light on the dark veil in either theme.
-            container(label("Not installed", 11., Color { a: 0.9, ..Color::WHITE }))
+            container(label("Not installed", CAPTION, Color { a: 0.9, ..Color::WHITE }))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .align_x(Alignment::Center)
@@ -379,7 +379,7 @@ impl Settings {
                         .size(22)
                         .icon()
                         .into(),
-                    label(count, 11., MUTED),
+                    label(count, CAPTION, MUTED),
                 ])
                 .spacing(4)
                 .align_x(Alignment::Center)
@@ -452,7 +452,7 @@ impl Settings {
                 .height(tile_height(width) + 4.)
                 .padding(2)
                 .into(),
-                container(label(title, 11., FG))
+                container(label(title, CAPTION, FG))
                     .width(width + 4.)
                     .padding([0, 4])
                     .into(),
@@ -982,7 +982,7 @@ impl Settings {
                 .as_ref()
                 .is_some_and(|custom| custom.invalid().is_some())
             {
-                fields.push(label("Use #RRGGBB", 11., WARN));
+                fields.push(label("Use #RRGGBB", CAPTION, WARN));
             }
             rows.push(
                 row::with_children(fields)

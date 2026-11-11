@@ -178,9 +178,9 @@ fn detail_state<'a>(
     state: impl Into<String>,
 ) -> Element<'a, Message> {
     let state = state.into();
-    let mut lines = vec![label(title, 14., FG)];
+    let mut lines = vec![label(title, BODY, FG)];
     if !state.is_empty() {
-        lines.push(label(state, 12., MUTED));
+        lines.push(label(state, CAPTION, MUTED));
     }
     column::with_children(lines)
         .spacing(3)
@@ -297,7 +297,7 @@ pub(super) fn group_row_state<'a>(
     )
 }
 fn pill<'a>(value: impl Into<String>, color: Color) -> Element<'a, Message> {
-    container(label(value, 11., color))
+    container(label(value, CAPTION, color))
         .padding([4, 9])
         .class(cosmic::theme::Container::custom(move |theme| {
             cosmic::iced::widget::container::Style {
@@ -997,7 +997,7 @@ impl Settings {
                 button::custom(
                     column::with_children(vec![
                         pill(kept.len().to_string(), self.settings_accent()),
-                        text::body("Not applied").size(10).into(),
+                        text::body("Not applied").size(CAPTION).into(),
                     ])
                     .spacing(2)
                     .width(Length::Fill)
@@ -1011,7 +1011,7 @@ impl Settings {
                 .into()
             } else {
                 let mut rows = vec![
-                    container(label("NOT APPLIED", 11., MUTED))
+                    container(label("NOT APPLIED", CAPTION, MUTED))
                         .padding([0, 14, 2, 14])
                         .into(),
                 ];
@@ -1129,7 +1129,7 @@ impl Settings {
         column::with_children(vec![
             split(
                 label(title, 12., FG),
-                label(value_label, 11., self.settings_accent()),
+                label(value_label, CAPTION, self.settings_accent()),
             ),
             slider(range, value, move |value| {
                 Message::AppearanceValue(control.clone(), value)
