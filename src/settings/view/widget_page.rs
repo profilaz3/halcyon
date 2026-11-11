@@ -88,15 +88,28 @@ impl Settings {
 
     /// The one way every page points to COSMIC Settings for the rest.
     pub(super) fn cosmic_link<'a>(&self, page: &'static str) -> Element<'a, Message> {
-        button::custom(
-            row::with_children(vec![
-                detail("More in COSMIC Settings", "Options this app doesn’t cover"),
-                label("↗", 16., MUTED),
-            ])
-            .spacing(12)
-            .align_y(Alignment::Center),
+        self.cosmic_row(
+            "More in COSMIC Settings",
+            "Options this app doesn’t cover",
+            page,
+            format!("{page}-cosmic-settings"),
         )
-        .id(cosmic::widget::Id::new(format!("{page}-cosmic-settings")))
+    }
+
+    /// A row that opens one page of COSMIC Settings.
+    pub(super) fn cosmic_row<'a>(
+        &self,
+        title: &'a str,
+        subtitle: &'a str,
+        page: &'static str,
+        id: String,
+    ) -> Element<'a, Message> {
+        button::custom(
+            row::with_children(vec![detail(title, subtitle), label("↗", 16., MUTED)])
+                .spacing(12)
+                .align_y(Alignment::Center),
+        )
+        .id(cosmic::widget::Id::new(id))
         .class(nav_style(false, self.settings_accent()))
         .padding([4, 0])
         .width(Length::Fill)

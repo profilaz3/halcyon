@@ -1369,7 +1369,7 @@ impl Settings {
                 "system-log-out-symbolic",
                 AppSettingsPage::Operation,
                 if self.service.startup {
-                    "Starts at sign-in".into()
+                    "Starts at sign-in · Set up again".into()
                 } else {
                     "Running, sign-in and set up again".into()
                 },

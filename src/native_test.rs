@@ -433,6 +433,10 @@ impl Native {
             .map(|found| found.1)
             .collect()
     }
+    /// Every text drawn in the real widget tree.
+    pub fn all_text<M>(&mut self, view: cosmic::Element<'_, M>) -> Vec<String> {
+        self.texts(view).into_iter().map(|found| found.0).collect()
+    }
     /// Text that runs past the window's right edge, outside any area that
     /// scrolls sideways.
     pub fn overflowing_text<M>(&mut self, view: cosmic::Element<'_, M>) -> Vec<(String, Rectangle)> {

@@ -120,7 +120,13 @@ fn surface_color(theme: &cosmic::Theme, color: Color) -> Color {
 }
 
 fn label<'a>(value: impl Into<String>, size: f32, color: Color) -> Element<'a, Message> {
-    text::body(value.into())
+    let value = value.into();
+    // A row title is a 14-point label in the foreground color.
+    #[cfg(test)]
+    if size == 14. && color == FG {
+        drawn::note(&value);
+    }
+    text::body(value)
         .size(size)
         .line_height(1.25)
         .class(text_style(color))
@@ -203,6 +209,8 @@ fn switch<'a>(
     )
 }
 fn heading<'a>(title: &'static str, description: &'static str) -> Element<'a, Message> {
+    #[cfg(test)]
+    drawn::note(title);
     let big = text::title3(title).size(28).into();
     explain::titled(big, title, description.to_owned(), 13., 4)
 }
@@ -218,6 +226,20 @@ fn separator() -> Element<'static, Message> {
         }))
         .into()
 }
+/// The row titles and headings the shared helpers drew on this thread, so a
+/// test can check that search finds every one of them.
+#[cfg(test)]
+pub(super) mod drawn {
+    use std::cell::RefCell;
+    thread_local!(static TITLES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) });
+    pub(in crate::settings) fn note(title: &str) {
+        TITLES.with(|titles| titles.borrow_mut().push(title.to_owned()));
+    }
+    /// Everything noted since the last call.
+    pub(in crate::settings) fn take() -> Vec<String> {
+        TITLES.with(|titles| std::mem::take(&mut *titles.borrow_mut()))
+    }
+}
 /// A titled native COSMIC list: rows separated by thin dividers, the
 /// heading outside the box. Used by the grouped settings pages.
 pub(super) fn group<'a>(
@@ -226,6 +248,8 @@ pub(super) fn group<'a>(
 ) -> Element<'a, Message> {
     let mut section = cosmic::widget::settings::section();
     if let Some(title) = title {
+        #[cfg(test)]
+        drawn::note(title);
         section = section.title(title);
     }
     section.extend(rows).into()

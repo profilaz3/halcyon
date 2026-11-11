@@ -216,7 +216,18 @@ impl Settings {
         if self.color_well.is_some() {
             items.push(self.search_target("appearance-colors", self.appearance_colors(draft)));
         }
-        items.push(group(None, vec![self.cosmic_link("appearance")]));
+        items.push(group(
+            None,
+            vec![
+                self.cosmic_row(
+                    "Text size",
+                    "Set by display scaling in COSMIC Settings",
+                    "displays",
+                    "text-size-cosmic-settings".into(),
+                ),
+                self.cosmic_link("appearance"),
+            ],
+        ));
         column::with_children(items).spacing(16).into()
     }
 

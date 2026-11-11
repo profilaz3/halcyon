@@ -256,7 +256,8 @@ impl Settings {
     }
 
     pub(super) fn search_results_page(&self) -> Element<'_, Message> {
-        let matches = super::super::navigation::search(&self.search_query);
+        let super::super::navigation::Matches { hits: matches, partial } =
+            super::super::navigation::find(&self.search_query);
         let mut rows = vec![heading("Find a setting", "")];
         if self.rail() {
             let mut search =
@@ -272,7 +273,16 @@ impl Settings {
         }
         if matches.is_empty() && !self.search_query.trim().is_empty() {
             rows.push(label(
-                "No settings found. Try city, GPU, font, tiling or startup.",
+                format!(
+                    "No settings match “{}”. Try another word, or browse Appearance, Wallpaper, Widgets or Dock and panel.",
+                    self.search_query.trim()
+                ),
+                14.,
+                MUTED,
+            ));
+        } else if partial {
+            rows.push(label(
+                "Nothing matches every word. These match some of them.",
                 14.,
                 MUTED,
             ));
