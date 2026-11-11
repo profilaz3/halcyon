@@ -29,7 +29,7 @@ damage can establish unhealthy status. A capable IPC host is required separately
 for live arrangement.
 
 Settings refreshes on open/focus. It uses the shared installation state for
-Add-ons and Islands controls. Installation/runtime probes and native add-on
+the Islands panel controls on **Dock and panel**. Installation/runtime probes and native add-on
 edits run on blocking workers; the event handler consumes structured results.
 Read-only UI planning uses that cached capability. The store independently
 revalidates on the worker under transaction locks before sidecar writes, and
@@ -37,7 +37,10 @@ refuses a write if a UI handler bypasses the worker. Imported
 and scheduled looks omit optional Islands settings, including `island_gap`, when
 absent, keeping saved sidecars. Applying a look does not enable disabled Islands. The setup wizard and Dock
 controls still honor an explicit user choice to enable or disable them.
-Only App settings → Add-ons shows `Get Islands ↗` when absent.
+The Islands panel ships in the main Halcyon package, so there is no separate
+download or install button. When it is absent, **Dock and panel** says the
+Islands panel isn't installed and asks you to reinstall Halcyon from the same
+place you got it, then sign out and back in.
 
 Tests use an explicit root. The CLI `--root` path never queries host packages or
 IPC; Rust fixtures read only `<fixture>/islands-installation.json`, with the same
@@ -96,7 +99,7 @@ Disabled status performs no installed-runtime or procfs audit.
 
 Open/focus requests coalesce to one in-flight check. Completion generations reject
 stale results. A timeout/unknown compatibility result stops automatic focus
-retries; Add-ons → Check again deliberately retries. Cached presentation is not
+retries; reopening Settings or focusing it again deliberately retries. Cached presentation is not
 transaction authority: existing background write/Undo/baseline contracts continue
 to revalidate. No status operation changes selection, kills a host, clears a latch
 or writes user settings. Missing optional CLI plus retained generation still

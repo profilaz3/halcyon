@@ -2,10 +2,27 @@ use super::*;
 #[cfg(test)]
 #[path = "layout_foundation_tests.rs"]
 mod foundation_tests;
+use cosmic::cctk::sctk::reexports::protocols::xdg::shell::client::xdg_positioner::{
+    Anchor as PopupAnchor, Gravity,
+};
+use cosmic::iced::platform_specific::runtime::wayland::popup::{SctkPopupSettings, SctkPositioner};
 use cosmic::iced::platform_specific::shell::commands::layer_surface::destroy_layer_surface;
+use cosmic::iced::platform_specific::shell::commands::popup::{destroy_popup, get_popup};
 use cosmic::iced::widget::{opaque, pin, stack};
 use cosmic::iced::{Point, keyboard, mouse};
 use std::collections::BTreeMap;
+
+/// A choice in a widget's right-click menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuPick {
+    Settings,
+    Arrange,
+    Hide,
+}
+
+pub(super) const MENU_WIDTH: u32 = 220;
+const MENU_ROW: u32 = 36;
+const MENU_PADDING: u32 = 6;
 
 /// Where a widget waits when the desktop has no room for it.
 const OFF_DESKTOP: [f32; 2] = [-10000., 0.];
@@ -1099,7 +1116,7 @@ impl Cards {
                     .find(|output| output.handle == original.handle)
             });
         if editor.contexts != contexts || output.is_none() {
-            editor.error = Some("Displays changed. Reconnect the original displays to resume, retry cancel, or keep the saved layout.".into());
+            editor.error = Some("Displays changed. Reconnect the original displays to keep arranging, or choose another option.".into());
             return Task::none();
         }
         let display = output.and_then(|output| self.displays.key(output));
@@ -1140,7 +1157,7 @@ impl Cards {
         }
         editor.pending_resume = None;
         editor.exit_failed = true;
-        editor.error = Some("Displays changed while resuming. Reconnect the original displays to resume, retry cancel, or keep the saved layout.".into());
+        editor.error = Some("Displays changed while resuming. Reconnect the original displays to keep arranging, or choose another option.".into());
         self.pending_arrange = None;
         self.arrange_display = None;
         self.sidebar.show(Instant::now());
@@ -1190,35 +1207,46 @@ impl Cards {
 
     pub(super) fn arrange_recovery_view(&self) -> Option<Element<'_, Message>> {
         let editor = self.paused_layout.as_ref().filter(|e| e.exit_failed)?;
-        let content = column::with_children(vec![
-            text::heading("Arrange paused").into(),
-            text::body("The desktop is available. Your draft is kept in this session.").into(),
-            cosmic::widget::scrollable(text::body(
-                editor
-                    .error
-                    .as_deref()
-                    .unwrap_or("Could not finish arrangement"),
-            ))
-            .height(Length::Fill)
-            .into(),
-            cosmic::widget::button::text("Retry cancel")
-                .id("arrange-retry".into())
-                .on_press(Message::LayoutRetryCancel)
-                .into(),
-            cosmic::widget::button::text("Resume editing")
+        let mut content: Vec<Element<'_, Message>> = vec![
+            text::heading("Your arrangement wasn’t saved").into(),
+            text::body("Your desktop works normally. Choose what to do with your changes.").into(),
+            cosmic::widget::button::suggested("Keep arranging")
+                .width(Length::Fill)
                 .id("arrange-resume".into())
                 .on_press(Message::LayoutResume)
                 .into(),
-            cosmic::widget::button::text("Keep saved layout")
+            cosmic::widget::button::standard("Discard changes")
+                .width(Length::Fill)
                 .id("arrange-keep".into())
                 .on_press(Message::LayoutKeepSaved)
                 .into(),
-            text::caption(
-                "Keep saved layout discards the unsaved draft. Completed changes stay in history.",
-            )
+            cosmic::widget::button::standard("Undo all of Arrange")
+                .width(Length::Fill)
+                .id("arrange-retry".into())
+                .on_press(Message::LayoutRetryCancel)
+                .into(),
+            cosmic::widget::button::link(if self.recovery_details {
+                "Hide details"
+            } else {
+                "Details"
+            })
+            .id("arrange-details".into())
+            .on_press(Message::RecoveryDetails)
             .into(),
-        ])
-        .spacing(10);
+        ];
+        if self.recovery_details {
+            content.push(
+                cosmic::widget::scrollable(text::caption(
+                    editor
+                        .error
+                        .as_deref()
+                        .unwrap_or("Could not finish arrangement"),
+                ))
+                .height(Length::Fill)
+                .into(),
+            );
+        }
+        let content = column::with_children(content).spacing(10);
         Some(
             container(content)
                 .padding(12)
@@ -1240,6 +1268,12 @@ impl Cards {
             }
             Err(error) => {
                 eprintln!("Could not reset desktop layout: {error}");
+                self.raise_notice(
+                    "Couldn’t reset the layout",
+                    "Your widgets stay where they were.",
+                    error.to_string(),
+                    Some(Message::ResetLayout),
+                );
                 return Task::none();
             }
         }
@@ -1660,6 +1694,116 @@ impl Cards {
         }
         Task::none()
     }
+    /// A card that opens its menu on a right click.
+    pub(super) fn with_menu<'a>(
+        &self,
+        widget: Widget,
+        card: Element<'a, Message>,
+    ) -> Element<'a, Message> {
+        if self.layout_editor.active {
+            return card;
+        }
+        mouse_area(card)
+            .on_right_press(Message::WidgetMenu(widget))
+            .into()
+    }
+    /// The surface showing `widget` now.
+    fn surface_of(&self, widget: Widget) -> window::Id {
+        if self.custom_layout()
+            || !matches!(widget, Widget::Weather | Widget::Devbox | Widget::Projects)
+        {
+            self.widget_id(widget)
+        } else {
+            self.ids[1]
+        }
+    }
+    pub(super) fn open_widget_menu(&mut self, widget: Widget) -> Task<Message> {
+        let close = self.close_widget_menu();
+        let fallback = self.surface_of(widget);
+        let (parent, at) = match POINTER.lock().ok().and_then(|pointer| *pointer) {
+            Some((id, at)) if self.ids.contains(&id) => (id, at),
+            _ => (fallback, Point::new(16., 16.)),
+        };
+        let id = window::Id::unique();
+        self.menu = Some((id, widget));
+        let height = MENU_ROW * 3 + MENU_PADDING * 2;
+        let popup = get_popup(SctkPopupSettings {
+            parent,
+            id,
+            positioner: SctkPositioner {
+                size: Some((MENU_WIDTH, height)),
+                size_limits: cosmic::iced::Limits::NONE
+                    .width(MENU_WIDTH as f32)
+                    .height(height as f32),
+                anchor_rect: cosmic::iced::Rectangle {
+                    x: at.x as i32,
+                    y: at.y as i32,
+                    width: 1,
+                    height: 1,
+                },
+                anchor: PopupAnchor::BottomRight,
+                gravity: Gravity::BottomRight,
+                // Slide, then flip, to stay on screen near the pointer.
+                constraint_adjustment: 15,
+                offset: (0, 0),
+                reactive: true,
+            },
+            parent_size: None,
+            grab: true,
+            close_with_children: false,
+            input_zone: None,
+        });
+        Task::batch([close, popup])
+    }
+    pub(super) fn close_widget_menu(&mut self) -> Task<Message> {
+        match self.menu.take() {
+            Some((id, _)) => destroy_popup(id),
+            None => Task::none(),
+        }
+    }
+    pub(super) fn widget_menu_pick(&mut self, pick: MenuPick) -> Task<Message> {
+        let Some((_, widget)) = self.menu else {
+            return Task::none();
+        };
+        let close = self.close_widget_menu();
+        let next = self.update(match pick {
+            MenuPick::Settings => Message::WidgetSettings(widget),
+            MenuPick::Arrange => Message::Arrange,
+            MenuPick::Hide => Message::SetWidgetVisible(widget, false),
+        });
+        Task::batch([close, next])
+    }
+    pub(super) fn widget_menu_view(&self, widget: Widget) -> Element<'_, Message> {
+        let item = |label: String, id: &'static str, pick: MenuPick| -> Element<'_, Message> {
+            cosmic::widget::button::custom(
+                container(text::body(label))
+                    .height(Length::Fill)
+                    .align_y(Alignment::Center),
+            )
+            .id(id.into())
+            .class(cosmic::theme::Button::MenuItem)
+            .padding([0, 12])
+            .width(Length::Fill)
+            .height(Length::Fixed(MENU_ROW as f32))
+            .on_press(Message::WidgetMenuPick(pick))
+            .into()
+        };
+        let (settings, hide) = widget_menu_labels(widget);
+        container(column::with_children(vec![
+            item(settings, "widget-menu-settings", MenuPick::Settings),
+            item(
+                "Arrange widgets".into(),
+                "widget-menu-arrange",
+                MenuPick::Arrange,
+            ),
+            item(hide, "widget-menu-hide", MenuPick::Hide),
+        ]))
+        .padding(MENU_PADDING as u16)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .class(cosmic::theme::Container::Dropdown)
+        .into()
+    }
     pub(super) fn individual_widget(&self, widget: Widget) -> Element<'_, Message> {
         if !self.config.widget_visible(widget) || !self.widget_available(widget) {
             return empty_surface();
@@ -1673,6 +1817,7 @@ impl Cards {
             Widget::Glance => self.glance(),
             Widget::Music | Widget::Notes | Widget::Focus => self.tool_card(widget),
         };
+        let card = self.with_menu(widget, card);
         // Matches the surface's shadow margin (see the layer surface sizes).
         let m = crate::widget_style::shadow_margin(&self.config);
         if m > 0. {
@@ -1813,7 +1958,7 @@ impl Cards {
                         (!self.layout_editor.history.is_empty()).then_some(Message::LayoutUndo),
                     )
                     .into(),
-                cosmic::widget::button::text("Reset")
+                cosmic::widget::button::text("Reset layout")
                     .on_press(Message::LayoutDefaults)
                     .into(),
                 cosmic::widget::button::text("Cancel")
@@ -2059,10 +2204,17 @@ mod tests {
                 let pixels = native.render(cards.individual_widget(widget), &theme);
                 let index =
                     (((size[1] as usize - 6) * size[0] as usize) + size[0] as usize / 2) * 4;
-                assert!(
-                    pixels[index + 3] > 150,
-                    "{widget:?} {name}: frame must fill its native surface"
-                );
+                if widget == Widget::Music {
+                    // Nothing plays here: one line at the top, the rest clear (DT-14).
+                    let top = ((40 * size[0] as usize) + size[0] as usize / 2) * 4;
+                    assert!(pixels[top + 3] > 150, "Music {name}: idle line drawn");
+                    assert!(pixels[index + 3] < 10, "Music {name}: idle card shrinks");
+                } else {
+                    assert!(
+                        pixels[index + 3] > 150,
+                        "{widget:?} {name}: frame must fill its native surface"
+                    );
+                }
                 native.capture(
                     cards.individual_widget(widget),
                     &theme,
@@ -2633,4 +2785,14 @@ mod review030_tests {
         assert_eq!(restored.widget_sizes, before.widget_sizes);
         assert_eq!(restored.monitor_layouts, before.monitor_layouts);
     }
+}
+
+/// The first and last lines of a widget's right-click menu.
+pub(super) fn widget_menu_labels(widget: Widget) -> (String, String) {
+    let title = widget.title();
+    let mut lower = title.to_string();
+    if let Some(first) = lower.get_mut(..1) {
+        first.make_ascii_lowercase();
+    }
+    (format!("{title} settings…"), format!("Hide {lower}"))
 }

@@ -1488,7 +1488,7 @@ impl Settings {
             group(Some("On the desktop"), vec![
                 group_row(
                     "Widget controls",
-                    "A side panel to add, hide and edit widgets. Hold the pointer at the right screen edge to open it.",
+                    "A side panel to show, hide and reorder widgets. Hold the pointer at the right edge for a second, or use Open now.",
                     button::standard("Open now")
                         .on_press_maybe((self.service_known && self.service.running && !self.busy && !preview())
                             .then_some(Message::ShowControls)).into(),

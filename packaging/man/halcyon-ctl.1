@@ -1,16 +1,73 @@
-.TH HALCYON-CTL 1 "2026-10-23" "Halcyon 0.1.1" "User Commands"
+.TH HALCYON-CTL 1 "2026-11-11" "Halcyon 0.6.1" "User Commands"
 .SH NAME
 halcyon-ctl \- control Halcyon desktop widgets
 .SH SYNOPSIS
 .B halcyon-ctl
-.I command
+.RI [ command ]
 .RI [ arguments ]
 .SH DESCRIPTION
 Control Halcyon from the terminal or a desktop shortcut.
-Commands include start, stop, settings and focus.
-Run
-.B halcyon-ctl --help
-for the complete command list and arguments.
+Run with no command to open Settings.
+.B halcyon-ctl
+.I command
+.B --help
+describes one command.
+.SH COMMANDS
+.TP
+.B start
+Show the widgets now and at every sign-in.
+.TP
+.B stop
+Hide the widgets and stop starting them at sign-in.
+.TP
+.B restart
+Restart the widgets, for example after an update.
+.TP
+.B status
+Show whether the widgets are running.
+.TP
+.BI "settings \fR[\fB--page " page\fR]
+Open Settings, on
+.I page
+if given (for example
+.BR clock ).
+.TP
+.B drawer
+Open or close the edge menu, the same as
+.BR "halcyon --toggle drawer" .
+.TP
+.BI "panel \fR[\fIwidget\fR|\fBopen\fR|\fBclose\fR|\fBrail\fR]"
+Open the edge menu, or open it on one widget.
+.TP
+.BI toggle " widget"
+Show or hide one widget.
+.TP
+.BI focus " action"
+Control the Focus timer, for example from a keyboard shortcut.
+.TP
+.BI theme " name"
+Apply a Halcyon theme.
+.TP
+.BR cosmic-colors " on|off"
+Turn matching the COSMIC accent color on or off.
+.TP
+.BI weather " city"
+Set the weather city by name.
+.TP
+.B weather-picker
+Choose the weather city in Settings.
+.TP
+.B restore
+Put back your wallpaper from before Halcyon and stop the widgets.
+This also stops them starting at sign-in; run
+.B halcyon-ctl start
+to turn them back on.
+.TP
+.B restore-wallpaper
+Put back only your wallpaper from before Halcyon.
+.TP
+.B wallpapers-install
+Check that Halcyon's built-in wallpapers are installed.
 .SH SEE ALSO
 .BR halcyon (1)
 .br

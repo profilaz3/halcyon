@@ -1638,7 +1638,7 @@ impl Settings {
         .height(24)
         .align_y(Alignment::Center);
         let mut action_buttons = vec![
-            switch("Line up with others", editor.snap, Message::Snap).into(),
+            switch("Snap to grid", editor.snap, Message::Snap).into(),
             switch("Show grid", editor.guides, Message::Guides).into(),
             container(text::body("")).width(Length::Fill).into(),
         ];

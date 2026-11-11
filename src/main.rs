@@ -11,6 +11,7 @@ mod desktop_theme;
 mod displays;
 mod drawer;
 mod installation;
+mod instance;
 mod layout;
 mod layout_state;
 mod materials;
@@ -34,6 +35,11 @@ mod widget_presentation;
 mod widget_style;
 
 fn main() -> cosmic::iced::Result {
+    // Help, version and shortcut commands never start a window.
+    let mut early = std::env::args().skip(1);
+    if let Some(code) = instance::early_command(early.next().as_deref(), early.next().as_deref()) {
+        std::process::exit(code);
+    }
     if std::env::args().nth(1).as_deref() == Some("--activity-island") {
         return cosmic::applet::run::<activity_island::Applet>(());
     }
@@ -162,9 +168,25 @@ fn main() -> cosmic::iced::Result {
         let page = args.next().unwrap_or_default();
         return run_settings(&page);
     }
+    if let Some(other) = command.as_deref() {
+        eprintln!("Unknown option {other}\nSee: halcyon --help");
+        std::process::exit(2);
+    }
     if config::Config::load().design_problem.is_some() {
         return run_settings("general");
     }
+    // One widgets process per session. Kept open until the process ends.
+    let _instance = match instance::acquire() {
+        instance::Lock::Busy => {
+            println!("{}", instance::ALREADY_RUNNING);
+            return Ok(());
+        }
+        instance::Lock::Held(file) => Some(file),
+        instance::Lock::Unavailable(error) => {
+            eprintln!("Starting without the single-copy check: {error}");
+            None
+        }
+    };
     usage::start(paths::state_dir().map(|dir| dir.join("usage.json")));
     let settings = cosmic::app::Settings::default()
         .no_main_window(true)

@@ -1,5 +1,5 @@
 use super::*;
-use crate::settings::support::{Health, Message as Edit};
+use crate::settings::support::{GUIDES, Health, Message as Edit};
 
 fn action<'a>(title: &'static str, message: Edit) -> Element<'a, Message> {
     button::text(title)
@@ -51,6 +51,17 @@ impl Settings {
                 ),
             ],
         )];
+        items.push(
+            row::with_children(
+                GUIDES
+                    .iter()
+                    .map(|&(title, url)| action(title, Edit::Guide(url)))
+                    .collect::<Vec<_>>(),
+            )
+            .spacing(8)
+            .wrap()
+            .into(),
+        );
         let accent = self.settings_accent();
         let mut rows = Vec::new();
         for c in &snapshot.components {

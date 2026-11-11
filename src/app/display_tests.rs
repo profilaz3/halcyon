@@ -209,6 +209,7 @@ fn monitor_pinning_lifecycle_actions() {
         typing: true,
         conflicted: false,
         saving: false,
+        on_demand: false,
     });
     let old_ids = cards.ids;
     let epoch = cards.display_generation;

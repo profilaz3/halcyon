@@ -174,15 +174,22 @@ of a removed installation can use the explicit bootstrap above. If Python itself
 has already been removed, the removal script leaves the public configuration
 intact rather than leaving an active source without its key.
 
-## Islands in published 0.4.x releases
+## The Islands panel
 
-Available since Halcyon 0.4.0.
+The Islands panel is part of the main Halcyon package; there is nothing extra to
+download. To use it, open **Dock and panel**, set **Shape** to **Islands** and
+choose **Switch at next sign-in**. Islands start the next time you sign in. The
+per-user helper checks native compatibility, ownership and previous failures
+before staging the switch.
 
-Open **App settings → Updates → Get Islands…**. Halcyon downloads and verifies
-one reviewed companion package, checks the proposed system changes, then asks
-**Install Islands**. The system handles authorization. **Switch at next sign-in**
-is a separate per-user choice; the existing helper checks native compatibility,
-ownership and previous failures before staging activation. Log out and back in.
+If **Dock and panel** says the Islands panel isn't installed, reinstall Halcyon
+from the same place you got it, then sign out and back in.
+
+### Separate companion in earlier releases
+
+Earlier releases, starting with 0.4.0, offered the companion as a separate
+verified download from **App settings → Updates → Get Islands…**. That page and
+button are gone in current releases; the notes below describe those releases only.
 
 This path works from a verified system package with the same version as the
 running app. It does not enable or rewrite APT sources. An intentionally disabled

@@ -118,6 +118,9 @@ pub struct Sidebar {
     pub progress: f32,
     pub pointer: Point,
     pub drag: Option<ReorderDrag>,
+    /// Opened from the keyboard (`halcyon --toggle drawer`): the row the
+    /// keyboard is on. The menu holds the keyboard only then.
+    pub focus: Option<usize>,
     dismiss_at: Option<Instant>,
     reveal_at: Option<Instant>,
     last_frame: Instant,
@@ -131,6 +134,7 @@ impl Sidebar {
             progress: 0.,
             pointer: Point::ORIGIN,
             drag: None,
+            focus: None,
             dismiss_at: None,
             reveal_at: None,
             last_frame: Instant::now(),
@@ -144,6 +148,7 @@ impl Sidebar {
     }
     pub fn hide(&mut self) {
         self.visible = false;
+        self.focus = None;
         self.dismiss_at = None;
         self.reveal_at = None;
         self.last_frame = Instant::now();
@@ -204,6 +209,7 @@ impl Sidebar {
             self.dismiss_at = None;
             if !self.hovered && !self.edge_hovered && self.drag.is_none() {
                 self.visible = false;
+                self.focus = None;
             }
         }
         let dt = now
@@ -223,6 +229,43 @@ impl Sidebar {
     }
     pub fn margin(&self) -> i32 {
         (HIDDEN_MARGIN as f32 * (1. - self.progress)).round() as i32
+    }
+}
+
+/// A place the keyboard can be in the open edge menu, top down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DrawerItem {
+    Widget(Widget),
+    Arrange,
+    Settings,
+}
+/// What a key does in the open edge menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DrawerKey {
+    Next,
+    Previous,
+    Activate,
+    MoveUp,
+    MoveDown,
+    Close,
+}
+impl DrawerKey {
+    pub fn from_key(
+        key: &cosmic::iced::keyboard::Key,
+        modifiers: cosmic::iced::keyboard::Modifiers,
+    ) -> Option<Self> {
+        use cosmic::iced::keyboard::{Key, key::Named};
+        Some(match key {
+            Key::Named(Named::Escape) => Self::Close,
+            Key::Named(Named::ArrowUp) if modifiers.alt() => Self::MoveUp,
+            Key::Named(Named::ArrowDown) if modifiers.alt() => Self::MoveDown,
+            Key::Named(Named::Tab) if modifiers.shift() => Self::Previous,
+            Key::Named(Named::Tab | Named::ArrowDown) => Self::Next,
+            Key::Named(Named::ArrowUp) => Self::Previous,
+            Key::Named(Named::Enter) => Self::Activate,
+            Key::Character(c) if c.as_str() == " " => Self::Activate,
+            _ => return None,
+        })
     }
 }
 
