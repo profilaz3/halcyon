@@ -372,9 +372,16 @@ impl Settings {
                     "Delete this design?",
                     "Widgets already using it keep their own copy.",
                 ),
-                button::destructive("Delete")
-                    .on_press_maybe((!busy).then(|| edit(Edit::ConfirmDelete)))
-                    .into(),
+                row::with_children(vec![
+                    button::text("Cancel")
+                        .on_press(edit(Edit::CancelDelete))
+                        .into(),
+                    button::destructive("Delete")
+                        .on_press_maybe((!busy).then(|| edit(Edit::ConfirmDelete)))
+                        .into(),
+                ])
+                .spacing(8)
+                .into(),
             ));
         }
         content.push(group(Some("More"), more));
@@ -386,7 +393,7 @@ impl Settings {
     pub(super) fn recipe_actions(&self) -> Element<'_, Message> {
         let recipe = &self.recipe_editor.draft;
         let busy = self.native_busy;
-        let apply = button::suggested("Use this design")
+        let apply = button::suggested("Apply design")
             .id(cosmic::widget::Id::new("recipe-apply"));
         let applied = self.config.recipes.get(recipe.kind) == Some(recipe);
         let actions = self.preview_bar(

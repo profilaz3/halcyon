@@ -175,7 +175,7 @@ impl Apply {
     pub(super) fn run(self) -> Result<Config, String> {
         let path = Config::path().ok_or("Configuration directory unavailable")?;
         let p = self.layout;
-        actions::in_action("Canvas changes", || {
+        actions::in_action("Widget positions", || {
             actions::guarded(Some(&self.baseline), || {
                 Config::edit_layout_context_at(
                     &path,
@@ -351,7 +351,7 @@ impl Settings {
                     self.placement.canvas_end(&self.config);
                     self.font_menu = None;
                     self.arranging = false;
-                    self.status = "Canvas discarded".into();
+                    self.status = "Widget moves discarded".into();
                     self.error = false;
                 }
             }
@@ -414,7 +414,7 @@ impl Settings {
                 self.placement.canvas_end(&self.config);
                 self.font_menu = None;
                 let task = self.after_desktop_change();
-                self.status = "Canvas applied · Undo is available".into();
+                self.status = "Widget positions saved · Undo is available".into();
                 self.error = false;
                 task
             }

@@ -140,7 +140,7 @@ impl Settings {
             separator(),
             step(
                 "3",
-                "Appearance · Theme and colors",
+                "Appearance · Accent color",
                 match self.config.appearance.family {
                     Some(family) if self.config.appearance.wallpaper_colors => {
                         format!("{} · colors from your wallpaper", family.title())
@@ -152,9 +152,9 @@ impl Settings {
                 },
                 self.config.appearance.family.is_some(),
                 if self.config.appearance.family.is_some() {
-                    "Change theme"
+                    "Change style"
                 } else {
-                    "Choose a theme"
+                    "Choose a style"
                 },
                 Some(Message::Page(Page::Themes)),
             ),
@@ -188,7 +188,7 @@ impl Settings {
             .wrap()
             .into(),
             label(
-                "Move and resize widgets in Layout and displays. For quick controls, hold the pointer at the far-right screen edge for one second.",
+                "Move and resize widgets in Widgets › Arrange widgets. For quick controls, hold the pointer at the far-right screen edge for one second.",
                 11.,
                 MUTED,
             ),

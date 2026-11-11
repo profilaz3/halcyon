@@ -42,6 +42,12 @@ fn fb17_native_builder_save_apply_reset_undo_and_library_delete_are_independent(
     assert!(!app.recipe_editor.error, "{:?}", app.recipe_editor.notice);
     assert_eq!(app.config.recipes.clock.as_ref(), Some(&saved));
     assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), frozen);
+    // Cancel closes the delete review and keeps the design.
+    send(&mut app, Message::Delete);
+    assert!(app.recipe_editor.delete_review);
+    send(&mut app, Message::CancelDelete);
+    assert!(!app.recipe_editor.delete_review);
+    assert!(!app.recipe_editor.library.entries.is_empty());
     send(&mut app, Message::Delete);
     send(&mut app, Message::ConfirmDelete);
     assert!(app.recipe_editor.library.entries.is_empty());
@@ -62,7 +68,7 @@ fn fb17_native_builder_save_apply_reset_undo_and_library_delete_are_independent(
         let bounds = native.bounds(app.settings_view(), "recipe-apply");
         assert!(bounds.y >= 0. && bounds.y + bounds.height <= h);
         // The button reads the same for every kind now.
-        let text = native.text_bounds(app.settings_view(), "Use this design");
+        let text = native.text_bounds(app.settings_view(), "Apply design");
         assert!(text.x >= bounds.x && text.x + text.width <= bounds.x + bounds.width);
         assert!(text.y >= bounds.y && text.y + text.height <= bounds.y + bounds.height);
         native.capture(

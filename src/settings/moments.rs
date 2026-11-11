@@ -68,7 +68,7 @@ impl Settings {
         match result {
             Ok(config) => {
                 self.config = config;
-                self.status = "Moment saved · Undo is available".into();
+                self.status = "Time of day saved · Undo is available".into();
                 self.error = false;
             }
             Err(error) => self.failed(error),

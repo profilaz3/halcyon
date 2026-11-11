@@ -136,7 +136,7 @@ impl Settings {
         if let Some(transition) = blocked.iter().find(|b| is_transition(b)) {
             let first = match editor.first_step() {
                 Some(Behavior::Autotile) => "Apply tiling first",
-                _ => "Apply scope first",
+                _ => "Apply Workspaces first",
             };
             items.push(banner(
                 transition.reason.clone(),

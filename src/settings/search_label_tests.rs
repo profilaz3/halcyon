@@ -66,3 +66,101 @@ fn search_result_paths_never_repeat_a_step() {
         "Windows › Corners, outline color and shadows"
     );
 }
+
+/// Every screen a search result can open: page, Halcyon tab, bar, object tab
+/// and whether the page's fold is open.
+fn every_screen() -> Vec<(navigation::SearchHit, navigation::ObjectTab)> {
+    use crate::desktop::panels::PanelKind;
+    let mut screens = Vec::new();
+    for page in Page::ALL {
+        let destinations: &[AppSettingsPage] = if page == Page::General {
+            &[
+                AppSettingsPage::Home,
+                AppSettingsPage::Operation,
+                AppSettingsPage::Interface,
+                AppSettingsPage::Privacy,
+                AppSettingsPage::Updates,
+                AppSettingsPage::WhatsNew,
+                AppSettingsPage::Help,
+            ]
+        } else {
+            &[AppSettingsPage::Operation]
+        };
+        let bars: &[Option<PanelKind>] = if page == Page::DesktopDock {
+            &[Some(PanelKind::Dock), Some(PanelKind::Panel)]
+        } else {
+            &[None]
+        };
+        for &destination in destinations {
+            for &bar in bars {
+                for advanced in [false, true] {
+                    for tab in navigation::ObjectTab::ALL {
+                        screens.push((navigation::probe(page, destination, bar, advanced), tab));
+                    }
+                }
+            }
+        }
+    }
+    screens
+}
+
+// Search knows every row title and heading the pages draw: each one, on
+// every page, tab, bar and fold a result can open, is a result for that
+// screen. A title that names another page is found as that page.
+#[test]
+fn search_finds_every_title_the_pages_draw() {
+    let name = "search_finds_every_title_the_pages_draw";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    let size = Size::new(1280., 800.);
+    send_settings(&mut app, Message::Resized(size));
+    send_settings(&mut app, Message::Widget(Widget::Glance, true));
+    let index = navigation::all_search_hits();
+    let pages: Vec<&str> = index
+        .iter()
+        .filter(|hit| hit.names_page_result())
+        .map(|hit| hit.label)
+        .collect();
+    let mut missing = std::collections::BTreeSet::new();
+    for (screen, tab) in every_screen() {
+        send_settings(&mut app, Message::SearchResult(screen));
+        send_settings(&mut app, Message::ObjectTab(tab));
+        view::drawn::take();
+        let mut native = crate::native_test::Native::new(size);
+        // A view can build a row and then leave it out; only what is shown counts.
+        let shown = native.all_text(app.settings_view());
+        for title in view::drawn::take() {
+            if !shown.contains(&title) {
+                continue;
+            }
+            let found = pages.contains(&title.as_str())
+                || navigation::NOT_INDEXED
+                    .iter()
+                    .any(|(skipped, _)| *skipped == title)
+                || index
+                    .iter()
+                    .any(|hit| hit.label == title && hit.opens(&screen));
+            if !found {
+                missing.insert(format!(
+                    "{:?} {:?} {:?} {} {tab:?} “{title}”",
+                    screen.page,
+                    screen.app_destination(),
+                    screen.bar,
+                    screen.advanced,
+                ));
+            }
+        }
+    }
+    assert!(missing.is_empty(), "not in search: {missing:#?}");
+}
+

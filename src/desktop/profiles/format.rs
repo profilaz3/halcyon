@@ -91,7 +91,7 @@ const SECTIONS_V2: [&str; 2] = ["windows", "workspaces"];
 /// Sections only version 3 records have.
 const SECTIONS_V3: [&str; 2] = ["wallpaper", "desktop_icons"];
 /// What a shared profile can't import.
-pub const LOCAL_ONLY: &str = "This profile refers to pictures or displays on another computer. Shared profiles can include built-in, COSMIC and color wallpapers.";
+pub const LOCAL_ONLY: &str = "This look refers to pictures or displays on another computer. Shared looks can include built-in, COSMIC and color wallpapers.";
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ProfileError {
@@ -1184,11 +1184,13 @@ impl Profile {
     /// Checks everything before the record is stored or used.
     pub fn validate(&self) -> Result<(), ProfileError> {
         if self.format != FORMAT {
-            return Err(ProfileError::Invalid("Not a Halcyon profile.".into()));
+            return Err(ProfileError::Invalid(
+                "This file isn’t a Halcyon look.".into(),
+            ));
         }
         if !(LEGACY_VERSION..=VERSION).contains(&self.version) {
             return Err(ProfileError::Unsupported(format!(
-                "This profile uses format version {}; this version of Halcyon reads versions {LEGACY_VERSION} to {VERSION}.",
+                "This look uses format version {}; this version of Halcyon reads versions {LEGACY_VERSION} to {VERSION}.",
                 self.version
             )));
         }
@@ -1196,14 +1198,14 @@ impl Profile {
             && let Some(member) = self.version_2_member()
         {
             return Err(ProfileError::Invalid(format!(
-                "This version 1 profile includes “{member}”, which only version 2 profiles have."
+                "This version 1 look includes “{member}”, which only version 2 looks have."
             )));
         }
         if self.version < VERSION_3
             && let Some(member) = self.version_3_member()
         {
             return Err(ProfileError::Invalid(format!(
-                "This version {} profile includes “{member}”, which only version 3 profiles have.",
+                "This version {} look includes “{member}”, which only version 3 looks have.",
                 self.version
             )));
         }
@@ -1211,7 +1213,7 @@ impl Profile {
             && let Some(member) = self.version_4_member()
         {
             return Err(ProfileError::Invalid(format!(
-                "This version {} profile includes “{member}”, which only version 4 profiles have.",
+                "This version {} look includes “{member}”, which only version 4 looks have.",
                 self.version
             )));
         }
@@ -1222,28 +1224,28 @@ impl Profile {
                 .is_some_and(|v| v.get("widget_sizes").is_some())
         {
             return Err(ProfileError::Invalid(
-                "Widget sizes require profile version 5.".into(),
+                "Widget sizes need look format version 5.".into(),
             ));
         }
         if self.has_islands() && self.version < VERSION_6 {
             return Err(ProfileError::Invalid(
-                "Dock Islands requires profile version 6".into(),
+                "Dock Islands needs look format version 6".into(),
             ));
         }
         if (self.appearance_only || self.has_theme_members()) && self.version < VERSION_7 {
             return Err(ProfileError::Invalid(
-                "Shared themes require profile version 7".into(),
+                "Shared themes need look format version 7".into(),
             ));
         }
         if self.has_materials() && self.version < VERSION_8 {
             return Err(ProfileError::Invalid(
-                "Materials require profile version 8".into(),
+                "Materials need look format version 8".into(),
             ));
         }
         if let Some(composition) = &self.composition {
             if self.version < VERSION_10 {
                 return Err(ProfileError::Invalid(
-                    "Composition requires profile version 10".into(),
+                    "Composition needs look format version 10".into(),
                 ));
             }
             composition.validate().map_err(ProfileError::Invalid)?;
@@ -1251,59 +1253,59 @@ impl Profile {
         if let Some(package) = &self.package {
             if self.version < VERSION_14 {
                 return Err(ProfileError::Invalid(
-                    "Package credits require profile version 14".into(),
+                    "Package credits need look format version 14".into(),
                 ));
             }
             package.validate().map_err(ProfileError::Invalid)?;
             if !package.ancestors.is_empty() && self.version < VERSION_15 {
                 return Err(ProfileError::Invalid(
-                    "Remix credits require profile version 15".into(),
+                    "Remix credits need look format version 15".into(),
                 ));
             }
         }
         if self.has_lighting() && self.version < VERSION {
             return Err(ProfileError::Invalid(
-                "Clock scene lighting requires profile version 20".into(),
+                "Clock scene lighting needs look format version 20".into(),
             ));
         }
         if self.has_rain() && self.version < VERSION_19 {
             return Err(ProfileError::Invalid(
-                "Wallpaper rain requires profile version 19".into(),
+                "Wallpaper rain needs look format version 19".into(),
             ));
         }
         if self.has_visualizer() && self.version < VERSION_18 {
             return Err(ProfileError::Invalid(
-                "Audio visualizers require profile version 18".into(),
+                "Audio visualizers need look format version 18".into(),
             ));
         }
         if self.has_tool_recipes() && self.version < VERSION_17 {
             return Err(ProfileError::Invalid(
-                "Music and Focus recipes require profile version 17".into(),
+                "Music and Focus widget designs need look format version 17".into(),
             ));
         }
         if self.has_extended_recipes() && self.version < VERSION_16 {
             return Err(ProfileError::Invalid(
-                "Calendar recipes require profile version 16".into(),
+                "Calendar widget designs need look format version 16".into(),
             ));
         }
         if self.has_recipes() && self.version < VERSION_13 {
             return Err(ProfileError::Invalid(
-                "Personal recipes require profile version 13".into(),
+                "Your own widget designs need look format version 13".into(),
             ));
         }
         if self.has_moments() && self.version < VERSION_12 {
             return Err(ProfileError::Invalid(
-                "Moments require profile version 12".into(),
+                "Time of day settings need look format version 12".into(),
             ));
         }
         if self.has_depth() && self.version < VERSION_11 {
             return Err(ProfileError::Invalid(
-                "Clock depth requires profile version 11".into(),
+                "Clock depth needs look format version 11".into(),
             ));
         }
         if self.has_clock_presentation() && self.version < VERSION_9 {
             return Err(ProfileError::Invalid(
-                "Clock presentation choices require profile version 9".into(),
+                "Clock presentation choices need look format version 9".into(),
             ));
         }
         if self.appearance_only {
@@ -1311,7 +1313,7 @@ impl Profile {
         }
         if !valid_name(&self.name) {
             return Err(ProfileError::Invalid(
-                "Profile names have 1–80 characters and no line breaks.".into(),
+                "Look names can be 1 to 80 characters, on one line.".into(),
             ));
         }
         let invalid = ProfileError::Invalid;
@@ -1417,23 +1419,23 @@ pub fn import(bytes: &[u8]) -> Result<Profile, ProfileError> {
 /// may refer to this computer's pictures and displays.
 pub fn import_local(bytes: &[u8]) -> Result<Profile, ProfileError> {
     if bytes.len() > MAX_PROFILE_BYTES {
-        return Err(ProfileError::Invalid("This profile is too large.".into()));
+        return Err(ProfileError::Invalid("This look is too large.".into()));
     }
     let value: Value = serde_json::from_slice(bytes)
-        .map_err(|_| ProfileError::Invalid("This file is not a Halcyon profile.".into()))?;
+        .map_err(|_| ProfileError::Invalid("This file isn’t a Halcyon look.".into()))?;
     let object = value
         .as_object()
-        .ok_or_else(|| ProfileError::Invalid("This file is not a Halcyon profile.".into()))?;
+        .ok_or_else(|| ProfileError::Invalid("This file isn’t a Halcyon look.".into()))?;
     match object.get("format").and_then(Value::as_str) {
         Some(FORMAT) => {}
         Some("desktop-cards-journal" | "desktop-cards-undo") => {
             return Err(ProfileError::Invalid(
-                "This is a Halcyon recovery record, not a profile.".into(),
+                "This is a Halcyon recovery record, not a look.".into(),
             ));
         }
         _ => {
             return Err(ProfileError::Invalid(
-                "This file is not a Halcyon profile.".into(),
+                "This file isn’t a Halcyon look.".into(),
             ));
         }
     }
@@ -1443,12 +1445,12 @@ pub fn import_local(bytes: &[u8]) -> Result<Profile, ProfileError> {
         }
         Some(version) if version > u64::from(VERSION) => {
             return Err(ProfileError::Unsupported(format!(
-                "This profile was made by a newer version of Halcyon (format {version})."
+                "This look was made by a newer version of Halcyon (format {version})."
             )));
         }
         _ => {
             return Err(ProfileError::Invalid(
-                "This profile has no supported format version.".into(),
+                "This look has no supported format version.".into(),
             ));
         }
     };
@@ -1474,20 +1476,20 @@ pub fn import_local(bytes: &[u8]) -> Result<Profile, ProfileError> {
         match since(key) {
             None => {
                 return Err(ProfileError::Unsupported(format!(
-                    "This profile includes “{}”, which this version of Halcyon does not support.",
+                    "This look includes “{}”, which this version of Halcyon does not support.",
                     key.chars().take(64).collect::<String>()
                 )));
             }
             Some(first) if first > version => {
                 return Err(ProfileError::Invalid(format!(
-                    "This version {version} profile includes “{key}”, which only version {first} profiles have."
+                    "This version {version} look includes “{key}”, which only version {first} looks have."
                 )));
             }
             Some(_) => {}
         }
     }
     let profile: Profile = serde_json::from_value(value)
-        .map_err(|error| ProfileError::Invalid(format!("This profile is not valid: {error}")))?;
+        .map_err(|error| ProfileError::Invalid(format!("This look is not valid: {error}")))?;
     profile.validate()?;
     Ok(profile)
 }
@@ -1527,7 +1529,7 @@ fn encode_record(mut profile: Profile) -> Result<Vec<u8>, ProfileError> {
         .map_err(|error| ProfileError::Invalid(error.to_string()))?;
     bytes.push(b'\n');
     if bytes.len() > MAX_PROFILE_BYTES {
-        return Err(ProfileError::Invalid("This profile is too large.".into()));
+        return Err(ProfileError::Invalid("This look is too large.".into()));
     }
     Ok(bytes)
 }

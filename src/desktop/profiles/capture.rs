@@ -46,7 +46,7 @@ pub struct Capture {
 /// settings as a profile named `name`. Writes nothing.
 pub fn capture(store: &DesktopStore, name: &str) -> Result<Capture, ProfileError> {
     let mut profile = Profile::new(name).ok_or_else(|| {
-        ProfileError::Invalid("Profile names have 1–80 characters and no line breaks.".into())
+        ProfileError::Invalid("Look names can be 1 to 80 characters, on one line.".into())
     })?;
     let mut warnings = Vec::new();
     for kind in PanelKind::ALL {
@@ -253,7 +253,7 @@ fn capture_appearance(
                 if builder.gaps.0 > MAX_GAP || builder.gaps.1 > MAX_GAP {
                     variant_look.gaps = None;
                     warnings.push(format!(
-                        "{} window gaps are outside the range profiles support; not captured.",
+                        "{} window gaps are outside the range looks support; not captured.",
                         variant.title()
                     ));
                 }
@@ -298,7 +298,7 @@ fn capture_windows(
         });
         if !allowed {
             warnings.push(format!(
-                "Windows {} is outside the range profiles support; not captured.",
+                "Windows {} is outside the range looks support; not captured.",
                 behavior.title()
             ));
             continue;
@@ -479,7 +479,7 @@ fn capture_widgets(
             let _ = widget::put(&mut section, field.pointer, Some(value));
         } else {
             warnings.push(format!(
-                "{} has a value this version doesn’t support in profiles; not captured.",
+                "{} has a value this version doesn’t support in looks; not captured.",
                 field.label
             ));
         }
@@ -596,7 +596,7 @@ fn background_look(entry: &BgEntry, places: &Places, warnings: &mut Vec<String>)
                 Ok(metadata) => metadata.is_dir(),
                 Err(_) => {
                     warnings.push(format!(
-                        "Your wallpaper “{}” is missing; the profile keeps where it was.",
+                        "Your wallpaper “{}” is missing; the look keeps where it was.",
                         super::desktop_look::file_label(path)
                     ));
                     !wallpaper::is_image(path)

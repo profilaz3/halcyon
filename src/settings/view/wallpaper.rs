@@ -10,9 +10,7 @@ use crate::desktop::wallpaper::{
     BgEntry, BgSource, Displays, ROTATIONS, SamplingMethod, ScalingMode, Target,
 };
 use crate::settings::desktop::Notice;
-use crate::settings::wallpaper::{
-    Custom, FitChoice, Message as Edit, Pick, Tab, Tile, display_name, hex,
-};
+use crate::settings::wallpaper::{Custom, FitChoice, Message as Edit, Pick, Tab, Tile, hex};
 
 fn edit(message: Edit) -> Message {
     Message::Wallpaper(message)
@@ -281,7 +279,7 @@ impl Settings {
                 if !crate::desktop::wallpaper::valid_output_name(&view.name) {
                     continue;
                 }
-                let mut text = display_name(&view.name);
+                let mut text = self.displays.display_name(&view.name);
                 text.push_str(if view.listed { " · own" } else { " · shared" });
                 if !view.connected {
                     text.push_str(" · not connected");
@@ -304,7 +302,10 @@ impl Settings {
         {
             rows.push(split(
                 label(
-                    format!("{} has its own background.", display_name(name)),
+                    format!(
+                        "{} has its own background.",
+                        self.displays.display_name(name)
+                    ),
                     12.,
                     MUTED,
                 ),
@@ -320,7 +321,7 @@ impl Settings {
     /// are linked rather than mixed into this page's Apply.
     fn wallpaper_related(&self) -> Element<'_, Message> {
         group(
-            None,
+            Some("Desktop"),
             vec![
                 self.subpage_row(
                     "Icons on the desktop",
@@ -679,9 +680,25 @@ impl Settings {
                 width,
             ));
         }
+        // Featured pictures that aren’t installed wait behind “Get more
+        // pictures”; the one in use stays so its ring and warning show.
+        let in_use = |tile: &Tile| {
+            let source = tile.source(editor.bundled_dir());
+            editor.current() == Some(&source)
+                || editor
+                    .entry()
+                    .and_then(|entry| entry.known().map(|entry| entry.source == source))
+                    .unwrap_or(false)
+        };
+        let mut not_installed = 0;
         for tile in editor.page_tiles() {
+            if tab == Tab::Bundled && tile.missing && !in_use(tile) {
+                not_installed += 1;
+                continue;
+            }
             tiles.push(self.wallpaper_tile(tile, enabled, width));
         }
+        let shown = tiles.len();
         items.push(
             row::with_children(tiles)
                 .spacing(gap)
@@ -690,15 +707,23 @@ impl Settings {
                 .into(),
         );
         match tab {
-            Tab::Bundled if editor.tiles().iter().any(|tile| tile.missing) => {
-                items.push(banner(
-                    "Some bundled wallpapers aren’t installed.",
-                    WARN,
-                    vec![
-                        button::standard("Reinstall bundled wallpapers")
-                            .on_press_maybe(editor.writable().then(|| edit(Edit::Reinstall)))
-                            .into(),
-                    ],
+            Tab::Bundled if not_installed > 0 => {
+                items.push(split(
+                    label(
+                        if shown == 0 {
+                            "Halcyon’s pictures aren’t installed yet.".to_string()
+                        } else {
+                            format!("{not_installed} more aren’t installed yet.")
+                        },
+                        12.,
+                        MUTED,
+                    ),
+                    container(
+                        button::standard(format!("Get more pictures ({not_installed})"))
+                            .on_press_maybe(editor.writable().then(|| edit(Edit::Reinstall))),
+                    )
+                    .id(cosmic::widget::Id::new("wallpaper-get-more"))
+                    .into(),
                 ));
             }
             Tab::Cosmic if editor.tiles().is_empty() => {

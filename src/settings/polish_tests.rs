@@ -151,7 +151,7 @@ fn polish050_native_page_patterns_and_one_builder_footer() {
             );
             if page == Page::Builder {
                 // One column: the sample, then the controls; the footer has
-                // only Use this design, and Save sits under More in the page.
+                // only Apply design, and Save sits under More in the page.
                 let controls = native.bounds(app.settings_view(), "recipe-stage");
                 let apply = native.bounds(app.settings_view(), "recipe-apply");
                 assert!(
@@ -699,7 +699,7 @@ fn polish_e_dock_shape_follow_style_and_looks_header() {
     // separate switch says it on the dock or on Appearance.
     let mut native = crate::native_test::Native::new(Size::new(1280., 800.));
     assert!(native.try_bounds(app.settings_view(), "dock-style-bars").is_none());
-    assert!(native.text_all(app.settings_view(), "Follow the look’s style").is_empty());
+    assert!(native.text_all(app.settings_view(), "Match the desktop style").is_empty());
     send_settings(&mut app, Message::Page(Page::Themes));
     assert!(native.text_all(app.settings_view(), "Style the dock and panel").is_empty());
     // Clock: following the look hides its own style choices.

@@ -185,7 +185,32 @@ impl Settings {
                     .into(),
             )],
         );
-        container(column::with_children(vec![visibility, daily, more]).spacing(20))
+        // How widgets behave on the desktop lives with the widgets; Halcyon’s
+        // Interface tab is about this window only.
+        let behave = container(super::group(
+            Some("How widgets behave"),
+            vec![
+                group_row(
+                    "Widget controls",
+                    "A side panel to show, hide and reorder widgets. Hold the pointer at the right edge for a second, or use Open now.",
+                    button::standard("Open now")
+                        .on_press_maybe(
+                            (self.service_known && self.service.running && !self.busy && !preview())
+                                .then_some(Message::ShowControls),
+                        )
+                        .into(),
+                ),
+                switch(
+                    "Slide in",
+                    "Animate the controls as they open",
+                    self.config.sidebar_slide,
+                    Message::SidebarSlide,
+                ),
+            ],
+        ))
+        .id(cosmic::widget::Id::new("widgets-behave"))
+        .into();
+        container(column::with_children(vec![visibility, daily, more, behave]).spacing(20))
             .id(cosmic::widget::Id::new("desktop-widgets"))
             .into()
     }
@@ -921,7 +946,7 @@ impl Settings {
         let mut appearance = Vec::new();
         if family.is_some() {
             appearance.push(split(
-                detail("Follow the look’s style", "Background and fonts come from the look"),
+                detail("Match the desktop style", "Background and fonts come from the look"),
                 container(toggler(follows).on_toggle(Message::GlanceFollowStyle))
                     .id(cosmic::widget::Id::new("glance-follow-style"))
                     .into(),
@@ -1223,7 +1248,7 @@ impl Settings {
         if self.clock_moment_target().is_none() {
             face_rows.push(split(
                 detail(
-                    "Follow the look’s style",
+                    "Match the desktop style",
                     "Font, weight, letter style, type and background come from the look",
                 ),
                 container(toggler(follows).on_toggle(Message::ClockFollowStyle))
@@ -1369,7 +1394,7 @@ impl Settings {
                 "system-log-out-symbolic",
                 AppSettingsPage::Operation,
                 if self.service.startup {
-                    "Starts at sign-in".into()
+                    "Starts at sign-in · Set up again".into()
                 } else {
                     "Running, sign-in and set up again".into()
                 },
@@ -1378,7 +1403,7 @@ impl Settings {
             .add(row(
                 "view-dual-symbolic",
                 AppSettingsPage::Interface,
-                "Widget controls and this window".into(),
+                "This window".into(),
                 false,
             ))
             .add(row(
@@ -1429,7 +1454,7 @@ impl Settings {
                 selected.title(),
                 match selected {
                     AppSettingsPage::Operation => "How Halcyon runs and starts.",
-                    AppSettingsPage::Interface => "Widget controls and this window.",
+                    AppSettingsPage::Interface => "How this window looks and behaves.",
                     AppSettingsPage::Privacy => {
                         "What Halcyon shares, and what stays on your computer."
                     }
@@ -1495,16 +1520,6 @@ impl Settings {
 
     fn app_interface_page(&self) -> Element<'_, Message> {
         column::with_children(vec![
-            group(Some("On the desktop"), vec![
-                group_row(
-                    "Widget controls",
-                    "A side panel to show, hide and reorder widgets. Hold the pointer at the right edge for a second, or use Open now.",
-                    button::standard("Open now")
-                        .on_press_maybe((self.service_known && self.service.running && !self.busy && !preview())
-                            .then_some(Message::ShowControls)).into(),
-                ),
-                switch("Slide in", "Animate the controls as they open", self.config.sidebar_slide, Message::SidebarSlide),
-            ]),
             group(Some("This window"), vec![
                 self.search_target("settings-motion", group_row(
                     "Animate settings",

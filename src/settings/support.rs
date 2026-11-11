@@ -394,7 +394,7 @@ impl Settings {
                 }
             };
         components.push(Component {
-            name: "Schedules",
+            name: Page::DesktopAutomation.title(),
             state,
             health,
             action: Automation,

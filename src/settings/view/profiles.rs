@@ -1220,7 +1220,7 @@ impl Settings {
                     )))
                     .into(),
                 button::text(if self.page == Page::Themes {
-                    "Save theme…"
+                    "Save style…"
                 } else {
                     "Save look…"
                 })
@@ -2179,7 +2179,7 @@ impl Settings {
         let apply = button::suggested(if self.page == Page::Themes {
             "Apply appearance"
         } else {
-            "Use this look"
+            "Apply look"
         })
         .id("profiles-confirm".into())
         .on_press_maybe((editor.can_apply() && !self.native_busy).then_some(edit(Edit::Apply)))

@@ -72,7 +72,7 @@ impl Settings {
                     let content = container(
                         row::with_children(vec![
                             text::title3((i + 1).to_string()).into(),
-                            text::caption(o.name().unwrap_or("Display").to_string()).into(),
+                            text::caption(o.display_name()).into(),
                         ])
                         .spacing(6)
                         .align_y(cosmic::iced::Alignment::Center),

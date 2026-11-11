@@ -3,7 +3,7 @@
 //! reopened and refreshed through the same conflict checks as navigation.
 //! Each page owns one bounded versioned record. Read-only previews never
 //! read or write live records; fixtures use only their own state directory.
-use super::Settings;
+use super::{Page, Settings};
 use crate::desktop::DesktopStore;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::collections::{BTreeMap, BTreeSet};
@@ -58,19 +58,20 @@ impl Kind {
     }
     pub(super) fn title(self) -> &'static str {
         match self {
-            Self::Dock => "Dock and panel",
-            Self::Appearance => "Desktop appearance",
-            Self::Windows => "Windows",
-            Self::Workspaces => "Workspaces",
-            Self::Wallpaper => "Wallpaper & colors",
-            Self::DesktopIcons => "Desktop icons",
-            Self::WindowRules => "Floating apps",
-            Self::Shortcuts => "Shortcuts",
-            Self::Layout => "Widget layout",
-            Self::Canvas => "Desktop canvas",
-            Self::Automation => "Schedules",
-            Self::Preset => "Presets",
-            Self::Previews => "Theme and look previews",
+            // Named the way the sidebar and page headings are.
+            Self::Dock => Page::DesktopDock.title(),
+            Self::Appearance => Page::DesktopAppearance.title(),
+            Self::Windows => Page::DesktopWindows.title(),
+            Self::Workspaces => Page::DesktopWorkspaces.title(),
+            Self::Wallpaper => Page::DesktopWallpaper.title(),
+            Self::DesktopIcons => Page::DesktopIcons.title(),
+            Self::WindowRules => Page::DesktopWindowRules.title(),
+            Self::Shortcuts => "Keyboard shortcuts",
+            Self::Layout => Page::WidgetLayout.title(),
+            Self::Canvas => "Widget positions",
+            Self::Automation => Page::DesktopAutomation.title(),
+            Self::Preset => Page::DesktopProfiles.title(),
+            Self::Previews => "Appearance and look previews",
             Self::Recipe => "Widget design preview",
         }
     }
@@ -345,7 +346,7 @@ impl Settings {
                 Ok(()) => session.recovered += 1,
                 Err(error) => {
                     session.unreadable.insert(Kind::Layout);
-                    errors.push(format!("Widget layout draft: {error}"));
+                    errors.push(format!("{}: {error}", Kind::Layout.title()));
                 }
             },
             Ok(None) => {}
@@ -356,7 +357,7 @@ impl Settings {
                 Ok(()) => session.recovered += 1,
                 Err(error) => {
                     session.unreadable.insert(Kind::Canvas);
-                    errors.push(format!("Canvas draft: {error}"));
+                    errors.push(format!("{}: {error}", Kind::Canvas.title()));
                 }
             },
             Ok(None) => {}

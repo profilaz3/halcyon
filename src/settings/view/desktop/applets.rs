@@ -107,7 +107,7 @@ impl Settings {
         .then(|| {
             split(
                 label("Beta · System, music and meetings", 13., MUTED),
-                button::text("Add Activity island")
+                button::text("Add Activity pill")
                     .id("panel-add-activity".into())
                     .on_press_maybe((!self.native_busy && !editor.drag.active()).then_some(edit(
                         Edit::Add(Region::Center, crate::activity_island::APPLET_ID.into()),
@@ -334,7 +334,7 @@ impl Settings {
         ));
         blocks.push(
             row::with_children(vec![
-                button::suggested("Use starter layout")
+                button::suggested("Apply starter layout")
                     .on_press_maybe(
                         (idle && starter != Regions::default()).then_some(edit(Edit::UseStarter)),
                     )

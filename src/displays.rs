@@ -8,6 +8,37 @@ pub fn valid_name(name: &str) -> bool {
     !name.trim().is_empty() && name.len() <= 128 && !name.chars().any(char::is_control)
 }
 
+/// A laptop's own panel, by its connector.
+pub fn built_in(connector: &str) -> bool {
+    ["eDP", "LVDS", "DSI"]
+        .iter()
+        .any(|prefix| connector.starts_with(prefix))
+}
+
+/// The one name Settings gives a display: “Built-in display” for a
+/// laptop's own panel, else the model it reports, else its connector.
+pub fn display_name(connector: &str, model: Option<&str>) -> String {
+    let model = model
+        .map(str::trim)
+        .filter(|m| !m.is_empty() && *m != connector);
+    match model {
+        _ if built_in(connector) => "Built-in display".into(),
+        Some(model) => model.into(),
+        None => connector.into(),
+    }
+}
+
+/// The name with the connector after it, “Dell U2723QE · DP-2”, or the
+/// connector alone when that is all there is.
+pub fn display_title(connector: &str, model: Option<&str>) -> String {
+    let name = display_name(connector, model);
+    if name == connector {
+        name
+    } else {
+        format!("{name} · {connector}")
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Output {
     pub handle: WlOutput,
@@ -17,13 +48,20 @@ impl Output {
     pub fn name(&self) -> Option<&str> {
         self.info.name.as_deref().filter(|name| valid_name(name))
     }
+    /// “Dell U2723QE · DP-2”: the display's name, then its connector.
     pub fn title(&self) -> String {
         let model = self.info.model.trim();
         match (self.name(), model.is_empty()) {
-            (Some(name), false) if model != name => format!("{model} · {name}"),
-            (Some(name), _) => name.into(),
+            (Some(name), _) => display_title(name, Some(model)),
             (None, false) => format!("{model} (unnamed display)"),
             (None, true) => "Unnamed display".into(),
+        }
+    }
+    /// The display's name alone, where its connector would crowd the text.
+    pub fn display_name(&self) -> String {
+        match self.name() {
+            Some(name) => display_name(name, Some(&self.info.model)),
+            None => self.title(),
         }
     }
     /// OutputEvent's library equality deliberately ignores these properties.
@@ -98,6 +136,16 @@ impl Registry {
     }
     pub fn outputs(&self) -> &[Output] {
         &self.outputs
+    }
+    /// What Settings calls the display on `connector`, with its model when
+    /// it is connected: “On {display}”.
+    pub fn display_name(&self, connector: &str) -> String {
+        let model = self
+            .outputs
+            .iter()
+            .find(|o| o.name() == Some(connector))
+            .map(|o| o.info.model.as_str());
+        display_name(connector, model)
     }
     pub fn accept_identities(
         &mut self,
@@ -231,6 +279,18 @@ pub mod test_support;
 mod tests {
     use super::*;
     use test_support::{Wire, info};
+    #[test]
+    fn every_screen_names_a_display_the_same_way() {
+        assert_eq!(display_name("eDP-1", Some("0x0A2B")), "Built-in display");
+        assert_eq!(display_title("eDP-1", None), "Built-in display · eDP-1");
+        assert_eq!(display_name("DP-2", Some(" Dell U2723QE ")), "Dell U2723QE");
+        assert_eq!(
+            display_title("DP-2", Some("Dell U2723QE")),
+            "Dell U2723QE · DP-2"
+        );
+        assert_eq!(display_title("DP-2", Some("")), "DP-2");
+        assert_eq!(display_title("DP-2", Some("DP-2")), "DP-2");
+    }
     #[test]
     fn physical_aliases_end_with_the_unique_live_output() {
         let wire = Wire::new();

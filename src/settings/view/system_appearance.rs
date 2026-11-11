@@ -216,7 +216,18 @@ impl Settings {
         if self.color_well.is_some() {
             items.push(self.search_target("appearance-colors", self.appearance_colors(draft)));
         }
-        items.push(group(None, vec![self.cosmic_link("appearance")]));
+        items.push(group(
+            None,
+            vec![
+                self.cosmic_row(
+                    "Text size",
+                    "Set by display scaling in COSMIC Settings",
+                    "displays",
+                    "text-size-cosmic-settings".into(),
+                ),
+                self.cosmic_link("appearance"),
+            ],
+        ));
         column::with_children(items).spacing(16).into()
     }
 
@@ -393,7 +404,7 @@ impl Settings {
         );
         if open {
             items.push(label(
-                "Surface overrides for the theme preview above. Choose the accent in Theme and colors.",
+                "Surface overrides for the style preview above. Choose the accent in Accent color.",
                 11.,
                 MUTED,
             ));

@@ -322,8 +322,11 @@ impl Settings {
         // one shows, say so; choosing them lives on Looks › Time of day.
         if let Some(phase) = self.config.moments.active {
             rows.push(self.link_row_state(
-                "Day and night widget style",
-                format!("Showing the {} style · Time of day", phase.title().to_lowercase()),
+                "Style by time of day",
+                format!(
+                    "Showing the {} style · Opens Looks › Time of day",
+                    phase.title().to_lowercase()
+                ),
                 Message::Page(Page::Moments),
                 "appearance-moments".into(),
             ));
@@ -430,7 +433,7 @@ impl Settings {
             ),
             _ => (
                 "Your desktop".into(),
-                "Choose a theme to preview it here".into(),
+                "Choose a style to preview it here".into(),
             ),
         };
         let mut actions: Vec<Element<'_, Message>> = Vec::new();

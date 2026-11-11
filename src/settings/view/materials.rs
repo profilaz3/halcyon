@@ -185,6 +185,34 @@ impl Settings {
             advanced.push(self.legacy_widget_style());
         }
         rows.push(self.page_settings_advanced(Page::Appearance, advanced));
+        // The dock’s and the windows’ own transparency live on their pages;
+        // these rows say so and open each control.
+        let elsewhere = |title: &'static str, place: &'static str, id: &'static str, hit| {
+            group_row_state(
+                title,
+                place,
+                container(button::text("Open").on_press(Message::SearchResult(hit)))
+                    .id(cosmic::widget::Id::new(id))
+                    .into(),
+            )
+        };
+        rows.push(group(
+            Some("Other surfaces"),
+            vec![
+                elsewhere(
+                    "Dock and panel",
+                    "Dock and panel › See-through",
+                    "material-open-dock",
+                    crate::settings::navigation::DOCK_SEE_THROUGH,
+                ),
+                elsewhere(
+                    "Windows",
+                    "Windows › Frosted surfaces and blur",
+                    "material-open-windows",
+                    crate::settings::navigation::WINDOW_BLUR,
+                ),
+            ],
+        ));
         let controls = column::with_children(rows).spacing(12).into();
         column::with_children(vec![
             heading(

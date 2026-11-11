@@ -37,7 +37,7 @@ impl ProfileId {
         if valid {
             Ok(Self(value.to_string()))
         } else {
-            Err(ProfileError::Invalid("Invalid profile ID".into()))
+            Err(ProfileError::Invalid("This look’s ID isn’t valid".into()))
         }
     }
     pub fn as_str(&self) -> &str {
@@ -146,7 +146,7 @@ impl<'a> ProfileLibrary<'a> {
             }
         }
         Err(ProfileError::Storage(
-            "Could not choose a profile ID".into(),
+            "Couldn’t choose an ID for this look".into(),
         ))
     }
 
@@ -181,7 +181,7 @@ impl<'a> ProfileLibrary<'a> {
     pub fn rename(&self, id: &ProfileId, name: &str) -> Result<Profile, ProfileError> {
         if !valid_name(name) {
             return Err(ProfileError::Invalid(
-                "Profile names have 1–80 characters and no line breaks.".into(),
+                "Look names can be 1 to 80 characters, on one line.".into(),
             ));
         }
         let mut profile = self.load(id)?;
@@ -195,7 +195,7 @@ impl<'a> ProfileLibrary<'a> {
         let mut profile = self.load(id)?;
         if !valid_name(name) {
             return Err(ProfileError::Invalid(
-                "Profile names have 1–80 characters and no line breaks.".into(),
+                "Look names can be 1 to 80 characters, on one line.".into(),
             ));
         }
         profile.name = name.to_string();
@@ -262,12 +262,12 @@ fn regular_file(path: &Path) -> Result<(), ProfileError> {
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.is_file() => Ok(()),
         Ok(_) => Err(ProfileError::Storage(format!(
-            "{} is not a profile file",
+            "{} isn’t a look file",
             path.display()
         ))),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Err(ProfileError::NotFound(
-            "This profile no longer exists.".into(),
-        )),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            Err(ProfileError::NotFound("This look no longer exists.".into()))
+        }
         Err(error) => Err(storage(path, error)),
     }
 }
@@ -276,7 +276,7 @@ fn read_profile(path: &Path) -> Result<Profile, ProfileError> {
     regular_file(path)?;
     let meta = fs::symlink_metadata(path).map_err(|error| storage(path, error))?;
     if meta.len() > MAX_PROFILE_BYTES as u64 {
-        return Err(ProfileError::Invalid("This profile is too large.".into()));
+        return Err(ProfileError::Invalid("This look is too large.".into()));
     }
     let bytes = fs::read(path).map_err(|error| storage(path, error))?;
     import_local(&bytes)

@@ -171,7 +171,7 @@ impl DesktopRecovery {
                     crate::desktop::recovery::BaselineKind::CurrentDesktop => "Desktop snapshot",
                 };
                 format!(
-                    "{kind} · {} · {} scopes",
+                    "{kind} · {} · {} areas",
                     info.captured_at
                         .split('T')
                         .next()

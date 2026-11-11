@@ -900,7 +900,7 @@ impl DesktopEditor {
         if patch.is_empty() && widgets.is_empty() {
             return;
         }
-        match store.apply_owned(&patch, Some(&widgets), Owner::DockPanel, "Dock & Panel") {
+        match store.apply_owned(&patch, Some(&widgets), Owner::DockPanel, "Dock and panel") {
             Ok(change) => {
                 self.undo = Some(change);
                 // Immediate saves must retain the selected occurrence and its

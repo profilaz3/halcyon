@@ -31,7 +31,7 @@ The widget builder customizes Clock, Weather, Calendar, System monitor, Music an
 
 ## 3. Dock and panel customization
 
-Applet arrangement, spacing, size, opacity, corners and auto-hide. **Islands** separates applets into floating groups; **Penumbra** fades bar backgrounds into the wallpaper. Both are optional and included in the package. The **Activity island** (beta) shows music, meetings, notifications and camera or microphone use in the middle of an Islands panel.
+Applet arrangement, spacing, size, opacity, corners and auto-hide. **Islands** separates applets into floating groups; **Penumbra** fades bar backgrounds into the wallpaper. Both are optional and included in the package. The **Activity pill** (beta) shows music, meetings, notifications and camera or microphone use in the middle of an Islands panel.
 
 [![Illustrated close-up of Islands panel groups and dock beside Penumbra bar fades](docs/presentation/055-readme/panel-elements-dark.png)](docs/presentation/055-readme/panel-elements-dark.png)
 

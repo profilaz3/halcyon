@@ -2084,7 +2084,7 @@ impl ProfilesEditor {
                 self.select(Selection::Current);
                 self.notice = Some(Notice::Done(match name {
                     Some(name) => format!("Deleted “{name}”"),
-                    None => "Deleted the unreadable profile".into(),
+                    None => "Removed a saved look that couldn’t be read".into(),
                 }));
             }
             Err(error) => self.notice = Some(Notice::Error(error.to_string())),
@@ -2158,7 +2158,7 @@ impl ProfilesEditor {
             profiles::import(&bytes).and_then(|profile| {
                 if themes_only && !profile.appearance_only {
                     return Err(profiles::ProfileError::Invalid(
-                        "This file is a layout preset. Import it in Presets & schedules.".into(),
+                        "This file is a whole look. Import it in Looks › Import a look….".into(),
                     ));
                 }
                 ProfileLibrary::new(store)
@@ -2219,7 +2219,7 @@ impl ProfilesEditor {
         Some(if plan.domains.iter().any(|part| part.blocked.is_empty()) {
             "Leave out the blocked part to apply the rest"
         } else {
-            "Can’t apply this profile yet"
+            "Can’t apply this look yet"
         })
     }
 
@@ -2529,10 +2529,10 @@ pub fn read_import(path: &Path) -> Result<Vec<u8>, String> {
     let unreadable = |error: io::Error| format!("Could not read the file: {error}");
     let meta = fs::metadata(path).map_err(unreadable)?;
     if !meta.is_file() {
-        return Err("Choose a profile file.".into());
+        return Err("Choose a look file.".into());
     }
     if meta.len() > profiles::packages::MAX_BYTES as u64 {
-        return Err("This profile is too large.".into());
+        return Err("This look is too large.".into());
     }
     let file = fs::OpenOptions::new()
         .read(true)
@@ -2549,7 +2549,7 @@ pub fn read_import(path: &Path) -> Result<Vec<u8>, String> {
     if bytes.len() > profiles::packages::MAX_BYTES
         || (bytes.len() > MAX_PROFILE_BYTES && !profiles::packages::recognizes(&bytes))
     {
-        return Err("This profile is too large.".into());
+        return Err("This look is too large.".into());
     }
     Ok(bytes)
 }

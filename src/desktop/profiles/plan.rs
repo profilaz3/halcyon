@@ -720,7 +720,7 @@ pub fn plan(
     if selected.is_empty() {
         result
             .blocking
-            .push("Choose at least one part of the profile.".into());
+            .push("Choose at least one part of the look.".into());
     }
     if !store.writable() {
         result
@@ -739,7 +739,7 @@ pub fn plan(
         let mut part = DomainPlan::new(domain);
         if !profile.has(domain) {
             part.blocked
-                .push(format!("This profile has no {} settings.", domain.title()));
+                .push(format!("This look has no {} settings.", domain.title()));
             result.domains.push(part);
             continue;
         }
@@ -937,7 +937,7 @@ pub fn plan(
                                 Domain::Appearance
                             }
                     }) {
-                        part.changes.push("Use this profile’s fixed colors".into());
+                        part.changes.push("Use this look’s fixed colors".into());
                     }
                 }
             }
@@ -1308,7 +1308,7 @@ fn set_typed(draft: &mut PanelDraft, name: &str, value: &RawValue) -> Result<(),
         "opacity" => typed!(f32),
         "border_radius" | "spacing" | "padding" => typed!(u32),
         "background" => typed!(Background),
-        _ => Err("is not supported in profiles.".into()),
+        _ => Err("is not supported in looks.".into()),
     }
 }
 
@@ -1485,10 +1485,10 @@ fn plan_windows(
                     Setting::Known(false) => "Turn automatic tiling off",
                     _ => "Turn automatic tiling on",
                 },
-                _ => "Change the tiling scope",
+                _ => "Change Workspaces",
             };
             part.blocked.push(format!(
-                "Automatic tiling and its scope would both change. {first} on the Windows page first, then apply this profile."
+                "Automatic tiling and the Workspaces choice would both change. {first} on the Windows page first, then apply this look."
             ));
         } else {
             part.blocked.push(format!(

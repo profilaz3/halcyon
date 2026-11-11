@@ -2,6 +2,7 @@
 #[cfg(test)]
 pub(super) use super::preference_undo::PreferenceUndo;
 use super::{AppSettingsPage, Message, Page, Settings};
+use crate::desktop::panels::PanelKind;
 use cosmic::app::Task;
 
 #[cfg(test)]
@@ -61,6 +62,9 @@ pub struct SearchHit {
     /// The folded section that holds an advanced control, as the screen
     /// names it. Left out when its name depends on the page’s state.
     section: Option<&'static str>,
+    /// The label is the name of the page, tab or bar the result opens. Such
+    /// a result comes before the rows on that page.
+    names_page: bool,
 }
 
 impl SearchHit {
@@ -80,6 +84,24 @@ impl SearchHit {
     pub fn anchor(self) -> &'static str {
         self.anchor
     }
+    #[cfg(test)]
+    pub(super) fn names_page_result(&self) -> bool {
+        self.names_page
+    }
+    /// This result opens the screen `screen` shows.
+    #[cfg(test)]
+    pub(super) fn opens(&self, screen: &Self) -> bool {
+        self.page.canonical() == screen.page.canonical()
+            && (self.page != Page::General || self.destination == screen.destination)
+            && (self.bar.is_none() || self.bar == screen.bar)
+    }
+    /// Both open the same row on the same screen.
+    fn same_row(&self, other: &Self) -> bool {
+        self.page.canonical() == other.page.canonical()
+            && self.label == other.label
+            && self.bar == other.bar
+            && (self.page != Page::General || self.destination == other.destination)
+    }
     const fn at(mut self, anchor: &'static str) -> Self {
         self.anchor = anchor;
         self
@@ -98,6 +120,10 @@ impl SearchHit {
     }
     const fn section(mut self, section: &'static str) -> Self {
         self.section = Some(section);
+        self
+    }
+    const fn names_page(mut self) -> Self {
+        self.names_page = true;
         self
     }
     /// Where the result is, as the sidebar, tab and section name it. A
@@ -302,17 +328,19 @@ pub(super) const LOOKS: SearchHit = hit(
     "Looks",
     "setups profiles presets starter looks saved calm evening focus workbench paper rose clean desktop presentation welcome rain snow fog weather mix combine import share file save current",
     false,
-);
+)
+.names_page();
 pub(super) const STARTUP: SearchHit = hit(
     Page::General,
     "Startup",
     "general halcyon app settings startup login sign in background service running setup again",
     false,
-);
+)
+.names_page();
 pub(super) const ACTIVITY_ISLAND: SearchHit = hit(
     Page::DesktopDock,
-    "Activity island",
-    "activity island notifications do not disturb dnd camera microphone privacy bluetooth meetings music media",
+    "Activity pill",
+    "activity island capsule notifications do not disturb dnd camera microphone privacy bluetooth meetings music media",
     false,
 )
 .at("panel-items")
@@ -323,8 +351,28 @@ pub(super) const SEE_THROUGH: SearchHit = hit(
     "see-through widgets transparent transparency see through opacity clear glass frosted",
     false,
 )
+.names_page()
 .at("material-scope")
 .open(SearchOpen::Transparency);
+/// The dock’s own see-through slider, which Glass and transparency links to.
+pub(super) const DOCK_SEE_THROUGH: SearchHit = hit(
+    Page::DesktopDock,
+    "See-through",
+    "dock transparent transparency opacity glass see through",
+    false,
+)
+.at("native-bar-opacity")
+.bar(crate::desktop::panels::PanelKind::Dock);
+/// Blur behind frosted windows, which Glass and transparency links to.
+pub(super) const WINDOW_BLUR: SearchHit = hit(
+    Page::DesktopWindows,
+    "Frosted surfaces and blur",
+    "desktop effects blur frosted glass shadows windows transparent transparency",
+    true,
+)
+.at("appearance-effects")
+.open(SearchOpen::Effects)
+.section(WINDOW_DETAILS);
 
 pub(super) const PRIVACY: SearchHit = hit(
     Page::General,
@@ -341,13 +389,15 @@ const SEARCH: &[SearchHit] = &[
         "help diagnostics support problem report status troubleshoot how things are running",
         false,
     )
+    .names_page()
     .destination(AppSettingsPage::Help),
     hit(
         Page::Changes,
         "Changes",
-        "why did my desktop change history automatic schedule undo recent changes log",
+        "why did my desktop change history automatic scheduled undo recent changes log",
         false,
-    ),
+    )
+    .names_page(),
     hit(
         Page::Themes,
         "Mode",
@@ -574,20 +624,50 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::Widgets,
         "Widgets",
-        "widgets show hide turn on off cards my widgets",
+        "widgets show hide turn on off add cards my widgets display monitor screen second external output",
         false,
     )
+    .names_page()
     .at("desktop-widgets"),
     hit(
         Page::Notes,
         "Notes",
         "notes notebook text checklists checklist",
         false,
-    ),
+    )
+    .names_page(),
     hit(
         Page::Focus,
         "Focus timer",
         "focus timer pomodoro breaks notifications",
+        false,
+    )
+    .names_page(),
+    DOCK_SEE_THROUGH,
+    hit(
+        Page::DesktopDock,
+        "See-through",
+        "panel transparent transparency opacity glass see through",
+        false,
+    )
+    .at("native-bar-opacity")
+    .bar(PanelKind::Panel),
+    hit(
+        Page::DesktopAppearance,
+        "Text size",
+        "font text size bigger smaller larger zoom scaling scale display read",
+        false,
+    ),
+    hit(
+        Page::General,
+        "Set up again",
+        "setup wizard onboarding first run start over welcome tour again",
+        false,
+    ),
+    hit(
+        Page::DesktopAutomation,
+        "Where you are",
+        "city location timezone sunrise sunset sun times",
         false,
     ),
     hit(
@@ -596,6 +676,7 @@ const SEARCH: &[SearchHit] = &[
         "desktop font fonts typeface typography interface fixed width icons icon theme",
         false,
     )
+    .names_page()
     .at("appearance-fonts"),
     hit(
         Page::DesktopWindows,
@@ -606,15 +687,7 @@ const SEARCH: &[SearchHit] = &[
     .at("window-corners")
     .open(SearchOpen::Effects)
     .section(WINDOW_DETAILS),
-    hit(
-        Page::DesktopWindows,
-        "Frosted surfaces and blur",
-        "desktop effects blur frosted glass shadows",
-        true,
-    )
-    .at("appearance-effects")
-    .open(SearchOpen::Effects)
-    .section(WINDOW_DETAILS),
+    WINDOW_BLUR,
     hit(
         Page::Projects,
         "Update every",
@@ -688,19 +761,22 @@ const SEARCH: &[SearchHit] = &[
         "Wallpaper",
         "wallpaper background pictures slideshow gradient widget color colors palette accent sync automatic follow desktop pop os",
         false,
-    ),
+    )
+    .names_page(),
     hit(
         Page::DesktopIcons,
         "Icons on the desktop",
         "desktop files icons trash home mounted drives size spacing",
         false,
-    ),
+    )
+    .names_page(),
     hit(
         Page::DesktopDock,
         "Dock",
-        "dock applets position size autohide penumbra gradient shape compact full width floating",
+        "dock applets position size autohide blend gradient shape compact full width floating",
         false,
     )
+    .names_page()
     .bar(crate::desktop::panels::PanelKind::Dock),
     hit(
         Page::DesktopDock,
@@ -708,6 +784,7 @@ const SEARCH: &[SearchHit] = &[
         "top bar panel islands applets position size autohide shape compact full width",
         false,
     )
+    .names_page()
     .bar(crate::desktop::panels::PanelKind::Panel),
     hit(
         Page::DesktopDock,
@@ -741,13 +818,15 @@ const SEARCH: &[SearchHit] = &[
         "Apps that don’t tile",
         "floating apps exceptions window rules tiling",
         false,
-    ),
+    )
+    .names_page(),
     hit(
         Page::DesktopShortcuts,
         "Keyboard shortcuts",
         "shortcuts keyboard keys commands bindings hotkeys",
         false,
-    ),
+    )
+    .names_page(),
     hit(
         Page::DesktopMotion,
         "Reduce motion",
@@ -760,21 +839,23 @@ const SEARCH: &[SearchHit] = &[
         "Widget builder",
         "make your own widget recipe custom clock weather calendar agenda cpu memory disk network gpu uptime system readings native parts compose",
         false,
-    ),
+    )
+    .names_page(),
     hit(
         Page::DesktopAutomation,
         "Time of day",
         "change with time of day day and night style widget style moments clock night style adaptive daily cycle day evening night moments automation schedule automatic time displays monitors rules preset sun solar dawn sunrise noon golden hour sunset city timezone",
         false,
-    ),
+    )
+    .names_page(),
     STARTUP,
     hit(
-        Page::General,
+        Page::Widgets,
         "Widget controls",
         "widget controls sidebar screen edge menu side panel slide delay animation",
         false,
     )
-    .destination(AppSettingsPage::Interface),
+    .at("widgets-behave"),
     PRIVACY,
     hit(
         Page::General,
@@ -782,6 +863,7 @@ const SEARCH: &[SearchHit] = &[
         "updates installation version islands addon add-on diagnostics check",
         false,
     )
+    .names_page()
     .destination(AppSettingsPage::Updates),
     hit(
         Page::General,
@@ -789,6 +871,7 @@ const SEARCH: &[SearchHit] = &[
         "release notes new features changes changelog version whats",
         false,
     )
+    .names_page()
     .destination(AppSettingsPage::WhatsNew),
     hit(
         Page::Changes,
@@ -799,18 +882,281 @@ const SEARCH: &[SearchHit] = &[
     .at("changes-earlier"),
 ];
 
+/// Row titles and section headings the pages draw that no result above
+/// names. `search_finds_every_title_the_pages_draw` fails when a page draws
+/// a title that neither this table nor the results above hold.
+const ROWS: &[SearchHit] = &[
+    hit(Page::Appearance, "Clear glass", "", false),
+    hit(Page::Appearance, "Frosted", "", false),
+    hit(Page::Appearance, "Liquid", "", false),
+    hit(Page::Appearance, "Other surfaces", "", false),
+    hit(Page::Appearance, "Smoked glass", "", false),
+    hit(Page::Appearance, "Widget corners, opacity and outline", "", false),
+    hit(Page::Builder, "Add a part", "", false),
+    hit(Page::Builder, "Basics", "", false),
+    hit(Page::Builder, "Clock face", "", false),
+    hit(Page::Builder, "Date", "", false),
+    hit(Page::Builder, "Go back to the built-in clock", "", false),
+    hit(Page::Builder, "Make a copy", "", false),
+    hit(Page::Builder, "More", "", false),
+    hit(Page::Builder, "Name", "", false),
+    hit(Page::Builder, "Parts, top to bottom", "", false),
+    hit(Page::Builder, "Save without using it", "", false),
+    hit(Page::Builder, "Size", "", false),
+    hit(Page::Builder, "Type", "", false),
+    hit(Page::Calendar, "Add a calendar", "", false),
+    hit(Page::Calendar, "Hide event details", "", false),
+    hit(Page::Calendar, "Highlight meetings", "", false),
+    hit(Page::Calendar, "Sync and sign-in setup", "", false),
+    hit(Page::Calendar, "Tomorrow", "", false),
+    hit(Page::Clock, "24-hour time", "", false),
+    hit(Page::Clock, "Alignment", "", false),
+    hit(Page::Clock, "Let the scene cover the clock", "", false),
+    hit(Page::Clock, "Match the desktop style", "", false),
+    hit(Page::Clock, "Show the date", "", false),
+    hit(Page::Clock, "Text", "", false),
+    hit(Page::Clock, "Text size", "", false),
+    hit(Page::DesktopAppearance, "Fixed-width font", "", false),
+    hit(Page::DesktopAppearance, "Icon theme", "", false),
+    hit(Page::DesktopAppearance, "Interface font", "", false),
+    hit(Page::DesktopAppearance, "Match style", "", false),
+    hit(Page::DesktopAppearance, "Widget font", "", false),
+    hit(Page::DesktopAutomation, "Set times and screens", "", false),
+    hit(Page::Moments, "Showing now", "", false),
+    hit(Page::DesktopAutomation, "What changes", "", false),
+    hit(Page::DesktopAutomation, "Where you are", "", false),
+    hit(Page::DesktopDock, "Between items", "", true)
+        .at("dock-advanced")
+        .bar(PanelKind::Dock)
+        .section(BAR_ADVANCED),
+    hit(Page::DesktopDock, "Blend into wallpaper", "", false).bar(PanelKind::Dock),
+    hit(Page::DesktopDock, BAR_ADVANCED, "", true)
+        .at("dock-advanced")
+        .bar(PanelKind::Dock)
+        .section(BAR_ADVANCED),
+    hit(Page::DesktopDock, "Floating", "", false).bar(PanelKind::Dock),
+    hit(Page::DesktopDock, "Hide after", "", true)
+        .at("dock-advanced")
+        .bar(PanelKind::Dock)
+        .section(BAR_ADVANCED),
+    hit(Page::DesktopDock, "Inner padding", "", true)
+        .at("dock-advanced")
+        .bar(PanelKind::Dock)
+        .section(BAR_ADVANCED),
+    hit(Page::DesktopDock, "Keep style when maximized", "", true)
+        .at("dock-advanced")
+        .bar(PanelKind::Dock)
+        .section(BAR_ADVANCED),
+    hit(Page::DesktopDock, "Position", "", false).bar(PanelKind::Dock),
+    hit(Page::DesktopDock, "Reveal edge", "", true)
+        .at("dock-advanced")
+        .bar(PanelKind::Dock)
+        .section(BAR_ADVANCED),
+    hit(Page::DesktopDock, "Screen edge", "", false).bar(PanelKind::Dock),
+    hit(Page::DesktopDock, "See-through", "", false).bar(PanelKind::Dock),
+    hit(Page::DesktopDock, "Shape", "", false).bar(PanelKind::Dock),
+    hit(Page::DesktopDock, "Show after", "", true)
+        .at("dock-advanced")
+        .bar(PanelKind::Dock)
+        .section(BAR_ADVANCED),
+    hit(Page::DesktopDock, "Size", "", false).bar(PanelKind::Dock),
+    hit(Page::DesktopDock, "Slide duration", "", true)
+        .at("dock-advanced")
+        .bar(PanelKind::Dock)
+        .section(BAR_ADVANCED),
+    hit(Page::DesktopDock, "Style", "", false).bar(PanelKind::Dock),
+    hit(Page::DesktopDock, "Between items", "", true)
+        .at("dock-advanced")
+        .bar(PanelKind::Panel)
+        .section(BAR_ADVANCED),
+    hit(Page::DesktopDock, "Blend into wallpaper", "", false).bar(PanelKind::Panel),
+    hit(Page::DesktopDock, BAR_ADVANCED, "", true)
+        .at("dock-advanced")
+        .bar(PanelKind::Panel)
+        .section(BAR_ADVANCED),
+    hit(Page::DesktopDock, "Floating", "", false).bar(PanelKind::Panel),
+    hit(Page::DesktopDock, "Hide after", "", true)
+        .at("dock-advanced")
+        .bar(PanelKind::Panel)
+        .section(BAR_ADVANCED),
+    hit(Page::DesktopDock, "Inner padding", "", true)
+        .at("dock-advanced")
+        .bar(PanelKind::Panel)
+        .section(BAR_ADVANCED),
+    hit(Page::DesktopDock, "Keep style when maximized", "", true)
+        .at("dock-advanced")
+        .bar(PanelKind::Panel)
+        .section(BAR_ADVANCED),
+    hit(Page::DesktopDock, "Position", "", false).bar(PanelKind::Panel),
+    hit(Page::DesktopDock, "Reveal edge", "", true)
+        .at("dock-advanced")
+        .bar(PanelKind::Panel)
+        .section(BAR_ADVANCED),
+    hit(Page::DesktopDock, "Screen edge", "", false).bar(PanelKind::Panel),
+    hit(Page::DesktopDock, "See-through", "", false).bar(PanelKind::Panel),
+    hit(Page::DesktopDock, "Shape", "", false).bar(PanelKind::Panel),
+    hit(Page::DesktopDock, "Show after", "", true)
+        .at("dock-advanced")
+        .bar(PanelKind::Panel)
+        .section(BAR_ADVANCED),
+    hit(Page::DesktopDock, "Size", "", false).bar(PanelKind::Panel),
+    hit(Page::DesktopDock, "Slide duration", "", true)
+        .at("dock-advanced")
+        .bar(PanelKind::Panel)
+        .section(BAR_ADVANCED),
+    hit(Page::DesktopDock, "Style", "", false).bar(PanelKind::Panel),
+    hit(Page::DesktopIcons, "Show on the desktop", "", false),
+    hit(Page::DesktopIcons, "Size", "", false),
+    hit(Page::DesktopMotion, "Dock and panel slide speed", "", false),
+    hit(Page::DesktopMotion, "Easier-to-read widgets", "", false),
+    hit(Page::DesktopMotion, "Keyboard", "", false),
+    hit(Page::DesktopMotion, "Motion", "", false),
+    hit(Page::DesktopMotion, "Reading", "", false),
+    hit(Page::DesktopWallpaper, "Match the weather", "", false),
+    hit(Page::DesktopWallpaper, "Picture size", "", false),
+    hit(Page::DesktopWallpaper, "Same on all displays", "", false),
+    hit(Page::DesktopWindows, "Active window outline", "", false),
+    hit(Page::DesktopWindows, "Arranging windows", "", false),
+    hit(Page::DesktopWindows, "Choosing a window", "", false),
+    hit(Page::DesktopWindows, "Corners, outline color and shadows", "", false),
+    hit(Page::DesktopWindows, "Direction", "", false),
+    hit(Page::DesktopWindows, "Effects", "", false),
+    hit(Page::DesktopWindows, "Maximize button", "", false),
+    hit(Page::DesktopWindows, "Minimize button", "", false),
+    hit(Page::DesktopWindows, "Move the pointer to the window you switch to", "", false),
+    hit(Page::DesktopWindows, "Outline the active window", "", false),
+    hit(Page::DesktopWindows, "Outline width", "", false),
+    hit(Page::DesktopWindows, "Overview", "", false),
+    hit(Page::DesktopWindows, "Round floating window corners", "", false),
+    hit(Page::DesktopWindows, "Round tiled window corners", "", false),
+    hit(Page::DesktopWindows, "Select a window by pointing at it", "", false),
+    hit(Page::DesktopWindows, "Shadows on tiled windows", "", false),
+    hit(Page::DesktopWindows, "Snap to screen edges", "", false),
+    hit(Page::DesktopWindows, "Switch workspaces", "", false),
+    hit(Page::DesktopWindows, "Title bar and outline", "", false),
+    hit(Page::DesktopWindows, "When you start typing", "", false),
+    hit(Page::DesktopWindows, "Wrap around", "", false),
+    hit(Page::Devbox, "Background services", "", false),
+    hit(Page::Devbox, "How often it updates", "", false),
+    hit(Page::Devbox, "Time since start", "", false),
+    hit(Page::Focus, "Break", "", false),
+    hit(Page::Focus, "Focus", "", false),
+    hit(Page::Focus, "How long", "", false),
+    hit(Page::Focus, "Long break", "", false),
+    hit(Page::Focus, "Long break after", "", false),
+    hit(Page::Focus, "Send a notification", "", false),
+    hit(Page::Focus, "Start the break automatically", "", false),
+    hit(Page::Focus, "When time is up", "", false),
+    hit(Page::General, "How things are running", "", false).destination(AppSettingsPage::Help),
+    hit(Page::General, "Report a problem", "", false).destination(AppSettingsPage::Help),
+    hit(Page::General, "Running in the background", "", false).destination(AppSettingsPage::Help),
+    hit(Page::General, "This window", "", false).destination(AppSettingsPage::Interface),
+    hit(Page::General, "Keep running in the background", "", false).destination(AppSettingsPage::Operation),
+    hit(Page::General, "Running", "", false).destination(AppSettingsPage::Operation),
+    hit(Page::General, "Set up again", "", false).destination(AppSettingsPage::Operation),
+    hit(Page::General, "Setting up", "", false).destination(AppSettingsPage::Operation),
+    hit(Page::General, "Start when you sign in", "", false).destination(AppSettingsPage::Operation),
+    hit(Page::General, "Always stays on your computer", "", false).destination(AppSettingsPage::Privacy),
+    hit(Page::General, "Privacy policy", "", false).destination(AppSettingsPage::Privacy),
+    hit(Page::General, "Sharing", "", false).destination(AppSettingsPage::Privacy),
+    hit(Page::General, "Your calendar, notes, accounts and projects", "", false).destination(AppSettingsPage::Privacy),
+    hit(Page::General, "Get ready for your own designs", "", false).destination(AppSettingsPage::Updates),
+    hit(Page::General, "More about this version", "", false).destination(AppSettingsPage::Updates),
+    hit(Page::General, "This version", "", false).destination(AppSettingsPage::Updates),
+    hit(Page::General, "Updates come from your system", "", false).destination(AppSettingsPage::Updates),
+    hit(Page::General, "Version", "", false).destination(AppSettingsPage::Updates),
+    hit(Page::Glance, "Background", "", false),
+    hit(Page::Glance, "Clock font", "", false),
+    hit(Page::Glance, "Font", "", false),
+    hit(Page::Glance, "Include in this card", "", false),
+    hit(Page::Glance, "Same as text", "", false),
+    hit(Page::Glance, "Same as widgets", "", false),
+    hit(Page::Glance, "Spacing", "", false),
+    hit(Page::Glance, "Text", "", false),
+    hit(Page::Glance, "Tomorrow’s events", "", false),
+    hit(Page::Music, "Album art", "", false),
+    hit(Page::Music, "Around the cover", "", false),
+    hit(Page::Music, "Card", "", false),
+    hit(Page::Music, "Progress bar", "", false),
+    hit(Page::Notes, "Card size", "", false),
+    hit(Page::Notes, "Your note", "", false),
+    hit(Page::Overview, "Getting started", "", false),
+    hit(Page::Overview, "Show widgets", "", false),
+    hit(Page::PendingChanges, "Unfinished changes", "", false).names_page(),
+    hit(Page::Projects, "Add a folder", "", false),
+    hit(Page::Projects, "How often it updates", "", false),
+    hit(Page::Themes, "Color", "", false),
+    hit(Page::Themes, "Surfaces", "", false),
+    hit(Page::Themes, "Text and icons", "", false),
+    hit(Page::Weather, "Dew point and how often it updates", "", false),
+    hit(Page::Widgets, "How widgets behave", "", false).at("widgets-behave"),
+    hit(Page::Widgets, "Slide in", "", false).at("widgets-behave"),
+];
+
 /// Every search result, for tests that open each one.
 #[cfg(test)]
 pub(super) fn all_search_hits() -> &'static [SearchHit] {
-    SEARCH
+    index()
 }
+/// A result that opens one page, tab and fold, for tests that walk every
+/// screen.
+#[cfg(test)]
+pub(super) fn probe(
+    page: Page,
+    destination: AppSettingsPage,
+    bar: Option<crate::desktop::panels::PanelKind>,
+    advanced: bool,
+) -> SearchHit {
+    let mut probe = hit(page, "", "", advanced).destination(destination);
+    probe.bar = bar;
+    probe
+}
+/// Row titles that are not settings, and why search leaves them out.
+#[cfg(test)]
+pub(super) const NOT_INDEXED: &[(&str, &str)] = &[
+    ("Desktop", "a heading on Wallpaper over Icons on the desktop, which has its own result"),
+    ("Clock type", "a part of the day’s own value; search opens the Clock setting"),
+    ("Clock weight", "a part of the day’s own value; search opens the Clock setting"),
+    ("Clock italic", "a part of the day’s own value; search opens the Clock setting"),
+    ("Clock background", "a part of the day’s own value; search opens the Clock setting"),
+    ("Widget look", "a part of the day’s own value; search opens Glass and transparency"),
+    ("No glass", "a choice in the glass picker; “glass” finds it"),
+    ("Layout", "a section of the widget builder; “layout” opens Arrange widgets"),
+    ("Size and place", "on every widget’s Position tab; the widget’s name finds it"),
+    ("Move or resize", "on every widget page; the widget’s name finds it"),
+    ("Make your own design", "a link on every widget page; “Widget builder” finds it"),
+    ("More in COSMIC Settings", "a link out of Halcyon"),
+    ("Before Halcyon", "a group in the Changes list, which follows your history"),
+    ("Changed Daily overview", "an entry in the Changes list"),
+    ("Wallpaper from before Halcyon", "an entry in the Changes list"),
+    ("Nothing to recover", "shown only when there is nothing to list"),
+    ("No apps yet", "shown only when there is nothing to list"),
+    ("No shortcuts of your own yet", "shown only when there is nothing to list"),
+    ("Tiling is off", "a notice, not a setting"),
+    ("Update your widgets?", "a confirmation that opens from “Get ready…”"),
+    ("Displays", "a status row on Help that opens the setting it’s about"),
+    ("Halcyon’s panel", "a status row that opens the setting it’s about"),
+    ("Status", "a status row that opens the setting it’s about"),
+    ("Check again", "a button"),
+    ("Search settings", "a key listed under Keyboard on Accessibility; “keyboard” finds the list"),
+    ("Undo", "a key listed under Keyboard on Accessibility; “keyboard” finds the list"),
+    ("Go back", "a key listed under Keyboard on Accessibility; “keyboard” finds the list"),
+    ("Move between controls", "a key listed under Keyboard on Accessibility; “keyboard” finds the list"),
+    ("Close", "a key listed under Keyboard on Accessibility; “keyboard” finds the list"),
+];
+
 /// Labels the screen draws only in a state the test fixture lacks, and why.
 #[cfg(test)]
-pub(super) const UNCHECKED_LABELS: &[(&str, &str)] = &[(
-    "Activity island",
-    "named by its item in the panel’s Contents or by the Add Activity island button, \
-     and the fixture has no Halcyon panel to offer either",
-)];
+pub(super) const UNCHECKED_LABELS: &[(&str, &str)] = &[
+    (
+        "Activity pill",
+        "named by its item in the panel’s Contents or by the Add Activity pill button, \
+         and the fixture has no Halcyon panel to offer either",
+    ),
+    ("Tomorrow", "in Calendar’s Agenda, shown once a calendar is connected"),
+    ("Hide event details", "in Calendar’s Agenda, shown once a calendar is connected"),
+    ("Highlight meetings", "in Calendar’s Agenda, shown once a calendar is connected"),
+];
 
 const fn hit(page: Page, label: &'static str, terms: &'static str, advanced: bool) -> SearchHit {
     SearchHit {
@@ -827,24 +1173,81 @@ const fn hit(page: Page, label: &'static str, terms: &'static str, advanced: boo
         open: SearchOpen::None,
         bar: None,
         section: None,
+        names_page: false,
     }
 }
 
+/// What a search found. `partial` says no result matched every word, so the
+/// results are the ones that match the most words.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Matches {
+    pub hits: Vec<SearchHit>,
+    pub partial: bool,
+}
+
+/// Every result: the hand-written ones with their anchors and synonyms, then
+/// each row title and heading the pages draw that none of them names.
+fn index() -> &'static [SearchHit] {
+    static INDEX: std::sync::OnceLock<Vec<SearchHit>> = std::sync::OnceLock::new();
+    INDEX.get_or_init(|| {
+        let mut index = SEARCH.to_vec();
+        for hit in &mut index {
+            let title = if hit.page == Page::General {
+                hit.destination.title()
+            } else {
+                hit.page.title()
+            };
+            hit.names_page |= hit.label == title && hit.bar.is_none() && !hit.advanced;
+        }
+        // Every page is found by its title, ahead of the rows on it.
+        let pages = Page::ALL
+            .into_iter()
+            .filter(|page| *page == page.canonical() && *page != Page::General)
+            // Headed “Unfinished changes” and “Keyboard shortcuts”, which find them.
+            .filter(|page| !matches!(page, Page::PendingChanges | Page::DesktopShortcuts))
+            .map(|page| hit(page, page.title(), "", false).names_page())
+            .chain(
+                [AppSettingsPage::Home]
+                    .into_iter()
+                    .chain(AppSettingsPage::ALL)
+                    .chain([AppSettingsPage::WhatsNew])
+                    .map(|destination| {
+                        hit(Page::General, destination.title(), "", false)
+                            .destination(destination)
+                            .names_page()
+                    }),
+            );
+        for row in pages.chain(ROWS.iter().copied()) {
+            if !index.iter().any(|hit| hit.same_row(&row)) {
+                index.push(row);
+            }
+        }
+        index
+    })
+}
+
 /// Search stays entirely local. Whole words and prefixes come before aliases
-/// and spelling corrections; a typo never displaces a literal result.
+/// and spelling corrections; a typo never displaces a literal result. A
+/// result named after its page comes before the rows on pages.
 pub fn search(query: &str) -> Vec<SearchHit> {
+    find(query).hits
+}
+
+/// [`search`], and whether the results match only some of the words.
+pub fn find(query: &str) -> Matches {
     use std::cmp::Reverse;
 
-    let mut query = search_words(query);
+    let mut query = query_words(query);
     if query.is_empty() {
-        return Vec::new();
+        return Matches::default();
     }
     // Repeating a word must not inflate its relevance.
     let mut seen = std::collections::HashSet::new();
     query.retain(|word| seen.insert(word.clone()));
     let phrase = query.join(" ");
-    let mut matches = Vec::new();
-    for (index, entry) in SEARCH.iter().copied().enumerate() {
+    let mut complete = Vec::new();
+    let mut some = Vec::new();
+    for (index, entry) in index().iter().copied().enumerate() {
         let label = search_words(entry.label);
         let page = search_words(entry.page.title());
         let terms = search_words(entry.terms);
@@ -854,30 +1257,35 @@ pub fn search(query: &str) -> Vec<SearchHit> {
         let mut aliases = 0;
         let mut prefixes = 0;
         let mut relevance = 0;
-        let mut complete = true;
+        let mut found = 0;
+        // Each word found is in this result's own name.
+        let mut in_label = true;
         for word in &query {
             let best = fields
                 .iter()
-                .flat_map(|(tokens, weight)| {
+                .enumerate()
+                .flat_map(|(field, (tokens, weight))| {
                     tokens.iter().filter_map(move |token| {
-                        word_match(word, token)
-                            .map(|(typo, alias, prefix)| (typo, alias, prefix, Reverse(*weight)))
+                        word_match(word, token).map(|(typo, alias, prefix)| {
+                            (typo, alias, prefix, Reverse(*weight), field)
+                        })
                     })
                 })
                 .min();
-            if let Some((typo, alias, prefix, Reverse(weight))) = best {
+            if let Some((typo, alias, prefix, Reverse(weight), field)) = best {
                 corrections += usize::from(typo);
                 aliases += usize::from(alias);
                 prefixes += usize::from(prefix);
                 relevance += weight;
-            } else {
-                complete = false;
-                break;
+                found += 1;
+                in_label &= field == 0 && !typo;
             }
         }
-        if !complete {
+        if found == 0 {
             continue;
         }
+        // Every word found is in the page's name, typed and not a synonym.
+        let names_page = entry.names_page && in_label && aliases == 0;
         if label.join(" ") == phrase {
             relevance += 100;
         }
@@ -894,20 +1302,33 @@ pub fn search(query: &str) -> Vec<SearchHit> {
                 relevance += 6;
             }
         }
-        matches.push((
-            (
-                corrections,
-                aliases,
-                prefixes,
-                Reverse(relevance),
-                entry.advanced,
-                index,
-            ),
-            entry,
-        ));
+        let rank = (
+            Reverse(found),
+            // Typing a page's name, not a synonym of it, opens that page.
+            !names_page,
+            corrections,
+            aliases,
+            prefixes,
+            Reverse(relevance),
+            // On a tie, a hand-written result before a row title.
+            index >= SEARCH.len(),
+            entry.advanced,
+            index,
+        );
+        if found == query.len() {
+            complete.push((rank, entry));
+        } else {
+            some.push((rank, entry));
+        }
     }
+    // Nothing matches every word: show what matches the most of them.
+    let partial = complete.is_empty();
+    let mut matches = if partial { some } else { complete };
     matches.sort_unstable_by_key(|(rank, _)| *rank);
-    matches.into_iter().take(10).map(|(_, hit)| hit).collect()
+    Matches {
+        partial: partial && !matches.is_empty(),
+        hits: matches.into_iter().take(10).map(|(_, hit)| hit).collect(),
+    }
 }
 
 fn search_words(text: &str) -> Vec<String> {
@@ -917,8 +1338,75 @@ fn search_words(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// (spelling correction, synonym, prefix). Short technical names such as CPU
-/// and RAM are never fuzzy matched, and every query word must find a match.
+/// Words that say nothing about which setting someone wants.
+const STOP_WORDS: &[&str] = &[
+    "a", "an", "and", "are", "at", "be", "by", "can", "do", "does", "for", "from", "how", "i",
+    "in", "is", "it", "its", "me", "my", "of", "on", "or", "the", "this", "to", "when", "where",
+    "which", "with", "you", "your",
+];
+
+/// Phrases people type for something the screens name in other words.
+const PHRASES: &[(&str, &str)] = &[
+    ("time zone", "timezone"),
+    ("sign in", "signin"),
+    ("log in", "signin"),
+    ("first run", "wizard"),
+    ("start over", "wizard"),
+    ("see through", "seethrough"),
+    ("night mode", "dark"),
+    ("dark mode", "dark"),
+    ("light mode", "light"),
+    ("do not disturb", "dnd"),
+    ("add widget", "widgets"),
+    ("add widgets", "widgets"),
+    ("add a widget", "widgets"),
+];
+
+/// The query's words, without stop words unless that leaves nothing.
+fn query_words(query: &str) -> Vec<String> {
+    let mut text = format!(" {} ", search_words(query).join(" "));
+    for (phrase, word) in PHRASES {
+        text = text.replace(&format!(" {phrase} "), &format!(" {word} "));
+    }
+    let words = search_words(&text);
+    let meaningful: Vec<String> = words
+        .iter()
+        .filter(|word| !STOP_WORDS.contains(&word.as_str()))
+        .cloned()
+        .collect();
+    if meaningful.is_empty() { words } else { meaningful }
+}
+
+/// Other words for what the screens call something.
+fn synonyms(word: &str) -> &'static [&'static str] {
+    match word {
+        "transparent" | "transparency" | "seethrough" | "translucent" => {
+            &["opacity", "transparency", "glass"]
+        }
+        "colour" => &["color"],
+        "colours" => &["colors"],
+        "autostart" | "boot" | "signin" | "login" => &["startup", "sign"],
+        "hotkey" | "hotkeys" | "keybinding" | "keybindings" => &["shortcuts"],
+        "wallpapers" | "background" | "backdrop" => &["wallpaper"],
+        "taskbar" | "launcher" => &["dock", "panel"],
+        "topbar" | "menubar" | "bar" => &["panel"],
+        "monitor" | "monitors" | "screen" | "screens" | "displays" | "output" => &["display"],
+        "timezone" => &["timezone", "city"],
+        "google" | "ics" | "ical" | "caldav" | "outlook" | "agenda" | "events" => &["calendar"],
+        "bigger" | "smaller" | "larger" | "scale" | "scaling" | "zoom" => &["size"],
+        "theme" | "themes" => &["style"],
+        "wizard" | "onboarding" | "setup" => &["set", "wizard"],
+        "left" | "right" | "top" | "bottom" | "side" => &["position"],
+        "image" | "images" | "photo" | "photos" | "picture" | "pictures" => &["picture", "wallpaper"],
+        "upgrade" | "upgrades" => &["updates"],
+        "tiling" | "tile" => &["tile"],
+        "font" | "fonts" => &["fonts", "text"],
+        _ => &[],
+    }
+}
+
+/// (spelling correction, synonym, prefix). Short words and technical names
+/// such as CPU and RAM are never fuzzy matched.
 fn word_match(word: &str, token: &str) -> Option<(bool, bool, bool)> {
     if token == word {
         return Some((false, false, false));
@@ -926,16 +1414,7 @@ fn word_match(word: &str, token: &str) -> Option<(bool, bool, bool)> {
     if token.starts_with(word) {
         return Some((false, false, true));
     }
-    let aliases: &[&str] = match word {
-        "transparent" | "transparency" => &["opacity"],
-        "colour" => &["color"],
-        "colours" => &["colors"],
-        "autostart" | "boot" => &["startup"],
-        "hotkey" | "hotkeys" => &["shortcuts"],
-        "wallpapers" => &["wallpaper"],
-        _ => &[],
-    };
-    for alias in aliases {
+    for alias in synonyms(word) {
         if token.starts_with(alias) {
             return Some((false, true, token != *alias));
         }
@@ -943,15 +1422,18 @@ fn word_match(word: &str, token: &str) -> Option<(bool, bool, bool)> {
     one_typo(word, token).then_some((true, false, false))
 }
 
-/// One insertion, deletion, replacement or adjacent transposition. Restrict
-/// corrections to words of at least four characters to avoid noisy matches
-/// for acronyms, numbers and partially typed short queries.
+/// One insertion, deletion, replacement or adjacent transposition after the
+/// first letter. Corrections need words of at least five letters, so short
+/// words, acronyms and partly typed words never match something unrelated.
 fn one_typo(left: &str, right: &str) -> bool {
     if !left.is_ascii() || !right.is_ascii() {
         return false;
     }
     let (left, right) = (left.as_bytes(), right.as_bytes());
-    if left.len().min(right.len()) < 4 || left.len().abs_diff(right.len()) > 1 {
+    if left.len().min(right.len()) < 5
+        || left.len().abs_diff(right.len()) > 1
+        || left[0] != right[0]
+    {
         return false;
     }
     let common = left.iter().zip(right).take_while(|(a, b)| a == b).count();
@@ -1016,7 +1498,7 @@ impl Page {
     pub(super) fn save_hint(self) -> &'static str {
         match self {
             Self::Overview => "Edit layout to preview changes before applying",
-            Self::Themes => "Choose a theme to preview it here",
+            Self::Themes => "Choose a style to preview it here",
             Self::DesktopWallpaper => "Choose a wallpaper to preview it here",
             Self::DesktopProfiles => "Choose a look to see what it includes",
             Self::Notes => "",
@@ -1306,16 +1788,25 @@ mod tests {
         assert_eq!(search("calendar update")[0].page, Page::Calendar);
         assert!(search("calendar update")[0].advanced);
         assert!(search("  ").is_empty());
-        assert!(search("nonexistent-thing").is_empty());
+        assert!(search("nonexistentthing").is_empty());
     }
 
     #[test]
     fn search_ranks_specific_controls_and_common_page_options_first() {
         assert_eq!(search("memory usage")[0].label, "Memory");
-        assert_eq!(search("calendar")[0].label, "Calendars");
-        assert_eq!(search("weather")[0].label, "Location");
-        assert_eq!(search("clock")[0].label, "Time and date");
-        assert_eq!(search("time")[0].label, "Time and date");
+        // A page’s own name opens the page, ahead of the rows on it.
+        for (query, page) in [
+            ("calendar", Page::Calendar),
+            ("weather", Page::Weather),
+            ("clock", Page::Clock),
+            ("time", Page::DesktopAutomation),
+        ] {
+            let hit = search(query)[0];
+            assert_eq!(hit.page, page, "{query}");
+            assert!(hit.names_page, "{query}");
+        }
+        assert_eq!(search("weather location")[0].label, "Location");
+        assert_eq!(search("clock time")[0].label, "Time and date");
         let update = search("calendar update")[0];
         assert_eq!((update.page, update.label), (Page::Calendar, "Update every"));
         let colors = search("colors");
@@ -1328,11 +1819,7 @@ mod tests {
     #[test]
     fn search_accepts_common_typos_without_fuzzy_acronyms_or_unrelated_words() {
         for query in ["calender", "calndar", "calendarr", "clalendar", "claendar"] {
-            assert_eq!(
-                search(query)[0].label,
-                "Calendars",
-                "{query}"
-            );
+            assert_eq!(search(query)[0].page, Page::Calendar, "{query}");
         }
         assert_eq!(search("netwrok")[0].label, "Network");
         let update = search("calender updat")[0];
@@ -1342,12 +1829,15 @@ mod tests {
             "gpx",
             "zxyw",
             "caaaalendar",
-            "calendar banana",
             "---",
             "🪴",
         ] {
             assert!(search(query).is_empty(), "{query}");
         }
+        // A word that matches nothing leaves the others to rank alone.
+        let partial = find("calendar banana");
+        assert!(partial.partial);
+        assert_eq!(partial.hits[0].page, Page::Calendar);
     }
 
     #[test]
@@ -1395,11 +1885,59 @@ mod tests {
         );
         // Builder now supports both Calendar and GPU parts; use an actually
         // unsupported second term to verify that search retains every word.
-        assert!(search("calendar bluetooth").is_empty());
-        assert_eq!(search("calendar agenda")[0].page, Page::Builder);
+        assert!(find("calendar bluetooth").partial);
+        assert!(search("calendar agenda").iter().any(|hit| hit.page == Page::Builder));
         assert_eq!(search("gpu recipe")[0].page, Page::Builder);
-        assert!(search("calendar mystery option").is_empty());
+        assert!(find("calendar mystery option").partial);
+        assert!(!find("calendar update").partial);
         assert!(search("desktop").len() <= 10);
+    }
+
+    // IA-01: what people type, including the exact names of rows they can
+    // see, reaches the page that has it.
+    #[test]
+    fn search_finds_what_people_type_on_the_right_page() {
+        use crate::desktop::panels::PanelKind;
+        for (query, page, destination) in [
+            ("Text size", Page::DesktopAppearance, None),
+            ("font size", Page::DesktopAppearance, None),
+            ("bigger text", Page::DesktopAppearance, None),
+            ("Show the date", Page::Clock, None),
+            ("Picture size", Page::DesktopWallpaper, None),
+            ("Start when you sign in", Page::General, Some(AppSettingsPage::Operation)),
+            ("Set up again", Page::General, Some(AppSettingsPage::Operation)),
+            ("setup wizard", Page::General, Some(AppSettingsPage::Operation)),
+            ("onboarding", Page::General, Some(AppSettingsPage::Operation)),
+            ("start over", Page::General, Some(AppSettingsPage::Operation)),
+            ("first run", Page::General, Some(AppSettingsPage::Operation)),
+            ("check for updates", Page::General, Some(AppSettingsPage::Updates)),
+            ("update", Page::General, Some(AppSettingsPage::Updates)),
+            ("add widget", Page::Overview, None),
+            ("time zone", Page::DesktopAutomation, None),
+            ("schedule", Page::DesktopAutomation, None),
+            ("taskbar", Page::DesktopDock, None),
+            ("second monitor", Page::Overview, None),
+            ("dock on left", Page::DesktopDock, None),
+            ("dock transparency", Page::DesktopDock, None),
+        ] {
+            let found = find(query);
+            assert!(!found.partial, "{query}");
+            let hit = found.hits[0];
+            assert_eq!(hit.page.canonical(), page, "{query}: {hit:?}");
+            if let Some(destination) = destination {
+                assert_eq!(hit.app_destination(), destination, "{query}: {hit:?}");
+            }
+        }
+        assert_eq!(search("dock on left")[0].bar, Some(PanelKind::Dock));
+        assert_eq!(search("dock transparency")[0].label, "See-through");
+        // Stop words never decide a result, and a typo needs five letters.
+        assert_eq!(search("the dock"), search("dock"));
+        assert!(search("clok").is_empty());
+        assert!(
+            search("icloud").iter().all(|hit| hit.label != "Moving effect"),
+            "{:?}",
+            search("icloud")
+        );
     }
 
     #[test]
@@ -2038,7 +2576,7 @@ impl Settings {
         }
         if self.automation.dirty() {
             push(
-                "Schedule",
+                Page::DesktopAutomation.title(),
                 Page::DesktopProfiles,
                 false,
                 KeptTarget::Page(Page::DesktopAutomation),
@@ -2046,7 +2584,7 @@ impl Settings {
         }
         if self.window_rules.dirty() {
             push(
-                "Floating apps",
+                Page::DesktopWindowRules.title(),
                 Page::Overview,
                 false,
                 KeptTarget::Page(Page::DesktopWindowRules),
@@ -2070,7 +2608,7 @@ impl Settings {
         }
         if self.desktop_icons.dirty() {
             push(
-                "Desktop icons",
+                Page::DesktopIcons.title(),
                 Page::Overview,
                 false,
                 KeptTarget::Page(Page::DesktopIcons),

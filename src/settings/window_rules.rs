@@ -6,6 +6,7 @@ use crate::desktop::store::{DesktopStore, Journal, Owner};
 use crate::desktop::window_rules::{
     CustomRule, Match, RuleRow, WindowRulesDraft, classify, exact_app, title_contains, validate,
 };
+use crate::settings::Page;
 use crate::settings::desktop::Notice;
 use crate::settings::drafts::DraftEditor;
 use std::path::PathBuf;
@@ -139,7 +140,7 @@ pub struct WindowRulesEditor {
 impl Default for WindowRulesEditor {
     fn default() -> Self {
         Self {
-            core: DraftEditor::new(Owner::WindowRules, "Floating apps"),
+            core: DraftEditor::new(Owner::WindowRules, Page::DesktopWindowRules.title()),
             search: String::new(),
             form: None,
             expanded: None,
@@ -152,7 +153,11 @@ impl WindowRulesEditor {
     #[cfg(test)]
     pub fn with_store(store: DesktopStore) -> Self {
         Self {
-            core: DraftEditor::with_store(Owner::WindowRules, "Floating apps", store),
+            core: DraftEditor::with_store(
+                Owner::WindowRules,
+                Page::DesktopWindowRules.title(),
+                store,
+            ),
             ..Self::default()
         }
     }

@@ -600,14 +600,7 @@ fn color_of(entry: Setting<BgEntry>) -> Option<BgColor> {
 
 /// "Built-in display" for laptop panels, else the connector.
 pub fn display_name(name: &str) -> String {
-    if ["eDP", "LVDS", "DSI"]
-        .iter()
-        .any(|prefix| name.starts_with(prefix))
-    {
-        "Built-in display".into()
-    } else {
-        name.to_string()
-    }
+    crate::displays::display_name(name, None)
 }
 
 /// One gallery tile.
