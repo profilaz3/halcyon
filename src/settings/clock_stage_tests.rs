@@ -617,3 +617,360 @@ fn own_wallpaper_clock_page_walks_every_scene_state() {
     );
     assert!(!app.error, "{}", app.status);
 }
+
+/// The stage clock's corner handle resizes its box, shape kept: the drag
+/// draws nothing new until it rests or ends, the release saves size and
+/// place as one Undo step and lights the clock at its new size, and `+`/`-`
+/// do the same in tenths of the automatic size.
+#[test]
+fn clock_stage_corner_resizes_the_clock_as_one_undo_step() {
+    if desktop_test_child(
+        "clock_stage_corner_resizes_the_clock_as_one_undo_step",
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::desktop::wallpaper::{BgEntry, BgSource, bundled_dir, bundled_path};
+    use crate::native_test::Native;
+    use crate::settings::clock_stage::{self as stage, Edit};
+    use cosmic::iced::{Event, Point, keyboard, mouse};
+    let root = isolated_root();
+    let fixture = root.join("cosmic-root");
+    let (probe, _) = Settings::init(Core::default(), Page::DesktopWallpaper);
+    let bundled = bundled_dir(probe.wallpaper.store().unwrap());
+    drop(probe);
+    let ridge = bundled_path(&bundled, "halcyon-ridge");
+    std::fs::create_dir_all(&bundled).unwrap();
+    std::fs::copy(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("assets/wallpapers/halcyon-ridge.png"),
+        &ridge,
+    )
+    .unwrap();
+    seed(
+        &fixture.join("config/cosmic"),
+        &[(
+            "com.system76.CosmicBackground",
+            "all",
+            &ron::to_string(&BgEntry::new("all", BgSource::Path(ridge.clone()))).unwrap(),
+        )],
+    );
+    Config::save_clock(json!({"depth": true, "face": "digital", "surface": "none"})).unwrap();
+    let (mut app, initial) = Settings::init(Core::default(), Page::Clock);
+    settle_settings(&mut app, initial);
+    drive_wallpaper(&mut app);
+    let size = Size::new(1280., 800.);
+    send_settings(&mut app, Message::Resized(size));
+    send_settings(
+        &mut app,
+        Message::ClockLighting(crate::depth::Lighting::Soft),
+    );
+    assert!(app.ridge_wallpaper() && app.clock_stage_open());
+    let screen = stage::known(app.placement.preview_snapshot().screen);
+    assert_eq!(screen, [1920., 1080.]);
+    let text_size = app.config.clock.scale;
+
+    // Somewhere in the sky with room to grow.
+    let clock = Widget::Clock.key();
+    assert!(app.placement.place_widget(clock, [700., 90.]));
+    send_settings(&mut app, Message::Placement(placement::Message::Save));
+    let (start, natural) = app.clock_stage_place().unwrap();
+    assert_eq!(natural, [490., 200.]);
+    let saved = || {
+        let (mut fresh, initial) = Settings::init(Core::default(), Page::Clock);
+        settle_settings(&mut fresh, initial);
+        (
+            fresh.clock_stage_place().unwrap(),
+            fresh.config.widget_sizes.get(clock).copied(),
+        )
+    };
+    let near = |a: [f32; 2], b: [f32; 2]| (0..2).all(|i| (a[i] - b[i]).abs() < 1.5);
+    let lit_at = |app: &Settings, (position, size): ([f32; 2], [f32; 2])| {
+        let frame = stage::frame(position, size, screen);
+        app.clock_stage.requested().map(|r| &r.frame) == Some(&frame)
+            && app.clock_stage.lit(&frame).is_some()
+    };
+    assert!(lit_at(&app, (start, natural)));
+    assert_eq!(saved(), ((start, natural), None));
+
+    // The handle shows only with the pointer over the clock (or focus on it).
+    let mut native = Native::new(size);
+    let body = native_reveal(&app, &mut native, stage::CLOCK_ID);
+    let scale = body.width / natural[0];
+    assert!(!app.clock_stage.handle());
+    let send = |app: &mut Settings, native: &mut Native, event: mouse::Event, at: Point| {
+        for message in native.event(app.settings_view(), Event::Mouse(event), at).0 {
+            send_settings(app, message);
+        }
+    };
+    let grip = Point::new(body.x + body.width - 4., body.y + body.height - 4.);
+    send(
+        &mut app,
+        &mut native,
+        mouse::Event::CursorMoved { position: grip },
+        grip,
+    );
+    assert!(app.clock_stage.handle());
+    for (theme, name) in [
+        (cosmic::Theme::light(), "light"),
+        (cosmic::Theme::dark(), "dark"),
+    ] {
+        for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+            send_settings(&mut app, Message::Resized(size));
+            let mut native = Native::new(size);
+            native_reveal(&app, &mut native, "clock-stage-reset");
+            assert!(native.overflowing_text(app.settings_view()).is_empty());
+            assert!(native.duplicate_ids(app.settings_view()).is_empty());
+            assert_eq!(
+                native
+                    .text_all(
+                        app.settings_view(),
+                        "Drag the clock to move it, or its corner to resize"
+                    )
+                    .len(),
+                1
+            );
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("clock-stage-handle-{name}-{}", size.width),
+            );
+        }
+    }
+    send_settings(&mut app, Message::Resized(size));
+    let mut native = Native::new(size);
+    let body = native_reveal(&app, &mut native, stage::CLOCK_ID);
+    let grip = Point::new(body.x + body.width - 4., body.y + body.height - 4.);
+    send(
+        &mut app,
+        &mut native,
+        mouse::Event::CursorMoved { position: grip },
+        grip,
+    );
+    send(
+        &mut app,
+        &mut native,
+        mouse::Event::ButtonPressed(mouse::Button::Left),
+        grip,
+    );
+    assert!(app.clock_stage.dragging() && app.placement.resizing());
+
+    // A tenth larger along the diagonal: the top-left stays, the shape is
+    // kept, nothing is saved and the old render stays (stretched) meanwhile.
+    let to = Point::new(grip.x + 49. * scale, grip.y + 20. * scale);
+    send(
+        &mut app,
+        &mut native,
+        mouse::Event::CursorMoved { position: to },
+        to,
+    );
+    let (at, grown) = app.clock_stage_place().unwrap();
+    assert!(near(at, start), "{at:?} vs {start:?}");
+    assert!(near(grown, [539., 220.]), "{grown:?}");
+    assert_eq!(saved(), ((start, natural), None));
+    assert_eq!(
+        app.clock_stage.requested().map(|r| r.frame.size),
+        Some(natural)
+    );
+    assert!(app.clock_stage.last_lit().is_some());
+    send(
+        &mut app,
+        &mut native,
+        mouse::Event::ButtonReleased(mouse::Button::Left),
+        to,
+    );
+    let release = stage::drag_input(
+        Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+        cosmic::iced::event::Status::Ignored,
+    )
+    .unwrap();
+    send_settings(&mut app, Message::ClockStage(release));
+    assert!(!app.clock_stage.dragging() && !app.error, "{}", app.status);
+    // Saved: the box and the place the desktop decodes, and the lit clock
+    // drawn again at the new size.
+    let ((saved_at, saved_size), stored) = saved();
+    assert!(near(saved_at, start) && near(saved_size, grown));
+    assert_eq!(stored, Some(grown));
+    assert!(
+        lit_at(&app, (start, grown)),
+        "{:?}",
+        app.clock_stage.requested()
+    );
+    // The Text size slider is its own control.
+    assert_eq!(app.config.clock.scale, text_size);
+
+    // One Undo restores both size and place.
+    native_click(&mut app, &mut native, "settings-undo");
+    assert!(!app.error, "{}", app.status);
+    assert_eq!(app.clock_stage_place().unwrap(), (start, natural));
+    assert_eq!(saved(), ((start, natural), None));
+    assert!(lit_at(&app, (start, natural)));
+
+    // Keys: `+` and `-`, or Ctrl with an arrow, only when nobody else used
+    // them; each step is one Undo step.
+    let key = |key: keyboard::Key, modifiers: keyboard::Modifiers| {
+        Event::Keyboard(keyboard::Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: keyboard::key::Physical::Unidentified(
+                keyboard::key::NativeCode::Unidentified,
+            ),
+            location: keyboard::Location::Standard,
+            modifiers,
+            text: None,
+            repeat: false,
+        })
+    };
+    let ignored = cosmic::iced::event::Status::Ignored;
+    let plus = key(
+        keyboard::Key::Character("+".into()),
+        keyboard::Modifiers::SHIFT,
+    );
+    assert!(matches!(
+        stage::arrow_input(plus.clone(), ignored),
+        Some(Edit::Grow(1))
+    ));
+    assert!(stage::arrow_input(plus, cosmic::iced::event::Status::Captured).is_none());
+    assert!(matches!(
+        stage::arrow_input(
+            key(
+                keyboard::Key::Character("-".into()),
+                keyboard::Modifiers::empty()
+            ),
+            ignored
+        ),
+        Some(Edit::Grow(-1))
+    ));
+    assert!(matches!(
+        stage::arrow_input(
+            key(
+                keyboard::Key::Named(keyboard::key::Named::ArrowDown),
+                keyboard::Modifiers::CTRL
+            ),
+            ignored
+        ),
+        Some(Edit::Grow(-1))
+    ));
+    assert!(matches!(
+        stage::arrow_input(
+            key(
+                keyboard::Key::Named(keyboard::key::Named::ArrowDown),
+                keyboard::Modifiers::empty()
+            ),
+            ignored
+        ),
+        Some(Edit::Arrow([0, 1], false))
+    ));
+    send_settings(&mut app, Message::ClockStage(Edit::Step(1)));
+    send_settings(&mut app, Message::ClockStage(Edit::Step(1)));
+    assert_eq!(saved().1, Some([588., 240.]));
+    send_settings(&mut app, Message::UndoDesktop);
+    assert_eq!(saved().1, Some([539., 220.]));
+    send_settings(&mut app, Message::UndoDesktop);
+    assert_eq!(saved(), ((start, natural), None));
+    // At the smallest box another step changes nothing and adds no step.
+    send_settings(&mut app, Message::ClockStage(Edit::Step(-9)));
+    assert_eq!(saved().1, Some([245., 100.]));
+    send_settings(&mut app, Message::ClockStage(Edit::Step(-1)));
+    assert_eq!(saved().1, Some([245., 100.]));
+    send_settings(&mut app, Message::UndoDesktop);
+    assert_eq!(saved(), ((start, natural), None));
+
+    // Keyboard focus shows the handle too.
+    send_settings(&mut app, Message::ClockStage(Edit::Hover(false)));
+    assert!(!app.clock_stage.handle());
+    send_settings(&mut app, Message::ClockStage(Edit::Focus(true)));
+    assert!(app.clock_stage.handle());
+    send_settings(&mut app, Message::ClockStage(Edit::Focus(false)));
+
+    // The analog face grows with the same box.
+    use crate::widget_style::resolver::ClockFace;
+    send_settings(&mut app, Message::ClockFace(Some(ClockFace::Analog)));
+    assert_eq!(app.config.clock.face, Some(ClockFace::Analog));
+    send_settings(&mut app, Message::ClockStage(Edit::Step(4)));
+    assert_eq!(saved().1, Some([686., 280.]));
+    send_settings(&mut app, Message::ClockStage(Edit::Hover(true)));
+    for (theme, name) in [
+        (cosmic::Theme::light(), "light"),
+        (cosmic::Theme::dark(), "dark"),
+    ] {
+        let mut native = Native::new(size);
+        native_reveal(&app, &mut native, stage::CLOCK_ID);
+        native.capture(
+            app.settings_view(),
+            &theme,
+            &format!("clock-stage-analog-140-{name}"),
+        );
+    }
+    send_settings(&mut app, Message::UndoDesktop);
+    assert_eq!(saved(), ((start, natural), None));
+    send_settings(&mut app, Message::ClockFace(Some(ClockFace::Digital)));
+
+    // Renders over Ridge with Soft lighting at 70%, 100% and 160%: the stage,
+    // and the same request drawn at the screen's full size.
+    if let Some(dir) = std::env::var_os("DESKTOP_CARDS_LAYOUT_EVIDENCE") {
+        let dir = std::path::PathBuf::from(dir);
+        let picture = image::open(&ridge).unwrap().to_rgba8();
+        let mut log = String::new();
+        for (percent, steps) in [(70, -3), (100, 0), (160, 6)] {
+            if steps != 0 {
+                send_settings(&mut app, Message::ClockStage(Edit::Step(steps)));
+            }
+            let place = app.clock_stage_place().unwrap();
+            assert!(near(place.1, natural.map(|v| v * percent as f32 / 100.)));
+            assert!(lit_at(&app, place), "{percent}");
+            let request = app.clock_stage.requested().cloned().unwrap();
+            let frame = request.frame.clone();
+            let lit = crate::depth::render(&request).unwrap();
+            log += &format!("{percent}%: {:?}\n", frame);
+            use cosmic::iced::widget::{image as native_image, pin, stack};
+            let view: cosmic::Element<'_, Message> = stack([
+                native_image(native_image::Handle::from_rgba(
+                    picture.width(),
+                    picture.height(),
+                    picture.as_raw().clone(),
+                ))
+                .width(screen[0])
+                .height(screen[1])
+                .content_fit(cosmic::iced::ContentFit::Cover)
+                .into(),
+                pin(native_image(native_image::Handle::from_rgba(
+                    lit.width, lit.height, lit.rgba,
+                ))
+                .width(frame.size[0])
+                .height(frame.size[1]))
+                .position(Point::new(frame.origin[0], frame.origin[1]))
+                .into(),
+            ])
+            .width(screen[0])
+            .height(screen[1])
+            .into();
+            let pixels =
+                Native::new(Size::new(screen[0], screen[1])).render(view, &cosmic::Theme::dark());
+            image::save_buffer(
+                dir.join(format!("clock-stage-render-soft-{percent}.png")),
+                &pixels,
+                screen[0] as u32,
+                screen[1] as u32,
+                image::ColorType::Rgba8,
+            )
+            .unwrap();
+            let mut native = Native::new(size);
+            native_reveal(&app, &mut native, stage::CLOCK_ID);
+            native.capture(
+                app.settings_view(),
+                &cosmic::Theme::dark(),
+                &format!("clock-stage-soft-{percent}-dark"),
+            );
+            if steps != 0 {
+                send_settings(&mut app, Message::UndoDesktop);
+            }
+        }
+        std::fs::write(dir.join("clock-stage-render-soft-sizes.txt"), log).unwrap();
+    }
+}

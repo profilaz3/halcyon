@@ -179,6 +179,50 @@ pub fn resize(
     })
 }
 
+/// The factors a box of `size` can be scaled by and keep its shape: no
+/// smaller than the widget's minimum, no larger than [`sized`] allows.
+pub fn kept_limits(widget: crate::drawer::Widget, size: Size, screen: Size) -> (f32, f32) {
+    let min = minimum_size(widget);
+    let high = ((screen[0] - 48.).max(1.) / size[0]).min((screen[1] - 96.).max(1.) / size[1]);
+    let low = (min[0] / size[0]).max(min[1] / size[1]);
+    (low.min(high), high)
+}
+
+/// Resize from the lower-right corner keeping the box's shape. How far the
+/// corner is pulled along the box's diagonal sets the factor. The top-left
+/// stays put unless the larger box would leave the screen; then it moves in
+/// the way the desktop clamps it. Returns the new top-left and size.
+pub fn resize_kept(
+    widget: crate::drawer::Widget,
+    top_left: Point,
+    start: Size,
+    requested: Size,
+    screen: Size,
+) -> (Point, Size) {
+    if !start.iter().all(|v| v.is_finite() && *v >= 1.) {
+        return (clamp(top_left, start, screen), start);
+    }
+    let along = (requested[0] * start[0] + requested[1] * start[1])
+        / (start[0] * start[0] + start[1] * start[1]);
+    let (low, high) = kept_limits(widget, start, screen);
+    let factor = if along.is_finite() { along } else { 1. }.clamp(low, high);
+    let size = sized(widget, start.map(|v| (v * factor).round()), screen);
+    (clamp(top_left, size, screen), size)
+}
+
+/// The box `steps` tenths of `natural` larger (or smaller) than `size`, its
+/// shape kept: from 104% one step up is 110%, one down is 100%.
+pub fn step_kept(size: Size, natural: Size, steps: i8) -> Size {
+    let tenths = size[0] / natural[0].max(1.) * 10.;
+    let target = if steps > 0 {
+        (tenths + 0.01).floor() + f32::from(steps)
+    } else {
+        (tenths - 0.01).ceil() + f32::from(steps)
+    };
+    let factor = (target.max(1.) * natural[0] / 10.) / size[0].max(1.);
+    size.map(|v| v * factor)
+}
+
 /// Space kept between widgets that would otherwise touch.
 pub const WIDGET_GAP: f32 = 16.;
 
@@ -274,6 +318,72 @@ fn free_spot_clamped(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn kept_resize_keeps_the_shape_and_the_top_left() {
+        use crate::drawer::Widget::Clock;
+        let screen = [1920., 1080.];
+        let start = [490., 200.];
+        // Pulled along the diagonal, a tenth larger, from where it was.
+        assert_eq!(
+            super::resize_kept(Clock, [82., 88.], start, [539., 220.], screen),
+            ([82., 88.], [539., 220.])
+        );
+        // Pulled only sideways, it still grows in both directions.
+        let (at, size) = super::resize_kept(Clock, [82., 88.], start, [588., 200.], screen);
+        assert_eq!(at, [82., 88.]);
+        assert_eq!(size, [574., 234.]);
+        assert!((size[0] / size[1] - 2.45).abs() < 0.01, "{size:?}");
+        // Nonsense from the pointer leaves the box as it was.
+        assert_eq!(
+            super::resize_kept(Clock, [82., 88.], start, [f32::NAN, 0.], screen),
+            ([82., 88.], start)
+        );
+    }
+    #[test]
+    fn kept_resize_stops_at_the_arrangement_limits() {
+        use crate::drawer::Widget::Clock;
+        let screen = [1920., 1080.];
+        let start = [490., 200.];
+        // The smallest: the clock's 100 px minimum height, shape kept.
+        assert_eq!(
+            super::resize_kept(Clock, [82., 88.], start, [0., 0.], screen),
+            ([82., 88.], [245., 100.])
+        );
+        // The largest: the screen less the arrangement's margins, here the
+        // width; the box moves in to keep 24 px from the edge.
+        assert_eq!(
+            super::resize_kept(Clock, [82., 88.], start, [9e3, 9e3], screen),
+            ([24., 88.], [1872., 764.])
+        );
+        assert_eq!(super::kept_limits(Clock, start, screen).0, 0.5);
+    }
+    #[test]
+    fn kept_resize_near_an_edge_moves_in_as_the_desktop_clamps() {
+        use crate::drawer::Widget::Clock;
+        let screen = [1920., 1080.];
+        let start = [490., 200.];
+        let corner = [1380., 820.];
+        let (at, size) = super::resize_kept(Clock, corner, start, [539., 220.], screen);
+        assert_eq!(size, [539., 220.]);
+        // The same place the desktop would draw it.
+        assert_eq!(at, super::clamp(corner, size, screen));
+        assert_eq!(at, [1357., 812.]);
+        // Shrinking back in the same drag returns it to where it started.
+        assert_eq!(
+            super::resize_kept(Clock, corner, start, start, screen),
+            (corner, start)
+        );
+    }
+    #[test]
+    fn size_steps_land_on_tenths_of_the_natural_box() {
+        let natural = [490., 200.];
+        let step = |size, steps| super::step_kept(size, natural, steps).map(f32::round);
+        assert_eq!(step(natural, 1), [539., 220.]);
+        assert_eq!(step(natural, -1), [441., 180.]);
+        // From 104%: up to 110%, down to 100%.
+        assert_eq!(step([509.6, 208.], 1), [539., 220.]);
+        assert_eq!(step([509.6, 208.], -1), natural);
+    }
     #[test]
     fn reserved_area_search_preserves_clearance_and_refuses_overflow() {
         let area = [752., 440.];

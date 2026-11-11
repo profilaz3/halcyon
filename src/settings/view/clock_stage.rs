@@ -1,5 +1,6 @@
 //! The Clock page's stage: the screen the clock is on, with the clock where
-//! it sits. Dragging the clock moves it on the desktop. When the scene would
+//! it sits. Dragging the clock moves it on the desktop, and dragging its
+//! corner handle resizes it. When the scene would
 //! cover it a little way off, an outline marks that spot and a button moves
 //! it there.
 use super::*;
@@ -9,6 +10,35 @@ use cosmic::iced::{Point, mouse};
 
 fn action(edit: Edit) -> Message {
     Message::ClockStage(edit)
+}
+
+/// The corner handle's side, in stage pixels.
+const HANDLE: f32 = 16.;
+
+/// The stage clock's resize handle: a small chip at its lower-right corner,
+/// with the resize cursor.
+fn resize_handle<'a>(accent: Color) -> Element<'a, Message> {
+    mouse_area(
+        container(label("◢", 11., Color::WHITE))
+            .width(HANDLE)
+            .height(HANDLE)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center)
+            .class(cosmic::theme::Container::custom(move |_| {
+                cosmic::iced::widget::container::Style {
+                    background: Some(Background::Color(accent)),
+                    border: Border {
+                        color: Color::WHITE,
+                        width: 1.,
+                        radius: [4., 0., 4., 0.].into(),
+                    },
+                    ..Default::default()
+                }
+            })),
+    )
+    .on_press(action(Edit::ResizePress))
+    .interaction(mouse::Interaction::ResizingDiagonallyDown)
+    .into()
 }
 
 impl Settings {
@@ -134,14 +164,27 @@ impl Settings {
                         .into(),
                     );
                 }
-                let (content, at): (Element<'_, Message>, _) = match self.clock_stage.lit(&frame) {
-                    Some(handle) => (
+                let resizing = self.placement.resizing();
+                let lit = self
+                    .clock_stage
+                    .lit(&frame)
+                    .map(|handle| (handle, frame.origin));
+                // Mid-resize, the last lit clock stretched to the new box
+                // until the new size is drawn.
+                let lit = lit.or_else(|| {
+                    resizing
+                        .then(|| self.clock_stage.last_lit())
+                        .flatten()
+                        .map(|handle| (handle, position))
+                });
+                let (content, at): (Element<'_, Message>, _) = match lit {
+                    Some((handle, at)) => (
                         cosmic::widget::image(handle.clone())
                             .width(shown[0])
                             .height(shown[1])
                             .content_fit(cosmic::iced::ContentFit::Fill)
                             .into(),
-                        frame.origin,
+                        at,
                     ),
                     None => (
                         profiles::card(Widget::Clock, shown, &self.config, scale),
@@ -157,11 +200,46 @@ impl Settings {
                     .padding(0)
                     .width(shown[0])
                     .height(shown[1]);
-                let body = mouse_area(body).interaction(if self.clock_stage.dragging() {
-                    mouse::Interaction::Grabbing
-                } else {
-                    mouse::Interaction::Grab
-                });
+                let mut parts: Vec<Element<'_, Message>> = vec![body.into()];
+                if self.clock_stage.handle() {
+                    // The box the handle resizes; a clock with no surface
+                    // has no edge of its own.
+                    parts.push(
+                        container(cosmic::iced::widget::space())
+                            .width(shown[0])
+                            .height(shown[1])
+                            .class(cosmic::theme::Container::custom(move |_| {
+                                cosmic::iced::widget::container::Style {
+                                    border: Border {
+                                        color: Color { a: 0.7, ..accent },
+                                        width: 1.,
+                                        radius: 5.into(),
+                                    },
+                                    ..Default::default()
+                                }
+                            }))
+                            .into(),
+                    );
+                    parts.push(
+                        pin(resize_handle(accent))
+                            .position(Point::new(
+                                (shown[0] - HANDLE).max(0.),
+                                (shown[1] - HANDLE).max(0.),
+                            ))
+                            .into(),
+                    );
+                }
+                // Hover comes from the stage's own pointer: an enter handler
+                // here would swallow the move the stage needs.
+                let body = mouse_area(stack(parts).width(shown[0]).height(shown[1])).interaction(
+                    if resizing {
+                        mouse::Interaction::ResizingDiagonallyDown
+                    } else if self.clock_stage.dragging() {
+                        mouse::Interaction::Grabbing
+                    } else {
+                        mouse::Interaction::Grab
+                    },
+                );
                 let at = stage::to_stage(at, scale);
                 layers.push(pin(body).position(Point::new(at[0], at[1])).into());
             }
@@ -184,7 +262,8 @@ impl Settings {
             );
             container(
                 mouse_area(stack(layers).width(width).height(height).clip(true))
-                    .on_move(move |point| action(Edit::Pointer(point, scale))),
+                    .on_move(move |point| action(Edit::Pointer(point, scale)))
+                    .on_exit(action(Edit::Hover(false))),
             )
             .id(cosmic::widget::Id::new("clock-stage"))
             .width(Length::Fill)
@@ -199,9 +278,13 @@ impl Settings {
                     .suggested(&stage::frame(position, clock, screen))
             });
             let mut buttons: Vec<Element<'_, Message>> = vec![
-                container(label("Drag the clock to move it", 12., MUTED))
-                    .width(Length::Fill)
-                    .into(),
+                container(label(
+                    "Drag the clock to move it, or its corner to resize",
+                    12.,
+                    MUTED,
+                ))
+                .width(Length::Fill)
+                .into(),
             ];
             if suggested.is_some() {
                 buttons.push(
