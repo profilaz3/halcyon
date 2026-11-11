@@ -1009,6 +1009,7 @@ const ROWS: &[SearchHit] = &[
     hit(Page::DesktopIcons, "Size", "", false),
     hit(Page::DesktopMotion, "Dock and panel slide speed", "", false),
     hit(Page::DesktopMotion, "Easier-to-read widgets", "", false),
+    hit(Page::DesktopMotion, "Keyboard", "", false),
     hit(Page::DesktopMotion, "Motion", "", false),
     hit(Page::DesktopMotion, "Reading", "", false),
     hit(Page::DesktopWallpaper, "Match the weather", "", false),
@@ -1137,6 +1138,11 @@ pub(super) const NOT_INDEXED: &[(&str, &str)] = &[
     ("Halcyon’s panel", "a status row that opens the setting it’s about"),
     ("Status", "a status row that opens the setting it’s about"),
     ("Check again", "a button"),
+    ("Search settings", "a key listed under Keyboard on Accessibility; “keyboard” finds the list"),
+    ("Undo", "a key listed under Keyboard on Accessibility; “keyboard” finds the list"),
+    ("Go back", "a key listed under Keyboard on Accessibility; “keyboard” finds the list"),
+    ("Move between controls", "a key listed under Keyboard on Accessibility; “keyboard” finds the list"),
+    ("Close", "a key listed under Keyboard on Accessibility; “keyboard” finds the list"),
 ];
 
 /// Labels the screen draws only in a state the test fixture lacks, and why.
