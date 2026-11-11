@@ -523,6 +523,86 @@ fn structure_accessibility_root_halcyon_and_one_owner_each() {
     }
 }
 
+/// ON-13: Running and startup opens with whether Halcyon is on, and the
+/// button that changes it.
+#[test]
+fn on13_running_and_startup_says_whether_halcyon_is_on() {
+    if isolated(
+        "settings::navigation::ux_regressions::on13_running_and_startup_says_whether_halcyon_is_on",
+    ) {
+        return;
+    }
+    use crate::settings::view::AppSettingsPage;
+    let mut app = app(Page::General);
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        send_settings(&mut app, Message::Resized(size));
+        send_settings(&mut app, Message::AppSettingsPage(AppSettingsPage::Home));
+        let mut native = Native::new(size);
+        native.text_bounds(app.settings_view(), "Running and startup");
+        click(&mut app, &mut native, "app-settings-operation");
+        assert_eq!(app.app_settings_page, AppSettingsPage::Operation);
+        // A preview has no service to stop.
+        native.text_bounds(app.settings_view(), "Not available in this preview");
+        crate::settings::DRAW_REAL_SERVICE.with(|real| real.set(true));
+        app.service_known = true;
+        app.busy = false;
+        for (running, title, detail, action, name) in [
+            (
+                true,
+                "Halcyon is running",
+                "Widgets, colors and schedules are active.",
+                "Stop",
+                "running",
+            ),
+            (
+                false,
+                "Halcyon is stopped",
+                "Nothing on your desktop is managed.",
+                "Start",
+                "stopped",
+            ),
+        ] {
+            app.service.running = running;
+            let state = native.text_bounds(app.settings_view(), title);
+            native.text_bounds(app.settings_view(), detail);
+            let startup = native.text_bounds(app.settings_view(), "Start when you sign in");
+            assert!(state.y < startup.y, "{name} comes first");
+            let button = native.bounds(app.settings_view(), "service-running");
+            assert!(
+                (button.y - state.y).abs() < 40.,
+                "{name}: {button:?} {state:?}"
+            );
+            assert!(!native.text_all(app.settings_view(), action).is_empty());
+            assert!(
+                native
+                    .text_all(app.settings_view(), "Keep running in the background")
+                    .is_empty()
+            );
+            for (theme, theme_name) in [
+                (cosmic::Theme::light(), "light"),
+                (cosmic::Theme::dark(), "dark"),
+            ] {
+                native.capture(
+                    app.settings_view(),
+                    &theme,
+                    &format!("on13-{name}-{}-{theme_name}", size.width),
+                );
+            }
+        }
+        // Messages run with the preview's service, so nothing asks systemctl.
+        crate::settings::DRAW_REAL_SERVICE.with(|real| real.set(false));
+        send_settings(&mut app, Message::AppSettingsPage(AppSettingsPage::Home));
+        app.service.running = false;
+        crate::settings::DRAW_REAL_SERVICE.with(|real| real.set(true));
+        native.text_bounds(app.settings_view(), "Stopped");
+        crate::settings::DRAW_REAL_SERVICE.with(|real| real.set(false));
+    }
+    assert_eq!(
+        crate::settings::navigation::search("stop halcyon")[0].label,
+        "Running and startup"
+    );
+}
+
 #[test]
 fn builder_first_visit_opens_widget_update_review_once() {
     if isolated(

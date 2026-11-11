@@ -5995,7 +5995,17 @@ fn capture_glance(event: &serde_json::Value) -> Option<Message> {
     };
     Some(Message::GlanceSection(key, event["value"].as_bool()?))
 }
+#[cfg(test)]
+thread_local! {
+    /// Draws the service as a real one would, for captures. Tests never press
+    /// its controls, so nothing reaches systemctl.
+    static DRAW_REAL_SERVICE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 fn preview() -> bool {
+    #[cfg(test)]
+    if DRAW_REAL_SERVICE.with(std::cell::Cell::get) {
+        return false;
+    }
     std::env::var_os("DESKTOP_CARDS_CONFIG").is_some()
 }
 fn capture_dir() -> Option<PathBuf> {

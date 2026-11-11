@@ -332,8 +332,8 @@ pub(super) const LOOKS: SearchHit = hit(
 .names_page();
 pub(super) const STARTUP: SearchHit = hit(
     Page::General,
-    "Startup",
-    "general halcyon app settings startup login sign in background service running setup again",
+    "Running and startup",
+    "general halcyon app settings startup login sign in background service running stopped stop start on off setup again",
     false,
 )
 .names_page();
@@ -1863,7 +1863,7 @@ mod tests {
             );
             assert!(!hit.advanced);
         }
-        assert_eq!(search("autostart")[0].label, "Startup");
+        assert_eq!(search("autostart")[0].label, "Running and startup");
         assert_eq!(search("hotkeys")[0].page, Page::DesktopShortcuts);
         let hit = search("memory cache")[0];
         assert_eq!(hit.anchor(), "devbox-memory");
