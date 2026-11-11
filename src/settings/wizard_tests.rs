@@ -561,9 +561,15 @@ fn finishing_keeps_the_look_and_skip_leaves_the_desktop_alone() {
     let (mut app, mut native) = open(size);
     click(&mut app, &mut native, "wizard-leave");
     assert!(app.wizard.is_none());
-    assert!(Config::load().onboarded);
+    // Skip for now isn't finishing: Home keeps offering setup.
+    assert!(!Config::load().onboarded);
+    assert!(app.needs_setup());
     assert_eq!(Config::load().appearance.family, None);
-    assert_eq!(user(DOCK, "border_radius"), None, "Not now changes nothing");
+    assert_eq!(
+        user(DOCK, "border_radius"),
+        None,
+        "Skip for now changes nothing"
+    );
 
     let (mut app, mut native) = open(size);
     click(&mut app, &mut native, "wizard-start");
@@ -586,7 +592,7 @@ fn finishing_keeps_the_look_and_skip_leaves_the_desktop_alone() {
     assert!(config.widget_visible(crate::drawer::Widget::Clock));
     assert!(!config.widget_visible(crate::drawer::Widget::Devbox));
     assert!(!config.glance.enabled && !config.glance.show_calendar);
-    // The old checklist doesn't follow the wizard.
+    // Finished setup isn't offered again on Home.
     assert!(!app.needs_setup());
 }
 
@@ -1931,4 +1937,347 @@ fn polish050_compact_choices_and_seven_step_progress_keep_default_bar_navigation
         click(&mut app, &mut native, "wizard-cancel");
         assert!(app.wizard.is_none());
     }
+}
+
+/// ON-07: a missing Islands panel says so on the Bars step, and Why? names
+/// the fix. ON-08: Review names a combined card once, with what it holds.
+#[test]
+fn on07_on08_bars_and_review_at_820() {
+    if child("on07_on08_bars_and_review_at_820") {
+        return;
+    }
+    on07_on08_bars_and_review(Size::new(820., 600.));
+}
+
+#[test]
+fn on07_on08_bars_and_review_at_1280() {
+    if child("on07_on08_bars_and_review_at_1280") {
+        return;
+    }
+    on07_on08_bars_and_review(Size::new(1280., 800.));
+}
+
+fn on07_on08_bars_and_review(size: Size) {
+    seed_desktop();
+    let themes = [
+        (cosmic::Theme::light(), "light"),
+        (cosmic::Theme::dark(), "dark"),
+    ];
+    {
+        let (mut app, mut native) = open(size);
+        app.desktop.islands.installation = crate::desktop::islands::Installation::Absent;
+        click(&mut app, &mut native, "wizard-start");
+        click(&mut app, &mut native, "wizard-look-calm");
+        click(&mut app, &mut native, "wizard-next");
+        assert_eq!(step(&app), wizard::Step::Bars);
+        let _ = app.update(Message::Wizard(wizard::Message::KeepBars(false)));
+        native.text_bounds(
+            app.settings_view(),
+            "Needs the Islands panel, which isn’t installed.",
+        );
+        let missing = crate::settings::desktop::islands::MISSING;
+        assert!(native.text_all(app.settings_view(), missing).is_empty());
+        reveal(&mut app, &mut native, "wizard-islands-why");
+        click(&mut app, &mut native, "wizard-islands-why");
+        native.text_bounds(app.settings_view(), missing);
+        for (theme, name) in &themes {
+            native.capture(
+                app.settings_view(),
+                theme,
+                &format!("on07-bars-{}-{name}", size.width),
+            );
+        }
+        let _ = app.update(Message::Wizard(wizard::Message::Show(
+            wizard::Step::Widgets,
+        )));
+        if !app.wizard.as_ref().unwrap().widgets.grouped {
+            reveal(&mut app, &mut native, "wizard-widget-group");
+            click(&mut app, &mut native, "wizard-widget-group");
+        }
+        let widgets = &app.wizard.as_ref().unwrap().widgets;
+        assert!(widgets.grouped);
+        let names = widgets.names(widgets.active());
+        assert!(names[0].starts_with("Daily overview (clock"), "{names:?}");
+        for daily in ["Clock", "Weather", "Calendar"] {
+            assert!(!names.iter().any(|name| name == daily), "{names:?}");
+        }
+        let _ = app.update(Message::Wizard(wizard::Message::Show(wizard::Step::Ready)));
+        native.text_bounds(app.settings_view(), &names.join(", "));
+        for (theme, name) in &themes {
+            native.capture(
+                app.settings_view(),
+                theme,
+                &format!("on08-review-{}-{name}", size.width),
+            );
+        }
+    }
+}
+
+/// ON-03: the Look step says everything a look changes, and Review and Done
+/// name its light or dark style and COSMIC accent.
+#[test]
+fn on03_look_names_style_and_accent_at_820() {
+    if child("on03_look_names_style_and_accent_at_820") {
+        return;
+    }
+    on03_look_names_style_and_accent(Size::new(820., 600.));
+}
+
+#[test]
+fn on03_look_names_style_and_accent_at_1280() {
+    if child("on03_look_names_style_and_accent_at_1280") {
+        return;
+    }
+    on03_look_names_style_and_accent(Size::new(1280., 800.));
+}
+
+fn on03_look_names_style_and_accent(size: Size) {
+    seed_desktop();
+    let themes = [
+        (cosmic::Theme::light(), "light"),
+        (cosmic::Theme::dark(), "dark"),
+    ];
+    let colors = "Style: Dark · Accent: Teal (all COSMIC apps)";
+    let (mut app, mut native) = open(size);
+    click(&mut app, &mut native, "wizard-start");
+    assert_eq!(step(&app), wizard::Step::Look);
+    native.text_bounds(
+        app.settings_view(),
+        "A look sets your wallpaper, light or dark style, COSMIC accent colors, dock and panel shape, and a set of widgets. You can change the dock, panel and widgets next.",
+    );
+    reveal(&mut app, &mut native, "wizard-look-calm");
+    click(&mut app, &mut native, "wizard-look-calm");
+    for (theme, name) in &themes {
+        native.capture(
+            app.settings_view(),
+            theme,
+            &format!("on03-look-{}-{name}", size.width),
+        );
+    }
+    let _ = app.update(Message::Wizard(wizard::Message::Show(wizard::Step::Ready)));
+    native.text_bounds(app.settings_view(), &format!("Slow morning\n{colors}"));
+    for (theme, name) in &themes {
+        native.capture(
+            app.settings_view(),
+            theme,
+            &format!("on03-review-{}-{name}", size.width),
+        );
+    }
+    click(&mut app, &mut native, "wizard-apply");
+    assert_eq!(step(&app), wizard::Step::Done);
+    let lines = &app.wizard.as_ref().unwrap().applied.as_ref().unwrap().lines;
+    let look = lines.iter().position(|line| line == "Look: Slow morning");
+    assert_eq!(
+        look.map(|at| lines[at + 1].as_str()),
+        Some(colors),
+        "{lines:?}"
+    );
+    native.text_bounds(app.settings_view(), colors);
+    for (theme, name) in &themes {
+        native.capture(
+            app.settings_view(),
+            theme,
+            &format!("on03-done-{}-{name}", size.width),
+        );
+    }
+}
+
+/// ON-14: a fresh wizard starts on My current desktop, and going on without
+/// picking a look keeps the desktop's own colors.
+#[test]
+fn on14_look_step_starts_on_the_current_desktop_at_820() {
+    if child("on14_look_step_starts_on_the_current_desktop_at_820") {
+        return;
+    }
+    on14_look_step_starts_on_the_current_desktop(Size::new(820., 600.));
+}
+
+#[test]
+fn on14_look_step_starts_on_the_current_desktop_at_1280() {
+    if child("on14_look_step_starts_on_the_current_desktop_at_1280") {
+        return;
+    }
+    on14_look_step_starts_on_the_current_desktop(Size::new(1280., 800.));
+}
+
+fn on14_look_step_starts_on_the_current_desktop(size: Size) {
+    seed_desktop();
+    let themes = [
+        (cosmic::Theme::light(), "light"),
+        (cosmic::Theme::dark(), "dark"),
+    ];
+    let (mut app, mut native) = open(size);
+    click(&mut app, &mut native, "wizard-start");
+    assert_eq!(step(&app), wizard::Step::Look);
+    assert_eq!(app.wizard.as_ref().unwrap().look, None);
+    native.bounds(app.settings_view(), "wizard-look-current");
+    for (theme, name) in &themes {
+        native.capture(
+            app.settings_view(),
+            theme,
+            &format!("on14-look-{}-{name}", size.width),
+        );
+    }
+    click(&mut app, &mut native, "wizard-next");
+    assert_eq!(step(&app), wizard::Step::Bars);
+    assert_eq!(app.wizard.as_ref().unwrap().look, None);
+    let _ = app.update(Message::Wizard(wizard::Message::Show(wizard::Step::Ready)));
+    native.text_bounds(app.settings_view(), "My current desktop");
+    for (theme, name) in &themes {
+        native.capture(
+            app.settings_view(),
+            theme,
+            &format!("on14-review-{}-{name}", size.width),
+        );
+    }
+}
+
+/// ON-04: Done says where the way back lives once it closes, and Show
+/// Changes finishes setup there.
+#[test]
+fn on04_done_points_to_changes_at_820() {
+    if child("on04_done_points_to_changes_at_820") {
+        return;
+    }
+    on04_done_points_to_changes(Size::new(820., 600.));
+}
+
+#[test]
+fn on04_done_points_to_changes_at_1280() {
+    if child("on04_done_points_to_changes_at_1280") {
+        return;
+    }
+    on04_done_points_to_changes(Size::new(1280., 800.));
+}
+
+fn on04_done_points_to_changes(size: Size) {
+    seed_desktop();
+    let themes = [
+        (cosmic::Theme::light(), "light"),
+        (cosmic::Theme::dark(), "dark"),
+    ];
+    let (mut app, mut native) = open(size);
+    click(&mut app, &mut native, "wizard-start");
+    reveal(&mut app, &mut native, "wizard-look-calm");
+    click(&mut app, &mut native, "wizard-look-calm");
+    let _ = app.update(Message::Wizard(wizard::Message::Show(wizard::Step::Ready)));
+    click(&mut app, &mut native, "wizard-apply");
+    assert_eq!(step(&app), wizard::Step::Done);
+    native.text_bounds(app.settings_view(), "Changed your mind later?");
+    native.text_bounds(
+        app.settings_view(),
+        "Undo this setup from Changes. You can also go back to your desktop from before Halcyon there.",
+    );
+    // Done has Finish where the other steps have Next.
+    native.scroll(app.settings_view(), "wizard-body", 0.);
+    let footer = native.bounds(app.settings_view(), "wizard-finish");
+    let bounds = native.bounds(app.settings_view(), "wizard-done-changes");
+    let overflow = bounds.y + bounds.height - (footer.y - 60.);
+    if overflow > 0. {
+        native.scroll(app.settings_view(), "wizard-body", overflow);
+    }
+    for (theme, name) in &themes {
+        native.capture(
+            app.settings_view(),
+            theme,
+            &format!("on04-done-{}-{name}", size.width),
+        );
+    }
+    click(&mut app, &mut native, "wizard-done-changes");
+    assert!(app.wizard.is_none());
+    assert_eq!(app.page, Page::Changes);
+    assert!(Config::load().onboarded);
+    native.bounds(app.settings_view(), "restore-desktop");
+    for (theme, name) in &themes {
+        native.capture(
+            app.settings_view(),
+            theme,
+            &format!("on04-changes-{}-{name}", size.width),
+        );
+    }
+}
+
+/// ON-15: widgets that don't fit say so once, beside a disabled Next, with
+/// how to continue, instead of a Choose widgets button on that same step.
+#[test]
+fn on15_crowded_widgets_say_so_once_at_820() {
+    if child("on15_crowded_widgets_say_so_once_at_820") {
+        return;
+    }
+    on15_crowded_widgets_say_so_once(Size::new(820., 600.));
+}
+
+#[test]
+fn on15_crowded_widgets_say_so_once_at_1280() {
+    if child("on15_crowded_widgets_say_so_once_at_1280") {
+        return;
+    }
+    on15_crowded_widgets_say_so_once(Size::new(1280., 800.));
+}
+
+fn on15_crowded_widgets_say_so_once(size: Size) {
+    seed_desktop();
+    let themes = [
+        (cosmic::Theme::light(), "light"),
+        (cosmic::Theme::dark(), "dark"),
+    ];
+    let (mut app, mut native) = open(size);
+    click(&mut app, &mut native, "wizard-start");
+    reveal(&mut app, &mut native, "wizard-look-calm");
+    click(&mut app, &mut native, "wizard-look-calm");
+    let _ = app.update(Message::Wizard(wizard::Message::Show(
+        wizard::Step::Widgets,
+    )));
+    let wizard = app.wizard.as_mut().unwrap();
+    wizard.shrink_display([400., 300.]);
+    let error = wizard
+        .widget_plan(&app.config)
+        .error
+        .expect("too many widgets");
+    assert!(error.ends_with(" needs more room."), "{error}");
+    let grouped = app.wizard.as_ref().unwrap().widgets.grouped;
+    let fix = if grouped {
+        "Remove a widget to continue."
+    } else {
+        "Remove a widget or turn on Combine to continue."
+    };
+    let note = format!("{error} {fix}");
+    native.text_bounds(app.settings_view(), &note);
+    assert!(native.text_all(app.settings_view(), &error).is_empty());
+    assert!(
+        native
+            .text_all(app.settings_view(), "Choose widgets")
+            .is_empty()
+    );
+    native.text_bounds(app.settings_view(), "Next");
+    native.bounds(app.settings_view(), "wizard-step-error");
+    for (theme, name) in &themes {
+        native.capture(
+            app.settings_view(),
+            theme,
+            &format!("on15-widgets-{}-{name}", size.width),
+        );
+    }
+    // Next does nothing until the widgets fit.
+    click(&mut app, &mut native, "wizard-next");
+    assert_eq!(step(&app), wizard::Step::Widgets);
+    // With Combine off, turning it on is offered too.
+    let _ = app.update(Message::Wizard(wizard::Message::GroupWidgets(!grouped)));
+    let wizard = app.wizard.as_mut().unwrap();
+    wizard.shrink_display([400., 300.]);
+    let error = wizard
+        .widget_plan(&app.config)
+        .error
+        .expect("still too many");
+    let fix = if wizard.widgets.grouped {
+        "Remove a widget to continue."
+    } else {
+        "Remove a widget or turn on Combine to continue."
+    };
+    native.text_bounds(app.settings_view(), &format!("{error} {fix}"));
+    assert!(
+        native
+            .text_all(app.settings_view(), "Choose widgets")
+            .is_empty()
+    );
 }

@@ -193,6 +193,29 @@ impl Draft {
         }
         result
     }
+    /// The chosen widgets as Review and Done name them, in `order`: one
+    /// Daily overview that says what it holds, never its parts again.
+    pub fn names(&self, order: impl IntoIterator<Item = Widget>) -> Vec<String> {
+        order
+            .into_iter()
+            .filter(|w| !(self.grouped && DAILY.contains(w)))
+            .map(|w| {
+                if w != Widget::Glance {
+                    return w.title().to_owned();
+                }
+                let parts: Vec<_> = DAILY
+                    .into_iter()
+                    .filter(|d| self.selected(*d))
+                    .map(|d| d.title().to_lowercase())
+                    .collect();
+                match parts.split_last() {
+                    Some((last, [])) => format!("Daily overview ({last})"),
+                    Some((last, rest)) => format!("Daily overview ({} and {last})", rest.join(", ")),
+                    None => w.title().to_owned(),
+                }
+            })
+            .collect()
+    }
     pub fn toggle(&mut self, w: Widget) {
         if !CHOICES.contains(&w) {
             return;
@@ -468,10 +491,8 @@ impl Draft {
                 )
             };
             let Some(point) = point else {
-                error = Some(format!(
-                    "{} needs more room. Choose fewer widgets or another display.",
-                    w.title()
-                ));
+                // The wizard says how to fix it, which depends on the step.
+                error = Some(format!("{} needs more room.", w.title()));
                 break;
             };
             occupied.push([point[0], point[1], size[0], size[1]]);
@@ -608,6 +629,44 @@ mod tests {
         assert!(draft.active().contains(&Widget::Glance));
         assert!(!draft.active().contains(&Widget::Weather));
         assert_eq!(draft.config(&config).notes.enabled, config.notes.enabled);
+    }
+
+    #[test]
+    fn a_combined_card_is_named_once_with_what_it_holds() {
+        let raw = serde_json::json!({
+            "enabled_widgets": ["clock", "weather", "notes"],
+            "glance": {"enabled": true, "show_clock": true, "show_weather": true, "show_calendar": false},
+            "notes": {"enabled": true}
+        });
+        let config: Config = serde_json::from_value(raw.clone()).unwrap();
+        let (_, _, snapshot, _) = fixture();
+        let mut draft = Draft::new(&config, &raw, &snapshot);
+        let projected = draft.config(&config);
+        let everything = || {
+            Widget::ALL
+                .into_iter()
+                .filter(|w| projected.widget_selected(*w))
+        };
+        // Clock and weather also stay selected underneath the combined card.
+        assert!(everything().count() > 2);
+        assert_eq!(
+            draft.names(everything()),
+            ["Daily overview (clock and weather)", "Notes"]
+        );
+        assert_eq!(
+            draft.names(draft.active()),
+            ["Daily overview (clock and weather)", "Notes"]
+        );
+        draft.toggle(Widget::Calendar);
+        assert_eq!(
+            draft.names(draft.active())[0],
+            "Daily overview (clock, weather and calendar)"
+        );
+        // Separate again, each is named on its own, in the chosen order.
+        draft.group(false);
+        let mut names = draft.names(draft.active());
+        names.sort();
+        assert_eq!(names, ["Calendar", "Clock", "Notes", "Weather"]);
     }
 
     #[test]

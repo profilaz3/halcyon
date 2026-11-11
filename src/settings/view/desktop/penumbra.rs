@@ -70,7 +70,7 @@ impl Settings {
             .into()
     }
 
-    /// Why blending isn't available yet. Halcyon's panel provides it; when
+    /// Why blending isn't available yet. The Islands panel provides it; when
     /// Islands already asks for that panel, its step under Shape is the only
     /// one, so this just points there. As `titled`, it is the feature's row.
     fn penumbra_setup(&self, draft: &PanelDraft, titled: bool) -> Element<'_, Message> {
@@ -86,11 +86,11 @@ impl Settings {
         };
         if self.panel_host() == super::host::Host::Running {
             return note(
-                "Halcyon’s panel needs an update for this. Update Halcyon, then sign in again.",
+                "The Islands panel needs an update for this. Update Halcyon, then sign out and back in.",
             );
         }
         if islands {
-            return note("Comes with Halcyon’s panel. See Shape above.");
+            return note("Comes with the Islands panel. See Shape above.");
         }
         let Some(step) = self.host_step("This uses") else {
             return if titled {

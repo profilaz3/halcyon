@@ -332,7 +332,7 @@ impl Settings {
             ),
         };
         components.push(Component {
-            name: "Halcyon’s panel",
+            name: "Islands panel",
             state,
             health,
             action: Islands,

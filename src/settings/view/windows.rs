@@ -35,7 +35,8 @@ pub(super) fn store_pill<'a>(store: Option<&DesktopStore>, accent: Color) -> Ele
     }
 }
 
-/// The recovery banner shared by the desktop subpages.
+/// The banner shared by every desktop page after Halcyon was closed in
+/// the middle of a change: it says what was being changed.
 pub(super) fn recovery_banner<'a>(
     recovery: Option<&Result<crate::desktop::store::Journal, String>>,
     writable: bool,
@@ -43,14 +44,16 @@ pub(super) fn recovery_banner<'a>(
     keep: Message,
 ) -> Option<Element<'a, Message>> {
     match recovery? {
-        Ok(_) => Some(banner(
-            "An earlier change was interrupted.",
+        Ok(journal) => Some(banner(
+            crate::desktop::store::activity::interrupted(journal),
             WARN,
             vec![
-                button::text("Keep current")
+                button::text("Keep what’s on screen")
+                    .id(cosmic::widget::Id::new("recovery-keep"))
                     .on_press_maybe(writable.then_some(keep))
                     .into(),
-                button::standard("Restore previous")
+                button::standard("Go back to before")
+                    .id(cosmic::widget::Id::new("recovery-restore"))
                     .on_press_maybe(writable.then_some(recover))
                     .into(),
             ],
@@ -59,7 +62,8 @@ pub(super) fn recovery_banner<'a>(
             error.clone(),
             ERROR,
             vec![
-                button::text("Keep current")
+                button::text("Keep what’s on screen")
+                    .id(cosmic::widget::Id::new("recovery-keep"))
                     .on_press_maybe(writable.then_some(keep))
                     .into(),
             ],

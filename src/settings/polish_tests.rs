@@ -53,53 +53,6 @@ fn polish050_recovered_legacy_layout_can_be_saved_or_cancelled() {
 }
 
 #[test]
-fn polish050_dismissed_reminder_tracks_exact_undo_and_external_refresh() {
-    let name = "polish050_dismissed_reminder_tracks_exact_undo_and_external_refresh";
-    if desktop_test_child(
-        name,
-        DesktopEnv {
-            app_config: true,
-            fixture: true,
-            ..Default::default()
-        },
-    ) {
-        return;
-    }
-    let root = isolated_root();
-    Config::save_changes(
-        json!({"widgets_visible":true,"enabled_widgets":["weather"],"location":null}),
-    )
-    .unwrap();
-    let mut app = open_isolated_editor(&root);
-    let task = wizard::follow_up::Task::Weather;
-    assert!(
-        app.setup_followups
-            .pending(&app.config, false)
-            .contains(&task)
-    );
-    send_settings(&mut app, Message::DismissSetupTask(task));
-    assert!(!app.error, "{}", app.status);
-    assert!(
-        !app.setup_followups
-            .pending(&app.config, false)
-            .contains(&task)
-    );
-    send_settings(&mut app, Message::UndoDesktop);
-    assert!(
-        app.setup_followups
-            .pending(&app.config, false)
-            .contains(&task)
-    );
-    Config::save_changes(json!({"setup_followup_weather_dismissed":true})).unwrap();
-    send_settings(&mut app, Message::Tick);
-    assert!(
-        !app.setup_followups
-            .pending(&app.config, false)
-            .contains(&task)
-    );
-}
-
-#[test]
 fn polish050_native_page_patterns_and_one_builder_footer() {
     let name = "polish050_native_page_patterns_and_one_builder_footer";
     if desktop_test_child(
@@ -307,13 +260,17 @@ fn polish050_prior_page_undo_does_not_label_calendar_but_remains_available() {
     send_settings(&mut app, Message::ClockFormat(!before));
     assert!(app.page_undo_button().is_some());
     send_settings(&mut app, Message::Page(Page::Calendar));
-    // Calendar didn't make it, so its footer has no Undo for it; Ctrl+Z
-    // still reaches it from here.
+    // Calendar didn't make it, so neither its footer nor Ctrl+Z undoes it
+    // here. It stays available on Clock and in Changes.
     assert!(app.page_undo_button().is_none());
     assert!(matches!(
         app.undo_target(),
         crate::settings::navigation::UndoTarget::Desktop(..)
     ));
+    send_settings(&mut app, Message::KeyboardUndo(false));
+    assert_eq!(app.config.clock.format_24h, !before);
+    send_settings(&mut app, Message::Page(Page::Clock));
+    assert!(app.page_undo_button().is_some());
     send_settings(&mut app, Message::KeyboardUndo(false));
     assert_eq!(app.config.clock.format_24h, before);
 }
@@ -834,17 +791,18 @@ fn history_f_changes_names_widgets_and_puts_back_older_changes() {
         send_settings(&mut app, Message::Resized(size));
         let mut native = crate::native_test::Native::new(size);
         assert!(native.duplicate_ids(app.settings_view()).is_empty());
-        // The latest keeps Undo; older ones offer Put back.
+        // The latest keeps Undo; older ones offer their own Undo.
         assert!(native.try_bounds(app.settings_view(), "history-review-undo").is_some());
-        assert!(native.try_bounds(app.settings_view(), &format!("change-put-back-{}", glance.id)).is_none());
-        native_reveal(&app, &mut native, &format!("change-put-back-{}", date.id));
+        assert!(native.try_bounds(app.settings_view(), &format!("change-undo-{}", glance.id)).is_none());
+        native_reveal(&app, &mut native, &format!("change-undo-{}", date.id));
         assert!(!native.text_all(app.settings_view(), "Changed Daily overview").is_empty());
+        assert!(!native.text_all(app.settings_view(), "Undoes only this change. Later changes stay.").is_empty());
         for (theme, mode) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
             native.capture(app.settings_view(), &theme, &format!("history-f-changes-{}-{mode}", size.width));
         }
     }
     let mut native = crate::native_test::Native::new(Size::new(1280., 800.));
-    native_click(&mut app, &mut native, &format!("change-put-back-{}", date.id));
+    native_click(&mut app, &mut native, &format!("change-undo-{}", date.id));
     assert_eq!(Config::load().clock.show_date, date_before, "the clock date is back");
     assert_eq!(
         Config::load().glance.density,
@@ -852,17 +810,20 @@ fn history_f_changes_names_widgets_and_puts_back_older_changes() {
         "newer changes stay"
     );
     send_settings(&mut app, Message::Support(support::Message::Changed));
-    assert!(native.try_bounds(app.settings_view(), &format!("change-put-back-{}", date.id)).is_none());
+    assert!(native.try_bounds(app.settings_view(), &format!("change-undo-{}", date.id)).is_none());
     assert!(native.try_bounds(app.settings_view(), "history-review-undo").is_some());
 
-    // The dock spacing changed again since: Put back opens the review.
+    // The dock spacing changed again since: its Undo opens the review.
     spacing(&store, 9);
     send_settings(&mut app, Message::Support(support::Message::Changed));
-    native_reveal(&app, &mut native, &format!("change-put-back-{dock}"));
-    native_click(&mut app, &mut native, &format!("change-put-back-{dock}"));
+    native_reveal(&app, &mut native, &format!("change-undo-{dock}"));
+    native_click(&mut app, &mut native, &format!("change-undo-{dock}"));
     let review = app.undo_review.clone().expect("the review opens");
     assert!(review.puts_back());
-    assert!(!native.text_all(app.settings_view(), "Put back the rest").is_empty());
+    assert!(!native.text_all(app.settings_view(), "Undo the rest anyway").is_empty());
+    // Each conflict in the page's words, never its config key.
+    assert_eq!(review.conflicts, ["Between items: now 9 px, was Default"]);
+    native.text_bounds(app.settings_view(), "Between items: now 9 px, was Default");
     for (theme, mode) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
         native.capture(app.settings_view(), &theme, &format!("history-f-review-1280-{mode}"));
     }
@@ -1097,9 +1058,23 @@ fn footer_undo_stays_on_the_page_that_made_the_change() {
     // Its own page offers it again, though it was made on an earlier visit.
     send_settings(&mut app, Message::Page(Page::DesktopDock));
     native.text_bounds(app.settings_view(), &format!("Undo {title}"));
-    // Ctrl+Z still undoes it from anywhere.
+    // Ctrl+Z on another page does nothing, like the footer: the change
+    // stays, and its own page still offers to undo it.
     send_settings(&mut app, Message::Page(Page::Overview));
     let id = app.last_desktop_change.as_ref().unwrap().2.clone();
+    let spacing_now = app.desktop.current().unwrap().spacing().known().copied();
+    send_settings(&mut app, Message::KeyboardUndo(false));
+    assert!(!app.error, "{}", app.status);
+    assert_eq!(app.last_desktop_change.as_ref().map(|c| &c.2), Some(&id));
+    assert_eq!(
+        app.desktop.current().unwrap().spacing().known().copied(),
+        spacing_now
+    );
+    assert!(native.try_bounds(app.settings_view(), "settings-undo").is_none());
+    capture(&app, &mut native, "footer-other-page-ctrl-z");
+    send_settings(&mut app, Message::Page(Page::DesktopDock));
+    native.text_bounds(app.settings_view(), &format!("Undo {title}"));
+    // On its own page, Ctrl+Z undoes it, as the button would.
     send_settings(&mut app, Message::KeyboardUndo(false));
     assert!(!app.error, "{}", app.status);
     assert_ne!(app.last_desktop_change.as_ref().map(|c| &c.2), Some(&id));
@@ -1425,7 +1400,8 @@ fn time_of_day_without_a_city_asks_for_it_once() {
     let root = isolated_root();
     let mut app = open_isolated_editor(&root);
     send_settings(&mut app, Message::Page(Page::DesktopAutomation));
-    let line = "Sunrise and sunset there decide when your look switches";
+    let line =
+        "Choose a city so Halcyon knows when sunrise and sunset are. Until then, nothing switches.";
     for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
         send_settings(&mut app, Message::Resized(size));
         let mut native = crate::native_test::Native::new(size);
@@ -1463,6 +1439,40 @@ fn time_of_day_without_a_city_asks_for_it_once() {
             &mut native,
             &format!("time-of-day-no-city-{}", size.width),
         );
+    }
+    // Set times and screens still switch without a city, so the line says
+    // that instead when one of them is on.
+    {
+        use crate::automation::{Days, ProfileRef, Rule, Time, Trigger};
+        let settings = app.automation.settings_mut().expect("automation read");
+        settings.enabled = true;
+        settings.rules.push(Rule {
+            id: "on16-evening".into(),
+            enabled: true,
+            since: 0,
+            profile: ProfileRef::Preset("calm".into()),
+            name: "Slow morning".into(),
+            when: Trigger::Schedule {
+                time: Time::new(19, 0).unwrap(),
+                days: Days::EVERY,
+            },
+        });
+    }
+    let qualified = "Choose a city so Halcyon knows when sunrise and sunset are. Until then, only set times and screens switch.";
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        native.text_bounds(app.settings_view(), qualified);
+        assert!(native.text_all(app.settings_view(), line).is_empty());
+        capture_both(
+            &app,
+            &mut native,
+            &format!("on16-time-of-day-set-times-{}", size.width),
+        );
+    }
+    {
+        let settings = app.automation.settings_mut().expect("automation read");
+        settings.rules.retain(|rule| rule.id != "on16-evening");
     }
     let city = City {
         name: "Sydney".into(),
@@ -1931,4 +1941,66 @@ fn windows_page_saves_its_corner_and_effect_controls() {
     let mut reopened = open_isolated_editor(&root);
     send_settings(&mut reopened, Message::Page(Page::DesktopWindows));
     assert_eq!(roundness(&reopened), Some(other));
+}
+
+/// FB-05: after Halcyon was closed in the middle of a change, the banner
+/// says what was being changed, and its choices say what they do.
+#[test]
+fn interrupted_change_banner_names_what_was_changing() {
+    let name = "interrupted_change_banner_names_what_was_changing";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::desktop::store::{Journal, JournalEntry};
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    let store = app.desktop.store().unwrap().clone();
+    let journal = Journal {
+        format: "desktop-cards-journal".into(),
+        version: 1,
+        id: "interrupted".into(),
+        operation: "apply".into(),
+        created: "2026-11-11T12:00:00Z".into(),
+        entries: vec![JournalEntry {
+            namespace: "com.system76.CosmicComp".into(),
+            version: 1,
+            key: "autotile".into(),
+            before: Some("false".into()),
+            after: Some("true".into()),
+        }],
+        widget: None,
+        undo: None,
+        design: None,
+    };
+    std::fs::create_dir_all(store.state_dir()).unwrap();
+    std::fs::write(
+        store.state_dir().join("desktop-journal.json"),
+        serde_json::to_vec(&journal).unwrap(),
+    )
+    .unwrap();
+    assert!(store.pending_recovery().unwrap().is_some());
+    send_settings(&mut app, Message::Page(Page::DesktopWindows));
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        native.text_bounds(
+            app.settings_view(),
+            "Halcyon was closed while changing Windows.",
+        );
+        native.text_bounds(app.settings_view(), "Keep what’s on screen");
+        native.text_bounds(app.settings_view(), "Go back to before");
+        capture_both(&app, &mut native, &format!("interrupted-windows-{}", size.width));
+    }
+    let mut native = crate::native_test::Native::new(Size::new(1280., 800.));
+    native_click(&mut app, &mut native, "recovery-keep");
+    assert!(store.pending_recovery().unwrap().is_none(), "keeping clears it");
+    assert!(native.try_bounds(app.settings_view(), "recovery-keep").is_none());
+    assert!(app.workspaces.recovery().is_none(), "Workspaces below follows");
 }

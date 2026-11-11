@@ -313,9 +313,9 @@ impl Settings {
         let mut rows = vec![heading(
             "Unfinished changes",
             if self.recovery_sheet.rows.is_empty() {
-                "Changes left half-done by an update show up here."
+                "Changes you made in a previous version that were never applied show up here."
             } else {
-                "From the previous version. Nothing changes until you choose to use one."
+                "Changes you made in the previous version that were never applied. Nothing changes until you pick one."
             },
         )];
         for (index, proposal) in self.recovery_sheet.rows.iter().enumerate() {
@@ -338,7 +338,7 @@ impl Settings {
                 ));
             }
             let mut actions = vec![
-                button::text("Keep current")
+                button::text("Keep what’s on screen")
                     .on_press(Message::RecoveryDiscard(index))
                     .into(),
                 button::text("Use this choice")
@@ -366,8 +366,8 @@ impl Settings {
             rows.push(group(
                 None,
                 vec![detail_state(
-                    "Nothing to recover",
-                    "Nothing was left half-done when Halcyon updated.",
+                    "Nothing waiting",
+                    "Every change from the previous version was applied.",
                 )],
             ));
         } else {
@@ -382,17 +382,17 @@ impl Settings {
 
     pub(super) fn simple_status(&self) -> Element<'_, Message> {
         if let Some(review) = &self.undo_review {
-            let verb = if review.puts_back() { "Put back" } else { "Undo" };
             // Names keep their case: "Undo look “Paper”", not "paper".
             let summary = self.latest_summary().filter(|s| s.id == review.id());
             let mut lines = vec![label(
                 &format!(
-                    "{verb} {} · some values changed since",
+                    "Some of these settings were changed after {}. Choose what to keep.",
                     crate::settings::support::change_name(summary, &review.label)
                 ),
                 13.,
-                desktop::ERROR,
+                desktop::WARN,
             )];
+            // Each in its page's words: "Between items: now 9 px, was 4 px".
             lines.extend(
                 review
                     .conflicts
@@ -402,15 +402,11 @@ impl Settings {
             );
             lines.push(
                 row::with_children(vec![
-                    button::text("Keep all current values")
+                    button::text("Keep today’s values")
                         .id("undo-keep-current".into())
                         .on_press(Message::ResolveUndoShown(review.clone(), false))
                         .into(),
-                    button::suggested(if review.puts_back() {
-                        "Put back the rest"
-                    } else {
-                        "Undo other changes"
-                    })
+                    button::suggested("Undo the rest anyway")
                         .id("undo-reviewed".into())
                         .on_press(Message::ResolveUndoShown(review.clone(), true))
                         .into(),
@@ -563,7 +559,8 @@ impl Settings {
             .is_some_and(|(_, _, id)| self.undo_baseline.as_ref() != Some(id))
     }
     /// Whether this page made the latest change: made here since it opened,
-    /// or recorded for this page. Elsewhere Ctrl+Z and Changes undo it.
+    /// or recorded for this page. Only here do Ctrl+Z and the footer undo
+    /// it; elsewhere Changes does.
     pub(in crate::settings) fn owns_latest_change(&self) -> bool {
         let Some((owner, label, _)) = &self.last_desktop_change else {
             return false;

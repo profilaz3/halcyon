@@ -725,9 +725,12 @@ pub enum Message {
     CommandDone(String, Result<(), String>),
     OpenCalendar,
     Calendar(calendar::Message),
+    /// Hides the Home card that offers setup ("Not now").
     SetupDismissed(bool),
-    SetupOpen(bool),
-    DismissSetupTask(wizard::follow_up::Task),
+    /// Hides the Home card about an update without opening its notes.
+    NotesSeen,
+    /// Opens a web page a release note names.
+    OpenNoteLink(&'static str),
     /// Close the finished setup and open a page for a follow-up task.
     FinishSetupTo(Page),
     OpenWeatherSource,
@@ -803,14 +806,17 @@ pub struct Settings {
     error_details: Option<String>,
     /// Setup choices wait to be resumed from Recovery.
     setup_kept: bool,
+    /// The release notes last seen when Settings opened: What’s new lists
+    /// every version after it, even once this visit records the new one.
+    notes_seen: Option<String>,
+    /// The release notes recorded as seen now; Home's update card reads it.
+    notes_recorded: Option<String>,
     collapsed_scenes: Vec<Page>,
     scene_objects_open: bool,
     page_scroll: std::collections::BTreeMap<String, f32>,
     /// First-run setup, shown instead of the pages while it runs.
     wizard: Option<wizard::Wizard>,
     search_query: String,
-    setup_requested: bool,
-    setup_followups: wizard::follow_up::State,
     search_selected: Option<navigation::SearchHit>,
     /// The explanation opened with its "?", on the page it belongs to.
     explained: Option<(Page, u64)>,
@@ -1083,8 +1089,6 @@ impl cosmic::Application for Settings {
             page,
             wizard,
             search_query: String::new(),
-            setup_requested: false,
-            setup_followups: wizard::follow_up::State::load(),
             search_selected: None,
             explained: None,
             advanced_pages: Vec::new(),
@@ -1141,6 +1145,8 @@ impl cosmic::Application for Settings {
             kept_note: None,
             error_details: None,
             setup_kept: false,
+            notes_seen: release_notes::seen(),
+            notes_recorded: release_notes::seen(),
             collapsed_scenes: Vec::new(),
             scene_objects_open: false,
             page_scroll: Default::default(),
@@ -1855,6 +1861,17 @@ impl cosmic::Application for Settings {
                 }
                 (_, true) => Task::none(),
                 (navigation::UndoTarget::Preview(_), false) => self.undo_preview_step(),
+                // Like the footer's Undo: only the page that made the latest
+                // change undoes it. Elsewhere it stays, for Changes to undo.
+                (navigation::UndoTarget::Desktop(..), false)
+                    if !self.owns_latest_change()
+                        && !self
+                            .wizard
+                            .as_ref()
+                            .is_some_and(|w| w.step == wizard::Step::Arrange) =>
+                {
+                    Task::none()
+                }
                 (_, false) => self.update(Message::UndoDesktop),
             };
         }
@@ -2299,25 +2316,23 @@ impl Settings {
                 self.setup_kept = false;
                 self.wizard = Some(open_wizard());
             }
-            Message::SetupOpen(open) => {
-                if open && !self.setup_requested && self.page == Page::Overview {
-                    self.remember_route();
-                }
-                let navigate = self.handle(Message::Page(Page::Overview));
-                self.setup_requested = open;
-                return navigate;
-            }
             Message::SetupDismissed(on) => {
-                self.save(json!({"setup_dismissed":on}));
-                return self.handle(Message::SetupOpen(!on));
-            }
-            Message::DismissSetupTask(task) => match self.setup_followups.dismiss(task) {
-                Ok(config) => {
-                    self.config = config;
-                    self.saved();
+                self.save(json!({"setup_dismissed": on}));
+                // Setup is the first visit: there is nothing new to tell yet.
+                if on {
+                    self.record_notes_seen();
+                    // Not now lands on Home, as dismissing setup always has.
+                    return self.handle(Message::Page(Page::Overview));
                 }
-                Err(error) => self.failed(error),
-            },
+            }
+            Message::NotesSeen => self.record_notes_seen(),
+            Message::OpenNoteLink(url) => {
+                return run_command(
+                    "/usr/bin/xdg-open".into(),
+                    vec![url.into()],
+                    "Page opened",
+                );
+            }
             Message::SearchSettings(query) => {
                 if !query.trim().is_empty() {
                     self.placement.leave();
@@ -2439,9 +2454,6 @@ impl Settings {
                     // Leaving a review keeps it if it was changed.
                     return self.leave_review_to_browse();
                 }
-                if self.history.is_empty() && self.page == Page::Overview && self.setup_requested {
-                    return self.handle(Message::SetupOpen(false));
-                }
                 return self.go_back();
             }
             Message::TryPreset(id) => {
@@ -2504,7 +2516,7 @@ impl Settings {
             }
             Message::PutBackChange(id) => {
                 if !self.appearance_pending.is_empty() || self.notice_editing {
-                    self.failed("Finish the current edit before putting back a change.".into());
+                    self.failed("Finish the current edit before undoing a change.".into());
                     return Task::none();
                 }
                 return self.put_back_change(id);
@@ -2851,6 +2863,9 @@ impl Settings {
                 };
                 self.app_settings_page = page;
                 self.support.report = None;
+                if page == AppSettingsPage::WhatsNew {
+                    self.record_notes_seen();
+                }
                 let support = if page == AppSettingsPage::Help {
                     self.load_support()
                 } else {
@@ -2890,7 +2905,6 @@ impl Settings {
             Message::Tick => {
                 self.refresh_usage();
                 self.calendar.refresh();
-                self.setup_followups = wizard::follow_up::State::load();
                 match Config::try_load() {
                     Ok(config) => self.config = config,
                     Err(error)
@@ -3363,7 +3377,6 @@ impl Settings {
                 self.devbox_reorder.cancel();
                 self.help_open = None;
                 self.color_well = None;
-                self.setup_requested = false;
                 self.shortcuts.cancel_recording();
                 self.flush_edits();
                 // An unsaved layout draft survives a visit to a widget's own
@@ -4607,7 +4620,7 @@ impl Settings {
     /// The miniature editor lives on the Widgets page; pointer and arrow-key
     /// listeners run only while it is on screen.
     fn placement_active(&self) -> bool {
-        self.canvas_visible() && !self.setup_requested && self.search_query.trim().is_empty()
+        self.canvas_visible() && self.search_query.trim().is_empty()
     }
     /// The Motion page: the app-animation toggle writes off the UI thread
     /// and reports in the status line.
@@ -4820,12 +4833,22 @@ impl Settings {
                 self.wizard = None;
                 self.setup_kept = true;
                 self.save(json!({"onboarded": true}));
+                self.record_notes_seen();
                 let page = self.handle(Message::Page(Page::Overview));
                 self.kept_note = Some((
                     "Setup choices kept. Your desktop stays as it is.".into(),
                     navigation::KeptTarget::SetupChoices,
                 ));
                 page
+            }
+            wizard::Outcome::Skipped => {
+                // Setup stays unfinished: Home keeps offering it.
+                self.setup_kept = false;
+                self.wizard = None;
+                if let Some(store) = &store {
+                    wizard::Wizard::forget(store);
+                }
+                self.handle(Message::Page(Page::Overview))
             }
             wizard::Outcome::Done { finish, startup } => {
                 self.setup_kept = false;
@@ -4834,6 +4857,7 @@ impl Settings {
                     wizard::Wizard::forget(store);
                 }
                 self.save(json!({"onboarded": true}));
+                self.record_notes_seen();
                 let refresh = self.after_desktop_change();
                 let page = self.handle(Message::Page(Page::Overview));
                 // The cards appear now, and at every sign-in when chosen.
@@ -4859,7 +4883,6 @@ impl Settings {
     /// preferences and the other editors' current values. Their drafts stay.
     /// Returns the Wallpaper page's media work the refresh started.
     fn after_desktop_change(&mut self) -> Task<Message> {
-        self.setup_followups = wizard::follow_up::State::load();
         if let Ok(config) = Config::try_load() {
             self.config = config;
         }
@@ -4960,7 +4983,15 @@ impl Settings {
     }
     /// Windows uses the same completion path as the other inspectors.
     fn update_windows(&mut self, message: windows::Message) {
+        let resolves = matches!(
+            message,
+            windows::Message::Recover | windows::Message::KeepRecovery
+        );
         self.windows.update(message);
+        // Workspaces shares this page and the same interrupted change.
+        if resolves {
+            self.workspaces.refresh();
+        }
     }
     /// Capture mode drives the Profiles page through its own messages. An
     /// import reads only a file inside the fixture root, without a dialog;
@@ -5338,6 +5369,19 @@ impl Settings {
         self.corner_step = crate::desktop::DesktopStore::from_env()
             .ok()
             .and_then(|store| corners::current(&store, self.config.appearance.corner_radius));
+    }
+    /// This version's notes were shown or set aside. Kept with Settings'
+    /// own state, not as a setting: reading notes is nothing to undo and
+    /// must not take Undo from the last real change.
+    fn record_notes_seen(&mut self) {
+        let running = env!("CARGO_PKG_VERSION");
+        if self.notes_recorded.as_deref() == Some(running) {
+            return;
+        }
+        // Unrecorded, the card simply returns next time.
+        if release_notes::record_seen().is_ok() {
+            self.notes_recorded = Some(running.into());
+        }
     }
     fn saved(&mut self) {
         self.status = "Saved".into();
@@ -5951,7 +5995,17 @@ fn capture_glance(event: &serde_json::Value) -> Option<Message> {
     };
     Some(Message::GlanceSection(key, event["value"].as_bool()?))
 }
+#[cfg(test)]
+thread_local! {
+    /// Draws the service as a real one would, for captures. Tests never press
+    /// its controls, so nothing reaches systemctl.
+    static DRAW_REAL_SERVICE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 fn preview() -> bool {
+    #[cfg(test)]
+    if DRAW_REAL_SERVICE.with(std::cell::Cell::get) {
+        return false;
+    }
     std::env::var_os("DESKTOP_CARDS_CONFIG").is_some()
 }
 fn capture_dir() -> Option<PathBuf> {

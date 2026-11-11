@@ -1081,7 +1081,7 @@ impl DesktopEditor {
         } else {
             store
                 .discard_recovery()
-                .map(|()| "Current settings kept".to_string())
+                .map(|()| "Kept what’s on screen".to_string())
         };
         match result {
             Ok(message) => {

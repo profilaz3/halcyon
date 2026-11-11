@@ -227,8 +227,8 @@ impl Settings {
                 row::with_children(vec![
                     icon::from_name(Widget::Glance.icon()).size(16).into(),
                     container(detail(
-                        "Combine into one card",
-                        "Clock, weather and calendar in a single card",
+                        "Combine into a Daily overview card",
+                        "Clock, weather and calendar together in one card",
                     ))
                     .width(Length::Fill)
                     .into(),
@@ -301,12 +301,6 @@ impl Settings {
                         .on_press(go(Step::MoveWidgetsHere))
                         .into(),
                 );
-            }
-        }
-        if let Some(error) = plan.error {
-            // Arrange shows this next to its fixed footer action.
-            if !arrange {
-                preview.push(words(error, 13., DANGER));
             }
         }
         super::super::adaptive::columns(

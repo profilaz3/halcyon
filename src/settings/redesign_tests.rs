@@ -1281,9 +1281,14 @@ fn whats_new_opens_from_updates_and_each_note_leads_to_its_setting() {
     }
     // Reading the notes and following them changes nothing.
     assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
+    // Seeing them is remembered apart from settings: no change to undo.
+    assert_eq!(
+        crate::settings::release_notes::seen().as_deref(),
+        Some(env!("CARGO_PKG_VERSION"))
+    );
 }
 
-/// Choosing Islands shows the one step Halcyon's panel still needs, right
+/// Choosing Islands shows the one step the Islands panel still needs, right
 /// under Shape; Blend into wallpaper points there instead of repeating it;
 /// layout controls appear only once the panel answers.
 #[test]
@@ -1351,7 +1356,7 @@ fn islands_shape_shows_one_step_then_layout_controls() {
             .islands()
             .known()
             .is_some_and(|s| s.enabled),
-        "the Islands shape is saved even before Halcyon's panel runs"
+        "the Islands shape is saved even before the Islands panel runs"
     );
     app.desktop.islands.installation = disabled;
     app.desktop.islands.compatible = false;
@@ -1359,11 +1364,11 @@ fn islands_shape_shows_one_step_then_layout_controls() {
     native_reveal(&app, &mut native, "enable-islands");
     native.text_bounds(
         app.settings_view(),
-        "Islands use Halcyon’s panel instead of the COSMIC one. It takes over the next time you sign in.",
+        "Islands use the Islands panel instead of the COSMIC one. It takes over the next time you sign in.",
     );
     native.text_bounds(
         app.settings_view(),
-        "Comes with Halcyon’s panel. See Shape above.",
+        "Comes with the Islands panel. See Shape above.",
     );
     assert!(native.duplicate_ids(app.settings_view()).is_empty());
     assert!(

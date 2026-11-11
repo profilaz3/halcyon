@@ -81,12 +81,16 @@ impl Settings {
                     .into(),
             );
         }
-        if let Some(banner) = recovery_banner(
-            editor.recovery(),
-            editor.writable(),
-            edit(Edit::Recover),
-            edit(Edit::KeepRecovery),
-        ) {
+        // Embedded under Windows, which already shows the same journal.
+        let shown_above = embedded && self.windows.recovery().is_some();
+        if !shown_above
+            && let Some(banner) = recovery_banner(
+                editor.recovery(),
+                editor.writable(),
+                edit(Edit::Recover),
+                edit(Edit::KeepRecovery),
+            )
+        {
             items.push(banner);
         }
         if !draft.conflicts().is_empty() {

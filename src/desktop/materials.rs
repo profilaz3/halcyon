@@ -37,7 +37,7 @@ pub fn apply_from(
 ) -> Result<(), String> {
     let installed = super::islands::Installation::discover(store).installed();
     if matches!(target, Target::Dock | Target::Panel) && !installed {
-        return Err("Islands is not installed".into());
+        return Err("The Islands panel isn’t installed".into());
     }
     if let Some(f) = finish {
         f.validate()?;

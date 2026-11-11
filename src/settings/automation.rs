@@ -356,6 +356,11 @@ impl AutomationEditor {
     pub fn writable(&self) -> bool {
         self.store().is_some_and(DesktopStore::writable)
     }
+    /// The settings as read, for tests that draw a state without saving it.
+    #[cfg(test)]
+    pub(crate) fn settings_mut(&mut self) -> Option<&mut Automation> {
+        self.settings.as_mut()?.as_mut().ok()
+    }
     /// The saved settings (automation off until read).
     pub fn settings(&self) -> Result<&Automation, &str> {
         match &self.settings {

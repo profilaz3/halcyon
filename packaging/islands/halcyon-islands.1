@@ -5,28 +5,29 @@ halcyon-islands \- activate the optional Islands panel for one user
 .B halcyon-islands
 .RI "{status|enable|disable}"
 .SH DESCRIPTION
-Islands splits the COSMIC panel into floating islands. Activation is optional
-and takes effect at the next login. Run this command as your desktop user.
+The Islands panel splits the COSMIC panel into floating islands. Turning it on
+is optional and takes effect the next time you sign in. Run this command as
+your desktop user.
 .SH COMMANDS
 .TP
 .B status
 Report installation, selector compatibility and per-user activation state.
 .TP
 .B enable
-Install the packaged companion into your home and enable it for the next login.
+Install the packaged companion into your home and turn it on for the next sign-in.
 Unsupported or unreadable COSMIC package versions and a recorded Islands failure
 refuse activation without replacing the per-user companion. Version mismatches
 report installed and supported builds. A later COSMIC update that does not match
 selects the normal panel automatically.
 .TP
 .B disable
-Restore this command's installations. Log out and back in to use the stock panel.
+Restore this command's installations. Sign out and back in to use the standard panel.
 .TP
 .B \-\-help
 Show command help.
 .SH EXIT STATUS
 0 means success. For status, 0 requires an installed, compatible and enabled
-companion, including one waiting for the next login. 1 means an unavailable or
+companion, including one waiting for the next sign-in. 1 means an unavailable or
 disabled companion, or an operation failed. 2 means invalid usage.
 .SH FILES
 .TP
@@ -45,5 +46,5 @@ package. Previous source installations must be restored before enabling here.
 .SH SOURCE QUALIFICATION
 New companion builds accept distribution rebuilds of reviewed source triples
 when the native ABI and compositor preflight succeeds. Unknown source revisions
-and mixed triples select stock. A COSMIC release number alone is not a guarantee.
+and mixed triples select the standard panel. A COSMIC release number alone is not a guarantee.
 Status reports static eligibility; startup performs the runtime checks.

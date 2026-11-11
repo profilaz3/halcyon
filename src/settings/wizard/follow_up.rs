@@ -1,4 +1,4 @@
-//! Optional content tasks for selected widgets. Dismissals contain no provider data.
+//! Optional content tasks for selected widgets, listed on the wizard's Done step.
 use super::super::Page;
 use crate::{config::Config, drawer::Widget};
 
@@ -16,13 +16,6 @@ impl Task {
             Self::Weather => "weather",
             Self::Calendar => "calendar",
             Self::Projects => "projects",
-        }
-    }
-    fn preference(self) -> &'static str {
-        match self {
-            Self::Weather => "setup_followup_weather_dismissed",
-            Self::Calendar => "setup_followup_calendar_dismissed",
-            Self::Projects => "setup_followup_projects_dismissed",
         }
     }
     pub fn title(self) -> &'static str {
@@ -56,46 +49,15 @@ impl Task {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct State {
-    dismissed: [bool; 3],
-}
-
-impl State {
-    pub fn load() -> Self {
-        let raw = super::widgets::raw().unwrap_or_default();
-        Self::from_raw(&raw)
-    }
-    fn from_raw(raw: &serde_json::Value) -> Self {
-        Self {
-            dismissed: Task::ALL.map(|task| {
-                raw.get(task.preference())
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false)
-            }),
-        }
-    }
-    pub fn pending(&self, config: &Config, calendar_connected: bool) -> Vec<Task> {
-        Task::ALL
-            .into_iter()
-            .enumerate()
-            .filter_map(|(index, task)| {
-                (!self.dismissed[index] && task.needed(config, calendar_connected)).then_some(task)
-            })
-            .collect()
-    }
-    pub fn dismiss(&mut self, task: Task) -> Result<Config, String> {
-        // Patch one allowlisted boolean through the existing guarded config writer.
-        // Unknown preferences, notes and provider records are never replaced.
-        let config = Config::save_changes(serde_json::json!({ (task.preference()): true }))?;
-        self.dismissed[Task::ALL.iter().position(|t| *t == task).unwrap()] = true;
-        Ok(config)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn pending(config: &Config, calendar_connected: bool) -> Vec<Task> {
+        Task::ALL
+            .into_iter()
+            .filter(|task| task.needed(config, calendar_connected))
+            .collect()
+    }
     #[test]
     fn polish050_followups_only_include_selected_unconfigured_content() {
         let mut config = Config::default();
@@ -104,19 +66,15 @@ mod tests {
         config.enabled_widgets = vec!["clock".into(), "weather".into(), "projects".into()];
         config.location = None;
         config.project_roots.clear();
-        let tasks = State::default();
-        assert_eq!(
-            tasks.pending(&config, false),
-            vec![Task::Weather, Task::Projects]
-        );
+        assert_eq!(pending(&config, false), vec![Task::Weather, Task::Projects]);
         config.project_roots.push("~/Projects".into());
-        assert_eq!(tasks.pending(&config, false), vec![Task::Weather]);
+        assert_eq!(pending(&config, false), vec![Task::Weather]);
         config.widgets_visible = false;
-        assert!(tasks.pending(&config, false).is_empty());
+        assert!(pending(&config, false).is_empty());
         assert!(config.widget_selected(Widget::Weather));
     }
     #[test]
-    fn polish050_followups_honor_group_sections_and_individual_dismissal() {
+    fn polish050_followups_honor_group_sections() {
         let mut config = Config::default();
         config.widgets_visible = true;
         config.glance.enabled = true;
@@ -124,14 +82,10 @@ mod tests {
         config.glance.show_calendar = true;
         config.location = None;
         config.enabled_widgets.clear();
-        let tasks = State::from_raw(&serde_json::json!({
-            "setup_followup_weather_dismissed": true,
-            "setup_followup_calendar_dismissed": "invalid",
-            "unknown_future_field": "retained"
-        }));
-        assert_eq!(tasks.pending(&config, false), vec![Task::Calendar]);
-        assert!(tasks.pending(&config, true).is_empty());
+        assert_eq!(pending(&config, false), vec![Task::Weather, Task::Calendar]);
+        assert_eq!(pending(&config, true), vec![Task::Weather]);
         config.glance.show_calendar = false;
-        assert!(tasks.pending(&config, false).is_empty());
+        config.glance.show_weather = false;
+        assert!(pending(&config, false).is_empty());
     }
 }

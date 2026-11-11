@@ -122,20 +122,12 @@ impl Settings {
             rows.push(banner(error.to_string(), ERROR, vec![]));
             return column::with_children(rows).spacing(16).into();
         }
-        if editor.recovery().is_some() {
-            rows.push(banner(
-                "An earlier desktop change was interrupted.",
-                WARN,
-                vec![
-                    button::text("Keep current")
-                        .on_press(edit(Edit::KeepRecovery))
-                        .into(),
-                    button::standard("Restore previous")
-                        .on_press(edit(Edit::Recover))
-                        .into(),
-                ],
-            ));
-        }
+        rows.extend(super::windows::recovery_banner(
+            editor.recovery(),
+            true,
+            edit(Edit::Recover),
+            edit(Edit::KeepRecovery),
+        ));
         rows.push(self.theme_stage(&look));
         rows.push(self.appearance_styles(&look));
         rows.push(self.appearance_color(&look));

@@ -125,6 +125,30 @@ impl Settings {
                 rows.push(label(editor.connection.calendar_name.clone(), 14., MUTED));
             }
             for (index, choice) in editor.choices.iter().enumerate() {
+                if editor.confirm_remove.as_ref() == Some(&choice.id) {
+                    rows.push(detail_state(
+                        format!("Remove “{}”?", choice.name),
+                        "You’ll need its private link to add it again.",
+                    ));
+                    rows.push(
+                        row::with_children(vec![
+                            button::standard("Cancel")
+                                .id(cosmic::widget::Id::new("calendar-remove-cancel"))
+                                .on_press(message(Account::ConfirmRemove(None)))
+                                .into(),
+                            button::destructive("Remove")
+                                .id(cosmic::widget::Id::new("calendar-remove-confirm"))
+                                .on_press_maybe((!editor.busy).then(|| {
+                                    message(Account::RemoveSubscription(choice.id.clone()))
+                                }))
+                                .into(),
+                        ])
+                        .spacing(8)
+                        .wrap()
+                        .into(),
+                    );
+                    continue;
+                }
                 let enabled = selected.iter().any(|c| c.id == choice.id);
                 let mut controls: Vec<Element<'_, Message>> = vec![
                     container(
@@ -136,7 +160,8 @@ impl Settings {
                 if editor.connection.backend == Backend::Subscription {
                     controls.push(
                         button::text("Remove")
-                            .on_press(message(Account::RemoveSubscription(choice.id.clone())))
+                            .id(cosmic::widget::Id::new(format!("calendar-remove-{index}")))
+                            .on_press(message(Account::ConfirmRemove(Some(choice.id.clone()))))
                             .into(),
                     );
                 }

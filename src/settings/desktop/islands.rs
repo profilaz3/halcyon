@@ -568,6 +568,10 @@ impl DesktopEditor {
         }
     }
 }
+/// The Islands panel is missing; it ships with Halcyon, so this is the one
+/// way to get it.
+pub(in crate::settings) const MISSING: &str = "The Islands panel isn’t installed on this system. \
+     Reinstall Halcyon from the same place you got it, then sign out and back in.";
 impl State {
     /// Installation is the background worker's observation, independent of a
     /// per-user generation or live socket. Prefer it to legacy IPC diagnostics
@@ -582,22 +586,20 @@ impl State {
             } => Some(
                 "Checking Islands compatibility. The standard dock and panel remain available.",
             ),
-            Installation::Absent => Some(
-                "Install the Islands add-on to use this style. The standard dock and panel remain available.",
-            ),
+            Installation::Absent => Some(MISSING),
             Installation::Installed {
                 compatible: Some(false),
                 ..
             } => Some(
-                "Islands is installed but unavailable for this desktop. The standard dock and panel remain available. See Halcyon › Updates for details.",
+                "The Islands panel is installed but unavailable for this desktop. The standard dock and panel remain available. See Halcyon › Updates for details.",
             ),
             Installation::Installed { enabled: false, .. } => Some(
-                "Islands is installed but disabled. Choose Islands in Dock and panel to use it. The standard dock and panel remain available.",
+                "The Islands panel is installed but disabled. Choose Islands in Dock and panel to use it. The standard dock and panel remain available.",
             ),
             Installation::Installed {
                 status: Some(CompatibilityStatus::LogoutRequired),
                 ..
-            } => Some("Islands is enabled. Log out and back in to activate it."),
+            } => Some("Islands start the next time you sign in."),
             Installation::Installed { .. } => self.status.as_deref(),
         }
     }
@@ -667,7 +669,7 @@ mod runtime_tests {
             ),
             (
                 installed(true, Some(true), CompatibilityStatus::LogoutRequired),
-                "Log out and back in",
+                "next time you sign in",
             ),
         ] {
             state.installation = observation.clone();
@@ -697,7 +699,7 @@ mod runtime_tests {
             state
                 .availability_message()
                 .unwrap()
-                .starts_with("Install the Islands")
+                .starts_with("The Islands panel isn’t installed")
         );
         state.installation = warning_observation(true, Some(true), CompatibilityStatus::Standard);
         state.status = Some("The panel socket is not owned by this user".into());

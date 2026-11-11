@@ -82,16 +82,16 @@ def status(home, launcher, installer):
         print('Runtime ABI and compositor checks run at panel startup; status does not verify them.')
     print('Enabled for this user: ' + ('yes' if selected else 'no'))
     if failed:
-        print('Stock panel selected: a previous Islands failure is recorded.')
+        print('Standard panel selected: a previous Islands failure is recorded.')
     elif selected and not ready:
-        print('Stock panel selected: the user bundle or COSMIC versions do not match.')
+        print('Standard panel selected: your Islands panel files or COSMIC versions do not match.')
     elif ready:
         current = launcher.session_identity()
         if selection.get('defer_session') is not None and (
                 current is None or current == selection['defer_session']):
-            print('Activation: waiting for the next login.')
+            print('Activation: waiting for the next sign-in.')
         else:
-            print('Activation: eligible in this login; running processes are not inspected.')
+            print('Activation: eligible in this session; running processes are not inspected.')
     else:
         print('Activation: disabled.')
     return 0 if installed and match and ready else 1
@@ -116,7 +116,7 @@ def change(command, home, fixture, launcher, installer):
                 run_installer(['--restore', str(path)], env)
             if not active and (home / '.local/bin/cosmic-panel').exists():
                 raise ValueError('An existing panel selector is not managed by this command; restore its original install record')
-            print('Islands disabled. Log out and back in to use the stock panel.')
+            print('The Islands panel is turned off. Sign out and back in to use the standard panel.')
             return 0
         if active and not active[0][1].get('complete'):
             raise ValueError('An interrupted install exists. Run halcyon-islands disable before enabling again')
@@ -134,7 +134,7 @@ def change(command, home, fixture, launcher, installer):
         state = launcher.state_directory(home)
         if (state / 'failed').exists():
             raise ValueError(
-                'A previous Islands failure selects the stock panel. Activation was not changed. '
+                'A previous Islands failure selects the standard panel. Activation was not changed. '
                 'See /usr/share/doc/cosmic-ext-halcyon-islands/README before retrying.')
         # Never hide edits by layering a fresh installation over a changed bundle.
         if active:
@@ -156,8 +156,8 @@ def change(command, home, fixture, launcher, installer):
             run_installer([*target, '--binary', str(LIBRARY / 'cosmic-panel-islands'),
                            '--manifest', str(LIBRARY / 'companion-manifest.json'),
                            '--enable-next-login', '--record-owner', PACKAGE], env)
-        print('Islands enabled for the next login. Log out and back in to start it.')
-        print('The normal panel is used if source qualification or runtime checks fail.')
+        print('The Islands panel is turned on. It starts the next time you sign in.')
+        print('The standard panel is used if source qualification or runtime checks fail.')
         return 0
 
 
@@ -186,7 +186,7 @@ def main():
             command += ['--root', str(home), '--library', str(LIBRARY)]
         return subprocess.run(command, timeout=8, check=False).returncode
     if not (LIBRARY / 'panel_launcher.py').is_file() or not (LIBRARY / 'install.py').is_file():
-        print('Islands is incomplete. Install or reinstall the Halcyon package.', file=sys.stderr)
+        print('The Islands panel is incomplete. Reinstall Halcyon from the same place you got it.', file=sys.stderr)
         return 1
     sys.path.insert(0, str(LIBRARY))
     import panel_launcher as launcher
@@ -210,7 +210,7 @@ def main():
                 refresh.require_selector_path(home)
             with refresh.locked(home):
                 if (launcher.state_directory(home) / 'failed').exists():
-                    raise ValueError('A previous Islands failure selects the stock panel. Activation was not changed.')
+                    raise ValueError('A previous Islands failure selects the standard panel. Activation was not changed.')
                 result = refresh.stage_locked(home, LIBRARY, fixture=args.root is not None, enable=True)
             print(json.dumps(result))
             return 0 if result['state'] in ('staged', 'unchanged') else 1

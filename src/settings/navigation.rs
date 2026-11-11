@@ -332,8 +332,8 @@ pub(super) const LOOKS: SearchHit = hit(
 .names_page();
 pub(super) const STARTUP: SearchHit = hit(
     Page::General,
-    "Startup",
-    "general halcyon app settings startup login sign in background service running setup again",
+    "Running and startup",
+    "general halcyon app settings startup login sign in background service running stopped stop start on off setup again",
     false,
 )
 .names_page();
@@ -1051,7 +1051,6 @@ const ROWS: &[SearchHit] = &[
     hit(Page::General, "Report a problem", "", false).destination(AppSettingsPage::Help),
     hit(Page::General, "Running in the background", "", false).destination(AppSettingsPage::Help),
     hit(Page::General, "This window", "", false).destination(AppSettingsPage::Interface),
-    hit(Page::General, "Keep running in the background", "", false).destination(AppSettingsPage::Operation),
     hit(Page::General, "Running", "", false).destination(AppSettingsPage::Operation),
     hit(Page::General, "Set up again", "", false).destination(AppSettingsPage::Operation),
     hit(Page::General, "Setting up", "", false).destination(AppSettingsPage::Operation),
@@ -1061,6 +1060,7 @@ const ROWS: &[SearchHit] = &[
     hit(Page::General, "Sharing", "", false).destination(AppSettingsPage::Privacy),
     hit(Page::General, "Your calendar, notes, accounts and projects", "", false).destination(AppSettingsPage::Privacy),
     hit(Page::General, "Get ready for your own designs", "", false).destination(AppSettingsPage::Updates),
+    hit(Page::General, "Islands panel", "", false).destination(AppSettingsPage::Updates),
     hit(Page::General, "More about this version", "", false).destination(AppSettingsPage::Updates),
     hit(Page::General, "This version", "", false).destination(AppSettingsPage::Updates),
     hit(Page::General, "Updates come from your system", "", false).destination(AppSettingsPage::Updates),
@@ -1080,7 +1080,7 @@ const ROWS: &[SearchHit] = &[
     hit(Page::Music, "Progress bar", "", false),
     hit(Page::Notes, "Card size", "", false),
     hit(Page::Notes, "Your note", "", false),
-    hit(Page::Overview, "Getting started", "", false),
+    hit(Page::Overview, "Set up your desktop", "", false),
     hit(Page::Overview, "Show widgets", "", false),
     hit(Page::PendingChanges, "Unfinished changes", "", false).names_page(),
     hit(Page::Projects, "Add a folder", "", false),
@@ -1131,11 +1131,13 @@ pub(super) const NOT_INDEXED: &[(&str, &str)] = &[
     ("Wallpaper from before Halcyon", "an entry in the Changes list"),
     ("Nothing to recover", "shown only when there is nothing to list"),
     ("No apps yet", "shown only when there is nothing to list"),
+    ("Nothing waiting", "shown only when there is nothing to list"),
     ("No shortcuts of your own yet", "shown only when there is nothing to list"),
     ("Tiling is off", "a notice, not a setting"),
     ("Update your widgets?", "a confirmation that opens from “Get ready…”"),
     ("Displays", "a status row on Help that opens the setting it’s about"),
-    ("Halcyon’s panel", "a status row that opens the setting it’s about"),
+    ("Islands panel", "a status row on Help that opens the setting it’s about; Updates has the group"),
+    ("Set up your desktop", "a card shown until setup is finished; Home has it in search"),
     ("Status", "a status row that opens the setting it’s about"),
     ("Check again", "a button"),
     ("Search settings", "a key listed under Keyboard on Accessibility; “keyboard” finds the list"),
@@ -1863,7 +1865,7 @@ mod tests {
             );
             assert!(!hit.advanced);
         }
-        assert_eq!(search("autostart")[0].label, "Startup");
+        assert_eq!(search("autostart")[0].label, "Running and startup");
         assert_eq!(search("hotkeys")[0].page, Page::DesktopShortcuts);
         let hit = search("memory cache")[0];
         assert_eq!(hit.anchor(), "devbox-memory");
@@ -2083,7 +2085,6 @@ pub(super) struct Route {
     arranging: bool,
     saved_collection: bool,
     setup_review: Option<super::profiles::Selection>,
-    setup_requested: bool,
     report: Option<String>,
 }
 const MAX_HISTORY: usize = 40;
@@ -2181,7 +2182,6 @@ impl Settings {
             saved_collection: self.profiles.saved_collection,
             setup_review: (self.page == Page::DesktopProfiles && self.profiles.review_open())
                 .then(|| self.profiles.selection().clone()),
-            setup_requested: self.setup_requested,
             report: self.support.report.clone(),
         }
     }
@@ -2247,7 +2247,6 @@ impl Settings {
             {
                 Some(Page::DesktopProfiles)
             }
-            Page::Overview if self.setup_requested => Some(Page::Overview),
             _ => None,
         };
         if let Some(page) = inside {
@@ -2326,7 +2325,6 @@ impl Settings {
         self.app_settings_page = route.app;
         self.object_tab = route.tab;
         self.arranging = route.arranging && self.canvas.is_some();
-        self.setup_requested = route.setup_requested;
         self.support.report = route.report;
         if route.page == Page::DesktopProfiles {
             if let Some(selection) = route.setup_review {

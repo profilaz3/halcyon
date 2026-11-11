@@ -101,6 +101,9 @@ fn band(look: Option<&str>, aspect: f32) -> Option<Handle> {
     Some(handle)
 }
 
+/// The Bars step's Why? beside an unavailable Islands choice.
+const ISLANDS_WHY: u64 = 0x5157_4953_4c41_4e44;
+
 fn words<'a>(value: impl Into<String>, size: f32, color: Color) -> Element<'a, Message> {
     text::body(value.into())
         .size(size)
@@ -341,6 +344,40 @@ fn dock_drawing<'a>(shape: Shape, icon: f32) -> Element<'a, Message> {
 }
 
 impl Settings {
+    /// Why Islands can't be picked here, in one line; Why? names the fix.
+    fn wizard_islands_unavailable(&self) -> Element<'_, Message> {
+        use crate::desktop::islands::Installation;
+        let installation = &self.desktop.islands.installation;
+        let missing = !installation.installed() && !matches!(installation, Installation::Pending);
+        let caption = if installation.installed() {
+            "Available after you sign out and back in."
+        } else if missing {
+            "Needs the Islands panel, which isn’t installed."
+        } else {
+            "Checking for the Islands panel…"
+        };
+        let mut line = vec![words(caption, 12., SOFT)];
+        if missing {
+            line.push(
+                button::text("Why?")
+                    .id(cosmic::widget::Id::new("wizard-islands-why"))
+                    .padding([2, 0])
+                    .on_press(Message::Explain(ISLANDS_WHY))
+                    .into(),
+            );
+        }
+        let mut parts = vec![
+            row::with_children(line)
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .into(),
+        ];
+        if missing && self.explained == Some((self.page, ISLANDS_WHY)) {
+            parts.push(words(crate::settings::desktop::islands::MISSING, 12., SOFT));
+        }
+        column::with_children(parts).spacing(4).into()
+    }
+
     /// The width inside the step card, beside its scroll bar.
     /// The tallest a step's preview gets; every step shares it.
     fn wizard_preview_height(&self) -> f32 {
@@ -399,7 +436,7 @@ impl Settings {
                     "wizard-start",
                     (!self.native_busy).then_some(go(Step::Start)),
                 ),
-                quiet("Set up later", "wizard-leave", go(Step::Leave)),
+                quiet("Skip for now", "wizard-leave", go(Step::Leave)),
             ]
         };
         let intro = column::with_children(vec![
@@ -529,7 +566,7 @@ impl Settings {
             words(
                 match step {
                     Screen::Look => {
-                        "A look brings a wallpaper and a set of widgets. You can change the widgets next."
+                        "A look sets your wallpaper, light or dark style, COSMIC accent colors, dock and panel shape, and a set of widgets. You can change the dock, panel and widgets next."
                     }
                     Screen::Bars => "Keep your current dock and panel, or pick a new style.",
                     Screen::Widgets | Screen::Arrange | Screen::Weather => {
@@ -552,7 +589,18 @@ impl Settings {
         ];
         // The reason a step cannot apply stays beside its action, outside the
         // scrollable preview. Give the person a way to correct it, keeping the draft.
-        if let Some(error) = wizard.error.as_ref().or(placement_error.as_ref()) {
+        // On Choose widgets, Next stays disabled until the widgets fit;
+        // elsewhere the action goes back to Choose widgets.
+        let crowded = step == Screen::Widgets && placement_error.is_some();
+        let placement_note = placement_error.as_ref().map(|error| {
+            let fix = match step {
+                Screen::Widgets if wizard.widgets.grouped => "Remove a widget to continue.",
+                Screen::Widgets => "Remove a widget or turn on Combine to continue.",
+                _ => "Choose fewer widgets or another display.",
+            };
+            format!("{error} {fix}")
+        });
+        if let Some(error) = wizard.error.as_ref().or(placement_note.as_ref()) {
             parts.push(
                 container(words(error.clone(), 13., DANGER))
                     .id(cosmic::widget::Id::new("wizard-step-error"))
@@ -614,19 +662,19 @@ impl Settings {
                     secondary("Back", "wizard-back", go(Step::Back)),
                     quiet("Set up later", "wizard-leave-ask", go(Step::AskLeave(true))),
                 ],
-                button::suggested(if placement_error.is_some() {
+                button::suggested(if placement_error.is_some() && !crowded {
                     "Choose widgets"
                 } else {
                     "Next"
                 })
                 .id(cosmic::widget::Id::new("wizard-next"))
-                .on_press_maybe(
-                    (!self.native_busy).then_some(go(if placement_error.is_some() {
+                .on_press_maybe((!self.native_busy && !crowded).then_some(go(
+                    if placement_error.is_some() {
                         Step::Show(Screen::Widgets)
                     } else {
                         Step::Next
-                    })),
-                )
+                    },
+                )))
                 .into(),
             ),
         };
@@ -869,6 +917,9 @@ impl Settings {
                     group_row("Corners", "", shapes(bars.panel_shape, "panel", Step::PanelShape)),
                 ],
             ));
+            if !islands_ready {
+                controls.push(self.wizard_islands_unavailable());
+            }
             controls.push(group(
                 Some("Dock"),
                 vec![
@@ -900,7 +951,7 @@ impl Settings {
             if bars.islands {
                 controls.push(words(
                     if self.desktop.islands.installation.installed() {
-                        "Islands start at next login. No need to log out now."
+                        "Islands start the next time you sign in. No need to sign out now."
                     } else {
                         "Islands shows as a normal panel in this preview. Check it in Settings after setup."
                     },
@@ -1091,9 +1142,26 @@ impl Settings {
         parts.push(group(Some("What changed"), lines));
         if applied.is_some_and(|applied| applied.next_login) {
             parts.push(words(
-                "Islands start at next login. No need to log out now.",
+                "Islands start the next time you sign in. No need to sign out now.",
                 13.,
                 SOFT,
+            ));
+        }
+        if applied.is_some_and(|applied| applied.changed) {
+            // Undo setup on this screen goes away when it closes; say where
+            // the way back lives afterwards.
+            parts.push(group(
+                None,
+                vec![group_row(
+                    "Changed your mind later?",
+                    "Undo this setup from Changes. You can also go back to your desktop from before Halcyon there.",
+                    button::standard("Show Changes")
+                        .id("wizard-done-changes".into())
+                        .on_press_maybe(
+                            (!self.native_busy).then_some(Message::FinishSetupTo(Page::Changes)),
+                        )
+                        .into(),
+                )],
             ));
         }
         let pending: Vec<Element<'a, Message>> = crate::settings::wizard::follow_up::Task::ALL
@@ -1144,7 +1212,10 @@ impl Settings {
                     .presets()
                     .iter()
                     .find(|preset| preset.id == id)
-                    .map(|preset| preset.profile.name.clone())
+                    .map(|preset| match crate::desktop::profiles::colors_line(id) {
+                        Some(colors) => format!("{}\n{colors}", preset.profile.name),
+                        None => preset.profile.name.clone(),
+                    })
             })
             .unwrap_or_else(|| "My current desktop".into());
         let panel = format!(
@@ -1183,13 +1254,7 @@ impl Settings {
                 if wizard.widgets.active().is_empty() {
                     "None".into()
                 } else {
-                    wizard
-                        .widgets
-                        .active()
-                        .iter()
-                        .map(|w| w.title())
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    wizard.widgets.names(wizard.widgets.active()).join(", ")
                 },
                 Screen::Widgets,
             ),
@@ -1208,7 +1273,7 @@ impl Settings {
         let mut parts = vec![group(Some("Your choices"), choices)];
         if wizard.bars.islands && wizard.has_bar_choices() {
             parts.push(words(
-                "Islands start at next login. No need to log out now.",
+                "Islands start the next time you sign in. No need to sign out now.",
                 12.,
                 SOFT,
             ));

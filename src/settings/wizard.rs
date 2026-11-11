@@ -316,7 +316,8 @@ pub enum Message {
     /// The identity of the page which rendered a control; survives worker queues.
     Rendered(Step, u64, Box<Message>),
     Start,
-    /// Leaves the wizard as it is now (on Welcome: before anything changed).
+    /// Skips setup from Welcome, before anything changed. Setup stays
+    /// unfinished, so Home keeps offering it.
     Leave,
     Next,
     Back,
@@ -422,6 +423,8 @@ pub enum Outcome {
     /// `startup`); otherwise nothing more happens.
     /// Setup closes with its choices saved for later; nothing was written.
     Left,
+    /// Skipped from Welcome: nothing chosen, and setup isn't finished.
+    Skipped,
     Done {
         finish: bool,
         startup: bool,
@@ -798,12 +801,7 @@ impl Wizard {
                 self.capture_insets(store);
                 self.go(Step::Look);
             }
-            Message::Leave => {
-                return Outcome::Done {
-                    finish: false,
-                    startup: false,
-                };
-            }
+            Message::Leave => return Outcome::Skipped,
             Message::Back => {
                 self.widgets.cancel_drag();
                 if let Some(step) = self.visited.pop().or_else(|| self.step.back()) {
@@ -1088,6 +1086,11 @@ impl Wizard {
             .map(|key| crate::layout_state::for_display(&projected, Some(&key), false, displays))
             .collect();
     }
+    /// A display too small for the chosen widgets, for tests.
+    #[cfg(test)]
+    pub(crate) fn shrink_display(&mut self, screen: [f32; 2]) {
+        self.geometry.screen = screen;
+    }
     pub fn widget_plan(&self, config: &crate::config::Config) -> widgets::Plan {
         let mut plan = self.widgets.plan(
             config,
@@ -1357,6 +1360,7 @@ impl Wizard {
         let mut lines = Vec::new();
         if let Some(preset) = self.look.and_then(profiles::preset) {
             lines.push(format!("Look: {}", preset.profile.name));
+            lines.extend(profiles::colors_line(preset.id));
         }
         if self.touched.any() {
             lines.push(format!(
@@ -1367,11 +1371,11 @@ impl Wizard {
             ));
         }
         let projected = self.widgets.config(config);
-        let names: Vec<&str> = Widget::ALL
-            .into_iter()
-            .filter(|widget| projected.widget_selected(*widget))
-            .map(|widget| widget.title())
-            .collect();
+        let names = self.widgets.names(
+            Widget::ALL
+                .into_iter()
+                .filter(|widget| projected.widget_selected(*widget)),
+        );
         lines.push(if names.is_empty() {
             "Widgets: none".into()
         } else {

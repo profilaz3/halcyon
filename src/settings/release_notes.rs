@@ -8,6 +8,8 @@ pub(super) struct Note {
     pub body: &'static str,
     /// Where to turn it on or adjust it, opened like a search result.
     pub place: Option<SearchHit>,
+    /// A web page the note names, opened in the browser.
+    pub link: Option<&'static str>,
 }
 
 pub(super) struct Release {
@@ -23,16 +25,19 @@ pub(super) const RELEASES: &[Release] = &[
                 title: "Usage reports go straight to Halcyon",
                 body: "If you share usage data, reports now go directly to Halcyon's own collector.",
                 place: Some(navigation::PRIVACY),
+                link: None,
             },
             Note {
                 title: "Which features are on",
                 body: "The daily report also says which main features are switched on. Never what's in your widgets.",
                 place: Some(navigation::PRIVACY),
+                link: None,
             },
             Note {
                 title: "Public statistics",
                 body: "Totals from all reports are public at halcyon-reports.profilaz3.workers.dev.",
                 place: None,
+                link: Some("https://halcyon-reports.profilaz3.workers.dev"),
             },
         ],
     },
@@ -43,31 +48,37 @@ pub(super) const RELEASES: &[Release] = &[
                 title: "Activity pill (beta)",
                 body: "Music, meetings, notifications and camera or mic use, in the top panel. Needs Islands.",
                 place: Some(navigation::ACTIVITY_ISLAND),
+                link: None,
             },
             Note {
                 title: "Rain, snow and fog looks",
                 body: "Three new looks, each with its own wallpaper, colors and weather effect.",
                 place: Some(navigation::LOOKS),
+                link: None,
             },
             Note {
                 title: "Tidier built-in looks",
                 body: "Time and weather together top left; system monitor and music on the right.",
                 place: Some(navigation::LOOKS),
+                link: None,
             },
             Note {
                 title: "Much more see-through",
                 body: "Widgets can now be up to 90% see-through.",
                 place: Some(navigation::SEE_THROUGH),
+                link: None,
             },
             Note {
                 title: "Settings, rearranged",
                 body: "Organized by what you change, and Back returns where you came from.",
                 place: None,
+                link: None,
             },
             Note {
                 title: "Set up again, step by step",
                 body: "Pick a look, bars, widgets and city, then review once before applying.",
                 place: Some(navigation::STARTUP),
+                link: None,
             },
         ],
     },
@@ -78,6 +89,51 @@ pub(super) fn current() -> Option<&'static Release> {
     RELEASES
         .iter()
         .find(|release| release.version == env!("CARGO_PKG_VERSION"))
+}
+
+const SEEN_FILE: &str = "release-notes-seen";
+
+/// The newest version whose notes were shown, kept beside Settings' other
+/// state. None on a first run and in versions that never recorded it.
+pub(super) fn seen() -> Option<String> {
+    let store = crate::desktop::DesktopStore::from_env().ok()?;
+    let text = std::fs::read_to_string(store.state_dir().join(SEEN_FILE)).ok()?;
+    let text = text.trim();
+    (!text.is_empty() && text.len() <= 32).then(|| text.to_owned())
+}
+
+/// Records the running version's notes as seen.
+pub(super) fn record_seen() -> Result<(), String> {
+    let store = crate::desktop::DesktopStore::from_env().map_err(|e| e.to_string())?;
+    let path = store.state_file(SEEN_FILE).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(store.state_dir()).map_err(|e| e.to_string())?;
+    crate::config::write_config_text(&path, Some(env!("CARGO_PKG_VERSION")))
+}
+
+/// Every release newer than `seen` up to the running one, newest first.
+/// With nothing recorded, only the running version's notes.
+pub(super) fn since(seen: Option<&str>) -> Vec<&'static Release> {
+    since_in(RELEASES, seen, env!("CARGO_PKG_VERSION"))
+}
+
+fn since_in(
+    releases: &'static [Release],
+    seen: Option<&str>,
+    running: &str,
+) -> Vec<&'static Release> {
+    releases
+        .iter()
+        .filter(|release| match seen {
+            Some(seen) => newer(release.version, seen) && !newer(release.version, running),
+            None => release.version == running,
+        })
+        .collect()
+}
+
+/// Dotted version order; a part that isn't a number counts as 0.
+fn newer(a: &str, b: &str) -> bool {
+    let parts = |v: &str| -> Vec<u32> { v.split('.').map(|p| p.parse().unwrap_or(0)).collect() };
+    parts(a) > parts(b)
 }
 
 #[cfg(test)]
@@ -100,6 +156,45 @@ mod tests {
                 assert!(!text.contains(['\u{2013}', '\u{2014}']), "{text}");
                 assert!(!text.contains("  "), "{text}");
             }
+        }
+    }
+
+    #[test]
+    fn notes_since_the_last_seen_version_cover_every_release_in_between() {
+        static THREE: &[Release] = &[
+            Release {
+                version: "0.7.0",
+                notes: &[],
+            },
+            Release {
+                version: "0.6.10",
+                notes: &[],
+            },
+            Release {
+                version: "0.6.2",
+                notes: &[],
+            },
+        ];
+        let versions = |seen, running| -> Vec<_> {
+            since_in(THREE, seen, running)
+                .iter()
+                .map(|r| r.version)
+                .collect()
+        };
+        assert_eq!(
+            versions(Some("0.6.1"), "0.7.0"),
+            ["0.7.0", "0.6.10", "0.6.2"]
+        );
+        assert_eq!(versions(Some("0.6.2"), "0.7.0"), ["0.7.0", "0.6.10"]);
+        assert!(versions(Some("0.7.0"), "0.7.0").is_empty());
+        // Notes for a version not yet running stay hidden.
+        assert_eq!(versions(Some("0.6.1"), "0.6.10"), ["0.6.10", "0.6.2"]);
+        // Nothing recorded: only what is running.
+        assert_eq!(versions(None, "0.7.0"), ["0.7.0"]);
+        assert_eq!(since(None).len(), 1);
+        assert!(since(Some(env!("CARGO_PKG_VERSION"))).is_empty());
+        for note in RELEASES.iter().flat_map(|r| r.notes) {
+            assert!(note.link.is_none_or(|link| link.starts_with("https://")));
         }
     }
 

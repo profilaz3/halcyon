@@ -70,8 +70,8 @@ fn click(app: &mut Settings, native: &mut Native, id: &str) {
 }
 
 #[test]
-fn fresh_user_setup_routes_to_weather_calendar_and_local_widgets() {
-    if child("fresh_user_setup_routes_to_weather_calendar_and_local_widgets") {
+fn fresh_user_home_offers_setup_once_and_says_when_widgets_are_stopped() {
+    if child("fresh_user_home_offers_setup_once_and_says_when_widgets_are_stopped") {
         return;
     }
     for size in [Size::new(820., 600.), Size::new(1024., 720.)] {
@@ -92,29 +92,78 @@ fn fresh_user_setup_routes_to_weather_calendar_and_local_widgets() {
             &controls_theme(&app.config),
             &format!("new-user-home-{}", size.width),
         );
+        // One card, no checklist, and no banner while the widgets run.
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "setup-open")
+                .is_some()
+        );
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "updated-whats-new")
+                .is_none()
+        );
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "setup-step-1")
+                .is_none()
+        );
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "widgets-start")
+                .is_none()
+        );
         let canvas = native.bounds(app.settings_view(), "desktop-scene");
         assert!(canvas.y >= 0. && canvas.y + canvas.height <= size.height);
-        click(&mut app, &mut native, "setup-open");
         assert!(!app.placement_active());
+
+        // Stopped: Home says so. Set up… is the card right above it.
+        let _ = app.update(Message::Service(Ok(ServiceState {
+            running: false,
+            startup: false,
+        })));
         native.capture(
             app.settings_view(),
             &controls_theme(&app.config),
-            &format!("new-user-setup-{}", size.width),
+            &format!("new-user-stopped-{}", size.width),
         );
-        click(&mut app, &mut native, "setup-step-2");
-        assert_eq!(app.page, Page::Weather);
-        let _ = app.update(Message::Page(Page::Overview));
-        click(&mut app, &mut native, "setup-open");
-        click(&mut app, &mut native, "setup-step-3");
-        assert_eq!(
-            app.page,
-            Page::Themes,
-            "setup opens Appearance's theme choices"
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "widgets-start")
+                .is_some()
         );
-        let _ = app.update(Message::Page(Page::Overview));
-        click(&mut app, &mut native, "setup-open");
-        click(&mut app, &mut native, "setup-step-4");
-        assert_eq!(app.page, Page::Calendar);
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "widgets-setup")
+                .is_none()
+        );
+        let before = std::fs::read(Config::path().unwrap()).unwrap();
+        // Tests never start the real service: the preview seam turns it away.
+        click(&mut app, &mut native, "widgets-start");
+        assert!(!app.busy, "{}", app.status);
+        assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
+
+        // Looks says the same and offers setup.
+        let _ = app.update(Message::Page(Page::DesktopProfiles));
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "widgets-start")
+                .is_some()
+        );
+        click(&mut app, &mut native, "widgets-setup");
+        assert!(app.wizard.is_some());
+        // Skipping leaves setup unfinished, so Home still offers it.
+        click(&mut app, &mut native, "wizard-leave");
+        assert!(app.wizard.is_none());
+        assert_eq!(app.page, Page::Overview);
+        assert!(!Config::load().onboarded);
+        assert!(app.needs_setup());
+        let _ = app.update(Message::Service(Ok(ServiceState {
+            running: true,
+            startup: false,
+        })));
+
+        let _ = app.update(Message::Page(Page::Calendar));
         native.capture(
             app.settings_view(),
             &controls_theme(&app.config),
@@ -137,9 +186,6 @@ fn fresh_user_setup_routes_to_weather_calendar_and_local_widgets() {
         let _ = app.update(Message::Calendar(calendar::Message::Cancel));
         assert!(!app.calendar.busy);
         let _ = app.update(Message::Page(Page::Overview));
-        click(&mut app, &mut native, "setup-open");
-        click(&mut app, &mut native, "setup-back");
-        assert_eq!(app.page, Page::Overview);
         assert!(
             !app.placement_active(),
             "Returning to the overview must not start an edit"
@@ -158,12 +204,30 @@ fn fresh_user_setup_routes_to_weather_calendar_and_local_widgets() {
             "Opening and cancelling the layout editor must preserve saved preferences"
         );
         assert!(!Config::load().setup_dismissed);
-        click(&mut app, &mut native, "setup-open");
-        click(&mut app, &mut native, "setup-skip");
+        click(&mut app, &mut native, "setup-dismiss");
         assert!(!app.needs_setup());
         assert!(Config::load().setup_dismissed);
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "setup-open")
+                .is_none()
+        );
+        // A first run has nothing new to tell: setting setup aside records
+        // this version, so no update card follows it.
+        assert_eq!(
+            crate::settings::release_notes::seen().as_deref(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "updated-whats-new")
+                .is_none()
+        );
         let _ = app.update(Message::SetupDismissed(false));
         assert!(app.needs_setup());
+        click(&mut app, &mut native, "setup-open");
+        assert!(app.wizard.is_some(), "Start opens the setup wizard");
+        let _ = app.update(Message::Wizard(wizard::Message::Leave));
     }
 }
 
@@ -284,8 +348,146 @@ fn connected_account_selector_and_errors_fit_and_reject_old_responses() {
 }
 
 #[test]
-fn polish050_saved_selection_and_optional_followups_survive_hiding_and_restart() {
-    if child("polish050_saved_selection_and_optional_followups_survive_hiding_and_restart") {
+fn upgrade_home_names_whats_new_since_the_last_version_seen() {
+    if child("upgrade_home_names_whats_new_since_the_last_version_seen") {
+        return;
+    }
+    let running = env!("CARGO_PKG_VERSION");
+    let open = |seen: Option<&str>, size: Size| {
+        Config::save_changes(json!({"onboarded": true, "setup_dismissed": true})).unwrap();
+        let store = crate::desktop::DesktopStore::from_env().unwrap();
+        std::fs::create_dir_all(store.state_dir()).unwrap();
+        let file = store.state_dir().join("release-notes-seen");
+        match seen {
+            Some(version) => std::fs::write(&file, version).unwrap(),
+            None => drop(std::fs::remove_file(&file)),
+        }
+        let (mut app, _) = Settings::init(Core::default(), Page::Overview);
+        app.calendar.connection = crate::calendar::Connection::default();
+        let _ = app.update(Message::Service(Ok(ServiceState {
+            running: true,
+            startup: false,
+        })));
+        let _ = app.update(Message::Resized(size));
+        app
+    };
+    // Upgraded from a version that never recorded its notes: this one's.
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        let mut app = open(None, size);
+        let mut native = Native::new(size);
+        let card = native.bounds(app.settings_view(), "updated-whats-new");
+        assert!(
+            card.y >= 0. && card.y + card.height <= size.height,
+            "{card:?}"
+        );
+        native.text_bounds(
+            app.settings_view(),
+            &format!("Halcyon was updated to {running}"),
+        );
+        let notes = crate::settings::release_notes::current().unwrap().notes;
+        let summary = match notes.len() - 1 {
+            0 => notes[0].title.to_string(),
+            more => format!("{}, and {more} more", notes[0].title),
+        };
+        native.text_bounds(app.settings_view(), &summary);
+        for (theme, name) in [
+            (cosmic::Theme::light(), "light"),
+            (cosmic::Theme::dark(), "dark"),
+        ] {
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("on05-updated-card-{}-{name}", size.width),
+            );
+        }
+        click(&mut app, &mut native, "updated-whats-new");
+        assert_eq!(app.app_settings_page, AppSettingsPage::WhatsNew);
+        assert_eq!(
+            crate::settings::release_notes::seen().as_deref(),
+            Some(running)
+        );
+        native.text_bounds(app.settings_view(), &format!("Halcyon {running}"));
+        let _ = app.update(Message::Page(Page::Overview));
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "updated-whats-new")
+                .is_none()
+        );
+    }
+    // Several releases behind: every one in between, newest first.
+    let size = Size::new(1280., 800.);
+    let mut app = open(Some("0.5.0"), size);
+    let mut native = Native::new(size);
+    let all = crate::settings::release_notes::since(Some("0.5.0"));
+    assert!(all.len() >= 2);
+    let count: usize = all.iter().map(|release| release.notes.len()).sum();
+    native.text_bounds(
+        app.settings_view(),
+        &format!("{}, and {} more", all[0].notes[0].title, count - 1),
+    );
+    let _ = app.update(Message::AppSettingsPage(AppSettingsPage::WhatsNew));
+    let mut tops = Vec::new();
+    for release in &all {
+        let heading = format!("Halcyon {}", release.version);
+        tops.push(native.text_bounds(app.settings_view(), &heading).y);
+    }
+    assert!(tops.is_sorted(), "{tops:?}");
+    for (theme, name) in [
+        (cosmic::Theme::light(), "light"),
+        (cosmic::Theme::dark(), "dark"),
+    ] {
+        native.capture(
+            app.settings_view(),
+            &theme,
+            &format!("on05-whats-new-since-{name}"),
+        );
+    }
+    // The statistics address opens in the browser.
+    let linked = all
+        .iter()
+        .flat_map(|release| release.notes)
+        .position(|note| note.link.is_some())
+        .unwrap();
+    assert!(
+        native
+            .try_bounds(app.settings_view(), &format!("whats-new-link-{linked}"))
+            .is_some()
+    );
+    // Dismissing records the version without opening the notes.
+    let mut app = open(Some("0.5.0"), Size::new(820., 600.));
+    let mut native = Native::new(Size::new(820., 600.));
+    click(&mut app, &mut native, "updated-dismiss");
+    assert_eq!(app.page, Page::Overview);
+    assert_eq!(
+        crate::settings::release_notes::seen().as_deref(),
+        Some(running)
+    );
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "updated-whats-new")
+            .is_none()
+    );
+    // Already seen: nothing on Home.
+    let app = open(Some(running), size);
+    let mut native = Native::new(size);
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "updated-whats-new")
+            .is_none()
+    );
+}
+
+/// The tasks the Done step lists for widgets that still need content.
+fn pending(app: &Settings) -> Vec<wizard::follow_up::Task> {
+    wizard::follow_up::Task::ALL
+        .into_iter()
+        .filter(|task| task.needed(&app.config, false))
+        .collect()
+}
+
+#[test]
+fn polish050_saved_selection_survives_hiding_and_restart() {
+    if child("polish050_saved_selection_survives_hiding_and_restart") {
         return;
     }
     Config::save_changes(json!({
@@ -300,48 +502,25 @@ fn polish050_saved_selection_and_optional_followups_survive_hiding_and_restart()
     app.calendar.connection = crate::calendar::Connection::default();
     let _ = app.update(Message::Resized(size));
     let mut native = Native::new(size);
-    assert!(
-        app.needs_setup(),
-        "Finish must not erase selected missing-content tasks"
-    );
-    assert_eq!(app.setup_followups.pending(&app.config, false).len(), 3);
+    // Finished setup offers nothing more on Home.
+    assert!(!app.needs_setup());
+    assert_eq!(pending(&app).len(), 3);
     assert!(native.duplicate_ids(app.settings_view()).is_empty());
     native.capture(
         app.settings_view(),
         &controls_theme(&app.config),
         "polish050-widget-followups-820",
     );
-    // Onboarded users no longer get a reminder card on the Widgets page, so
-    // the reminders are driven through the same messages its buttons sent.
-    let _ = app.update(Message::DismissSetupTask(wizard::follow_up::Task::Weather));
-    assert!(
-        !app.error,
-        "Dismissal must save through the production dispatcher: {}",
-        app.status
-    );
-    assert!(
-        !app.setup_followups
-            .pending(&app.config, false)
-            .contains(&wizard::follow_up::Task::Weather)
-    );
-    let raw = wizard::widgets::raw().unwrap();
-    assert_eq!(raw["future_preference"]["keep"], 42);
-    assert_eq!(raw["notes"]["text"], "keep my note");
-    assert_eq!(raw["setup_followup_weather_dismissed"], true);
     let (mut app, _) = Settings::init(Core::default(), Page::Widgets);
     app.calendar.connection = crate::calendar::Connection::default();
     let _ = app.update(Message::Resized(size));
-    assert_eq!(
-        app.setup_followups.pending(&app.config, false),
-        vec![
-            wizard::follow_up::Task::Calendar,
-            wizard::follow_up::Task::Projects
-        ]
-    );
     click(&mut app, &mut native, "widgets-show-all");
     assert!(app.config.widget_selected(Widget::Weather));
     assert!(!app.config.data_visible(Widget::Weather));
-    assert!(app.setup_followups.pending(&app.config, false).is_empty());
+    assert!(pending(&app).is_empty());
+    let raw = wizard::widgets::raw().unwrap();
+    assert_eq!(raw["future_preference"]["keep"], 42);
+    assert_eq!(raw["notes"]["text"], "keep my note");
     native.capture(
         app.settings_view(),
         &controls_theme(&app.config),
@@ -355,8 +534,11 @@ fn polish050_saved_selection_and_optional_followups_survive_hiding_and_restart()
     );
     click(&mut app, &mut native, "widgets-show-all");
     assert_eq!(
-        app.setup_followups.pending(&app.config, false),
-        vec![wizard::follow_up::Task::Projects]
+        pending(&app),
+        vec![
+            wizard::follow_up::Task::Weather,
+            wizard::follow_up::Task::Projects
+        ]
     );
     let _ = app.update(Message::Page(wizard::follow_up::Task::Projects.page()));
     assert_eq!(app.page, Page::Projects);

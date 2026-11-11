@@ -763,6 +763,26 @@ impl Settings {
         column::with_children(controls).spacing(10).into()
     }
 
+    /// Without a city, sun times can't switch anything. Say so, and name
+    /// what still does: set times and screens don't need a city.
+    fn no_city_until(&self) -> &'static str {
+        if self.automation.draft.is_some() {
+            return "Until then, this schedule can’t switch.";
+        }
+        let others = self.automation.settings().is_ok_and(|settings| {
+            settings.enabled
+                && settings
+                    .rules
+                    .iter()
+                    .any(|rule| rule.enabled && !matches!(rule.when, Trigger::Solar { .. }))
+        });
+        if others {
+            "Until then, only set times and screens switch."
+        } else {
+            "Until then, nothing switches."
+        }
+    }
+
     pub(super) fn schedule_city_controls(&self, source: Source) -> Element<'_, Message> {
         let mut controls = Vec::new();
         let context = &self.automation.solar;
@@ -773,9 +793,15 @@ impl Settings {
             Ok(city) => detail_state("Where you are", city.name.clone()),
             Err(reason) if reason.starts_with("Choose a city") => detail_state(
                 "Where you are",
-                "Sunrise and sunset there decide when your look switches",
+                format!(
+                    "Choose a city so Halcyon knows when sunrise and sunset are. {}",
+                    self.no_city_until()
+                ),
             ),
-            Err(reason) => detail_state("Where you are", reason),
+            Err(reason) => detail_state(
+                "Where you are",
+                format!("{reason} {}", self.no_city_until()),
+            ),
         };
         if source == Source::Weather {
             controls.push(split(

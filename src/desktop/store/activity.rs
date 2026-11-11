@@ -435,6 +435,146 @@ fn native_scalar(value: Option<&String>) -> Option<String> {
         }
     }
 }
+/// The area of a desktop setting, as Changes groups it.
+fn native_area(namespace: &str) -> &'static str {
+    if namespace.contains("CosmicPanel") || namespace == dock_islands_core::NAMESPACE {
+        "Dock and panel"
+    } else if namespace.contains("Theme") || namespace.contains("Tk") {
+        "Appearance"
+    } else if namespace.contains("Background") {
+        "Wallpaper"
+    } else if namespace.contains("Shortcuts") {
+        "Shortcuts"
+    } else if namespace.contains("Workspaces") {
+        "Workspaces"
+    } else if namespace.contains("Files") {
+        "Desktop icons"
+    } else {
+        "Windows"
+    }
+}
+/// What an interrupted change was doing, named by the pages it touched,
+/// for the banner that asks whether to keep it.
+pub fn interrupted(journal: &super::Journal) -> String {
+    let mut pages: Vec<&str> = Vec::new();
+    for entry in &journal.entries {
+        let page = native_area(&entry.namespace);
+        if !pages.contains(&page) {
+            pages.push(page);
+        }
+    }
+    if journal.widget.is_some() {
+        pages.push("Widgets");
+    }
+    let what = match pages.as_slice() {
+        [] => "your desktop".to_string(),
+        [one] => one.to_string(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    };
+    match journal.operation.as_str() {
+        "undo" | "undo_restore" => format!("Halcyon was closed while undoing a change to {what}."),
+        "restore" => format!("Halcyon was closed while restoring {what}."),
+        _ => format!("Halcyon was closed while changing {what}."),
+    }
+}
+/// The recorded name of a desktop setting that has one (see `SETTINGS`).
+fn native_setting(namespace: &str, key: &str) -> Option<&'static str> {
+    if namespace.starts_with("com.system76.CosmicPanel.") {
+        match key {
+            "spacing" => Some("Bar spacing"),
+            "padding" => Some("Bar padding"),
+            "margin" => Some("Bar margin"),
+            "opacity" => Some("Bar opacity"),
+            _ => None,
+        }
+    } else if namespace == "com.system76.CosmicTheme.Mode" && key == "is_dark" {
+        Some("Dark appearance")
+    } else {
+        None
+    }
+}
+/// The recorded name of a widget setting that has one (see `SETTINGS`).
+fn widget_setting(pointer: &str) -> Option<&'static str> {
+    Some(match pointer {
+        "/appearance/opacity" => "Widget opacity",
+        "/appearance/corner_radius" => "Widget corners",
+        "/appearance/border_opacity" => "Widget outline",
+        "/clock/scale" => "Clock scale",
+        "/clock/show_date" => "Clock date",
+        "/clock/show_seconds" => "Clock seconds",
+        "/appearance/reduce_motion" => "Reduce motion",
+        "/placement/snap" => "Widget snap",
+        _ => return None,
+    })
+}
+/// "Between items: now 9 px, was 4 px", in the words its page uses. A
+/// setting without a name of its own says which page it is on, never its
+/// raw key; values that can't be shown plainly are left out.
+fn conflict_line(
+    setting: Option<&str>,
+    page: &str,
+    current: Option<String>,
+    previous: Option<String>,
+) -> String {
+    let title = match setting {
+        Some(setting) => setting_title(setting).to_string(),
+        None => format!("{page} · a setting"),
+    };
+    let unit = match setting.unwrap_or_default() {
+        "Bar spacing" | "Bar padding" | "Bar margin" | "Widget corners" => " px",
+        "Clock scale" | "Widget opacity" => "%",
+        _ => "",
+    };
+    let shown = |value: String| {
+        if matches!(value.as_str(), "Default" | "On" | "Off") {
+            value
+        } else {
+            format!("{value}{unit}")
+        }
+    };
+    match (current, previous) {
+        (Some(current), Some(previous)) => {
+            format!("{title}: now {}, was {}", shown(current), shown(previous))
+        }
+        _ => title,
+    }
+}
+/// A desktop setting changed since the change being undone.
+pub(super) fn native_conflict(
+    namespace: &str,
+    key: &str,
+    current: Option<&str>,
+    previous: Option<&str>,
+) -> String {
+    // Dock and panel settings are on the Dock or Panel page.
+    let page = match namespace {
+        n if n.starts_with("com.system76.CosmicPanel.Dock") => "Dock",
+        n if n.starts_with("com.system76.CosmicPanel.Panel") => "Panel",
+        n => native_area(n),
+    };
+    conflict_line(
+        native_setting(namespace, key),
+        page,
+        native_scalar(current.map(str::to_string).as_ref()),
+        native_scalar(previous.map(str::to_string).as_ref()),
+    )
+}
+/// A widget setting changed since the change being undone.
+pub(super) fn widget_conflict(
+    pointer: &str,
+    current: Option<&serde_json::Value>,
+    previous: Option<&serde_json::Value>,
+) -> String {
+    // Changes' own name first, then the name the widget setting is known by.
+    let setting =
+        widget_setting(pointer).or_else(|| super::widget::field(pointer).map(|field| field.label));
+    conflict_line(
+        setting,
+        widget_group(pointer).unwrap_or("Widgets"),
+        scalar(current),
+        scalar(previous),
+    )
+}
 pub(super) fn has_changes(file: &UndoFile) -> bool {
     !file.entries.is_empty() || file.widget.as_ref().is_some_and(|w| !w.fields.is_empty())
 }
@@ -451,38 +591,11 @@ pub(super) fn summarize(file: &UndoFile, display: bool) -> Summary {
     // A value without a detail of its own: the details are not the whole change.
     let mut partial = false;
     for e in &file.entries {
-        let area =
-            if e.namespace.contains("CosmicPanel") || e.namespace == dock_islands_core::NAMESPACE {
-                "Dock and panel"
-            } else if e.namespace.contains("Theme") || e.namespace.contains("Tk") {
-                "Appearance"
-            } else if e.namespace.contains("Background") {
-                "Wallpaper"
-            } else if e.namespace.contains("Shortcuts") {
-                "Shortcuts"
-            } else if e.namespace.contains("Workspaces") {
-                "Workspaces"
-            } else if e.namespace.contains("Files") {
-                "Desktop icons"
-            } else {
-                "Windows"
-            };
+        let area = native_area(&e.namespace);
         if !areas.contains(&area.to_string()) {
             areas.push(area.to_string());
         }
-        let name = if e.namespace.starts_with("com.system76.CosmicPanel.") {
-            match e.key.as_str() {
-                "spacing" => Some("Bar spacing"),
-                "padding" => Some("Bar padding"),
-                "margin" => Some("Bar margin"),
-                "opacity" => Some("Bar opacity"),
-                _ => None,
-            }
-        } else if e.namespace == "com.system76.CosmicTheme.Mode" && e.key == "is_dark" {
-            Some("Dark appearance")
-        } else {
-            None
-        };
+        let name = native_setting(&e.namespace, &e.key);
         if let Some(name) = name
             && let (Some(before), Some(after)) = (
                 native_scalar(e.before.as_ref()),
@@ -519,19 +632,9 @@ pub(super) fn summarize(file: &UndoFile, display: bool) -> Summary {
             }
         }
         for field in fields {
-            let name = match field.pointer.as_str() {
-                "/appearance/opacity" => "Widget opacity",
-                "/appearance/corner_radius" => "Widget corners",
-                "/appearance/border_opacity" => "Widget outline",
-                "/clock/scale" => "Clock scale",
-                "/clock/show_date" => "Clock date",
-                "/clock/show_seconds" => "Clock seconds",
-                "/appearance/reduce_motion" => "Reduce motion",
-                "/placement/snap" => "Widget snap",
-                _ => {
-                    partial = true;
-                    continue;
-                }
+            let Some(name) = widget_setting(&field.pointer) else {
+                partial = true;
+                continue;
             };
             if let (Some(before), Some(after)) =
                 (scalar(field.before.as_ref()), scalar(field.after.as_ref()))
@@ -809,6 +912,96 @@ mod tests {
         let undone = f.store().latest_change().unwrap().unwrap();
         assert_eq!(undone.item, None);
         assert_eq!(undone.summary().title(), recent.entries[0].title());
+    }
+    #[test]
+    fn interrupted_banner_says_what_was_being_changed() {
+        let entry = |namespace: &str| super::super::JournalEntry {
+            namespace: namespace.into(),
+            version: 1,
+            key: "autotile".into(),
+            before: None,
+            after: None,
+        };
+        let mut journal = super::super::Journal {
+            format: String::new(),
+            version: 3,
+            id: "x".into(),
+            operation: "apply".into(),
+            created: String::new(),
+            entries: vec![entry("com.system76.CosmicComp")],
+            widget: None,
+            undo: None,
+            design: None,
+        };
+        assert_eq!(
+            interrupted(&journal),
+            "Halcyon was closed while changing Windows."
+        );
+        journal.entries.push(entry("com.system76.CosmicPanel.Dock"));
+        journal.entries.push(entry("com.system76.CosmicBackground"));
+        journal.operation = "undo".into();
+        assert_eq!(
+            interrupted(&journal),
+            "Halcyon was closed while undoing a change to Windows, Dock and panel and Wallpaper."
+        );
+        journal.entries.clear();
+        journal.operation = "restore".into();
+        assert_eq!(
+            interrupted(&journal),
+            "Halcyon was closed while restoring your desktop."
+        );
+    }
+
+    #[test]
+    fn conflicts_read_in_the_pages_words_never_as_keys() {
+        let (nine, four) = ("9", "4");
+        assert_eq!(
+            native_conflict(
+                "com.system76.CosmicPanel.Dock",
+                "spacing",
+                Some(nine),
+                Some(four)
+            ),
+            "Between items: now 9 px, was 4 px"
+        );
+        assert_eq!(
+            native_conflict("com.system76.CosmicPanel.Panel", "margin", Some(nine), None),
+            "Edge gap: now 9 px, was Default"
+        );
+        let on = "true";
+        assert_eq!(
+            native_conflict("com.system76.CosmicTheme.Mode", "is_dark", Some(on), None),
+            "Dark appearance: now On, was Default"
+        );
+        // Without a name of its own: the page, a setting, and plain values.
+        assert_eq!(
+            native_conflict(
+                "com.system76.CosmicPanel.Dock",
+                "size",
+                Some(nine),
+                Some(four)
+            ),
+            "Dock · a setting: now 9, was 4"
+        );
+        let ron = "Some((x: 1))";
+        let line = native_conflict("com.system76.CosmicComp", "tiling", Some(ron), None);
+        assert_eq!(line, "Windows · a setting");
+        assert_eq!(
+            widget_conflict(
+                "/appearance/opacity",
+                Some(&serde_json::json!(75)),
+                Some(&serde_json::json!(60))
+            ),
+            "Widget opacity: now 75%, was 60%"
+        );
+        assert_eq!(
+            widget_conflict("/clock/face", Some(&serde_json::json!("digital")), None),
+            "Clock face"
+        );
+        assert_eq!(
+            widget_conflict("/no_such_setting", Some(&serde_json::json!(1)), None),
+            "Widgets · a setting: now 1, was Default"
+        );
     }
     #[test]
     fn polish050_history_titles_keep_safe_detail_and_legacy_fallback() {

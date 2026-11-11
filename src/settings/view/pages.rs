@@ -28,7 +28,7 @@ impl AppSettingsPage {
     pub fn title(self) -> &'static str {
         match self {
             Self::Home => "Halcyon",
-            Self::Operation => "Startup",
+            Self::Operation => "Running and startup",
             Self::Interface => "Interface",
             Self::Privacy => "Privacy",
             Self::Updates => "Updates",
@@ -39,7 +39,6 @@ impl AppSettingsPage {
 
     pub fn tab_title(self) -> &'static str {
         match self {
-            Self::Operation => "Startup",
             Self::Updates => "Updates",
             Self::Help => "Help",
             page => page.title(),
@@ -330,7 +329,34 @@ impl Settings {
             .into(),
         );
         let connected = self.calendar.connection.connected();
-        let mut sections = vec![self.calendar_connection()];
+        let mut sections = Vec::new();
+        if !connected {
+            // The preview shows made-up events until a calendar is
+            // connected; say so beside it, with the way to connect.
+            let editor = &self.calendar;
+            sections.push(
+                container(split(
+                    label(
+                        "Sample · connect a calendar to see your events.",
+                        13.,
+                        MUTED,
+                    ),
+                    button::text("Connect")
+                        .id(cosmic::widget::Id::new("calendar-sample-connect"))
+                        .on_press_maybe((!editor.busy).then(|| {
+                            Message::Calendar(if editor.client_ready {
+                                crate::settings::calendar::Message::Connect
+                            } else {
+                                crate::settings::calendar::Message::SubscriptionForm(true)
+                            })
+                        }))
+                        .into(),
+                ))
+                .id(cosmic::widget::Id::new("calendar-sample-note"))
+                .into(),
+            );
+        }
+        sections.push(self.calendar_connection());
         if connected {
             sections.push(group(Some("Agenda"), events));
         }
@@ -1443,16 +1469,20 @@ impl Settings {
             )
         };
         // One list, no group heading; Accessibility has its own entry.
+        // A stopped Halcyon is a state, so it shows like Starts at sign-in.
+        let stopped = self.service_known && !self.service.running && !preview();
         let halcyon = cosmic::widget::settings::section()
             .add(row(
                 "system-log-out-symbolic",
                 AppSettingsPage::Operation,
-                if self.service.startup {
+                if stopped {
+                    "Stopped".into()
+                } else if self.service.startup {
                     "Starts at sign-in · Set up again".into()
                 } else {
                     "Running, sign-in and set up again".into()
                 },
-                self.service.startup,
+                stopped || self.service.startup,
             ))
             .add(row(
                 "view-dual-symbolic",
@@ -1524,26 +1554,32 @@ impl Settings {
     }
 
     fn app_operation_page(&self) -> Element<'_, Message> {
-        let mut running = toggler(self.service.running);
         let mut startup = toggler(self.service.startup);
-        if self.service_known && !self.busy && !preview() {
-            running = running.on_toggle(Message::Background);
+        let ready = self.service_known && !self.busy && !preview();
+        if ready {
             startup = startup.on_toggle(Message::Startup);
         }
-        // Why it can't be changed yet stays visible; the explanation hides.
-        let background = if preview() {
-            group_row_state(
-                "Keep running in the background",
-                "Not available in this preview",
-                running.into(),
-            )
+        // The first row says whether Halcyon is on, with the way to change it.
+        let running = self.service.running;
+        let action = button::standard(if running { "Stop" } else { "Start" })
+            .id(cosmic::widget::Id::new("service-running"))
+            .on_press_maybe(ready.then_some(Message::Background(!running)))
+            .into();
+        let state = if preview() {
+            group_row_state("Halcyon", "Not available in this preview", action)
         } else if !self.service_known {
-            group_row_state("Keep running in the background", "Checking…", running.into())
+            group_row_state("Halcyon", "Checking…", action)
+        } else if running {
+            group_row_state(
+                "Halcyon is running",
+                "Widgets, colors and schedules are active.",
+                action,
+            )
         } else {
-            group_row(
-                "Keep running in the background",
-                "Wallpaper colors and schedules keep working while widgets are hidden",
-                running.into(),
+            group_row_state(
+                "Halcyon is stopped",
+                "Nothing on your desktop is managed.",
+                action,
             )
         };
         column::with_children(vec![
@@ -1551,7 +1587,7 @@ impl Settings {
                 Some("Running"),
                 vec![
                     // Show widgets lives on the Widgets page only.
-                    background,
+                    state,
                     group_row("Start when you sign in", "", startup.into()),
                 ],
             ),
