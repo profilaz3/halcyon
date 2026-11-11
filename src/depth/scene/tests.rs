@@ -296,3 +296,83 @@ fn own_wallpaper_a_ragged_outline_is_uneven() {
     };
     assert_eq!(confidence(&stats, &figure), 0.);
 }
+
+#[test]
+fn own_wallpaper_a_shape_floating_over_the_digits_is_not_ground() {
+    // Ink is at screen 660..1260 by 440..630 and the box ends at 710. A near
+    // blob covers the bottom of the digits with sky under it down to the
+    // ground at 660, so the row under the digits is still ground.
+    let blob = mask_with(Some(660), &[[600, 570, 1320, 630]]);
+    let m = measures(&blob, [560., 380.]);
+    assert!(
+        m.hidden_top <= MAX_HIDDEN_TOP
+            && m.hidden_bottom >= MIN_HIDDEN_BOTTOM
+            && m.hidden_all <= MAX_HIDDEN_ALL
+            && m.cut <= MAX_CUT
+            && m.ground >= MIN_GROUND,
+        "only the floating check can catch it: {m:?}"
+    );
+    assert!(m.floating > MAX_FLOATING, "{m:?}");
+    assert!(!passes(&m));
+    // Edges everywhere, so the outline cannot be what turns it down.
+    let scene = Scene {
+        edges: GrayImage::from_pixel(SOURCE[0], SOURCE[1], image::Luma([255])),
+        picture: RgbImage::new(SOURCE[0], SOURCE[1]),
+        stats: Stats {
+            source: SOURCE,
+            eta: 0.7,
+            coverage: 0.4,
+            top_touch: 0.,
+            flat: false,
+        },
+        mask: blob,
+    };
+    let j = judged(&scene, [560., 380.]);
+    assert_ne!(j.verdict, Verdict::Works, "{j:?}");
+    if let Some(spot) = j.suggested {
+        assert_ne!(spot, [560., 380.], "{j:?}");
+        assert!(j.measures.floating <= MAX_FLOATING, "{j:?}");
+    }
+    // The same digits on solid ground are fine.
+    let grounded = measures(
+        &mask_with(Some(660), &[[600, 570, 1320, 660]]),
+        [560., 380.],
+    );
+    assert!(
+        grounded.floating < 0.05 && passes(&grounded),
+        "{grounded:?}"
+    );
+}
+
+#[test]
+fn own_wallpaper_a_cut_that_follows_nothing_in_the_picture_is_not_offered() {
+    // The hill covers the bottom of the time, but no edge in the picture
+    // runs along the mask's outline.
+    let (depth, picture) = hill(300);
+    let mut scene = derive(&depth, &picture).unwrap();
+    scene.edges = GrayImage::new(SOURCE[0], SOURCE[1]);
+    let j = judged(&scene, [560., 380.]);
+    assert_eq!(j.verdict, Verdict::NotUseful, "{j:?}");
+    assert_eq!(j.reason, Some(Reason::Uneven));
+    assert!(j.measures.align < MIN_ALIGN, "{j:?}");
+    assert_eq!(j.suggested, None);
+}
+
+#[test]
+fn own_wallpaper_the_next_best_spot_is_offered_when_the_best_follows_nothing() {
+    // Picture edges only on the left of the screen: the clock's own column
+    // scores best but its cut is mostly off them, so a spot further left
+    // is offered instead.
+    let (depth, picture) = hill(300);
+    let mut scene = derive(&depth, &picture).unwrap();
+    for (x, _, p) in scene.edges.enumerate_pixels_mut() {
+        if x >= 400 {
+            p[0] = 0;
+        }
+    }
+    let j = judged(&scene, [560., 100.]);
+    assert_eq!(j.verdict, Verdict::NeedsNudge, "{j:?}");
+    let spot = j.suggested.unwrap();
+    assert!(spot[0] < 560., "{spot:?}");
+    assert!(j.measures.align >= MIN_ALIGN, "{j:?}");
+}

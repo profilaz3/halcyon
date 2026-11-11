@@ -509,21 +509,34 @@ pub struct Measures {
     pub ragged: f32,
     /// How far the spot is from where the clock is, in screen heights.
     pub moved: f32,
+    /// Share of the hidden ink in columns where the foreground does not run
+    /// unbroken from the covered digits down to the bottom of the clock's box:
+    /// a shape floating over the time with sky below it.
+    pub floating: f32,
 }
 
 /// Limits a spot has to meet. `hidden_top` and `hidden_bottom` are the
 /// spike's; `cut` and `ground` catch a head poking into the digits and a
-/// subject floating free of the ground (spike inputs yqkl97 and k8jox7).
+/// subject floating free of the ground (spike inputs yqkl97 and k8jox7);
+/// `floating` catches a shape over the digits with sky between it and the
+/// ground (good spots measure at most 0.48).
 pub const MAX_HIDDEN_TOP: f32 = 0.03;
 pub const MIN_HIDDEN_BOTTOM: f32 = 0.15;
 pub const MAX_HIDDEN_ALL: f32 = 0.45;
 pub const MAX_CUT: f32 = 0.35;
 pub const MIN_GROUND: f32 = 0.5;
+pub const MAX_FLOATING: f32 = 0.6;
 pub const WORKS: f32 = 0.35;
 /// Outline pixels per column past which the foreground is a figure or
 /// foliage poking into the time, not a skyline (the evaluation's person
 /// cutting into the digits measured 9.1; the busiest good skyline 6.8).
 pub const MAX_RAGGED: f32 = 8.;
+/// Share of the outline on picture edges below which the cut follows
+/// nothing in the picture and reads as a fault: the bundled Rose's dark
+/// cloud bank measured 0.25, the lowest good spot 0.64.
+pub const MIN_ALIGN: f32 = 0.45;
+/// Spots whose outline is measured before the search gives up.
+const TRIES: usize = 8;
 
 /// The clock as the judge sees it: its straight alpha, the face rows of
 /// the time, and where it is on the screen.
@@ -564,6 +577,8 @@ struct Sample {
     weight: f32,
     top: bool,
     group: usize,
+    /// Which sampled column of the ink it is in.
+    column: usize,
 }
 
 struct Ink {
@@ -572,6 +587,10 @@ struct Ink {
     /// Logical rows and columns of the ink, relative to the frame origin.
     rows: [f64; 2],
     cols: [f64; 2],
+    /// Each sampled column's logical x, relative to the frame origin.
+    columns: Vec<f64>,
+    /// The bottom of the clock's box, relative to the frame origin.
+    bottom: f64,
 }
 
 fn ink(glyph: &Glyph) -> Option<Ink> {
@@ -613,6 +632,7 @@ fn ink(glyph: &Glyph) -> Option<Ink> {
                 weight: f32::from(a) / 255.,
                 top: (y as f64 + 0.5) < split,
                 group: (x - left) / group_width,
+                column: (x - left) / stride,
             });
         }
     }
@@ -621,6 +641,11 @@ fn ink(glyph: &Glyph) -> Option<Ink> {
         groups,
         rows: [top as f64 / s, bottom as f64 / s],
         cols: [left as f64 / s, right as f64 / s],
+        columns: (left..right)
+            .step_by(stride)
+            .map(|x| (x as f64 + 0.5) / s)
+            .collect(),
+        bottom: h as f64 / s,
     })
 }
 
@@ -646,11 +671,19 @@ fn bilinear(mask: &GrayImage, p: [f64; 2]) -> f32 {
 fn cover(ink: &Ink, map: &Map, mask: &GrayImage, origin: [f64; 2]) -> Measures {
     let (mut top, mut top_all, mut bottom, mut bottom_all) = (0f32, 0f32, 0f32, 0f32);
     let mut groups = vec![[0f32; 2]; ink.groups];
+    // Per sampled column: hidden ink, and the highest covered sample.
+    let mut columns = vec![(0f32, f64::INFINITY); ink.columns.len()];
     for s in &ink.samples {
-        let hidden = bilinear(
+        let value = bilinear(
             mask,
             map.to_mask([origin[0] + s.at[0], origin[1] + s.at[1]]),
-        ) * s.weight;
+        );
+        let hidden = value * s.weight;
+        let column = &mut columns[s.column];
+        column.0 += hidden;
+        if value >= 0.5 {
+            column.1 = column.1.min(s.at[1]);
+        }
         if s.top {
             top += hidden;
             top_all += s.weight;
@@ -681,14 +714,51 @@ fn cover(ink: &Ink, map: &Map, mask: &GrayImage, origin: [f64; 2]) -> Measures {
         })
         .count() as f32
         / points as f32;
+    let floating = floating(ink, map, mask, origin, &columns);
     Measures {
         hidden_top: top / top_all.max(1e-6),
         hidden_bottom: bottom / bottom_all.max(1e-6),
         hidden_all: (top + bottom) / (top_all + bottom_all).max(1e-6),
         cut,
         ground,
+        floating,
         ..Default::default()
     }
+}
+
+/// The hidden share of the covered columns whose foreground breaks
+/// somewhere between their highest covered sample and the bottom of the
+/// clock's box.
+fn floating(
+    ink: &Ink,
+    map: &Map,
+    mask: &GrayImage,
+    origin: [f64; 2],
+    columns: &[(f32, f64)],
+) -> f32 {
+    let step = map.scale[1].max(1e-3);
+    let end = ink.bottom - 0.5;
+    let (mut all, mut loose) = (0f32, 0f32);
+    for (&x, &(hidden, from)) in ink.columns.iter().zip(columns) {
+        if !from.is_finite() {
+            continue;
+        }
+        all += hidden;
+        let mut y = from;
+        let grounded = loop {
+            if bilinear(mask, map.to_mask([origin[0] + x, origin[1] + y])) < 0.5 {
+                break false;
+            }
+            if y >= end {
+                break true;
+            }
+            y = (y + step).min(end);
+        };
+        if !grounded {
+            loose += hidden;
+        }
+    }
+    loose / all.max(1e-6)
 }
 
 fn passes(m: &Measures) -> bool {
@@ -697,6 +767,7 @@ fn passes(m: &Measures) -> bool {
         && m.hidden_bottom >= MIN_HIDDEN_BOTTOM
         && m.hidden_all <= MAX_HIDDEN_ALL
         && m.ground >= MIN_GROUND
+        && m.floating <= MAX_FLOATING
 }
 
 /// The outline's fit near a spot: on strong picture edges, and how many
@@ -762,9 +833,6 @@ fn confidence(stats: &Stats, m: &Measures) -> f32 {
         return 0.;
     }
     let mut c = 1f32;
-    if m.align < 0.45 {
-        c -= 0.3;
-    }
     if stats.eta < 0.35 {
         c -= 0.1;
     }
@@ -822,27 +890,31 @@ pub fn judge(
         m.moved = ((origin[0] - here[0]).hypot(origin[1] - here[1]) / screen[1]) as f32;
         m
     };
+    // A spot is offered only when its outline follows the picture and can
+    // be trusted.
+    let good = |m: &Measures, confidence: f32| m.align >= MIN_ALIGN && confidence >= WORKS;
+    // The first spot turned down, for the verdict when nothing better turns up.
+    let mut rejected: Option<(Measures, f32)> = None;
+    let mut tried: Vec<[f64; 2]> = Vec::new();
     let current = cover(&ink, &map, mask, here);
     if passes(&current) {
-        let m = finish(here, current);
+        let m = finish(here, current.clone());
         let confidence = confidence(stats, &m);
-        return Some(if confidence >= WORKS {
-            Judgement {
+        if good(&m, confidence) {
+            return Some(Judgement {
                 verdict: Verdict::Works,
                 confidence,
                 suggested: None,
                 reason: None,
                 measures: m,
-            }
-        } else {
-            Judgement {
-                confidence,
-                ..not_useful(Reason::Uneven, m)
-            }
-        });
+            });
+        }
+        rejected = Some((m, confidence));
+        tried.push(here);
     }
     // Search the clock's own column and three others, from near the top to
-    // the middle of the screen, then refine around the best.
+    // the middle of the screen. The best spots are refined in turn until one
+    // is good.
     let max = [screen[0] - size[0], screen[1] - size[1]].map(|v| v.max(0.).floor());
     let centre_x = |share: f64| {
         (screen[0] * share - (ink.cols[0] + ink.cols[1]) / 2.)
@@ -875,50 +947,52 @@ pub fn judge(
         let s = score(origin, &m);
         Some((origin, m, s))
     };
-    let mut best: Option<([f64; 2], Measures, f64)> = None;
-    let keep = |found: Option<([f64; 2], Measures, f64)>,
-                best: &mut Option<([f64; 2], Measures, f64)>| {
-        if let Some(found) = found
-            && best.as_ref().is_none_or(|b| found.2 > b.2)
-        {
-            *best = Some(found);
-        }
-    };
     let step = (ink_height / 24.).max(4. * screen[1] / 1080.).max(1.);
+    let mut found = Vec::new();
     for &x in &xs {
         let mut y = highest;
         while y <= lowest {
-            keep(try_at([x, y.round()]), &mut best);
+            found.extend(try_at([x, y.round()]));
             y += step;
         }
     }
-    if let Some(origin) = best.as_ref().map(|b| b.0) {
-        let fine = (step / 4.).max(1.);
-        for i in -4..=4 {
-            keep(
-                try_at([origin[0], (origin[1] + f64::from(i) * fine).round()]),
-                &mut best,
-            );
-        }
-    }
-    let Some((origin, m, _)) = best else {
-        return Some(not_useful(Reason::NoSpot, current));
+    found.sort_by(|a, b| b.2.total_cmp(&a.2));
+    let fine = (step / 4.).max(1.);
+    // Spots this close to one turned down share its outline.
+    let near = |a: [f64; 2], b: [f64; 2]| {
+        (a[0] - b[0]).abs() < 1. && (a[1] - b[1]).abs() < ink_height / 2.
     };
-    let m = finish(origin, m);
-    let confidence = confidence(stats, &m);
-    Some(if confidence >= WORKS {
-        Judgement {
-            verdict: Verdict::NeedsNudge,
-            confidence,
-            suggested: Some(origin.map(|v| v as f32)),
-            reason: None,
-            measures: m,
+    for start in found {
+        if tried.len() >= TRIES {
+            break;
         }
-    } else {
-        Judgement {
+        if tried.iter().any(|&t| near(t, start.0)) {
+            continue;
+        }
+        let at = start.0;
+        let (origin, m, _) = (-4..=4)
+            .filter_map(|i| try_at([at[0], (at[1] + f64::from(i) * fine).round()]))
+            .fold(start, |best, f| if f.2 > best.2 { f } else { best });
+        let m = finish(origin, m);
+        let confidence = confidence(stats, &m);
+        if good(&m, confidence) {
+            return Some(Judgement {
+                verdict: Verdict::NeedsNudge,
+                confidence,
+                suggested: Some(origin.map(|v| v as f32)),
+                reason: None,
+                measures: m,
+            });
+        }
+        rejected.get_or_insert((m, confidence));
+        tried.push(origin);
+    }
+    Some(match rejected {
+        Some((m, confidence)) => Judgement {
             confidence,
             ..not_useful(Reason::Uneven, m)
-        }
+        },
+        None => not_useful(Reason::NoSpot, current),
     })
 }
 
