@@ -105,6 +105,11 @@ print((root/'islands-installation.json').read_text())
         self.worker.take().unwrap().join().unwrap()
     }
 }
+/// Longest a queued change may take while the helper holds the locks. A
+/// change that waited on them would block until the helper's 2 s watchdog
+/// and leave `worker-timeout` behind, so half that still tells the two apart
+/// on a busy machine running an unoptimised build.
+const NO_LOCK_WAIT: Duration = Duration::from_secs(1);
 impl Drop for LockedNativeJob {
     fn drop(&mut self) {
         let _ = std::fs::write(self.root.join("worker-release"), b"release");
@@ -220,7 +225,7 @@ fn task2r2_style_toggle_defers_while_helper_holds_transaction_locks() {
         let started = Instant::now();
         other_tasks.push(app.update(message));
         assert!(
-            started.elapsed() < Duration::from_millis(250),
+            started.elapsed() < NO_LOCK_WAIT,
             "equivalent save path must not enter worker-held locks"
         );
     }
@@ -230,7 +235,7 @@ fn task2r2_style_toggle_defers_while_helper_holds_transaction_locks() {
     let still_before = Config::load().appearance.sync_colors == before;
     let messages = job.release();
     assert!(
-        elapsed < Duration::from_millis(250),
+        elapsed < NO_LOCK_WAIT,
         "style pointer waited on active worker locks: {elapsed:?}"
     );
     assert!(

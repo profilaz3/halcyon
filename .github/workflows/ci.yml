@@ -3,8 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
+  # Every pull request, including ones stacked on another branch.
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
@@ -16,18 +16,30 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    # A normal run takes about 15 minutes; stop a hung one well before
+    # GitHub's 6-hour default.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - name: Month for the apt cache key
+        id: month
+        run: echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+      - name: Restore apt packages
+        id: apt-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/apt-cache
+          key: apt-build-ubuntu-24.04-${{ steps.month.outputs.month }}-${{ hashFiles('.github/apt/build.txt', '.github/scripts/apt-install.sh') }}
+          restore-keys: apt-build-ubuntu-24.04-${{ steps.month.outputs.month }}-
       - name: Install build and packaging dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config pkgconf cmake just \
-            libxkbcommon-dev libwayland-dev libexpat1-dev libfontconfig-dev \
-            fonts-open-sans fonts-noto-mono \
-            libfreetype-dev libinput-dev libudev-dev libdbus-1-dev libseat-dev \
-            libegl1-mesa-dev libvulkan-dev mesa-vulkan-drivers libssl-dev libclang-dev \
-            dpkg-dev apt-utils gnupg util-linux apparmor appstream desktop-file-utils lintian python3 python3-yaml
+        timeout-minutes: 10
+        run: .github/scripts/apt-install.sh .github/apt/build.txt ~/apt-cache
+      - name: Save apt packages
+        if: steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/apt-cache
+          key: ${{ steps.apt-cache.outputs.cache-primary-key }}
       - name: Install Rust 1.93
         uses: dtolnay/rust-toolchain@master
         with:
@@ -136,16 +148,28 @@ jobs:
 
   penumbra:
     runs-on: ubuntu-24.04
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - name: Month for the apt cache key
+        id: month
+        run: echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+      - name: Restore apt packages
+        id: apt-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/apt-cache
+          key: apt-penumbra-ubuntu-24.04-${{ steps.month.outputs.month }}-${{ hashFiles('.github/apt/penumbra.txt', '.github/scripts/apt-install.sh') }}
+          restore-keys: apt-penumbra-ubuntu-24.04-${{ steps.month.outputs.month }}-
       - name: Install panel build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config cmake libclang-dev \
-            libxkbcommon-dev libwayland-dev libexpat1-dev libfontconfig-dev \
-            libfreetype-dev libinput-dev libudev-dev libdbus-1-dev libseat-dev \
-            libegl1-mesa-dev libvulkan-dev libssl-dev libpulse-dev
+        timeout-minutes: 10
+        run: .github/scripts/apt-install.sh .github/apt/penumbra.txt ~/apt-cache
+      - name: Save apt packages
+        if: steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/apt-cache
+          key: ${{ steps.apt-cache.outputs.cache-primary-key }}
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: '1.93.0'

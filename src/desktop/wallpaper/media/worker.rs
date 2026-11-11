@@ -76,7 +76,7 @@ pub(crate) async fn package_image(
             }
             child.wait().await.ok()?.success().then_some(bytes)
         };
-        let result = tokio::select! {biased; _=&mut gone=>None,_=cancel.changed()=>None,result=tokio::time::timeout(Duration::from_secs(4),run)=>result.ok().flatten()};
+        let result = tokio::select! {biased; _=&mut gone=>None,_=cancel.changed()=>None,result=tokio::time::timeout(wall_clock(Duration::from_secs(4),false),run)=>result.ok().flatten()};
         if result.is_none() {
             let _ = child.kill().await;
             let _ = child.wait().await;
@@ -241,6 +241,19 @@ pub(crate) async fn render_depth(input: Vec<u8>, cancel: watch::Receiver<bool>) 
     render_scene(input, cancel).await?.pixels
 }
 
+/// How long a worker may take on the wall clock. Unoptimised test builds
+/// render several times slower, more so while the rest of the suite runs
+/// alongside, so real work gets four times as long there. A stalled test
+/// child keeps its deadline: that is what the timeout tests measure. The
+/// CPU limit in `limits` is unchanged.
+fn wall_clock(deadline: Duration, stalled: bool) -> Duration {
+    if cfg!(all(test, debug_assertions)) && !stalled {
+        deadline * 4
+    } else {
+        deadline
+    }
+}
+
 /// A private child run of this program: which entry, how many of the two
 /// image slots it holds, how long it may take and how much it may answer.
 pub(crate) struct Child {
@@ -325,7 +338,7 @@ pub(crate) async fn run_child(
             biased;
             _ = &mut gone => None,
             _ = cancel.changed() => None,
-            result = tokio::time::timeout(child.deadline, run) => result.ok().flatten(),
+            result = tokio::time::timeout(wall_clock(child.deadline, child.stall), run) => result.ok().flatten(),
         };
         if result.is_none() {
             let _ = process.kill().await;
@@ -375,7 +388,7 @@ async fn run_owned(
         input,
         kind,
         shared,
-        stalled: _stalled,
+        stalled,
     } = work;
     let mut command = tokio::process::Command::new(std::env::current_exe().ok()?);
     #[cfg(not(test))]
@@ -396,7 +409,7 @@ async fn run_owned(
         "--nocapture",
     ]);
     #[cfg(test)]
-    if _stalled {
+    if stalled {
         command.env("HALCYON_BACKDROP_WORKER_STALL", "1");
     }
     if shared {
@@ -463,7 +476,7 @@ async fn run_owned(
             biased;
             _ = &mut gone => None,
             _ = cancel.changed() => None,
-            result = tokio::time::timeout(deadline, work) => result.ok().flatten(),
+            result = tokio::time::timeout(wall_clock(deadline, stalled), work) => result.ok().flatten(),
         }
     };
     // Retain the worker slot until cancellation, invalid output or timeout is

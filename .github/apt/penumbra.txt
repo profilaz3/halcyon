@@ -1,0 +1,4 @@
+build-essential pkg-config cmake libclang-dev
+libxkbcommon-dev libwayland-dev libexpat1-dev libfontconfig-dev
+libfreetype-dev libinput-dev libudev-dev libdbus-1-dev libseat-dev
+libegl1-mesa-dev libvulkan-dev libssl-dev libpulse-dev
