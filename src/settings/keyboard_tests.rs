@@ -532,3 +532,90 @@ fn ax11_accessibility_lists_the_keys_that_work_everywhere() {
         "ax11-keyboard-group-light",
     );
 }
+
+/// 1366×768 at 150% scaling leaves Settings 910×512 logical pixels.
+const SCALED_150: Size = Size::new(910., 512.);
+
+#[test]
+fn ax07_at_150_percent_the_selected_page_stays_in_view_in_the_sidebar() {
+    if child("ax07_at_150_percent_the_selected_page_stays_in_view_in_the_sidebar") {
+        return;
+    }
+    use crate::settings::tests::{native_send, send_settings, settle_settings};
+    let (mut app, initial) = Settings::init(Core::default(), Page::Overview);
+    settle_settings(&mut app, initial);
+    send_settings(&mut app, Message::Resized(SCALED_150));
+    // The title bar takes the top 48 pixels, as in the other captures.
+    let mut native = Native::new(Size::new(SCALED_150.width, SCALED_150.height - 48.));
+    let height = native.size.height;
+    for (page, name) in [
+        (Page::DesktopWindows, "windows"),
+        (Page::General, "halcyon"),
+        (Page::Changes, "changes"),
+        (Page::Overview, "looks"),
+    ] {
+        native_send(&mut app, &mut native, Message::Page(page));
+        let id = if page.sidebar() == Page::PINNED {
+            "nav-changes".to_owned()
+        } else {
+            format!("nav-{}", page.sidebar().key())
+        };
+        let entry = native.bounds(app.settings_view(), &id);
+        assert!(
+            entry.y >= 0. && entry.y + entry.height <= height,
+            "{id} is in view: {entry:?} in {height}"
+        );
+        for (theme, suffix) in [
+            (cosmic::Theme::dark(), ""),
+            (cosmic::Theme::light(), "-light"),
+        ] {
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("ax07-150-{name}{suffix}"),
+            );
+        }
+    }
+}
+
+#[test]
+fn ax07_arrange_buttons_keep_their_words_on_one_line() {
+    if child("ax07_arrange_buttons_keep_their_words_on_one_line") {
+        return;
+    }
+    use crate::settings::tests::{native_send, send_settings, settle_settings};
+    for (size, name) in [
+        (SCALED_150, "910"),
+        (Size::new(820., 600.), "820"),
+        (Size::new(1280., 800.), "1280"),
+    ] {
+        let (mut app, initial) = Settings::init(Core::default(), Page::Overview);
+        settle_settings(&mut app, initial);
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = Native::new(Size::new(size.width, size.height - 48.));
+        native_send(&mut app, &mut native, Message::Page(Page::Overview));
+        native_send(
+            &mut app,
+            &mut native,
+            Message::ObjectTab(navigation::ObjectTab::Content),
+        );
+        let task = app.update(Message::Canvas(canvas::Message::Start));
+        settle_settings(&mut app, task);
+        // A button's words are one 20-pixel line; wrapped, they take two.
+        let reset = native.text_bounds(app.settings_view(), "Reset layout");
+        assert!(
+            reset.height <= 24.,
+            "Reset layout wraps at {name}: {reset:?}"
+        );
+        for (theme, suffix) in [
+            (cosmic::Theme::dark(), ""),
+            (cosmic::Theme::light(), "-light"),
+        ] {
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("ax07-arrange-{name}{suffix}"),
+            );
+        }
+    }
+}

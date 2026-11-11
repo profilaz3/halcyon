@@ -141,6 +141,24 @@ pub fn reveal(target: &'static str) -> Task<Message> {
     }))
 }
 
+/// The sidebar's scroll area.
+pub(super) const SIDEBAR: &str = "settings-sidebar";
+
+/// Scrolls the sidebar until the entry for `page` is in view.
+pub(super) fn reveal_in_sidebar(page: Page) -> Task<Message> {
+    use cosmic::iced::runtime::{Action, task};
+    let root = page.sidebar();
+    let id = if root == Page::PINNED {
+        "nav-changes".to_owned()
+    } else {
+        format!("nav-{}", root.key())
+    };
+    task::effect(Action::widget(Reveal {
+        target: Some(cosmic::widget::Id::new(id)),
+        ..Default::default()
+    }))
+}
+
 /// Reveal inside every containing scroll area, including independent inspectors.
 /// The same operation handles keyboard focus; resizing does not reset offsets.
 #[derive(Default)]

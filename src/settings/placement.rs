@@ -1637,11 +1637,14 @@ impl Settings {
         .spacing(10)
         .height(24)
         .align_y(Alignment::Center);
-        let mut action_buttons = vec![
+        let switches = row::with_children(vec![
             switch("Snap to grid", editor.snap, Message::Snap).into(),
             switch("Show grid", editor.guides, Message::Guides).into(),
-            container(text::body("")).width(Length::Fill).into(),
-        ];
+        ])
+        .spacing(16)
+        .height(40)
+        .align_y(Alignment::Center);
+        let mut action_buttons: Vec<Element<'_, super::Message>> = Vec::new();
         if self.canvas.is_some() {
             action_buttons.push(
                 button::text("Reset layout")
@@ -1677,10 +1680,17 @@ impl Settings {
         }
         // Reserve the same toolbar height: selecting or dragging must not
         // move the miniature under the pointer when draft actions appear.
-        let actions = row::with_children(action_buttons)
+        // When the buttons don't fit beside the switches they move to a
+        // second line instead of squeezing their words.
+        let buttons = row::with_children(action_buttons)
             .spacing(16)
             .height(40)
             .align_y(Alignment::Center);
+        let actions = cosmic::widget::flex_row(vec![switches.into(), buttons.into()])
+            .column_spacing(16)
+            .row_spacing(0)
+            .justify_content(cosmic::widget::JustifyContent::SpaceBetween)
+            .width(Length::Fill);
         let mut parts = vec![actions.into(), preview.into(), caption.into()];
         if self.canvas_visible()
             || matches!(self.page, super::Page::Overview | super::Page::WidgetLayout)

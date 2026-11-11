@@ -33,7 +33,7 @@ cosmic = { package = "libcosmic", git = "https://github.com/pop-os/libcosmic", d
 # The accessibility tree types that `a11y` builds iced with; the same
 # patched iced as below, so no new crates are compiled.
 iced_accessibility = { git = "https://github.com/profilaz3/iced", rev = "22c073b9e305d1d4738fd21547763cfcdf852b74" }
-serde ={ version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 toml = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }

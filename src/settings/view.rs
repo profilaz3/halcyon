@@ -829,9 +829,8 @@ impl Settings {
         let rail = self.rail();
         let kept = self.kept_previews();
         let entry = |id: cosmic::widget::segmented_button::Entity| -> Element<'_, Message> {
-            // The pinned Changes entry has no place in the model.
-            let active =
-                self.nav_model.is_active(id) && self.page.sidebar() != Page::PINNED;
+            // The Changes entry has no place in the model.
+            let active = self.nav_model.is_active(id) && self.page.sidebar() != Page::PINNED;
             let page = self.nav_model.data::<Page>(id).copied();
             let waiting = page.is_some_and(|page| kept.iter().any(|item| item.root == page));
             let name = match page {
@@ -886,7 +885,6 @@ impl Settings {
                 )))
                 .class(nav_style(active, self.settings_accent()))
                 .selected(active)
-                // Eight roots and the pinned Changes fit the rail at 820×552.
                 .padding(if rail { [5, 2] } else { [11, 12] })
                 .width(Length::Fill)
                 .on_press(Message::NavSelected(id))
@@ -998,19 +996,23 @@ impl Settings {
                 column::with_children(rows).spacing(2).into()
             });
         }
-        let pinned = container(self.changes_entry(rail))
-            .padding(if rail { [4, 6, 6, 6] } else { [6, 8, 12, 8] })
-            .width(Length::Fill);
-        let content = container(column::with_children(vec![
+        // Changes comes last in the same list, so at large scaling it
+        // scrolls with the rest instead of covering the selected entry. The
+        // rail keeps it close enough to fit at 820×552.
+        let list = column::with_children(vec![
+            column::with_children(groups).spacing(14).into(),
+            self.changes_entry(rail),
+        ])
+        .spacing(if rail { 4 } else { 14 });
+        let content = container(
             scrollable(
-                container(column::with_children(groups).spacing(14))
-                    .padding(if rail { [10, 6, 10, 6] } else { [12, 8, 12, 8] })
+                container(list)
+                    .padding(if rail { [10, 6, 6, 6] } else { [12, 8, 12, 8] })
                     .width(Length::Fill),
             )
-            .height(Length::Fill)
-            .into(),
-            pinned.into(),
-        ]))
+            .id(cosmic::widget::Id::new(super::navigation::SIDEBAR))
+            .height(Length::Fill),
+        )
         .width(self.sidebar_width())
         .height(Length::Fill)
         .class(cosmic::theme::Container::Primary)
@@ -1027,7 +1029,7 @@ impl Settings {
                 })
             })
             .collect();
-        // Arrows continue from the last group into the pinned Changes.
+        // Arrows continue from the last group into Changes.
         entries.push((
             cosmic::widget::Id::new("nav-changes"),
             Message::OpenRoot(Page::PINNED),

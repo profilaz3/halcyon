@@ -993,7 +993,7 @@ pub fn run(page: &str) -> cosmic::iced::Result {
             .min_height(size.height)
             .max_height(size.height)
     } else {
-        cosmic::iced::Limits::NONE.min_width(820.).min_height(600.)
+        cosmic::iced::Limits::NONE.min_width(820.).min_height(480.)
     };
     let settings = cosmic::app::Settings::default()
         .size(size)
@@ -3483,6 +3483,7 @@ impl Settings {
                 return Task::batch([
                     scroll,
                     reveal,
+                    navigation::reveal_in_sidebar(page),
                     changes,
                     if matches!(page, Page::General | Page::Overview) {
                         service_task()
