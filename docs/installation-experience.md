@@ -182,13 +182,19 @@ source. Default enrollment code and the published 0.3.0 assets are unchanged.
 
 ### User journey implemented for the next app build
 
+> **Superseded.** The Islands panel now ships inside the main package, so steps
+> 3 and the extra transaction below no longer apply: there is no **Get Islands**
+> button and no Add-ons page. See the current journey in
+> [Distribution and system updates](DISTRIBUTION.md#the-islands-panel). The rest
+> of this section is kept as the record of that release.
+
 1. Download the main app, open it with COSMIC Store, authorize installation if
    required, and open Halcyon. The existing main package enrolls a clean system
    offline; the OS resolves any ordinary missing dependencies.
 2. Finish the existing onboarding. Widgets and themes work without Islands.
-3. Optionally open **App settings → Updates → Get Islands…**. The app downloads
-   the reviewed companion, verifies its exact size/hash, and simulates the
-   proposed install. **Install Islands** hands the verified file to the OS.
+3. (Historical) The app offered a separate download of the reviewed companion,
+   verified its exact size/hash, simulated the proposed install and handed the
+   verified file to the OS.
 4. Choose **Switch at next sign-in**. The existing per-user helper checks ownership,
    failed state, native qualification and activation conditions under its lock.
    Log out and back in. Disabled packages intentionally report compatibility as
