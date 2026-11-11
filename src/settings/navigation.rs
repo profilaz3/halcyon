@@ -339,8 +339,8 @@ pub(super) const STARTUP: SearchHit = hit(
 .names_page();
 pub(super) const ACTIVITY_ISLAND: SearchHit = hit(
     Page::DesktopDock,
-    "Activity island",
-    "activity island notifications do not disturb dnd camera microphone privacy bluetooth meetings music media",
+    "Activity pill",
+    "activity island capsule notifications do not disturb dnd camera microphone privacy bluetooth meetings music media",
     false,
 )
 .at("panel-items")
@@ -1135,8 +1135,8 @@ pub(super) const NOT_INDEXED: &[(&str, &str)] = &[
 #[cfg(test)]
 pub(super) const UNCHECKED_LABELS: &[(&str, &str)] = &[
     (
-        "Activity island",
-        "named by its item in the panel’s Contents or by the Add Activity island button, \
+        "Activity pill",
+        "named by its item in the panel’s Contents or by the Add Activity pill button, \
          and the fixture has no Halcyon panel to offer either",
     ),
     ("Tomorrow", "in Calendar’s Agenda, shown once a calendar is connected"),
