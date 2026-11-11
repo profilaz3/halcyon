@@ -42,6 +42,12 @@ fn fb17_native_builder_save_apply_reset_undo_and_library_delete_are_independent(
     assert!(!app.recipe_editor.error, "{:?}", app.recipe_editor.notice);
     assert_eq!(app.config.recipes.clock.as_ref(), Some(&saved));
     assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), frozen);
+    // Cancel closes the delete review and keeps the design.
+    send(&mut app, Message::Delete);
+    assert!(app.recipe_editor.delete_review);
+    send(&mut app, Message::CancelDelete);
+    assert!(!app.recipe_editor.delete_review);
+    assert!(!app.recipe_editor.library.entries.is_empty());
     send(&mut app, Message::Delete);
     send(&mut app, Message::ConfirmDelete);
     assert!(app.recipe_editor.library.entries.is_empty());

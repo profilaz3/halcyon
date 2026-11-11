@@ -139,9 +139,7 @@ impl Problem {
             Self::Network => {
                 "Could not reach your calendar provider. Check your internet connection, then try again."
             }
-            Self::Service => {
-                "Google Calendar is unavailable. Check that the Calendar API is enabled for the app, or try again later."
-            }
+            Self::Service => "Google Calendar isn’t responding right now. Try again later.",
             Self::InvalidResponse => {
                 "Google returned an incomplete response. Try connecting again."
             }

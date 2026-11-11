@@ -1046,8 +1046,7 @@ fn windows_workspaces_profile_roundtrip_and_legacy_import() {
     assert!(
         part.blocked
             .iter()
-            .any(|reason: &String| reason
-                .contains("Change the tiling scope on the Windows page first")),
+            .any(|reason: &String| reason.contains("Change Workspaces on the Windows page first")),
         "{:?}",
         part.blocked
     );

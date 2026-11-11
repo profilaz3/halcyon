@@ -372,9 +372,16 @@ impl Settings {
                     "Delete this design?",
                     "Widgets already using it keep their own copy.",
                 ),
-                button::destructive("Delete")
-                    .on_press_maybe((!busy).then(|| edit(Edit::ConfirmDelete)))
-                    .into(),
+                row::with_children(vec![
+                    button::text("Cancel")
+                        .on_press(edit(Edit::CancelDelete))
+                        .into(),
+                    button::destructive("Delete")
+                        .on_press_maybe((!busy).then(|| edit(Edit::ConfirmDelete)))
+                        .into(),
+                ])
+                .spacing(8)
+                .into(),
             ));
         }
         content.push(group(Some("More"), more));

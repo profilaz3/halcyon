@@ -20,6 +20,8 @@ pub enum Message {
     Duplicate,
     Delete,
     ConfirmDelete,
+    /// Close the delete review without deleting.
+    CancelDelete,
     Apply,
     UseBuiltin,
     Reload,
@@ -384,6 +386,7 @@ pub(super) fn capture(value: &serde_json::Value) -> Option<Message> {
         "builtin" => Message::UseBuiltin,
         "delete" => Message::Delete,
         "confirm_delete" => Message::ConfirmDelete,
+        "cancel_delete" => Message::CancelDelete,
         _ => return None,
     })
 }

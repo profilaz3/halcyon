@@ -200,8 +200,8 @@ pub fn tiling_transition(patch: &DesktopPatch) -> Option<Blocked> {
         .and_then(|raw| raw.decode::<TileBehavior>().ok())
         .unwrap_or(TileBehavior::PerWorkspace);
     let first = match first_tiling_step(target) {
-        Behavior::Scope => "the scope first, then tiling",
-        _ => "tiling first, then the scope",
+        Behavior::Scope => "the Workspaces choice first, then tiling",
+        _ => "tiling first, then the Workspaces choice",
     };
     Some(Blocked {
         key: scope,
@@ -210,7 +210,7 @@ pub fn tiling_transition(patch: &DesktopPatch) -> Option<Blocked> {
 }
 
 /// The start of every tiling-transition reason; see `is_transition`.
-pub const TRANSITION: &str = "Automatic tiling and its scope can’t change in one step.";
+pub const TRANSITION: &str = "Automatic tiling and the Workspaces choice can’t change in one step.";
 
 /// Whether `blocked` is the tiling transition rather than a value problem.
 pub fn is_transition(blocked: &Blocked) -> bool {
