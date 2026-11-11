@@ -51,13 +51,7 @@ pub fn source(store: &DesktopStore, draft: &WallpaperDraft) -> Source {
         .map_or(Target::Shared, |name| Target::Output(name.clone()));
     let label = output.as_ref().map_or_else(
         || "Shared background".into(),
-        |name| {
-            if built_in(name) {
-                format!("Built-in display ({name})")
-            } else {
-                name.clone()
-            }
-        },
+        |name| crate::displays::display_title(name, None),
     );
     let background = draft.effective(&target);
     let input = match background.known().map(|entry| &entry.source) {

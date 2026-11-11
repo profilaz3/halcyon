@@ -1710,7 +1710,7 @@ impl Settings {
                     .filter_map(|output| {
                         let key = self.displays.key(output)?;
                         Some(
-                            button::text(output.name().unwrap_or("Display"))
+                            button::text(output.title())
                                 .on_press(super::Message::MonitorPreview(key))
                                 .into(),
                         )

@@ -10,9 +10,7 @@ use crate::desktop::wallpaper::{
     BgEntry, BgSource, Displays, ROTATIONS, SamplingMethod, ScalingMode, Target,
 };
 use crate::settings::desktop::Notice;
-use crate::settings::wallpaper::{
-    Custom, FitChoice, Message as Edit, Pick, Tab, Tile, display_name, hex,
-};
+use crate::settings::wallpaper::{Custom, FitChoice, Message as Edit, Pick, Tab, Tile, hex};
 
 fn edit(message: Edit) -> Message {
     Message::Wallpaper(message)
@@ -281,7 +279,7 @@ impl Settings {
                 if !crate::desktop::wallpaper::valid_output_name(&view.name) {
                     continue;
                 }
-                let mut text = display_name(&view.name);
+                let mut text = self.displays.display_name(&view.name);
                 text.push_str(if view.listed { " · own" } else { " · shared" });
                 if !view.connected {
                     text.push_str(" · not connected");
@@ -304,7 +302,10 @@ impl Settings {
         {
             rows.push(split(
                 label(
-                    format!("{} has its own background.", display_name(name)),
+                    format!(
+                        "{} has its own background.",
+                        self.displays.display_name(name)
+                    ),
                     12.,
                     MUTED,
                 ),

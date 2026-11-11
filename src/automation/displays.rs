@@ -16,10 +16,7 @@ pub struct Display {
 impl Display {
     /// "AOC 24G2W1G5 · DP-1", or the connector alone.
     pub fn title(&self) -> String {
-        match &self.label {
-            Some(label) => format!("{label} · {}", self.name),
-            None => self.name.clone(),
-        }
+        crate::displays::display_title(&self.name, self.label.as_deref())
     }
 }
 

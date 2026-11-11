@@ -59,7 +59,11 @@ fn opening_reads_only_and_offers_every_profile_and_display() {
         choices,
         [
             ("DP-2".to_string(), "Dell U2720Q · DP-2".to_string(), true),
-            ("eDP-1".to_string(), "eDP-1".to_string(), true),
+            (
+                "eDP-1".to_string(),
+                "Built-in display · eDP-1".to_string(),
+                true
+            ),
             ("HDMI-A-1".to_string(), "HDMI-A-1".to_string(), false),
         ]
     );
