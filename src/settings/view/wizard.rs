@@ -101,6 +101,9 @@ fn band(look: Option<&str>, aspect: f32) -> Option<Handle> {
     Some(handle)
 }
 
+/// The Bars step's Why? beside an unavailable Islands choice.
+const ISLANDS_WHY: u64 = 0x5157_4953_4c41_4e44;
+
 fn words<'a>(value: impl Into<String>, size: f32, color: Color) -> Element<'a, Message> {
     text::body(value.into())
         .size(size)
@@ -341,6 +344,40 @@ fn dock_drawing<'a>(shape: Shape, icon: f32) -> Element<'a, Message> {
 }
 
 impl Settings {
+    /// Why Islands can't be picked here, in one line; Why? names the fix.
+    fn wizard_islands_unavailable(&self) -> Element<'_, Message> {
+        use crate::desktop::islands::Installation;
+        let installation = &self.desktop.islands.installation;
+        let missing = !installation.installed() && !matches!(installation, Installation::Pending);
+        let caption = if installation.installed() {
+            "Available after you sign out and back in."
+        } else if missing {
+            "Needs the Islands panel, which isn’t installed."
+        } else {
+            "Checking for the Islands panel…"
+        };
+        let mut line = vec![words(caption, 12., SOFT)];
+        if missing {
+            line.push(
+                button::text("Why?")
+                    .id(cosmic::widget::Id::new("wizard-islands-why"))
+                    .padding([2, 0])
+                    .on_press(Message::Explain(ISLANDS_WHY))
+                    .into(),
+            );
+        }
+        let mut parts = vec![
+            row::with_children(line)
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .into(),
+        ];
+        if missing && self.explained == Some((self.page, ISLANDS_WHY)) {
+            parts.push(words(crate::settings::desktop::islands::MISSING, 12., SOFT));
+        }
+        column::with_children(parts).spacing(4).into()
+    }
+
     /// The width inside the step card, beside its scroll bar.
     /// The tallest a step's preview gets; every step shares it.
     fn wizard_preview_height(&self) -> f32 {
@@ -869,6 +906,9 @@ impl Settings {
                     group_row("Corners", "", shapes(bars.panel_shape, "panel", Step::PanelShape)),
                 ],
             ));
+            if !islands_ready {
+                controls.push(self.wizard_islands_unavailable());
+            }
             controls.push(group(
                 Some("Dock"),
                 vec![
@@ -900,7 +940,7 @@ impl Settings {
             if bars.islands {
                 controls.push(words(
                     if self.desktop.islands.installation.installed() {
-                        "Islands start at next login. No need to log out now."
+                        "Islands start the next time you sign in. No need to sign out now."
                     } else {
                         "Islands shows as a normal panel in this preview. Check it in Settings after setup."
                     },
@@ -1091,7 +1131,7 @@ impl Settings {
         parts.push(group(Some("What changed"), lines));
         if applied.is_some_and(|applied| applied.next_login) {
             parts.push(words(
-                "Islands start at next login. No need to log out now.",
+                "Islands start the next time you sign in. No need to sign out now.",
                 13.,
                 SOFT,
             ));
@@ -1208,7 +1248,7 @@ impl Settings {
         let mut parts = vec![group(Some("Your choices"), choices)];
         if wizard.bars.islands && wizard.has_bar_choices() {
             parts.push(words(
-                "Islands start at next login. No need to log out now.",
+                "Islands start the next time you sign in. No need to sign out now.",
                 12.,
                 SOFT,
             ));

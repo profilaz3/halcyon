@@ -632,7 +632,7 @@ fn ui_click(
     messages
 }
 
-/// Islands and Blend into wallpaper share one "Halcyon's panel" step on the
+/// Islands and Blend into wallpaper share one "Islands panel" step on the
 /// Dock and panel page. Whichever asks for it, there is exactly one next step.
 fn penumbra_setup_actions(app: &mut Settings, native: &mut crate::native_test::Native) {
     use crate::desktop::islands::{CompatibilityStatus, Installation, Provenance};
@@ -677,7 +677,7 @@ fn penumbra_setup_actions(app: &mut Settings, native: &mut crate::native_test::N
             .try_bounds(app.settings_view(), "enable-islands")
             .is_none()
     );
-    native.text_bounds(app.settings_view(), "Getting Halcyon’s panel ready…");
+    native.text_bounds(app.settings_view(), "Getting the Islands panel ready…");
     app.updates.islands.phase = islands::Phase::Failed(Failure::IslandsRefused("Nope."));
     native.text_bounds(app.settings_view(), "Nope.");
     assert!(clicked(
@@ -694,7 +694,7 @@ fn penumbra_setup_actions(app: &mut Settings, native: &mut crate::native_test::N
             .try_bounds(app.settings_view(), "enable-islands")
             .is_none()
     );
-    native.text_bounds(app.settings_view(), "Checking Halcyon’s panel…");
+    native.text_bounds(app.settings_view(), "Checking the Islands panel…");
     app.installation_busy = false;
 
     app.desktop.islands.installation = Installation::Installed {
@@ -857,7 +857,7 @@ fn native_updates_clicks_renders_failure_unknown_and_absence() {
             status: Some(crate::desktop::islands::CompatibilityStatus::Disabled),
             diagnostics: String::new(),
         };
-        // Halcyon's panel turns on from Dock and panel; Updates only names it.
+        // The Islands panel turns on from Dock and panel; Updates only names it.
         let _ = app.update(SettingsMessage::OpenBar(
             crate::desktop::panels::PanelKind::Panel,
         ));

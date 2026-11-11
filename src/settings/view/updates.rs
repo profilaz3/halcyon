@@ -41,7 +41,7 @@ impl Settings {
                     );
                 }
                 // Islands and Blend turn on in Dock and panel. This is where
-                // to look when Halcyon's panel won't start.
+                // to look when the Islands panel won't start.
                 addons.extend(self.panel_troubleshooting());
                 if let Check::Failed(error) = &self.updates.check
                     && summary.title != "Update check failed"
@@ -170,7 +170,7 @@ impl Settings {
         }
         let mut groups = vec![group(Some("This version"), content)];
         if !addons.is_empty() {
-            groups.push(group(Some("Halcyon’s panel"), addons));
+            groups.push(group(Some("Islands panel"), addons));
         }
         // Before the update: get ready; afterwards: save a copy.
         groups.push(self.design_section(Some("Widgets")));

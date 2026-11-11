@@ -49,7 +49,7 @@ impl Summary {
             );
         }
         if super::pending_islands(islands) {
-            return result("Islands is ready for your next login","Save your work, then log out and back in when convenient. The current panel keeps running until then.".into(),false);
+            return result("Islands start the next time you sign in","Save your work, then sign out and back in when convenient. The current panel keeps running until then.".into(),false);
         }
         match check {
             Check::Checking => result(

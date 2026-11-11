@@ -1,4 +1,4 @@
-//! Islands and Blend into wallpaper both need Halcyon's own panel. This is the
+//! Islands and Blend into wallpaper both need the Islands panel. This is the
 //! single place that says whether it is running and, if not, the one next step.
 //! Diagnostics and rechecks live in App settings › Updates, not here.
 use super::*;
@@ -6,7 +6,8 @@ use crate::desktop::islands::{CompatibilityStatus, Installation, Provenance};
 use crate::settings::updates::Message as Update;
 use crate::settings::updates::islands::{self, Message as Panel, Phase};
 
-/// What stands between the person and Halcyon's panel, in their terms.
+/// What stands between the person and the Islands panel, in their terms.
+
 #[derive(Clone, Debug, PartialEq)]
 pub(in crate::settings) enum Host {
     /// It answers right now; its features work.
@@ -86,12 +87,12 @@ impl Settings {
                         .identity
                         .as_ref()
                         .and_then(|id| id.islands_activation_notice())
-                        .unwrap_or("Halcyon’s panel doesn’t match this Halcyon. Update or reinstall Halcyon."),
+                        .unwrap_or("The Islands panel doesn’t match this Halcyon. Update or reinstall Halcyon."),
                 ),
             };
         }
         Host::Unavailable(match installation {
-            Installation::Absent => "Halcyon’s panel isn’t installed. Reinstall Halcyon to get it.",
+            Installation::Absent => crate::settings::desktop::islands::MISSING,
             Installation::Installed {
                 provenance: Provenance::Manual,
                 ..
@@ -106,16 +107,16 @@ impl Settings {
                 status: Some(CompatibilityStatus::UpdateNeeded),
                 ..
             } => {
-                "Halcyon’s panel doesn’t support this version of COSMIC yet. Update Halcyon, then sign in again."
+                "The Islands panel doesn’t support this version of COSMIC yet. Update Halcyon, then sign out and back in."
             }
             Installation::Installed { enabled: true, .. } => {
-                "Halcyon’s panel didn’t start, so the COSMIC panel is in use."
+                "The Islands panel didn’t start, so the COSMIC panel is in use."
             }
-            _ => "Halcyon’s panel isn’t available right now.",
+            _ => "The Islands panel isn’t available right now.",
         })
     }
 
-    /// The one next step toward Halcyon's panel, or None once it runs.
+    /// The one next step toward the Islands panel, or None once it runs.
     /// `lead` says what asked for it, e.g. "Islands use".
     pub(super) fn host_step(&self, lead: &str) -> Option<Element<'_, Message>> {
         // Updates holds the panel's checks and fixes; the link says so, and
@@ -129,12 +130,12 @@ impl Settings {
         };
         let rows: Vec<Element<'_, Message>> = match self.panel_host() {
             Host::Running => return None,
-            Host::Checking => vec![label("Checking Halcyon’s panel…", 12., MUTED)],
-            Host::Switching => vec![label("Getting Halcyon’s panel ready…", 12., MUTED)],
+            Host::Checking => vec![label("Checking the Islands panel…", 12., MUTED)],
+            Host::Switching => vec![label("Getting the Islands panel ready…", 12., MUTED)],
             Host::Switch => vec![
                 label(
                     format!(
-                        "{lead} Halcyon’s panel instead of the COSMIC one. \
+                        "{lead} the Islands panel instead of the COSMIC one. \
                          It takes over the next time you sign in."
                     ),
                     12.,
