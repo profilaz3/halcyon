@@ -1223,13 +1223,7 @@ impl Settings {
                 if wizard.widgets.active().is_empty() {
                     "None".into()
                 } else {
-                    wizard
-                        .widgets
-                        .active()
-                        .iter()
-                        .map(|w| w.title())
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    wizard.widgets.names(wizard.widgets.active()).join(", ")
                 },
                 Screen::Widgets,
             ),

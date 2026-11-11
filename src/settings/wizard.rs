@@ -1365,11 +1365,11 @@ impl Wizard {
             ));
         }
         let projected = self.widgets.config(config);
-        let names: Vec<&str> = Widget::ALL
-            .into_iter()
-            .filter(|widget| projected.widget_selected(*widget))
-            .map(|widget| widget.title())
-            .collect();
+        let names = self.widgets.names(
+            Widget::ALL
+                .into_iter()
+                .filter(|widget| projected.widget_selected(*widget)),
+        );
         lines.push(if names.is_empty() {
             "Widgets: none".into()
         } else {
