@@ -76,7 +76,7 @@ pub(crate) async fn package_image(
             }
             child.wait().await.ok()?.success().then_some(bytes)
         };
-        let result = tokio::select! {biased; _=&mut gone=>None,_=cancel.changed()=>None,result=tokio::time::timeout(wall_clock(Duration::from_secs(4),false),run)=>result.ok().flatten()};
+        let result = tokio::select! {biased; _=&mut gone=>None,_=cancel.changed()=>None,result=tokio::time::timeout(wall_clock(Duration::from_secs(4),false),run)=>timed(result)};
         if result.is_none() {
             let _ = child.kill().await;
             let _ = child.wait().await;
@@ -253,6 +253,14 @@ fn wall_clock(deadline: Duration, stalled: bool) -> Duration {
         deadline
     }
 }
+/// A child that ran past its deadline is counted as a render timeout in the
+/// usage report (sharing on only); its result is discarded either way.
+fn timed<T>(result: Result<Option<T>, tokio::time::error::Elapsed>) -> Option<T> {
+    if result.is_err() {
+        crate::usage::counts::problem("render_timeout");
+    }
+    result.ok().flatten()
+}
 
 /// A private child run of this program: which entry, how many of the two
 /// image slots it holds, how long it may take and how much it may answer.
@@ -338,7 +346,7 @@ pub(crate) async fn run_child(
             biased;
             _ = &mut gone => None,
             _ = cancel.changed() => None,
-            result = tokio::time::timeout(wall_clock(child.deadline, child.stall), run) => result.ok().flatten(),
+            result = tokio::time::timeout(wall_clock(child.deadline, child.stall), run) => timed(result),
         };
         if result.is_none() {
             let _ = process.kill().await;
@@ -476,7 +484,7 @@ async fn run_owned(
             biased;
             _ = &mut gone => None,
             _ = cancel.changed() => None,
-            result = tokio::time::timeout(wall_clock(deadline, stalled), work) => result.ok().flatten(),
+            result = tokio::time::timeout(wall_clock(deadline, stalled), work) => timed(result),
         }
     };
     // Retain the worker slot until cancellation, invalid output or timeout is

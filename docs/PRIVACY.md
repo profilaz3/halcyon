@@ -84,11 +84,80 @@ not be read:
 - `theme_style`: the built-in theme style name, or `default`
 
 These are read from local settings files only, once per daily report. They are
-switch positions, not usage: no clicks, counts, durations or times of use are
-recorded or sent. Weather locations, calendar or player names, custom theme or
+switch positions. Weather locations, calendar or player names, custom theme or
 font names, automation rules, display names, widget positions and widget
 contents are never included. The feature snapshot is covered by the same
 **Share usage data** choice and is absent from preference/opt-out messages.
+
+### Schema 7: use, problems, setup and system
+
+The next client uses schema 7 and adds five fields to the same daily request.
+They describe the time since the last report the collector accepted. Every key
+comes from a fixed list in the app and the collector refuses any other key; each
+count is a whole number from 1 to 100000, and keys with nothing to count are
+left out.
+
+- `pages`: how many times each Settings page was opened, by its fixed page key:
+  `overview`, `layout`, `pending`, `appearance`, `widgets`, `glance`,
+  `calendar`, `weather`, `devbox`, `clock`, `projects`, `music`, `notes`,
+  `focus`, `general`, `desktop`, `desktop-dock`, `desktop-appearance`,
+  `desktop-wallpaper`, `desktop-icons`, `desktop-profiles`, `themes`,
+  `desktop-windows`, `desktop-workspaces`, `desktop-motion`,
+  `desktop-window-rules`, `desktop-shortcuts`, `desktop-automation`,
+  `moments`, `adaptive`, `builder` and `changes`. A page counts when Settings
+  opens on it and each time you move to it. Nothing you type or search for is
+  recorded.
+- `runtime_hours`: how long the desktop process ran, counted in ten-minute
+  steps and rounded to the nearest whole hour (0 to 10000). Time asleep or
+  suspended is not counted.
+- `problems`: how many times each of these happened:
+  - `panic`: a Halcyon process hit an internal error (a Rust panic). Only the
+    fact is counted; no message, location or log is kept or sent.
+  - `render_timeout`: a wallpaper or picture took too long to prepare.
+  - `update.<kind>`: **Check for updates** failed, and
+    `islands.<kind>`: turning on Islands failed, where `<kind>` is one of
+    `missing_packagekit`, `offline`, `timeout`, `authorization`, `untrusted`,
+    `invalid_response`, `failed`, `installation_changed`, `activation`,
+    `islands_mismatch` or `islands_refused`. A check you cancel is not counted.
+- `setup`: how far first-run setup got: `opened`, `left` (skipped from the
+  welcome screen), `kept_for_later`, `cancelled`, `finished`, `undone`,
+  `reached.<step>` for `look`, `bars`, `widgets`, `arrange`, `weather`, `ready`
+  and `done`, and `skipped.<step>` for `bars`, `widgets` and `arrange`. None of
+  the choices made in setup are included.
+- `system`: a few facts read at report time, each `null` when unknown:
+  - `distro` and `distro_version`: `ID` and `VERSION_ID` from
+    `/etc/os-release` (or `/usr/lib/os-release`), for example `pop` and
+    `24.04`. Only lowercase letters, digits, `.`, `_` and `-` are allowed, up to
+    32 and 16 characters; any other value is sent as `null`, not cleaned up.
+  - `cosmic`: the installed version of the `cosmic-session` package, read from
+    the package database (dpkg, RPM on Fedora, or pacman), as up to three
+    numbers such as `1.0.3`. Halcyon never starts COSMIC programs to ask.
+  - `gpu`: the makers of the graphics cards, each `amd`, `intel`, `nvidia` or
+    `other`, from the PCI vendor number in `/sys/class/drm`. Model names and
+    serial numbers are not read.
+  - `displays` and `resolution`: how many displays the desktop shows (1 to 16)
+    and the largest one's current resolution, such as `3840x2160`. Display
+    names, makers, positions and scale are not included.
+
+For example:
+
+```json
+"pages": {"appearance": 2, "weather": 1},
+"runtime_hours": 5,
+"problems": {"update.offline": 1},
+"setup": {"opened": 1, "reached.look": 1, "skipped.bars": 1},
+"system": {"distro": "pop", "distro_version": "24.04", "cosmic": "1.0.3",
+           "gpu": ["amd"], "displays": 2, "resolution": "3840x2160"}
+```
+
+The counts are kept in `~/.local/state/halcyon/usage-counts.json` until they
+are sent. Any Halcyon process adds to it, and only while **Share usage data** is
+on: nothing is counted while it is off, and turning it off deletes the file.
+Once the collector accepts a report, the counts it carried are subtracted, so
+each one is sent once. A failed report keeps them for the next try. The
+collector stores them on that day's row; a second report on the same UTC day
+replaces it rather than adding to it. If an accepted reply is lost and the
+retry lands on a later UTC day, those counts can be stored twice.
 
 The installation token is randomly generated locally with 256 bits of entropy.
 It is not a Google identity, machine ID, username, email or hardware identifier.
@@ -97,9 +166,10 @@ can affect counts: these are installations, not accounts, individual people or
 downloads. A token is pseudonymous, **not anonymous**.
 
 Reports contain no calendar events, music, notes, project names or paths,
-weather locations, hardware details, crash logs or screenshots. There is no
-tracking of clicks, time spent or how often a feature is used; schema 6 only
-says which headline features are switched on.
+weather locations, file paths, host or user names, language or locale, typed
+text, crash logs or screenshots. Hardware is limited to the graphics maker,
+display count and largest resolution listed above. Use is limited to the page
+counts and running hours above: no clicks, times of day or per-page durations.
 
 ### Approximate country
 
@@ -150,19 +220,20 @@ active and new installation counts, version shares, how Halcyon was installed,
 update channel shares, how many days installations were active, first-country
 counts, weekly return rates, the share of installations that turned
 reporting off and, from 0.6.1, the share of installations with each headline
-feature, widget, theme style and wallpaper effect switched on. No
-installation token, hash or per-installation record is published. Any
-country, version, install method, theme style or wallpaper effect with fewer
-than five installations is counted in Other, a feature or widget count below
-five is shown only as "fewer than 5", nothing about features is shown until
-five installations report them, and a weekly group with fewer than five new
-installations is hidden.
+feature, widget, theme style and wallpaper effect switched on. From schema 7
+it also shows, over the last 28 days, how many installations opened each
+Settings page and how often, how many hit each problem, how far setup got,
+running hours in ranges with the median, and the distributions, COSMIC
+versions, graphics makers, display counts and largest resolutions from each
+installation's latest report. No installation token, hash or per-installation
+record is published. Counts are published exactly, without a minimum group
+size, so a group of one installation is visible as 1.
 
 ## Status, counts and retention after the collector upgrade
 
 The statistics use the existing daily reports; the move to Cloudflare added no
-fields or client requests. The schema 6 feature snapshot travels inside the
-same daily request and adds no requests.
+fields or client requests. The schema 6 feature snapshot and the schema 7
+fields travel inside the same daily request and add no requests.
 
 Each installation has one current record. The row keeps
 its latest activity date, version, first country, current reporting status,
@@ -187,6 +258,9 @@ clients and days without these fields remain unknown. A channel change is an
 observation, not a package-manager transaction log. Schema 6 keeps the feature
 snapshot on the same daily row, so at most one per UTC day for 90 days, and it
 is deleted with the rest of the daily activity when reporting is turned off.
+Schema 7 keeps its five fields the same way: on that day's row, in a fixed
+order, replaced by a later report the same day, kept for 90 days and deleted
+when reporting is turned off.
 
 Turning reporting off deletes that installation's stored daily activity at once.
 Its record keeps only what is needed to honor the choice (status, revision,
@@ -220,8 +294,9 @@ retention in its daily maintenance; its backups follow Google's own practices.
 
 `~/.local/state/halcyon/usage.json` (or the XDG state directory) contains the
 random token, preference, revision, latest opt-out/choice times, cached country,
-optional first desktop start and bounded retry state. The file is private to the local user and is excluded
-from exported looks and setups. Older 0.2.0 clients reject this extended state
+optional first desktop start and bounded retry state. `usage-counts.json` next
+to it holds the schema 7 counts not yet sent. Both files are private to the
+local user and are excluded from exported looks and setups. Older 0.2.0 clients reject this extended state
 rather than ignoring the off preference. Uninstalling preserves it normally;
 stopping the desktop and Settings processes stops future transmissions.
 

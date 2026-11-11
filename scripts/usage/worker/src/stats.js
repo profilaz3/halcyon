@@ -3,6 +3,7 @@
 // Counts are exact, however small.
 
 import {RETENTION_DAYS, WIDGETS, applyRetention, dayOf, isoDay} from './report.js';
+import {detailsSummary} from './details.js';
 
 export const FORMATS = ['deb', 'rpm', 'source', 'unknown'];
 export const SEGMENT_NAMES = {
@@ -37,7 +38,7 @@ const weekStart = week => week * 7 - 3;
 // rowid stands in for the installation inside one query; it is never published.
 export async function loadActivity(db, fromDay) {
   const {results} = await db.prepare(`SELECT i.rowid AS n, a.day AS day, a.version AS version,
-      a.package_format AS format, a.update_channel AS channel, a.features AS features,
+      a.package_format AS format, a.update_channel AS channel, a.features AS features, a.details AS details,
       i.first_seen_day AS first, i.country AS country
     FROM activity a JOIN installations i ON i.id = a.id
     WHERE a.day >= ? AND i.status = 'enabled' ORDER BY a.day`).bind(fromDay).all();
@@ -383,5 +384,6 @@ export function buildSummary({rows, daily, releases, statuses, now, since = DIRE
     opt_out_share: retained ? (statusCount.opted_out || 0) / retained : null,
     sharing: {on: statusCount.enabled || 0, off: statusCount.opted_out || 0},
     features: featureSummary(rows, today - 27, today),
+    details: detailsSummary(rows, today - 27, today),
   };
 }

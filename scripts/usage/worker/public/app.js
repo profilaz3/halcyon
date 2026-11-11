@@ -216,6 +216,12 @@ const shareText = r => r.known ? `${pct(r.value)} · ${fmt(r.on)} of ${fmt(r.kno
 const shareCells = r => [r.name, r.known ? fmt(r.on) : 'not reported', r.known ? pct(r.value) : ''];
 const featureEmpty = body => empty(body, `Shown once an installation on ${data.since_version || 'a current version'} reports its settings.`);
 
+// Use, problems and setup: installations with each key, and how many times.
+const countRow = r => ({name: r.name, value: r.installations, count: r.count});
+const countText = r => `${fmt(r.value)} · ${fmt(r.count)}×`;
+const countCells = r => [r.name, fmt(r.value), fmt(r.count)];
+const detailsEmpty = body => empty(body, 'Shown once an installation on a version that sends these details reports.');
+
 function kpis() {
   const s = seg(), w = s.windows[state.range];
   const tiles = [];
@@ -360,6 +366,65 @@ const renderers = {
       let slot = 0;
       segbar(body, items.map(i => ({...i, slot: i.key === 'unknown' || slot >= SLOTS.length ? 'gray' : SLOTS[slot++]})), title);
     });
+  },
+  'c-pages'(body) {
+    const d = data.details;
+    if (!d || !d.pages) return detailsEmpty(body);
+    if (!d.pages.length) return empty(body, 'No Settings page was opened in this period.');
+    const rows = d.pages.map(countRow);
+    if (tableMode['c-pages']) return body.appendChild(table(['Page', 'Installations', 'Times opened'], rows.map(countCells)));
+    hbars(body, rows, 'Installations that opened each Settings page', countText);
+  },
+  'c-problems'(body) {
+    const d = data.details;
+    if (!d || !d.problems) return detailsEmpty(body);
+    const p = d.problems;
+    body.appendChild(html('div', 'note', `${fmt(p.clean)} of ${fmt(d.reported)} installations reported no problems.`));
+    if (!p.items.length) return;
+    const rows = p.items.map(countRow);
+    if (tableMode['c-problems']) return body.appendChild(table(['Problem', 'Installations', 'Times'], rows.map(countCells)));
+    hbars(body, rows, 'Installations that hit each problem', countText);
+  },
+  'c-setup'(body) {
+    const d = data.details;
+    if (!d || !d.setup) return detailsEmpty(body);
+    const s = d.setup;
+    if (!s.started) return empty(body, 'No installation opened setup in this period.');
+    const steps = s.steps.map(r => ({name: r.name, value: r.installations, skipped: r.skipped}));
+    const outcomes = s.outcomes.filter(o => o.installations).map(o => ({name: o.name, value: o.installations}));
+    const stepText = r => `${fmt(r.value)} · ${pct(r.value / s.started)}${r.skipped ? ` · ${fmt(r.skipped)} skipped` : ''}`;
+    if (tableMode['c-setup']) {
+      body.appendChild(table(['Step', 'Reached', 'Share', 'Skipped'], steps.map(r => [r.name, fmt(r.value), pct(r.value / s.started), fmt(r.skipped)])));
+      return body.appendChild(table(['How it ended', 'Installations'], outcomes.map(r => [r.name, fmt(r.value)])));
+    }
+    body.appendChild(html('div', 'note', `${fmt(s.started)} installations opened setup.`));
+    hbars(body, steps, 'Installations that reached each setup step', stepText);
+    if (!outcomes.length) return;
+    body.appendChild(html('div', 'note spaced', 'How it ended'));
+    hbars(body, outcomes, 'How setup ended', r => fmt(r.value));
+  },
+  'c-system'(body) {
+    const d = data.details;
+    if (!d || !d.system) return detailsEmpty(body);
+    const sys = d.system;
+    const parts = [['Distribution', sys.distro], ['COSMIC', sys.cosmic], ['Graphics', sys.gpu], ['Displays', sys.displays],
+      ['Largest display', sys.resolution]].filter(([, items]) => items && items.length);
+    const runtime = d.runtime;
+    if (tableMode['c-system']) {
+      for (const [title, items] of parts) body.appendChild(table([title, 'Installations'], items.map(i => [i.name, fmt(i.count)])));
+      if (runtime) body.appendChild(table(['Hours running per report', 'Reports'], runtime.buckets.map(b => [b.name, fmt(b.count)])));
+      return;
+    }
+    parts.forEach(([title, items], k) => {
+      const head = html('div', 'note', title === 'Graphics' ? `${title} (a computer can have more than one)` : title);
+      if (k) head.classList.add('spaced');
+      body.appendChild(head);
+      hbars(body, items.map(i => ({name: i.name, value: i.count, muted: i.key === 'unknown'})), title, r => fmt(r.value));
+    });
+    if (runtime) {
+      body.appendChild(html('div', 'note spaced', `Hours running per report (median ${runtime.median_hours.toLocaleString('en-US')})`));
+      hbars(body, runtime.buckets.map(b => ({name: b.name, value: b.count, tipLabel: 'Reports'})), 'Hours running per report', r => fmt(r.value));
+    }
   },
   'c-retention'(body) {
     const cohorts = data.cohorts;

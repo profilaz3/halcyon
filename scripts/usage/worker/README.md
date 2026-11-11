@@ -5,8 +5,8 @@ The activity collector and the public statistics page, live at
 
 | Path | What it does |
 | --- | --- |
-| `POST /v1/report` | Accepts schema 1 to 6 reports (schema 6 adds the feature snapshot). Same validation, ordering rules and acknowledgements as the former Apps Script collector. Always HTTP 200; `{"ok":false}` on rejection. |
-| `GET /v1/report` | Health: `{"service":"halcyon-activity","schema":6}`. |
+| `POST /v1/report` | Accepts schema 1 to 7 reports (schema 6 adds the feature snapshot, schema 7 the use, problem, setup and system details). Same validation, ordering rules and acknowledgements as the former Apps Script collector. Always HTTP 200; `{"ok":false}` on rejection. |
+| `GET /v1/report` | Health: `{"service":"halcyon-activity","schema":7}`. |
 | `GET /api/summary.json` | Public aggregates, rebuilt hourly, cached for 5 minutes. |
 | `GET /` | The dashboard (`public/`), plain HTML, CSS and JS with a strict CSP. |
 
@@ -18,10 +18,10 @@ retained activity on the next hourly run.
 
 ## Data
 
-`migrations/0001_initial.sql` defines five tables; `0002_features.sql` adds the schema 6 feature snapshot to `activity`:
+`migrations/0001_initial.sql` defines five tables; `0002_features.sql` adds the schema 6 feature snapshot to `activity` and `0003_details.sql` the schema 7 details:
 
 - `installations`: one row per SHA-256 hashed token: reporting choice, first-use facts, latest activity.
-- `activity`: at most one row per installation and UTC day (version, package format, update channel, feature snapshot as canonical JSON).
+- `activity`: at most one row per installation and UTC day (version, package format, update channel, feature snapshot and schema 7 details as canonical JSON).
 - `daily`: anonymous totals per completed day, install method, metric and version, plus per-feature totals. Kept indefinitely.
 - `releases`, `meta`: GitHub release dates, the rollup watermark and the published summary.
 

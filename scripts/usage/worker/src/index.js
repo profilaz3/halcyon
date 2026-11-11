@@ -5,7 +5,7 @@
 import {MAX_BODY, applyReport, installationId, validateReport} from './report.js';
 import {maintain} from './stats.js';
 
-const HEALTH = {service: 'halcyon-activity', schema: 6};
+const HEALTH = {service: 'halcyon-activity', schema: 7};
 const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',

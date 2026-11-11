@@ -1679,6 +1679,8 @@ impl Cards {
             }
             Message::OutputChanged(event, output) => {
                 self.displays.update(event, output);
+                let (count, largest) = self.displays.summary();
+                crate::usage::system::displays(count, largest);
                 let migration = self.reconcile_output();
                 Task::batch([migration, self.automation_displays(), self.identity_scan()])
             }

@@ -16,6 +16,16 @@ pub(super) fn system(root: &Path) -> bool {
     })
 }
 
+/// The `cosmic-session` package version, or none when it is not installed.
+pub(super) fn cosmic_version(root: &Path) -> Option<String> {
+    if !system(root) {
+        return None;
+    }
+    query(root, &["-q", "--qf", "%{VERSION}", "cosmic-session"])
+        .map(|v| v.trim().to_owned())
+        .filter(|v| !v.is_empty() && !v.contains(char::is_whitespace))
+}
+
 /// Bounded fixed-program queries. Drain stdout while the child is alive so a
 /// large file list cannot deadlock on the pipe. Kill and reap on every timeout.
 fn query(root: &Path, args: &[&str]) -> Option<String> {

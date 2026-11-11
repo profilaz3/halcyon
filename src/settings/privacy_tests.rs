@@ -182,3 +182,14 @@ fn usage_checkbox_native_save_restart_setup_undo_export_and_failure() {
         "fixture and test network guard stays closed"
     );
 }
+
+#[test]
+fn every_settings_page_is_a_known_usage_count() {
+    for page in Page::ALL {
+        assert!(
+            crate::usage::counts::PAGES.contains(&page.key()),
+            "{}",
+            page.key()
+        );
+    }
+}

@@ -1,12 +1,14 @@
 use super::*;
+
+/// Everything a daily report carries, in the words shown beside the switch.
+/// docs/PRIVACY.md lists the same fields with their exact values.
+pub(in crate::settings) const USAGE_SHARED: &str = "The app version, your country, which days you use it, which main features are on, which Settings pages you open, how many hours it runs, crashes, failed updates and image timeouts, how far setup gets, your Linux distribution and COSMIC version, graphics maker, number of displays and largest screen resolution. Never what's in your widgets.";
+
 impl Settings {
     pub(in crate::settings) fn usage_control(&self) -> Element<'_, Message> {
         // What is shared is consent text: always on screen, never behind "?".
         let mut controls = vec![split(
-            detail_state(
-                "Share usage data",
-                "The app version, your country, which days you use it and which main features are on. Never what's in your widgets.",
-            ),
+            detail_state("Share usage data", USAGE_SHARED),
             container(
                 toggler(self.usage_enabled)
                     .on_toggle_maybe((!self.usage_busy).then_some(Message::ShareUsage)),
