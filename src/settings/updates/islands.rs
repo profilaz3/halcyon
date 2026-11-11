@@ -89,6 +89,9 @@ pub(super) fn update(settings: &mut Settings, value: Message) -> Task<SettingsMe
             if token == state.generation && state.phase == Phase::Enabling =>
         {
             state.cancellation = None;
+            if let Some(failure) = &result.failure {
+                failure.count("islands");
+            }
             state.phase = result.failure.map(Phase::Failed).unwrap_or_default();
             if let Some(installation) = result.observed {
                 settings.desktop.islands.installation = installation;

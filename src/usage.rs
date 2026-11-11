@@ -1,4 +1,6 @@
 //! Pseudonymous daily activity and explicit reporting choices. No content or hardware identity.
+//! Since schema 7 the daily report also carries counts since the last report
+//! (see counts.rs) and a few fixed system facts (see system.rs).
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
@@ -7,8 +9,10 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+pub mod counts;
 mod features;
 mod scheduling;
+pub mod system;
 
 const RETRY_SECONDS: i64 = 6 * 60 * 60;
 const STATUS_LIFETIME: i64 = 7 * 86400;
@@ -86,6 +90,18 @@ struct Report<'a> {
     #[serde(flatten)]
     installation_info: crate::installation::Observation,
     features: features::Features,
+    pages: &'a std::collections::BTreeMap<String, u32>,
+    runtime_hours: Option<u32>,
+    problems: &'a std::collections::BTreeMap<String, u32>,
+    setup: &'a std::collections::BTreeMap<String, u32>,
+    system: system::System,
+}
+/// The collector's largest accepted runtime per report.
+const MAX_RUNTIME_HOURS: u32 = 10_000;
+/// How often the desktop adds to its running time.
+const RUNTIME_TICK: Duration = Duration::from_secs(600);
+fn counts_path(path: &Path) -> PathBuf {
+    path.with_file_name("usage-counts.json")
 }
 #[derive(Serialize)]
 struct StatusReport<'a> {
@@ -162,6 +178,7 @@ fn change(path: &Path, enabled: bool, now: i64) -> Result<(), String> {
     state.changed_at = Some(now);
     if !enabled {
         state.opted_out_at = Some(now);
+        counts::forget(&counts_path(path));
     }
     state.pending = Some(Pending {
         created_at: now,
@@ -436,7 +453,8 @@ async fn report_once(
 ) -> Result<String, String> {
     let country = country_for(path, installation, revision, country_url).await;
     let first_started_at = load(path)?.first_started_at;
-    guarded(
+    let taken = counts::snapshot(&counts_path(path));
+    let day = guarded(
         path,
         installation,
         revision,
@@ -449,9 +467,15 @@ async fn report_once(
             revision,
             country.as_deref(),
             first_started_at,
+            &taken,
         ),
     )
-    .await
+    .await?;
+    // Accepted: what was sent is no longer pending. Counts added meanwhile stay.
+    if current(path, installation, revision, true, true) {
+        let _ = counts::sent(&counts_path(path), &taken);
+    }
+    Ok(day)
 }
 // Reports go only to the published Cloudflare collector, never elsewhere.
 const COLLECTOR_HOST: &str = "halcyon-reports.profilaz3.workers.dev";
@@ -465,7 +489,7 @@ fn endpoint(value: &str) -> Option<reqwest::Url> {
         && url.query().is_none()
         && url.fragment().is_none()
         && url.path() == "/v1/report")
-    .then_some(url)
+        .then_some(url)
 }
 fn client() -> Result<reqwest::Client, reqwest::Error> {
     // The collector answers directly; a redirect is never followed.
@@ -513,12 +537,13 @@ async fn send(
     revision: u64,
     country: Option<&str>,
     first_started_at: Option<i64>,
+    counts: &counts::Counts,
 ) -> Result<String, String> {
     let ack = post(
         client,
         url,
         &Report {
-            schema: 6,
+            schema: 7,
             kind: "activity",
             installation,
             revision,
@@ -527,6 +552,11 @@ async fn send(
             first_started_at,
             installation_info: crate::installation::reporting_observation().await,
             features: features::observe().await,
+            pages: &counts.pages,
+            runtime_hours: Some(counts.runtime_hours().min(MAX_RUNTIME_HOURS)),
+            problems: &counts.problems,
+            setup: &counts.setup,
+            system: system::observe().await,
         },
     )
     .await?;
@@ -669,6 +699,19 @@ async fn run(path: PathBuf, activity: bool) {
     let started = std::time::Instant::now();
     if activity {
         let _ = record_start(&path, Utc::now().timestamp());
+        // Running time, in whole ticks, counted only while sharing is on.
+        tokio::spawn(async {
+            let mut tick = tokio::time::interval(RUNTIME_TICK);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            tick.tick().await;
+            loop {
+                tick.tick().await;
+                let _ = tokio::task::spawn_blocking(|| {
+                    counts::add_runtime((RUNTIME_TICK.as_secs() / 60) as u32)
+                })
+                .await;
+            }
+        });
     }
     let mut watch = scheduling::StateWatch::new(path.clone(), work_ready().clone());
     loop {

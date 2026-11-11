@@ -21,6 +21,8 @@ mod navigation;
 mod pages;
 mod preview;
 mod privacy;
+#[cfg(test)]
+pub(super) use privacy::USAGE_SHARED;
 pub(super) mod profiles;
 mod rain;
 mod recipes;

@@ -1,10 +1,12 @@
+import {canonicalDetails} from './details.js';
+
 // Report validation and ingestion. Semantics match the former Apps Script
 // collector (scripts/usage/collector.gs) so 0.2.0 and later clients keep
 // working unchanged: same schemas, same acknowledgements, same ordering rules.
 
 export const MAX_INSTALLATIONS = 100000;
 export const RETENTION_DAYS = 90;
-export const MAX_BODY = 1024;
+export const MAX_BODY = 4096;
 
 export const validCountry = v => typeof v === 'string' && /^[A-Z]{2}$/.test(v);
 export const validVersion = v => typeof v === 'string' && v.length <= 48
@@ -53,6 +55,12 @@ export function canonicalFeatures(f) {
   return JSON.stringify(out);
 }
 
+// Schema 7 adds the details fields to schema 6 (see src/details.js).
+const DETAIL_FIELDS = ['pages', 'problems', 'runtime_hours', 'setup', 'system'];
+const SCHEMA_7_KEYS = ['country', 'features', 'first_started_at', 'installation', 'installed_app_version', 'kind',
+  'package_format', 'revision', 'schema', 'update_channel', 'version', ...DETAIL_FIELDS].sort().join(',');
+const pickDetails = v => Object.fromEntries(DETAIL_FIELDS.map(k => [k, v[k]]));
+
 export function validateReport(body) {
   if (typeof body !== 'string' || body.length > MAX_BODY) throw Error('Invalid report');
   const v = JSON.parse(body);
@@ -80,11 +88,17 @@ export function validateReport(body) {
     && (v.first_started_at === null || validTime(v.first_started_at))
     && validInstallation(v.package_format, v.update_channel, v.installed_app_version)
     && canonicalFeatures(v.features) !== null;
+  const extended = v.schema === 7 && v.kind === 'activity'
+    && keys === SCHEMA_7_KEYS
+    && revision && validVersion(v.version) && country
+    && (v.first_started_at === null || validTime(v.first_started_at))
+    && validInstallation(v.package_format, v.update_channel, v.installed_app_version)
+    && canonicalFeatures(v.features) !== null && canonicalDetails(pickDetails(v)) !== null;
   // Client action time is informational, never a receipt or retention clock.
   const status = v.schema === 3 && v.kind === 'status'
     && keys === 'changed_at,enabled,installation,kind,revision,schema'
     && revision && v.revision > 0 && typeof v.enabled === 'boolean' && validTime(v.changed_at);
-  if (!(legacy || activity || detailed || channel || features || status)) throw Error('Invalid report');
+  if (!(legacy || activity || detailed || channel || features || extended || status)) throw Error('Invalid report');
   if (legacy) v.kind = 'activity';
   return v;
 }
@@ -182,15 +196,16 @@ function planActivity(db, row, id, report, now) {
       .bind(today, report.version, country, received, started, id, row.revision));
   }
   const detailed = report.schema >= 5;
-  statements.push(db.prepare(`INSERT INTO activity (id, day, version, package_format, update_channel, installed_version, received_at, features)
-      SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?9
+  statements.push(db.prepare(`INSERT INTO activity (id, day, version, package_format, update_channel, installed_version, received_at, features, details)
+      SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?9, ?10
       WHERE EXISTS (SELECT 1 FROM installations WHERE id = ?1 AND status = 'enabled' AND revision = ?8 AND last_received_at = ?7)
       ON CONFLICT (id, day) DO UPDATE SET version = excluded.version, package_format = excluded.package_format,
         update_channel = excluded.update_channel, installed_version = excluded.installed_version,
-        received_at = excluded.received_at, features = excluded.features`)
+        received_at = excluded.received_at, features = excluded.features, details = excluded.details`)
     .bind(id, today, report.version, detailed ? report.package_format : 'unknown',
       detailed ? report.update_channel : 'unknown', detailed ? report.installed_app_version : null,
-      received, revision, report.schema === 6 ? canonicalFeatures(report.features) : null));
+      received, revision, report.schema >= 6 ? canonicalFeatures(report.features) : null,
+      report.schema === 7 ? canonicalDetails(pickDetails(report)) : null));
   return {statements, ack};
 }
 

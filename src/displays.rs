@@ -100,6 +100,21 @@ impl Registry {
             outputs.next().is_some_and(|o| &o.handle == handle) && outputs.next().is_none()
         });
     }
+    /// How many displays are connected, and the largest current mode in pixels.
+    pub fn summary(&self) -> (usize, Option<(u32, u32)>) {
+        let largest = self
+            .outputs
+            .iter()
+            .filter_map(|o| o.info.modes.iter().find(|m| m.current))
+            .filter_map(|m| {
+                Some((
+                    u32::try_from(m.dimensions.0).ok()?,
+                    u32::try_from(m.dimensions.1).ok()?,
+                ))
+            })
+            .max_by_key(|(w, h)| u64::from(*w) * u64::from(*h));
+        (self.outputs.len(), largest)
+    }
     pub fn unique(&self, name: &str) -> Option<&Output> {
         let mut found = self
             .outputs

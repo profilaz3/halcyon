@@ -94,8 +94,9 @@ fn endpoint_is_limited_to_the_cloudflare_collector() {
 }
 #[test]
 fn report_contains_only_the_documented_fields() {
+    let counts = counts::Counts::default();
     let report = serde_json::to_value(Report {
-        schema: 6,
+        schema: 7,
         kind: "activity",
         revision: 0,
         installation: &"a".repeat(64),
@@ -104,10 +105,18 @@ fn report_contains_only_the_documented_fields() {
         first_started_at: Some(1000),
         installation_info: crate::installation::Observation::default(),
         features: features::Features::default(),
+        pages: &counts.pages,
+        runtime_hours: Some(0),
+        problems: &counts.problems,
+        setup: &counts.setup,
+        system: system::System::default(),
     })
     .unwrap();
-    assert_eq!(report.as_object().unwrap().len(), 11);
-    assert_eq!(report["schema"], 6);
+    assert_eq!(report.as_object().unwrap().len(), 16);
+    assert_eq!(report["schema"], 7);
+    assert_eq!(report["pages"], serde_json::json!({}));
+    assert_eq!(report["runtime_hours"], 0);
+    assert_eq!(report["system"].as_object().unwrap().len(), 6);
     assert_eq!(report["version"], "0.2.0");
     assert_eq!(report["country"], "HR");
     assert!(report.get("installation").is_some());
@@ -135,6 +144,7 @@ async fn reply(response: &'static str) -> Result<String, String> {
         0,
         None,
         Some(1000),
+        &counts::Counts::default(),
     )
     .await;
     server.join().unwrap();
@@ -299,8 +309,8 @@ async fn failed_country_lookup_still_sends_activity_with_unknown_country() {
     let request = report_request.join().unwrap();
     let report: serde_json::Value =
         serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
-    assert_eq!(report.as_object().unwrap().len(), 11);
-    assert_eq!(report["schema"], 6);
+    assert_eq!(report.as_object().unwrap().len(), 16);
+    assert_eq!(report["schema"], 7);
     assert_eq!(report["installation"], id);
     assert_eq!(report["first_started_at"], 900);
     assert!(report["country"].is_null());
@@ -862,5 +872,57 @@ async fn failed_short_session_stays_pending_and_next_day_delivers_without_backfi
         load(&path).unwrap().last_success.as_deref(),
         Some("2026-10-25")
     );
+    std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+}
+#[tokio::test]
+async fn an_accepted_report_sends_the_counts_once_and_opting_out_forgets_them() {
+    let path = fixture();
+    record_start(&path, 900).unwrap();
+    let counts = counts_path(&path);
+    counts::add(&counts, counts::Kind::Page, "appearance").unwrap();
+    counts::add(&counts, counts::Kind::Problem, "update.offline").unwrap();
+    counts::add(&counts, counts::Kind::Setup, "reached.look").unwrap();
+    let id = claim(&path, "2026-10-23", 1000).unwrap().unwrap().0;
+    let (country_url, country_request) = local_server("200 OK", r#"{"country":"HR"}"#);
+    let (report_url, report_request) = local_server("200 OK", r#"{"ok":true,"day":"2026-10-23"}"#);
+    report_once(
+        &path,
+        &client().unwrap(),
+        reqwest::Url::parse(&report_url).unwrap(),
+        &id,
+        0,
+        &country_url,
+    )
+    .await
+    .unwrap();
+    country_request.join().unwrap();
+    let request = report_request.join().unwrap();
+    let report: serde_json::Value =
+        serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
+    assert_eq!(report["pages"], serde_json::json!({"appearance": 1}));
+    assert_eq!(report["problems"], serde_json::json!({"update.offline": 1}));
+    assert_eq!(report["setup"], serde_json::json!({"reached.look": 1}));
+    assert_eq!(report["runtime_hours"], 0);
+    assert_eq!(counts::snapshot(&counts), counts::Counts::default());
+
+    // A refused report keeps them for the next try.
+    counts::add(&counts, counts::Kind::Page, "notes").unwrap();
+    let (report_url, report_request) = local_server("200 OK", r#"{"ok":false}"#);
+    assert!(
+        report_once(
+            &path,
+            &client().unwrap(),
+            reqwest::Url::parse(&report_url).unwrap(),
+            &id,
+            0,
+            "http://127.0.0.1:9/",
+        )
+        .await
+        .is_err()
+    );
+    report_request.join().unwrap();
+    assert_eq!(counts::snapshot(&counts).pages.len(), 1);
+    change(&path, false, 2000).unwrap();
+    assert!(!counts.exists());
     std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
 }

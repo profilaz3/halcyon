@@ -63,6 +63,8 @@ fn main() -> cosmic::iced::Result {
     }
     // Settings from before the rename move to the new folders, once.
     paths::migrate();
+    // A panic in the desktop or Settings counts as a problem (sharing on only).
+    usage::counts::install_panic_hook();
     let mut args = std::env::args().skip(1);
     let command = args.next();
     if matches!(

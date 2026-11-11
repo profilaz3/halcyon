@@ -939,6 +939,7 @@ static OPEN_STYLES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 /// First-run setup, starting from the dock and panel as they are now, or
 /// resuming setup left unfinished (with its changes, for Cancel).
 fn open_wizard() -> wizard::Wizard {
+    crate::usage::counts::setup("opened");
     let store = crate::desktop::DesktopStore::from_env().ok();
     let islands = store
         .as_ref()
@@ -1063,6 +1064,7 @@ impl cosmic::Application for Settings {
             .filter(|_| config.design_problem.is_none())
             .map(|_| open_wizard());
         crate::usage::start_status();
+        crate::usage::counts::page(page.key());
         let usage = crate::usage::preference();
         let mut app = Self {
             depth_preview: Default::default(),
@@ -3357,6 +3359,7 @@ impl Settings {
                 let page = page.canonical();
                 let from = self.page;
                 if self.page != page {
+                    crate::usage::counts::page(page.key());
                     // A previous page's change stays available in Recent
                     // changes and keyboard Undo, not as this task's footer.
                     self.undo_baseline = navigation::latest_desktop_change().map(|(_, _, id)| id);

@@ -24,6 +24,11 @@ fn observed_channel(state: Enrollment, system: &'static str) -> &'static str {
         _ => "unknown",
     }
 }
+/// The installed COSMIC session's version on Fedora, from the rpm database. The
+/// usage report never runs a COSMIC program to learn it.
+pub(crate) fn cosmic_rpm_version(root: &Path) -> Option<String> {
+    rpm::cosmic_version(root)
+}
 /// Small local metadata observation for the existing daily report. No package
 /// refresh, service access, content reads, or hashing of the large executables.
 pub(crate) async fn reporting_observation() -> Observation {

@@ -377,7 +377,7 @@ pub(super) const WINDOW_BLUR: SearchHit = hit(
 pub(super) const PRIVACY: SearchHit = hit(
     Page::General,
     "Share usage data",
-    "privacy usage reporting anonymous telemetry",
+    "privacy usage reporting anonymous telemetry statistics crashes system",
     false,
 )
 .destination(AppSettingsPage::Privacy);

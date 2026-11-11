@@ -801,7 +801,10 @@ impl Wizard {
                 self.capture_insets(store);
                 self.go(Step::Look);
             }
-            Message::Leave => return Outcome::Skipped,
+            Message::Leave => {
+                crate::usage::counts::setup("left");
+                return Outcome::Skipped;
+            }
             Message::Back => {
                 self.widgets.cancel_drag();
                 if let Some(step) = self.visited.pop().or_else(|| self.step.back()) {
@@ -816,6 +819,7 @@ impl Wizard {
             Message::AskLeave(on) => self.leaving = on,
             Message::KeepForLater => {
                 self.leaving = false;
+                crate::usage::counts::setup("kept_for_later");
                 return Outcome::Left;
             }
             Message::KeepCurrent => {
@@ -843,12 +847,14 @@ impl Wizard {
             Message::UndoSetup => {
                 let changed = self.undo_all(store);
                 if self.error.is_none() {
+                    crate::usage::counts::setup("undone");
                     self.applied = None;
                     self.go(Step::Ready);
                 }
                 return changed;
             }
             Message::Skip => {
+                crate::usage::counts::setup(&format!("skipped.{}", self.step.key()));
                 if matches!(self.step, Step::Widgets | Step::Arrange) {
                     self.reset_widgets(config);
                     if self.error.is_none() {
@@ -1004,12 +1010,14 @@ impl Wizard {
                 if self.error.is_some() {
                     return changed;
                 }
+                crate::usage::counts::setup("cancelled");
                 return Outcome::Done {
                     finish: false,
                     startup: false,
                 };
             }
             Message::Finish => {
+                crate::usage::counts::setup("finished");
                 return Outcome::Done {
                     finish: true,
                     startup: self.startup,
@@ -1022,6 +1030,7 @@ impl Wizard {
     fn go(&mut self, step: Step) {
         self.widgets.cancel_drag();
         if self.step != step {
+            crate::usage::counts::setup(&format!("reached.{}", step.key()));
             self.visited.push(self.step);
             if self.visited.len() > 32 {
                 self.visited.remove(0);
@@ -1454,6 +1463,30 @@ fn apply_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_step_after_welcome_is_a_known_usage_count() {
+        use crate::usage::counts::known_setup;
+        let steps = [
+            Step::Look,
+            Step::Bars,
+            Step::Widgets,
+            Step::Arrange,
+            Step::Weather,
+            Step::Ready,
+            Step::Done,
+        ];
+        for step in steps {
+            assert!(known_setup(&format!("reached.{}", step.key())), "{step:?}");
+        }
+        assert!(
+            !known_setup("reached.welcome"),
+            "the welcome screen is counted as opened"
+        );
+        for step in [Step::Bars, Step::Widgets, Step::Arrange] {
+            assert!(known_setup(&format!("skipped.{}", step.key())), "{step:?}");
+        }
+    }
 
     #[test]
     fn every_dock_and_panel_choice_is_a_valid_record() {

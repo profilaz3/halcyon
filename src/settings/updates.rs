@@ -32,6 +32,29 @@ pub enum Failure {
     IslandsRefused(&'static str),
 }
 impl Failure {
+    /// The fixed kind counted in the usage report; a cancel is not a problem.
+    pub fn usage_key(&self) -> Option<&'static str> {
+        Some(match self {
+            Self::MissingPackageKit => "missing_packagekit",
+            Self::Offline => "offline",
+            Self::Timeout => "timeout",
+            Self::Cancelled => return None,
+            Self::Authorization => "authorization",
+            Self::Untrusted => "untrusted",
+            Self::InvalidResponse => "invalid_response",
+            Self::Failed => "failed",
+            Self::InstallationChanged => "installation_changed",
+            Self::Activation => "activation",
+            Self::IslandsMismatch => "islands_mismatch",
+            Self::IslandsRefused(_) => "islands_refused",
+        })
+    }
+    /// Counts a failure shown to the user as `<area>.<kind>`.
+    pub fn count(&self, area: &str) {
+        if let Some(key) = self.usage_key() {
+            crate::usage::counts::problem(&format!("{area}.{key}"));
+        }
+    }
     pub fn label(&self) -> &'static str {
         match self {
             Self::IslandsRefused(label) => label,
@@ -142,7 +165,10 @@ impl Updates {
         self.check = match result {
             Ok(Some(version)) => Check::Available(version),
             Ok(None) => Check::Current,
-            Err(error) => Check::Failed(error),
+            Err(error) => {
+                error.count("update");
+                Check::Failed(error)
+            }
         };
     }
 }
