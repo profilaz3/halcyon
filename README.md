@@ -95,6 +95,37 @@ To activate the optional panel component, open **Dock and panel**, set **Shape**
 
 [Installation & updates](docs/DISTRIBUTION.md) · [Fedora package details](docs/FEDORA-PACKAGING.md)
 
+## What Halcyon changes, and how to go back
+
+Halcyon keeps a copy of your desktop from before its first change. Depending on what you choose in setup and Settings, it can change:
+
+- your wallpaper, colors and theme
+- dock and panel appearance (including the Islands panel)
+- window, workspace and icon settings
+- whether the desktop widgets start at sign-in
+
+**To go back to stock COSMIC:** open Halcyon, go to **Changes → Before Halcyon → Desktop from before Halcyon** and choose **Restore…**. Then remove the package:
+
+```sh
+sudo apt remove cosmic-ext-halcyon   # Pop!_OS
+sudo dnf remove cosmic-ext-halcyon   # Fedora
+```
+
+Removing the package alone leaves your colors and panel as they are. From a terminal, `halcyon-ctl restore` puts back your wallpaper from before Halcyon and stops the widgets, including at sign-in; `halcyon-ctl start` turns them back on.
+
+## Command line and shortcuts
+
+```text
+halcyon                     Show the desktop widgets (only one copy runs at a time)
+halcyon --settings [PAGE]   Open Settings, on PAGE if given (for example clock)
+halcyon --toggle TARGET     Open or close the edge menu (drawer), or show or hide a widget
+halcyon-ctl start | stop    Show or hide the widgets, now and at sign-in
+halcyon-ctl focus toggle    Start or pause the Focus timer
+halcyon-ctl --help          Every command, described
+```
+
+Bind `halcyon --toggle drawer` to a key in **COSMIC Settings → Keyboard → Keyboard shortcuts** to open the edge menu without the mouse. In the menu, Tab and the arrow keys move, Enter shows or hides a widget, Alt+Up and Alt+Down reorder the right column, and Esc closes it. Right-click any widget for its settings, Arrange, or Hide. `man halcyon` and `man halcyon-ctl` have the details.
+
 ## Help & development
 
 [Calendar setup](docs/CALENDAR.md) · [Report a bug](https://github.com/profilaz3/halcyon/issues) · [Build & contribute](docs/DEVELOPMENT.md) · [Privacy](docs/PRIVACY.md)
