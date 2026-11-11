@@ -1,4 +1,4 @@
-.TH HALCYON 1 "2026-10-23" "Halcyon 0.1.1" "User Commands"
+.TH HALCYON 1 "2026-11-11" "Halcyon 0.6.1" "User Commands"
 .SH NAME
 halcyon \- desktop widgets and themes for COSMIC
 .SH SYNOPSIS
@@ -6,13 +6,61 @@ halcyon \- desktop widgets and themes for COSMIC
 .br
 .B halcyon --settings
 .RI [ page ]
+.br
+.B halcyon --toggle
+.I target
+.br
+.B halcyon
+.RB [ --help | --version ]
 .SH DESCRIPTION
 Halcyon displays desktop widgets and coordinates wallpaper, colors,
 windows, dock and panel appearance on the COSMIC desktop.
-Run without arguments to display widgets. Use
-.B --settings
-to open Settings and the first-run setup.
+Run without arguments to display widgets.
+Only one copy shows widgets at a time: a second
+.B halcyon
+says Halcyon is already running and exits.
+.SH OPTIONS
+.TP
+.BI --settings " \fR[\fIpage\fR]"
+Open Settings and the first-run setup, on
+.I page
+if given (for example
+.BR clock ,
+.B weather
+or
+.BR notes ).
+.TP
+.BI --toggle " target"
+Ask the running widgets to open or close the edge menu
+.RB ( drawer ),
+or to show or hide one widget
+.RB ( calendar ,
+.BR projects ,
+.BR devbox ,
+.BR weather ,
+.BR clock ,
+.BR glance ,
+.BR music ,
+.B notes
+or
+.BR focus ).
+Bind it to a key in COSMIC Settings, Keyboard shortcuts.
+In the edge menu, Tab and the arrow keys move, Enter shows or hides a widget,
+Alt+Up and Alt+Down reorder the right column, and Esc closes the menu.
+.TP
+.B --help
+Show a summary of these options and exit.
+.TP
+.B --version
+Show the version and exit.
+.SH EXIT STATUS
+0 on success, including when Halcyon is already running;
+1 when a command could not reach the running widgets;
+2 for an unknown option or target.
 .SH FILES
+.I $XDG_RUNTIME_DIR/halcyon/widgets.lock
+is held while the widgets run.
+.br
 .I /usr/share/backgrounds/halcyon/
 contains the installed wallpapers.
 .br

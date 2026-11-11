@@ -274,11 +274,14 @@ def restore_wallpaper():
     restore_background()
     print('Previous wallpaper restored.')
 
+RESTORED = ('Restored your wallpaper and stopped Halcyon. '
+            'It won\u2019t start at sign-in until you run: halcyon-ctl start')
+
 def restore():
     # Keep the original command's stop-and-disable behavior for existing callers.
     restore_background()
     service('stop')
-    print('Previous wallpaper restored; widgets hidden.')
+    print(RESTORED)
 
 # Every page the native Settings window accepts (`Page::key` in src/settings.rs), plus the old
 # `layout` alias for Widgets.
@@ -290,17 +293,37 @@ SETTINGS_PAGES = ('adaptive', 'builder', 'moments', 'overview', 'pending', 'them
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    sub = parser.add_subparsers(dest='command')
-    sub.add_parser('theme').add_argument('name', choices=THEMES)
-    sub.add_parser('cosmic-colors').add_argument('state', choices=['on', 'off'])
-    sub.add_parser('weather').add_argument('city')
-    sub.add_parser('panel').add_argument('widget', choices=[*WIDGETS, 'open', 'close', 'rail'], nargs='?', default='open')
-    sub.add_parser('toggle').add_argument('widget', choices=WIDGETS)
-    sub.add_parser('focus').add_argument('action', choices=FOCUS_ACTIONS)
-    sub.add_parser('settings').add_argument('--page', choices=SETTINGS_PAGES, default='')
-    for key in ('weather-picker', 'start', 'stop', 'restart', 'status', 'restore', 'restore-wallpaper', 'wallpapers-install'):
-        sub.add_parser(key)
+    parser = argparse.ArgumentParser(
+        prog='halcyon-ctl', description=__doc__.split('\n\n')[0],
+        epilog='Run with no command to open Settings. Help for one command: halcyon-ctl COMMAND --help',
+    )
+    sub = parser.add_subparsers(dest='command', metavar='COMMAND')
+    def command(name, text):
+        return sub.add_parser(name, help=text, description=text)
+    command('start', 'Show the widgets now and at every sign-in')
+    command('stop', 'Hide the widgets and stop starting them at sign-in')
+    command('restart', 'Restart the widgets, for example after an update')
+    command('status', 'Show whether the widgets are running')
+    command('settings', 'Open Settings').add_argument(
+        '--page', choices=SETTINGS_PAGES, default='', metavar='PAGE',
+        help='Open this page, for example clock, weather or notes')
+    command('drawer', 'Open or close the edge menu (same as: halcyon --toggle drawer)')
+    command('panel', 'Open the edge menu, or open it on one widget').add_argument(
+        'widget', choices=[*WIDGETS, 'open', 'close', 'rail'], nargs='?', default='open',
+        help='A widget, or open, close or rail')
+    command('toggle', 'Show or hide one widget').add_argument(
+        'widget', choices=WIDGETS, help='One of: ' + ', '.join(WIDGETS))
+    command('focus', 'Control the Focus timer, for example from a keyboard shortcut').add_argument(
+        'action', choices=FOCUS_ACTIONS, help='One of: ' + ', '.join(FOCUS_ACTIONS))
+    command('theme', 'Apply a Halcyon theme').add_argument('name', choices=THEMES)
+    command('cosmic-colors', 'Turn matching the COSMIC accent color on or off').add_argument(
+        'state', choices=['on', 'off'])
+    command('weather', 'Set the weather city by name').add_argument('city')
+    command('weather-picker', 'Choose the weather city in Settings')
+    command('restore', 'Put back your wallpaper from before Halcyon and stop the widgets, '
+            'including at sign-in')
+    command('restore-wallpaper', 'Put back only your wallpaper from before Halcyon')
+    command('wallpapers-install', 'Check that Halcyon\u2019s built-in wallpapers are installed')
     args = parser.parse_args()
     if args.command == 'theme':
         apply_theme(args.name)
@@ -310,6 +333,8 @@ def main():
         set_weather(args.city)
     elif args.command == 'weather-picker':
         weather_picker()
+    elif args.command == 'drawer':
+        desktop_command({'action': 'drawer'})
     elif args.command == 'panel':
         open_panel(args.widget)
     elif args.command == 'toggle':

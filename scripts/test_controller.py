@@ -253,6 +253,36 @@ class ControllerTests(unittest.TestCase):
                                              text=True, capture_output=True)
             service.assert_not_called()
 
+    def test_dt10_restore_says_startup_is_off_and_how_to_turn_it_back_on(self):
+        saved = controller.CONFIG / 'original-background.ron'
+        saved.write_text('(output: "all", source: Path("/previous.png"))\n')
+        output = io.StringIO()
+        with patch.object(controller, 'service') as service, redirect_stdout(output):
+            with patch.object(controller.sys, 'argv', ['halcyon-ctl', 'restore']):
+                controller.main()
+        service.assert_called_once_with('stop')
+        self.assertIn('won\u2019t start at sign-in until you run: halcyon-ctl start', output.getvalue())
+
+    def test_dt10_every_command_is_described(self):
+        output = io.StringIO()
+        with patch.object(controller.sys, 'argv', ['halcyon-ctl', '--help']), redirect_stdout(output):
+            with self.assertRaises(SystemExit):
+                controller.main()
+        text = output.getvalue()
+        for name in ('start', 'stop', 'restart', 'status', 'settings', 'drawer', 'panel', 'toggle',
+                     'focus', 'theme', 'cosmic-colors', 'weather', 'weather-picker', 'restore',
+                     'restore-wallpaper', 'wallpapers-install'):
+            line = next((line for line in text.splitlines() if line.strip().startswith(name + ' ')
+                         or line.strip() == name), None)
+            self.assertIsNotNone(line, name)
+        self.assertIn('including at sign-in', text)
+
+    def test_ax04_drawer_reaches_the_running_widgets(self):
+        with patch.object(controller, 'desktop_command') as command:
+            with patch.object(controller.sys, 'argv', ['halcyon-ctl', 'drawer']):
+                controller.main()
+        command.assert_called_once_with({'action': 'drawer'})
+
     def test_wallpapers_install_checks_the_installed_wallpapers_offline(self):
         for name in controller.THEMES:
             controller.wallpaper_file(name).parent.mkdir(parents=True, exist_ok=True)
