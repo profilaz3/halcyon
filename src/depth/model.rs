@@ -89,7 +89,9 @@ pub enum Error {
 impl Error {
     pub fn sentence(self) -> &'static str {
         match self {
-            Self::Network => "Couldn’t reach the download server",
+            Self::Network => {
+                "Couldn’t download the scene model. Check that you’re online, then choose Try again."
+            }
             Self::Status(_) => "The download server didn’t send the model",
             Self::Size | Self::Hash => "The download wasn’t the expected file, so it was removed",
             Self::Disk => "Couldn’t save the model on this computer",

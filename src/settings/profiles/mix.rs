@@ -74,7 +74,7 @@ impl ProfilesEditor {
         let captured = match profiles::capture(store, "Your desktop") {
             Ok(captured) => captured,
             Err(error) => {
-                self.notice = Some(Notice::Error(error.to_string()));
+                self.notice = Some(Notice::failed(&error));
                 return;
             }
         };

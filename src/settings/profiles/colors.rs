@@ -50,7 +50,7 @@ impl ProfilesEditor {
                 true
             }
             Err(error) => {
-                self.notice = Some(Notice::Error(error.to_string()));
+                self.notice = Some(Notice::failed(&error));
                 false
             }
         }

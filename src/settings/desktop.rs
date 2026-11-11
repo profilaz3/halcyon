@@ -122,7 +122,46 @@ pub fn control_id(slot: Slot, control: AppletControl) -> cosmic::widget::Id {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Notice {
     Done(String),
+    /// A sentence, then optionally `DETAILS` and the technical text.
     Error(String),
+    /// Work in progress the page waits for; not a failure.
+    Busy(String),
+    /// The change was made, with something worth knowing.
+    Warning(String),
+}
+
+/// Saved, but Islands didn't take the new layout yet.
+pub const ISLANDS_PENDING: &str = "Saved, but the panel didn’t pick up the new layout. It shows \
+     after you log out and back in. Undo is available.";
+
+/// Separates an error's sentence from its technical text.
+const DETAILS: char = '\u{1F}';
+
+impl Notice {
+    /// A plain sentence, with the technical text kept for Details.
+    pub fn failed(error: &impl crate::desktop::UserMessage) -> Self {
+        let message = error.user_message();
+        let details = error.to_string();
+        Self::Error(if details == message || details.is_empty() {
+            message
+        } else {
+            format!("{message}{DETAILS}{details}")
+        })
+    }
+    /// The sentence the page shows.
+    pub fn text(&self) -> &str {
+        match self {
+            Self::Error(text) => text.split(DETAILS).next().unwrap_or(text),
+            Self::Done(text) | Self::Busy(text) | Self::Warning(text) => text,
+        }
+    }
+    /// The technical text behind an error, for its Details line.
+    pub fn details(&self) -> Option<&str> {
+        match self {
+            Self::Error(text) => text.split_once(DETAILS).map(|(_, details)| details),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -516,7 +555,7 @@ impl DesktopEditor {
                     }
                 },
                 Err(error) => {
-                    self.notice = Some(Notice::Error(error.to_string()));
+                    self.notice = Some(Notice::failed(&error));
                 }
             }
         }
@@ -877,7 +916,7 @@ impl DesktopEditor {
         let mut patch = DesktopPatch::new();
         for draft in self.drafts.values() {
             if let Err(error) = patch.merge(draft.patch()) {
-                self.notice = Some(Notice::Error(error.to_string()));
+                self.notice = Some(Notice::failed(&error));
                 return;
             }
         }
@@ -925,9 +964,8 @@ impl DesktopEditor {
                     && self.islands.compatible
                     && let Err(error) = self.acknowledge_islands()
                 {
-                    self.notice = Some(Notice::Error(format!(
-                        "Settings saved. {error}. Undo is available."
-                    )));
+                    eprintln!("Islands did not take the saved layout: {error}");
+                    self.notice = Some(Notice::Warning(ISLANDS_PENDING.into()));
                 }
             }
             Err(DesktopError::Conflict(keys)) => {
@@ -947,7 +985,7 @@ impl DesktopEditor {
             }
             Err(error) => {
                 self.after_write_error(&error);
-                self.notice = Some(Notice::Error(error.to_string()));
+                self.notice = Some(Notice::failed(&error));
             }
         }
     }
@@ -970,7 +1008,7 @@ impl DesktopEditor {
                     }
                     self.notice = Some(Notice::Done("Using the current values".into()));
                 }
-                Err(error) => self.notice = Some(Notice::Error(error.to_string())),
+                Err(error) => self.notice = Some(Notice::failed(&error)),
             }
         }
     }
@@ -991,7 +1029,7 @@ impl DesktopEditor {
                     }
                     self.notice = Some(Notice::Done(super::drafts::KEEPING.into()));
                 }
-                Err(error) => self.notice = Some(Notice::Error(error.to_string())),
+                Err(error) => self.notice = Some(Notice::failed(&error)),
             }
         }
     }
@@ -1027,7 +1065,7 @@ impl DesktopEditor {
             }
             Err(error) => {
                 self.after_write_error(&error);
-                self.notice = Some(Notice::Error(error.to_string()));
+                self.notice = Some(Notice::failed(&error));
             }
         }
     }
@@ -1051,7 +1089,7 @@ impl DesktopEditor {
                 self.reload(false);
                 self.notice = Some(Notice::Done(message));
             }
-            Err(error) => self.notice = Some(Notice::Error(error.to_string())),
+            Err(error) => self.notice = Some(Notice::failed(&error)),
         }
     }
 }

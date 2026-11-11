@@ -441,7 +441,7 @@ fn own_wallpaper_clock_page_walks_every_scene_state() {
     assert!(has(&app, "Let the scene cover the clock"));
     assert!(has(
         &app,
-        "Finds the foreground in your own pictures. About 99 MB, and it runs only on this computer."
+        "Downloads a 99 MB model from Hugging Face once. Your pictures are analyzed only on this computer, and nothing is uploaded."
     ));
     assert!(has(&app, "Download"));
     assert!(!present(&app, "clock-depth-fix") && !present(&app, "clock-lighting"));
@@ -456,17 +456,21 @@ fn own_wallpaper_clock_page_walks_every_scene_state() {
         Message::SceneModel(Scene::Progress(first, 42_500_000)),
     );
     assert!(has(&app, "Downloading… 42 of 99 MB"));
+    // The switch's own line says how far along it is.
     assert_eq!(
         reason(&app).as_deref(),
-        Some("Downloading the scene model…")
+        Some("Getting ready… 42 of 99 MB")
     );
     assert!(has(&app, "Cancel"));
     shots(&mut app, "downloading", "clock-scene-model");
+    let depth = |app: &Settings| app.config.clock_layer(app.clock_moment_target()).depth;
+    assert!(depth(&app));
     send_settings(&mut app, Message::SceneModel(Scene::Cancel));
     assert_eq!(
         app.scenes.model,
         ModelState::Failed(model::Error::Cancelled)
     );
+    assert!(!depth(&app), "no model, so the switch goes off");
     // The cancelled download's own ending changes nothing.
     send_settings(
         &mut app,
@@ -482,7 +486,7 @@ fn own_wallpaper_clock_page_walks_every_scene_state() {
     );
     assert!(has(
         &app,
-        "Download cancelled. About 99 MB, and it runs only on this computer."
+        "Download cancelled. It’s 99 MB from Hugging Face, and your pictures are analyzed only on this computer."
     ));
 
     // A file that isn't the model: said plainly, with a retry.
@@ -500,6 +504,7 @@ fn own_wallpaper_clock_page_walks_every_scene_state() {
     );
     assert!(has(&app, wrong), "said once, on the Scene model row");
     assert!(has(&app, "Try again"));
+    assert!(!depth(&app));
     shots(&mut app, "download-failed", "clock-scene-model");
 
     // Retried and finished: finding the foreground starts by itself.
@@ -516,6 +521,7 @@ fn own_wallpaper_clock_page_walks_every_scene_state() {
         Message::SceneModel(Scene::Downloaded(third, Ok(()))),
     );
     assert_eq!(app.scenes.model, ModelState::Ready);
+    assert!(depth(&app), "finishing the download turns the switch back on");
     assert_eq!(reason(&app).as_deref(), Some("Finding the foreground…"));
     assert!(has(&app, "Remove"));
     shots(&mut app, "analysing", "clock-scene-model");
@@ -552,7 +558,7 @@ fn own_wallpaper_clock_page_walks_every_scene_state() {
     assert!(spot[1] > high[1] + 100., "{spot:?}");
     assert_eq!(
         reason(&app).as_deref(),
-        Some("The scene covers the clock a little lower down")
+        Some("The scene covers the clock a little lower down. The outline shows where.")
     );
     let frame = stage::frame(high, clock, screen);
     assert!(
@@ -597,9 +603,15 @@ fn own_wallpaper_clock_page_walks_every_scene_state() {
     ));
     assert_eq!(
         reason(&app).as_deref(),
-        Some("This picture has no clear foreground")
+        Some(
+            "This picture has no clear foreground. Pictures with a person, hill or building \
+             in the lower half work best."
+        )
     );
-    assert!(has(&app, "Use Ridge"));
+    // Another picture first; Ridge says it replaces the wallpaper.
+    assert!(has(&app, "Try a different picture…"));
+    assert!(has(&app, "Use Halcyon’s Ridge wallpaper instead"));
+    assert!(present(&app, "clock-depth-alternative"));
     assert!(!present(&app, "clock-lighting"));
     assert!(app.clock_stage.lit(&frame).is_none());
     shots(&mut app, "not-useful", "clock-depth-fix");
@@ -616,6 +628,9 @@ fn own_wallpaper_clock_page_walks_every_scene_state() {
         Some("Download the scene model to use this on your own pictures")
     );
     assert!(!app.error, "{}", app.status);
+    // Another picture is chosen on Wallpaper, where the change and its Undo live.
+    drop(app.update(Message::ChooseScenePicture));
+    assert_eq!(app.page, Page::DesktopWallpaper);
 }
 
 /// The stage clock's corner handle resizes its box, shape kept: the drag

@@ -174,11 +174,14 @@ impl Settings {
     fn scene_block(&self) -> Option<Block> {
         use crate::depth::{Found, scene::Verdict};
         if !self.picture_wallpaper() {
-            return Some(Block::fix(
-                "Needs a picture wallpaper",
-                "Use Ridge",
-                Message::UseRidgeWallpaper,
-            ));
+            return Some(
+                Block::fix(
+                    "Needs a picture wallpaper",
+                    "Choose a picture…",
+                    Message::ChooseScenePicture,
+                )
+                .or("Use Halcyon’s Ridge wallpaper", Message::UseRidgeWallpaper),
+            );
         }
         let found = self.clock_stage.found();
         if self.ridge_wallpaper() || matches!(found, Some(Found::Ridge)) {
@@ -194,19 +197,31 @@ impl Settings {
                         .zip(now)
                         .is_none_or(|(spot, now)| spot[1] >= now);
                     Some(Block::reason(if lower {
-                        "The scene covers the clock a little lower down"
+                        "The scene covers the clock a little lower down. The outline shows where."
                     } else {
-                        "The scene covers the clock a little higher up"
+                        "The scene covers the clock a little higher up. The outline shows where."
                     }))
                 }
-                Verdict::NotUseful => Some(Block::fix(
-                    judgement
-                        .reason
-                        .unwrap_or(crate::depth::scene::Reason::NoForeground)
-                        .sentence(),
-                    "Use Ridge",
-                    Message::UseRidgeWallpaper,
-                )),
+                // Changing the wallpaper is the person's call: another
+                // picture comes first, and Ridge says it replaces theirs.
+                Verdict::NotUseful => Some(
+                    Block {
+                        reason: format!(
+                            "{}. Pictures with a person, hill or building in the lower half work best.",
+                            judgement
+                                .reason
+                                .unwrap_or(crate::depth::scene::Reason::NoForeground)
+                                .sentence(),
+                        )
+                        .into(),
+                        fix: Some(("Try a different picture…", Message::ChooseScenePicture)),
+                        alternative: None,
+                    }
+                    .or(
+                        "Use Halcyon’s Ridge wallpaper instead",
+                        Message::UseRidgeWallpaper,
+                    ),
+                ),
             };
         }
         match self.scenes.model {
@@ -217,8 +232,12 @@ impl Settings {
                     "Download the scene model to use this on your own pictures",
                 ));
             }
-            ModelState::Downloading(_) => {
-                return Some(Block::reason("Downloading the scene model…"));
+            ModelState::Downloading(bytes) => {
+                return Some(Block::reason(format!(
+                    "Getting ready… {} of {} MB",
+                    bytes / 1_000_000,
+                    model::SIZE / 1_000_000
+                )));
             }
             ModelState::Ready => {}
         }
@@ -284,6 +303,7 @@ impl Settings {
                     cancel.send_replace(true);
                     scenes.generation = scenes.generation.wrapping_add(1);
                     scenes.model = ModelState::Failed(model::Error::Cancelled);
+                    self.scene_switch_off();
                 }
             }
             Scene::Progress(generation, bytes) => {
@@ -302,6 +322,13 @@ impl Settings {
                     Ok(()) => ModelState::Ready,
                     Err(error) => ModelState::Failed(error),
                 };
+                if scenes.model == ModelState::Ready {
+                    if std::mem::take(&mut scenes.resume) {
+                        self.save_clock(serde_json::json!({"depth": true}));
+                    }
+                } else {
+                    self.scene_switch_off();
+                }
                 return self.scene_analyse();
             }
             Scene::Remove => {
@@ -313,6 +340,7 @@ impl Settings {
                 }
                 scenes.generation = scenes.generation.wrapping_add(1);
                 scenes.failed.clear();
+                scenes.resume = false;
                 if let Some(path) = model::path() {
                     model::remove(&path, crate::depth::cache::root().as_deref());
                 }
@@ -344,6 +372,14 @@ impl Settings {
             }
         }
         Task::none()
+    }
+    /// A switch can't stay on for a model that isn't there. It comes back
+    /// on when a later download finishes.
+    fn scene_switch_off(&mut self) {
+        if self.config.clock_layer(self.clock_moment_target()).depth {
+            self.save_clock(serde_json::json!({"depth": false}));
+            self.scenes.resume = true;
+        }
     }
     /// Analyses the stage’s picture when it has not been, the model is
     /// here, and it has not already failed. One analysis at a time.
@@ -397,18 +433,28 @@ impl Settings {
 pub(super) struct Block {
     pub reason: std::borrow::Cow<'static, str>,
     pub fix: Option<(&'static str, Message)>,
+    /// A second way out, shown after the fix.
+    pub alternative: Option<(&'static str, Message)>,
 }
 impl Block {
     fn reason(reason: impl Into<std::borrow::Cow<'static, str>>) -> Self {
         Self {
             reason: reason.into(),
             fix: None,
+            alternative: None,
         }
     }
     fn fix(reason: &'static str, label: &'static str, message: Message) -> Self {
         Self {
             reason: reason.into(),
             fix: Some((label, message)),
+            alternative: None,
+        }
+    }
+    fn or(self, label: &'static str, message: Message) -> Self {
+        Self {
+            alternative: Some((label, message)),
+            ..self
         }
     }
 }
@@ -450,6 +496,8 @@ pub(super) struct Scenes {
     download: Option<watch::Sender<bool>>,
     analysing: Option<(String, watch::Sender<bool>)>,
     failed: std::collections::HashMap<String, crate::depth::analyse::Failure>,
+    /// A failed download turned the switch off; finishing one turns it on.
+    pub(super) resume: bool,
     /// Tests only: record an analysis without starting it.
     #[cfg(test)]
     pub(super) hold: bool,
@@ -462,6 +510,7 @@ impl Default for Scenes {
             download: None,
             analysing: None,
             failed: Default::default(),
+            resume: false,
             #[cfg(test)]
             hold: false,
         }

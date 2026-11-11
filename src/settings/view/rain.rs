@@ -21,7 +21,7 @@ impl Settings {
         )
     }
     /// Match the weather's state line: what the weather shows now, or why
-    /// Moving effect plays instead.
+    /// Moving effect (or nothing) plays instead.
     fn weather_state(&self, p: &Preferences, scene: &weather::Scene) -> String {
         if !p.weather {
             return "Rain, snow, fog and cloud shadows follow the Weather widget".into();
@@ -47,9 +47,19 @@ impl Settings {
             Source::NoReading if !self.config.data_visible(Widget::Weather) => {
                 "Turn on the Weather widget to use this".into()
             }
-            Source::NoReading => "No weather reading yet: using Moving effect".into(),
-            Source::Stale => "Weather reading is out of date: using Moving effect".into(),
-            Source::Unknown(_) => "Unrecognized weather: using Moving effect".into(),
+            // Name what shows meanwhile: Moving effect may be None.
+            Source::NoReading | Source::Stale | Source::Unknown(_) => {
+                let shows = if p.enabled {
+                    format!("Your Moving effect ({}) shows", p.effect.title())
+                } else {
+                    "No effect shows".into()
+                };
+                match scene.source {
+                    Source::NoReading => format!("No weather reading yet. {shows} until one arrives."),
+                    Source::Stale => format!("Weather is out of date. {shows} until it updates."),
+                    _ => format!("This weather isn’t recognized. {shows} instead."),
+                }
+            }
             Source::Manual => String::new(),
         }
     }

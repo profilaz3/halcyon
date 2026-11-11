@@ -2431,7 +2431,7 @@ impl Settings {
                 KeptTarget::Canvas,
             ));
         }
-        if self.page == Page::Notes && self.tools.dirty() {
+        if self.page == Page::Notes && self.tools.unsaved() {
             self.kept_note = Some(("Note kept. Not saved yet.".into(), KeptTarget::Note));
         }
         if self.page == Page::Builder && self.recipe_editor.dirty() {
@@ -2518,7 +2518,7 @@ impl Settings {
                 KeptTarget::Placement,
             );
         }
-        if self.tools.dirty() {
+        if self.tools.unsaved() {
             push("Unsaved note", Page::Overview, false, KeptTarget::Note);
         }
         if self.recipe_editor.dirty() {

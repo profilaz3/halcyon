@@ -50,7 +50,7 @@ impl Settings {
         let mb = |bytes: u64| bytes / 1_000_000;
         let (state, button, event) = match self.scenes.model {
             ModelState::Missing => (
-                "Finds the foreground in your own pictures. About 99 MB, and it runs only on this computer.".into(),
+                "Downloads a 99 MB model from Hugging Face once. Your pictures are analyzed only on this computer, and nothing is uploaded.".into(),
                 "Download",
                 Scene::Download,
             ),
@@ -60,7 +60,7 @@ impl Settings {
                 Scene::Cancel,
             ),
             ModelState::Failed(Error::Cancelled) => (
-                "Download cancelled. About 99 MB, and it runs only on this computer.".into(),
+                "Download cancelled. It’s 99 MB from Hugging Face, and your pictures are analyzed only on this computer.".into(),
                 "Download",
                 Scene::Download,
             ),

@@ -32,7 +32,7 @@ pub mod workspaces;
 #[allow(unused_imports)]
 pub use store::{
     AppliedChange, ConfigKey, DesktopError, DesktopPatch, DesktopStore, KeyRule, LatestChange,
-    Owner, RawValue, Snapshot, WidgetChange, WidgetPatch,
+    Owner, RawValue, Snapshot, UserMessage, WidgetChange, WidgetPatch,
 };
 
 /// Every key the adapter may write. Later domains append their rule tables.

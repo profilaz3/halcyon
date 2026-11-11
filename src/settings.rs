@@ -537,6 +537,8 @@ pub enum Message {
     ObjectTab(navigation::ObjectTab),
     /// Returns to a retained preview.
     ResumeKept(navigation::KeptTarget),
+    /// Shows or hides the technical text behind the footer's error.
+    ToggleErrorDetails,
     /// Undoes one step of the preview on this screen, and nothing else.
     UndoPreviewStep,
     /// Reveals the unresolved values inside the page's preview review.
@@ -676,6 +678,8 @@ pub enum Message {
     ClockLighting(crate::depth::Lighting),
     /// Opens Wallpaper with Ridge chosen, so the hills can cover the clock.
     UseRidgeWallpaper,
+    /// Opens Wallpaper and its picture chooser, for a picture the scene can use.
+    ChooseScenePicture,
     /// The scene model and the analysis of your own pictures.
     SceneModel(depth::Scene),
     Moment(moments::Message),
@@ -793,6 +797,9 @@ pub struct Settings {
     quiet_navigation: bool,
     /// What leaving just kept, and how to return to it.
     kept_note: Option<(String, navigation::KeptTarget)>,
+    /// The technical text shown under the footer's error; a new error
+    /// starts hidden.
+    error_details: Option<String>,
     /// Setup choices wait to be resumed from Recovery.
     setup_kept: bool,
     collapsed_scenes: Vec<Page>,
@@ -948,6 +955,12 @@ fn startup_enabled() -> bool {
 /// Set by `run` for first-run setup (`setup`), read once by `init`.
 static OPEN_PANEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static OPEN_WIZARD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Set when someone chooses Restart Settings; `main` opens Settings again
+/// once this window has closed.
+static RESTART: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub fn restart_requested() -> bool {
+    RESTART.load(std::sync::atomic::Ordering::Relaxed)
+}
 pub fn run(page: &str) -> cosmic::iced::Result {
     let remembered = if page.is_empty() {
         crate::desktop::DesktopStore::from_env()
@@ -1122,6 +1135,7 @@ impl cosmic::Application for Settings {
             search_open: false,
             quiet_navigation: false,
             kept_note: None,
+            error_details: None,
             setup_kept: false,
             collapsed_scenes: Vec::new(),
             scene_objects_open: false,
@@ -1658,7 +1672,8 @@ impl cosmic::Application for Settings {
                     .map(|_| Message::Tools(tools::Message::Redraw)),
             );
         }
-        if self.page == Page::Notes && self.tools.autosave_pending() {
+        // Typing saves itself when it pauses, also after leaving Notes.
+        if self.tools.autosave_pending() {
             subscriptions.push(
                 cosmic::iced::time::every(Duration::from_millis(500))
                     .map(|_| Message::Tools(tools::Message::NoteAutosave)),
@@ -2589,6 +2604,15 @@ impl Settings {
             Message::BrowseSetups => return self.leave_review_to_browse(),
             Message::ObjectTab(tab) => return self.select_object_tab(tab),
             Message::ResumeKept(target) => return self.resume_kept(target),
+            Message::ToggleErrorDetails => {
+                let shown = self.page_error_details().map(str::to_owned);
+                self.error_details = match shown {
+                    Some(details) if self.error_details.as_ref() != Some(&details) => {
+                        Some(details)
+                    }
+                    _ => None,
+                };
+            }
             Message::UndoPreviewStep => return self.undo_preview_step(),
             Message::ReviewPreviewConflicts => return navigation::reveal("preview-conflicts"),
             Message::Placement(message) => {
@@ -3960,7 +3984,10 @@ impl Settings {
             }
             Message::Recipe(edit) => self.update_recipe(edit),
             Message::Design(edit) => return self.update_design(edit),
-            Message::ClockDepth(value) => self.save_clock(json!({"depth": value})),
+            Message::ClockDepth(value) => {
+                self.scenes.resume = false;
+                self.save_clock(json!({"depth": value}));
+            }
             Message::SceneModel(event) => return self.update_scene(event),
             Message::ClockLighting(value) => self.save_clock(json!({"lighting": value})),
             Message::UseRidgeWallpaper => {
@@ -3970,6 +3997,11 @@ impl Settings {
                     wallpaper::Pick::Bundled("halcyon-ridge".into()),
                 )));
                 return Task::batch([page, select]);
+            }
+            Message::ChooseScenePicture => {
+                let page = self.update(Message::Page(Page::DesktopWallpaper));
+                let choose = self.update(Message::Wallpaper(wallpaper::Message::AddPicture));
+                return Task::batch([page, choose]);
             }
             edit @ (Message::ClockFace(_)
             | Message::ClockWeight(_)
@@ -6497,6 +6529,8 @@ fn service_task() -> Task<Message> {
     })
 }
 
+#[cfg(test)]
+mod feedback_tests;
 #[cfg(test)]
 mod future_builder_probe;
 #[cfg(test)]
@@ -10392,13 +10426,14 @@ mod tests {
             assert!(!denser.enabled && denser.effect == before.effect);
             send_settings(&mut app, Message::UndoDesktop);
             assert_eq!(Config::load().rain, on);
-            // An old reading hands back to Moving effect, and says so.
+            // An old reading hands back to Moving effect, and says so. With
+            // Moving effect off, it says no effect shows.
             weather_reading(73, chrono::Local::now() - chrono::Duration::hours(5));
             send_settings(&mut app, Message::Tick);
             native_reveal(&app, &mut native, "rain-weather");
             native.text_bounds(
                 app.settings_view(),
-                "Weather reading is out of date: using Moving effect",
+                "Weather is out of date. No effect shows until it updates.",
             );
             native.capture(
                 app.settings_view(),

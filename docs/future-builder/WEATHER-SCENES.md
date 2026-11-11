@@ -101,9 +101,10 @@ The Match the weather row shows what is happening in plain words:
   density”, “Foggy: fog at 70% of your opacity”, “Partly cloudy: cloud shadows
   at 70% of your coverage”, “Snow: snow at your full density”, “Clear skies:
   no effect”.
-- Falling back: “No weather reading yet: using Moving effect”, “Weather
-  reading is out of date: using Moving effect”, “Unrecognized weather: using
-  Moving effect” or “Turn on the Weather widget to use this”.
+- Falling back, naming what shows meanwhile: “No weather reading yet. Your
+  Moving effect (Rain) shows until one arrives.”, “Weather is out of date. No
+  effect shows until it updates.”, “This weather isn’t recognized. Your Moving
+  effect (Fog) shows instead.” or “Turn on the Weather widget to use this”.
 
 While Match the weather is on, **Weather strength** (Subtle, Natural, Strong)
 sits under it, and **Adjust** (Rain, Snow, Fog, Cloud shadows) chooses which

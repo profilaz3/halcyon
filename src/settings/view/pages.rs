@@ -218,7 +218,7 @@ impl Settings {
         let on = self.config.widget_selected(widget);
         let inside = self.config.glance.enabled
             && matches!(widget, Widget::Clock | Widget::Weather | Widget::Calendar);
-        let readiness = if widget == Widget::Notes && self.tools.dirty() {
+        let readiness = if widget == Widget::Notes && self.tools.unsaved() {
             "Unsaved note"
         } else if widget == Widget::Calendar && !self.calendar.connection.connected() {
             "Connect your calendar"
@@ -482,6 +482,22 @@ impl Settings {
         ];
         let preview = crate::app::settings_weather_preview(&self.config).map(|_| Message::Preview);
         let preview = Some(super::sample::fit(preview, 220.));
+        // The preview's conditions are made up; say so, and before a city is
+        // chosen say how to see real ones.
+        let note = if self.config.location.is_none() {
+            "Example weather. Choose your city below to see yours."
+        } else {
+            "Example weather"
+        };
+        let mut controls = controls;
+        controls.insert(
+            0,
+            container(label(note, 12., MUTED))
+                .id(cosmic::widget::Id::new("weather-preview-note"))
+                .width(Length::Fill)
+                .align_x(Alignment::Center)
+                .into(),
+        );
         self.widget_template(Widget::Weather, "Weather", preview, controls)
     }
 
@@ -1281,9 +1297,35 @@ impl Settings {
             let lighting = clock.depth && block.is_none();
             const TITLE: &str = "Let the scene cover the clock";
             face_rows.push(match block {
+                // Two ways out get a row of their own under the switch.
                 Some(super::depth::Block {
                     reason,
                     fix: Some((fix, message)),
+                    alternative: Some((other, instead)),
+                }) => column::with_children(vec![
+                    split(detail_state(TITLE, reason), switch.into()),
+                    container(
+                        row::with_children(vec![
+                            container(button::standard(fix).on_press(message))
+                                .id(cosmic::widget::Id::new("clock-depth-fix"))
+                                .into(),
+                            container(button::standard(other).on_press(instead))
+                                .id(cosmic::widget::Id::new("clock-depth-alternative"))
+                                .into(),
+                        ])
+                        .spacing(8)
+                        .wrap(),
+                    )
+                    .width(Length::Fill)
+                    .align_x(Alignment::End)
+                    .into(),
+                ])
+                .spacing(8)
+                .into(),
+                Some(super::depth::Block {
+                    reason,
+                    fix: Some((fix, message)),
+                    alternative: None,
                 }) => split(
                     detail_state(TITLE, reason),
                     cosmic::widget::row![
@@ -1295,7 +1337,7 @@ impl Settings {
                     .align_y(Alignment::Center)
                     .into(),
                 ),
-                Some(super::depth::Block { reason, fix: None }) => {
+                Some(super::depth::Block { reason, fix: None, .. }) => {
                     split(detail_state(TITLE, reason), switch.into())
                 }
                 None => split(

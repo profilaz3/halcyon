@@ -41,15 +41,21 @@ impl Failure {
             Self::Activation => {
                 "Islands could not be changed. Check Islands diagnostics and the installation guide before retrying."
             }
-            Self::MissingPackageKit => "System update service unavailable.",
-            Self::Offline => "Couldn’t reach the package sources. Try again when online.",
-            Self::Timeout => "The system did not finish in time. Recheck its status.",
-            Self::Cancelled => "Operation cancelled.",
-            Self::Authorization => "System authorization was not granted.",
-            Self::Untrusted => "Package sources could not be verified.",
-            Self::InvalidResponse => "The system returned an incomplete update result.",
-            Self::Failed => "The system could not complete this operation.",
-            Self::InstallationChanged => "Installation changed. Reopen Settings to check it again.",
+            Self::MissingPackageKit => {
+                "The system update service isn’t running. Restart your computer, or check for updates in your system’s software app."
+            }
+            Self::Offline => "Couldn’t reach the package sources. Check that you’re online, then try again.",
+            Self::Timeout => "The system took too long to answer. Try again in a few minutes.",
+            Self::Cancelled => "Cancelled.",
+            Self::Authorization => "Permission wasn’t given. Choose Check for updates to try again.",
+            Self::Untrusted => {
+                "Your package sources couldn’t be verified. Check your software sources, then try again."
+            }
+            Self::InvalidResponse => "The system’s answer was incomplete. Try again in a few minutes.",
+            Self::Failed => "The system couldn’t finish. Restart your computer, then try again.",
+            Self::InstallationChanged => {
+                "Halcyon was updated or reinstalled while Settings was open. Restart Settings to check again."
+            }
         }
     }
 }
@@ -76,6 +82,8 @@ pub enum Message {
     Releases,
     Information,
     Notes,
+    /// Close Settings and open it again on the installed version.
+    Restart,
 }
 #[derive(Default)]
 pub struct Updates {
@@ -223,6 +231,14 @@ impl Settings {
                     .and_then(Identity::update_command)
                 {
                     return cosmic::iced::clipboard::write(command.to_owned());
+                }
+            }
+            Message::Restart => {
+                super::navigation::remember_app_destination(super::AppSettingsPage::Updates);
+                super::RESTART.store(true, std::sync::atomic::Ordering::Relaxed);
+                self.flush_edits();
+                if let Some(id) = self.core.main_window_id() {
+                    return cosmic::iced::window::close(id);
                 }
             }
             Message::Information => {

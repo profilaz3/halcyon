@@ -249,6 +249,16 @@ Do not post installation tokens, credentials or private widget contents there.
 - **Projects, notes and settings:** remain local; activity reports do not include
   their contents.
 
+## Scene model
+
+“Let the scene cover the clock” on your own pictures needs a scene model. It
+downloads only when you choose Download: one 99 MB file from Hugging Face, fetched
+once over HTTPS, checked against a pinned fingerprint and kept in
+`~/.local/share/halcyon/models`. Hugging Face receives a normal download request
+and the connection IP. Your pictures are analyzed on this computer; nothing is
+uploaded, and the results stay in `~/.cache/halcyon/depth`. Remove, on the Scene
+model row, deletes the model and those results.
+
 ## System update checks
 
 App settings reads installation and package-source information locally. It does

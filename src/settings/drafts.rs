@@ -447,7 +447,7 @@ impl<D: PageDraft> DraftEditor<D> {
             },
             Err(error) => {
                 if self.draft().is_some() {
-                    self.notice = Some(Notice::Error(error.to_string()));
+                    self.notice = Some(Notice::failed(&error));
                 } else {
                     self.draft = Some(Err(error.to_string()));
                 }
@@ -497,7 +497,7 @@ impl<D: PageDraft> DraftEditor<D> {
                     self.notice = Some(Notice::Done("Using the current values".into()));
                 }
             }
-            Err(error) => self.notice = Some(Notice::Error(error.to_string())),
+            Err(error) => self.notice = Some(Notice::failed(&error)),
         }
     }
     /// Keeps every edit over the outside changes; Apply then writes them.
@@ -510,7 +510,7 @@ impl<D: PageDraft> DraftEditor<D> {
                 }
                 self.notice = Some(Notice::Done(KEEPING.into()));
             }
-            Err(error) => self.notice = Some(Notice::Error(error.to_string())),
+            Err(error) => self.notice = Some(Notice::failed(&error)),
         }
     }
     /// Applies the draft as one change owned by this page.
@@ -604,7 +604,7 @@ impl<D: PageDraft> DraftEditor<D> {
                 } else {
                     self.refresh_recovery();
                 }
-                self.notice = Some(Notice::Error(error.to_string()));
+                self.notice = Some(Notice::failed(&error));
                 false
             }
         }
@@ -634,7 +634,7 @@ impl<D: PageDraft> DraftEditor<D> {
                 } else {
                     self.refresh_recovery();
                 }
-                self.notice = Some(Notice::Error(error.to_string()));
+                self.notice = Some(Notice::failed(&error));
             }
         }
     }
@@ -657,7 +657,7 @@ impl<D: PageDraft> DraftEditor<D> {
                 self.reload(false);
                 self.notice = Some(Notice::Done(message));
             }
-            Err(error) => self.notice = Some(Notice::Error(error.to_string())),
+            Err(error) => self.notice = Some(Notice::failed(&error)),
         }
     }
     pub fn state_key(&self) -> String {

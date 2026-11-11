@@ -10,6 +10,7 @@ impl Settings {
         let mut content = Vec::new();
         let mut addons = Vec::new();
         let mut actions = Vec::new();
+        let mut links = Vec::new();
         let action =
             |title: &'static str, id: &'static str, message: Update| -> Element<'_, Message> {
                 button::standard(title)
@@ -31,6 +32,14 @@ impl Settings {
                     .unwrap_or(&identity.running_version);
                 content.push(group_row("Version", "", label(main, 14., MUTED)));
                 content.push(detail_state(summary.title.clone(), summary.detail.clone()));
+                if summary.restart {
+                    actions.push(
+                        button::suggested("Restart Settings")
+                            .id(cosmic::widget::Id::new("updates-restart"))
+                            .on_press(Message::Updates(Update::Restart))
+                            .into(),
+                    );
+                }
                 // Islands and Blend turn on in Dock and panel. This is where
                 // to look when Halcyon's panel won't start.
                 addons.extend(self.panel_troubleshooting());
@@ -44,7 +53,7 @@ impl Settings {
                         if self.updates.check == Check::Checking {
                             actions.push(action("Cancel check", "updates-cancel", Update::Cancel));
                         } else {
-                            let check = if summary.system_action {
+                            let check = if summary.system_action || summary.restart {
                                 button::standard("Check for updates")
                             } else {
                                 button::suggested("Check for updates")
@@ -92,20 +101,20 @@ impl Settings {
                             "updates-releases",
                             Update::Releases,
                         ));
-                        actions.push(action(
+                        links.push(action(
                             "Installation guide",
                             "updates-information",
                             Update::Information,
                         ));
                     }
                     UpdateChannel::Source => {
-                        actions.push(action(
+                        links.push(action(
                             "Release information",
                             "updates-releases",
                             Update::Releases,
                         ));
                     }
-                    _ => actions.push(action(
+                    _ => links.push(action(
                         "Details",
                         "updates-information",
                         Update::Information,
@@ -122,7 +131,7 @@ impl Settings {
         }
         // This version's notes ship with it; an available update's are online.
         if matches!(self.updates.check, Check::Available(_)) && self.updates.notes_url().is_some() {
-            actions.push(
+            links.push(
                 button::text("What’s in the update ↗")
                     .on_press(Message::Updates(Update::Notes))
                     .into(),
@@ -131,11 +140,21 @@ impl Settings {
         if let Some(error) = &self.updates.store_error {
             content.push(label(error, 12., MUTED));
         }
+        // What to do next gets its own row; reading about the version is apart.
         if !actions.is_empty() {
+            content.push(
+                row::with_children(actions)
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .wrap()
+                    .into(),
+            );
+        }
+        if !links.is_empty() {
             content.push(group_row(
                 "More about this version",
                 "",
-                row::with_children(actions)
+                row::with_children(links)
                     .spacing(8)
                     .align_y(Alignment::Center)
                     .into(),

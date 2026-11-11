@@ -1458,7 +1458,7 @@ impl Settings {
         if let Some(error) = editor.load_error() {
             items.push(label("Look that can’t be read", 18., WARN));
             items.push(banner(
-                format!("This look can’t be read: {error}"),
+                format!("This look can’t be read. {error}"),
                 ERROR,
                 vec![
                     button::text("Delete")
@@ -2184,8 +2184,13 @@ impl Settings {
         .id("profiles-confirm".into())
         .on_press_maybe((editor.can_apply() && !self.native_busy).then_some(edit(Edit::Apply)))
         .into();
+        let status = if self.page_error().is_some() {
+            self.error_line(problem)
+        } else {
+            label(problem, 12., MUTED).into()
+        };
         let bar = self.preview_bar(
-            label(problem, 12., MUTED),
+            status,
             editor.can_undo_step(),
             extra,
             edit(Edit::Discard),
