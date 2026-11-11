@@ -9,6 +9,7 @@ use crate::desktop::appearance::Preview;
 use crate::desktop::profiles::{Domain, Preset, ProfilePlan};
 use crate::drawer::Widget;
 use crate::settings::profiles::{Message as Edit, NameAction, Selection, name_id};
+use cosmic::Apply;
 use cosmic::iced::Point;
 use cosmic::iced::widget::{pin, stack};
 use cosmic::widget::responsive;
@@ -1910,10 +1911,9 @@ impl Settings {
                         .into(),
                     button::icon(icon::from_name("view-more-symbolic").size(18))
                         .id(cosmic::widget::Id::new("looks-more"))
-                        .tooltip("More ways to make a look")
                         .selected(self.help_open == Some("looks-more"))
                         .on_press(Message::ToggleHelp("looks-more"))
-                        .into(),
+                        .apply(|control| super::tip::tip(control, "More ways to make a look")),
                 ])
                 .spacing(6)
                 .align_y(Alignment::Center)

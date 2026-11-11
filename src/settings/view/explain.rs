@@ -116,15 +116,13 @@ fn button<'a>(key: u64, description: &str, open: bool) -> Element<'a, Message> {
         .on_press(Message::Explain(key));
     // Open, the text is already on screen, so the tooltip says how to hide
     // it. Both states keep the same widgets, so keyboard focus stays put.
-    let tip = if open { "Hide explanation" } else { description };
-    cosmic::widget::tooltip(
-        control,
-        container(text::body(tip.to_owned()).size(12)).max_width(320),
-        cosmic::widget::tooltip::Position::Top,
-    )
-    .padding(8)
-    .gap(4)
-    .into()
+    // The words show on hover and while the "?" has keyboard focus.
+    let tip = if open {
+        "Hide explanation"
+    } else {
+        description
+    };
+    super::tip::tip(control, tip)
 }
 
 /// A title with its explanation behind a "?", or shown under it when the

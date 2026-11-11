@@ -9,11 +9,38 @@ fn send(message: well::Message) -> Message {
 }
 
 fn dot<'a>(rgb: Option<[f32; 3]>, size: u16) -> Element<'a, Message> {
-    fill(
+    swatch(rgb, size, false)
+}
+
+/// A round swatch, with a check mark when it is the current color.
+fn swatch<'a>(rgb: Option<[f32; 3]>, size: u16, checked: bool) -> Element<'a, Message> {
+    let inside: Element<'a, Message> = if checked {
+        // Dark on light colors, white on dark ones.
+        let [r, g, b] = rgb.unwrap_or_default();
+        let mark = if 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 {
+            Color::from_rgb(0.04, 0.05, 0.1)
+        } else {
+            Color::WHITE
+        };
+        container(
+            icon::from_name("object-select-symbolic")
+                .size(14)
+                .icon()
+                .class(cosmic::theme::Svg::custom(move |_| {
+                    cosmic::iced::widget::svg::Style { color: Some(mark) }
+                })),
+        )
+        .center_x(size)
+        .center_y(size)
+        .into()
+    } else {
         cosmic::iced::widget::space()
             .width(size)
             .height(size)
-            .into(),
+            .into()
+    };
+    fill(
+        inside,
         rgb.map_or(Color::TRANSPARENT, well::color),
         Color { a: 0.35, ..FG },
         1.,
@@ -64,7 +91,7 @@ impl Settings {
 
     /// Under the control that opened it: the wallpaper's colors and a few
     /// calm ones, one click each, then the picker for anything else.
-    pub(super) fn color_panel(
+    pub(in crate::settings) fn color_panel(
         &self,
         target: Target,
         from_wallpaper: &[[f32; 3]],
@@ -73,13 +100,18 @@ impl Settings {
             .color_well
             .as_ref()
             .filter(|well| well.target == target)?;
+        // Each swatch says its code, on hover, on focus and to a screen
+        // reader, and the one the control already has is checked.
         let chip = |rgb: [f32; 3], index: usize, group: &str| -> Element<'_, Message> {
-            button::custom(dot(Some(rgb), 26))
+            let code = crate::settings::wallpaper::hex(rgb);
+            let current = open.is_current(rgb);
+            let swatch = button::custom(swatch(Some(rgb), 26, current))
                 .id(cosmic::widget::Id::new(format!("color-{group}-{index}")))
-                .class(chip_style(false, self.settings_accent()))
+                .name(format!("Color: {code}"))
+                .class(chip_style(current, self.settings_accent()))
                 .padding(3)
-                .on_press(send(well::Message::Pick(rgb)))
-                .into()
+                .on_press(send(well::Message::Pick(rgb)));
+            super::tip::tip(swatch, &code)
         };
         let mut rows: Vec<Element<'_, Message>> = Vec::new();
         if !from_wallpaper.is_empty() {

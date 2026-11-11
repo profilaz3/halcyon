@@ -1,6 +1,7 @@
 use super::*;
 use crate::calendar::Backend;
 use crate::settings::calendar::{Message as Account, SubscriptionProvider};
+use cosmic::Apply;
 
 impl Settings {
     pub(super) fn calendar_connection(&self) -> Element<'_, Message> {
@@ -42,9 +43,8 @@ impl Settings {
             header.push(
                 button::icon(icon::from_name("view-more-symbolic").size(18))
                     .id(cosmic::widget::Id::new("calendar-account-options"))
-                    .tooltip("Account options")
                     .on_press(Message::ToggleHelp("calendar-account"))
-                    .into(),
+                    .apply(|control| super::tip::tip(control, "Account options")),
             );
         }
         // Not connected and nothing in progress: the single "Connect a
@@ -227,9 +227,13 @@ impl Settings {
                 if editor.subscription_help {
                     rows.push(self.calendar_subscription_guide());
                 }
+                // Enter adds the calendar, like Add calendar, once there's a link.
+                let add = (!editor.subscription_url.0.trim().is_empty())
+                    .then_some(message(Account::AddSubscription));
                 rows.push(
                     text_input("Calendar name", &editor.subscription_name)
                         .on_input(move |name| message(Account::SubscriptionName(name)))
+                        .on_submit_maybe(add.clone().map(|add| move |_| add.clone()))
                         .into(),
                 );
                 rows.push(
@@ -242,6 +246,7 @@ impl Settings {
                     .on_input(move |url| {
                         message(Account::SubscriptionUrl(crate::calendar::SecretText(url)))
                     })
+                    .on_submit_maybe(add.clone().map(|add| move |_| add.clone()))
                     .into(),
                 );
                 if editor.connection.connected()
@@ -257,10 +262,7 @@ impl Settings {
                     row::with_children(vec![
                         button::standard("Add calendar")
                             .id(cosmic::widget::Id::new("calendar-subscription-add"))
-                            .on_press_maybe(
-                                (!editor.subscription_url.0.trim().is_empty())
-                                    .then_some(message(Account::AddSubscription)),
-                            )
+                            .on_press_maybe(add)
                             .into(),
                         button::text("Cancel")
                             .on_press(message(Account::SubscriptionForm(false)))

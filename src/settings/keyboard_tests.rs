@@ -370,3 +370,165 @@ fn ax01_controls_have_accessible_names() {
         "{nodes:#?}"
     );
 }
+
+#[test]
+fn ax10_escape_closes_one_thing_at_a_time_from_the_inside_out() {
+    if child("ax10_escape_closes_one_thing_at_a_time_from_the_inside_out") {
+        return;
+    }
+    use crate::settings::escape::Closes;
+    use crate::settings::tests::settle_settings;
+    let (mut app, initial) = Settings::init(Core::default(), Page::DesktopMotion);
+    settle_settings(&mut app, initial);
+    app.search_query = "clock".into();
+    app.explained = Some((Page::DesktopMotion, 1));
+    app.font_menu = Some(FontTarget::Clock);
+    app.color_well = Some(color_well::Well::open(color_well::Target::Fit, None));
+
+    let mut order = Vec::new();
+    while let Some(closes) = app.escape_closes() {
+        order.push(closes);
+        let _ = app.update(Message::Escape);
+        assert!(order.len() <= 4, "Escape keeps finding {order:?}");
+    }
+    assert_eq!(
+        order,
+        [
+            Closes::ColorPanel,
+            Closes::FontList,
+            Closes::Explanation,
+            Closes::Search
+        ]
+    );
+    assert!(app.color_well.is_none() && app.font_menu.is_none());
+    assert!(app.explained.is_none() && app.search_query.is_empty());
+
+    // An explanation left open on another page isn't on screen to close.
+    app.explained = Some((Page::Clock, 1));
+    assert_eq!(app.escape_closes(), None);
+}
+
+#[test]
+fn ax10_escape_leaves_an_open_panel_to_a_drag_in_progress() {
+    if child("ax10_escape_leaves_an_open_panel_to_a_drag_in_progress") {
+        return;
+    }
+    use crate::settings::tests::settle_settings;
+    let (mut app, initial) = Settings::init(Core::default(), Page::DesktopMotion);
+    settle_settings(&mut app, initial);
+    app.color_well = Some(color_well::Well::open(color_well::Target::Fit, None));
+    app.reorder.source = Some(Widget::Clock);
+
+    assert_eq!(app.escape_closes(), None);
+    let _ = app.update(Message::Escape);
+    assert!(app.color_well.is_some());
+}
+
+#[test]
+fn ax11_swatches_say_their_code_and_the_current_one_is_marked() {
+    if child("ax11_swatches_say_their_code_and_the_current_one_is_marked") {
+        return;
+    }
+    use crate::settings::tests::{send_settings, settle_settings};
+    let (mut app, initial) = Settings::init(Core::default(), Page::DesktopWallpaper);
+    settle_settings(&mut app, initial);
+    let current = color_well::rgb(color_well::QUICK[2]);
+    let target = color_well::Target::Fit;
+    send_settings(
+        &mut app,
+        Message::ColorWell(color_well::Message::Open(target, Some(current))),
+    );
+    let panel = || {
+        app.color_panel(target, &[current])
+            .expect("the panel is open")
+    };
+    let mut native = Native::new(Size::new(420., 520.));
+    let nodes = native.a11y(panel());
+    let swatches: Vec<_> = nodes
+        .iter()
+        .filter_map(|(_, name, _)| name.as_deref()?.strip_prefix("Color: #"))
+        .collect();
+    // The wallpaper's one color, then every suggestion.
+    assert_eq!(swatches.len(), 1 + color_well::QUICK.len(), "{nodes:#?}");
+    assert!(swatches.contains(&"7BA4F4"), "{swatches:?}");
+    native.capture(panel(), &cosmic::Theme::dark(), "ax11-swatches-current");
+    native.capture(
+        panel(),
+        &cosmic::Theme::light(),
+        "ax11-swatches-current-light",
+    );
+}
+
+#[test]
+fn ax01_wallpaper_tiles_are_named_after_their_file() {
+    use crate::settings::wallpaper::{Pick, Tile};
+    let tile = |pick, label: &str| Tile {
+        pick,
+        label: label.into(),
+        missing: false,
+        external: false,
+    };
+    assert_eq!(
+        tile(Pick::Image("/pictures/aurora.jpg".into()), "Aurora").name(),
+        "Wallpaper: aurora.jpg"
+    );
+    assert_eq!(
+        tile(Pick::Folder("/pictures/Trips".into()), "").name(),
+        "Wallpaper folder: Trips"
+    );
+    assert_eq!(
+        tile(Pick::Bundled("dunes.png".into()), "").name(),
+        "Wallpaper: dunes.png"
+    );
+}
+
+#[test]
+fn ax11_accessibility_lists_the_keys_that_work_everywhere() {
+    if child("ax11_accessibility_lists_the_keys_that_work_everywhere") {
+        return;
+    }
+    use crate::settings::tests::{send_settings, settle_settings};
+    let size = Size::new(1280., 800.);
+    let (mut app, initial) = Settings::init(Core::default(), Page::DesktopMotion);
+    settle_settings(&mut app, initial);
+    send_settings(&mut app, Message::Page(Page::DesktopMotion));
+    send_settings(&mut app, Message::Resized(size));
+    let mut native = Native::new(size);
+    let group = native.text_bounds(app.settings_view(), "Keyboard");
+    for title in [
+        "Search settings",
+        "Undo",
+        "Go back",
+        "Move between controls",
+        "Close",
+    ] {
+        let row = native.text_bounds(app.settings_view(), title);
+        assert!(row.y > group.y, "{title:?} sits under Keyboard");
+    }
+    for cap in ["Ctrl", "F", "Z", "Alt", "←", "Tab", "Esc"] {
+        assert!(
+            !native.text_all(app.settings_view(), cap).is_empty(),
+            "the {cap:?} keycap is shown"
+        );
+    }
+    // The rows are named for screen readers like any other row.
+    let names: Vec<_> = native
+        .a11y(app.settings_view())
+        .into_iter()
+        .filter_map(|(_, name, _)| name)
+        .collect();
+    assert!(
+        names.iter().any(|name| name == "Move between controls"),
+        "{names:?}"
+    );
+    native.capture(
+        app.settings_view(),
+        &cosmic::Theme::dark(),
+        "ax11-keyboard-group",
+    );
+    native.capture(
+        app.settings_view(),
+        &cosmic::Theme::light(),
+        "ax11-keyboard-group-light",
+    );
+}

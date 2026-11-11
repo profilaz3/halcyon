@@ -10,6 +10,7 @@ use crate::automation::status::{self as words, Tone};
 use crate::automation::{Change, Days, Effect, Rule, Trigger};
 use crate::settings::automation::{DraftEdit, Kind, Message as Edit, PauseFor, RuleDraft};
 use chrono::Local;
+use cosmic::Apply;
 use cosmic::widget::Space;
 
 fn edit(message: Edit) -> Message {
@@ -63,14 +64,18 @@ fn chip<'a>(title: String, on: bool, accent: Color, message: Message) -> Element
 fn small_icon<'a>(name: &'static str, message: Option<Message>) -> Element<'a, Message> {
     button::icon(icon::from_name(name))
         .extra_small()
-        .tooltip(match name {
-            "go-up-symbolic" => "Move rule up in priority",
-            "go-down-symbolic" => "Move rule down in priority",
-            "edit-delete-symbolic" => "Remove rule",
-            _ => "Rule action",
-        })
         .on_press_maybe(message)
-        .into()
+        .apply(|control| {
+            super::tip::tip(
+                control,
+                match name {
+                    "go-up-symbolic" => "Move rule up in priority",
+                    "go-down-symbolic" => "Move rule down in priority",
+                    "edit-delete-symbolic" => "Remove rule",
+                    _ => "Rule action",
+                },
+            )
+        })
 }
 
 impl Settings {

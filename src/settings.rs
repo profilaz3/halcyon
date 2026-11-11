@@ -26,6 +26,7 @@ mod direct;
 #[cfg(test)]
 mod display_tests;
 mod drafts;
+mod escape;
 mod legacy;
 mod moments;
 mod monitors;
@@ -548,6 +549,8 @@ pub enum Message {
     SearchResult(navigation::SearchHit),
     RevealSearch(navigation::SearchHit),
     FocusSearch,
+    /// Closes the innermost open panel, list, explanation or search.
+    Escape,
     /// Returns to the named history destination (Alt+Left).
     Back,
     /// Home: preview a built-in look on the Presets page. Nothing applies.
@@ -1410,9 +1413,7 @@ impl cosmic::Application for Settings {
                     Event::Keyboard(keyboard::Event::KeyPressed {
                         key: keyboard::Key::Named(keyboard::key::Named::Escape),
                         ..
-                    }) if status == cosmic::iced::event::Status::Ignored => {
-                        Some(Message::SearchSettings(String::new()))
-                    }
+                    }) if status == cosmic::iced::event::Status::Ignored => Some(Message::Escape),
                     _ => None,
                 }
             }));
@@ -2375,6 +2376,7 @@ impl Settings {
                     return navigation::reveal(hit.anchor());
                 }
             }
+            Message::Escape => return self.escape(),
             Message::FocusSearch => {
                 if self.rail() {
                     self.search_open = true;
@@ -4545,6 +4547,7 @@ fn checkpoint_message(message: &Message) -> bool {
             | Message::Placement(placement::Message::Pointer(..))
             | Message::SearchSettings(..)
             | Message::FocusSearch
+            | Message::Escape
             | Message::RevealSearch(..)
             | Message::ReviewPreviewConflicts
             | Message::RefreshService

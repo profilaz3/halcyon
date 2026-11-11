@@ -1,4 +1,5 @@
 use super::*;
+use cosmic::Apply;
 
 impl Settings {
     pub(super) fn search_target<'a>(
@@ -91,9 +92,8 @@ impl Settings {
                 button::text(title)
                     .id(cosmic::widget::Id::new("settings-back"))
                     .leading_icon(icon::from_name("go-previous-symbolic").size(16))
-                    .tooltip("Back (Alt+←)")
                     .on_press(message)
-                    .into(),
+                    .apply(|control| super::tip::tip(control, "Back (Alt+←)")),
             );
         }
         if !top.is_empty() {

@@ -1,4 +1,5 @@
 use super::*;
+use cosmic::Apply;
 
 /// Transient App settings navigation, independent of saved configuration.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -353,9 +354,8 @@ impl Settings {
             if !state.query.is_empty() {
                 search_row.push(
                     button::icon(icon::from_name("edit-clear-symbolic"))
-                        .tooltip("Clear search")
                         .on_press(Message::ClearCitySearch)
-                        .into(),
+                        .apply(|control| super::tip::tip(control, "Clear search")),
                 );
             }
             if self.config.location.is_none()
@@ -823,15 +823,19 @@ impl Settings {
                             "devbox-move-{}-{direction}",
                             section.key()
                         )))
-                        .tooltip(if direction < 0 {
-                            "Move up"
-                        } else {
-                            "Move down"
-                        })
                         .on_press_maybe(
                             (enabled && idle).then_some(Message::DevboxMove(section, direction)),
                         )
-                        .into(),
+                        .apply(|control| {
+                            super::tip::tip(
+                                control,
+                                if direction < 0 {
+                                    "Move up"
+                                } else {
+                                    "Move down"
+                                },
+                            )
+                        }),
                 );
             }
         }

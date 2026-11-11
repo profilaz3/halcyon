@@ -35,6 +35,8 @@ pub enum Message {
 pub struct Well {
     pub target: Target,
     pub model: ColorPickerModel,
+    /// The color the control had when it opened; its swatch is checked.
+    pub current: Option<[f32; 3]>,
 }
 
 /// Calm, readable colors offered beside a wallpaper's own suggestions.
@@ -63,7 +65,18 @@ impl Well {
     pub fn open(target: Target, current: Option<[f32; 3]>) -> Self {
         let mut model = ColorPickerModel::new("Hex", "RGB", None, current.map(color));
         let _ = model.update::<()>(ColorPickerUpdate::ToggleColorPicker);
-        Self { target, model }
+        Self {
+            target,
+            model,
+            current,
+        }
+    }
+
+    /// Whether `rgb` is the color the control already has, to the byte.
+    pub fn is_current(&self, rgb: [f32; 3]) -> bool {
+        self.current.is_some_and(|current| {
+            crate::settings::wallpaper::hex(current) == crate::settings::wallpaper::hex(rgb)
+        })
     }
 }
 
@@ -122,6 +135,19 @@ pub fn update(well: &mut Option<Well>, message: Message) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_current_color_is_checked_to_the_byte() {
+        let well = Well::open(Target::Accent, Some(rgb(QUICK[2])));
+        assert!(well.is_current(rgb(QUICK[2])));
+        assert!(well.is_current([
+            0x7B as f32 / 255. + 0.001,
+            0xA4 as f32 / 255.,
+            0xF4 as f32 / 255.
+        ]));
+        assert!(!well.is_current(rgb(QUICK[3])));
+        assert!(!Well::open(Target::Accent, None).is_current(rgb(QUICK[2])));
+    }
 
     #[test]
     fn opening_toggles_and_choices_close_with_the_target() {

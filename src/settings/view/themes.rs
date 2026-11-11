@@ -10,6 +10,7 @@ use crate::desktop::profiles::themes;
 use crate::desktop::wallpaper::automatic;
 use crate::desktop_theme::{Family, tone};
 use crate::settings::profiles::{Message as Edit, NameAction, Selection};
+use cosmic::Apply;
 use cosmic::iced::widget::stack;
 
 fn edit(message: Edit) -> Message {
@@ -437,9 +438,8 @@ impl Settings {
             let writable = editor.writable();
             let action = |name: &'static str, tip: &'static str, message: Option<Message>| {
                 button::icon(icon::from_name(name).size(16))
-                    .tooltip(tip)
                     .on_press_maybe(message)
-                    .into()
+                    .apply(|control| super::tip::tip(control, tip))
             };
             actions.push(action(
                 "edit-copy-symbolic",
