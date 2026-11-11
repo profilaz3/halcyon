@@ -832,9 +832,12 @@ pub fn resolve(a: Appearance) -> Roles {
     if a.contrast_assist {
         card = crate::widget_style::readable(card);
     }
+    // Text on a see-through card passes over a white or a black picture.
+    card = crate::widget_style::legible(card);
     // Drawer and layout controls stay opaque even over see-through cards.
     let mut filled = card;
     filled.background.a = filled.background.a.max(0.92);
+    let filled = crate::widget_style::legible(filled);
     let wall_bg = if a.wallpaper_light {
         rgb([238, 236, 226])
     } else {
@@ -899,6 +902,8 @@ impl Config {
                 self.materials.widgets(),
                 self.appearance.contrast_assist,
             );
+            // See-through cards keep their text readable over any picture.
+            roles.card = crate::widget_style::legible(roles.card);
             if self.materials.widgets().is_some() {
                 roles.frosted = !roles.transparent;
             }
@@ -991,6 +996,52 @@ mod tests {
         assert_eq!(fallback.weight, Weight::Bold);
     }
 
+    /// The worst contrast of `ink` on `card` over any picture: the card's
+    /// fill blended over black, white and the greys between. An opaque card
+    /// is just itself.
+    fn over_any_picture(ink: Color, card: Color) -> f32 {
+        let a = card.a.clamp(0., 1.);
+        (0..=20)
+            .map(|n| {
+                let v = n as f32 / 20.;
+                let mix = |c: f32| c * a + v * (1. - a);
+                contrast(ink, Color::from_rgb(mix(card.r), mix(card.g), mix(card.b)))
+            })
+            .fold(f32::INFINITY, f32::min)
+    }
+
+    #[test]
+    fn see_through_cards_stay_readable_over_white_and_black_pictures() {
+        // Glass and Frosted at every opacity a person can pick, in both
+        // modes, with and without a material finish.
+        let old: Config = serde_json::from_str("{}").unwrap();
+        for family in Family::ALL {
+            for light in [false, true] {
+                for opacity in [crate::config::MIN_CARD_OPACITY, 25, 40, 55, 70, 85, 100] {
+                    let mut c = old.clone();
+                    c.appearance.family = Some(family);
+                    c.appearance.wallpaper_light = light;
+                    c.appearance.opacity = opacity;
+                    let roles = c.theme_roles().unwrap();
+                    if roles.transparent {
+                        continue;
+                    }
+                    let card = roles.card;
+                    assert!(card.background.a >= f32::from(opacity) / 100. - 1e-4);
+                    for ink in [card.foreground, card.muted, card.accent] {
+                        let worst = over_any_picture(ink, card.background);
+                        assert!(
+                            worst >= 4.5,
+                            "{family:?} light={light} {opacity}%: {ink:?} {worst:.2}"
+                        );
+                    }
+                    let controls = c.surface_palette();
+                    assert!(over_any_picture(controls.foreground, controls.background) >= 4.5);
+                }
+            }
+        }
+    }
+
     #[test]
     fn shared_themes_keep_legacy_and_cache_readable_roles() {
         let old: Config = serde_json::from_str("{}").unwrap();
@@ -1023,6 +1074,13 @@ mod tests {
                     roles.error,
                 ] {
                     assert!(contrast(color, bg) >= 4.5, "{family:?} {light}: {color:?}");
+                }
+                // A see-through card is read over the picture behind it.
+                if !roles.transparent {
+                    for color in [roles.card.foreground, roles.card.muted, roles.card.accent] {
+                        let worst = over_any_picture(color, roles.card.background);
+                        assert!(worst >= 4.5, "{family:?} {light}: {color:?} {worst:.2}");
+                    }
                 }
                 assert_eq!(roles.transparent, family.spec().transparent);
                 let controls = c.surface_palette();
@@ -1093,6 +1151,12 @@ mod tests {
                             contrast(ink, bg) >= 4.5,
                             "{family:?} {seed:?} {light}: {ink:?}"
                         );
+                    }
+                    if !roles.transparent {
+                        for ink in [roles.card.foreground, roles.card.muted, roles.card.accent] {
+                            let worst = over_any_picture(ink, roles.card.background);
+                            assert!(worst >= 4.5, "{family:?} {seed:?} {light}: {worst:.2}");
+                        }
                     }
                     // Readable ink keeps the color rather than graying it.
                     if tint.c >= 0.05 {
