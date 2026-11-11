@@ -6521,6 +6521,7 @@ mod tests {
     include!("settings/solar_tests.rs");
     include!("settings/adaptive_tests.rs");
     include!("settings/polish_tests.rs");
+    include!("settings/structure_tests.rs");
     include!("settings/search_label_tests.rs");
     include!("settings/corners_tests.rs");
     include!("settings/clock_stage_tests.rs");

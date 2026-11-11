@@ -31,16 +31,29 @@ impl Settings {
                 options.push(("Islands · not installed".into(), true, None));
             }
         }
-        let shape = segmented(options, self.settings_accent());
+        let offered = options.len() > 2;
+        let mut shape = vec![segmented(options, self.settings_accent())];
         // A width this editor can't read is kept until a shape is chosen.
-        match draft.extend() {
-            Setting::Unsupported(raw) if !islands => field(
+        if let Setting::Unsupported(raw) = draft.extend()
+            && !islands
+        {
+            shape.push(kept(&raw));
+        }
+        if offered {
+            shape.push(label(
+                "Islands splits the panel into floating pieces.",
+                12.,
+                MUTED,
+            ));
+        }
+        match shape.len() {
+            1 => field("Shape", shape.remove(0)),
+            _ => field(
                 "Shape",
-                cosmic::widget::column::with_children(vec![shape, kept(&raw)])
+                cosmic::widget::column::with_children(shape)
                     .spacing(6)
                     .into(),
             ),
-            _ => field("Shape", shape),
         }
     }
 }

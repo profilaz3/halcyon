@@ -354,6 +354,25 @@ pub(super) const SEE_THROUGH: SearchHit = hit(
 .names_page()
 .at("material-scope")
 .open(SearchOpen::Transparency);
+/// The dock’s own see-through slider, which Glass and transparency links to.
+pub(super) const DOCK_SEE_THROUGH: SearchHit = hit(
+    Page::DesktopDock,
+    "See-through",
+    "dock transparent transparency opacity glass see through",
+    false,
+)
+.at("native-bar-opacity")
+.bar(crate::desktop::panels::PanelKind::Dock);
+/// Blur behind frosted windows, which Glass and transparency links to.
+pub(super) const WINDOW_BLUR: SearchHit = hit(
+    Page::DesktopWindows,
+    "Frosted surfaces and blur",
+    "desktop effects blur frosted glass shadows windows transparent transparency",
+    true,
+)
+.at("appearance-effects")
+.open(SearchOpen::Effects)
+.section(WINDOW_DETAILS);
 
 pub(super) const PRIVACY: SearchHit = hit(
     Page::General,
@@ -624,19 +643,14 @@ const SEARCH: &[SearchHit] = &[
         false,
     )
     .names_page(),
-    hit(
-        Page::DesktopDock,
-        "See-through",
-        "dock transparent transparency opacity glass see through",
-        false,
-    )
-    .bar(PanelKind::Dock),
+    DOCK_SEE_THROUGH,
     hit(
         Page::DesktopDock,
         "See-through",
         "panel transparent transparency opacity glass see through",
         false,
     )
+    .at("native-bar-opacity")
     .bar(PanelKind::Panel),
     hit(
         Page::DesktopAppearance,
@@ -673,15 +687,7 @@ const SEARCH: &[SearchHit] = &[
     .at("window-corners")
     .open(SearchOpen::Effects)
     .section(WINDOW_DETAILS),
-    hit(
-        Page::DesktopWindows,
-        "Frosted surfaces and blur",
-        "desktop effects blur frosted glass shadows",
-        true,
-    )
-    .at("appearance-effects")
-    .open(SearchOpen::Effects)
-    .section(WINDOW_DETAILS),
+    WINDOW_BLUR,
     hit(
         Page::Projects,
         "Update every",
@@ -844,12 +850,12 @@ const SEARCH: &[SearchHit] = &[
     .names_page(),
     STARTUP,
     hit(
-        Page::General,
+        Page::Widgets,
         "Widget controls",
         "widget controls sidebar screen edge menu side panel slide delay animation",
         false,
     )
-    .destination(AppSettingsPage::Interface),
+    .at("widgets-behave"),
     PRIVACY,
     hit(
         Page::General,
@@ -883,6 +889,7 @@ const ROWS: &[SearchHit] = &[
     hit(Page::Appearance, "Clear glass", "", false),
     hit(Page::Appearance, "Frosted", "", false),
     hit(Page::Appearance, "Liquid", "", false),
+    hit(Page::Appearance, "Other surfaces", "", false),
     hit(Page::Appearance, "Smoked glass", "", false),
     hit(Page::Appearance, "Widget corners, opacity and outline", "", false),
     hit(Page::Builder, "Add a part", "", false),
@@ -905,6 +912,7 @@ const ROWS: &[SearchHit] = &[
     hit(Page::Clock, "24-hour time", "", false),
     hit(Page::Clock, "Alignment", "", false),
     hit(Page::Clock, "Let the scene cover the clock", "", false),
+    hit(Page::Clock, "Match the desktop style", "", false),
     hit(Page::Clock, "Show the date", "", false),
     hit(Page::Clock, "Text", "", false),
     hit(Page::Clock, "Text size", "", false),
@@ -912,7 +920,6 @@ const ROWS: &[SearchHit] = &[
     hit(Page::DesktopAppearance, "Icon theme", "", false),
     hit(Page::DesktopAppearance, "Interface font", "", false),
     hit(Page::DesktopAppearance, "Match style", "", false),
-    hit(Page::Clock, "Match the desktop style", "", false),
     hit(Page::DesktopAppearance, "Widget font", "", false),
     hit(Page::DesktopAutomation, "Set times and screens", "", false),
     hit(Page::Moments, "Showing now", "", false),
@@ -1042,8 +1049,6 @@ const ROWS: &[SearchHit] = &[
     hit(Page::General, "How things are running", "", false).destination(AppSettingsPage::Help),
     hit(Page::General, "Report a problem", "", false).destination(AppSettingsPage::Help),
     hit(Page::General, "Running in the background", "", false).destination(AppSettingsPage::Help),
-    hit(Page::General, "On the desktop", "", false).destination(AppSettingsPage::Interface),
-    hit(Page::General, "Slide in", "", false).destination(AppSettingsPage::Interface),
     hit(Page::General, "This window", "", false).destination(AppSettingsPage::Interface),
     hit(Page::General, "Keep running in the background", "", false).destination(AppSettingsPage::Operation),
     hit(Page::General, "Running", "", false).destination(AppSettingsPage::Operation),
@@ -1083,6 +1088,8 @@ const ROWS: &[SearchHit] = &[
     hit(Page::Themes, "Surfaces", "", false),
     hit(Page::Themes, "Text and icons", "", false),
     hit(Page::Weather, "Dew point and how often it updates", "", false),
+    hit(Page::Widgets, "How widgets behave", "", false).at("widgets-behave"),
+    hit(Page::Widgets, "Slide in", "", false).at("widgets-behave"),
 ];
 
 /// Every search result, for tests that open each one.
@@ -1106,6 +1113,7 @@ pub(super) fn probe(
 /// Row titles that are not settings, and why search leaves them out.
 #[cfg(test)]
 pub(super) const NOT_INDEXED: &[(&str, &str)] = &[
+    ("Desktop", "a heading on Wallpaper over Icons on the desktop, which has its own result"),
     ("Clock type", "a part of the day’s own value; search opens the Clock setting"),
     ("Clock weight", "a part of the day’s own value; search opens the Clock setting"),
     ("Clock italic", "a part of the day’s own value; search opens the Clock setting"),
