@@ -1086,6 +1086,11 @@ impl Wizard {
             .map(|key| crate::layout_state::for_display(&projected, Some(&key), false, displays))
             .collect();
     }
+    /// A display too small for the chosen widgets, for tests.
+    #[cfg(test)]
+    pub(crate) fn shrink_display(&mut self, screen: [f32; 2]) {
+        self.geometry.screen = screen;
+    }
     pub fn widget_plan(&self, config: &crate::config::Config) -> widgets::Plan {
         let mut plan = self.widgets.plan(
             config,

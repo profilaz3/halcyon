@@ -589,7 +589,18 @@ impl Settings {
         ];
         // The reason a step cannot apply stays beside its action, outside the
         // scrollable preview. Give the person a way to correct it, keeping the draft.
-        if let Some(error) = wizard.error.as_ref().or(placement_error.as_ref()) {
+        // On Choose widgets, Next stays disabled until the widgets fit;
+        // elsewhere the action goes back to Choose widgets.
+        let crowded = step == Screen::Widgets && placement_error.is_some();
+        let placement_note = placement_error.as_ref().map(|error| {
+            let fix = match step {
+                Screen::Widgets if wizard.widgets.grouped => "Remove a widget to continue.",
+                Screen::Widgets => "Remove a widget or turn on Combine to continue.",
+                _ => "Choose fewer widgets or another display.",
+            };
+            format!("{error} {fix}")
+        });
+        if let Some(error) = wizard.error.as_ref().or(placement_note.as_ref()) {
             parts.push(
                 container(words(error.clone(), 13., DANGER))
                     .id(cosmic::widget::Id::new("wizard-step-error"))
@@ -651,19 +662,19 @@ impl Settings {
                     secondary("Back", "wizard-back", go(Step::Back)),
                     quiet("Set up later", "wizard-leave-ask", go(Step::AskLeave(true))),
                 ],
-                button::suggested(if placement_error.is_some() {
+                button::suggested(if placement_error.is_some() && !crowded {
                     "Choose widgets"
                 } else {
                     "Next"
                 })
                 .id(cosmic::widget::Id::new("wizard-next"))
-                .on_press_maybe(
-                    (!self.native_busy).then_some(go(if placement_error.is_some() {
+                .on_press_maybe((!self.native_busy && !crowded).then_some(go(
+                    if placement_error.is_some() {
                         Step::Show(Screen::Widgets)
                     } else {
                         Step::Next
-                    })),
-                )
+                    },
+                )))
                 .into(),
             ),
         };

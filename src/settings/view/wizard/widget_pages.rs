@@ -303,12 +303,6 @@ impl Settings {
                 );
             }
         }
-        if let Some(error) = plan.error {
-            // Arrange shows this next to its fixed footer action.
-            if !arrange {
-                preview.push(words(error, 13., DANGER));
-            }
-        }
         super::super::adaptive::columns(
             container(column::with_children(preview).spacing(10))
                 .width(Length::Fill)

@@ -491,10 +491,8 @@ impl Draft {
                 )
             };
             let Some(point) = point else {
-                error = Some(format!(
-                    "{} needs more room. Choose fewer widgets or another display.",
-                    w.title()
-                ));
+                // The wizard says how to fix it, which depends on the step.
+                error = Some(format!("{} needs more room.", w.title()));
                 break;
             };
             occupied.push([point[0], point[1], size[0], size[1]]);

@@ -2196,3 +2196,88 @@ fn on04_done_points_to_changes(size: Size) {
         );
     }
 }
+
+/// ON-15: widgets that don't fit say so once, beside a disabled Next, with
+/// how to continue, instead of a Choose widgets button on that same step.
+#[test]
+fn on15_crowded_widgets_say_so_once_at_820() {
+    if child("on15_crowded_widgets_say_so_once_at_820") {
+        return;
+    }
+    on15_crowded_widgets_say_so_once(Size::new(820., 600.));
+}
+
+#[test]
+fn on15_crowded_widgets_say_so_once_at_1280() {
+    if child("on15_crowded_widgets_say_so_once_at_1280") {
+        return;
+    }
+    on15_crowded_widgets_say_so_once(Size::new(1280., 800.));
+}
+
+fn on15_crowded_widgets_say_so_once(size: Size) {
+    seed_desktop();
+    let themes = [
+        (cosmic::Theme::light(), "light"),
+        (cosmic::Theme::dark(), "dark"),
+    ];
+    let (mut app, mut native) = open(size);
+    click(&mut app, &mut native, "wizard-start");
+    reveal(&mut app, &mut native, "wizard-look-calm");
+    click(&mut app, &mut native, "wizard-look-calm");
+    let _ = app.update(Message::Wizard(wizard::Message::Show(
+        wizard::Step::Widgets,
+    )));
+    let wizard = app.wizard.as_mut().unwrap();
+    wizard.shrink_display([400., 300.]);
+    let error = wizard
+        .widget_plan(&app.config)
+        .error
+        .expect("too many widgets");
+    assert!(error.ends_with(" needs more room."), "{error}");
+    let grouped = app.wizard.as_ref().unwrap().widgets.grouped;
+    let fix = if grouped {
+        "Remove a widget to continue."
+    } else {
+        "Remove a widget or turn on Combine to continue."
+    };
+    let note = format!("{error} {fix}");
+    native.text_bounds(app.settings_view(), &note);
+    assert!(native.text_all(app.settings_view(), &error).is_empty());
+    assert!(
+        native
+            .text_all(app.settings_view(), "Choose widgets")
+            .is_empty()
+    );
+    native.text_bounds(app.settings_view(), "Next");
+    native.bounds(app.settings_view(), "wizard-step-error");
+    for (theme, name) in &themes {
+        native.capture(
+            app.settings_view(),
+            theme,
+            &format!("on15-widgets-{}-{name}", size.width),
+        );
+    }
+    // Next does nothing until the widgets fit.
+    click(&mut app, &mut native, "wizard-next");
+    assert_eq!(step(&app), wizard::Step::Widgets);
+    // With Combine off, turning it on is offered too.
+    let _ = app.update(Message::Wizard(wizard::Message::GroupWidgets(!grouped)));
+    let wizard = app.wizard.as_mut().unwrap();
+    wizard.shrink_display([400., 300.]);
+    let error = wizard
+        .widget_plan(&app.config)
+        .error
+        .expect("still too many");
+    let fix = if wizard.widgets.grouped {
+        "Remove a widget to continue."
+    } else {
+        "Remove a widget or turn on Combine to continue."
+    };
+    native.text_bounds(app.settings_view(), &format!("{error} {fix}"));
+    assert!(
+        native
+            .text_all(app.settings_view(), "Choose widgets")
+            .is_empty()
+    );
+}
