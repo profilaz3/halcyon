@@ -2321,6 +2321,8 @@ impl Settings {
                 // Setup is the first visit: there is nothing new to tell yet.
                 if on {
                     self.record_notes_seen();
+                    // Not now lands on Home, as dismissing setup always has.
+                    return self.handle(Message::Page(Page::Overview));
                 }
             }
             Message::NotesSeen => self.record_notes_seen(),
