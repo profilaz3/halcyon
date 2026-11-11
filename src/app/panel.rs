@@ -2,6 +2,17 @@ use super::*;
 use cosmic::Application;
 use cosmic::iced::mouse;
 use cosmic::iced::widget::keyed_column;
+use drawer::{DrawerItem, DrawerKey};
+
+/// The edge menu's second group, in order.
+const ELSEWHERE: [Widget; 6] = [
+    Widget::Calendar,
+    Widget::Clock,
+    Widget::Glance,
+    Widget::Music,
+    Widget::Notes,
+    Widget::Focus,
+];
 
 impl Cards {
     pub(super) fn set_widget_visible(&mut self, widget: Widget, visible: bool) -> Task<Message> {
@@ -10,9 +21,145 @@ impl Cards {
             config.save_widget(widget, visible)
         }) {
             eprintln!("Could not save widget selection: {error}");
+            self.raise_notice(
+                "Couldn’t save the widget list",
+                "Your change wasn’t kept.",
+                error.to_string(),
+                Some(Message::SetWidgetVisible(widget, visible)),
+            );
             return Task::none();
         }
         self.apply_config(config)
+    }
+    /// Shows a failed desktop change in the edge menu, opening it.
+    pub(super) fn raise_notice(
+        &mut self,
+        title: &'static str,
+        body: &'static str,
+        error: String,
+        retry: Option<Message>,
+    ) {
+        self.notice = Some(Notice {
+            title,
+            body,
+            error,
+            retry,
+            details: false,
+        });
+        self.sidebar.show(Instant::now());
+    }
+    pub(super) fn save_widget_order(&mut self, order: Vec<Widget>) -> Task<Message> {
+        let original = self.config.ordered_right_cards();
+        if let Err(error) = self.config.save_order(&order) {
+            self.config.widget_order = original.iter().map(|w| w.key().into()).collect();
+            eprintln!("Could not save widget order: {error}");
+            self.raise_notice(
+                "Couldn’t save the widget order",
+                "The widgets are back in their saved order.",
+                error.to_string(),
+                Some(Message::SaveOrder(order)),
+            );
+        }
+        Task::none()
+    }
+    /// Every place the keyboard can be in the edge menu, top down.
+    pub(super) fn drawer_items(&self) -> Vec<DrawerItem> {
+        self.config
+            .ordered_right_cards()
+            .into_iter()
+            .chain(ELSEWHERE)
+            .map(DrawerItem::Widget)
+            .chain([DrawerItem::Arrange, DrawerItem::Settings])
+            .collect()
+    }
+    fn drawer_focus(&self) -> Option<DrawerItem> {
+        let items = self.drawer_items();
+        self.sidebar
+            .focus
+            .map(|index| items[index.min(items.len() - 1)])
+    }
+    /// `halcyon --toggle drawer`.
+    pub(super) fn drawer_toggle(&mut self) -> Task<Message> {
+        if self.sidebar.visible {
+            return self.update(Message::HideControls);
+        }
+        self.sidebar.show(Instant::now());
+        self.sidebar.focus = Some(0);
+        if self.controls_open {
+            // Still sliding out: the open surface takes the keys now.
+            set_keyboard_interactivity(self.ids[2], KeyboardInteractivity::Exclusive)
+        } else {
+            Task::none()
+        }
+    }
+    pub(super) fn drawer_key(&mut self, key: DrawerKey) -> Task<Message> {
+        let Some(index) = self.sidebar.focus else {
+            return Task::none();
+        };
+        if key == DrawerKey::Close {
+            return self.update(Message::HideControls);
+        }
+        if self.notice.is_some() {
+            return match key {
+                DrawerKey::Activate => self.update(Message::NoticeRetry),
+                _ => Task::none(),
+            };
+        }
+        if self.arrange_recovery_view().is_some() {
+            return Task::none();
+        }
+        let items = self.drawer_items();
+        let index = index.min(items.len() - 1);
+        match key {
+            DrawerKey::Next => self.sidebar.focus = Some((index + 1) % items.len()),
+            DrawerKey::Previous => {
+                self.sidebar.focus = Some((index + items.len() - 1) % items.len())
+            }
+            DrawerKey::Activate => {
+                return match items[index] {
+                    DrawerItem::Widget(widget) => self.update(Message::ToggleWidget(widget)),
+                    DrawerItem::Arrange => {
+                        self.sidebar.hide();
+                        self.update(Message::Arrange)
+                    }
+                    DrawerItem::Settings => {
+                        self.sidebar.hide();
+                        self.update(Message::Settings)
+                    }
+                };
+            }
+            DrawerKey::MoveUp | DrawerKey::MoveDown => {
+                let DrawerItem::Widget(widget) = items[index] else {
+                    return Task::none();
+                };
+                let mut order = self.config.ordered_right_cards();
+                let Some(from) = order.iter().position(|w| *w == widget) else {
+                    return Task::none();
+                };
+                if !self.rail_draggable(widget) {
+                    return Task::none();
+                }
+                let to = if key == DrawerKey::MoveUp {
+                    from.checked_sub(1)
+                } else {
+                    (from + 1 < order.len()).then_some(from + 1)
+                };
+                let Some(to) = to else {
+                    return Task::none();
+                };
+                order.swap(from, to);
+                // The keyboard stays on the widget it moved.
+                self.sidebar.focus = Some(to);
+                return self.save_widget_order(order);
+            }
+            DrawerKey::Close => {}
+        }
+        Task::none()
+    }
+    fn rail_draggable(&self, widget: Widget) -> bool {
+        !self.custom_layout()
+            && !(self.config.glance.enabled
+                && matches!(widget, Widget::Clock | Widget::Weather | Widget::Calendar))
     }
     pub(super) fn next_wake(&self) -> Option<Instant> {
         let visible = |widget| {
@@ -296,12 +443,7 @@ impl Cards {
         })
     }
     pub(super) fn command_path() -> Option<std::path::PathBuf> {
-        if std::env::var_os("DESKTOP_CARDS_CONFIG").is_some() {
-            Config::path()
-                .and_then(|p| p.parent().map(|parent| parent.join("desktop-command.json")))
-        } else {
-            crate::paths::runtime_dir().map(|dir| dir.join("command.json"))
-        }
+        crate::instance::command_path()
     }
     pub(super) fn read_command() -> Option<Message> {
         let path = Self::command_path()?;
@@ -317,6 +459,7 @@ impl Cards {
             }),
             "reset-layout" => Some(Message::ResetLayout),
             "close" => Some(Message::HideControls),
+            "drawer" => Some(Message::DrawerToggle),
             "rail" => Some(Message::ShowControls),
             "open" => match value["widget"].as_str() {
                 None | Some("open") => Some(Message::ShowControls),
@@ -365,10 +508,8 @@ impl Cards {
         draggable: bool,
         corners: [f32; 4],
     ) -> Element<'_, Message> {
-        let draggable = draggable
-            && !self.custom_layout()
-            && !(self.config.glance.enabled
-                && matches!(widget, Widget::Clock | Widget::Weather | Widget::Calendar));
+        let draggable = draggable && self.rail_draggable(widget);
+        let focused = self.drawer_focus() == Some(DrawerItem::Widget(widget));
         let p = self.config.surface_palette();
         let selected = if widget.is_tool() {
             self.config.widget_visible(widget)
@@ -434,7 +575,7 @@ impl Cards {
                         })),
                         border: Border {
                             color,
-                            width: if dragged { 2. } else { 0. },
+                            width: if dragged || focused { 2. } else { 0. },
                             radius: corners.into(),
                         },
                         ..Default::default()
@@ -462,6 +603,9 @@ impl Cards {
         if let Some(recovery) = self.arrange_recovery_view() {
             return recovery;
         }
+        if let Some(notice) = self.notice_view() {
+            return notice;
+        }
         let p = self.config.surface_palette();
         // Rounded ends for the first and last row of a group.
         let corners = |index: usize, count: usize| -> [f32; 4] {
@@ -478,14 +622,7 @@ impl Cards {
                 .map(|(index, widget)| (widget, self.rail_button(widget, true, corners(index, count)))),
         )
         .spacing(drawer::ROW_STEP - drawer::ROW_HEIGHT);
-        let elsewhere = [
-            Widget::Calendar,
-            Widget::Clock,
-            Widget::Glance,
-            Widget::Music,
-            Widget::Notes,
-            Widget::Focus,
-        ];
+        let elsewhere = ELSEWHERE;
         let others = column::with_children(
             elsewhere
                 .into_iter()
@@ -520,36 +657,58 @@ impl Cards {
         )
         .padding([0, 4])
         .height(Length::Fixed(drawer::HEADER));
-        let settings = mouse_area(
-            container(
-                row::with_children(vec![
-                    cosmic::widget::icon::from_name("preferences-system-symbolic")
-                        .size(16)
-                        .icon()
-                        .into(),
-                    label("Open settings", 13., p.foreground),
-                ])
-                .spacing(9)
-                .align_y(Alignment::Center),
+        let focus = self.drawer_focus();
+        let action = |icon: &'static str, title: &'static str, item: DrawerItem, message| {
+            let focused = focus == Some(item);
+            mouse_area(
+                container(
+                    row::with_children(vec![
+                        cosmic::widget::icon::from_name(icon).size(16).icon().into(),
+                        label(title, 13., p.foreground),
+                    ])
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .width(Length::Fill)
+                .height(Length::Fixed(34.))
+                .padding([0, 10])
+                .align_y(Alignment::Center)
+                .class(cosmic::theme::Container::custom(move |_| {
+                    cosmic::iced::widget::container::Style {
+                        icon_color: Some(p.foreground),
+                        border: Border {
+                            color: if focused {
+                                p.accent
+                            } else {
+                                mix(p.foreground, p.background, 0.16)
+                            },
+                            width: if focused { 2. } else { 1. },
+                            radius: 12.into(),
+                        },
+                        ..Default::default()
+                    }
+                })),
             )
-            .width(Length::Fill)
-            .height(Length::Fixed(34.))
-            .padding([0, 12])
-            .align_y(Alignment::Center)
-            .class(cosmic::theme::Container::custom(move |_| {
-                cosmic::iced::widget::container::Style {
-                    icon_color: Some(p.foreground),
-                    border: Border {
-                        color: mix(p.foreground, p.background, 0.16),
-                        width: 1.,
-                        radius: 12.into(),
-                    },
-                    ..Default::default()
-                }
-            })),
-        )
-        .on_press(Message::Settings)
-        .interaction(mouse::Interaction::Pointer);
+            .on_press(message)
+            .interaction(mouse::Interaction::Pointer)
+        };
+        let settings = row::with_children(vec![
+            action(
+                "view-grid-symbolic",
+                "Arrange",
+                DrawerItem::Arrange,
+                Message::Arrange,
+            )
+            .into(),
+            action(
+                "preferences-system-symbolic",
+                "Settings",
+                DrawerItem::Settings,
+                Message::Settings,
+            )
+            .into(),
+        ])
+        .spacing(8);
         mouse_area(
             container(
                 column::with_children(vec![
@@ -603,6 +762,55 @@ impl Cards {
         .on_exit(Message::Hover(false, false))
         .into()
     }
+    /// A failed desktop change, in the place Arrange explains its own.
+    pub(super) fn notice_view(&self) -> Option<Element<'_, Message>> {
+        let notice = self.notice.as_ref()?;
+        let mut content = vec![
+            text::heading(notice.title).into(),
+            text::body(notice.body).into(),
+        ];
+        let mut buttons = Vec::new();
+        if notice.retry.is_some() {
+            buttons.push(
+                cosmic::widget::button::suggested("Try again")
+                    .id("notice-retry".into())
+                    .on_press(Message::NoticeRetry)
+                    .into(),
+            );
+        }
+        buttons.push(
+            cosmic::widget::button::standard("Dismiss")
+                .id("notice-dismiss".into())
+                .on_press(Message::NoticeDismiss)
+                .into(),
+        );
+        content.push(row::with_children(buttons).spacing(8).into());
+        content.push(
+            cosmic::widget::button::link(if notice.details {
+                "Hide details"
+            } else {
+                "Details"
+            })
+            .id("notice-details".into())
+            .on_press(Message::NoticeDetails)
+            .into(),
+        );
+        if notice.details {
+            content.push(
+                cosmic::widget::scrollable(text::caption(notice.error.as_str()))
+                    .height(Length::Fill)
+                    .into(),
+            );
+        }
+        Some(
+            container(column::with_children(content).spacing(10))
+                .padding(12)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .class(cosmic::theme::Container::Card)
+                .into(),
+        )
+    }
     pub(super) fn edge_handle(&self) -> Element<'_, Message> {
         mouse_area(
             container(text::body(""))
@@ -632,7 +840,7 @@ impl Cards {
     pub(super) fn calendar_widget(&self) -> Element<'_, Message> {
         let mut widgets = Vec::new();
         if self.config.widget_visible(Widget::Calendar) {
-            widgets.push(self.calendar_card());
+            widgets.push(self.with_menu(Widget::Calendar, self.calendar_card()));
         }
         container(column::with_children(widgets).width(Length::Fill))
             .height(Length::Fill)
@@ -652,7 +860,7 @@ impl Cards {
                 Widget::Weather => self.weather_card(),
                 _ => unreachable!("Calendar and Clock live on the left; tools float"),
             };
-            (widget, view)
+            (widget, self.with_menu(widget, view))
         }))
         .spacing(drawer::CARD_GAP)
         .width(Length::Fill);
@@ -721,6 +929,12 @@ impl Cards {
                                 self.config.widget_order =
                                     original.iter().map(|w| w.key().into()).collect();
                                 eprintln!("Could not save widget order: {error}");
+                                self.raise_notice(
+                                    "Couldn’t save the widget order",
+                                    "The widgets are back in their saved order.",
+                                    error.to_string(),
+                                    Some(Message::SaveOrder(order)),
+                                );
                             }
                         }
                     }

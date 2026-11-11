@@ -590,6 +590,8 @@ impl ToolsEditor {
             | Action::NoteEdit
             | Action::NoteSave
             | Action::NoteCancel
+            | Action::NoteUndo
+            | Action::NoteUndoExpired(_)
             | Action::NoteAction(_) => Task::none(),
         }
     }

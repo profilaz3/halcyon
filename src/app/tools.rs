@@ -32,6 +32,20 @@ pub(super) struct NoteDraft {
     pub conflicted: bool,
     /// A save is under way (off the UI thread).
     pub saving: bool,
+    /// The pointer left the note: other windows can take the keyboard back
+    /// with a click, and the note saves when they do.
+    pub on_demand: bool,
+}
+
+/// How long a cancelled draft can be brought back.
+pub(super) const UNDO_DISCARD: Duration = Duration::from_secs(5);
+
+/// A cancelled draft, kept briefly for Undo.
+pub(super) struct Discarded {
+    pub text: String,
+    pub base: String,
+    /// Tells this discard's expiry from a later one's.
+    pub serial: u64,
 }
 
 pub(super) struct Tools {
@@ -46,6 +60,9 @@ pub(super) struct Tools {
     art_loading: Option<String>,
     pub note: Result<notes::Note, String>,
     pub draft: Option<NoteDraft>,
+    pub discarded: Option<Discarded>,
+    /// Counts Cancels so a late Undo timer never ends a newer Undo.
+    discards: u64,
     pub note_problem: Option<String>,
     checking_note: bool,
     pub focus: focus::Session,
@@ -68,6 +85,8 @@ impl Tools {
             art_loading: None,
             note: notes::load(),
             draft: None,
+            discarded: None,
+            discards: 0,
             note_problem: None,
             checking_note: false,
             focus: focus::Session::load(),
@@ -87,6 +106,8 @@ impl Tools {
             art_loading: None,
             note: Ok(notes::Note::default()),
             draft: None,
+            discarded: None,
+            discards: 0,
             note_problem: None,
             checking_note: false,
             focus: focus::Session::default(),
@@ -208,6 +229,7 @@ impl Cards {
                     editing: self.tools.draft.as_ref().map(|draft| &draft.content),
                     paused: self.tools.draft.as_ref().is_some_and(|draft| !draft.typing),
                     problem: self.tools.note_problem.as_deref(),
+                    discarded: self.tools.discarded.is_some(),
                 },
                 &self.config,
                 (!self.tools.checking_note).then_some(on_desktop as fn(Action) -> Message),
@@ -318,6 +340,38 @@ impl Cards {
         if let Some(draft) = &mut self.tools.draft {
             draft.typing = false;
         }
+    }
+
+    /// The note surface while it holds the keyboard for typing.
+    pub(super) fn note_typing_surface(&self) -> Option<window::Id> {
+        self.note_lifted().then(|| self.widget_id(Widget::Notes))
+    }
+
+    /// The pointer left the note while typing: keep the keys here, but let
+    /// a click on another window take them (DT-04).
+    pub(super) fn note_pointer_left(&mut self) -> Task<Message> {
+        let id = self.widget_id(Widget::Notes);
+        match &mut self.tools.draft {
+            Some(draft) if draft.typing && !draft.on_demand => {
+                draft.on_demand = true;
+                set_keyboard_interactivity(id, KeyboardInteractivity::OnDemand)
+            }
+            _ => Task::none(),
+        }
+    }
+
+    /// Another window took the keyboard: save what was typed and stop
+    /// editing. A conflicting draft waits, paused, for an explicit Save.
+    pub(super) fn note_focus_lost(&mut self) -> Task<Message> {
+        if !self.tools.draft.as_ref().is_some_and(|draft| draft.typing) {
+            return Task::none();
+        }
+        let save = self.save_note_quietly();
+        if self.tools.draft.as_ref().is_some_and(|draft| !draft.saving) {
+            self.pause_note();
+            return Task::batch([save, self.note_editing(false)]);
+        }
+        save
     }
 
     /// Puts the note surface in the mode its state calls for; nothing to
@@ -475,7 +529,15 @@ impl Cards {
                 if self.config.music.player.is_some() {
                     match Config::save_tool(Widget::Music, serde_json::json!({"player": null})) {
                         Ok(config) => return self.apply_config(config),
-                        Err(error) => eprintln!("Could not switch to automatic media: {error}"),
+                        Err(error) => {
+                            eprintln!("Could not switch to automatic media: {error}");
+                            self.raise_notice(
+                                "Couldn’t switch to automatic media",
+                                "Your choice wasn’t saved.",
+                                error.to_string(),
+                                Some(Message::Tool(Action::MusicAuto)),
+                            );
+                        }
                     }
                 }
                 return self.music_art_task();
@@ -505,6 +567,7 @@ impl Cards {
                 if let Some(draft) = &mut self.tools.draft {
                     // Resume a paused draft where it was left.
                     draft.typing = true;
+                    draft.on_demand = false;
                 } else {
                     let Ok(note) = &self.tools.note else {
                         return Task::none();
@@ -515,7 +578,9 @@ impl Cards {
                         typing: true,
                         conflicted: false,
                         saving: false,
+                        on_demand: false,
                     });
+                    self.tools.discarded = None;
                     self.tools.note_problem = None;
                 }
                 if !self.note_lifted() {
@@ -530,10 +595,55 @@ impl Cards {
             }
             Action::NoteSave => return self.save_note(),
             Action::NoteCancel => {
-                if self.tools.draft.take().is_some() {
+                if let Some(draft) = self.tools.draft.take() {
                     self.tools.note_problem = None;
                     self.reload_note();
-                    return self.note_editing(false);
+                    let text = draft.content.text();
+                    let text = text.strip_suffix('\n').unwrap_or(&text).to_string();
+                    self.tools.discards += 1;
+                    let serial = self.tools.discards;
+                    let unchanged = text == draft.base;
+                    self.tools.discarded = (!unchanged).then_some(Discarded {
+                        text,
+                        base: draft.base,
+                        serial,
+                    });
+                    let editing = self.note_editing(false);
+                    if unchanged {
+                        return editing;
+                    }
+                    return Task::batch([
+                        editing,
+                        cosmic::task::future(async move {
+                            tokio::time::sleep(UNDO_DISCARD).await;
+                            Message::Tool(Action::NoteUndoExpired(serial))
+                        }),
+                    ]);
+                }
+            }
+            Action::NoteUndo => {
+                if let Some(discarded) = self.tools.discarded.take()
+                    && self.tools.draft.is_none()
+                {
+                    self.tools.draft = Some(NoteDraft {
+                        content: text_editor::Content::with_text(&discarded.text),
+                        base: discarded.base,
+                        typing: true,
+                        conflicted: false,
+                        saving: false,
+                        on_demand: false,
+                    });
+                    return self.note_editing(self.note_lifted());
+                }
+            }
+            Action::NoteUndoExpired(serial) => {
+                if self
+                    .tools
+                    .discarded
+                    .as_ref()
+                    .is_some_and(|d| d.serial == serial)
+                {
+                    self.tools.discarded = None;
                 }
             }
             Action::NoteToggle(line) => {
@@ -566,7 +676,15 @@ impl Cards {
                     serde_json::json!({ "focus_minutes": minutes }),
                 ) {
                     Ok(config) => return self.apply_config(config),
-                    Err(error) => eprintln!("Could not save the focus length: {error}"),
+                    Err(error) => {
+                        eprintln!("Could not save the focus length: {error}");
+                        self.raise_notice(
+                            "Couldn’t save the focus length",
+                            "The timer keeps its previous length.",
+                            error.to_string(),
+                            Some(Message::Tool(Action::FocusMinutes(minutes))),
+                        );
+                    }
                 }
             }
         }
@@ -893,6 +1011,59 @@ mod tests {
             return;
         }
         body();
+    }
+
+    #[test]
+    fn dt04_cancel_offers_undo_for_a_few_seconds() {
+        isolated("dt04_cancel_offers_undo_for_a_few_seconds", || {
+            let mut config = Config::load();
+            config.notes.enabled = true;
+            let (mut cards, _) = Cards::init(Core::default(), config);
+            let _output = cards.test_output_ready();
+            let _ = cards.update(Message::Tool(Action::NoteEdit));
+            for c in "half a thought".chars() {
+                let _ = cards.update(Message::Tool(Action::NoteAction(
+                    text_editor::Action::Edit(text_editor::Edit::Insert(c)),
+                )));
+            }
+            let _ = cards.update(Message::Tool(Action::NoteCancel));
+            assert!(cards.tools.draft.is_none());
+            assert_eq!(notes::load().unwrap().text, "", "Cancel writes nothing");
+            let serial = cards.tools.discarded.as_ref().unwrap().serial;
+            let size = cards.widget_size(Widget::Notes);
+            let mut native =
+                crate::native_test::Native::new(cosmic::iced::Size::new(size[0], size[1]));
+            native.text_bounds(cards.tool_card(Widget::Notes), "Changes discarded");
+            native.text_bounds(cards.tool_card(Widget::Notes), "Undo");
+            for (theme, shade) in [
+                (cosmic::Theme::light(), "light"),
+                (cosmic::Theme::dark(), "dark"),
+            ] {
+                native.capture(
+                    cards.tool_card(Widget::Notes),
+                    &theme,
+                    &format!("dt04-note-undo-{shade}"),
+                );
+            }
+            // Undo brings the text back into the editor.
+            let _ = cards.update(Message::Tool(Action::NoteUndo));
+            let draft = cards.tools.draft.as_ref().expect("draft restored");
+            assert_eq!(draft.content.text().trim_end(), "half a thought");
+            assert!(cards.tools.discarded.is_none());
+            // A late timer from an older Cancel leaves a newer Undo alone.
+            let _ = cards.update(Message::Tool(Action::NoteCancel));
+            let newer = cards.tools.discarded.as_ref().unwrap().serial;
+            assert_ne!(newer, serial);
+            let _ = cards.update(Message::Tool(Action::NoteUndoExpired(serial)));
+            assert!(cards.tools.discarded.is_some());
+            let _ = cards.update(Message::Tool(Action::NoteUndoExpired(newer)));
+            assert!(cards.tools.discarded.is_none());
+            assert!(
+                native
+                    .text_all(cards.tool_card(Widget::Notes), "Changes discarded")
+                    .is_empty()
+            );
+        });
     }
 
     #[test]

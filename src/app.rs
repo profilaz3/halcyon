@@ -13,6 +13,8 @@ mod autoswitch;
 mod calendar_details;
 mod clock;
 mod depth;
+#[cfg(test)]
+mod desktop_ux_tests;
 mod devbox;
 #[cfg(test)]
 mod display_tests;
@@ -137,7 +139,7 @@ use cosmic::iced::platform_specific::runtime::wayland::layer_surface::{
     IcedMargin, IcedOutput, SctkLayerSurfaceSettings,
 };
 use cosmic::iced::platform_specific::shell::commands::layer_surface::{
-    Anchor, KeyboardInteractivity, Layer, get_layer_surface, set_margin,
+    Anchor, KeyboardInteractivity, Layer, get_layer_surface, set_keyboard_interactivity, set_margin,
 };
 use cosmic::iced::{Alignment, Background, Border, Color, Font, Length, Subscription, window};
 use cosmic::widget::{column, container, mouse_area, row, scrollable, text};
@@ -254,7 +256,46 @@ pub enum Message {
     DisplayIdentities(u64, std::collections::BTreeMap<String, String>),
     /// Automatic profile switches finished.
     Switched(Vec<(crate::automation::Due, crate::automation::run::Ran)>),
+    /// `halcyon --toggle drawer`: open the edge menu for the keyboard, or close it.
+    DrawerToggle,
+    /// A key on the edge menu or the widget menu (others are dropped).
+    KeyInput(
+        window::Id,
+        cosmic::iced::keyboard::Key,
+        cosmic::iced::keyboard::Modifiers,
+    ),
+    /// A surface lost the keyboard.
+    Unfocused(window::Id),
+    /// The pointer left a surface.
+    PointerLeft(window::Id),
+    /// A surface closed; the compositor dismisses the widget menu this way.
+    SurfaceClosed(window::Id),
+    /// Right-click on a widget: its menu.
+    WidgetMenu(Widget),
+    WidgetMenuPick(layout::MenuPick),
+    WidgetSettings(Widget),
+    SetWidgetVisible(Widget, bool),
+    SaveOrder(Vec<Widget>),
+    NoticeRetry,
+    NoticeDismiss,
+    NoticeDetails,
+    RecoveryDetails,
 }
+
+/// A change made on the desktop that couldn't be saved, shown in the edge
+/// menu (where Arrange explains its own failures) until dismissed.
+pub struct Notice {
+    pub title: &'static str,
+    pub body: &'static str,
+    pub error: String,
+    pub retry: Option<Message>,
+    pub details: bool,
+}
+
+/// Where the pointer last moved, so the widget menu opens under it. Kept
+/// out of the update loop: motion over cards must not rebuild surfaces.
+static POINTER: std::sync::Mutex<Option<(window::Id, cosmic::iced::Point)>> =
+    std::sync::Mutex::new(None);
 pub struct Cards {
     activity: crate::activity_island::bridge::Owner,
     core: Core,
@@ -339,6 +380,10 @@ pub struct Cards {
     depth: depth::State,
     rain: rain::State,
     wallpaper_color_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    notice: Option<Notice>,
+    /// The open widget menu: its popup and the widget it's for.
+    menu: Option<(window::Id, Widget)>,
+    recovery_details: bool,
 }
 impl cosmic::Application for Cards {
     type Executor = cosmic::executor::Default;
@@ -441,6 +486,9 @@ impl cosmic::Application for Cards {
             depth: Default::default(),
             rain: Default::default(),
             wallpaper_color_generation: Default::default(),
+            notice: None,
+            menu: None,
+            recovery_details: false,
         };
         // Output discovery creates the first probe, including on late startup.
         tasks.extend(app.refresh_visible_data());
@@ -519,17 +567,33 @@ impl cosmic::Application for Cards {
         }
         subscriptions.push(
             cosmic::iced::event::listen_with(|event, status, id| match event {
-                cosmic::iced::Event::Mouse(event) => Some(Message::Pointer(id, event)),
+                cosmic::iced::Event::Mouse(event) => {
+                    match event {
+                        cosmic::iced::mouse::Event::CursorMoved { position } => {
+                            if let Ok(mut pointer) = POINTER.lock() {
+                                *pointer = Some((id, position));
+                            }
+                        }
+                        cosmic::iced::mouse::Event::CursorLeft => {
+                            return Some(Message::PointerLeft(id));
+                        }
+                        _ => {}
+                    }
+                    Some(Message::Pointer(id, event))
+                }
                 cosmic::iced::Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
                     key,
                     modifiers,
                     ..
-                }) if status == cosmic::iced::event::Status::Ignored => Some(
-                    Message::SurfaceInput(id, Box::new(Message::LayoutKey(key, modifiers.shift()))),
-                ),
-                cosmic::iced::Event::Window(window::Event::Unfocused) => Some(
-                    Message::SurfaceInput(id, Box::new(Message::LayoutCancelDrag)),
-                ),
+                }) if status == cosmic::iced::event::Status::Ignored => {
+                    Some(Message::KeyInput(id, key, modifiers))
+                }
+                cosmic::iced::Event::Window(window::Event::Unfocused) => {
+                    Some(Message::Unfocused(id))
+                }
+                cosmic::iced::Event::Window(window::Event::Closed) => {
+                    Some(Message::SurfaceClosed(id))
+                }
                 cosmic::iced::Event::Window(window::Event::Opened { size, .. })
                 | cosmic::iced::Event::Window(window::Event::Resized(size)) => {
                     Some(Message::SurfaceResized(id, size))
@@ -545,37 +609,74 @@ impl cosmic::Application for Cards {
                 self.ids,
                 self.sidebar.drag.is_some(),
                 self.layout_editor.active,
+                self.sidebar.focus.is_some(),
+                self.menu.map(|(id, _)| id),
+                self.note_typing_surface(),
             ))
-            .filter_map(|((ids, dragging, arranging), message)| {
-                match &message {
-                    Message::Pointer(id, event) => {
-                        // Motion over Calendar/Weather must not rebuild all five surfaces.
-                        // Outside releases still cancel an active sidebar drag.
-                        ((arranging
-                            && (*id == ids[5]
-                                || matches!(
-                                    event,
-                                    cosmic::iced::mouse::Event::ButtonReleased(
-                                        cosmic::iced::mouse::Button::Left
-                                    )
-                                )))
-                            || *id == ids[2]
-                            || *id == ids[3]
-                            || (dragging
-                                && matches!(
-                                    event,
-                                    cosmic::iced::mouse::Event::ButtonReleased(
-                                        cosmic::iced::mouse::Button::Left
-                                    )
-                                )))
-                        .then_some(message)
+            .filter_map(
+                |((ids, dragging, arranging, drawer_keys, menu, note), message)| {
+                    match &message {
+                        Message::KeyInput(id, key, modifiers) => {
+                            if arranging {
+                                Some(Message::SurfaceInput(
+                                    *id,
+                                    Box::new(Message::LayoutKey(key.clone(), modifiers.shift())),
+                                ))
+                            } else {
+                                ((drawer_keys && *id == ids[2]) || Some(*id) == menu)
+                                    .then_some(message)
+                            }
+                        }
+                        Message::Unfocused(id) => {
+                            if arranging {
+                                Some(Message::SurfaceInput(
+                                    *id,
+                                    Box::new(Message::LayoutCancelDrag),
+                                ))
+                            } else {
+                                (Some(*id) == note).then_some(message)
+                            }
+                        }
+                        Message::PointerLeft(id) => {
+                            if Some(*id) == note {
+                                Some(message)
+                            } else {
+                                // Treated as before: plain pointer motion.
+                                let event = cosmic::iced::mouse::Event::CursorLeft;
+                                ((arranging && *id == ids[5]) || *id == ids[2] || *id == ids[3])
+                                    .then_some(Message::Pointer(*id, event))
+                            }
+                        }
+                        Message::SurfaceClosed(id) => (Some(*id) == menu).then_some(message),
+                        Message::Pointer(id, event) => {
+                            // Motion over Calendar/Weather must not rebuild all five surfaces.
+                            // Outside releases still cancel an active sidebar drag.
+                            ((arranging
+                                && (*id == ids[5]
+                                    || matches!(
+                                        event,
+                                        cosmic::iced::mouse::Event::ButtonReleased(
+                                            cosmic::iced::mouse::Button::Left
+                                        )
+                                    )))
+                                || *id == ids[2]
+                                || *id == ids[3]
+                                || (dragging
+                                    && matches!(
+                                        event,
+                                        cosmic::iced::mouse::Event::ButtonReleased(
+                                            cosmic::iced::mouse::Button::Left
+                                        )
+                                    )))
+                            .then_some(message)
+                        }
+                        Message::LayoutKey(..) | Message::LayoutCancelDrag => {
+                            arranging.then_some(message)
+                        }
+                        _ => Some(message),
                     }
-                    Message::LayoutKey(..) | Message::LayoutCancelDrag => {
-                        arranging.then_some(message)
-                    }
-                    _ => Some(message),
-                }
-            }),
+                },
+            ),
         );
         if self.sidebar.animating() {
             subscriptions.push(
@@ -593,6 +694,11 @@ impl cosmic::Application for Cards {
     fn view_window(&self, id: window::Id) -> Element<'_, Message> {
         if let Some(view) = self.rain_view(id) {
             return view;
+        }
+        if let Some((menu, widget)) = self.menu
+            && menu == id
+        {
+            return self.widget_menu_view(widget);
         }
         if !self.ids.contains(&id) {
             return empty_surface();
@@ -723,7 +829,12 @@ impl Cards {
             id,
             output: self.layer_output(),
             layer: Layer::Overlay,
-            keyboard_interactivity: KeyboardInteractivity::None,
+            // Opened from the keyboard, the menu takes the keys until it closes.
+            keyboard_interactivity: if self.sidebar.focus.is_some() {
+                KeyboardInteractivity::Exclusive
+            } else {
+                KeyboardInteractivity::None
+            },
             anchor: Anchor::RIGHT,
             margin: IcedMargin {
                 right: margin,
@@ -1229,6 +1340,63 @@ impl Cards {
             }
             Message::ToggleWidget(widget) => {
                 self.set_widget_visible(widget, !self.config.data_visible(widget))
+            }
+            Message::SetWidgetVisible(widget, visible) => self.set_widget_visible(widget, visible),
+            Message::SaveOrder(order) => self.save_widget_order(order),
+            Message::DrawerToggle => self.drawer_toggle(),
+            Message::KeyInput(id, key, modifiers) => {
+                if self.menu.is_some_and(|(menu, _)| menu == id) {
+                    if matches!(
+                        key,
+                        cosmic::iced::keyboard::Key::Named(
+                            cosmic::iced::keyboard::key::Named::Escape
+                        )
+                    ) {
+                        return self.close_widget_menu();
+                    }
+                    return Task::none();
+                }
+                match drawer::DrawerKey::from_key(&key, modifiers) {
+                    Some(key) if id == self.ids[2] => self.drawer_key(key),
+                    _ => Task::none(),
+                }
+            }
+            Message::Unfocused(id) | Message::PointerLeft(id)
+                if Some(id) != self.note_typing_surface() =>
+            {
+                Task::none()
+            }
+            Message::Unfocused(_) => self.note_focus_lost(),
+            Message::PointerLeft(_) => self.note_pointer_left(),
+            Message::SurfaceClosed(id) => {
+                if self.menu.is_some_and(|(menu, _)| menu == id) {
+                    self.menu = None;
+                }
+                Task::none()
+            }
+            Message::WidgetMenu(widget) => self.open_widget_menu(widget),
+            Message::WidgetMenuPick(pick) => self.widget_menu_pick(pick),
+            Message::WidgetSettings(widget) => self.launch(
+                crate::paths::CONTROLLER,
+                vec!["settings".into(), "--page".into(), widget.key().into()],
+            ),
+            Message::NoticeRetry => match self.notice.take().and_then(|notice| notice.retry) {
+                Some(message) => self.update(message),
+                None => Task::none(),
+            },
+            Message::NoticeDismiss => {
+                self.notice = None;
+                Task::none()
+            }
+            Message::NoticeDetails => {
+                if let Some(notice) = &mut self.notice {
+                    notice.details = !notice.details;
+                }
+                Task::none()
+            }
+            Message::RecoveryDetails => {
+                self.recovery_details = !self.recovery_details;
+                Task::none()
             }
             Message::ShowControls => {
                 self.sidebar.show(Instant::now());

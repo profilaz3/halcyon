@@ -25,6 +25,10 @@ pub enum Action {
     NoteEdit,
     NoteSave,
     NoteCancel,
+    /// Bring back the draft Cancel just discarded.
+    NoteUndo,
+    /// The chance to undo discard `serial` has passed.
+    NoteUndoExpired(u64),
     NoteAction(text_editor::Action),
     /// Tick or untick the checklist item on this line.
     NoteToggle(usize),
@@ -652,14 +656,33 @@ pub fn music_visualized<'a, M: Clone + 'static>(
             column::with_children(parts).spacing(6).into()
         }
     };
-    frame(
-        container(content)
+    let idle = view.player.is_none() || !matches!(view.feed, Some(music::Feed::Players(_)));
+    let card = |height| {
+        frame(
+            container(content)
+                .height(Length::Fill)
+                .align_y(Alignment::Center)
+                .into(),
+            config,
+            height,
+        )
+    };
+    // With nothing to control, a tall card would be mostly empty: draw one
+    // line at the top and leave the rest of the space clear.
+    match idle_height(idle, height) {
+        Some(compact) => container(card(compact))
+            .width(Length::Fill)
             .height(Length::Fill)
-            .align_y(Alignment::Center)
+            .align_y(Alignment::Start)
             .into(),
-        config,
-        height,
-    )
+        None => card(height),
+    }
+}
+
+/// The idle Music card's height when the card is tall enough to shrink.
+pub(crate) fn idle_height(idle: bool, height: f32) -> Option<f32> {
+    let compact = 44. + 2. * f32::from(PADDING);
+    (idle && height > compact + 8.).then_some(compact)
 }
 
 /// Everything the Notes card shows.
@@ -672,6 +695,8 @@ pub struct NotesView<'a> {
     pub paused: bool,
     /// A save problem or conflict to explain.
     pub problem: Option<&'a str>,
+    /// Cancel just discarded a draft: offer Undo.
+    pub discarded: bool,
 }
 
 pub fn notes<'a, M: Clone + 'a>(
@@ -748,7 +773,7 @@ pub fn notes<'a, M: Clone + 'a>(
             view.problem.unwrap_or(if view.paused {
                 "Unsaved · Resume to keep writing"
             } else {
-                "Esc or Ctrl+S saves"
+                "Esc saves and closes · Ctrl+S saves"
             }),
             crate::widget_style::SECONDARY,
             if view.problem.is_some() {
@@ -901,6 +926,23 @@ pub fn notes<'a, M: Clone + 'a>(
             crate::widget_style::SECONDARY,
             WARN,
         ));
+    } else if view.discarded {
+        parts.push(
+            row::with_children(vec![
+                label("Changes discarded", crate::widget_style::SECONDARY, p.muted),
+                fill(),
+                chip(
+                    Some("edit-undo-symbolic"),
+                    "Undo",
+                    act(Action::NoteUndo),
+                    p,
+                    false,
+                ),
+            ])
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .into(),
+        );
     } else if let Some(footer) = footer {
         parts.push(label(footer, crate::widget_style::SECONDARY, p.muted));
     }
@@ -1164,6 +1206,7 @@ mod tests {
                     editing: None,
                     paused: false,
                     problem: None,
+                    discarded: false,
                 },
                 &config,
                 enabled.then_some(std::convert::identity::<Action> as fn(Action) -> Action),

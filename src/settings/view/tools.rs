@@ -372,6 +372,7 @@ impl Settings {
                 editing: None,
                 paused: false,
                 problem: None,
+                discarded: false,
             },
             &self.config,
             (!dirty && !tools.saving() && !example)
