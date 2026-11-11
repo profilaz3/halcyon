@@ -46,19 +46,19 @@ impl InactiveReason {
     fn message(&self) -> &'static str {
         match self {
             Self::NotInstalled => {
-                "Install and enable the Islands add-on to use this style. The standard dock and panel remain available."
+                "The Islands panel isn’t installed. Reinstall Halcyon from the same place you got it, then sign out and back in. The standard dock and panel remain available."
             }
             Self::Disabled => {
-                "Islands is disabled. Run halcyon-islands enable, then log out and back in."
+                "The Islands panel is turned off. Run halcyon-islands enable, then sign out and back in."
             }
             Self::CosmicChanged => {
-                "Islands needs an update for this COSMIC version. Install the matching add-on, run halcyon-islands enable, then log out and back in. Your saved layout is kept."
+                "The Islands panel needs an update for this COSMIC version. Update Halcyon, run halcyon-islands enable, then sign out and back in. Your saved layout is kept."
             }
             Self::Failed => {
-                "Islands stopped unexpectedly, so the standard panel was selected. See the Islands troubleshooting guide before enabling it again."
+                "The Islands panel stopped unexpectedly, so the standard panel was selected. See the Islands troubleshooting guide before turning it on again."
             }
             Self::NotRunning => {
-                "Islands is not running. Startup checks may have selected the standard panel. After enabling or updating the add-on, log out and back in; check the Islands status and session log if it remains unavailable."
+                "The Islands panel isn’t running. Startup checks may have chosen the standard panel. After turning it on or updating Halcyon, sign out and back in. If it’s still unavailable, run halcyon-islands status and check the session log."
             }
         }
     }
@@ -182,7 +182,8 @@ impl Client {
         }
         if !Installation::discover(store).installed() {
             return Err(
-                "Islands is not installed or its installation could not be verified".into(),
+                "The Islands panel isn’t installed, or its installation couldn’t be verified"
+                    .into(),
             );
         }
         let path = Self::socket_path(store)?;
@@ -252,7 +253,8 @@ impl Client {
         if Instant::now() >= deadline {
             return Err("Islands status timed out".into());
         }
-        let meta = std::fs::symlink_metadata(path).map_err(|_| "Islands is not running")?;
+        let meta =
+            std::fs::symlink_metadata(path).map_err(|_| "The Islands panel isn’t running")?;
         if !meta.file_type().is_socket() || meta.uid() != unsafe { libc::geteuid() } {
             return Err("The panel socket is not owned by this user".into());
         }
@@ -286,7 +288,7 @@ impl Client {
             )
         } != 0
         {
-            return Err("Islands is not responding".into());
+            return Err("The Islands panel isn’t responding".into());
         }
         Ok(Self {
             stream: BufReader::new(UnixStream::from(fd)),
@@ -648,6 +650,23 @@ mod tests {
             }),
             InactiveReason::CosmicChanged
         );
+    }
+
+    #[test]
+    fn inactive_messages_name_the_islands_panel_and_signing_in() {
+        for reason in [
+            InactiveReason::NotInstalled,
+            InactiveReason::Disabled,
+            InactiveReason::CosmicChanged,
+            InactiveReason::Failed,
+            InactiveReason::NotRunning,
+        ] {
+            let message = reason.message();
+            assert!(message.starts_with("The Islands panel "), "{message}");
+            for old in ["log out", "login", "add-on", "Islands is "] {
+                assert!(!message.contains(old), "{message}");
+            }
+        }
     }
 
     #[test]

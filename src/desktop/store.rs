@@ -1352,7 +1352,8 @@ impl DesktopStore {
         }) && !super::islands::Installation::for_write(self).installed()
         {
             return Err(DesktopError::Io(
-                "Islands is not installed. Saved add-on preferences were kept.".into(),
+                "The Islands panel isn’t installed. Your saved Islands preferences were kept."
+                    .into(),
             ));
         }
         if let Some(expected) = patch.epoch_guard {

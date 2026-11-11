@@ -137,7 +137,7 @@ def build(binary, manifest, version, out, licenses=None, catalog=None):
             ' A patched COSMIC panel that splits the panel into floating islands.\n'
             ' The launcher uses the standard panel if source or runtime checks fail.\n'
             ' Installing the add-on never holds back COSMIC system updates.\n'
-            ' Activation is per user with halcyon-islands enable, at the next login.\n'
+            ' Activation is per user with halcyon-islands enable, the next time you sign in.\n'
             ' Installing this package does not activate or restart a panel.\n')
         staging.chmod(0o755)
         for path in staging.rglob('*'):
