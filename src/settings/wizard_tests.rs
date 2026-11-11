@@ -1938,3 +1938,77 @@ fn polish050_compact_choices_and_seven_step_progress_keep_default_bar_navigation
         assert!(app.wizard.is_none());
     }
 }
+
+/// ON-07: a missing Islands panel says so on the Bars step, and Why? names
+/// the fix. ON-08: Review names a combined card once, with what it holds.
+#[test]
+fn on07_on08_bars_and_review_at_820() {
+    if child("on07_on08_bars_and_review_at_820") {
+        return;
+    }
+    on07_on08_bars_and_review(Size::new(820., 600.));
+}
+
+#[test]
+fn on07_on08_bars_and_review_at_1280() {
+    if child("on07_on08_bars_and_review_at_1280") {
+        return;
+    }
+    on07_on08_bars_and_review(Size::new(1280., 800.));
+}
+
+fn on07_on08_bars_and_review(size: Size) {
+    seed_desktop();
+    let themes = [
+        (cosmic::Theme::light(), "light"),
+        (cosmic::Theme::dark(), "dark"),
+    ];
+    {
+        let (mut app, mut native) = open(size);
+        app.desktop.islands.installation = crate::desktop::islands::Installation::Absent;
+        click(&mut app, &mut native, "wizard-start");
+        click(&mut app, &mut native, "wizard-look-calm");
+        click(&mut app, &mut native, "wizard-next");
+        assert_eq!(step(&app), wizard::Step::Bars);
+        let _ = app.update(Message::Wizard(wizard::Message::KeepBars(false)));
+        native.text_bounds(
+            app.settings_view(),
+            "Needs the Islands panel, which isn’t installed.",
+        );
+        let missing = crate::settings::desktop::islands::MISSING;
+        assert!(native.text_all(app.settings_view(), missing).is_empty());
+        reveal(&mut app, &mut native, "wizard-islands-why");
+        click(&mut app, &mut native, "wizard-islands-why");
+        native.text_bounds(app.settings_view(), missing);
+        for (theme, name) in &themes {
+            native.capture(
+                app.settings_view(),
+                theme,
+                &format!("on07-bars-{}-{name}", size.width),
+            );
+        }
+        let _ = app.update(Message::Wizard(wizard::Message::Show(
+            wizard::Step::Widgets,
+        )));
+        if !app.wizard.as_ref().unwrap().widgets.grouped {
+            reveal(&mut app, &mut native, "wizard-widget-group");
+            click(&mut app, &mut native, "wizard-widget-group");
+        }
+        let widgets = &app.wizard.as_ref().unwrap().widgets;
+        assert!(widgets.grouped);
+        let names = widgets.names(widgets.active());
+        assert!(names[0].starts_with("Daily overview (clock"), "{names:?}");
+        for daily in ["Clock", "Weather", "Calendar"] {
+            assert!(!names.iter().any(|name| name == daily), "{names:?}");
+        }
+        let _ = app.update(Message::Wizard(wizard::Message::Show(wizard::Step::Ready)));
+        native.text_bounds(app.settings_view(), &names.join(", "));
+        for (theme, name) in &themes {
+            native.capture(
+                app.settings_view(),
+                theme,
+                &format!("on08-review-{}-{name}", size.width),
+            );
+        }
+    }
+}
