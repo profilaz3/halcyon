@@ -577,7 +577,10 @@ impl Settings {
             ),
         };
         // Widget pages share the Widgets root but are pages of their own.
-        if page.sidebar() == Page::Overview {
+        // Wallpaper and Weather apply one draft, so either undoes it.
+        if page.edits_wallpaper() {
+            self.page.edits_wallpaper()
+        } else if page.sidebar() == Page::Overview {
             page.canonical() == self.page.canonical()
         } else {
             page.sidebar() == self.page.sidebar()
@@ -696,7 +699,9 @@ impl Settings {
                 self.system_appearance.notice.as_ref(),
                 self.wallpaper.notice(),
             ],
-            Page::DesktopWallpaper | Page::Appearance => [self.wallpaper.notice(), None, None],
+            Page::DesktopWallpaper | Page::WeatherEffects | Page::Appearance => {
+                [self.wallpaper.notice(), None, None]
+            }
             _ => [None, None, None],
         };
         let mut notices = notices.into_iter().flatten();

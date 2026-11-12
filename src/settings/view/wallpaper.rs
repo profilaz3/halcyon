@@ -590,12 +590,16 @@ impl Settings {
         if !fit.is_empty() {
             side.push(group(None, fit));
         }
-        // With no effect running it is one row, which fits beside the
-        // picture; a running effect has its options and goes below.
-        let effect_on = self.wallpaper.effect().unwrap_or(&self.config.rain).enabled;
-        if !effect_on {
-            side.push(self.rain_controls());
-        }
+        // Weather effects have a page of their own; one row leads there.
+        side.push(group(
+            None,
+            vec![self.subpage_row(
+                "Weather effects",
+                "Rain, snow, fog and cloud shadows over the wallpaper",
+                Page::WeatherEffects,
+                "wallpaper-open-weather",
+            )],
+        ));
         items.push(
             row::with_children(vec![
                 preview,
@@ -608,10 +612,70 @@ impl Settings {
         );
         // Pictures come first: choosing one is the main task here.
         items.push(self.wallpaper_gallery(enabled, true));
+        items.push(self.wallpaper_related());
+        column::with_children(items).spacing(20).into()
+    }
+
+    /// Weather: rain, snow, fog and cloud shadows over the wallpaper. They
+    /// are part of the wallpaper's draft, so its preview, Apply and Undo
+    /// work here too.
+    pub(super) fn weather_effects_page(&self) -> Element<'_, Message> {
+        let editor = &self.wallpaper;
+        let mut items: Vec<Element<'_, Message>> = vec![split(
+            heading(
+                "Weather effects",
+                "Rain, snow, fog and cloud shadows that play over your wallpaper.",
+            ),
+            store_pill(editor.store(), self.wallpaper_accent()),
+        )];
+        if let Some(error) = editor.unavailable() {
+            items.push(banner(
+                format!("Weather effects are unavailable. {error}"),
+                ERROR,
+                Vec::new(),
+            ));
+            return column::with_children(items).spacing(14).into();
+        }
+        if editor.draft().is_none() {
+            items.push(label("Reading wallpaper settings…", 12., MUTED));
+            return column::with_children(items).spacing(14).into();
+        }
+        // The same picture Wallpaper shows, playing what the desktop plays.
+        let width = (self.content_width() * 0.4).clamp(220., 400.);
+        let preview: Element<'_, Message> = container(self.wallpaper_preview(width))
+            .id(cosmic::widget::Id::new("desktop-scene"))
+            .width(width)
+            .into();
+        let wallpaper = group(
+            None,
+            vec![self.subpage_row(
+                "Wallpaper",
+                "The picture the weather plays over",
+                Page::DesktopWallpaper,
+                "weather-open-wallpaper",
+            )],
+        );
+        // With no effect running the controls are two rows, which fit
+        // beside the picture; a running effect has its options below.
+        let effect_on = editor.effect().unwrap_or(&self.config.rain).enabled;
+        let mut side = Vec::new();
+        if !effect_on {
+            side.push(self.rain_controls());
+        }
+        side.push(wallpaper);
+        items.push(
+            row::with_children(vec![
+                preview,
+                container(column::with_children(side).spacing(12))
+                    .width(Length::Fill)
+                    .into(),
+            ])
+            .spacing(20)
+            .into(),
+        );
         if effect_on {
             items.push(self.rain_controls());
         }
-        items.push(self.wallpaper_related());
         column::with_children(items).spacing(20).into()
     }
 

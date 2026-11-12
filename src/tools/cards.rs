@@ -378,6 +378,8 @@ pub struct MusicView<'a> {
     pub now: Instant,
     pub manually_selected: bool,
     pub problem: bool,
+    /// The track shown last, for an idle card to name and resume.
+    pub last: Option<&'a music::LastTrack>,
 }
 
 pub fn music<'a, M: Clone + 'static>(
@@ -412,25 +414,34 @@ pub fn music_visualized<'a, M: Clone + 'static>(
     let p = config.palette();
     let [_, height] = dimensions.unwrap_or_else(|| size(Widget::Music, config));
     let act = |action: Action, allowed: bool| on.filter(|_| allowed).map(|on| on(action));
-    let players = match view.feed {
-        Some(music::Feed::Players(players)) => players.len(),
-        _ => 0,
+    let live: &[music::Player] = match view.feed {
+        Some(music::Feed::Players(players)) => players,
+        _ => &[],
     };
-    let content: Element<'a, M> = match (view.feed, view.player) {
-        (None, _) => idle_player("Nothing playing", "Start a music app", config, p),
-        (Some(music::Feed::Unavailable(_)), _) => idle_player(
+    let players = live.len();
+    // Nothing loaded now, but something played earlier: name it and offer
+    // to resume it, unless the bus itself is the problem.
+    let last = view.last.filter(|_| match (view.feed, view.player) {
+        (Some(music::Feed::Unavailable(_)), _) => false,
+        (_, Some(player)) => !player.has_track(),
+        _ => true,
+    });
+    let content: Element<'a, M> = match (view.feed, view.player, last) {
+        (_, _, Some(last)) => last_played(last, live, view.art, config, on, p),
+        (None, _, _) => idle_player("Nothing playing", "Start a music app", config, p),
+        (Some(music::Feed::Unavailable(_)), _, _) => idle_player(
             "Media controls unavailable",
             "The desktop session bus isn’t reachable.",
             config,
             p,
         ),
-        (Some(music::Feed::Players(_)), None) => idle_player(
+        (Some(music::Feed::Players(_)), None, _) => idle_player(
             "Nothing playing",
             "Play something in any music app or browser tab.",
             config,
             p,
         ),
-        (Some(music::Feed::Players(_)), Some(player)) => {
+        (Some(music::Feed::Players(_)), Some(player), None) => {
             let playing = player.status == music::Playback::Playing;
             let transport = |command, allowed| {
                 act(
@@ -656,33 +667,96 @@ pub fn music_visualized<'a, M: Clone + 'static>(
             column::with_children(parts).spacing(6).into()
         }
     };
-    let idle = view.player.is_none() || !matches!(view.feed, Some(music::Feed::Players(_)));
-    let card = |height| {
-        frame(
-            container(content)
-                .height(Length::Fill)
-                .align_y(Alignment::Center)
-                .into(),
-            config,
-            height,
-        )
-    };
-    // With nothing to control, a tall card would be mostly empty: draw one
-    // line at the top and leave the rest of the space clear.
-    match idle_height(idle, height) {
-        Some(compact) => container(card(compact))
-            .width(Length::Fill)
+    // Idle or not, the card fills its slot, so arranging places what the
+    // desktop shows and nothing moves when playback starts.
+    frame(
+        container(content)
             .height(Length::Fill)
-            .align_y(Alignment::Start)
+            .align_y(Alignment::Center)
             .into(),
-        None => card(height),
-    }
+        config,
+        height,
+    )
 }
 
-/// The idle Music card's height when the card is tall enough to shrink.
-pub(crate) fn idle_height(idle: bool, height: f32) -> Option<f32> {
-    let compact = 44. + 2. * f32::from(PADDING);
-    (idle && height > compact + 8.).then_some(compact)
+/// The idle card after something played: the track, its player, and a
+/// button that resumes it while that player (or another of its app's) is
+/// still there to take Play.
+fn last_played<'a, M: Clone + 'static>(
+    last: &'a music::LastTrack,
+    live: &'a [music::Player],
+    art: Option<&'a Handle>,
+    config: &Config,
+    on: Option<fn(Action) -> M>,
+    p: Palette,
+) -> Element<'a, M> {
+    let resumer = last.resumer(live);
+    let mut top: Vec<Element<'a, M>> = Vec::new();
+    if config.music.show_artwork {
+        top.push(match art {
+            Some(handle) => cosmic::widget::image(handle.clone())
+                .width(44.)
+                .height(44.)
+                .content_fit(cosmic::iced::ContentFit::Cover)
+                .border_radius([9.; 4])
+                .opacity(0.7)
+                .into(),
+            None => container(tinted(
+                icon::from_name("multimedia-audio-player-symbolic")
+                    .size(20)
+                    .icon()
+                    .into(),
+                Color {
+                    a: 0.12,
+                    ..p.accent
+                },
+                p.muted,
+                [12, 12],
+                9.,
+            ))
+            .width(44.)
+            .height(44.)
+            .into(),
+        });
+    }
+    let resume = on.zip(resumer).map(|(on, player)| {
+        on(Action::Music(music::TransportRequest {
+            bus: player.bus.clone(),
+            command: music::Command::Play,
+        }))
+    });
+    // Artist, then where it played: "Aura · Last played in Music".
+    let source = if resumer.is_some() {
+        format!("Last played in {}", last.player)
+    } else {
+        format!("{} isn’t open", last.player)
+    };
+    let subtitle = if last.author.is_empty() {
+        source
+    } else {
+        format!("{} · {source}", last.author)
+    };
+    top.push(
+        column::with_children(vec![
+            line(last.title.clone(), 15., p.foreground),
+            line(subtitle, 11., p.muted),
+        ])
+        .spacing(3)
+        .width(Length::Fill)
+        .into(),
+    );
+    // One row like the playing card, with Resume at its end; the card
+    // centres the row in its height.
+    top.push(
+        container(control("media-playback-start-symbolic", 16, resume, p, true))
+            .id(cosmic::widget::Id::new("music-resume"))
+            .into(),
+    );
+    row::with_children(top)
+        .spacing(10)
+        .height(44.)
+        .align_y(Alignment::Center)
+        .into()
 }
 
 /// Everything the Notes card shows.
@@ -1264,6 +1338,7 @@ mod tests {
                                 now: Instant::now(),
                                 manually_selected: manual,
                                 problem: false,
+                                last: None,
                             },
                             &config,
                             enabled.then_some(
@@ -1333,6 +1408,7 @@ mod tests {
                     now: Instant::now(),
                     manually_selected: false,
                     problem: false,
+                    last: None,
                 },
                 &config,
                 Some(std::convert::identity::<Action>),
@@ -1378,6 +1454,7 @@ mod tests {
                             now: player.sampled,
                             manually_selected: false,
                             problem: false,
+                            last: None,
                         },
                         &config,
                         Some(std::convert::identity::<Action>),

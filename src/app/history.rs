@@ -1,21 +1,27 @@
 use crate::config::{DevboxPreferences, DevboxSection, Palette};
 use crate::data::Metrics;
-use cosmic::iced::{Color, Length, Point, Rectangle, mouse};
+use crate::widget_style::tint;
+use cosmic::iced::{Alignment, Color, Length, Point, Rectangle, mouse};
 use cosmic::widget::canvas;
 use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 
 const WINDOW: Duration = Duration::from_secs(300);
 const MAX_SAMPLES: usize = 301;
-pub(super) const HEIGHT: f32 = 14.;
+pub(super) const HEIGHT: f32 = crate::layout_state::DEVBOX_GRAPH_HEIGHT;
+/// The ceilings a percentage graph steps between, lowest first.
+const CEILINGS: [f64; 3] = [25., 50., 100.];
+/// A lower ceiling is taken only once the whole window sits this far under
+/// it, so a reading hovering at a step does not flip the scale back and forth.
+const CEILING_HEADROOM: f64 = 0.8;
+/// Room kept around the plot so the line and the latest dot are not clipped.
+const INSET: f32 = 2.5;
 
 #[derive(Debug, Default)]
 pub(super) struct MetricHistories {
-    cpu: Series,
-    memory: Series,
-    disk: Series,
+    cpu: Percent,
     network: NetworkHistory,
-    gpus: BTreeMap<String, Series>,
+    gpus: BTreeMap<String, Percent>,
     gpu_reset_at: Option<Instant>,
     at: Option<Instant>,
 }
@@ -29,37 +35,28 @@ impl MetricHistories {
             at: Some(now),
             ..Self::default()
         };
-        for index in 0..=30 {
-            let age = Duration::from_secs((30 - index) * 10);
+        for (index, variation) in SHAPE.into_iter().enumerate() {
+            let age = Duration::from_secs((SHAPE.len() - 1 - index) as u64 * 10);
             let at = now.checked_sub(age).unwrap_or(now);
-            let variation = if index == 30 {
-                1.
-            } else {
-                [0.8, 0.9, 0.7, 1.1, 1.3, 1.2, 0.9, 1.][index as usize % 8]
-            };
             histories.cpu.push(
                 at,
                 Some((f64::from(metrics.cpu) * variation).clamp(0., 100.)),
             );
-            histories.memory.push(
-                at,
-                used_percent(metrics.memory_used as f64, metrics.memory_total as f64)
-                    .map(|value| (value + (variation - 1.) * 3.).clamp(0., 100.)),
-            );
-            histories.disk.push(
-                at,
-                metrics
-                    .disk
-                    .and_then(|(used, total)| used_percent(used, total)),
-            );
             if let Some(network) = &metrics.network {
+                // Upload moves on its own rhythm, so the two areas read apart.
+                let upload = SHAPE[(index + 11) % SHAPE.len()];
                 histories.network.push(
                     at,
                     network.download.map(|value| value * variation),
-                    network.upload.map(|value| value * variation),
+                    network.upload.map(|value| value * upload),
                 );
             }
             for gpu in &metrics.gpus {
+                let variation = if index == SHAPE.len() - 1 {
+                    1.
+                } else {
+                    SHAPE[(index + 5) % SHAPE.len()]
+                };
                 histories.gpus.entry(gpu.id.clone()).or_default().push(
                     at,
                     gpu.utilization
@@ -71,15 +68,7 @@ impl MetricHistories {
     }
 
     pub(super) fn enabled(preferences: &DevboxPreferences, section: DevboxSection) -> bool {
-        section.enabled(preferences)
-            && match section {
-                DevboxSection::Cpu => preferences.history.cpu,
-                DevboxSection::Memory => preferences.history.memory,
-                DevboxSection::Disk => preferences.history.disk,
-                DevboxSection::Network => preferences.history.network,
-                DevboxSection::Gpu => preferences.history.gpu,
-                DevboxSection::Uptime | DevboxSection::Services => false,
-            }
+        section.graphed(preferences)
     }
 
     pub(super) fn any_enabled(preferences: &DevboxPreferences) -> bool {
@@ -107,23 +96,6 @@ impl MetricHistories {
                     .cpu_sampled
                     .then_some(metrics.cpu as f64)
                     .and_then(percentage),
-            );
-        }
-        if Self::enabled(preferences, DevboxSection::Memory) {
-            self.memory.push(
-                at,
-                metrics
-                    .memory_sampled
-                    .then(|| used_percent(metrics.memory_used as f64, metrics.memory_total as f64))
-                    .flatten(),
-            );
-        }
-        if Self::enabled(preferences, DevboxSection::Disk) {
-            self.disk.push(
-                at,
-                metrics
-                    .disk
-                    .and_then(|(used, total)| used_percent(used, total)),
             );
         }
         if Self::enabled(preferences, DevboxSection::Network) {
@@ -157,7 +129,7 @@ impl MetricHistories {
                         .then_some(previous_at)
                         .flatten(),
                 );
-                let series = self.gpus.entry(gpu.id.clone()).or_default();
+                let history = self.gpus.entry(gpu.id.clone()).or_default();
                 let sample = gpu
                     .utilization_at
                     .filter(|sample_at| {
@@ -166,23 +138,17 @@ impl MetricHistories {
                     .zip(gpu.utilization.map(f64::from).and_then(percentage))
                     .filter(|_| !gpu.asleep);
                 match sample {
-                    Some((sample_at, value)) => series.push(sample_at, Some(value)),
-                    None => series.push(at, None),
+                    Some((sample_at, value)) => history.push(sample_at, Some(value)),
+                    None => history.push(at, None),
                 }
-                series.prune(at);
+                history.prune(at);
             }
         }
     }
 
     pub(super) fn reconcile(&mut self, preferences: &DevboxPreferences, visible: bool) {
         if !visible || !Self::enabled(preferences, DevboxSection::Cpu) {
-            self.cpu = Series::default();
-        }
-        if !visible || !Self::enabled(preferences, DevboxSection::Memory) {
-            self.memory = Series::default();
-        }
-        if !visible || !Self::enabled(preferences, DevboxSection::Disk) {
-            self.disk = Series::default();
+            self.cpu = Percent::default();
         }
         if !visible || !Self::enabled(preferences, DevboxSection::Network) {
             self.network = NetworkHistory::default();
@@ -206,65 +172,145 @@ impl MetricHistories {
         if Self::enabled(preferences, DevboxSection::Cpu) {
             self.cpu.push(at, None);
         }
-        if Self::enabled(preferences, DevboxSection::Memory) {
-            self.memory.push(at, None);
-        }
-        if Self::enabled(preferences, DevboxSection::Disk) {
-            self.disk.push(at, None);
-        }
         if Self::enabled(preferences, DevboxSection::Network) {
             self.network.push(at, None, None);
         }
-        for series in self.gpus.values_mut() {
-            series.push(at, None);
+        for history in self.gpus.values_mut() {
+            history.push(at, None);
         }
     }
 
+    /// The section's area graph. CPU and GPU name their ceiling in the top
+    /// right corner; Network's scale is shared by both directions.
     pub(super) fn view<'a, Message: 'a>(
         &'a self,
         section: DevboxSection,
         gpu_id: Option<&str>,
         palette: Palette,
     ) -> cosmic::Element<'a, Message> {
-        let mut accent = palette.accent;
-        accent.a *= 0.62;
-        let mut secondary = palette.muted;
-        secondary.a *= 0.65;
-        let percent = |series| Trace {
-            series,
-            scale: 100.,
-            color: accent,
+        let percent = |history: &'a Percent| {
+            (
+                vec![Trace {
+                    series: &history.series,
+                    scale: history.ceiling,
+                    color: palette.accent,
+                }],
+                Some(history.ceiling),
+            )
         };
-        let traces = match section {
-            DevboxSection::Cpu => vec![percent(&self.cpu)],
-            DevboxSection::Memory => vec![percent(&self.memory)],
-            DevboxSection::Disk => vec![percent(&self.disk)],
-            DevboxSection::Network => vec![
-                Trace {
-                    series: &self.network.download,
-                    scale: self.network.scale,
-                    color: accent,
-                },
-                Trace {
-                    series: &self.network.upload,
-                    scale: self.network.scale,
-                    color: secondary,
-                },
-            ],
+        let (traces, ceiling) = match section {
+            DevboxSection::Cpu => percent(&self.cpu),
+            // Upload first, so download (the main reading) draws on top.
+            DevboxSection::Network => (
+                vec![
+                    Trace {
+                        series: &self.network.upload,
+                        scale: self.network.scale,
+                        color: palette.muted,
+                    },
+                    Trace {
+                        series: &self.network.download,
+                        scale: self.network.scale,
+                        color: palette.accent,
+                    },
+                ],
+                None,
+            ),
             DevboxSection::Gpu => gpu_id
                 .and_then(|id| self.gpus.get(id))
                 .map(percent)
-                .into_iter()
-                .collect(),
-            DevboxSection::Uptime | DevboxSection::Services => Vec::new(),
+                .unwrap_or_default(),
+            DevboxSection::Memory
+            | DevboxSection::Disk
+            | DevboxSection::Uptime
+            | DevboxSection::Services => (Vec::new(), None),
         };
-        canvas(Sparkline {
+        let graph: cosmic::Element<'a, Message> = canvas(Sparkline {
             traces,
             at: self.at,
+            track: tint(palette.accent, palette.background, 0.06),
+            baseline: tint(palette.accent, palette.background, 0.2),
         })
         .width(Length::Fill)
         .height(Length::Fixed(HEIGHT))
+        .into();
+        let Some(ceiling) = ceiling else {
+            return graph;
+        };
+        let label = cosmic::widget::text::body(format!("{ceiling:.0}%"))
+            .size(9.)
+            .line_height(1.)
+            .font(crate::widget_style::font())
+            .class(cosmic::theme::Text::Color(palette.muted));
+        cosmic::iced::widget::stack(vec![
+            graph,
+            cosmic::widget::container(label)
+                .width(Length::Fill)
+                .align_x(Alignment::End)
+                .padding([2, 4])
+                .into(),
+        ])
+        .height(Length::Fixed(HEIGHT))
         .into()
+    }
+}
+
+/// The Settings example's few minutes: a gentle rise and fall around the
+/// reading, ending on it, rather than a regular saw tooth.
+const SHAPE: [f64; 31] = [
+    0.70, 0.74, 0.82, 0.78, 0.72, 0.76, 0.88, 1.02, 1.12, 1.06, 0.94, 0.86, 0.90, 1.00, 1.18, 1.32,
+    1.24, 1.08, 0.96, 0.84, 0.80, 0.86, 0.98, 1.10, 1.04, 0.92, 0.88, 0.94, 1.02, 0.98, 1.00,
+];
+
+/// A percentage reading with the ceiling its graph is drawn against: 25, 50
+/// or 100%, so a mostly idle processor still shows its shape.
+#[derive(Debug)]
+struct Percent {
+    series: Series,
+    ceiling: f64,
+}
+
+impl Default for Percent {
+    fn default() -> Self {
+        Self {
+            series: Series::default(),
+            ceiling: CEILINGS[0],
+        }
+    }
+}
+
+impl Percent {
+    fn push(&mut self, at: Instant, value: Option<f64>) {
+        self.series.push(at, value);
+        self.rescale();
+    }
+
+    fn prune(&mut self, now: Instant) {
+        self.series.prune(now);
+        self.rescale();
+    }
+
+    /// Rises as soon as a reading passes the ceiling; steps down only when
+    /// the whole window fits comfortably under a lower one.
+    fn rescale(&mut self) {
+        let peak = self
+            .series
+            .samples
+            .iter()
+            .filter_map(|(_, value)| *value)
+            .fold(0., f64::max);
+        let step = |headroom: f64| {
+            CEILINGS
+                .into_iter()
+                .find(|ceiling| peak <= ceiling * headroom)
+                .unwrap_or(CEILINGS[CEILINGS.len() - 1])
+        };
+        let needed = step(1.);
+        self.ceiling = if needed > self.ceiling {
+            needed
+        } else {
+            self.ceiling.min(step(CEILING_HEADROOM)).max(needed)
+        };
     }
 }
 
@@ -277,6 +323,10 @@ struct Trace<'a> {
 struct Sparkline<'a> {
     traces: Vec<Trace<'a>>,
     at: Option<Instant>,
+    /// The faint band behind the plot, the whole width of the card.
+    track: Color,
+    /// The zero line along the bottom.
+    baseline: Color,
 }
 
 impl<Message> canvas::Program<Message, cosmic::Theme> for Sparkline<'_> {
@@ -291,33 +341,75 @@ impl<Message> canvas::Program<Message, cosmic::Theme> for Sparkline<'_> {
         _: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
-        if let Some(at) = self.at {
-            let point = |(x, y): (f32, f32)| {
-                Point::new(
-                    1. + x * (bounds.width - 2.).max(0.),
-                    1. + y * (bounds.height - 2.).max(0.),
-                )
-            };
-            for trace in &self.traces {
-                for segment in trace.series.segments(at, trace.scale) {
-                    if segment.len() == 1 {
-                        frame.fill(&canvas::Path::circle(point(segment[0]), 0.65), trace.color);
-                    } else {
-                        let path = canvas::Path::new(|path| {
-                            path.move_to(point(segment[0]));
-                            for sample in &segment[1..] {
-                                path.line_to(point(*sample));
-                            }
-                        });
-                        frame.stroke(
-                            &path,
-                            canvas::Stroke::default()
-                                .with_color(trace.color)
-                                .with_width(1.)
-                                .with_line_join(canvas::LineJoin::Round),
-                        );
-                    }
+        let (width, height) = (bounds.width, bounds.height);
+        frame.fill(
+            &canvas::Path::rounded_rectangle(Point::ORIGIN, bounds.size(), 3.into()),
+            self.track,
+        );
+        let bottom = height - 0.5;
+        frame.stroke(
+            &canvas::Path::line(Point::new(0., bottom), Point::new(width, bottom)),
+            canvas::Stroke::default()
+                .with_color(self.baseline)
+                .with_width(1.),
+        );
+        let Some(at) = self.at else {
+            return vec![frame.into_geometry()];
+        };
+        let point = |(x, y): (f32, f32)| {
+            Point::new(
+                INSET + x * (width - 2. * INSET).max(0.),
+                INSET + y * (height - 2. * INSET).max(0.),
+            )
+        };
+        for trace in &self.traces {
+            let segments = trace.series.segments(at, trace.scale);
+            for segment in &segments {
+                let first = point(segment[0]);
+                let last = point(segment[segment.len() - 1]);
+                if segment.len() > 1 {
+                    let area = canvas::Path::new(|path| {
+                        path.move_to(Point::new(first.x, bottom));
+                        for sample in segment {
+                            path.line_to(point(*sample));
+                        }
+                        path.line_to(Point::new(last.x, bottom));
+                        path.close();
+                    });
+                    frame.fill(
+                        &area,
+                        Color {
+                            a: trace.color.a * 0.22,
+                            ..trace.color
+                        },
+                    );
+                    let line = canvas::Path::new(|path| {
+                        path.move_to(first);
+                        for sample in &segment[1..] {
+                            path.line_to(point(*sample));
+                        }
+                    });
+                    frame.stroke(
+                        &line,
+                        canvas::Stroke::default()
+                            .with_color(trace.color)
+                            .with_width(1.75)
+                            .with_line_join(canvas::LineJoin::Round)
+                            .with_line_cap(canvas::LineCap::Round),
+                    );
+                } else {
+                    frame.fill(&canvas::Path::circle(first, 0.9), trace.color);
                 }
+            }
+            // The newest reading is marked, unless the newest sample is a gap.
+            if trace
+                .series
+                .samples
+                .back()
+                .is_some_and(|(_, value)| value.is_some())
+                && let Some(latest) = segments.last().and_then(|segment| segment.last())
+            {
+                frame.fill(&canvas::Path::circle(point(*latest), 2.25), trace.color);
             }
         }
         vec![frame.into_geometry()]
@@ -326,11 +418,6 @@ impl<Message> canvas::Program<Message, cosmic::Theme> for Sparkline<'_> {
 
 fn percentage(value: f64) -> Option<f64> {
     (value.is_finite() && (0. ..=100.).contains(&value)).then_some(value)
-}
-
-fn used_percent(used: f64, total: f64) -> Option<f64> {
-    (used.is_finite() && total.is_finite() && total > 0. && used >= 0. && used <= total)
-        .then(|| used / total * 100.)
 }
 
 #[derive(Debug, Default)]
@@ -470,25 +557,14 @@ mod tests {
         let mut histories = MetricHistories::default();
         let mut metrics = metrics();
         histories.record(&metrics, &enabled(), true);
-        assert_eq!(histories.cpu.samples.back().unwrap().1, Some(25.));
-        assert_eq!(histories.memory.samples.back().unwrap().1, Some(25.));
-        assert_eq!(histories.disk.samples.back().unwrap().1, Some(25.));
+        assert_eq!(histories.cpu.series.samples.back().unwrap().1, Some(25.));
         metrics.cpu_sampled = false;
-        metrics.memory_sampled = false;
-        metrics.disk = None;
         histories.record(&metrics, &enabled(), true);
-        assert_eq!(histories.cpu.samples.back().unwrap().1, None);
-        assert_eq!(histories.memory.samples.back().unwrap().1, None);
-        assert_eq!(histories.disk.samples.back().unwrap().1, None);
+        assert_eq!(histories.cpu.series.samples.back().unwrap().1, None);
         metrics.cpu_sampled = true;
         metrics.cpu = f32::NAN;
-        metrics.memory_sampled = true;
-        metrics.memory_total = 0.;
-        metrics.disk = Some((3., 2.));
         histories.record(&metrics, &enabled(), true);
-        assert_eq!(histories.cpu.samples.back().unwrap().1, None);
-        assert_eq!(histories.memory.samples.back().unwrap().1, None);
-        assert_eq!(histories.disk.samples.back().unwrap().1, None);
+        assert_eq!(histories.cpu.series.samples.back().unwrap().1, None);
     }
 
     #[test]
@@ -501,14 +577,11 @@ mod tests {
         preferences.history.network = false;
         preferences.gpu = false;
         histories.reconcile(&preferences, true);
-        assert!(histories.cpu.samples.is_empty());
-        assert!(histories.memory.samples.is_empty());
+        assert!(histories.cpu.series.samples.is_empty());
         assert!(histories.network.download.samples.is_empty());
         assert!(histories.gpus.is_empty());
-        assert_eq!(histories.disk.samples.len(), 1);
         histories.record(&metrics(), &preferences, true);
-        assert!(histories.cpu.samples.is_empty());
-        assert!(histories.memory.samples.is_empty());
+        assert!(histories.cpu.series.samples.is_empty());
         assert!(histories.network.download.samples.is_empty());
         assert!(histories.gpus.is_empty());
     }
@@ -519,13 +592,11 @@ mod tests {
         histories.record(&metrics(), &enabled(), true);
         histories.reconcile(&enabled(), false);
         histories.record(&metrics(), &enabled(), false);
-        assert!(histories.cpu.samples.is_empty());
-        assert!(histories.memory.samples.is_empty());
-        assert!(histories.disk.samples.is_empty());
+        assert!(histories.cpu.series.samples.is_empty());
         assert!(histories.network.download.samples.is_empty());
         assert!(histories.gpus.is_empty());
         histories.record(&metrics(), &enabled(), true);
-        assert_eq!(histories.cpu.samples.len(), 1);
+        assert_eq!(histories.cpu.series.samples.len(), 1);
     }
 
     #[test]
@@ -533,13 +604,11 @@ mod tests {
         let mut histories = MetricHistories::default();
         histories.record(&metrics(), &enabled(), true);
         histories.unavailable(&enabled(), true);
-        assert_eq!(histories.cpu.samples.back().unwrap().1, None);
-        assert_eq!(histories.memory.samples.back().unwrap().1, None);
-        assert_eq!(histories.disk.samples.back().unwrap().1, None);
+        assert_eq!(histories.cpu.series.samples.back().unwrap().1, None);
         assert_eq!(histories.network.download.samples.back().unwrap().1, None);
         assert_eq!(histories.network.upload.samples.back().unwrap().1, None);
         for series in histories.gpus.values() {
-            assert_eq!(series.samples.back().unwrap().1, None);
+            assert_eq!(series.series.samples.back().unwrap().1, None);
         }
     }
 
@@ -556,6 +625,7 @@ mod tests {
         histories.record(&metrics, &enabled(), true);
         assert_eq!(
             histories.gpus["0000:00:00.0"]
+                .series
                 .samples
                 .iter()
                 .map(|(_, value)| *value)
@@ -564,6 +634,7 @@ mod tests {
         );
         assert_eq!(
             histories.gpus["0000:01:00.0"]
+                .series
                 .samples
                 .iter()
                 .map(|(_, value)| *value)
@@ -575,7 +646,7 @@ mod tests {
         assert!(!histories.gpus.contains_key(&missing.id));
         metrics.gpus.push(missing);
         histories.record(&metrics, &enabled(), true);
-        assert_eq!(histories.gpus["0000:00:00.0"].samples.len(), 1);
+        assert_eq!(histories.gpus["0000:00:00.0"].series.samples.len(), 1);
     }
 
     #[test]
@@ -584,11 +655,16 @@ mod tests {
         let mut metrics = metrics();
         histories.record(&metrics, &enabled(), true);
         histories.record(&metrics, &enabled(), true);
-        assert_eq!(histories.gpus["0000:00:00.0"].samples.len(), 1);
+        assert_eq!(histories.gpus["0000:00:00.0"].series.samples.len(), 1);
         metrics.gpus[0].asleep = true;
         histories.record(&metrics, &enabled(), true);
         assert_eq!(
-            histories.gpus["0000:00:00.0"].samples.back().unwrap().1,
+            histories.gpus["0000:00:00.0"]
+                .series
+                .samples
+                .back()
+                .unwrap()
+                .1,
             None
         );
     }
@@ -604,13 +680,23 @@ mod tests {
         preferences.history.gpu = true;
         histories.record(&metrics, &preferences, true);
         assert_eq!(
-            histories.gpus["0000:00:00.0"].samples.back().unwrap().1,
+            histories.gpus["0000:00:00.0"]
+                .series
+                .samples
+                .back()
+                .unwrap()
+                .1,
             None
         );
         metrics.gpus[0].utilization_at = Some(Instant::now());
         histories.record(&metrics, &preferences, true);
         assert_eq!(
-            histories.gpus["0000:00:00.0"].samples.back().unwrap().1,
+            histories.gpus["0000:00:00.0"]
+                .series
+                .samples
+                .back()
+                .unwrap()
+                .1,
             Some(20.)
         );
     }
@@ -625,7 +711,12 @@ mod tests {
         metrics.gpus.push(gpu);
         histories.record(&metrics, &enabled(), true);
         assert_eq!(
-            histories.gpus["0000:01:00.0"].samples.back().unwrap().1,
+            histories.gpus["0000:01:00.0"]
+                .series
+                .samples
+                .back()
+                .unwrap()
+                .1,
             None
         );
     }
@@ -728,5 +819,80 @@ mod tests {
         assert_eq!(network.upload.samples[0].1, None);
         assert_eq!(network.download.samples[1].1, Some(0.));
         assert_eq!(network.scale, 1024.);
+    }
+
+    #[test]
+    fn percentage_graphs_step_their_ceiling_with_hysteresis() {
+        let start = Instant::now();
+        let mut cpu = Percent::default();
+        let at = |second: u64| start + Duration::from_secs(second);
+        cpu.push(at(0), Some(12.));
+        assert_eq!(cpu.ceiling, 25., "an idle processor fills its graph");
+        // A reading over the ceiling raises it at once, to the step it fits.
+        cpu.push(at(1), Some(30.));
+        assert_eq!(cpu.ceiling, 50.);
+        cpu.push(at(2), Some(64.));
+        assert_eq!(cpu.ceiling, 100.);
+        // Quiet readings keep it while the 64% is still in the window...
+        for second in 3..=302 {
+            cpu.push(at(second), Some(22.));
+            assert_eq!(cpu.ceiling, 100., "{second}");
+        }
+        // ...then it steps down, but only as far as the window fits with room:
+        // 22% is under 25% but too close to it, so 50% it is.
+        cpu.push(at(303), Some(22.));
+        assert_eq!(cpu.ceiling, 50.);
+        for second in 304..=603 {
+            cpu.push(at(second), Some(19.));
+            assert_eq!(cpu.ceiling, 50., "22% is still in the window");
+        }
+        cpu.push(at(604), Some(19.));
+        assert_eq!(cpu.ceiling, 25.);
+        // Gaps never count as zero, and a reset starts at the lowest step.
+        cpu.push(at(605), None);
+        assert_eq!(cpu.ceiling, 25.);
+        assert_eq!(Percent::default().ceiling, 25.);
+        assert!(
+            cpu.series
+                .segments(at(605), cpu.ceiling)
+                .iter()
+                .flatten()
+                .all(|(_, y)| (0. ..=1.).contains(y))
+        );
+    }
+
+    #[test]
+    fn memory_and_disk_never_collect_a_history() {
+        let mut histories = MetricHistories::default();
+        histories.record(&metrics(), &enabled(), true);
+        for section in [DevboxSection::Memory, DevboxSection::Disk] {
+            assert!(!MetricHistories::enabled(&enabled(), section));
+        }
+        let only_memory = DevboxPreferences {
+            history: crate::config::DevboxHistoryPreferences {
+                memory: true,
+                disk: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(!MetricHistories::any_enabled(&only_memory));
+    }
+
+    #[test]
+    fn the_settings_example_ends_on_its_readings_under_a_fitting_ceiling() {
+        let sample = &crate::app::settings_preview::monitor_sample().metrics;
+        let histories = MetricHistories::settings_sample(sample);
+        let last = |series: &Series| series.samples.back().unwrap().1.unwrap();
+        assert_eq!(last(&histories.cpu.series), f64::from(sample.cpu));
+        // 26% wanders up to about a third, so the example reads against 50%.
+        assert_eq!(histories.cpu.ceiling, 50.);
+        let gpu = histories.gpus.values().next().unwrap();
+        assert_eq!(last(&gpu.series), 18.);
+        assert_eq!(gpu.ceiling, 25.);
+        let network = sample.network.as_ref().unwrap();
+        assert_eq!(last(&histories.network.download), network.download.unwrap());
+        assert!(histories.network.scale >= network.download.unwrap() * 1.32);
+        assert_eq!(histories.cpu.series.samples.len(), SHAPE.len());
     }
 }

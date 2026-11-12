@@ -260,7 +260,7 @@ fn widget_page(group: Option<&str>) -> Page {
         Some("Projects") => Page::Projects,
         Some("Activity") => Page::DesktopDock,
         Some("Time of day") => Page::DesktopAutomation,
-        Some("Wallpaper effects") => Page::DesktopWallpaper,
+        Some("Wallpaper effects") => Page::WeatherEffects,
         Some("Recipes") => Page::Builder,
         Some("Dock and panel style") => Page::DesktopDock,
         Some("Widget arrangement") => Page::Widgets,

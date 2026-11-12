@@ -308,7 +308,7 @@ def restore():
 # `layout` alias for Widgets.
 SETTINGS_PAGES = ('adaptive', 'builder', 'moments', 'overview', 'pending', 'themes', 'presets', 'schedules', 'widget-style', 'system-monitor', 'daily-overview', 'focus-timer', 'app-settings', 'appearance', 'widgets', 'layout', 'glance', 'calendar', 'weather', 'devbox', 'clock',
                   'projects', 'music', 'notes', 'focus', 'general', 'desktop', 'desktop-dock',
-                  'desktop-appearance', 'desktop-wallpaper', 'desktop-icons', 'desktop-profiles',
+                  'desktop-appearance', 'desktop-wallpaper', 'weather-effects', 'desktop-icons', 'desktop-profiles',
                   'desktop-windows', 'desktop-workspaces', 'desktop-motion', 'desktop-window-rules',
                   'desktop-shortcuts', 'desktop-automation', 'changes')
 

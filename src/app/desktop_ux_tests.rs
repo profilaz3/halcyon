@@ -298,31 +298,195 @@ fn dt02_right_click_menu_hides_the_widget_it_was_opened_on() {
 }
 
 #[test]
-fn dt14_idle_music_card_shrinks_to_one_line() {
+fn dt14_idle_music_card_keeps_its_slot_and_offers_the_last_track() {
+    use crate::tools::cards::{Action, MusicView, music as card};
+    use crate::tools::music;
     let config = Config::default();
-    let view = || crate::tools::cards::MusicView {
-        feed: None,
-        player: None,
-        art: None,
-        now: Instant::now(),
-        manually_selected: false,
-        problem: false,
-    };
-    assert_eq!(crate::tools::cards::idle_height(true, 360.), Some(80.));
-    assert_eq!(crate::tools::cards::idle_height(true, 84.), None);
-    assert_eq!(crate::tools::cards::idle_height(false, 360.), None);
     let size = Size::new(480., 360.);
     let mut native = Native::new(size);
-    let card = || crate::tools::cards::music::<Message>(view(), &config, None, Some([480., 360.]));
-    let title = native.text_bounds(card(), "Nothing playing");
+    // Nothing played yet: one muted line, centred in the full card.
+    let nothing = || {
+        card::<Message>(
+            MusicView {
+                feed: None,
+                player: None,
+                art: None,
+                now: Instant::now(),
+                manually_selected: false,
+                problem: false,
+                last: None,
+            },
+            &config,
+            None,
+            Some([480., 360.]),
+        )
+    };
+    let title = native.text_bounds(nothing(), "Nothing playing");
+    let middle = title.y + title.height / 2.;
     assert!(
-        title.y + title.height < 80.,
-        "the line sits at the top: {title:?}"
+        (middle - 180.).abs() < 24.,
+        "the line sits in the middle of the card: {title:?}"
     );
+    // The player that played it is still there: the track and a Resume
+    // that sends Play to that player.
+    let mut stopped = crate::tools::cards::recipe::sample_player(Instant::now());
+    let last = music::LastTrack::of(&stopped).unwrap();
+    stopped.status = music::Playback::Stopped;
+    stopped.title.clear();
+    let feed = music::Feed::Players(vec![stopped.clone()]);
+    let resumable_at = |[width, height]: [f32; 2]| {
+        card(
+            MusicView {
+                feed: Some(&feed),
+                player: Some(&stopped),
+                art: None,
+                now: Instant::now(),
+                manually_selected: false,
+                problem: false,
+                last: Some(&last),
+            },
+            &config,
+            Some(Message::Tool),
+            Some([width, height]),
+        )
+    };
+    let resumable = || resumable_at([480., 360.]);
+    // One row like the playing card: artwork, the title over "artist ·
+    // where it played", and Resume at the row's end, centred in the card.
+    // 360×144 is the size the card has on a real desktop.
+    for size in [[480., 360.], [360., 144.]] {
+        let mut native = Native::new(Size::new(size[0], size[1]));
+        let title = native.text_bounds(resumable_at(size), &last.title);
+        let subtitle = native.text_bounds(
+            resumable_at(size),
+            &format!("{} · Last played in {}", last.author, last.player),
+        );
+        let resume = native.bounds(resumable_at(size), "music-resume");
+        let middle = size[1] / 2.;
+        assert!(subtitle.y > title.y, "{title:?} {subtitle:?}");
+        assert!(
+            (resume.center().y - middle).abs() < 6.,
+            "Resume centred in the card: {resume:?} at {size:?}"
+        );
+        assert!(
+            ((title.y + subtitle.y + subtitle.height) / 2. - middle).abs() < 8.,
+            "text centred in the card: {title:?} {subtitle:?} at {size:?}"
+        );
+        assert!(
+            resume.x >= subtitle.x + subtitle.width && resume.x + resume.width <= size[0],
+            "Resume ends the row: {resume:?} at {size:?}"
+        );
+        assert!(
+            size[0] - (resume.x + resume.width) < 32.,
+            "{resume:?} at {size:?}"
+        );
+    }
+    let resume = native.bounds(resumable(), "music-resume");
+    let press = cosmic::iced::Event::Mouse(cosmic::iced::mouse::Event::ButtonPressed(
+        cosmic::iced::mouse::Button::Left,
+    ));
+    let (messages, _) = native.event(resumable(), press.clone(), resume.center());
+    assert!(
+        messages.iter().any(|message| matches!(
+            message,
+            Message::Tool(Action::Music(music::TransportRequest { bus, command: music::Command::Play }))
+                if *bus == stopped.bus
+        )),
+        "{messages:?}"
+    );
+    // Its player quit: the track stays, and Resume does nothing.
+    let empty = music::Feed::Players(Vec::new());
+    let closed = || {
+        card(
+            MusicView {
+                feed: Some(&empty),
+                player: None,
+                art: None,
+                now: Instant::now(),
+                manually_selected: false,
+                problem: false,
+                last: Some(&last),
+            },
+            &config,
+            Some(Message::Tool),
+            Some([480., 360.]),
+        )
+    };
+    native.text_bounds(
+        closed(),
+        &format!("{} · {} isn’t open", last.author, last.player),
+    );
+    let resume = native.bounds(closed(), "music-resume");
+    assert!(native.event(closed(), press, resume.center()).0.is_empty());
     for (theme, shade) in [
         (cosmic::Theme::light(), "light"),
         (cosmic::Theme::dark(), "dark"),
     ] {
-        native.capture(card(), &theme, &format!("dt14-music-idle-{shade}"));
+        native.capture(nothing(), &theme, &format!("dt14-music-idle-{shade}"));
+        native.capture(resumable(), &theme, &format!("dt14-music-last-{shade}"));
+        Native::new(Size::new(360., 144.)).capture(
+            resumable_at([360., 144.]),
+            &theme,
+            &format!("dt14-music-last-360x144-{shade}"),
+        );
+    }
+}
+
+/// Review pictures of the System monitor and the idle Music card, written
+/// only when `DESKTOP_CARDS_LAYOUT_EVIDENCE` names a folder.
+#[test]
+fn evidence_monitor_and_music_cards() {
+    let sample = settings_preview::monitor_sample();
+    let histories = history::MetricHistories::settings_sample(&sample.metrics);
+    let all: Config = serde_json::from_value(serde_json::json!({
+        "devbox":{"cpu":true,"memory":true,"disk":true,"network":true,"gpu":true,
+            "uptime":false,"services":false,"swap":true,"memory_cache":true,
+            "history":{"cpu":true,"memory":true,"disk":true,"network":true,"gpu":true}}
+    }))
+    .unwrap();
+    let plain: Config = serde_json::from_value(serde_json::json!({
+        "devbox":{"uptime":false,"services":false}
+    }))
+    .unwrap();
+    for (theme, shade) in [
+        (cosmic::Theme::light(), "light"),
+        (cosmic::Theme::dark(), "dark"),
+    ] {
+        for (config, name) in [(&all, "history"), (&plain, "bars")] {
+            let height = devbox::natural_height(config, sample.metrics.gpus.len());
+            let mut native = Native::new(Size::new(360., height));
+            native.capture(
+                devbox::view(config, &sample.metrics, &histories, height),
+                &theme,
+                &format!("monitor-{name}-{shade}"),
+            );
+        }
+        let config = Config::default();
+        let mut native = Native::new(Size::new(360., 140.));
+        let mut stopped = crate::tools::cards::recipe::sample_player(Instant::now());
+        let last = crate::tools::music::LastTrack::of(&stopped).unwrap();
+        stopped.status = crate::tools::music::Playback::Stopped;
+        stopped.title.clear();
+        let feed = crate::tools::music::Feed::Players(vec![stopped.clone()]);
+        for (name, last, feed) in [("idle", None, None), ("last", Some(&last), Some(&feed))] {
+            native.capture(
+                crate::tools::cards::music::<Message>(
+                    crate::tools::cards::MusicView {
+                        feed,
+                        player: feed.map(|_| &stopped),
+                        art: None,
+                        now: Instant::now(),
+                        manually_selected: false,
+                        problem: false,
+                        last,
+                    },
+                    &config,
+                    Some(Message::Tool),
+                    Some([360., 140.]),
+                ),
+                &theme,
+                &format!("music-{name}-{shade}"),
+            );
+        }
     }
 }

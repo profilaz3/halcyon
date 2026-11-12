@@ -88,15 +88,19 @@ pub(super) fn view<'a>(
                 )
             }
             DevboxSection::Memory => {
+                // Used, then cache in a lighter shade: cache is memory the
+                // system hands back on demand, so it reads as softer use.
                 let bar_indicator = if m.memory_total > 0. {
-                    let mut segments = vec![(m.memory_used / m.memory_total, p.accent)];
-                    if preferences.memory_cache {
-                        segments.push((
-                            m.memory_cache / m.memory_total,
-                            mix(p.accent, p.background, 0.45),
-                        ));
-                    }
-                    bar(&segments, p)
+                    bar(
+                        &[
+                            (m.memory_used / m.memory_total, p.accent),
+                            (
+                                m.memory_cache / m.memory_total,
+                                mix(p.accent, p.background, 0.45),
+                            ),
+                        ],
+                        p,
+                    )
                 } else {
                     neutral_rule(p)
                 };
@@ -603,7 +607,7 @@ mod tests {
             cards.metrics.gpus = vec![Default::default()];
             assert_eq!(
                 cards.devbox_natural_height(),
-                143.,
+                171.,
                 "CPU and {second} share indicator height; RAM keeps its labels"
             );
             for _ in 0..400 {
@@ -613,7 +617,7 @@ mod tests {
             }
             assert_eq!(
                 cards.devbox_natural_height(),
-                143.,
+                171.,
                 "sample count must not resize the card"
             );
             cards.config.devbox.cpu = false;
@@ -623,5 +627,20 @@ mod tests {
                 "a hidden CPU history must not enlarge {second}"
             );
         }
+    }
+
+    #[test]
+    fn saved_memory_and_disk_graphs_leave_their_bars_at_bar_height() {
+        let config: Config = serde_json::from_value(serde_json::json!({
+            "enabled_widgets":[],
+            "devbox":{"cpu":false, "memory":true, "disk":true, "network":false,
+                "gpu":false, "uptime":false, "services":false,
+                "history":{"memory":true, "disk":true}}
+        }))
+        .unwrap();
+        let (cards, _) = Cards::init(Core::default(), config);
+        // Two bar rows, no graph slots: 67 + 2 x 25 + 8.
+        assert_eq!(cards.devbox_natural_height(), 125.);
+        assert!(cards.config.devbox.memory_cache);
     }
 }

@@ -655,6 +655,7 @@ impl Settings {
             // Wallpaper & colors is one page: the title and large preview
             // scroll with the gallery and color controls.
             Page::DesktopWallpaper => self.wallpaper_page(),
+            Page::WeatherEffects => self.weather_effects_page(),
             Page::DesktopIcons => self.desktop_icons_page(),
             Page::DesktopProfiles => self.profiles_page(),
             Page::Themes => self.themes_page(),
@@ -797,7 +798,7 @@ impl Settings {
             self.canvas_actions()
         } else if self.page == Page::Builder {
             self.recipe_actions()
-        } else if self.page == Page::DesktopWallpaper {
+        } else if self.page.edits_wallpaper() {
             self.wallpaper_actions()
         } else if matches!(self.page, Page::DesktopProfiles | Page::Themes) {
             self.profiles_actions()
@@ -931,7 +932,7 @@ impl Settings {
                 )))
                 .class(nav_style(active, self.settings_accent()))
                 .selected(active)
-                .padding(if rail { [5, 2] } else { [11, 12] })
+                .padding(if rail { [4, 2] } else { [11, 12] })
                 .width(Length::Fill)
                 .on_press(Message::NavSelected(id))
                 .into()
@@ -953,7 +954,7 @@ impl Settings {
                 .id(cosmic::widget::Id::new("rail-search"))
                 .class(nav_style(self.search_open, self.settings_accent()))
                 .selected(self.search_open)
-                .padding([5, 2])
+                .padding([4, 2])
                 .width(Length::Fill)
                 .on_press(Message::FocusSearch)
                 .into(),
@@ -1044,7 +1045,7 @@ impl Settings {
         }
         // Changes comes last in the same list, so at large scaling it
         // scrolls with the rest instead of covering the selected entry. The
-        // rail keeps it close enough to fit at 820×552.
+        // rail keeps all nine roots and Changes inside an 820×600 window.
         let list = column::with_children(vec![
             column::with_children(groups).spacing(14).into(),
             self.changes_entry(rail),

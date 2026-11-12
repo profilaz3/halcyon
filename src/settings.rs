@@ -92,6 +92,10 @@ pub enum Page {
     DesktopAppearance,
     /// Backgrounds, slideshows and colors, a subpage of Pop!_OS.
     DesktopWallpaper,
+    /// Rain, snow, fog, clouds and Match the weather: a root of its own.
+    /// The effects play over the wallpaper, so they share its editor,
+    /// preview and Apply.
+    WeatherEffects,
     /// Desktop icon size and what the desktop shows, a subpage of Pop!_OS.
     DesktopIcons,
     /// Saved and built-in desktop looks, a subpage of Pop!_OS.
@@ -117,7 +121,7 @@ pub enum Page {
     Changes,
 }
 impl Page {
-    /// Eight roots, each named for what it changes; leaf routes keep their
+    /// Nine roots, each named for what it changes; leaf routes keep their
     /// existing command keys.
     const SIDEBAR: [(Option<&'static str>, &'static [Self]); 1] = [(
         None,
@@ -125,6 +129,7 @@ impl Page {
             Self::DesktopProfiles,
             Self::Themes,
             Self::DesktopWallpaper,
+            Self::WeatherEffects,
             Self::Overview,
             Self::DesktopDock,
             Self::DesktopWindows,
@@ -134,7 +139,7 @@ impl Page {
     )];
     /// Pinned below the roots, at the bottom of the sidebar.
     const PINNED: Self = Self::Changes;
-    const ALL: [Self; 32] = [
+    const ALL: [Self; 33] = [
         Self::Overview,
         Self::WidgetLayout,
         Self::PendingChanges,
@@ -154,6 +159,7 @@ impl Page {
         Self::DesktopDock,
         Self::DesktopAppearance,
         Self::DesktopWallpaper,
+        Self::WeatherEffects,
         Self::DesktopIcons,
         Self::DesktopProfiles,
         Self::Themes,
@@ -195,6 +201,7 @@ impl Page {
                 Self::DesktopProfiles
             }
             Self::DesktopWallpaper | Self::DesktopIcons => Self::DesktopWallpaper,
+            Self::WeatherEffects => Self::WeatherEffects,
             Self::DesktopDock => Self::DesktopDock,
             Self::DesktopWindows | Self::DesktopWindowRules | Self::DesktopShortcuts => {
                 Self::DesktopWindows
@@ -226,6 +233,7 @@ impl Page {
             Self::Appearance => "Glass and transparency",
             Self::DesktopAppearance => "Fonts and icons",
             Self::DesktopWallpaper => "Wallpaper",
+            Self::WeatherEffects => "Weather",
             Self::Themes => "Appearance",
             Self::DesktopProfiles => "Looks",
             Self::DesktopWindows => "Windows",
@@ -249,6 +257,7 @@ impl Page {
             Self::Appearance => "applications-graphics-symbolic",
             Self::DesktopAppearance => "preferences-desktop-appearance-symbolic",
             Self::DesktopWallpaper => "preferences-desktop-wallpaper-symbolic",
+            Self::WeatherEffects => "weather-showers-symbolic",
             Self::Themes => "preferences-color-symbolic",
             Self::DesktopDock => "view-app-grid-symbolic",
             Self::DesktopWindows => "preferences-window-management-symbolic",
@@ -293,6 +302,7 @@ impl Page {
             Self::DesktopDock => "desktop-dock",
             Self::DesktopAppearance => "desktop-appearance",
             Self::DesktopWallpaper => "desktop-wallpaper",
+            Self::WeatherEffects => "weather-effects",
             Self::DesktopIcons => "desktop-icons",
             Self::DesktopProfiles => "desktop-profiles",
             Self::Themes => "themes",
@@ -329,6 +339,7 @@ impl Page {
             Self::DesktopDock => "Dock and panel",
             Self::DesktopAppearance => "Fonts and icons",
             Self::DesktopWallpaper => "Wallpaper",
+            Self::WeatherEffects => "Weather effects",
             Self::DesktopIcons => "Icons on the desktop",
             Self::DesktopProfiles => "Looks",
             Self::Themes => "Appearance",
@@ -351,6 +362,7 @@ impl Page {
             "setups" | "looks" => "desktop-profiles",
             "dock" | "panel" => "desktop-dock",
             "wallpaper" => "desktop-wallpaper",
+            "effects" | "wallpaper-effects" | "rain" => "weather-effects",
             "settings" | "halcyon" => "general",
             "accessibility" => "desktop-motion",
             "shortcuts" => "desktop-shortcuts",
@@ -386,6 +398,20 @@ impl Page {
             other => other,
         }
     }
+    /// The key a visit is counted under. Weather effects were part of
+    /// Wallpaper until they got a page, and the report collector only
+    /// accepts the keys it knows, so they keep counting there.
+    pub(super) fn usage_key(self) -> &'static str {
+        match self {
+            Self::WeatherEffects => Self::DesktopWallpaper.key(),
+            page => page.key(),
+        }
+    }
+    /// Wallpaper and Weather edit one draft: its preview, Apply and Undo
+    /// work on either page.
+    fn edits_wallpaper(self) -> bool {
+        matches!(self, Self::DesktopWallpaper | Self::WeatherEffects)
+    }
     fn icon(self) -> &'static str {
         match self {
             Self::Overview => "preferences-desktop-display-symbolic",
@@ -405,6 +431,7 @@ impl Page {
             Self::Focus => "alarm-symbolic",
             Self::General => "preferences-system-symbolic",
             Self::DesktopWallpaper => "preferences-desktop-wallpaper-symbolic",
+            Self::WeatherEffects => "weather-showers-symbolic",
             Self::Desktop
             | Self::DesktopDock
             | Self::DesktopAppearance
@@ -634,6 +661,11 @@ pub enum Message {
     DevboxDragOver(DevboxSection),
     DevboxDragLeave(DevboxSection),
     ArrangeDesktop,
+    /// Home's and search's Arrange widgets: the editor on the desktop
+    /// itself, or the one in Settings when the desktop can't open it.
+    ArrangeWidgets,
+    /// The desktop couldn't open its editor: arrange in Settings instead.
+    ArrangeHere(String),
     OpenDesktop(&'static str),
     CalendarPrivacy(bool),
     Today(bool),
@@ -1066,7 +1098,7 @@ impl cosmic::Application for Settings {
             .filter(|_| config.design_problem.is_none())
             .map(|_| open_wizard());
         crate::usage::start_status();
-        crate::usage::counts::page(page.key());
+        crate::usage::counts::page(page.usage_key());
         let usage = crate::usage::preference();
         let mut app = Self {
             depth_preview: Default::default(),
@@ -1255,7 +1287,7 @@ impl cosmic::Application for Settings {
             app.wallpaper.open();
             app.system_appearance.open();
         }
-        if page == Page::DesktopWallpaper {
+        if page.edits_wallpaper() {
             app.rain.refresh_weather(&app.config);
         }
         if page == Page::AdaptiveLooks {
@@ -1367,7 +1399,7 @@ impl cosmic::Application for Settings {
                 .color_subscription()
                 .map(|_| Message::DesktopPaletteChanged),
         ];
-        if self.page == Page::DesktopWallpaper
+        if self.page.edits_wallpaper()
             && (self
                 .wallpaper
                 .effect()
@@ -1600,7 +1632,7 @@ impl cosmic::Application for Settings {
                 );
             }
         }
-        if self.page == Page::DesktopWallpaper {
+        if self.page.edits_wallpaper() {
             let paths = self.wallpaper.watch_paths();
             if !paths.is_empty() {
                 subscriptions.push(
@@ -1841,7 +1873,7 @@ impl cosmic::Application for Settings {
         {
             self.theme_instant = true;
         }
-        if self.page == Page::DesktopWallpaper && instant_wallpaper_edit(&message) {
+        if self.page.edits_wallpaper() && instant_wallpaper_edit(&message) {
             self.wallpaper_instant = true;
         }
         if matches!(message, Message::Window(WindowControl::Close)) {
@@ -2184,7 +2216,7 @@ impl Settings {
         if !self.wallpaper_instant {
             return Task::none();
         }
-        if self.page != Page::DesktopWallpaper {
+        if !self.page.edits_wallpaper() {
             self.wallpaper_instant = false;
             return Task::none();
         }
@@ -2401,9 +2433,17 @@ impl Settings {
                 } else {
                     Task::none()
                 };
+                // Arrange widgets opens the editor on the desktop, as the
+                // button on Widgets does.
+                let arrange = if hit.open == navigation::SearchOpen::Arrange {
+                    self.update(Message::ArrangeWidgets)
+                } else {
+                    Task::none()
+                };
                 return Task::batch([
                     navigation,
                     support,
+                    arrange,
                     cosmic::task::future(async move {
                         tokio::time::sleep(Duration::from_millis(40)).await;
                         Message::RevealSearch(hit)
@@ -2935,7 +2975,7 @@ impl Settings {
                 }
                 self.placement.refresh(&self.config);
                 self.refresh_canvas();
-                if self.page == Page::DesktopWallpaper {
+                if self.page.edits_wallpaper() {
                     self.rain.refresh_weather(&self.config);
                 }
                 if let Some(wizard) = self.wizard.as_mut() {
@@ -3214,7 +3254,7 @@ impl Settings {
                                         }
                                     }
                                 }
-                                if self.page == Page::DesktopWallpaper {
+                                if self.page.edits_wallpaper() {
                                     let fixture = self
                                         .wallpaper
                                         .store()
@@ -3372,7 +3412,7 @@ impl Settings {
                 let page = page.canonical();
                 let from = self.page;
                 if self.page != page {
-                    crate::usage::counts::page(page.key());
+                    crate::usage::counts::page(page.usage_key());
                     // A previous page's change stays available in Recent
                     // changes and keyboard Undo, not as this task's footer.
                     self.undo_baseline = navigation::latest_desktop_change().map(|(_, _, id)| id);
@@ -3383,7 +3423,7 @@ impl Settings {
                     self.arranging = false;
                     self.note_leaving(page);
                 }
-                if self.page != page && self.page == Page::DesktopWallpaper {
+                if self.page != page && self.page.edits_wallpaper() {
                     // Keep values and transaction baselines; only stop rendering.
                     self.rain.preview = false;
                     self.rain.adjust = None;
@@ -3401,7 +3441,7 @@ impl Settings {
                 self.placement.refresh(&self.config);
                 self.refresh_canvas();
                 self.page = page;
-                if page == Page::DesktopWallpaper {
+                if page.edits_wallpaper() {
                     self.rain.refresh_weather(&self.config);
                 }
                 self.search_open = false;
@@ -3461,6 +3501,7 @@ impl Settings {
                         | Page::DesktopWindows
                         | Page::DesktopAppearance
                         | Page::DesktopWallpaper
+                        | Page::WeatherEffects
                 ) || navigation::widget_of(page).is_some()
                 {
                     self.profiles.open_home();
@@ -3775,6 +3816,33 @@ impl Settings {
                     self.placement.display.clone(),
                 );
             }
+            Message::ArrangeWidgets => {
+                if self.busy || self.canvas.is_some() {
+                    return Task::none();
+                }
+                if !desktop_arrange_available(&self.config) {
+                    return self.update(Message::Canvas(canvas::Message::Start));
+                }
+                self.working("Opening desktop arrangement…");
+                return desktop_command(
+                    "arrange",
+                    "Drag widgets, then save your layout",
+                    self.placement.display.clone(),
+                    true,
+                );
+            }
+            Message::ArrangeHere(error) => {
+                self.busy = false;
+                eprintln!("Arrange on desktop: {error}");
+                let task = self.update(Message::Canvas(canvas::Message::Start));
+                if self.canvas.is_some() {
+                    self.status = "The desktop couldn’t open its editor, so you can arrange here".into();
+                    self.error = false;
+                } else if !self.error {
+                    self.failed(error);
+                }
+                return task;
+            }
             Message::OpenDesktop(page) => {
                 return run_command(
                     "/usr/bin/cosmic-settings".into(),
@@ -3881,13 +3949,13 @@ impl Settings {
             }
             Message::Rain(edit) => match edit {
                 rain::Edit::Lifecycle(state) => self.rain.lifecycle = state,
-                rain::Edit::Draft(p) if self.page == Page::DesktopWallpaper => {
+                rain::Edit::Draft(p) if self.page.edits_wallpaper() => {
                     self.wallpaper.begin_gesture();
                     if let Err(error) = self.wallpaper.stage_effect(p) {
                         self.failed(error);
                     }
                 }
-                rain::Edit::Set(p) if self.page == Page::DesktopWallpaper => {
+                rain::Edit::Set(p) if self.page.edits_wallpaper() => {
                     self.set_effect(p);
                 }
                 // Only which controls show; nothing is staged or saved.
@@ -4988,7 +5056,9 @@ impl Settings {
             Page::DesktopWindowRules => self.window_rules.open(),
             Page::DesktopShortcuts => self.shortcuts.open(),
             // Clock reads it too: the hills and its stage need the picture.
-            Page::DesktopWallpaper | Page::Appearance => self.wallpaper.open(),
+            Page::DesktopWallpaper | Page::WeatherEffects | Page::Appearance => {
+                self.wallpaper.open()
+            }
             Page::Clock => {
                 self.wallpaper.open();
                 self.scenes.refresh();
@@ -5522,7 +5592,7 @@ impl Settings {
                     | Edit::Recover
                     | Edit::KeepRecovery
             );
-        if !result && self.page != Page::DesktopWallpaper && !color_control {
+        if !result && !self.page.edits_wallpaper() && !color_control {
             return Task::none();
         }
         if matches!(message, Edit::StopMatching) {
@@ -5540,7 +5610,7 @@ impl Settings {
             self.rain.clear();
         }
         // Each choice is one local step; analysis results and refreshes are not.
-        let before = (self.page == Page::DesktopWallpaper
+        let before = (self.page.edits_wallpaper()
             && matches!(
                 message,
                 Edit::Select(_)
@@ -6495,10 +6565,28 @@ fn desktop_command_path() -> Option<PathBuf> {
         crate::paths::runtime_dir().map(|dir| dir.join("command.json"))
     }
 }
+/// Whether the desktop can take Arrange widgets: somewhere to send the
+/// request and a widget on the desktop to arrange.
+fn desktop_arrange_available(config: &Config) -> bool {
+    desktop_command_path().is_some()
+        && crate::drawer::Widget::ALL
+            .iter()
+            .any(|widget| config.widget_visible(*widget))
+}
 fn desktop_command_on_display(
     action: &'static str,
     status: &'static str,
     display: Option<String>,
+) -> Task<Message> {
+    desktop_command(action, status, display, false)
+}
+/// Asks the desktop to `action`. With `arrange_here`, a desktop that can't
+/// take it opens the editor in Settings instead of only reporting it.
+fn desktop_command(
+    action: &'static str,
+    status: &'static str,
+    display: Option<String>,
+    arrange_here: bool,
 ) -> Task<Message> {
     let path = desktop_command_path();
     let isolated = preview();
@@ -6528,7 +6616,10 @@ fn desktop_command_on_display(
         })
         .await
         .unwrap_or_else(|error| Err(error.to_string()));
-        Message::CommandDone(status.into(), result)
+        match result {
+            Err(error) if arrange_here => Message::ArrangeHere(error),
+            result => Message::CommandDone(status.into(), result),
+        }
     })
 }
 fn normalize_folder(input: &str) -> Result<String, String> {
@@ -6849,6 +6940,7 @@ mod tests {
             "rain_native_settings_preview_commit_undo_and_clipping"
                 | "weather_scenes_native_toggle_apply_undo_and_status"
                 | "weather_strength_and_adjust_native_controls"
+                | "weather_effects_open_from_wallpaper_and_lead_back"
         ) && std::env::var_os("VK_DRIVER_FILES").is_none()
             && std::env::var_os("VK_ICD_FILENAMES").is_none()
         {
@@ -10236,7 +10328,7 @@ mod tests {
         let paper_before = store.load(&WallpaperDraft::keys()).unwrap();
         let raw_before = raw_preferences();
         for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
-            let (mut app, initial) = Settings::init(Core::default(), Page::DesktopWallpaper);
+            let (mut app, initial) = Settings::init(Core::default(), Page::WeatherEffects);
             settle_settings(&mut app, initial);
             drive_wallpaper(&mut app);
             send_settings(&mut app, Message::Resized(size));
@@ -10428,6 +10520,75 @@ mod tests {
     }
 
     #[test]
+    fn weather_effects_open_from_wallpaper_and_lead_back() {
+        if desktop_test_child(
+            "weather_effects_open_from_wallpaper_and_lead_back",
+            DesktopEnv {
+                app_config: true,
+                fixture: true,
+                icons: Icons::Shown,
+                ..Default::default()
+            },
+        ) {
+            return;
+        }
+        weather_fixture();
+        for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+            let (mut app, initial) = Settings::init(Core::default(), Page::DesktopWallpaper);
+            settle_settings(&mut app, initial);
+            drive_wallpaper(&mut app);
+            send_settings(&mut app, Message::Resized(size));
+            app.rain.lifecycle = crate::rain::lifecycle::State {
+                ready: true,
+                ..Default::default()
+            };
+            let mut native = crate::native_test::Native::with_backend(size, "wgpu");
+            // Wallpaper keeps one row for the effects, not their controls.
+            assert!(
+                native
+                    .try_bounds(app.settings_view(), "rain-controls")
+                    .is_none()
+            );
+            native.capture(
+                app.settings_view(),
+                &controls_theme(&app.config),
+                &format!("wallpaper-weather-link-{}", size.width),
+            );
+            native_click(&mut app, &mut native, "wallpaper-open-weather");
+            assert_eq!(app.page, Page::WeatherEffects);
+            // Weather is a root of its own, right after Wallpaper.
+            let wallpaper = native.bounds(app.settings_view(), "nav-desktop-wallpaper");
+            let weather = native.bounds(app.settings_view(), "nav-weather-effects");
+            let widgets = native.bounds(app.settings_view(), "nav-overview");
+            assert!(wallpaper.y < weather.y && weather.y < widgets.y);
+            native_reveal(&app, &mut native, "rain-controls");
+            native.capture(
+                app.settings_view(),
+                &controls_theme(&app.config),
+                &format!("weather-page-{}", size.width),
+            );
+            // Choosing an effect here applies it, and Undo stays here.
+            let before = Config::load().rain;
+            let mut effect = before.clone();
+            effect.enabled = true;
+            send_settings(&mut app, Message::Rain(rain::Edit::Set(effect.clone())));
+            drive_wallpaper(&mut app);
+            assert_eq!(Config::load().rain, effect);
+            assert!(app.owns_latest_change());
+            native.scroll(app.settings_view(), "settings-content", -10000.);
+            native.capture(
+                app.settings_view(),
+                &controls_theme(&app.config),
+                &format!("weather-page-on-{}", size.width),
+            );
+            send_settings(&mut app, Message::UndoDesktop);
+            assert_eq!(Config::load().rain, before);
+            native_click(&mut app, &mut native, "weather-open-wallpaper");
+            assert_eq!(app.page, Page::DesktopWallpaper);
+        }
+    }
+
+    #[test]
     fn weather_scenes_native_toggle_apply_undo_and_status() {
         if desktop_test_child(
             "weather_scenes_native_toggle_apply_undo_and_status",
@@ -10447,7 +10608,7 @@ mod tests {
             crate::data::weather_description(73)
         );
         for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
-            let (mut app, initial) = Settings::init(Core::default(), Page::DesktopWallpaper);
+            let (mut app, initial) = Settings::init(Core::default(), Page::WeatherEffects);
             settle_settings(&mut app, initial);
             drive_wallpaper(&mut app);
             send_settings(&mut app, Message::Resized(size));
@@ -10588,7 +10749,7 @@ mod tests {
             ..Default::default()
         };
         for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
-            let (mut app, initial) = Settings::init(Core::default(), Page::DesktopWallpaper);
+            let (mut app, initial) = Settings::init(Core::default(), Page::WeatherEffects);
             settle_settings(&mut app, initial);
             drive_wallpaper(&mut app);
             send_settings(&mut app, Message::Resized(size));

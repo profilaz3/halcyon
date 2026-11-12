@@ -8,7 +8,7 @@ fn ux_native_effect_preview_survives_navigation_and_restart_without_applying() {
         return;
     }
     let before = std::fs::read(Config::path().unwrap()).unwrap();
-    let (mut app, _) = Settings::init(Core::default(), Page::DesktopWallpaper);
+    let (mut app, _) = Settings::init(Core::default(), Page::WeatherEffects);
     let mut effect = app.config.rain.clone();
     effect.enabled = true;
     let _ = app.update(Message::Rain(rain::Edit::Set(effect.clone())));
@@ -17,7 +17,7 @@ fn ux_native_effect_preview_survives_navigation_and_restart_without_applying() {
     let _ = app.update(Message::Page(Page::DesktopWallpaper));
     assert_eq!(app.wallpaper.effect(), Some(&effect));
     drop(app);
-    let (mut app, _) = Settings::init(Core::default(), Page::DesktopWallpaper);
+    let (mut app, _) = Settings::init(Core::default(), Page::WeatherEffects);
     assert_eq!(app.wallpaper.effect(), Some(&effect));
     assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
     let _ = app.update(Message::Wallpaper(wallpaper::Message::Discard));
@@ -2255,13 +2255,14 @@ fn ux_native_every_route_and_tab_renders_without_repeated_names() {
 }
 
 #[test]
-fn ux_native_eight_roots_and_every_old_route_resolves() {
+fn ux_native_nine_roots_and_every_old_route_resolves() {
     assert_eq!(
         Page::SIDEBAR[0].1,
         &[
             Page::DesktopProfiles,
             Page::Themes,
             Page::DesktopWallpaper,
+            Page::WeatherEffects,
             Page::Overview,
             Page::DesktopDock,
             Page::DesktopWindows,
@@ -2286,6 +2287,7 @@ fn ux_native_eight_roots_and_every_old_route_resolves() {
         (Page::Builder, Page::Overview),
         (Page::DesktopWallpaper, Page::DesktopWallpaper),
         (Page::DesktopIcons, Page::DesktopWallpaper),
+        (Page::WeatherEffects, Page::WeatherEffects),
         (Page::DesktopDock, Page::DesktopDock),
         (Page::DesktopWindows, Page::DesktopWindows),
         (Page::DesktopWorkspaces, Page::DesktopWindows),
@@ -2306,7 +2308,7 @@ fn ux_native_eight_roots_and_every_old_route_resolves() {
         assert_eq!(page.sidebar(), root, "{page:?}");
         assert_eq!(Page::parse(page.key()).sidebar(), root, "{page:?}");
     }
-    assert_eq!(Page::ALL.len(), 32, "a new route must be mapped here too");
+    assert_eq!(Page::ALL.len(), 33, "a new route must be mapped here too");
     for (alias, page) in [
         ("home", Page::Overview),
         ("layout", Page::Overview),
@@ -2321,6 +2323,13 @@ fn ux_native_eight_roots_and_every_old_route_resolves() {
         ("schedules", Page::DesktopAutomation),
         ("desktop", Page::Overview),
         ("widgets", Page::Overview),
+        // Weather effects lived on Wallpaper; their old names reach them.
+        ("weather-effects", Page::WeatherEffects),
+        ("effects", Page::WeatherEffects),
+        ("wallpaper-effects", Page::WeatherEffects),
+        ("rain", Page::WeatherEffects),
+        ("wallpaper", Page::DesktopWallpaper),
+        ("weather", Page::Weather),
     ] {
         assert_eq!(Page::parse(alias), page, "{alias}");
     }
@@ -2470,7 +2479,7 @@ fn ux_native_undo_target_is_one_thing_for_button_and_keyboard() {
     let _ = app.update(Message::KeyboardUndo(false));
     assert_eq!(Config::load().clock.format_24h, !before);
     // A preview owns Undo on its screen; an empty history stops there.
-    let _ = app.update(Message::Page(Page::DesktopWallpaper));
+    let _ = app.update(Message::Page(Page::WeatherEffects));
     let mut effect = app.config.rain.clone();
     effect.enabled = !effect.enabled;
     let _ = app.update(Message::Rain(rain::Edit::Set(effect.clone())));

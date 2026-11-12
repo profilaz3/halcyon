@@ -406,7 +406,7 @@ impl Config {
             let current: Self = serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
             if &current.rain != expected && &current.rain != next {
                 return Err(
-                    "Wallpaper effects changed elsewhere. Reopen Wallpaper before trying again."
+                    "Weather effects changed elsewhere. Reopen Weather before trying again."
                         .into(),
                 );
             }
@@ -1258,6 +1258,9 @@ impl Default for GlancePreferences {
     }
 }
 
+/// Which System monitor readings draw a five-minute graph. Memory and Disk
+/// always show a bar now: their `memory` and `disk` keys are still read and
+/// written so older and newer versions agree, but draw nothing.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct DevboxHistoryPreferences {
@@ -1313,6 +1316,18 @@ impl DevboxSection {
         }
     }
 
+    /// Whether this reading is shown and draws its history graph. Only
+    /// CPU, Network and GPU have graphs; Memory and Disk keep their bars.
+    pub fn graphed(self, preferences: &DevboxPreferences) -> bool {
+        self.enabled(preferences)
+            && match self {
+                Self::Cpu => preferences.history.cpu,
+                Self::Network => preferences.history.network,
+                Self::Gpu => preferences.history.gpu,
+                Self::Memory | Self::Disk | Self::Uptime | Self::Services => false,
+            }
+    }
+
     pub fn enabled(self, preferences: &DevboxPreferences) -> bool {
         match self {
             Self::Cpu => preferences.cpu,
@@ -1327,7 +1342,7 @@ impl DevboxSection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(default)]
+#[serde(from = "SavedDevboxPreferences")]
 pub struct DevboxPreferences {
     pub cpu: bool,
     pub memory: bool,
@@ -1340,6 +1355,61 @@ pub struct DevboxPreferences {
     pub services: bool,
     pub history: DevboxHistoryPreferences,
     pub order: Vec<String>,
+}
+
+/// `DevboxPreferences` as saved. Memory no longer has a history graph; its
+/// bar always splits used from cache. Someone who turned the graph on asked
+/// for more detail than the bar, so with no cache choice of their own the
+/// cache size is shown beside it. A saved `memory_cache` always wins.
+#[derive(Deserialize)]
+#[serde(default)]
+struct SavedDevboxPreferences {
+    cpu: bool,
+    memory: bool,
+    memory_cache: Option<bool>,
+    swap: bool,
+    disk: bool,
+    network: bool,
+    gpu: bool,
+    uptime: bool,
+    services: bool,
+    history: DevboxHistoryPreferences,
+    order: Vec<String>,
+}
+impl Default for SavedDevboxPreferences {
+    fn default() -> Self {
+        let d = DevboxPreferences::default();
+        Self {
+            cpu: d.cpu,
+            memory: d.memory,
+            memory_cache: None,
+            swap: d.swap,
+            disk: d.disk,
+            network: d.network,
+            gpu: d.gpu,
+            uptime: d.uptime,
+            services: d.services,
+            history: d.history,
+            order: d.order,
+        }
+    }
+}
+impl From<SavedDevboxPreferences> for DevboxPreferences {
+    fn from(saved: SavedDevboxPreferences) -> Self {
+        Self {
+            cpu: saved.cpu,
+            memory: saved.memory,
+            memory_cache: saved.memory_cache.unwrap_or(saved.history.memory),
+            swap: saved.swap,
+            disk: saved.disk,
+            network: saved.network,
+            gpu: saved.gpu,
+            uptime: saved.uptime,
+            services: saved.services,
+            history: saved.history,
+            order: saved.order,
+        }
+    }
 }
 impl DevboxPreferences {
     pub fn ordered_sections(&self) -> Vec<DevboxSection> {
@@ -2503,6 +2573,42 @@ mod tests {
         assert_eq!(config.devbox.history, DevboxHistoryPreferences::default());
         assert!(config.widget_visible(Widget::Clock));
         assert!(!config.enabled_widgets.iter().any(|key| key == "glance"));
+    }
+
+    #[test]
+    fn a_saved_memory_graph_becomes_the_cache_bar_unless_cache_was_chosen() {
+        let devbox = |value: serde_json::Value| {
+            serde_json::from_value::<Config>(serde_json::json!({ "devbox": value }))
+                .unwrap()
+                .devbox
+        };
+        let graphed = devbox(serde_json::json!({"history": {"memory": true}}));
+        assert!(graphed.memory_cache, "the graph's extra detail becomes the cache size");
+        assert!(graphed.history.memory, "the saved key is kept as it was");
+        assert!(!DevboxSection::Memory.graphed(&graphed));
+        let chosen =
+            devbox(serde_json::json!({"memory_cache": false, "history": {"memory": true}}));
+        assert!(!chosen.memory_cache, "an explicit cache choice wins");
+        assert!(!devbox(serde_json::json!({})).memory_cache);
+        assert!(!devbox(serde_json::json!({"history": {"cpu": true}})).memory_cache);
+        // Disk keeps its bar too; CPU, Network and GPU still graph.
+        let all = devbox(serde_json::json!({"history": {
+            "cpu": true, "memory": true, "disk": true, "network": true, "gpu": true
+        }}));
+        let graphed: Vec<_> = DevboxSection::ALL
+            .into_iter()
+            .filter(|section| section.graphed(&all))
+            .collect();
+        assert_eq!(
+            graphed,
+            [
+                DevboxSection::Cpu,
+                DevboxSection::Network,
+                DevboxSection::Gpu
+            ]
+        );
+        // Saving writes the cache choice, so the next start reads it as made.
+        assert_eq!(serde_json::to_value(&all).unwrap()["memory_cache"], true);
     }
 
     #[test]

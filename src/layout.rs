@@ -223,8 +223,10 @@ pub fn step_kept(size: Size, natural: Size, steps: i8) -> Size {
     size.map(|v| v * factor)
 }
 
-/// Space kept between widgets that would otherwise touch.
-pub const WIDGET_GAP: f32 = 16.;
+/// Space kept between widgets that would otherwise touch: the same gap the
+/// card columns stack with, so a widget moved clear of another (or a tool
+/// placed under one) lines up with a column instead of standing 2px apart.
+pub const WIDGET_GAP: f32 = crate::drawer::CARD_GAP;
 
 /// Whether two rectangles (`[x, y, width, height]`) come closer than `gap`.
 fn crowds(a: [f32; 4], b: [f32; 4], gap: f32) -> bool {
@@ -407,6 +409,27 @@ mod tests {
         assert_eq!(
             super::free_spot_in_area([0., 0.], size, &[[0., 0., 752., 440.]], area),
             None
+        );
+    }
+    #[test]
+    fn a_tool_under_another_keeps_the_column_gap() {
+        use crate::drawer::Widget;
+        let screen = [1920., 1080.];
+        let (focus_size, notes_size) = ([280., 160.], [360., 180.]);
+        let focus = super::tool_position(Widget::Focus, focus_size, 0., screen);
+        let notes = super::tool_position(Widget::Notes, notes_size, focus_size[1], screen);
+        assert_eq!(notes[1] - focus[1] - focus_size[1], crate::drawer::CARD_GAP);
+        // Placement leaves Notes there instead of nudging it further down.
+        let placed = [[focus[0], focus[1], focus_size[0], focus_size[1]]];
+        assert_eq!(free_spot(notes, notes_size, &placed, screen), Some(notes));
+        // A widget moved clear of a card stands a column's gap from it.
+        let below = free_spot([focus[0], focus[1] + 20.], focus_size, &placed, screen).unwrap();
+        assert!(
+            below[1] == focus[1] + focus_size[1] + crate::drawer::CARD_GAP
+                || below[1] == focus[1] - focus_size[1] - crate::drawer::CARD_GAP
+                || below[0] == focus[0] + focus_size[0] + crate::drawer::CARD_GAP
+                || below[0] == focus[0] - focus_size[0] - crate::drawer::CARD_GAP,
+            "{below:?}"
         );
     }
     #[test]

@@ -15,6 +15,7 @@ pub enum Area {
     Looks,
     Appearance,
     Wallpaper,
+    Weather,
     Widgets,
     Bars,
     Windows,
@@ -28,6 +29,7 @@ impl Area {
             Self::Looks => "Looks",
             Self::Appearance => "Appearance",
             Self::Wallpaper => "Wallpaper",
+            Self::Weather => "Weather",
             Self::Widgets => "Widgets",
             Self::Bars => "Dock and panel",
             Self::Windows => "Windows",
@@ -47,6 +49,8 @@ pub(super) enum SearchOpen {
     /// The widget material's see-through control.
     Transparency,
     Metric(crate::config::DevboxSection),
+    /// Arrange widgets: the editor on the desktop (see `ArrangeWidgets`).
+    Arrange,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -399,7 +403,7 @@ pub(super) const TIME_OF_DAY: SearchHit = hit(
 pub(super) const SCENE_COVERS_CLOCK: SearchHit =
     hit(Page::Clock, "Let the scene cover the clock", "", false);
 pub(super) const MATCH_WEATHER: SearchHit =
-    hit(Page::DesktopWallpaper, "Match the weather", "", false);
+    hit(Page::WeatherEffects, "Match the weather", "", false);
 
 const SEARCH: &[SearchHit] = &[
     hit(
@@ -517,7 +521,7 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::Devbox,
         "Memory",
-        "system monitor devbox ram memory usage cache swap readings history graph sparkline",
+        "system monitor devbox ram memory usage cache swap readings bar",
         false,
     )
     .at("devbox-memory")
@@ -525,7 +529,7 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::Devbox,
         "Disk",
-        "system monitor devbox disk usage storage readings history graph sparkline",
+        "system monitor devbox disk usage storage readings bar",
         false,
     )
     .at("devbox-disk")
@@ -566,6 +570,14 @@ const SEARCH: &[SearchHit] = &[
         Page::Overview,
         "Arrange widgets",
         "layout drag drop move resize size width height placement position grid snap guides arrange",
+        false,
+    )
+    .at("arrange-widgets")
+    .open(SearchOpen::Arrange),
+    hit(
+        Page::Overview,
+        "Arrange with keyboard",
+        "keyboard arrow keys list accessible arrange layout",
         false,
     )
     .at("canvas-start"),
@@ -763,7 +775,14 @@ const SEARCH: &[SearchHit] = &[
     .bar(crate::desktop::panels::PanelKind::Panel)
     .section(BAR_ADVANCED),
     hit(
-        Page::DesktopWallpaper,
+        Page::WeatherEffects,
+        "Weather effects",
+        "wallpaper effects weather rain snow fog clouds cloud shadows living animated wallpaper",
+        false,
+    )
+    .names_page(),
+    hit(
+        Page::WeatherEffects,
         "Moving effect",
         "wallpaper effects rain snow fog cloud shadows living droplets flakes opacity mist wind refraction animation",
         false,
@@ -1475,6 +1494,7 @@ impl Page {
             | Self::Themes
             | Self::DesktopProfiles
             | Self::DesktopWallpaper
+            | Self::WeatherEffects
             | Self::DesktopDock
             | Self::DesktopWindows
             | Self::DesktopMotion
@@ -1497,6 +1517,7 @@ impl Page {
             Self::Themes => Area::Appearance,
             Self::DesktopProfiles => Area::Looks,
             Self::DesktopWallpaper => Area::Wallpaper,
+            Self::WeatherEffects => Area::Weather,
             Self::DesktopDock => Area::Bars,
             Self::DesktopWindows => Area::Windows,
             Self::DesktopMotion => Area::Accessibility,
@@ -1692,6 +1713,45 @@ mod tests {
     use super::*;
     use cosmic::Application;
     #[test]
+    fn weather_effects_are_found_on_their_own_page_by_old_and_new_names() {
+        for query in [
+            "weather effects",
+            "wallpaper effects",
+            "moving effect",
+            "match the weather",
+            "rain",
+            "snow",
+            "fog",
+            "cloud shadows",
+        ] {
+            let hits = search(query);
+            let first = hits
+                .iter()
+                .position(|hit| hit.page == Page::WeatherEffects)
+                .unwrap_or_else(|| panic!("{query}: {hits:?}"));
+            assert!(first < 3, "{query}: {hits:?}");
+            // Nothing still sends them to Wallpaper.
+            assert!(
+                !hits
+                    .iter()
+                    .any(|hit| hit.page == Page::DesktopWallpaper && hit.anchor() == "rain-controls"),
+                "{query}"
+            );
+        }
+        let page = search("weather effects")[0];
+        assert_eq!(page.page, Page::WeatherEffects);
+        assert!(page.names_page_result());
+        assert_eq!(search("moving effect")[0].anchor(), "rain-controls");
+        // Wallpaper itself stays where it was.
+        assert_eq!(search("wallpaper")[0].page, Page::DesktopWallpaper);
+        // A root of its own, counted where effects always were.
+        assert_eq!(Page::WeatherEffects.parent(), None);
+        assert_eq!(Page::WeatherEffects.sidebar(), Page::WeatherEffects);
+        assert_eq!(Page::WeatherEffects.usage_key(), "desktop-wallpaper");
+        assert_eq!(Page::WeatherEffects.nav_title(), "Weather");
+    }
+
+    #[test]
     fn architecture_search_routing_survives_label_changes() {
         if crate::displays::test_support::isolated(
             "settings::navigation::tests::architecture_search_routing_survives_label_changes",
@@ -1719,6 +1779,8 @@ mod tests {
                     assert_eq!(app.material_target, crate::materials::Target::Widgets);
                 }
                 SearchOpen::Metric(metric) => assert!(app.devbox_details.contains(&metric)),
+                // The desktop editor opens, or Settings' own when it can't.
+                SearchOpen::Arrange => assert!(app.busy || app.canvas_visible()),
                 SearchOpen::None => {}
             }
         }
@@ -1769,6 +1831,7 @@ mod tests {
                 Page::DesktopProfiles,
                 Page::Themes,
                 Page::DesktopWallpaper,
+                Page::WeatherEffects,
                 Page::Overview,
                 Page::DesktopDock,
                 Page::DesktopWindows,
@@ -1954,9 +2017,17 @@ mod tests {
         for query in ["layout", "arrange widgets", "resize widgets", "grid snap"] {
             let hit = search(query)[0];
             assert_eq!(hit.page, Page::Overview, "{query}");
-            assert_eq!(hit.anchor(), "canvas-start", "{query}");
+            assert_eq!(hit.anchor(), "arrange-widgets", "{query}");
+            assert_eq!(hit.open, SearchOpen::Arrange, "{query}");
             assert!(!hit.advanced);
         }
+        // The list in Settings stays reachable for the keyboard.
+        let keyboard = search("arrange with keyboard")[0];
+        assert_eq!(
+            (keyboard.page, keyboard.anchor()),
+            (Page::Overview, "canvas-start")
+        );
+        assert_eq!(keyboard.open, SearchOpen::None);
     }
 
     #[test]
@@ -1974,13 +2045,15 @@ mod tests {
             assert_eq!(hit.anchor(), anchor, "{query}");
             assert!(!hit.advanced, "{query}");
         }
+        // Memory and Disk show bars, so only CPU, Network and GPU have a
+        // history graph to find.
         let hits = search("history");
-        assert_eq!(hits.len(), 6);
+        assert_eq!(hits.len(), 4);
         assert_eq!(
             hits.iter()
                 .filter(|hit| hit.page == Page::Devbox && !hit.advanced)
                 .count(),
-            5
+            3
         );
         assert!(
             hits.iter()
@@ -2424,7 +2497,7 @@ impl Settings {
                 self.kept_note = Some((format!("{title} kept. Not applied."), target));
             }
         }
-        if self.page == Page::DesktopWallpaper && self.wallpaper.dirty() {
+        if self.page.edits_wallpaper() && self.wallpaper.dirty() {
             self.kept_note = Some((
                 "Wallpaper preview kept. Not applied.".into(),
                 KeptTarget::Wallpaper,
@@ -2641,7 +2714,7 @@ impl Settings {
                     .then_some("widget design edit"),
             );
         }
-        if self.page == Page::DesktopWallpaper && self.wallpaper.preview_open() {
+        if self.page.edits_wallpaper() && self.wallpaper.preview_open() {
             return UndoTarget::Preview(self.wallpaper.can_undo_step().then_some("wallpaper edit"));
         }
         if preview_kind(self.page).is_some() && self.profiles.review_open() {
@@ -2667,7 +2740,7 @@ impl Settings {
             self.checkpoint_session_drafts();
             return Task::none();
         }
-        if self.page == Page::DesktopWallpaper {
+        if self.page.edits_wallpaper() {
             match self.wallpaper.undo_step() {
                 Ok(true) => {
                     self.rain.clear();
