@@ -857,7 +857,7 @@ impl Applet {
                 "List only, don’t pop up",
                 Some(AppRule::ListOnly),
             ),
-            ("activity-rule-reset", "Reset to default", None),
+            ("activity-rule-reset", "Default", None),
         ] {
             let chosen = current == rule;
             list = list.push(item(

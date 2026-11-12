@@ -3141,7 +3141,7 @@ fn app_rules_mute_always_show_and_list_only() {
     let mut ui = regrow(&mut app);
     assert!(ui.duplicate_ids(app.capsule(true)).is_empty());
     let text = ui.all_text(app.capsule(true));
-    for line in ["Slack", "Mute this app", "Always show", "List only, don’t pop up", "Reset to default"] {
+    for line in ["Slack", "Mute this app", "Always show", "List only, don’t pop up", "Default"] {
         assert!(text.iter().any(|t| t == line), "{line}: {text:?}");
     }
     for id in ["activity-rule-back", "activity-rule-mute", "activity-rule-reset"] {
