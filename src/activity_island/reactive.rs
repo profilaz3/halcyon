@@ -238,6 +238,7 @@ impl Applet {
                 cue: a.cue.clone(),
                 meta: a.detail.clone(),
                 progress: a.progress.map(|p| p as f32 / 100.),
+                bar_start: 0.,
             },
             None => Content {
                 title: source.label().into(),
@@ -644,6 +645,30 @@ impl Applet {
     }
 }
 
+/// What a notification's new version is to the one it replaces, when it
+/// carries a progress value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Step {
+    /// No progress either side: an ordinary arrival.
+    Plain,
+    /// Progress begins: it may be revealed once, as any arrival.
+    Start,
+    /// The value moved: updated in place, never revealed.
+    Update,
+    /// It reached the end or dropped its value: revealed once more.
+    Finish,
+}
+/// `before` is the replaced notification's progress, `None` when it is new.
+pub(super) fn progress_step(before: Option<Option<u8>>, after: Option<u8>) -> Step {
+    match (before, after) {
+        (Some(Some(old)), Some(new)) if old < 100 && new >= 100 => Step::Finish,
+        (Some(Some(old)), None) if old < 100 => Step::Finish,
+        (Some(Some(_)), Some(_)) => Step::Update,
+        (_, Some(new)) if new < 100 => Step::Start,
+        _ => Step::Plain,
+    }
+}
+
 #[cfg(test)]
 mod integration_tests {
     use super::*;
@@ -971,6 +996,26 @@ impl Applet {
                     self.forget_note(id);
                     self.muted += 1;
                     return Task::none();
+                }
+                let before = self.notes.iter().position(|n| n.id == id);
+                match progress_step(before.map(|i| self.notes[i].progress), note.progress) {
+                    Step::Plain | Step::Start => {}
+                    step @ (Step::Update | Step::Finish) => {
+                        // In place: same row, same group, no new reveal.
+                        let index = before.expect("a step follows a known note");
+                        self.notes[index] = note;
+                        self.arm_expiry();
+                        // The live activity's Done card stands for the end.
+                        let done_shown = self
+                            .ui
+                            .jobs
+                            .for_note(id)
+                            .is_some_and(|j| j.done_at.is_some());
+                        if step == Step::Finish && !done_shown {
+                            return self.reveal_note(id, now);
+                        }
+                        return Task::none();
+                    }
                 }
                 self.notes.retain(|n| n.id != id);
                 self.notes.insert(0, note);

@@ -3445,6 +3445,243 @@ fn transfers_from_notifications_show_progress_then_done_then_retract() {
     assert!(!app.eligible_kinds().contains(&Kind::Transfer));
 }
 #[test]
+fn progress_steps_tell_start_update_and_finish_apart() {
+    use super::reactive::{Step, progress_step};
+    assert_eq!(progress_step(None, None), Step::Plain);
+    assert_eq!(progress_step(Some(None), None), Step::Plain);
+    assert_eq!(progress_step(None, Some(5)), Step::Start);
+    assert_eq!(progress_step(Some(None), Some(5)), Step::Start);
+    assert_eq!(progress_step(Some(Some(5)), Some(6)), Step::Update);
+    assert_eq!(progress_step(Some(Some(5)), Some(100)), Step::Finish);
+    assert_eq!(progress_step(Some(Some(5)), None), Step::Finish);
+    assert_eq!(progress_step(Some(Some(100)), Some(100)), Step::Update);
+    assert_eq!(progress_step(Some(Some(100)), Some(3)), Step::Update);
+    assert_eq!(progress_step(None, Some(100)), Step::Plain);
+}
+fn progress_note(id: u32, app: &str, value: u8) -> notifications::Note {
+    let mut copy = note(id, app, "folder-symbolic", "Copying", "3 files");
+    copy.progress = Some(value);
+    copy
+}
+#[test]
+fn progress_notifications_update_in_place_and_reveal_only_at_start_and_end() {
+    let (mut app, _snapshot) = revealing();
+    notify(&mut app, note(1, "Mail", "", "Older", ""));
+    settle(&mut app);
+    close(&mut app);
+    wake(&mut app, NOTE_GAP);
+    // Start: revealed once, as any arrival.
+    notify(&mut app, progress_note(7, "Files", 10));
+    settle(&mut app);
+    assert!(app.popup.is_some() && app.kind == Kind::Notification(7));
+    close(&mut app);
+    wake(&mut app, NOTE_GAP);
+    notify(&mut app, note(8, "Chat", "", "Newer", ""));
+    settle(&mut app);
+    close(&mut app);
+    let order = |app: &Applet| app.notes.iter().map(|n| n.id).collect::<Vec<_>>();
+    assert_eq!(order(&app), [8, 7, 1]);
+    // Every new value: in place, in the list, the group and the job, and
+    // never revealed, however long since the last reveal.
+    for value in [25, 50, 75, 90] {
+        wake(&mut app, Duration::from_secs(60));
+        notify(&mut app, progress_note(7, "Files", value));
+        settle(&mut app);
+        assert!(app.popup.is_none(), "{value}% must not reveal");
+        assert!(
+            !app.pending.contains(&7),
+            "{value}% must not wait to reveal"
+        );
+        assert_eq!(order(&app), [8, 7, 1], "{value}% keeps its place");
+        assert_eq!(app.note(7).and_then(|n| n.progress), Some(value));
+        let job = app.ui.jobs.for_note(7).expect("the job follows it");
+        assert!((job.fraction - f64::from(value) / 100.).abs() < 1e-9);
+    }
+    assert_eq!(app.group_ids(&app.note(7).unwrap().app_key()), [7]);
+    // Finish: revealed once more, as the live activity's Done.
+    wake(&mut app, Duration::from_secs(60));
+    notify(&mut app, progress_note(7, "Files", 100));
+    assert!(app.popup.is_some() && app.kind == Kind::Transfer);
+    app.kind = Kind::Transfer;
+    assert_eq!(app.content().title, "Done");
+    assert_eq!(order(&app), [8, 7, 1]);
+    close(&mut app);
+    // A repeat of the end does not reveal again.
+    wake(&mut app, Duration::from_secs(60));
+    notify(&mut app, progress_note(7, "Files", 100));
+    settle(&mut app);
+    assert!(app.popup.is_none());
+    // Ending by dropping the value, with no job left to show Done: the
+    // notification itself is revealed once.
+    app.ui.jobs = transfers::Tracker::default();
+    wake(&mut app, Duration::from_secs(60));
+    notify(&mut app, progress_note(9, "Files", 30));
+    settle(&mut app);
+    close(&mut app);
+    app.ui.jobs = transfers::Tracker::default();
+    wake(&mut app, Duration::from_secs(60));
+    notify(&mut app, note(9, "Files", "", "Copied", "3 files"));
+    settle(&mut app);
+    assert!(app.popup.is_some() && app.kind == Kind::Notification(9));
+}
+#[test]
+fn progress_follows_each_apps_rule() {
+    use preferences::AppRule;
+    let (mut app, mut snapshot) = revealing();
+    // Mute: neither listed nor followed.
+    preferences_rule(&mut app, &mut snapshot, "Files", Some(AppRule::Mute));
+    notify(&mut app, progress_note(7, "Files", 10));
+    assert!(app.note(7).is_none() && app.ui.jobs.is_empty() && app.popup.is_none());
+    // List only: listed and followed, never revealed, not even when done.
+    preferences_rule(&mut app, &mut snapshot, "Files", Some(AppRule::ListOnly));
+    notify(&mut app, progress_note(7, "Files", 10));
+    settle(&mut app);
+    assert!(app.note(7).is_some() && app.ui.jobs.for_note(7).is_some());
+    assert!(app.popup.is_none());
+    notify(&mut app, progress_note(7, "Files", 100));
+    settle(&mut app);
+    assert!(app.ui.jobs.for_note(7).is_some_and(|j| j.done_at.is_some()));
+    assert!(app.popup.is_none(), "List only never reveals Done");
+    // Always show: start and Done reveal even with reveals off.
+    snapshot.preferences.reveals = false;
+    preferences_rule(&mut app, &mut snapshot, "Files", Some(AppRule::Always));
+    app.ui.jobs = transfers::Tracker::default();
+    notify(&mut app, progress_note(8, "Files", 10));
+    settle(&mut app);
+    assert!(app.popup.is_some() && app.kind == Kind::Notification(8));
+    close(&mut app);
+    wake(&mut app, Duration::from_secs(60));
+    notify(&mut app, progress_note(8, "Files", 100));
+    assert!(app.popup.is_some() && app.kind == Kind::Transfer);
+    close(&mut app);
+    // Without a rule and with reveals off, Done stays quiet.
+    preferences_rule(&mut app, &mut snapshot, "Files", None);
+    app.ui.jobs = transfers::Tracker::default();
+    notify(&mut app, progress_note(9, "Files", 10));
+    wake(&mut app, Duration::from_secs(60));
+    notify(&mut app, progress_note(9, "Files", 100));
+    assert!(app.popup.is_none());
+    // Muting an app with a running job drops the job too.
+    snapshot.preferences.reveals = true;
+    app.ui.jobs = transfers::Tracker::default();
+    notify(&mut app, progress_note(10, "Files", 20));
+    assert!(app.ui.jobs.for_note(10).is_some());
+    preferences_rule(&mut app, &mut snapshot, "Files", Some(AppRule::Mute));
+    assert!(app.ui.jobs.is_empty() && app.note(10).is_none());
+}
+fn download(bytes: u64, rate: Option<f64>, paused: bool, finished: bool) -> transfers::Update {
+    let name = "ubuntu-26.04-desktop-amd64.iso";
+    let dir = std::path::Path::new("/home/user/Downloads");
+    transfers::Update {
+        key: "download:41".into(),
+        app: "Firefox".into(),
+        visible: Some(true),
+        finished,
+        file: Some(transfers::FileState {
+            name: name.into(),
+            bytes,
+            rate,
+            paused,
+            path: if finished {
+                dir.join(name)
+            } else {
+                dir.join(format!("{name}.part"))
+            },
+        }),
+        owners: vec![
+            ("Firefox".into(), "firefox".into()),
+            ("Firefox".into(), "org.mozilla.firefox".into()),
+        ],
+        ..Default::default()
+    }
+}
+fn downloading(app: &mut Applet) {
+    let _ = app.update(Message::Live(live::Msg::Transfer(download(
+        1_240_000_000,
+        Some(21_400_000.),
+        false,
+        false,
+    ))));
+    app.kind = Kind::Transfer;
+}
+fn downloaded(app: &mut Applet) {
+    downloading(app);
+    let _ = app.update(Message::Live(live::Msg::Transfer(download(
+        6_114_656_256,
+        None,
+        false,
+        true,
+    ))));
+    app.kind = Kind::Transfer;
+}
+#[test]
+fn downloads_show_size_and_rate_without_a_percentage_then_done() {
+    use preferences::AppRule;
+    let (mut app, mut snapshot) = revealing();
+    downloading(&mut app);
+    assert!(app.popup.is_none(), "a starting download does not reveal");
+    let content = app.content();
+    assert_eq!(content.title, "Downloading ubuntu-26.04-desktop-amd64.iso");
+    assert_eq!(content.cue, "", "no percentage without a total");
+    assert_eq!(content.meta, "1.2 GB · 21 MB/s");
+    assert_eq!(content.progress, Some(transfers::SWEEP));
+    let job = app.ui.jobs.lead(Instant::now()).unwrap();
+    assert!(job.indeterminate() && job.remaining(Instant::now()).is_none());
+    // Paused: said so, with no rate.
+    let _ = app.update(Message::Live(live::Msg::Transfer(download(
+        1_240_000_000,
+        None,
+        true,
+        false,
+    ))));
+    let content = app.content();
+    assert_eq!(
+        (content.cue.as_str(), content.meta.as_str()),
+        ("Paused", "1.2 GB")
+    );
+    // Renamed to its final name: Done, revealed, with the folder and file.
+    let _ = app.update(Message::Live(live::Msg::Transfer(download(
+        6_114_656_256,
+        None,
+        false,
+        true,
+    ))));
+    assert!(app.popup.is_some() && app.kind == Kind::Transfer);
+    let content = app.content();
+    assert_eq!(
+        (content.title.as_str(), content.meta.as_str()),
+        ("Done", "ubuntu-26.04-desktop-amd64.iso · 6.1 GB")
+    );
+    let mut ui = regrow(&mut app);
+    let text = ui.all_text(app.capsule(true));
+    assert!(text.iter().any(|t| t == "Open folder"), "{text:?}");
+    assert!(text.iter().any(|t| t == "Open"), "{text:?}");
+    assert!(matches!(
+        click(&mut ui, &app, "activity-transfer-folder").as_slice(),
+        [Message::Live(live::Msg::TransferOpenFolder)]
+    ));
+    close(&mut app);
+    // List only for Firefox: followed, but Done is not revealed.
+    preferences_rule(&mut app, &mut snapshot, "Firefox", Some(AppRule::ListOnly));
+    app.ui.jobs = transfers::Tracker::default();
+    wake(&mut app, Duration::from_secs(60));
+    downloaded(&mut app);
+    assert!(app.popup.is_none() && !app.ui.jobs.is_empty());
+    // Muted: not followed at all.
+    preferences_rule(&mut app, &mut snapshot, "Firefox", Some(AppRule::Mute));
+    assert!(app.ui.jobs.is_empty(), "muting drops the job");
+    downloading(&mut app);
+    assert!(app.ui.jobs.is_empty());
+    // Deleted or stalled: the job goes without a word.
+    preferences_rule(&mut app, &mut snapshot, "Firefox", None);
+    downloading(&mut app);
+    let mut gone = download(0, None, false, false);
+    gone.file = None;
+    gone.visible = Some(false);
+    let _ = app.update(Message::Live(live::Msg::Transfer(gone)));
+    assert!(app.ui.jobs.is_empty() && app.popup.is_none());
+}
+#[test]
 fn music_seek_moves_by_keyboard_within_the_track() {
     let (mut app, mut rx) = listening();
     timed(&mut app, 2_000);
@@ -3559,6 +3796,7 @@ fn copying(app: &mut Applet) {
                 note: None,
                 progress: Some(fraction),
                 visible: Some(true),
+                ..Default::default()
             },
             at,
         );
@@ -3579,8 +3817,21 @@ fn live_activities_render_for_review() {
     let root = root.join("island-live");
     let scale = 2f32;
     type Setup = fn(&mut Applet);
-    let states: [(&str, f32, &[&str], Setup); 10] = [
+    let states: [(&str, f32, &[&str], Setup); 13] = [
         ("progress-collapsed", 0., &[], copying),
+        ("downloading-collapsed", 0., &[], downloading),
+        (
+            "downloading",
+            1.,
+            &["activity-transfer-folder"],
+            downloading,
+        ),
+        (
+            "download-done",
+            1.,
+            &["activity-transfer-folder", "activity-transfer-open"],
+            downloaded,
+        ),
         ("progress-expanded", 1., &[], copying),
         (
             "progress-done",
@@ -3596,6 +3847,7 @@ fn live_activities_render_for_review() {
                         note: None,
                         progress: Some(1.),
                         visible: Some(false),
+                        ..Default::default()
                     },
                     Instant::now(),
                 );

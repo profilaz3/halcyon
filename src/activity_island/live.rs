@@ -78,6 +78,8 @@ pub enum Msg {
     SeekBy(i64),
     Transfer(transfers::Update),
     TransferOpen,
+    /// A finished download, selected in the file manager.
+    TransferOpenFolder,
     TransferDismiss,
     /// From the picker or the outputs back to the card.
     Back,
@@ -509,6 +511,11 @@ impl Applet {
             .jobs
             .lead(Instant::now())
             .filter(|j| j.done_at.is_none())?;
+        let running = self.ui.jobs.running();
+        if job.indeterminate() {
+            // No total, so no ring: the title's glyph says it all.
+            return (running > 1).then(|| tabular(&running.to_string(), 11., palette.quiet, false));
+        }
         let mut row = widget::row([Ring {
             size: 14.,
             stroke: 2.5,
@@ -519,7 +526,6 @@ impl Applet {
         .into()])
         .spacing(4)
         .align_y(cosmic::iced::Alignment::Center);
-        let running = self.ui.jobs.running();
         if running > 1 {
             row = row.push(tabular(&running.to_string(), 11., palette.quiet, false));
         }
@@ -534,6 +540,11 @@ impl Applet {
     ) -> Element<'a, Message> {
         match kind {
             Kind::Transfer => match self.ui.jobs.lead(Instant::now()) {
+                Some(job) if job.done_at.is_none() && job.indeterminate() => Self::tinted(
+                    "folder-download-symbolic",
+                    size,
+                    palette.accent(Kind::Transfer),
+                ),
                 Some(job) if job.done_at.is_none() => Ring {
                     size: f32::from(size),
                     stroke: 2.,
@@ -574,6 +585,7 @@ impl Applet {
                     None => "Paused".into(),
                 },
                 progress: None,
+                bar_start: 0.,
             },
             None => Content {
                 title: "Timer".into(),
@@ -591,6 +603,41 @@ impl Applet {
                 ..Default::default()
             };
         };
+        let more = self.ui.jobs.running().saturating_sub(1);
+        let with_more = |text: String| {
+            if more > 0 {
+                format!("{text} · {more} more")
+            } else {
+                text
+            }
+        };
+        if let Some(file) = &job.file {
+            if job.done_at.is_some() {
+                return Content {
+                    title: "Done".into(),
+                    meta: format!("{} · {}", file.name, downloads::bytes_text(file.bytes)),
+                    progress: Some(1.),
+                    ..Default::default()
+                };
+            }
+            // No total is known, so no percentage and no estimate: the
+            // size so far, the rate and a moving segment.
+            let mut meta = downloads::bytes_text(file.bytes);
+            if let Some(rate) = file.rate.filter(|_| !file.paused) {
+                meta = format!("{meta} · {}/s", downloads::bytes_text(rate as u64));
+            }
+            return Content {
+                title: format!("Downloading {}", file.name),
+                cue: if file.paused {
+                    "Paused".into()
+                } else {
+                    String::new()
+                },
+                meta: with_more(meta),
+                progress: Some(transfers::SWEEP),
+                bar_start: job.sweep(),
+            };
+        }
         if job.done_at.is_some() {
             return Content {
                 title: "Done".into(),
@@ -603,19 +650,18 @@ impl Applet {
             .remaining(now)
             .map(transfers::eta_text)
             .unwrap_or_else(|| "In progress".into());
-        let more = self.ui.jobs.running().saturating_sub(1);
         Content {
             title: job.app.clone(),
             cue: format!("{}%", (job.fraction * 100.).floor() as i64),
-            meta: if more > 0 {
-                format!("{eta} · {more} more")
-            } else {
-                eta
-            },
+            meta: with_more(eta),
             progress: Some(job.fraction as f32),
+            bar_start: 0.,
         }
     }
     fn transfer_openable(&self, job: &transfers::Job) -> bool {
+        if job.file.is_some() {
+            return job.done_at.is_some();
+        }
         job.note
             .is_some_and(|id| self.note(id).is_some_and(|n| n.default))
             || job.desktop.is_some()
@@ -633,6 +679,43 @@ impl Applet {
             return row.into();
         };
         let done = job.done_at.is_some();
+        if !done && job.file.is_some() {
+            return row
+                .push(self.label_button(
+                    palette,
+                    "activity-transfer-folder",
+                    "Open folder",
+                    tint,
+                    reveal,
+                    Role::Quiet,
+                    Some(Message::Live(Msg::TransferOpenFolder)),
+                ))
+                .into();
+        }
+        if done && job.file.is_some() {
+            // A finished download: its folder, with the file selected, or
+            // the file itself.
+            return row
+                .push(self.label_button(
+                    palette,
+                    "activity-transfer-folder",
+                    "Open folder",
+                    tint,
+                    reveal,
+                    Role::Quiet,
+                    Some(Message::Live(Msg::TransferOpenFolder)),
+                ))
+                .push(self.label_button(
+                    palette,
+                    "activity-transfer-open",
+                    "Open",
+                    tint,
+                    reveal,
+                    Role::Primary,
+                    Some(Message::Live(Msg::TransferOpen)),
+                ))
+                .into();
+        }
         if done {
             row = row.push(self.label_button(
                 palette,
@@ -1272,11 +1355,36 @@ impl Applet {
                 self.send(Command::Seek { key, position_ms })
             }
             Msg::Transfer(update) => self.transfer_update(update, now),
+            Msg::TransferOpenFolder => {
+                // Running, it selects the temporary file.
+                let Some(path) = self
+                    .ui
+                    .jobs
+                    .lead(now)
+                    .and_then(|j| j.file.as_ref())
+                    .map(|f| f.path.clone())
+                else {
+                    return Task::none();
+                };
+                self.ui.jobs.dismiss_done();
+                let close = self.update(Message::Close);
+                let show = cosmic::task::future(async move {
+                    Message::SettingsOpened(downloads::show_in_folder(path).await)
+                });
+                Task::batch([close, show])
+            }
             Msg::TransferOpen => {
                 let Some(job) = self.ui.jobs.lead(now).cloned() else {
                     return Task::none();
                 };
                 self.ui.jobs.dismiss_done();
+                if let Some(path) = job.file.filter(|_| job.done_at.is_some()).map(|f| f.path) {
+                    let close = self.update(Message::Close);
+                    let open = cosmic::task::future(async move {
+                        Message::SettingsOpened(downloads::open_path(path).await)
+                    });
+                    return Task::batch([close, open]);
+                }
                 if let Some(id) = job
                     .note
                     .filter(|id| self.note(*id).is_some_and(|n| n.default))
@@ -1323,17 +1431,79 @@ impl Applet {
         update: transfers::Update,
         now: Instant,
     ) -> Task<Message> {
+        let rule = self.owners_rule(&update.owners);
+        if rule == Some(preferences::AppRule::Mute) {
+            // A muted app's jobs are not shown at all.
+            let key = update.key;
+            if self.ui.jobs.forget(|j| j.key == key) {
+                return self.after_transfer(false, None, now);
+            }
+            return Task::none();
+        }
         let finished = self.ui.jobs.update(update, now);
-        self.after_transfer(finished, now)
+        self.after_transfer(finished, rule, now)
     }
-    pub(super) fn after_transfer(&mut self, finished: bool, now: Instant) -> Task<Message> {
+    /// The first of an app's names that has a rule decides for its jobs.
+    pub(super) fn owners_rule(&self, owners: &[(String, String)]) -> Option<preferences::AppRule> {
+        let prefs = &self.snapshot.preferences;
+        owners
+            .iter()
+            .find_map(|(app, entry)| prefs.rule_for(app, entry))
+    }
+    pub(super) fn after_transfer(
+        &mut self,
+        finished: bool,
+        rule: Option<preferences::AppRule>,
+        now: Instant,
+    ) -> Task<Message> {
         if self.popup.is_none() {
             self.kind = self.automatic_kind();
         }
         if finished {
-            return self.consider_reveal(Some(Kind::Transfer), now);
+            return self.reveal_done(rule, now);
         }
         Task::none()
+    }
+    /// Done is shown once, as a notification's arrival would be: never for
+    /// an app set to List only, always for one set to Always show, and
+    /// otherwise when reveals are on. A job's progress never reveals.
+    fn reveal_done(&mut self, rule: Option<preferences::AppRule>, now: Instant) -> Task<Message> {
+        let allowed = match rule {
+            Some(preferences::AppRule::Always) => true,
+            Some(_) => false,
+            None => self.snapshot.preferences.reveals,
+        };
+        if !allowed
+            || !self.eligible_kinds().contains(&Kind::Transfer)
+            || self.popup.is_some()
+            || self.hovered
+            || !self.host_reveals
+            || self.snapshot.quiet != Some(false)
+            || self.snapshot.dnd
+            || !self.live()
+            || self
+                .snapshot
+                .system
+                .iter()
+                .any(|a| a.urgent && self.system_activity(a.source).is_some())
+        {
+            return Task::none();
+        }
+        self.kind = Kind::Transfer;
+        self.last_reveal = Some(now);
+        self.reveal_deadline = Some(now + Duration::from_secs(3));
+        self.revealed = true;
+        self.open_popup()
+    }
+    fn note_job_closed(&mut self, id: u32, now: Instant) -> Task<Message> {
+        let rule = self
+            .ui
+            .jobs
+            .for_note(id)
+            .map(|j| j.owners.clone())
+            .and_then(|o| self.owners_rule(&o));
+        let finished = self.ui.jobs.closed(id, now);
+        self.after_transfer(finished, rule, now)
     }
     /// Notifications that carry a percentage are jobs too.
     pub(super) fn note_transfer(
@@ -1343,16 +1513,17 @@ impl Applet {
     ) -> Task<Message> {
         match event {
             notifications::Event::Notify(note) => {
-                let Some(progress) = note.progress else {
+                if self.live() && !self.snapshot.preferences.notifications {
                     return Task::none();
+                }
+                let Some(progress) = note.progress else {
+                    // The value dropped from a followed job: it ended.
+                    return self.note_job_closed(note.id, now);
                 };
-                let update = transfers::note_update(note.id, &note.app, progress);
+                let update = transfers::note_update(note, progress);
                 self.transfer_update(update, now)
             }
-            notifications::Event::Closed(id) => {
-                let finished = self.ui.jobs.closed(*id, now);
-                self.after_transfer(finished, now)
-            }
+            notifications::Event::Closed(id) => self.note_job_closed(*id, now),
             _ => Task::none(),
         }
     }

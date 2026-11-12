@@ -1,6 +1,7 @@
 //! Native Activity island: a fixed panel slot and an overlapping popup.
 //! The desktop supplies a bounded projection of its existing providers.
 pub(crate) mod bridge;
+mod downloads;
 mod host;
 mod inbox;
 mod live;
@@ -236,6 +237,9 @@ struct Content {
     meta: String,
     /// Elapsed share of a running Focus session or a started Calendar event.
     progress: Option<f32>,
+    /// Where the line starts: a download with no known total moves a
+    /// segment along instead of filling.
+    bar_start: f32,
 }
 fn clock_time(ms: i64, format_24h: bool) -> String {
     chrono::DateTime::from_timestamp_millis(ms)
@@ -568,6 +572,7 @@ impl Application for Applet {
             bridge::client().map(Message::Backend),
             notifications::subscription().map(Message::Notes),
             transfers::subscription().map(|u| Message::Live(live::Msg::Transfer(u))),
+            downloads::subscription().map(|u| Message::Live(live::Msg::Transfer(u))),
         ];
         let clock = (self.popup.is_some()
             && self.kind == Kind::Music
@@ -1691,6 +1696,7 @@ impl Applet {
                     m.artist.clone()
                 },
                 progress: self.music_progress().map(|(p, n)| p as f32 / n as f32),
+                bar_start: 0.,
             },
             None if problem => Content {
                 title: "Music unavailable".into(),
@@ -1735,12 +1741,14 @@ impl Applet {
                 meta: format!("Ends {}", clock_time(end, self.format_24h)),
                 progress: (f.remaining_ms > 0)
                     .then(|| 1. - (end - now) as f32 / f.remaining_ms as f32),
+                bar_start: 0.,
             },
             None => Content {
                 title: clock,
                 cue: if f.ready { "Ready" } else { "Paused" }.into(),
                 meta: session,
                 progress: None,
+                bar_start: 0.,
             },
         }
     }
@@ -1763,6 +1771,7 @@ impl Applet {
                 progress: (c.starts_at_ms <= now && c.ends_at_ms > c.starts_at_ms).then(|| {
                     (now - c.starts_at_ms) as f32 / (c.ends_at_ms - c.starts_at_ms) as f32
                 }),
+                bar_start: 0.,
             },
             None if problem => Content {
                 title: "Calendar unavailable".into(),
@@ -2256,6 +2265,7 @@ impl Applet {
             mut cue,
             mut meta,
             progress,
+            bar_start,
         } = self.content();
         // Open, a meeting name gets the whole first line; when moves under it.
         if self.kind == Kind::Calendar && p >= 0.5 && !cue.is_empty() && !self.chooser {
@@ -2744,7 +2754,7 @@ impl Applet {
             // The scrubber is the music's progress line.
             bar: progress
                 .filter(|_| !seeking)
-                .map(|fraction| (fraction, accent)),
+                .map(|fraction| (bar_start, fraction, accent)),
             tight,
         }
         .into()

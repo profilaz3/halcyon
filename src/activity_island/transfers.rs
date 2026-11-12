@@ -1,7 +1,7 @@
-//! Copies and downloads, as apps report them. Two sources reach the island:
-//! the Unity launcher protocol (`com.canonical.Unity.LauncherEntry.Update`,
-//! sent by Electron and GTK apps) and a notification's `value` hint. Nothing
-//! here polls: the island only learns what the apps say.
+//! Copies and downloads. Three sources reach the island: the Unity launcher
+//! protocol (`com.canonical.Unity.LauncherEntry.Update`, sent by Electron and
+//! GTK apps), a notification's `value` hint, and browser downloads growing in
+//! the download folder (see `downloads`). Nothing here polls.
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 use zbus::zvariant::{OwnedValue, Value};
@@ -20,7 +20,7 @@ const AGREE: f64 = 0.2;
 const JOBS: usize = 8;
 
 /// One report from an app.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Update {
     pub key: String,
     pub app: String,
@@ -32,6 +32,27 @@ pub struct Update {
     pub progress: Option<f64>,
     /// False once the app hides its progress: finished or cancelled.
     pub visible: Option<bool>,
+    /// Finished, whatever the progress said. A download has no total, so
+    /// only its rename to the final name says it is done.
+    pub finished: bool,
+    /// A download's file, as the folder shows it.
+    pub file: Option<FileState>,
+    /// The apps whose island rules govern the job, as (name, desktop entry).
+    pub owners: Vec<(String, String)>,
+}
+/// A download as its temporary file shows it. No total is known, so the
+/// island never shows a percentage for one.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FileState {
+    /// The name it will have, without the temporary suffix.
+    pub name: String,
+    pub bytes: u64,
+    /// Bytes a second over the last few seconds, once there is a rate.
+    pub rate: Option<f64>,
+    /// It stopped growing a while ago.
+    pub paused: bool,
+    /// Where it is now: the temporary file, then the finished one.
+    pub path: std::path::PathBuf,
 }
 
 /// The launcher protocol's body: the app's `application://id.desktop` URI
@@ -64,13 +85,16 @@ fn launcher_update_with(
     if progress.is_none() && visible.is_none() {
         return None;
     }
+    let app = name(desktop);
     Some(Update {
         key: format!("launcher:{desktop}"),
-        app: name(desktop),
+        owners: vec![(app.clone(), super::notifications::desktop_entry(desktop))],
+        app,
         desktop: Some(desktop.to_owned()),
         note: None,
         progress,
         visible,
+        ..Default::default()
     })
 }
 /// A notification's `value` hint, 0 to 100, as the spec has it.
@@ -85,14 +109,16 @@ pub fn note_progress(hint: Option<&Value<'_>>) -> Option<u8> {
     };
     Some(value.clamp(0, 100) as u8)
 }
-pub fn note_update(id: u32, app: &str, progress: u8) -> Update {
+pub fn note_update(note: &super::notifications::Note, progress: u8) -> Update {
     Update {
-        key: format!("note:{id}"),
-        app: app.to_owned(),
+        key: format!("note:{}", note.id),
+        app: note.app.clone(),
         desktop: None,
-        note: Some(id),
+        note: Some(note.id),
         progress: Some(f64::from(progress) / 100.),
         visible: Some(true),
+        owners: vec![(note.app.clone(), note.entry.clone())],
+        ..Default::default()
     }
 }
 /// The app's own name from its desktop file, else a readable id.
@@ -243,14 +269,29 @@ pub struct Job {
     pub note: Option<u32>,
     pub fraction: f64,
     pub eta: Eta,
-    seen: Instant,
+    pub file: Option<FileState>,
+    pub owners: Vec<(String, String)>,
+    pub started: Instant,
+    pub seen: Instant,
     pub done_at: Option<Instant>,
 }
 impl Job {
     pub fn remaining(&self, now: Instant) -> Option<f64> {
         self.eta.remaining(now)
     }
+    /// A download with no known total: no percentage, no estimate.
+    pub fn indeterminate(&self) -> bool {
+        self.file.is_some()
+    }
+    /// Where an indeterminate bar's segment starts, as a share of the bar. It
+    /// steps along with each report, so it moves without a timer of its own.
+    pub fn sweep(&self) -> f32 {
+        let step = self.seen.saturating_duration_since(self.started).as_secs() % 4;
+        step as f32 * (1. - SWEEP) / 3.
+    }
 }
+/// An indeterminate bar's segment, as a share of the bar.
+pub const SWEEP: f32 = 0.28;
 
 /// Every job an app is reporting, and those just finished.
 #[derive(Clone, Debug, Default)]
@@ -263,14 +304,20 @@ impl Tracker {
         let index = self.jobs.iter().position(|j| j.key == u.key);
         let hidden = u.visible == Some(false);
         let Some(index) = index else {
-            if hidden || u.progress.is_none_or(|p| p >= 1.) {
+            let starts = match &u.file {
+                Some(_) => true,
+                None => u.progress.is_some_and(|p| p < 1.),
+            };
+            if hidden || u.finished || !starts {
                 return false;
             }
             if self.jobs.len() >= JOBS {
                 self.jobs.remove(0);
             }
             let mut eta = Eta::default();
-            eta.push(now, u.progress.unwrap_or(0.));
+            if u.file.is_none() {
+                eta.push(now, u.progress.unwrap_or(0.));
+            }
             self.jobs.push(Job {
                 key: u.key,
                 app: u.app,
@@ -278,6 +325,9 @@ impl Tracker {
                 note: u.note,
                 fraction: u.progress.unwrap_or(0.),
                 eta,
+                file: u.file,
+                owners: u.owners,
+                started: now,
                 seen: now,
                 done_at: None,
             });
@@ -285,6 +335,36 @@ impl Tracker {
         };
         let job = &mut self.jobs[index];
         job.seen = now;
+        if !u.owners.is_empty() {
+            job.owners = u.owners;
+        }
+        if let Some(file) = u.file {
+            if job.done_at.is_some() && !u.finished {
+                // The same name downloaded again.
+                job.done_at = None;
+                job.started = now;
+            }
+            job.file = Some(file);
+        }
+        if job.file.is_some() {
+            if job.done_at.is_some() {
+                return false;
+            }
+            if u.finished {
+                job.done_at = Some(now);
+                return true;
+            }
+            if hidden {
+                // Deleted, cancelled or long stalled.
+                self.jobs.remove(index);
+            }
+            return false;
+        }
+        if u.finished && job.done_at.is_none() {
+            job.fraction = 1.;
+            job.done_at = Some(now);
+            return true;
+        }
         if let Some(p) = u.progress {
             if job.done_at.is_some() && p < 0.97 && !hidden {
                 // The same app started another.
@@ -317,11 +397,9 @@ impl Tracker {
         self.update(
             Update {
                 key,
-                app: String::new(),
-                desktop: None,
                 note: Some(note),
-                progress: None,
                 visible: Some(false),
+                ..Default::default()
             },
             now,
         )
@@ -337,6 +415,16 @@ impl Tracker {
     }
     pub fn dismiss_done(&mut self) {
         self.jobs.retain(|j| j.done_at.is_none());
+    }
+    /// Drops jobs no longer wanted, such as those of a muted app.
+    pub fn forget(&mut self, unwanted: impl Fn(&Job) -> bool) -> bool {
+        let before = self.jobs.len();
+        self.jobs.retain(|j| !unwanted(j));
+        before != self.jobs.len()
+    }
+    /// The job a notification carries, if one is followed.
+    pub fn for_note(&self, note: u32) -> Option<&Job> {
+        self.jobs.iter().find(|j| j.note == Some(note))
     }
     pub fn is_empty(&self) -> bool {
         self.jobs.is_empty()
@@ -382,7 +470,7 @@ pub fn subscription() -> cosmic::iced::Subscription<Update> {
         return cosmic::iced::Subscription::none();
     }
     cosmic::iced::Subscription::run_with("activity-transfers", |_| {
-        cosmic::iced::stream::channel(16, async |mut out| {
+        cosmic::iced::stream::channel(16, async |out| {
             listen(out).await;
             std::future::pending().await
         })
@@ -461,10 +549,9 @@ mod tests {
         Update {
             key: key.into(),
             app: key.into(),
-            desktop: None,
-            note: None,
             progress: Some(progress),
             visible: Some(true),
+            ..Default::default()
         }
     }
     #[test]
@@ -520,7 +607,18 @@ mod tests {
         assert_eq!(note_progress(Some(&Value::U32(250))), Some(100));
         assert_eq!(note_progress(Some(&Value::Str("5".into()))), None);
         assert_eq!(note_progress(None), None);
-        let u = note_update(7, "Files", 30);
+        let mut n = crate::activity_island::notifications::note(
+            7,
+            "Files",
+            "",
+            "Copying",
+            "",
+            &[],
+            &Default::default(),
+        );
+        n.entry = "org.example.Files".into();
+        let u = note_update(&n, 30);
+        assert_eq!(u.owners, [("Files".into(), "org.example.Files".into())]);
         assert_eq!(
             (u.key.as_str(), u.note, u.progress),
             ("note:7", Some(7), Some(0.3))
@@ -624,9 +722,18 @@ mod tests {
     fn transfers_from_notifications_finish_when_closed_near_the_end() {
         let t = Instant::now();
         let mut tracker = Tracker::default();
-        tracker.update(note_update(4, "Files", 40), t);
+        let n = crate::activity_island::notifications::note(
+            4,
+            "Files",
+            "",
+            "Copying",
+            "",
+            &[],
+            &Default::default(),
+        );
+        tracker.update(note_update(&n, 40), t);
         assert!(!tracker.closed(9, t), "another notification");
-        tracker.update(note_update(4, "Files", 99), t + Duration::from_secs(1));
+        tracker.update(note_update(&n, 99), t + Duration::from_secs(1));
         assert!(tracker.closed(4, t + Duration::from_secs(2)));
         assert!(tracker.lead(t).unwrap().done_at.is_some());
         tracker.dismiss_done();
