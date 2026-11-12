@@ -91,11 +91,11 @@ contents are never included. The feature snapshot is covered by the same
 
 ### Schema 7: use, problems, setup and system
 
-The next client uses schema 7 and adds five fields to the same daily request.
-They describe the time since the last report the collector accepted. Every key
-comes from a fixed list in the app and the collector refuses any other key; each
-count is a whole number from 1 to 100000, and keys with nothing to count are
-left out.
+Halcyon 0.6.5 and later use schema 7 and add five fields to the same daily
+request. They describe the time since the last report the collector accepted.
+Every key comes from a fixed list in the app and the collector refuses any other
+key; each count is a whole number from 1 to 100000, and keys with nothing to
+count are left out.
 
 - `pages`: how many times each Settings page was opened, by its fixed page key:
   `overview`, `layout`, `pending`, `appearance`, `widgets`, `glance`,

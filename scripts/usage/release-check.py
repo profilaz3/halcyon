@@ -40,8 +40,8 @@ def main():
             with opener.open(request, timeout=20) as response:
                 body = response.read(1025)
                 if (response.status != 200 or len(body) > 1024
-                        or json.loads(body) != {"service": "halcyon-activity", "schema": 6}):
-                    raise ValueError("Collector must support the feature snapshot (schema 6); deploy and verify the collector before releasing")
+                        or json.loads(body) != {"service": "halcyon-activity", "schema": 7}):
+                    raise ValueError("Collector must support use, problems, setup and system reports (schema 7); deploy and verify the collector before releasing")
     except Exception as error:
         raise SystemExit(f"Release blocked: {error}") from None
     print("Activity collector endpoint verified" + (" (live health check)" if args.check_live else " (configuration only)"))

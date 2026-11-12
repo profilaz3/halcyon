@@ -382,6 +382,25 @@ pub(super) const PRIVACY: SearchHit = hit(
 )
 .destination(AppSettingsPage::Privacy);
 
+pub(super) const CHANGES: SearchHit = hit(
+    Page::Changes,
+    "Changes",
+    "why did my desktop change history automatic scheduled undo recent changes log",
+    false,
+)
+.names_page();
+pub(super) const TIME_OF_DAY: SearchHit = hit(
+    Page::DesktopAutomation,
+    "Time of day",
+    "change with time of day day and night style widget style moments clock night style adaptive daily cycle day evening night moments automation schedule automatic time displays monitors rules preset sun solar dawn sunrise noon golden hour sunset city timezone",
+    false,
+)
+.names_page();
+pub(super) const SCENE_COVERS_CLOCK: SearchHit =
+    hit(Page::Clock, "Let the scene cover the clock", "", false);
+pub(super) const MATCH_WEATHER: SearchHit =
+    hit(Page::DesktopWallpaper, "Match the weather", "", false);
+
 const SEARCH: &[SearchHit] = &[
     hit(
         Page::General,
@@ -391,13 +410,7 @@ const SEARCH: &[SearchHit] = &[
     )
     .names_page()
     .destination(AppSettingsPage::Help),
-    hit(
-        Page::Changes,
-        "Changes",
-        "why did my desktop change history automatic scheduled undo recent changes log",
-        false,
-    )
-    .names_page(),
+    CHANGES,
     hit(
         Page::Themes,
         "Mode",
@@ -841,13 +854,7 @@ const SEARCH: &[SearchHit] = &[
         false,
     )
     .names_page(),
-    hit(
-        Page::DesktopAutomation,
-        "Time of day",
-        "change with time of day day and night style widget style moments clock night style adaptive daily cycle day evening night moments automation schedule automatic time displays monitors rules preset sun solar dawn sunrise noon golden hour sunset city timezone",
-        false,
-    )
-    .names_page(),
+    TIME_OF_DAY,
     STARTUP,
     hit(
         Page::Widgets,
@@ -911,7 +918,7 @@ const ROWS: &[SearchHit] = &[
     hit(Page::Calendar, "Tomorrow", "", false),
     hit(Page::Clock, "24-hour time", "", false),
     hit(Page::Clock, "Alignment", "", false),
-    hit(Page::Clock, "Let the scene cover the clock", "", false),
+    SCENE_COVERS_CLOCK,
     hit(Page::Clock, "Match the desktop style", "", false),
     hit(Page::Clock, "Show the date", "", false),
     hit(Page::Clock, "Text", "", false),
@@ -1012,7 +1019,7 @@ const ROWS: &[SearchHit] = &[
     hit(Page::DesktopMotion, "Keyboard", "", false),
     hit(Page::DesktopMotion, "Motion", "", false),
     hit(Page::DesktopMotion, "Reading", "", false),
-    hit(Page::DesktopWallpaper, "Match the weather", "", false),
+    MATCH_WEATHER,
     hit(Page::DesktopWallpaper, "Picture size", "", false),
     hit(Page::DesktopWallpaper, "Same on all displays", "", false),
     hit(Page::DesktopWindows, "Active window outline", "", false),
