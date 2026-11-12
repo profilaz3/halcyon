@@ -79,6 +79,7 @@ impl Settings {
                 now: std::time::Instant::now(),
                 manually_selected: tools.pinned.is_some() || self.config.music.player.is_some(),
                 problem: tools.music_problem,
+                last: None,
             },
             &self.config,
             // The example's buttons do nothing.

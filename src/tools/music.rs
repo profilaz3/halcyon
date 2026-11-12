@@ -152,6 +152,51 @@ impl Player {
     }
 }
 
+/// The track the card last showed, kept in memory only, so an idle card
+/// can name it and offer to resume it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LastTrack {
+    pub bus: String,
+    /// The player's app (`app_key`), which outlives a per-process name.
+    pub app: String,
+    /// The player's own name, `Spotify`.
+    pub player: String,
+    pub title: String,
+    /// Artists, else the album.
+    pub author: String,
+    pub art_url: Option<String>,
+}
+
+impl LastTrack {
+    /// The player's track, when it has one.
+    pub fn of(player: &Player) -> Option<Self> {
+        if !player.has_track() {
+            return None;
+        }
+        Some(Self {
+            bus: player.bus.clone(),
+            app: player.app().to_string(),
+            player: player.name().to_string(),
+            title: player.title.clone(),
+            author: if player.artists.is_empty() {
+                player.album.clone()
+            } else {
+                player.artists.join(", ")
+            },
+            art_url: player.art_url.clone(),
+        })
+    }
+
+    /// The live player that can resume this track: the same player, else
+    /// another of its app's players, when it accepts Play.
+    pub fn resumer<'a>(&self, players: &'a [Player]) -> Option<&'a Player> {
+        let playable = || players.iter().filter(|player| player.can_play);
+        playable()
+            .find(|player| player.bus == self.bus)
+            .or_else(|| playable().find(|player| player.app() == self.app))
+    }
+}
+
 /// What the watcher reports.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Feed {
@@ -1029,6 +1074,38 @@ mod tests {
             can_control: true,
             can_raise: false,
         }
+    }
+
+    #[test]
+    fn the_last_track_resumes_through_its_player_or_its_app_while_one_can_play() {
+        assert_eq!(LastTrack::of(&player("a", Playback::Paused, "")), None);
+        let mut song = player("firefox.instance_1_84", Playback::Playing, "Song");
+        song.artists = vec!["One".into(), "Two".into()];
+        let last = LastTrack::of(&song).unwrap();
+        assert_eq!(
+            (last.app.as_str(), last.title.as_str(), last.author.as_str()),
+            ("firefox", "Song", "One, Two")
+        );
+        // The same player, stopped with nothing loaded, still takes Play.
+        let stopped = player("firefox.instance_1_84", Playback::Stopped, "");
+        assert_eq!(
+            last.resumer(std::slice::from_ref(&stopped)).unwrap().bus,
+            stopped.bus
+        );
+        // Restarted under a new instance: its app resumes it.
+        let restarted = vec![
+            player("spotify", Playback::Paused, "Other"),
+            player("firefox.instance_1_207", Playback::Stopped, ""),
+        ];
+        assert_eq!(
+            last.resumer(&restarted).unwrap().key,
+            "firefox.instance_1_207"
+        );
+        // Gone, or unable to play: nothing to resume.
+        assert!(last.resumer(&restarted[..1]).is_none());
+        let mut deaf = stopped.clone();
+        deaf.can_play = false;
+        assert!(last.resumer(&[deaf]).is_none());
     }
 
     #[test]

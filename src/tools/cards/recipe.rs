@@ -780,6 +780,7 @@ pub fn sample(
                 now,
                 manually_selected: false,
                 problem: false,
+                last: None,
             },
             config,
             recipe,

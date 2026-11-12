@@ -101,6 +101,7 @@ fn visualizer_native_opacity_and_styles_render_and_controls_fit() {
                         now,
                         manually_selected: false,
                         problem: false,
+                        last: None,
                     },
                     &config,
                     Some(|a| a),

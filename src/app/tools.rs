@@ -55,6 +55,9 @@ pub(super) struct Tools {
     pub recent: Vec<String>,
     /// A player chosen on the card for this session.
     pub pinned: Option<String>,
+    /// The track the card showed last, in memory only: an idle card names
+    /// it and offers to resume it.
+    pub last_track: Option<music::LastTrack>,
     pub music_problem: bool,
     art: Vec<(String, Option<Handle>)>,
     art_loading: Option<String>,
@@ -80,6 +83,7 @@ impl Tools {
             feed: None,
             recent: Vec::new(),
             pinned: None,
+            last_track: None,
             music_problem: false,
             art: Vec::new(),
             art_loading: None,
@@ -101,6 +105,7 @@ impl Tools {
             feed: None,
             recent: Vec::new(),
             pinned: None,
+            last_track: None,
             music_problem: false,
             art: Vec::new(),
             art_loading: None,
@@ -163,19 +168,20 @@ impl Cards {
     }
 
     /// Something the Music card can show: a player playing, or paused with
-    /// a track loaded (to see it and resume). Stopped or empty players don't
-    /// count.
+    /// a track loaded (to see it and resume), or the last track while its
+    /// player is still there to resume it. Other stopped or empty players
+    /// don't count, and the card leaves once the last track's player quits.
     fn music_present(&self) -> bool {
-        self.tools
-            .players()
-            .iter()
-            .any(|player| match player.status {
-                music::Playback::Playing => true,
-                music::Playback::Paused => {
-                    !player.title.trim().is_empty() || player.art_url.is_some()
-                }
-                music::Playback::Stopped => false,
-            })
+        let players = self.tools.players();
+        players.iter().any(|player| match player.status {
+            music::Playback::Playing => true,
+            music::Playback::Paused => !player.title.trim().is_empty() || player.art_url.is_some(),
+            music::Playback::Stopped => false,
+        }) || self
+            .tools
+            .last_track
+            .as_ref()
+            .is_some_and(|last| last.resumer(players).is_some())
     }
 
     /// Brings the Music card onto the desktop or takes it off when that
@@ -202,9 +208,19 @@ impl Cards {
         match widget {
             Widget::Music => {
                 let player = self.current_player();
-                let art = player
+                // With nothing loaded, the card shows the last track and
+                // its artwork, if that is still cached.
+                let last = self
+                    .tools
+                    .last_track
+                    .as_ref()
+                    .filter(|_| !player.is_some_and(music::Player::has_track));
+                let art_url = match last {
+                    Some(last) => last.art_url.as_deref(),
+                    None => player.and_then(|player| player.art_url.as_deref()),
+                };
+                let art = art_url
                     .filter(|_| self.config.music_artwork())
-                    .and_then(|player| player.art_url.as_deref())
                     .and_then(|url| self.tools.art(url))
                     .and_then(Option::as_ref);
                 cards::music_visualized(
@@ -216,6 +232,7 @@ impl Cards {
                         manually_selected: self.tools.pinned.is_some()
                             || self.config.music.player.is_some(),
                         problem: self.tools.music_problem,
+                        last: self.tools.last_track.as_ref(),
                     },
                     &self.config,
                     Some(on_desktop),
@@ -263,6 +280,14 @@ impl Cards {
             }
         }
         self.tools.feed = Some(feed);
+        // Only a track the card showed: playing, or paused to resume.
+        if let Some(last) = self
+            .current_player()
+            .filter(|player| player.status != music::Playback::Stopped)
+            .and_then(music::LastTrack::of)
+        {
+            self.tools.last_track = Some(last);
+        }
         self.music_art_task()
     }
 
@@ -1431,9 +1456,16 @@ mod tests {
         // Paused with a track loaded: it stays, to see it and resume.
         let _ = cards.update(feed(music::Playback::Paused));
         assert!(cards.tool_shown(Widget::Music));
-        // Paused with nothing loaded: gone.
+        // Paused with nothing loaded: the card stays on the last track, to
+        // resume it, while the player can still play.
         let mut empty = player(music::Playback::Paused);
         empty.title.clear();
+        let _ = cards.update(Message::MusicFeed(music::Feed::Players(vec![
+            empty.clone(),
+        ])));
+        assert!(cards.tool_shown(Widget::Music) && cards.tools.music_shown);
+        assert_eq!(cards.tools.last_track.as_ref().unwrap().title, "Track");
+        empty.can_play = false;
         let _ = cards.update(Message::MusicFeed(music::Feed::Players(vec![empty])));
         assert!(!cards.tool_shown(Widget::Music) && !cards.tools.music_shown);
         // The player quits: gone.
