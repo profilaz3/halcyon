@@ -287,6 +287,13 @@ impl Applet {
         let prefs = &self.snapshot.preferences;
         self.recent
             .retain(|r| prefs.rule_for(&r.note.app, &r.note.entry) != Some(AppRule::Mute));
+        // Their jobs go too, downloads and copies alike.
+        self.ui.jobs.forget(|j| {
+            j.owners
+                .iter()
+                .find_map(|(app, entry)| prefs.rule_for(app, entry))
+                == Some(AppRule::Mute)
+        });
         if self
             .open_group
             .as_ref()

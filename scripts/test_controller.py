@@ -121,6 +121,18 @@ class ControllerTests(unittest.TestCase):
                 with self.assertRaises(SystemExit), redirect_stdout(io.StringIO()), \
                         patch.object(controller.sys, 'stderr', io.StringIO()):
                     controller.main()
+            for args, sent in [(['timer', '5'], {'action': 'timer', 'minutes': 5.0}),
+                               (['timer', '2.5'], {'action': 'timer', 'minutes': 2.5}),
+                               (['timer', 'cancel'], {'action': 'timer', 'do': 'cancel'}),
+                               (['timer', 'pause'], {'action': 'timer', 'do': 'pause'})]:
+                with patch.object(controller.sys, 'argv', ['desktop-cards', *args]):
+                    controller.main()
+                self.assertEqual(json.loads(command.read_text()), sent)
+            for bad in ('0', '-3', '1441', 'soon'):
+                with patch.object(controller.sys, 'argv', ['desktop-cards', 'timer', bad]):
+                    with self.assertRaises(SystemExit), redirect_stdout(io.StringIO()), \
+                            patch.object(controller.sys, 'stderr', io.StringIO()):
+                        controller.main()
         self.assertFalse(self.config.exists(), 'tool commands never edit preferences')
 
     def test_live_palette_and_color_requests_delegate_without_python_writes(self):
@@ -270,7 +282,7 @@ class ControllerTests(unittest.TestCase):
                 controller.main()
         text = output.getvalue()
         for name in ('start', 'stop', 'restart', 'status', 'settings', 'drawer', 'panel', 'toggle',
-                     'focus', 'theme', 'cosmic-colors', 'weather', 'weather-picker', 'restore',
+                     'focus', 'timer', 'theme', 'cosmic-colors', 'weather', 'weather-picker', 'restore',
                      'restore-wallpaper', 'wallpapers-install'):
             line = next((line for line in text.splitlines() if line.strip().startswith(name + ' ')
                          or line.strip() == name), None)

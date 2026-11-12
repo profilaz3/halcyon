@@ -32,6 +32,15 @@ pub struct Snapshot {
     pub calendar_problem: bool,
     pub music_problem: bool,
     pub reduced_motion: bool,
+    /// The quick timer. The desktop owns it so `halcyon-ctl` reaches it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timer: Option<super::timer::Timer>,
+    /// The player takes a new position (MPRIS CanSeek) and knows its length.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub music_seek: bool,
+    /// The artwork's dominant colour, worked out once per track.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub music_tint: Option<[u8; 3]>,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -95,6 +104,15 @@ pub enum Command {
         #[serde(default)]
         rule: Option<super::preferences::AppRule>,
     },
+    /// Move the current track to a position.
+    Seek { key: String, position_ms: i64 },
+    TimerStart { ms: i64 },
+    /// +1 min, or start again once done.
+    TimerAdd { ms: i64 },
+    TimerPause,
+    TimerResume,
+    /// Cancel, and Dismiss once done.
+    TimerCancel,
 }
 #[derive(Clone, Debug)]
 pub enum Event {
@@ -103,6 +121,8 @@ pub enum Event {
     System(Vec<super::system::Activity>),
     Quiet(super::quiet::Quiet),
     Command(Command),
+    /// The running timer reached its end.
+    TimerDue,
     /// Some time after startup: an island that has not connected by now is
     /// not coming, so nothing should still hold COSMIC's popups.
     Settled,
@@ -131,6 +151,9 @@ pub struct Owner {
     pub dnd: bool,
     pub system: Vec<super::system::Activity>,
     pub clients: usize,
+    pub timer: Option<super::timer::Timer>,
+    /// Artwork address and its dominant colour, as many as the art cache.
+    pub tints: Vec<(String, Option<[u8; 3]>)>,
     sender: watch::Sender<Snapshot>,
     identity: u64,
 }
@@ -144,6 +167,8 @@ impl Default for Owner {
                 dnd: false,
                 system: Vec::new(),
                 clients: 0,
+                timer: None,
+                tints: Vec::new(),
                 sender: watch::channel(Snapshot::default()).0,
                 identity: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             }
@@ -200,6 +225,25 @@ impl Owner {
             },
         );
         let mut all = vec![server];
+        // Runs with or without an island: the chime still matters.
+        // Keyed by the wall-clock end, so a redraw never re-arms it; naps
+        // are short so a suspend cannot carry it past the end.
+        if let Some(ends) = self.timer.and_then(|t| t.ends_at_ms) {
+            all.push(Subscription::run_with(ends, |&ends| {
+                cosmic::iced::futures::stream::once(async move {
+                    loop {
+                        let left = ends - chrono::Utc::now().timestamp_millis();
+                        if left <= 0 {
+                            break Event::TimerDue;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            left.min(20_000) as u64
+                        ))
+                        .await;
+                    }
+                })
+            }));
+        }
         if self.clients > 0 {
             if prefs.calendar && self.sender.borrow().calendar.is_some() {
                 all.push(Subscription::run_with((), |_| {
@@ -237,11 +281,12 @@ pub fn socket_path() -> Option<PathBuf> {
         let path = crate::config::Config::path()?;
         let digest = Sha256::digest(path.as_os_str().as_encoded_bytes());
         let key: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
-        format!("preview-{key}-v4.sock")
+        format!("preview-{key}-v5.sock")
     } else {
-        // v4: per-app notification rules. A mismatched applet and
-        // desktop wait for each other, never misread.
-        "session-v4.sock".into()
+        // v5: per-app notification rules, the quick timer, seeking and
+        // the artwork tint. A mismatched applet and desktop wait for each
+        // other, never misread.
+        "session-v5.sock".into()
     };
     Some(directory.join(name))
 }

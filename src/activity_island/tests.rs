@@ -1785,6 +1785,7 @@ fn note(id: u32, app: &str, icon: &str, title: &str, body: &str) -> notification
         at_ms: 0,
         entry: String::new(),
         timeout_ms: 0,
+        progress: None,
     }
 }
 fn notify(app: &mut Applet, note: notifications::Note) {
@@ -3283,6 +3284,685 @@ fn notification_groups_recent_and_rules_render_for_review() {
                 &root.join(format!("inbox-{name}-{theme_name}.png")),
                 &pixels,
                 ((frame.popup_width() * scale) as usize, (height * scale) as usize),
+                &frame,
+                Palette::for_panel(&app.core.applet).surface,
+                wall,
+                scale,
+            );
+        }
+    }
+}
+
+/// An island whose commands can be read back.
+fn listening() -> (Applet, tokio::sync::mpsc::Receiver<Command>) {
+    let mut app = app();
+    let (tx, rx) = tokio::sync::mpsc::channel(16);
+    app.commands = Some(tx);
+    (app, rx)
+}
+fn timed(app: &mut Applet, position_ms: i64) {
+    app.snapshot.music = Some(music());
+    app.snapshot.music_seek = true;
+    app.snapshot.timing = Some(bridge::MusicTiming {
+        key: "track-1".into(),
+        position_ms,
+        length_ms: 180_000,
+        rate: 1.,
+    });
+    app.music_sampled = Instant::now();
+    app.kind = Kind::Music;
+}
+#[test]
+fn live_timer_picks_a_length_starts_pauses_and_cancels() {
+    let (mut app, mut rx) = listening();
+    app.kind = Kind::Idle;
+    let _ = app.update(Message::Live(live::Msg::TimerPicker));
+    assert_eq!(app.ui.view, live::View::Picker);
+    assert!(app.popup.is_some(), "the picker opens the island");
+    assert_eq!(app.popup_extra, app.live_extra());
+    assert!(app.popup_extra > 0., "the picker has room for its presets");
+    assert_eq!(app.live_heading(1.).as_deref(), Some("New timer"));
+    let _ = app.update(Message::Live(live::Msg::TimerStep(-1)));
+    assert_eq!(app.ui.minutes, 10);
+    let _ = app.update(Message::Live(live::Msg::TimerStep(1)));
+    let _ = app.update(Message::Live(live::Msg::TimerStep(1)));
+    assert_eq!(app.ui.minutes, 20);
+
+    let _ = app.update(Message::Live(live::Msg::TimerStart(5)));
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Command::TimerStart { ms: 300_000 })
+    ));
+    assert_eq!((app.kind, app.ui.view), (Kind::Timer, live::View::Card));
+    assert!(app.timer_live() && app.live_panel());
+    assert_eq!(app.live_heading(1.).as_deref(), Some("Timer"));
+    let content = app.content();
+    assert!(
+        content.title == "5:00" || content.title == "4:59",
+        "{}",
+        content.title
+    );
+    assert!(content.meta.starts_with("Ends at "), "{}", content.meta);
+    assert!(app.eligible_kinds().contains(&Kind::Timer));
+
+    let _ = app.update(Message::Live(live::Msg::TimerPause));
+    assert!(matches!(rx.try_recv(), Ok(Command::TimerPause)));
+    assert!(app.timer().is_some_and(|t| t.paused()));
+    assert_eq!(app.content().meta, "Paused");
+    let _ = app.update(Message::Live(live::Msg::TimerResume));
+    assert!(matches!(rx.try_recv(), Ok(Command::TimerResume)));
+    assert!(app.timer().is_some_and(|t| t.running()));
+    let _ = app.update(Message::Live(live::Msg::TimerAdd));
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Command::TimerAdd { ms: 60_000 })
+    ));
+    assert!(app.timer().is_some_and(|t| t.total_ms == 360_000));
+
+    let _ = app.update(Message::Live(live::Msg::TimerCancel));
+    assert!(matches!(rx.try_recv(), Ok(Command::TimerCancel)));
+    assert!(app.timer().is_none());
+    assert!(!app.eligible_kinds().contains(&Kind::Timer));
+}
+#[test]
+fn live_escape_leaves_a_live_view_before_closing() {
+    let mut app = app();
+    let _ = app.update(Message::Live(live::Msg::TimerPicker));
+    let _ = app.update(Message::Key(keyboard::Key::Named(
+        keyboard::key::Named::Escape,
+    )));
+    assert_eq!(app.ui.view, live::View::Card);
+    assert!(app.popup.is_some(), "the first Escape only goes back");
+}
+#[test]
+fn a_finished_timer_reveals_past_the_throttle_and_waits_but_respects_do_not_disturb() {
+    let (mut app, mut snapshot) = revealing();
+    let now = chrono::Utc::now().timestamp_millis();
+    snapshot.timer = Some(timer::Timer::start(60_000, now - 120_000));
+    let _ = app.update(Message::Backend(ClientEvent::Snapshot(snapshot.clone())));
+    // Counting down is quiet.
+    assert!(app.popup.is_none());
+    // A notification just showed, so an ordinary reveal would wait.
+    app.last_reveal = Some(Instant::now());
+    let mut done = snapshot.timer.unwrap();
+    assert!(done.expire(now));
+    snapshot.timer = Some(done);
+    let _ = app.update(Message::Backend(ClientEvent::Snapshot(snapshot.clone())));
+    assert!(app.popup.is_some(), "the finished timer shows at once");
+    assert_eq!(app.kind, Kind::Timer);
+    assert_eq!(app.content().title, "Timer done");
+    assert_eq!(app.eligible_kinds().first(), Some(&Kind::Timer));
+    wake(&mut app, Duration::from_secs(30));
+    assert!(app.popup.is_some(), "it waits for Dismiss or +1 min");
+    assert_eq!(app.motion.target(), 1.);
+    // A repeat of the same snapshot does not reveal again.
+    close(&mut app);
+    let _ = app.update(Message::Backend(ClientEvent::Snapshot(snapshot.clone())));
+    assert!(app.popup.is_none());
+
+    let (mut app, mut snapshot) = revealing();
+    snapshot.dnd = true;
+    let _ = app.update(Message::Backend(ClientEvent::Snapshot(snapshot.clone())));
+    snapshot.timer = Some(done);
+    let _ = app.update(Message::Backend(ClientEvent::Snapshot(snapshot)));
+    assert!(
+        app.popup.is_none(),
+        "Do Not Disturb keeps the island closed"
+    );
+}
+#[test]
+fn transfers_from_notifications_show_progress_then_done_then_retract() {
+    let mut app = app();
+    let _ = app.update(Message::Notes(notifications::Event::Ready(true)));
+    let mut copy = note(7, "Files", "folder-symbolic", "Copying", "3 files");
+    copy.progress = Some(40);
+    notify(&mut app, copy.clone());
+    assert!(!app.ui.jobs.is_empty());
+    assert!(app.eligible_kinds().contains(&Kind::Transfer));
+    app.kind = Kind::Transfer;
+    let content = app.content();
+    assert_eq!(
+        (content.title.as_str(), content.cue.as_str()),
+        ("Files", "40%")
+    );
+    assert_eq!(
+        content.meta, "In progress",
+        "no estimate before a steady rate"
+    );
+    copy.progress = Some(99);
+    notify(&mut app, copy);
+    let _ = app.update(Message::Notes(notifications::Event::Closed(7)));
+    app.kind = Kind::Transfer;
+    assert_eq!(app.content().title, "Done");
+    assert!(
+        app.ui
+            .jobs
+            .lead(Instant::now())
+            .is_some_and(|j| j.done_at.is_some())
+    );
+    let _ = app.update(Message::Wake(transfers::DONE + Duration::from_secs(1)));
+    assert!(app.ui.jobs.is_empty(), "Done retracts after a few seconds");
+    assert!(!app.eligible_kinds().contains(&Kind::Transfer));
+}
+#[test]
+fn progress_steps_tell_start_update_and_finish_apart() {
+    use super::reactive::{Step, progress_step};
+    assert_eq!(progress_step(None, None), Step::Plain);
+    assert_eq!(progress_step(Some(None), None), Step::Plain);
+    assert_eq!(progress_step(None, Some(5)), Step::Start);
+    assert_eq!(progress_step(Some(None), Some(5)), Step::Start);
+    assert_eq!(progress_step(Some(Some(5)), Some(6)), Step::Update);
+    assert_eq!(progress_step(Some(Some(5)), Some(100)), Step::Finish);
+    assert_eq!(progress_step(Some(Some(5)), None), Step::Finish);
+    assert_eq!(progress_step(Some(Some(100)), Some(100)), Step::Update);
+    assert_eq!(progress_step(Some(Some(100)), Some(3)), Step::Update);
+    assert_eq!(progress_step(None, Some(100)), Step::Plain);
+}
+fn progress_note(id: u32, app: &str, value: u8) -> notifications::Note {
+    let mut copy = note(id, app, "folder-symbolic", "Copying", "3 files");
+    copy.progress = Some(value);
+    copy
+}
+#[test]
+fn progress_notifications_update_in_place_and_reveal_only_at_start_and_end() {
+    let (mut app, _snapshot) = revealing();
+    notify(&mut app, note(1, "Mail", "", "Older", ""));
+    settle(&mut app);
+    close(&mut app);
+    wake(&mut app, NOTE_GAP);
+    // Start: revealed once, as any arrival.
+    notify(&mut app, progress_note(7, "Files", 10));
+    settle(&mut app);
+    assert!(app.popup.is_some() && app.kind == Kind::Notification(7));
+    close(&mut app);
+    wake(&mut app, NOTE_GAP);
+    notify(&mut app, note(8, "Chat", "", "Newer", ""));
+    settle(&mut app);
+    close(&mut app);
+    let order = |app: &Applet| app.notes.iter().map(|n| n.id).collect::<Vec<_>>();
+    assert_eq!(order(&app), [8, 7, 1]);
+    // Every new value: in place, in the list, the group and the job, and
+    // never revealed, however long since the last reveal.
+    for value in [25, 50, 75, 90] {
+        wake(&mut app, Duration::from_secs(60));
+        notify(&mut app, progress_note(7, "Files", value));
+        settle(&mut app);
+        assert!(app.popup.is_none(), "{value}% must not reveal");
+        assert!(
+            !app.pending.contains(&7),
+            "{value}% must not wait to reveal"
+        );
+        assert_eq!(order(&app), [8, 7, 1], "{value}% keeps its place");
+        assert_eq!(app.note(7).and_then(|n| n.progress), Some(value));
+        let job = app.ui.jobs.for_note(7).expect("the job follows it");
+        assert!((job.fraction - f64::from(value) / 100.).abs() < 1e-9);
+    }
+    assert_eq!(app.group_ids(&app.note(7).unwrap().app_key()), [7]);
+    // Finish: revealed once more, as the live activity's Done.
+    wake(&mut app, Duration::from_secs(60));
+    notify(&mut app, progress_note(7, "Files", 100));
+    assert!(app.popup.is_some() && app.kind == Kind::Transfer);
+    app.kind = Kind::Transfer;
+    assert_eq!(app.content().title, "Done");
+    assert_eq!(order(&app), [8, 7, 1]);
+    close(&mut app);
+    // A repeat of the end does not reveal again.
+    wake(&mut app, Duration::from_secs(60));
+    notify(&mut app, progress_note(7, "Files", 100));
+    settle(&mut app);
+    assert!(app.popup.is_none());
+    // Ending by dropping the value, with no job left to show Done: the
+    // notification itself is revealed once.
+    app.ui.jobs = transfers::Tracker::default();
+    wake(&mut app, Duration::from_secs(60));
+    notify(&mut app, progress_note(9, "Files", 30));
+    settle(&mut app);
+    close(&mut app);
+    app.ui.jobs = transfers::Tracker::default();
+    wake(&mut app, Duration::from_secs(60));
+    notify(&mut app, note(9, "Files", "", "Copied", "3 files"));
+    settle(&mut app);
+    assert!(app.popup.is_some() && app.kind == Kind::Notification(9));
+}
+#[test]
+fn progress_follows_each_apps_rule() {
+    use preferences::AppRule;
+    let (mut app, mut snapshot) = revealing();
+    // Mute: neither listed nor followed.
+    preferences_rule(&mut app, &mut snapshot, "Files", Some(AppRule::Mute));
+    notify(&mut app, progress_note(7, "Files", 10));
+    assert!(app.note(7).is_none() && app.ui.jobs.is_empty() && app.popup.is_none());
+    // List only: listed and followed, never revealed, not even when done.
+    preferences_rule(&mut app, &mut snapshot, "Files", Some(AppRule::ListOnly));
+    notify(&mut app, progress_note(7, "Files", 10));
+    settle(&mut app);
+    assert!(app.note(7).is_some() && app.ui.jobs.for_note(7).is_some());
+    assert!(app.popup.is_none());
+    notify(&mut app, progress_note(7, "Files", 100));
+    settle(&mut app);
+    assert!(app.ui.jobs.for_note(7).is_some_and(|j| j.done_at.is_some()));
+    assert!(app.popup.is_none(), "List only never reveals Done");
+    // Always show: start and Done reveal even with reveals off.
+    snapshot.preferences.reveals = false;
+    preferences_rule(&mut app, &mut snapshot, "Files", Some(AppRule::Always));
+    app.ui.jobs = transfers::Tracker::default();
+    notify(&mut app, progress_note(8, "Files", 10));
+    settle(&mut app);
+    assert!(app.popup.is_some() && app.kind == Kind::Notification(8));
+    close(&mut app);
+    wake(&mut app, Duration::from_secs(60));
+    notify(&mut app, progress_note(8, "Files", 100));
+    assert!(app.popup.is_some() && app.kind == Kind::Transfer);
+    close(&mut app);
+    // Without a rule and with reveals off, Done stays quiet.
+    preferences_rule(&mut app, &mut snapshot, "Files", None);
+    app.ui.jobs = transfers::Tracker::default();
+    notify(&mut app, progress_note(9, "Files", 10));
+    wake(&mut app, Duration::from_secs(60));
+    notify(&mut app, progress_note(9, "Files", 100));
+    assert!(app.popup.is_none());
+    // Muting an app with a running job drops the job too.
+    snapshot.preferences.reveals = true;
+    app.ui.jobs = transfers::Tracker::default();
+    notify(&mut app, progress_note(10, "Files", 20));
+    assert!(app.ui.jobs.for_note(10).is_some());
+    preferences_rule(&mut app, &mut snapshot, "Files", Some(AppRule::Mute));
+    assert!(app.ui.jobs.is_empty() && app.note(10).is_none());
+}
+fn download(bytes: u64, rate: Option<f64>, paused: bool, finished: bool) -> transfers::Update {
+    let name = "ubuntu-26.04-desktop-amd64.iso";
+    let dir = std::path::Path::new("/home/user/Downloads");
+    transfers::Update {
+        key: "download:41".into(),
+        app: "Firefox".into(),
+        visible: Some(true),
+        finished,
+        file: Some(transfers::FileState {
+            name: name.into(),
+            bytes,
+            rate,
+            paused,
+            path: if finished {
+                dir.join(name)
+            } else {
+                dir.join(format!("{name}.part"))
+            },
+        }),
+        owners: vec![
+            ("Firefox".into(), "firefox".into()),
+            ("Firefox".into(), "org.mozilla.firefox".into()),
+        ],
+        ..Default::default()
+    }
+}
+fn downloading(app: &mut Applet) {
+    let _ = app.update(Message::Live(live::Msg::Transfer(download(
+        1_240_000_000,
+        Some(21_400_000.),
+        false,
+        false,
+    ))));
+    app.kind = Kind::Transfer;
+}
+fn downloaded(app: &mut Applet) {
+    downloading(app);
+    let _ = app.update(Message::Live(live::Msg::Transfer(download(
+        6_114_656_256,
+        None,
+        false,
+        true,
+    ))));
+    app.kind = Kind::Transfer;
+}
+#[test]
+fn downloads_show_size_and_rate_without_a_percentage_then_done() {
+    use preferences::AppRule;
+    let (mut app, mut snapshot) = revealing();
+    downloading(&mut app);
+    assert!(app.popup.is_none(), "a starting download does not reveal");
+    let content = app.content();
+    assert_eq!(content.title, "Downloading ubuntu-26.04-desktop-amd64.iso");
+    assert_eq!(content.cue, "", "no percentage without a total");
+    assert_eq!(content.meta, "1.2 GB · 21 MB/s");
+    assert_eq!(content.progress, Some(transfers::SWEEP));
+    let job = app.ui.jobs.lead(Instant::now()).unwrap();
+    assert!(job.indeterminate() && job.remaining(Instant::now()).is_none());
+    // Paused: said so, with no rate.
+    let _ = app.update(Message::Live(live::Msg::Transfer(download(
+        1_240_000_000,
+        None,
+        true,
+        false,
+    ))));
+    let content = app.content();
+    assert_eq!(
+        (content.cue.as_str(), content.meta.as_str()),
+        ("Paused", "1.2 GB")
+    );
+    // Renamed to its final name: Done, revealed, with the folder and file.
+    let _ = app.update(Message::Live(live::Msg::Transfer(download(
+        6_114_656_256,
+        None,
+        false,
+        true,
+    ))));
+    assert!(app.popup.is_some() && app.kind == Kind::Transfer);
+    let content = app.content();
+    assert_eq!(
+        (content.title.as_str(), content.meta.as_str()),
+        ("Done", "ubuntu-26.04-desktop-amd64.iso · 6.1 GB")
+    );
+    let mut ui = regrow(&mut app);
+    let text = ui.all_text(app.capsule(true));
+    assert!(text.iter().any(|t| t == "Open folder"), "{text:?}");
+    assert!(text.iter().any(|t| t == "Open"), "{text:?}");
+    assert!(matches!(
+        click(&mut ui, &app, "activity-transfer-folder").as_slice(),
+        [Message::Live(live::Msg::TransferOpenFolder)]
+    ));
+    close(&mut app);
+    // List only for Firefox: followed, but Done is not revealed.
+    preferences_rule(&mut app, &mut snapshot, "Firefox", Some(AppRule::ListOnly));
+    app.ui.jobs = transfers::Tracker::default();
+    wake(&mut app, Duration::from_secs(60));
+    downloaded(&mut app);
+    assert!(app.popup.is_none() && !app.ui.jobs.is_empty());
+    // Muted: not followed at all.
+    preferences_rule(&mut app, &mut snapshot, "Firefox", Some(AppRule::Mute));
+    assert!(app.ui.jobs.is_empty(), "muting drops the job");
+    downloading(&mut app);
+    assert!(app.ui.jobs.is_empty());
+    // Deleted or stalled: the job goes without a word.
+    preferences_rule(&mut app, &mut snapshot, "Firefox", None);
+    downloading(&mut app);
+    let mut gone = download(0, None, false, false);
+    gone.file = None;
+    gone.visible = Some(false);
+    let _ = app.update(Message::Live(live::Msg::Transfer(gone)));
+    assert!(app.ui.jobs.is_empty() && app.popup.is_none());
+}
+#[test]
+fn music_seek_moves_by_keyboard_within_the_track() {
+    let (mut app, mut rx) = listening();
+    timed(&mut app, 2_000);
+    app.popup = Some(window::Id::unique());
+    app.held = true;
+    assert!(app.scrubbing());
+    let left = keyboard::Key::Named(keyboard::key::Named::ArrowLeft);
+    let right = keyboard::Key::Named(keyboard::key::Named::ArrowRight);
+    let _ = app.update(Message::Key(left));
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Command::Seek { position_ms: 0, .. })
+    ));
+    let _ = app.update(Message::Key(right.clone()));
+    match rx.try_recv() {
+        Ok(Command::Seek { key, position_ms }) => {
+            assert_eq!(key, "track-1");
+            assert!((5_000..5_200).contains(&position_ms), "{position_ms}");
+        }
+        other => panic!("{other:?}"),
+    }
+    // Never past the end, so the player does not skip ahead.
+    app.ui.seek = None;
+    timed(&mut app, 179_500);
+    let _ = app.update(Message::Key(right.clone()));
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Command::Seek {
+            position_ms: 179_000,
+            ..
+        })
+    ));
+    // A player that cannot seek shows no scrubber and takes no keys.
+    app.snapshot.music_seek = false;
+    assert!(!app.scrubbing());
+    let _ = app.update(Message::Key(right));
+    assert!(rx.try_recv().is_err());
+}
+#[test]
+fn output_list_regrows_the_open_island_to_fit() {
+    let mut app = app();
+    app.snapshot.music = Some(music());
+    let _ = app.update(Message::Live(live::Msg::Outputs));
+    let first = app.popup.expect("the outputs open the island");
+    assert_eq!(app.ui.view, live::View::Outputs);
+    assert!(app.ui.sinks_loading);
+    let sink = |index, name: &str, label: &str, default| outputs::Sink {
+        index,
+        name: name.into(),
+        label: label.into(),
+        icon: "audio-speakers-symbolic",
+        default,
+    };
+    let sinks: Vec<_> = (0..5)
+        .map(|i| sink(i, &format!("sink-{i}"), &format!("Speaker {i}"), i == 0))
+        .collect();
+    let _ = app.update(Message::Live(live::Msg::OutputsLoaded(Ok(sinks.clone()))));
+    assert!(!app.ui.sinks_loading);
+    assert_eq!(
+        app.promote_popup,
+        Some(first),
+        "a longer list reopens taller"
+    );
+    let _ = app.update(Message::PopupGone(first));
+    assert!(app.popup.is_some_and(|id| id != first));
+    assert_eq!(app.popup_extra, app.live_extra());
+    let _ = app.update(Message::Live(live::Msg::OutputPick(sinks[3].clone())));
+    assert_eq!(app.ui.view, live::View::Card);
+    let picked: Vec<_> = app
+        .ui
+        .sinks
+        .iter()
+        .filter(|s| s.default)
+        .map(|s| s.index)
+        .collect();
+    assert_eq!(picked, [3], "the choice shows before pactl answers");
+}
+#[test]
+fn live_state_round_trips_through_the_bridge() {
+    let mut snapshot = app().snapshot;
+    snapshot.timer = Some(timer::Timer::start(90_000, 1_000));
+    snapshot.music_seek = true;
+    snapshot.music_tint = Some([200, 40, 90]);
+    let text = serde_json::to_string(&snapshot).unwrap();
+    assert_eq!(serde_json::from_str::<Snapshot>(&text).unwrap(), snapshot);
+    for command in [
+        Command::Seek {
+            key: "k".into(),
+            position_ms: 42,
+        },
+        Command::TimerStart { ms: 60_000 },
+        Command::TimerAdd { ms: 60_000 },
+        Command::TimerPause,
+        Command::TimerResume,
+        Command::TimerCancel,
+    ] {
+        let text = serde_json::to_string(&command).unwrap();
+        let back: Command = serde_json::from_str(&text).unwrap();
+        assert_eq!(serde_json::to_string(&back).unwrap(), text);
+    }
+}
+/// A copy at 62% whose rate has been steady long enough for an estimate.
+fn copying(app: &mut Applet) {
+    let now = Instant::now();
+    for (i, fraction) in [0.30, 0.38, 0.46, 0.54, 0.62].into_iter().enumerate() {
+        let at = now - Duration::from_secs(4 * (4 - i as u64));
+        app.ui.jobs.update(
+            transfers::Update {
+                key: "files".into(),
+                app: "Files".into(),
+                desktop: Some("com.system76.CosmicFiles.desktop".into()),
+                note: None,
+                progress: Some(fraction),
+                visible: Some(true),
+                ..Default::default()
+            },
+            at,
+        );
+    }
+    app.kind = Kind::Transfer;
+}
+/// Pictures of the progress, timer, scrubber and output states in both
+/// island styles, written only when evidence is asked for. Every control
+/// stays inside the card.
+#[test]
+fn live_activities_render_for_review() {
+    use cosmic::applet::cosmic_panel_config::CosmicPanelBackground;
+    use cosmic::iced::Size;
+    let Some(root) = std::env::var_os("HALCYON_ACTIVITY_EVIDENCE").map(std::path::PathBuf::from)
+    else {
+        return;
+    };
+    let root = root.join("island-live");
+    let scale = 2f32;
+    type Setup = fn(&mut Applet);
+    let states: [(&str, f32, &[&str], Setup); 13] = [
+        ("progress-collapsed", 0., &[], copying),
+        ("downloading-collapsed", 0., &[], downloading),
+        (
+            "downloading",
+            1.,
+            &["activity-transfer-folder"],
+            downloading,
+        ),
+        (
+            "download-done",
+            1.,
+            &["activity-transfer-folder", "activity-transfer-open"],
+            downloaded,
+        ),
+        ("progress-expanded", 1., &[], copying),
+        (
+            "progress-done",
+            1.,
+            &["activity-transfer-open", "activity-transfer-dismiss"],
+            |app| {
+                copying(app);
+                app.ui.jobs.update(
+                    transfers::Update {
+                        key: "files".into(),
+                        app: "Files".into(),
+                        desktop: Some("com.system76.CosmicFiles.desktop".into()),
+                        note: None,
+                        progress: Some(1.),
+                        visible: Some(false),
+                        ..Default::default()
+                    },
+                    Instant::now(),
+                );
+            },
+        ),
+        (
+            "timer-picker",
+            1.,
+            &[
+                "activity-timer-1",
+                "activity-timer-25",
+                "activity-timer-less",
+                "activity-timer-more",
+                "activity-timer-start",
+            ],
+            |app| {
+                app.kind = Kind::Idle;
+                app.ui.view = live::View::Picker;
+            },
+        ),
+        ("timer-collapsed", 0., &[], |app| {
+            let now = chrono::Utc::now().timestamp_millis();
+            app.snapshot.timer = Some(timer::Timer::start(5 * 60_000, now - 72_000));
+            app.kind = Kind::Timer;
+        }),
+        (
+            "timer-expanded",
+            1.,
+            &[
+                "activity-timer-add",
+                "activity-timer-pause",
+                "activity-timer-cancel",
+            ],
+            |app| {
+                let now = chrono::Utc::now().timestamp_millis();
+                app.snapshot.timer = Some(timer::Timer::start(5 * 60_000, now - 72_000));
+                app.kind = Kind::Timer;
+            },
+        ),
+        (
+            "timer-done",
+            1.,
+            &["activity-timer-dismiss", "activity-timer-again"],
+            |app| {
+                let now = chrono::Utc::now().timestamp_millis();
+                let mut t = timer::Timer::start(60_000, now - 61_000);
+                t.expire(now);
+                app.snapshot.timer = Some(t);
+                app.kind = Kind::Timer;
+            },
+        ),
+        ("music-scrubber", 1., &["activity-outputs"], |app| {
+            timed(app, 72_000);
+            app.snapshot.music_tint = Some([226, 88, 64]);
+        }),
+        ("music-collapsed", 0., &[], |app| {
+            timed(app, 72_000);
+            app.snapshot.music_tint = Some([226, 88, 64]);
+        }),
+        ("outputs", 1., &["activity-output-1"], |app| {
+            timed(app, 72_000);
+            app.snapshot.music_tint = Some([226, 88, 64]);
+            let sink = |index, label: &str, icon, default| outputs::Sink {
+                index,
+                name: format!("sink-{index}"),
+                label: label.into(),
+                icon,
+                default,
+            };
+            app.ui.sinks = vec![
+                sink(0, "Speakers", "audio-speakers-symbolic", false),
+                sink(1, "WH-1000XM5", "audio-headphones-symbolic", true),
+                sink(2, "LG HDR 4K", "video-display-symbolic", false),
+            ];
+            app.ui.view = live::View::Outputs;
+        }),
+    ];
+    for (theme_name, theme, background, wall) in [
+        (
+            "dark",
+            cosmic::Theme::dark(),
+            CosmicPanelBackground::Dark,
+            ([46., 58., 74.], [96., 84., 110.]),
+        ),
+        (
+            "light",
+            cosmic::Theme::light(),
+            CosmicPanelBackground::Light,
+            ([214., 196., 170.], [168., 186., 204.]),
+        ),
+    ] {
+        for (name, p, ids, setup) in states {
+            let mut app = app();
+            setup(&mut app);
+            app.core.applet.background = background.clone();
+            app.popup = Some(window::Id::unique());
+            app.held = true;
+            app.popup_extra = app.live_extra();
+            let frame = app.frame();
+            let (w, h) = (frame.popup_width(), app.popup_height());
+            let mut ui = crate::native_test::Native::new(Size::new(w, h));
+            app.motion.retarget(p, false, Instant::now());
+            assert!(ui.duplicate_ids(app.capsule(true)).is_empty(), "{name}");
+            for id in ids {
+                let b = ui.bounds(app.capsule(true), id);
+                assert!(
+                    b.x >= 0. && b.y >= 0. && b.x + b.width <= w + 0.5 && b.y + b.height <= h + 0.5,
+                    "{name}: {id} {b:?} outside {w}x{h}"
+                );
+            }
+            let pixels = ui.render_scaled(app.capsule(true), &theme, scale as f64);
+            save_scene(
+                &root.join(format!("{name}-{theme_name}.png")),
+                &pixels,
+                ((w * scale) as usize, (h * scale) as usize),
                 &frame,
                 Palette::for_panel(&app.core.applet).surface,
                 wall,

@@ -1,6 +1,7 @@
 //! Projects existing provider state into the panel view; the applet owns no accounts.
 use super::*;
 use crate::activity_island::bridge::{self, Command, Event, Snapshot};
+use crate::activity_island::timer;
 use crate::tools::{focus, music};
 
 fn short(value: &str) -> String {
@@ -139,11 +140,46 @@ impl Cards {
             music_problem: self.tools.music_problem
                 || matches!(self.tools.feed, Some(music::Feed::Unavailable(_))),
             reduced_motion: !self.config.settings_animations,
+            timer: self.activity.timer,
+            music_seek: playing.is_some_and(|p| p.seek_request(0.).is_some()),
+            music_tint: playing
+                .and_then(|p| p.art_url.as_ref())
+                .and_then(|url| self.activity.tints.iter().find(|(u, _)| u == url))
+                .and_then(|(_, tint)| *tint),
+        }
+    }
+    /// Applies a timer command (None: only see whether it ended) and keeps
+    /// the file in step. The chime plays unless Do Not Disturb is on.
+    fn timer_command(&mut self, command: Option<&Command>) {
+        let now = chrono::Utc::now().timestamp_millis();
+        let before = self.activity.timer;
+        let timer = &mut self.activity.timer;
+        match (command, timer.as_mut()) {
+            (Some(Command::TimerStart { ms }), _) => *timer = Some(timer::Timer::start(*ms, now)),
+            (Some(Command::TimerAdd { ms }), Some(t)) => t.add((*ms).clamp(0, timer::MAX_MS), now),
+            (Some(Command::TimerPause), Some(t)) => t.pause(now),
+            (Some(Command::TimerResume), Some(t)) => t.resume(now),
+            (Some(Command::TimerCancel), _) => *timer = None,
+            _ => {}
+        }
+        if let Some(t) = timer.as_mut()
+            && t.expire(now)
+            && !self.activity.dnd
+        {
+            timer::chime();
+        }
+        if self.activity.timer != before
+            && let Some(path) = timer::path()
+            && let Err(error) = timer::save_to(&path, self.activity.timer.as_ref())
+        {
+            eprintln!("Could not keep the timer: {error}");
         }
     }
     pub(super) fn activity_message(&mut self, event: Event) -> Task<Message> {
         match event {
             Event::RefreshCalendar => {}
+            // Expiry is a timer command like any other: it saves and chimes.
+            Event::TimerDue => self.timer_command(None),
             Event::Settled => {
                 if self.activity.clients == 0 {
                     crate::activity_island::popups::restore_soon();
@@ -172,9 +208,26 @@ impl Cards {
             Event::Command(Command::NoteRule { app, entry, rule }) => {
                 return self.save_note_rule(&app, &entry, rule);
             }
+            Event::Command(
+                command @ (Command::TimerStart { .. }
+                | Command::TimerAdd { .. }
+                | Command::TimerPause
+                | Command::TimerResume
+                | Command::TimerCancel),
+            ) => self.timer_command(Some(&command)),
+            Event::Command(Command::Seek { key, position_ms }) => {
+                if let Some(player) = self.current_player().filter(|p| music_key(p) == key)
+                    && let Some(length) = player.length_us.filter(|n| *n > 0)
+                    && let Some(mut request) = player.seek_request(0.)
+                {
+                    request.position_us = position_ms
+                        .saturating_mul(1000)
+                        .clamp(0, length.saturating_sub(1));
+                    return self.update_tool(crate::tools::cards::Action::MusicSeek(request));
+                }
+            }
             Event::Command(command) => {
                 let music_command = match command {
-                    Command::NoteRule { .. } => return Task::none(),
                     Command::Focus { key } => {
                         if key == focus_key(&self.tools.focus) {
                             return self.update_tool(crate::tools::cards::Action::FocusToggle);
@@ -186,6 +239,7 @@ impl Cards {
                     Command::Next { key } => (key, music::Command::Next),
                     Command::Previous { key } => (key, music::Command::Previous),
                     Command::Raise { key } => (key, music::Command::Raise),
+                    _ => return Task::none(),
                 };
                 if let Some(player) = self
                     .current_player()

@@ -505,6 +505,9 @@ impl cosmic::Application for Cards {
         tasks.push(app.wallpaper_colors_changed());
         tasks.push(app.publish_display_state());
         tasks.push(Self::read_system_motion());
+        app.activity.timer = crate::activity_island::timer::path().and_then(|path| {
+            crate::activity_island::timer::load_from(&path, chrono::Utc::now().timestamp_millis())
+        });
         app.publish_activity();
         tasks.push(cosmic::task::future(async {
             tokio::time::sleep(std::time::Duration::from_secs(20)).await;
@@ -741,6 +744,7 @@ impl cosmic::Application for Cards {
                 | Message::MusicFeed(_)
                 | Message::MusicControlDone(_)
                 | Message::FocusCommand(_)
+                | Message::MusicArt(..)
                 | Message::Tool(_)
                 | Message::Calendar(..)
                 | Message::PreviewCalendar(_)

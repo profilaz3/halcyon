@@ -67,8 +67,9 @@ pub(super) struct Surface<'a> {
     pub animate: bool,
     /// Report pointer motion, only needed while waiting for it to rest.
     pub waiting: bool,
-    /// Elapsed share and color of an optional line beneath the details.
-    pub bar: Option<(f32, Color)>,
+    /// Start, elapsed share and color of an optional line beneath the
+    /// details.
+    pub bar: Option<(f32, f32, Color)>,
     /// Nothing sits between the details and the actions.
     pub tight: bool,
 }
@@ -526,7 +527,7 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
 impl Surface<'_> {
     /// The elapsed line beneath the details, spanning the card symmetrically.
     fn draw_bar(&self, r: &mut Renderer, l: Layout<'_>, rect: Rectangle) {
-        let Some(((fraction, color), details)) = self.bar.zip(l.children().nth(2)) else {
+        let Some(((start, fraction, color), details)) = self.bar.zip(l.children().nth(2)) else {
             return;
         };
         if self.progress <= 0.5 || self.chooser {
@@ -556,7 +557,8 @@ impl Surface<'_> {
         fill(track, alpha(self.palette.ink, 0.12 * reveal), r);
         fill(
             Rectangle {
-                width: track.width * fraction.clamp(0., 1.),
+                x: track.x + track.width * start.clamp(0., 1.),
+                width: track.width * fraction.clamp(0., 1. - start.clamp(0., 1.)),
                 ..track
             },
             alpha(color, reveal),

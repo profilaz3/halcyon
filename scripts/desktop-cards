@@ -256,6 +256,27 @@ def focus(action):
     """Start, pause, toggle, reset or skip the Focus timer (for keyboard shortcuts)."""
     desktop_command({'action': 'focus', 'do': action})
 
+TIMER_ACTIONS = ('cancel', 'pause', 'resume')
+
+def timer_length(value):
+    """A quick timer's length in minutes, up to a day, or cancel, pause or resume."""
+    if value in TIMER_ACTIONS:
+        return value
+    try:
+        minutes = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError('give minutes, or one of: ' + ', '.join(TIMER_ACTIONS))
+    if not 0 < minutes <= 1440:
+        raise argparse.ArgumentTypeError('give between 1 second and 1440 minutes')
+    return minutes
+
+def timer(value):
+    """Start the Activity island's quick timer, or cancel, pause or resume it."""
+    if value in TIMER_ACTIONS:
+        desktop_command({'action': 'timer', 'do': value})
+    else:
+        desktop_command({'action': 'timer', 'minutes': value})
+
 def settings(page=''):
     # The native entry point owns the window and forwards requests, including
     # direct binary/desktop launches, and leaves the widget service's cgroup.
@@ -315,6 +336,9 @@ def main():
         'widget', choices=WIDGETS, help='One of: ' + ', '.join(WIDGETS))
     command('focus', 'Control the Focus timer, for example from a keyboard shortcut').add_argument(
         'action', choices=FOCUS_ACTIONS, help='One of: ' + ', '.join(FOCUS_ACTIONS))
+    command('timer', 'Start a quick timer in the Activity island, or cancel, pause or resume it').add_argument(
+        'length', type=timer_length, metavar='MINUTES|cancel|pause|resume',
+        help='Minutes, for example 5 or 2.5, or one of: ' + ', '.join(TIMER_ACTIONS))
     command('theme', 'Apply a Halcyon theme').add_argument('name', choices=THEMES)
     command('cosmic-colors', 'Turn matching the COSMIC accent color on or off').add_argument(
         'state', choices=['on', 'off'])
@@ -341,6 +365,8 @@ def main():
         open_panel(args.widget, toggle=True)
     elif args.command == 'focus':
         focus(args.action)
+    elif args.command == 'timer':
+        timer(args.length)
     elif args.command in ('start', 'stop', 'restart', 'status'):
         service(args.command)
     elif args.command == 'restore':
