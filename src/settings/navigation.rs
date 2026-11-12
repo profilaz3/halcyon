@@ -49,6 +49,8 @@ pub(super) enum SearchOpen {
     Metric(crate::config::DevboxSection),
 }
 
+    /// Arrange widgets: the editor on the desktop (see `ArrangeWidgets`).
+    Arrange,
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SearchHit {
     pub page: Page,
@@ -570,6 +572,14 @@ const SEARCH: &[SearchHit] = &[
     )
     .at("canvas-start"),
     hit(
+    .at("arrange-widgets")
+    .open(SearchOpen::Arrange),
+    hit(
+        Page::Overview,
+        "Arrange with keyboard",
+        "keyboard arrow keys list accessible arrange layout",
+        false,
+    )
         Page::Calendar,
         "Calendars",
         "calendar today tomorrow meetings join highlights add link",
@@ -1769,6 +1779,8 @@ mod tests {
                 Page::DesktopProfiles,
                 Page::Themes,
                 Page::DesktopWallpaper,
+                // The desktop editor opens, or Settings' own when it can't.
+                SearchOpen::Arrange => assert!(app.busy || app.canvas_visible()),
                 Page::Overview,
                 Page::DesktopDock,
                 Page::DesktopWindows,
@@ -1954,7 +1966,8 @@ mod tests {
         for query in ["layout", "arrange widgets", "resize widgets", "grid snap"] {
             let hit = search(query)[0];
             assert_eq!(hit.page, Page::Overview, "{query}");
-            assert_eq!(hit.anchor(), "canvas-start", "{query}");
+            assert_eq!(hit.anchor(), "arrange-widgets", "{query}");
+            assert_eq!(hit.open, SearchOpen::Arrange, "{query}");
             assert!(!hit.advanced);
         }
     }
@@ -2008,6 +2021,13 @@ pub(super) fn model(page: Page) -> cosmic::widget::nav_bar::Model {
     select(&mut model, page);
     model
 }
+        // The list in Settings stays reachable for the keyboard.
+        let keyboard = search("arrange with keyboard")[0];
+        assert_eq!(
+            (keyboard.page, keyboard.anchor()),
+            (Page::Overview, "canvas-start")
+        );
+        assert_eq!(keyboard.open, SearchOpen::None);
 pub(super) fn select(model: &mut cosmic::widget::nav_bar::Model, page: Page) {
     let id = model
         .iter()

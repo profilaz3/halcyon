@@ -70,12 +70,23 @@ impl Settings {
             .spacing(16)
             .into();
         }
+        // Arranging happens on the desktop itself; the list in Settings
+        // stays one click away for arranging with the keyboard.
         let header = split(
             heading("Widgets", "Click a widget in the picture to change it."),
-            button::standard("Arrange widgets")
-                .id(cosmic::widget::Id::new("canvas-start"))
-                .on_press(Message::Canvas(crate::settings::canvas::Message::Start))
-                .into(),
+            row::with_children(vec![
+                button::text("Arrange with keyboard")
+                    .id(cosmic::widget::Id::new("canvas-start"))
+                    .on_press(Message::Canvas(crate::settings::canvas::Message::Start))
+                    .into(),
+                button::standard("Arrange widgets")
+                    .id(cosmic::widget::Id::new("arrange-widgets"))
+                    .on_press_maybe((!self.busy).then_some(Message::ArrangeWidgets))
+                    .into(),
+            ])
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into(),
         );
         // Your real wallpaper, bars and widgets; every object opens its editor.
         let height = (self.content_width() * 0.4).clamp(200., 340.);

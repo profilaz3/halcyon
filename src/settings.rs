@@ -659,6 +659,11 @@ pub enum Message {
     SaveAppearance,
     CommitEdits(u64),
     FlushEdits,
+    /// Home's and search's Arrange widgets: the editor on the desktop
+    /// itself, or the one in Settings when the desktop can't open it.
+    ArrangeWidgets,
+    /// The desktop couldn't open its editor: arrange in Settings instead.
+    ArrangeHere(String),
     /// The title bar's own buttons and gestures, handled by libcosmic.
     Window(WindowControl),
     AppearancePreset(u8, u16, u8),
@@ -2426,9 +2431,17 @@ impl Settings {
                 }
             }
             Message::OpenRoot(page) => return self.open_root(page),
+                // Arrange widgets opens the editor on the desktop, as the
+                // button on Widgets does.
+                let arrange = if hit.open == navigation::SearchOpen::Arrange {
+                    self.update(Message::ArrangeWidgets)
+                } else {
+                    Task::none()
+                };
             Message::Back => {
                 if self.wizard.is_some() {
                     return self.update_wizard(wizard::Message::Back);
+                    arrange,
                 }
                 if self.history.is_empty()
                     && self.page == Page::General
@@ -3789,6 +3802,33 @@ impl Settings {
                     }
                     Err(error) => self.failed(error),
                 }
+            }
+            Message::ArrangeWidgets => {
+                if self.busy || self.canvas.is_some() {
+                    return Task::none();
+                }
+                if !desktop_arrange_available(&self.config) {
+                    return self.update(Message::Canvas(canvas::Message::Start));
+                }
+                self.working("Opening desktop arrangement…");
+                return desktop_command(
+                    "arrange",
+                    "Drag widgets, then save your layout",
+                    self.placement.display.clone(),
+                    true,
+                );
+            }
+            Message::ArrangeHere(error) => {
+                self.busy = false;
+                eprintln!("Arrange on desktop: {error}");
+                let task = self.update(Message::Canvas(canvas::Message::Start));
+                if self.canvas.is_some() {
+                    self.status = "The desktop couldn’t open its editor, so you can arrange here".into();
+                    self.error = false;
+                } else if !self.error {
+                    self.failed(error);
+                }
+                return task;
             }
             Message::Notice(value) => {
                 self.notice = value;
@@ -6512,10 +6552,28 @@ fn desktop_command_on_display(
             )
             .map_err(|error| error.to_string())?;
             std::fs::rename(temp, path).map_err(|error| error.to_string())
+/// Whether the desktop can take Arrange widgets: somewhere to send the
+/// request and a widget on the desktop to arrange.
+fn desktop_arrange_available(config: &Config) -> bool {
+    desktop_command_path().is_some()
+        && crate::drawer::Widget::ALL
+            .iter()
+            .any(|widget| config.widget_visible(*widget))
+}
         })
         .await
         .unwrap_or_else(|error| Err(error.to_string()));
         Message::CommandDone(status.into(), result)
+) -> Task<Message> {
+    desktop_command(action, status, display, false)
+}
+/// Asks the desktop to `action`. With `arrange_here`, a desktop that can't
+/// take it opens the editor in Settings instead of only reporting it.
+fn desktop_command(
+    action: &'static str,
+    status: &'static str,
+    display: Option<String>,
+    arrange_here: bool,
     })
 }
 fn normalize_folder(input: &str) -> Result<String, String> {
@@ -6560,7 +6618,10 @@ fn run_command(command: PathBuf, args: Vec<String>, status: &'static str) -> Tas
         })
         .await
         .unwrap_or_else(|error| Err(error.to_string()));
-        Message::CommandDone(status.into(), result)
+        match result {
+            Err(error) if arrange_here => Message::ArrangeHere(error),
+            result => Message::CommandDone(status.into(), result),
+        }
     })
 }
 fn controller(args: Vec<String>, status: &'static str) -> Task<Message> {

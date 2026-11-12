@@ -548,3 +548,51 @@ fn polish050_saved_selection_survives_hiding_and_restart() {
             .is_some()
     );
 }
+
+#[test]
+fn arrange_widgets_opens_the_desktop_editor_and_falls_back_to_settings() {
+    if child("arrange_widgets_opens_the_desktop_editor_and_falls_back_to_settings") {
+        return;
+    }
+    // Settings' editor drafts from the saved settings.
+    std::fs::write(Config::path().unwrap(), "{}").unwrap();
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        let (mut app, _) = Settings::init(Core::default(), Page::Overview);
+        let _ = app.update(Message::Resized(size));
+        let _ = app.update(Message::Service(Ok(ServiceState {
+            running: true,
+            startup: false,
+        })));
+        let mut native = Native::new(size);
+        assert!(desktop_arrange_available(&app.config));
+        // Arrange widgets asks the desktop for its editor; Settings opens
+        // none of its own.
+        click(&mut app, &mut native, "arrange-widgets");
+        assert!(app.busy && app.canvas.is_none(), "{}", app.status);
+        // The desktop couldn't open it: Settings' editor opens instead.
+        let _ = app.update(Message::ArrangeHere("no desktop".into()));
+        assert!(
+            !app.busy && app.canvas.is_some() && !app.error,
+            "{}",
+            app.status
+        );
+        click(&mut app, &mut native, "canvas-cancel");
+        assert!(app.canvas.is_none());
+        // Search reaches the desktop editor the same way.
+        let hit = navigation::search("arrange widgets")[0];
+        let _ = app.update(Message::SearchResult(hit));
+        assert!(app.busy && app.canvas.is_none(), "{}", app.status);
+        let _ = app.update(Message::CommandDone("done".into(), Ok(())));
+        // The keyboard link opens the list in Settings directly.
+        let _ = app.update(Message::Page(Page::Overview));
+        click(&mut app, &mut native, "canvas-start");
+        assert!(app.canvas.is_some() && !app.busy);
+        click(&mut app, &mut native, "canvas-cancel");
+        // Nothing on the desktop to arrange there: Settings' editor.
+        app.config.enabled_widgets.clear();
+        assert!(!desktop_arrange_available(&app.config));
+        let _ = app.update(Message::ArrangeWidgets);
+        assert!(app.canvas.is_some() && !app.busy);
+        let _ = app.update(Message::Canvas(canvas::Message::Cancel));
+    }
+}
