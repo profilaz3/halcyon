@@ -216,7 +216,7 @@ impl Settings {
             .id(cosmic::widget::Id::new("nav-changes"))
             .class(nav_style(active, accent))
             .selected(active)
-            .padding(if rail { [5, 2] } else { [11, 12] })
+            .padding(if rail { [4, 2] } else { [11, 12] })
             .width(Length::Fill)
             .on_press(Message::OpenRoot(Page::Changes));
         let tip = if unfinished {

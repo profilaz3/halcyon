@@ -555,7 +555,10 @@ fn changes_pinned_in_sidebar_filters_and_opens_where_made() {
         send_settings(&mut app, Message::Page(Page::Overview));
         let mut native = crate::native_test::Native::new(size);
         let entry = native.bounds(app.settings_view(), "nav-changes");
-        assert!(entry.y + entry.height <= size.height, "pinned inside the window");
+        assert!(
+            entry.y + entry.height <= size.height,
+            "pinned inside the window: {entry:?}"
+        );
         native.capture_hover(
             app.settings_view(),
             &cosmic::Theme::dark(),
@@ -895,6 +898,7 @@ fn rail_entries_keep_one_line_labels() {
         "Looks",
         "Appearance",
         "Wallpaper",
+        "Weather",
         "Widgets",
         "Dock",
         "Windows",

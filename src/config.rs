@@ -406,7 +406,7 @@ impl Config {
             let current: Self = serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
             if &current.rain != expected && &current.rain != next {
                 return Err(
-                    "Wallpaper effects changed elsewhere. Reopen Wallpaper before trying again."
+                    "Weather effects changed elsewhere. Reopen Weather before trying again."
                         .into(),
                 );
             }
