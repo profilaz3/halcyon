@@ -590,11 +590,11 @@ impl Settings {
         if !fit.is_empty() {
             side.push(group(None, fit));
         }
-        // Weather effects have a page of their own; one row leads there.
+        // Effects have a page of their own; one row leads there.
         side.push(group(
             None,
             vec![self.subpage_row(
-                "Weather effects",
+                "Effects",
                 "Rain, snow, fog and cloud shadows over the wallpaper",
                 Page::WeatherEffects,
                 "wallpaper-open-weather",
@@ -623,14 +623,14 @@ impl Settings {
         let editor = &self.wallpaper;
         let mut items: Vec<Element<'_, Message>> = vec![split(
             heading(
-                "Weather effects",
+                "Effects",
                 "Rain, snow, fog and cloud shadows that play over your wallpaper.",
             ),
             store_pill(editor.store(), self.wallpaper_accent()),
         )];
         if let Some(error) = editor.unavailable() {
             items.push(banner(
-                format!("Weather effects are unavailable. {error}"),
+                format!("Effects are unavailable. {error}"),
                 ERROR,
                 Vec::new(),
             ));

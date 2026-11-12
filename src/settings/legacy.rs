@@ -296,7 +296,7 @@ fn proposal_summary(c: &Composition) -> String {
             key => key,
         };
         let value = entry.desired.as_ref().map_or("System default".into(), |v| {
-            if key.namespace() == crate::desktop::wallpaper::NAMESPACE {
+            if crate::desktop::wallpaper::modes::is_background(key.namespace()) {
                 if let Ok(entry) = ron::from_str::<crate::desktop::wallpaper::BgEntry>(v.as_str()) {
                     use crate::desktop::wallpaper::{BgColor, BgSource};
                     return match entry.source {
@@ -799,11 +799,22 @@ impl Settings {
             Kind::Automation => {
                 restore!(automation, automation::RuleDraft, Page::DesktopAutomation)
             }
+            // Kept at once, like an unfinished layout found on reopening.
             Kind::Layout => match ron::from_str(&text)
                 .map_err(|e| e.to_string())
                 .and_then(|saved| self.placement.restore_session(saved))
             {
-                Ok(()) => return self.handle(Message::Page(Page::Overview)),
+                Ok(()) => {
+                    let kept = self.keep_recovered_layout();
+                    let status = (self.status.clone(), self.error);
+                    if kept && let Err(error) = self.recovery_sheet.discard(index) {
+                        self.failed(error);
+                        return Task::none();
+                    }
+                    let task = self.handle(Message::Page(Page::Overview));
+                    (self.status, self.error) = status;
+                    return task;
+                }
                 Err(e) => self.failed(e),
             },
             _ => {}

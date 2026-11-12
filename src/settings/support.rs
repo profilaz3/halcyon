@@ -258,7 +258,7 @@ fn widget_page(group: Option<&str>) -> Page {
         Some("Notes") => Page::Notes,
         Some("Focus") => Page::Focus,
         Some("Projects") => Page::Projects,
-        Some("Activity") => Page::DesktopDock,
+        Some("Activity") => Page::ActivityIsland,
         Some("Time of day") => Page::DesktopAutomation,
         Some("Wallpaper effects") => Page::WeatherEffects,
         Some("Recipes") => Page::Builder,
@@ -282,11 +282,28 @@ impl Settings {
         // Widget preferences span several pages, so their setting decides.
         let any_page = crate::desktop::Owner::parse(&entry.owner)
             == Some(crate::desktop::Owner::Preferences);
-        let hit = entry.details.iter().find_map(|detail| {
-            super::navigation::search(&detail.setting)
-                .into_iter()
-                .find(|hit| any_page || hit.page.sidebar() == page.sidebar())
-        });
+        // The change's own page first, then its sibling bar pages. Bar
+        // settings are recorded as “Bar spacing” and so on; the page names
+        // which bar.
+        let query = |setting: &str| match setting.strip_prefix("Bar ") {
+            Some(rest) if page.bar().is_some() => format!("{} {rest}", page.nav_title()),
+            _ => setting.to_string(),
+        };
+        let hit = entry
+            .details
+            .iter()
+            .find_map(|detail| {
+                super::navigation::search(&query(&detail.setting))
+                    .into_iter()
+                    .find(|hit| any_page || hit.target() == page)
+            })
+            .or_else(|| {
+                entry.details.iter().find_map(|detail| {
+                    super::navigation::search(&detail.setting)
+                        .into_iter()
+                        .find(|hit| hit.page.undo_group() == page.undo_group())
+                })
+            });
         match hit {
             Some(hit) => self.handle(AppMessage::SearchResult(hit)),
             None => {
@@ -315,12 +332,12 @@ impl Settings {
             health,
             action: Background,
         });
-        // Same words as the Dock and panel page and Updates.
+        // Same words as the Panel page and Updates.
         let (state, health) = match self.panel_host() {
             Host::Running => ("Running", Healthy),
             Host::Checking => ("Checking…", Unknown),
             Host::Switching => ("Getting ready…", Unknown),
-            Host::Switch => ("Not in use. Choose Islands under Dock and panel › Shape", Neutral),
+            Host::Switch => ("Not in use. Choose Islands under Panel › Shape", Neutral),
             Host::SignIn => ("Ready. Sign out and back in to start it", Attention),
             Host::Failed(reason) => (reason, Attention),
             Host::Unavailable(reason) => (

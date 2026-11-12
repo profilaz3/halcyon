@@ -7,6 +7,9 @@ After=graphical-session.target
 Type=simple
 ExecStart=/usr/bin/halcyon
 Restart=on-failure
+# After a package upgrade the widgets exit with 75 to be started again on
+# the new program (src/upgrade.rs). Named so it restarts whatever Restart= says.
+RestartForceExitStatus=75
 RestartSec=5
 
 [Install]

@@ -207,6 +207,9 @@ pub(super) fn label(message: &Message) -> String {
         },
         Message::MaterialChoose(_) | Message::MaterialSave => "Glass material",
         Message::MaterialMotion(_) => "Liquid widget motion",
+        // Only when turning it off also brings back the clock and weather;
+        // turning it off alone is named by its one field.
+        Message::Widget(Widget::Glance, false) => "Daily overview off, clock and weather shown",
         Message::Widget(_, _) => "Widget visibility",
         Message::Placement(_) | Message::ClockStage(_) => "Widget arrangement",
         Message::ChooseCity(_) => "Weather city",

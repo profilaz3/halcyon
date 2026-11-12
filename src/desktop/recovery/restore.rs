@@ -100,7 +100,7 @@ pub fn plan_restore(
                 }
             };
             if let Some(value) = &desired {
-                if key.namespace() == super::super::wallpaper::NAMESPACE {
+                if super::super::wallpaper::modes::is_background(key.namespace()) {
                     if let Ok(entry) = value.decode::<super::super::wallpaper::BgEntry>() {
                         if let super::super::wallpaper::BgSource::Path(path) = entry.source {
                             if !path.exists() {
@@ -197,6 +197,17 @@ pub fn plan_restore(
             }
         }
     }
+    // A snapshot taken before Halcyon knew about per-mode backgrounds has
+    // only the shared ones; Apply copies those to both modes. A newer one
+    // restores each namespace exactly.
+    let is_mode = super::super::wallpaper::modes::is_mode;
+    plan.patch.exact_backgrounds = plan.snapshot.domains.iter().any(|domain| {
+        domain
+            .native
+            .iter()
+            .any(|record| is_mode(&record.namespace))
+            || domain.inventory.iter().any(|item| is_mode(&item.namespace))
+    });
     Ok(plan)
 }
 
@@ -218,7 +229,7 @@ pub(crate) fn verify_plan(store: &DesktopStore, plan: &RestorePlan) -> Result<()
         .map(|(k, e)| (k, &e.desired))
         .chain(plan.patch.guards())
     {
-        if key.namespace() == super::super::wallpaper::NAMESPACE {
+        if super::super::wallpaper::modes::is_background(key.namespace()) {
             if let Some(raw) = value {
                 if let Ok(entry) = raw.decode::<super::super::wallpaper::BgEntry>() {
                     if let super::super::wallpaper::BgSource::Path(path) = entry.source {

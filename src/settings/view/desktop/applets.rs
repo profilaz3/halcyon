@@ -10,7 +10,7 @@ use cosmic::Apply;
 const SEARCH_FROM: usize = 8;
 
 impl Settings {
-    pub(super) fn activity_preferences(&self) -> Element<'_, Message> {
+    pub(in crate::settings) fn activity_preferences(&self) -> Element<'_, Message> {
         let p = &self.config.activity_island;
         let toggle = |name: &'static str, key: &'static str, on: bool, nested: bool| {
             let row = split(
@@ -148,7 +148,7 @@ impl Settings {
             .into()
     }
     /// A top panel without the Activity island offers to add it, centred.
-    pub(super) fn add_activity_island(
+    pub(in crate::settings) fn add_activity_island(
         &self,
         draft: &PanelDraft,
         regions: &crate::desktop::panels::Regions,
@@ -337,6 +337,7 @@ impl Settings {
                 hint
             });
         }
+        // The island's own options live on its page.
         if panel
             && Region::ALL.iter().any(|r| {
                 regions
@@ -346,7 +347,12 @@ impl Settings {
             })
         {
             blocks.push(separator());
-            blocks.push(self.activity_preferences());
+            blocks.push(self.link_row_state(
+                "Activity island",
+                self.part_state(Page::ActivityIsland),
+                Message::Page(Page::ActivityIsland),
+                "panel-open-island".into(),
+            ));
         }
         container(column::with_children(vec![header, section(blocks)]).spacing(8))
             .id(cosmic::widget::Id::new(id))

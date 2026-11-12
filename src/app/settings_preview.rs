@@ -176,6 +176,8 @@ impl SettingsSamples {
             notice: None,
             menu: None,
             recovery_details: false,
+            restart: Default::default(),
+            applying_colors: 0,
             surface_geometry: None,
             displays: Default::default(),
             selected_output: None,

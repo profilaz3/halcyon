@@ -69,6 +69,9 @@ const FONT_PAGE_SIZE: usize = 12;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
+    /// The page Settings opens on: the whole desktop in one picture, with
+    /// a tile for every part.
+    Home,
     Overview,
     WidgetLayout,
     PendingChanges,
@@ -86,8 +89,12 @@ pub enum Page {
     Focus,
     General,
     Desktop,
-    /// Dock & Panel editor, a subpage of Pop!_OS.
+    /// The dock's editor. The panel's is the same page on the other bar.
     DesktopDock,
+    /// The top panel's editor: the dock's page, showing the panel.
+    DesktopPanel,
+    /// The Activity island's options, from the panel's applet.
+    ActivityIsland,
     /// System appearance editor, a subpage of Pop!_OS.
     DesktopAppearance,
     /// Backgrounds, slideshows and colors, a subpage of Pop!_OS.
@@ -121,25 +128,30 @@ pub enum Page {
     Changes,
 }
 impl Page {
-    /// Nine roots, each named for what it changes; leaf routes keep their
-    /// existing command keys.
-    const SIDEBAR: [(Option<&'static str>, &'static [Self]); 1] = [(
-        None,
-        &[
-            Self::DesktopProfiles,
-            Self::Themes,
-            Self::DesktopWallpaper,
-            Self::WeatherEffects,
-            Self::Overview,
-            Self::DesktopDock,
-            Self::DesktopWindows,
-            Self::DesktopMotion,
-            Self::General,
-        ],
-    )];
+    /// Home, then one root per part of the desktop, each named for what it
+    /// changes; leaf routes keep their existing command keys.
+    const SIDEBAR: [(Option<&'static str>, &'static [Self]); 2] = [
+        (None, &[Self::Home]),
+        (
+            None,
+            &[
+                Self::DesktopWallpaper,
+                Self::WeatherEffects,
+                Self::Overview,
+                Self::DesktopPanel,
+                Self::DesktopDock,
+                Self::ActivityIsland,
+                Self::Themes,
+                Self::DesktopWindows,
+                Self::DesktopMotion,
+                Self::General,
+            ],
+        ),
+    ];
     /// Pinned below the roots, at the bottom of the sidebar.
     const PINNED: Self = Self::Changes;
-    const ALL: [Self; 33] = [
+    const ALL: [Self; 36] = [
+        Self::Home,
         Self::Overview,
         Self::WidgetLayout,
         Self::PendingChanges,
@@ -157,6 +169,8 @@ impl Page {
         Self::General,
         Self::Desktop,
         Self::DesktopDock,
+        Self::DesktopPanel,
+        Self::ActivityIsland,
         Self::DesktopAppearance,
         Self::DesktopWallpaper,
         Self::WeatherEffects,
@@ -196,13 +210,20 @@ impl Page {
     /// The sidebar root a page belongs to.
     fn sidebar(self) -> Self {
         match self.canonical() {
-            Self::Themes | Self::Appearance | Self::DesktopAppearance => Self::Themes,
-            Self::DesktopProfiles | Self::DesktopAutomation | Self::AdaptiveLooks => {
-                Self::DesktopProfiles
-            }
+            Self::Home => Self::Home,
+            // Looks left the sidebar. Their pages stay, under Appearance,
+            // which links to Time of day.
+            Self::Themes
+            | Self::Appearance
+            | Self::DesktopAppearance
+            | Self::DesktopProfiles
+            | Self::DesktopAutomation
+            | Self::AdaptiveLooks => Self::Themes,
             Self::DesktopWallpaper | Self::DesktopIcons => Self::DesktopWallpaper,
             Self::WeatherEffects => Self::WeatherEffects,
             Self::DesktopDock => Self::DesktopDock,
+            Self::DesktopPanel => Self::DesktopPanel,
+            Self::ActivityIsland => Self::ActivityIsland,
             Self::DesktopWindows | Self::DesktopWindowRules | Self::DesktopShortcuts => {
                 Self::DesktopWindows
             }
@@ -210,6 +231,17 @@ impl Page {
             Self::General => Self::General,
             Self::Changes | Self::PendingChanges => Self::Changes,
             _ => Self::Overview,
+        }
+    }
+    /// Who undoes whose changes: the root as it was before Looks left
+    /// the sidebar and the bars split, since one record covers each.
+    fn undo_group(self) -> Self {
+        match self.canonical() {
+            Self::DesktopProfiles | Self::DesktopAutomation | Self::AdaptiveLooks => {
+                Self::DesktopProfiles
+            }
+            Self::DesktopDock | Self::DesktopPanel | Self::ActivityIsland => Self::DesktopDock,
+            _ => self.sidebar(),
         }
     }
     fn root_title(self) -> &'static str {
@@ -233,7 +265,7 @@ impl Page {
             Self::Appearance => "Glass and transparency",
             Self::DesktopAppearance => "Fonts and icons",
             Self::DesktopWallpaper => "Wallpaper",
-            Self::WeatherEffects => "Weather",
+            Self::WeatherEffects => "Effects",
             Self::Themes => "Appearance",
             Self::DesktopProfiles => "Looks",
             Self::DesktopWindows => "Windows",
@@ -246,12 +278,13 @@ impl Page {
     /// The name in the narrow rail, short enough for one line.
     fn rail_title(self) -> &'static str {
         match self.sidebar() {
-            Self::DesktopDock => "Dock",
+            Self::ActivityIsland => "Island",
             page => page.nav_title(),
         }
     }
     fn nav_icon(self) -> &'static str {
         match self {
+            Self::Home => "go-home-symbolic",
             Self::Overview => "view-grid-symbolic",
             Self::Widgets => "view-grid-symbolic",
             Self::Appearance => "applications-graphics-symbolic",
@@ -260,6 +293,8 @@ impl Page {
             Self::WeatherEffects => "weather-showers-symbolic",
             Self::Themes => "preferences-color-symbolic",
             Self::DesktopDock => "view-app-grid-symbolic",
+            Self::DesktopPanel => "view-continuous-symbolic",
+            Self::ActivityIsland => "notification-symbolic",
             Self::DesktopWindows => "preferences-window-management-symbolic",
             Self::DesktopIcons => "user-desktop-symbolic",
             Self::DesktopShortcuts => "input-keyboard-symbolic",
@@ -283,6 +318,7 @@ impl Page {
     }
     fn key(self) -> &'static str {
         match self {
+            Self::Home => "home",
             Self::Overview => "overview",
             Self::WidgetLayout => "layout",
             Self::PendingChanges => "pending",
@@ -300,6 +336,8 @@ impl Page {
             Self::General => "general",
             Self::Desktop => "desktop",
             Self::DesktopDock => "desktop-dock",
+            Self::DesktopPanel => "desktop-panel",
+            Self::ActivityIsland => "activity-island",
             Self::DesktopAppearance => "desktop-appearance",
             Self::DesktopWallpaper => "desktop-wallpaper",
             Self::WeatherEffects => "weather-effects",
@@ -320,6 +358,7 @@ impl Page {
     }
     fn title(self) -> &'static str {
         match self {
+            Self::Home => "Home",
             Self::Overview => "Widgets",
             Self::WidgetLayout => "Arrange widgets",
             Self::PendingChanges => "Recover unfinished work",
@@ -336,10 +375,12 @@ impl Page {
             Self::Focus => "Focus timer",
             Self::General => "Halcyon",
             Self::Desktop => "Desktop",
-            Self::DesktopDock => "Dock and panel",
+            Self::DesktopDock => "Dock",
+            Self::DesktopPanel => "Panel",
+            Self::ActivityIsland => "Activity island",
             Self::DesktopAppearance => "Fonts and icons",
             Self::DesktopWallpaper => "Wallpaper",
-            Self::WeatherEffects => "Weather effects",
+            Self::WeatherEffects => "Effects",
             Self::DesktopIcons => "Icons on the desktop",
             Self::DesktopProfiles => "Looks",
             Self::Themes => "Appearance",
@@ -358,9 +399,13 @@ impl Page {
     fn parse(value: &str) -> Self {
         // Stable command keys and descriptive aliases all reach the same editors.
         let value = match value {
-            "home" | "widgets" | "desktop" => "overview",
-            "setups" | "looks" => "desktop-profiles",
-            "dock" | "panel" => "desktop-dock",
+            "widgets" | "desktop" => "overview",
+            // Looks left the sidebar but keeps its page, which leads back
+            // to Appearance.
+            "setups" | "looks" | "presets" => "desktop-profiles",
+            "dock" => "desktop-dock",
+            "panel" | "top-panel" => "desktop-panel",
+            "island" | "activity" | "activity-pill" => "activity-island",
             "wallpaper" => "desktop-wallpaper",
             "effects" | "wallpaper-effects" | "rain" => "weather-effects",
             "settings" | "halcyon" => "general",
@@ -373,7 +418,6 @@ impl Page {
             "daily-overview" => "glance",
             "focus-timer" => "focus",
             "app-settings" => "general",
-            "presets" => "desktop-profiles",
             "schedules" => "desktop-automation",
             "history" | "recent" | "recent-changes" | "restore" => "changes",
             _ => value,
@@ -381,7 +425,7 @@ impl Page {
         let page = Self::ALL
             .into_iter()
             .find(|page| page.key() == value)
-            .unwrap_or(Self::Overview);
+            .unwrap_or(Self::Home);
         // Day and night style opens Time of day ready for widget styles;
         // opening the page canonicalizes it.
         if page == Self::Moments { page } else { page.canonical() }
@@ -401,9 +445,13 @@ impl Page {
     /// The key a visit is counted under. Weather effects were part of
     /// Wallpaper until they got a page, and the report collector only
     /// accepts the keys it knows, so they keep counting there.
+    /// The new pages count under the key of the page that held them, and
+    /// Home under the retired Desktop key, which nothing else counts.
     pub(super) fn usage_key(self) -> &'static str {
         match self {
             Self::WeatherEffects => Self::DesktopWallpaper.key(),
+            Self::Home => Self::Desktop.key(),
+            Self::DesktopPanel | Self::ActivityIsland => Self::DesktopDock.key(),
             page => page.key(),
         }
     }
@@ -412,8 +460,31 @@ impl Page {
     fn edits_wallpaper(self) -> bool {
         matches!(self, Self::DesktopWallpaper | Self::WeatherEffects)
     }
+    /// The bar a bar editor shows. Panel and Dock are one editor.
+    pub(super) fn bar(self) -> Option<crate::desktop::panels::PanelKind> {
+        match self {
+            Self::DesktopDock => Some(crate::desktop::panels::PanelKind::Dock),
+            Self::DesktopPanel => Some(crate::desktop::panels::PanelKind::Panel),
+            _ => None,
+        }
+    }
+    /// The page that edits `kind`.
+    pub(super) fn of_bar(kind: crate::desktop::panels::PanelKind) -> Self {
+        match kind {
+            crate::desktop::panels::PanelKind::Dock => Self::DesktopDock,
+            crate::desktop::panels::PanelKind::Panel => Self::DesktopPanel,
+        }
+    }
+    /// Pages that work on the dock and panel drafts.
+    pub(super) fn edits_bars(self) -> bool {
+        matches!(
+            self,
+            Self::DesktopDock | Self::DesktopPanel | Self::ActivityIsland
+        )
+    }
     fn icon(self) -> &'static str {
         match self {
+            Self::Home => "go-home-symbolic",
             Self::Overview => "preferences-desktop-display-symbolic",
             Self::WidgetLayout => "object-move-symbolic",
             Self::PendingChanges => "document-save-symbolic",
@@ -434,6 +505,8 @@ impl Page {
             Self::WeatherEffects => "weather-showers-symbolic",
             Self::Desktop
             | Self::DesktopDock
+            | Self::DesktopPanel
+            | Self::ActivityIsland
             | Self::DesktopAppearance
             | Self::DesktopIcons
             | Self::DesktopProfiles
@@ -518,6 +591,8 @@ pub enum Message {
     AppSettingsPage(AppSettingsPage),
     ToggleScene,
     ToggleSceneObjects,
+    /// Home: pick a part of the picture; a second pick opens its page.
+    HomePart(Page),
     ContentScrolled(f32),
     Updates(updates::Message),
     Support(support::Message),
@@ -849,6 +924,8 @@ pub struct Settings {
     notes_recorded: Option<String>,
     collapsed_scenes: Vec<Page>,
     scene_objects_open: bool,
+    /// The part chosen on Home, if any.
+    home_part: Option<Page>,
     page_scroll: std::collections::BTreeMap<String, f32>,
     /// First-run setup, shown instead of the pages while it runs.
     wizard: Option<wizard::Wizard>,
@@ -865,6 +942,9 @@ pub struct Settings {
     /// The latest change when this window opened; the Undo bar offers only
     /// changes made since, so an old change doesn't follow you around.
     undo_baseline: Option<String>,
+    /// The change that kept an unfinished layout on reopening, so the
+    /// footer can say so beside its Undo.
+    layout_kept: Option<String>,
     /// The color picker that is open, if any; one at a time.
     color_well: Option<color_well::Well>,
     /// The widget font list that is open, and its search.
@@ -1000,7 +1080,6 @@ fn startup_enabled() -> bool {
         .is_ok_and(|status| status.success())
 }
 /// Set by `run` for first-run setup (`setup`), read once by `init`.
-static OPEN_PANEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static OPEN_WIZARD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Set when someone chooses Restart Settings; `main` opens Settings again
 /// once this window has closed.
@@ -1009,6 +1088,8 @@ pub fn restart_requested() -> bool {
     RESTART.load(std::sync::atomic::Ordering::Relaxed)
 }
 pub fn run(page: &str) -> cosmic::iced::Result {
+    // Settings opens on Home. The last page visited only tells a returning
+    // person from someone who has never opened Settings.
     let remembered = if page.is_empty() {
         crate::desktop::DesktopStore::from_env()
             .ok()
@@ -1026,9 +1107,7 @@ pub fn run(page: &str) -> cosmic::iced::Result {
             && (unfinished || (remembered.is_none() && config.appearance.family.is_none()))
     })
     .then_some("setup");
-    let page = if first.is_some() { "" } else { page };
-    let remembered = if first.is_some() { None } else { remembered };
-    let page = remembered.as_deref().or(first).unwrap_or(page);
+    let page = first.unwrap_or(page);
     let page = if page == "setup" {
         OPEN_WIZARD.store(true, std::sync::atomic::Ordering::Relaxed);
         "overview"
@@ -1061,7 +1140,6 @@ pub fn run(page: &str) -> cosmic::iced::Result {
         .theme(controls_theme(&Config::load()))
         .transparent(false)
         .exit_on_close(true);
-    OPEN_PANEL.store(page == "panel", std::sync::atomic::Ordering::Relaxed);
     cosmic::app::run::<Settings>(settings, Page::parse(page))
 }
 
@@ -1142,6 +1220,7 @@ impl cosmic::Application for Settings {
             last_desktop_change: None,
             last_desktop_summary: None,
             undo_baseline: navigation::latest_desktop_change().map(|(_, _, id)| id),
+            layout_kept: None,
             color_well: None,
             font_menu: None,
             font_search: String::new(),
@@ -1187,6 +1266,7 @@ impl cosmic::Application for Settings {
             notes_recorded: release_notes::seen(),
             collapsed_scenes: Vec::new(),
             scene_objects_open: false,
+            home_part: None,
             page_scroll: Default::default(),
             nav_model: navigation::model(page),
             appearance_editing: false,
@@ -1253,20 +1333,21 @@ impl cosmic::Application for Settings {
             .main_window_id()
             .map(|id| app.set_window_title("Halcyon".into(), id))
             .unwrap_or_else(Task::none);
-        let service = if matches!(page, Page::General | Page::Overview) {
+        let service = if matches!(page, Page::General | Page::Overview | Page::Home) {
             service_task()
         } else {
             Task::none()
         };
-        if page == Page::DesktopDock {
-            app.desktop.open();
-        }
         if page == Page::Appearance && !app.native_worker_needed() {
             app.material_native = crate::desktop::actions::history_store()
                 .is_ok_and(|s| crate::desktop::materials::native_support(&s));
         }
-        // Windows shows window corners and outline from the same draft.
-        if matches!(page, Page::DesktopAppearance | Page::DesktopWindows) {
+        // Windows shows window corners and outline from the same draft;
+        // Home and the island's page draw that window too.
+        if matches!(
+            page,
+            Page::DesktopAppearance | Page::DesktopWindows | Page::Home | Page::ActivityIsland
+        ) {
             app.system_appearance.open();
         }
         if matches!(
@@ -1314,11 +1395,14 @@ impl cosmic::Application for Settings {
         app.open_page_editor(page);
         if matches!(
             page,
-            Page::Overview
+            Page::Home
+                | Page::Overview
                 | Page::DesktopProfiles
                 | Page::Themes
                 | Page::Appearance
                 | Page::DesktopDock
+                | Page::DesktopPanel
+                | Page::ActivityIsland
                 | Page::DesktopIcons
                 | Page::DesktopWindows
                 | Page::DesktopAppearance
@@ -1346,11 +1430,6 @@ impl cosmic::Application for Settings {
         } else {
             Task::none()
         };
-        let panel = if OPEN_PANEL.swap(false, std::sync::atomic::Ordering::Relaxed) {
-            app.handle(Message::OpenBar(crate::desktop::panels::PanelKind::Panel))
-        } else {
-            Task::none()
-        };
         let motion = app.handle(Message::ReadSystemMotion);
         app.desktop_recovery.refresh();
         let installation = app.handle(Message::RefreshInstallation);
@@ -1360,7 +1439,6 @@ impl cosmic::Application for Settings {
             app,
             Task::batch([
                 title,
-                panel,
                 service,
                 media,
                 gallery,
@@ -1400,6 +1478,10 @@ impl cosmic::Application for Settings {
             self.config
                 .color_subscription()
                 .map(|_| Message::DesktopPaletteChanged),
+            // An upgrade replaced the program: look again, as on focus, so
+            // Updates offers Restart Settings. Settings never restarts by
+            // itself; Restart Settings saves the page's edits first.
+            crate::upgrade::watch().map(|_| Message::RefreshInstallation),
         ];
         if self.page.edits_wallpaper()
             && (self
@@ -1567,7 +1649,7 @@ impl cosmic::Application for Settings {
                 }
             }));
         }
-        if self.page == Page::DesktopDock {
+        if self.page.edits_bars() {
             let paths = self.desktop.watch_paths();
             if !paths.is_empty() {
                 subscriptions.push(
@@ -1844,8 +1926,7 @@ impl cosmic::Application for Settings {
             && matches!(&message, Message::Placement(edit) if !matches!(edit,
                 placement::Message::Select(_) | placement::Message::ClearSelection
                 | placement::Message::Cancel | placement::Message::Undo | placement::Message::Escape
-                | placement::Message::CancelDrag | placement::Message::Leave | placement::Message::Guides(_))
-                && !(matches!(edit, placement::Message::Save) && self.legacy_layout_recovery()))
+                | placement::Message::CancelDrag | placement::Message::Leave | placement::Message::Guides(_)))
         {
             // Landing previews never commit gestures, including delayed input
             // from a canvas that was just applied or cancelled.
@@ -2360,7 +2441,7 @@ impl Settings {
                 if on {
                     self.record_notes_seen();
                     // Not now lands on Home, as dismissing setup always has.
-                    return self.handle(Message::Page(Page::Overview));
+                    return self.handle(Message::Page(Page::Home));
                 }
             }
             Message::NotesSeen => self.record_notes_seen(),
@@ -2392,11 +2473,11 @@ impl Settings {
             Message::SearchResult(hit) => {
                 self.remember_route();
                 self.quiet_navigation = true;
-                let navigation = self.handle(Message::Page(hit.page));
+                let navigation = self.handle(Message::Page(hit.target()));
                 self.quiet_navigation = false;
                 self.object_tab = hit.object_tab();
                 if let Some(bar) = hit.bar {
-                    self.desktop.update(desktop::Message::Select(bar));
+                    let _ = self.desktop.update(desktop::Message::Select(bar));
                 }
                 if hit.page == Page::General {
                     self.app_settings_page = hit.app_destination();
@@ -2420,7 +2501,7 @@ impl Settings {
                             self.open_sections.insert("appearance-window-details");
                         }
                         Page::DesktopAppearance => self.system_appearance.advanced_colors = true,
-                        Page::DesktopDock => self.desktop.advanced = true,
+                        Page::DesktopDock | Page::DesktopPanel => self.desktop.advanced = true,
                         _ => {}
                     }
                 }
@@ -2513,13 +2594,8 @@ impl Settings {
                 return Task::batch([navigate, select]);
             }
             Message::OpenBar(kind) => {
-                if self.page == Page::DesktopDock && self.desktop.selected != kind {
-                    self.remember_route();
-                    self.object_tab = Default::default();
-                }
-                let navigate = self.handle(Message::Page(Page::DesktopDock));
-                let select = self.handle(Message::DesktopEditor(desktop::Message::Select(kind)));
-                return Task::batch([navigate, select]);
+                // Panel and Dock each have a page; it selects its bar.
+                return self.handle(Message::Page(Page::of_bar(kind)));
             }
             Message::ToggleAdvanced(page) => {
                 if self.advanced_pages.contains(&page) {
@@ -2683,32 +2759,23 @@ impl Settings {
                 // column reorder in progress owns it until drop or cancel.
                 if self.reorder.source.is_some()
                     || self.devbox_reorder.source.is_some()
-                    || (!self.placement_active()
-                        && !(self.legacy_layout_recovery()
-                            && matches!(
-                                message,
-                                placement::Message::Save
-                                    | placement::Message::Cancel
-                                    | placement::Message::Undo
-                            )))
+                    || !self.placement_active()
                 {
                     return Task::none();
                 }
-                let recovering =
-                    self.legacy_layout_recovery() && matches!(message, placement::Message::Save);
-                let task = self.update_placement(message);
-                if recovering && !self.error && !self.placement.dirty() {
-                    self.finish_layout_recovery();
-                }
-                return task;
+                return self.update_placement(message);
             }
             Message::DesktopEditor(message) => {
+                // Choosing the other bar on a bar page opens that bar's page.
+                if let desktop::Message::Select(kind) = message
+                    && self.page.bar().is_some_and(|shown| shown != kind)
+                {
+                    return self.handle(Message::Page(Page::of_bar(kind)));
+                }
                 let bar = matches!(message, desktop::Message::Select(_));
-                let was = self.page;
-                if (self.page == Page::DesktopDock || bar)
+                if (self.page.edits_bars() || bar)
                     && let Some(id) = self.desktop.update(message)
                 {
-                    let _ = was;
                     // Keyboard focus follows the moved applet.
                     return cosmic::widget::button::focus(id);
                 }
@@ -2957,6 +3024,12 @@ impl Settings {
             Message::ToggleSceneObjects => {
                 self.scene_objects_open = !self.scene_objects_open;
             }
+            Message::HomePart(part) => {
+                if self.home_part == Some(part) {
+                    return self.handle(Message::Page(part));
+                }
+                self.home_part = Some(part);
+            }
             Message::ContentScrolled(y) => {
                 if self.search_query.is_empty() {
                     self.page_scroll.insert(self.page.key().into(), y);
@@ -3148,7 +3221,7 @@ impl Settings {
                                         tasks.push(self.update(Message::Placement(message)));
                                     }
                                 }
-                                if self.page == Page::DesktopDock {
+                                if self.page.edits_bars() {
                                     let fixture = self
                                         .desktop
                                         .store()
@@ -3429,6 +3502,8 @@ impl Settings {
                     self.object_tab = Default::default();
                     self.arranging = false;
                     self.note_leaving(page);
+                    // Home opens with nothing picked.
+                    self.home_part = None;
                 }
                 if self.page != page && self.page.edits_wallpaper() {
                     // Keep values and transaction baselines; only stop rendering.
@@ -3469,9 +3544,6 @@ impl Settings {
                     self.refresh_corners();
                 }
                 self.desktop.drag.cancel();
-                if page == Page::DesktopDock {
-                    self.desktop.open();
-                }
                 // The builder needs the one-time widget update: its first
                 // visit opens the review instead of waiting for a click.
                 // Updating stays an explicit choice; Cancel keeps it closed.
@@ -3482,7 +3554,13 @@ impl Settings {
                     self.design.review = false;
                     self.design.automatic = false;
                 }
-                if matches!(page, Page::DesktopAppearance | Page::DesktopWindows) {
+                if matches!(
+                    page,
+                    Page::DesktopAppearance
+                        | Page::DesktopWindows
+                        | Page::Home
+                        | Page::ActivityIsland
+                ) {
                     self.system_appearance.open();
                 }
                 let mut resumed = false;
@@ -3499,11 +3577,14 @@ impl Settings {
                 }
                 if matches!(
                     page,
-                    Page::Overview
+                    Page::Home
+                        | Page::Overview
                         | Page::DesktopProfiles
                         | Page::Themes
                         | Page::Appearance
                         | Page::DesktopDock
+                        | Page::DesktopPanel
+                        | Page::ActivityIsland
                         | Page::DesktopIcons
                         | Page::DesktopWindows
                         | Page::DesktopAppearance
@@ -4661,6 +4742,7 @@ fn checkpoint_message(message: &Message) -> bool {
             | Message::ToggleHelp(..)
             | Message::ToggleSection(..)
             | Message::ToggleSceneObjects
+            | Message::HomePart(..)
             | Message::Profiles(profiles::Message::Collection(..) | profiles::Message::Compare(..))
             | Message::ContentScrolled(..)
             | Message::Preview
@@ -5054,9 +5136,31 @@ impl Settings {
                 .is_ok_and(|s| crate::desktop::materials::native_support(&s));
         }
         match page {
+            // Home names the state of every part, and draws the bars.
+            Page::Home => {
+                self.wallpaper.open();
+                self.windows.open();
+                self.motion.open();
+                self.desktop.open();
+            }
+            // Each bar page shows its own bar; the island lives on the panel.
+            Page::DesktopDock | Page::DesktopPanel | Page::ActivityIsland => {
+                let kind = page.bar().unwrap_or(crate::desktop::panels::PanelKind::Panel);
+                if self.desktop.selected != kind {
+                    let _ = self.desktop.update(desktop::Message::Select(kind));
+                }
+                self.desktop.open();
+                // The island's small picture of the desktop.
+                if page == Page::ActivityIsland {
+                    self.wallpaper.open();
+                }
+            }
+            // Its small picture of the desktop needs the wallpaper and bars.
             Page::DesktopWindows => {
                 self.windows.open();
                 self.workspaces.open();
+                self.wallpaper.open();
+                self.desktop.open();
             }
             Page::DesktopWorkspaces => self.workspaces.open(),
             Page::DesktopMotion => self.motion.open(),
@@ -6726,6 +6830,7 @@ mod tests {
     use cosmic::Application;
     use cosmic::iced::advanced::widget::Tree;
     include!("settings/redesign_tests.rs");
+    include!("settings/home_tests.rs");
     include!("settings/product_tests.rs");
     include!("settings/solar_tests.rs");
     include!("settings/adaptive_tests.rs");
@@ -6734,6 +6839,7 @@ mod tests {
     include!("settings/search_label_tests.rs");
     include!("settings/corners_tests.rs");
     include!("settings/clock_stage_tests.rs");
+    include!("settings/glance_off_tests.rs");
 
     /// What Wallpaper & colors recommends for a solid color background.
     fn recommended_color(rgb: [f32; 3]) -> [u8; 3] {
@@ -7607,7 +7713,12 @@ mod tests {
             (PanelKind::Panel, Anchor::Right),
         ] {
             let _ = app.update(Message::OpenBar(kind));
-            assert_eq!(app.page, Page::DesktopDock);
+            // Each bar has its own page.
+            let page = match kind {
+                PanelKind::Dock => Page::DesktopDock,
+                PanelKind::Panel => Page::DesktopPanel,
+            };
+            assert_eq!(app.page, page);
             assert_eq!(app.desktop.current().unwrap().kind(), kind);
             let _ = app.update(Message::DesktopEditor(desktop::Message::Anchor(anchor)));
             let _ = app.update(Message::Page(Page::Overview));
@@ -11963,7 +12074,8 @@ mod tests {
         use cosmic::iced::advanced::renderer::Headless;
         use cosmic::iced::runtime::user_interface::{Cache, UserInterface};
         assert_eq!(Page::parse("desktop-automation"), Page::DesktopAutomation);
-        assert_eq!(Page::DesktopAutomation.sidebar(), Page::DesktopProfiles);
+        // Time of day lives under Appearance now that Looks left the sidebar.
+        assert_eq!(Page::DesktopAutomation.sidebar(), Page::Themes);
         let isolated = isolated_root();
         let live = live_tree(&isolated);
         let root = PathBuf::from(std::env::var_os(crate::desktop::store::FIXTURE_ENV).unwrap());
@@ -14026,7 +14138,7 @@ if not presence:
         for task in pending {
             settle_settings(&mut app, task);
         }
-        assert_eq!(app.page, Page::DesktopDock);
+        assert_eq!(app.page, Page::DesktopPanel);
         let _ = app.update(Message::ObjectTab(navigation::ObjectTab::Design));
         let rect = native_reveal(&app, &mut native, "native-islands-style");
         assert!(rect.y + rect.height <= native.size.height);
