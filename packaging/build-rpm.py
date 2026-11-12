@@ -76,7 +76,7 @@ def build(args):
 Version: {args.version}
 Release: {args.release}.fc{args.fedora}
 Summary: Desktop widgets and themes for COSMIC
-License: GPL-3.0-or-later
+License: GPL-3.0-or-later AND GPL-3.0-only
 URL: https://github.com/profilaz3/halcyon
 ExclusiveArch: x86_64
 Requires: python3, git, systemd, cosmic-panel, cosmic-comp, cosmic-session, cosmic-settings-daemon

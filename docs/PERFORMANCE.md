@@ -1,3 +1,102 @@
+## Rain on glass and snow, 2026-11-12
+
+Rain now refracts the wallpaper through lens-shaped drops on fogged glass,
+and snow flakes keep a footprint of at least about 2 output pixels. Both
+changes add work per pixel, so composition was trimmed to pay for it:
+
+- The rain composite reads the full-size wallpaper once (the refracted,
+  mip-matched sample) instead of a sharp and a blurred sample. The fog's
+  blurred wallpaper comes from the small condensation texture.
+- Rain, snow and the fog or cloud atmospheres compose in separate entry
+  points, so each shader only holds its own effect's registers.
+- Composition is opaque. It never reads what is underneath, so it draws with
+  blending off.
+- Static beads stay cached and are sampled in composition, where the fog
+  decides which of them show. No extra pass draws them each frame.
+- Procedural rain draws only the instance ranges that can reach the glass,
+  computed on the CPU from the aspect ratio and wind (`procedural_draws` in
+  `src/rain/gpu.rs`).
+- Snow skips a flake cell before the flutter and shape math when the pixel
+  cannot reach the flake.
+- Eco draws no fine impacts, no narrow runoff lanes and only the two larger
+  bead layers.
+
+Measured on the Ryzen 7 5700G's integrated Radeon (Renoir) with
+`rain_gpu_benchmark`: GPU timestamps around all of an effect's passes for 45
+frames after a 15 frame warm-up, with the cached wallpaper, sleeping for the
+quality's 30 or 60 fps interval after each frame. This iGPU changes clocks
+between frames, so single runs are noisy (a 30% spread is common). Each
+number below is the median of three interleaved rounds: the old and new test
+binaries take turns, round after round, so clock and thermal drift hit both
+alike.
+
+```sh
+# Build the test binary once per tree, then alternate them:
+CARGO_PROFILE_DEV_DEBUG=0 cargo +1.93.0 test --offline --locked --bin halcyon --no-run
+HALCYON_RAIN_BENCH_EFFECT=rain,snow HALCYON_RAIN_GPU_TEST=1 \
+  HALCYON_RAIN_EVIDENCE=<out dir> <test binary> --ignored --test-threads=1 rain_gpu_benchmark
+```
+
+`HALCYON_RAIN_BENCH_EFFECT` limits the run to the listed effects. Each run
+writes `gpu-benchmark.json` into the evidence folder.
+
+GPU milliseconds per frame, old (main at 795a1a6) and new:
+
+| Size | Effect | Quality | Old | New | New / old |
+|---|---|---|---:|---:|---:|
+| 1920x1080 | Rain, procedural | Eco | 0.771 | 0.797 | 1.03x |
+| 1920x1080 | Rain, hybrid | Eco | 0.865 | 0.903 | 1.04x |
+| 1920x1080 | Snow | Eco | 0.628 | 0.730 | 1.16x |
+| 1920x1080 | Rain, procedural | Balanced | 0.897 | 0.967 | 1.08x |
+| 1920x1080 | Rain, hybrid | Balanced | 0.800 | 0.938 | 1.17x |
+| 1920x1080 | Snow | Balanced | 0.784 | 0.685 | 0.87x |
+| 1920x1080 | Rain, procedural | Smooth | 1.031 | 1.055 | 1.02x |
+| 1920x1080 | Rain, hybrid | Smooth | 0.846 | 0.867 | 1.02x |
+| 1920x1080 | Snow | Smooth | 0.960 | 0.759 | 0.79x |
+| 2560x1440 | Rain, procedural | Eco | 1.338 | 1.276 | 0.95x |
+| 2560x1440 | Rain, hybrid | Eco | 1.051 | 1.054 | 1.00x |
+| 2560x1440 | Snow | Eco | 0.837 | 0.988 | 1.18x |
+| 2560x1440 | Rain, procedural | Balanced | 1.389 | 1.310 | 0.94x |
+| 2560x1440 | Rain, hybrid | Balanced | 1.111 | 1.265 | 1.14x |
+| 2560x1440 | Snow | Balanced | 1.155 | 1.025 | 0.89x |
+| 2560x1440 | Rain, procedural | Smooth | 1.302 | 1.299 | 1.00x |
+| 2560x1440 | Rain, hybrid | Smooth | 1.009 | 1.401 | 1.39x |
+| 2560x1440 | Snow | Smooth | 1.218 | 1.294 | 1.06x |
+| 3840x2160 | Rain, procedural | Balanced | 2.548 | 2.612 | 1.02x |
+| 3840x2160 | Rain, hybrid | Balanced | 2.061 | 2.731 | 1.33x |
+| 3840x2160 | Snow | Balanced | 2.196 | 1.963 | 0.89x |
+
+Balanced costs at most 1.33x what it did (hybrid rain at 4K), and snow got
+cheaper. New Eco is cheaper than old Balanced at 2560x1440 for every effect,
+and at 1920x1080 for procedural rain (0.797 against 0.897) and snow (0.730
+against 0.784). Hybrid rain at 1920x1080 is the exception: new Eco measures
+0.90 ms against old Balanced's 0.72 to 0.80 ms over four separate runs. Old
+Eco measured 0.87 to 1.05 ms there too, above old Balanced, so at this size
+the light 30 fps workloads sit at the iGPU's clock floor rather than
+reflecting their work. Rounding Eco's lens mip level to a whole level (one
+mip read instead of two) made no measurable difference and was not kept.
+
+Narrower, winding trails that fog over from their edges (four more
+condensation taps on the quarter-size texture) were measured afterwards in
+the same way, Balanced rain, old main against the branch:
+
+| Size | Mode | Old | New | New / old |
+|---|---|---:|---:|---:|
+| 1920x1080 | Procedural | 0.858 | 1.042 | 1.21x |
+| 1920x1080 | Hybrid | 0.756 | 0.949 | 1.26x |
+| 2560x1440 | Procedural | 1.469 | 1.398 | 0.95x |
+| 2560x1440 | Hybrid | 1.083 | 1.301 | 1.20x |
+
+Snow shimmer, from `rain_and_snow_visual_evidence`: the mean change of 32x32
+pixel tile brightness between consecutive fixed-time frames (0 to 255 luma).
+Flakes that move keep a tile steady; flakes that pop or alias change it.
+
+| Case | Old | New |
+|---|---:|---:|
+| Default | 0.128 | 0.045 |
+| Small flakes | 0.094 | 0.013 |
+| Small flakes, Eco | 0.150 | 0.013 |
+
 ## Idle CPU with the island in the panel — 2026-11-08
 
 Halcyon 0.6.1 used about 90% of a core while doing nothing, as long as the

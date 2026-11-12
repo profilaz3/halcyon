@@ -753,3 +753,162 @@ fn settings_previews_captures_and_paused_surfaces_never_fade() {
     assert!(!f.frame());
     assert_eq!(f.shown().fade, 1.);
 }
+
+/// Before/after evidence: rain at a few moments and consecutive snow frames
+/// with a temporal flicker measure. Writes only `HALCYON_RAIN_EVIDENCE`.
+#[test]
+#[ignore = "explicit native GPU captures; writes only the evidence directory"]
+fn rain_and_snow_visual_evidence() {
+    let root = std::path::PathBuf::from(
+        std::env::var_os("HALCYON_RAIN_EVIDENCE").expect("private evidence directory"),
+    );
+    std::fs::create_dir_all(&root).unwrap();
+    let (width, height) = (1920u32, 1080u32);
+    let pixels = image::open(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/looks/evening-wallpaper.jpg"
+    ))
+    .unwrap()
+    .resize_exact(width, height, image::imageops::FilterType::Triangle)
+    .to_rgba8();
+    let scene = gpu::Scene::new(crate::desktop::wallpaper::media::Pixels {
+        width,
+        height,
+        rgba: pixels.into_raw(),
+    });
+    let mut native =
+        crate::native_test::Native::with_backend(Size::new(width as f32, height as f32), "wgpu");
+    let theme = cosmic::Theme::dark();
+    let save = |name: &str, bytes: &[u8]| {
+        image::save_buffer(
+            root.join(format!("{name}.png")),
+            bytes,
+            width,
+            height,
+            image::ColorType::Rgba8,
+        )
+        .unwrap();
+    };
+    let view = |p: Preferences, time: f32| -> cosmic::Element<'_, ()> {
+        cosmic::iced::widget::Shader::new(gpu::Program {
+            scene: scene.clone(),
+            preferences: p,
+            running: false,
+            fixed_time: Some(time),
+            fade: Default::default(),
+        })
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    };
+    for mode in [Mode::Procedural, Mode::Hybrid] {
+        for time in [3., 9., 20.] {
+            let p = Preferences {
+                enabled: true,
+                mode,
+                ..Default::default()
+            };
+            let bytes = native.render(view(p, time), &theme);
+            save(&format!("rain-{mode:?}-{time}s"), &bytes);
+        }
+    }
+    let mut report = Vec::new();
+    for (name, size, quality) in [
+        ("default", 30u8, Quality::Balanced),
+        ("small", 0, Quality::Balanced),
+        ("small-eco", 0, Quality::Eco),
+    ] {
+        let mut p = Preferences {
+            enabled: true,
+            effect: Effect::Snow,
+            quality,
+            ..Default::default()
+        };
+        p.snow.size = size;
+        let frames: Vec<Vec<u8>> = (0..12)
+            .map(|i| native.render(view(p.clone(), 4. + i as f32 / 30.), &theme))
+            .collect();
+        for (i, frame) in frames.iter().enumerate().take(4) {
+            save(&format!("snow-{name}-frame{i}"), frame);
+        }
+        let luma = |f: &[u8], i: usize| {
+            0.2126 * f64::from(f[i * 4])
+                + 0.7152 * f64::from(f[i * 4 + 1])
+                + 0.0722 * f64::from(f[i * 4 + 2])
+        };
+        let count = (width * height) as usize;
+        let base = &scene.pixels.rgba;
+        // Snow energy per frame: total brightening over the wallpaper. Smooth
+        // motion keeps it steady; aliasing makes flakes pop in and out.
+        let energy: Vec<f64> = frames
+            .iter()
+            .map(|f| {
+                (0..count)
+                    .map(|i| (luma(f, i) - luma(base, i)).max(0.))
+                    .sum()
+            })
+            .collect();
+        let mean = energy.iter().sum::<f64>() / energy.len() as f64;
+        let deviation =
+            (energy.iter().map(|e| (e - mean).powi(2)).sum::<f64>() / energy.len() as f64).sqrt();
+        // Per-pixel temporal second difference: zero for linear motion of a
+        // well filtered image, large where a pixel blinks.
+        let mut second = 0.;
+        let mut blinks = 0u64;
+        for w in frames.windows(3) {
+            for i in 0..count {
+                let d = (luma(&w[2], i) - 2. * luma(&w[1], i) + luma(&w[0], i)).abs();
+                second += d;
+                if d > 48. {
+                    blinks += 1;
+                }
+            }
+        }
+        let windows = (frames.len() - 2) as f64;
+        // Tile flicker: mean change of 32 x 32 pixel tile brightness between
+        // frames. A moving flake keeps its tile steady; a popping one does not.
+        let tiles = |f: &[u8]| {
+            let (columns, rows) = (width as usize / 32, height as usize / 32);
+            let mut sums = vec![0.; columns * rows];
+            for y in 0..rows * 32 {
+                for x in 0..columns * 32 {
+                    sums[(y / 32) * columns + x / 32] += luma(f, y * width as usize + x) / 1024.;
+                }
+            }
+            sums
+        };
+        let tiled: Vec<Vec<f64>> = frames.iter().map(|f| tiles(f)).collect();
+        let tile_change = tiled
+            .windows(2)
+            .map(|w| {
+                w[0].iter()
+                    .zip(&w[1])
+                    .map(|(a, b)| (a - b).abs())
+                    .sum::<f64>()
+                    / w[0].len() as f64
+            })
+            .sum::<f64>()
+            / (tiled.len() - 1) as f64;
+        let mut difference = vec![0u8; count * 4];
+        for i in 0..count {
+            let d = ((luma(&frames[1], i) - luma(&frames[0], i)).abs() * 4.).min(255.) as u8;
+            difference[i * 4..i * 4 + 4].copy_from_slice(&[d, d, d, 255]);
+        }
+        save(&format!("snow-{name}-difference-x4"), &difference);
+        report.push(serde_json::json!({
+            "case": name,
+            "energy_mean": mean,
+            "energy_cv": deviation / mean.max(1.),
+            "second_difference_per_pixel": second / windows / count as f64,
+            "blinking_pixels_per_frame": blinks as f64 / windows,
+            "tile_change_luma": tile_change,
+        }));
+    }
+    let report = serde_json::Value::Array(report);
+    std::fs::write(
+        root.join("snow-flicker.json"),
+        serde_json::to_vec_pretty(&report).unwrap(),
+    )
+    .unwrap();
+    println!("{report}");
+}

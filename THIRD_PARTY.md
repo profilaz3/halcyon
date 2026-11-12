@@ -1,6 +1,8 @@
 # Third-party software
 
-Halcyon is licensed GPL-3.0-or-later (see `LICENSE`). It is built from the
+Halcyon's own code is licensed GPL-3.0-or-later (see `LICENSE`). One source
+file adapted from another project, `src/rain/glass.wgsl`, is GPL-3.0-only (see
+below), so the crate declares `GPL-3.0-or-later AND GPL-3.0-only`. It is built from the
 Rust crates pinned in `Cargo.lock` (534 packages for Linux x86_64, checked
 2026-10-22 from the locked dependency set). Every license among them is
 compatible with distributing the combined program under the GPL version 3:
@@ -16,8 +18,10 @@ compatible with distributing the combined program under the GPL version 3:
 | MIT OR LGPL-3.0-or-later | `configparser` (used under MIT) |
 | No license field in the manifest | `libcosmic`, `cosmic-config`, `cosmic-config-derive`, `cosmic-theme`, `cosmic-settings-daemon`, `iced_accessibility`, `dnd`, `mime`, `apply` (System76 git dependencies; their repositories carry MPL-2.0 or MIT license files. The iced crates come from `profilaz3/iced`, a fork of System76's `pop-os/iced` with one fix, under the same MIT license) |
 
-Because two dependencies are GPL-3.0-only, binaries built from this
-repository are distributed under the GPL version 3.
+Because some dependencies and the rain glass shader are GPL-3.0-only,
+binaries built from this repository are distributed under the GPL version 3
+only. Halcyon's own files keep their GPL-3.0-or-later grant, so they can be
+reused under a later GPL version apart from the GPL-3.0-only parts.
 
 Release packages include the full license text of every dependency
 (generated from `Cargo.lock` at release time) next to the binary.
@@ -39,3 +43,14 @@ adapts the renderer and configuration schema from
 System76's COSMIC Panel. The native patch retains its SPDX license notice;
 the full GPL version 3 text is in `LICENSE`. Halcyon's Penumbra controls retain
 the original preference format for interoperability.
+
+The rain-on-glass wallpaper effect's water lens outline and lighting
+(`lens_shape` and `lens_light` in `src/rain/glass.wgsl`) are adapted from the
+rain-glass shader in [motixo/cosmic-forge-shaders](https://github.com/motixo/cosmic-forge-shaders)
+(`shaders/rain-glass.frag`, revision `e3dba3b36aa03afb14c0c0641bef8cd61bd3f996`),
+under GPL-3.0-only. They were ported from GLSL to WGSL and are evaluated per
+drop in Halcyon's own water field. The file retains its SPDX license notice
+and the Cosmic Forge copyright; the full GPL version 3 text is in `LICENSE`.
+Nothing from BigWings' Heartfelt Shadertoy (CC BY-NC-SA), which Cosmic Forge
+names as a visual reference, is used: Halcyon's drop placement, motion,
+condensation and composition are its own.
