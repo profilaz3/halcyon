@@ -211,7 +211,9 @@ impl Settings {
         // receives the item.
         let dragging = editor.drag.active();
         let idle = !dragging && !self.native_busy;
-        for region in Region::ALL {
+        // Islands list in the order the screen shows them.
+        let screen = editor.screen_order(draft.kind());
+        for region in screen.regions() {
             let list = regions.list(region);
             let picking = editor.picker == Some(region);
             let start = Slot { region, index: 0 };
@@ -227,7 +229,7 @@ impl Settings {
                 || (dragging && editor.drag.target == Some(start) && !list.is_empty());
             let header = container(split(
                 label(
-                    region.title(horizontal),
+                    screen.name(region),
                     13.,
                     if header_target { accent } else { FG },
                 ),
@@ -271,7 +273,7 @@ impl Settings {
                 let slot = Slot { region, index };
                 rows.push(self.item_row(id, slot, &regions, accent));
                 if editor.focus == Some(slot) && !dragging {
-                    rows.push(self.item_details(id, slot, horizontal));
+                    rows.push(self.item_details(id, slot, screen));
                 }
             }
             if list.is_empty() {
@@ -538,7 +540,12 @@ impl Settings {
     }
 
     /// Under a picked row: what the item is, and a move to another region.
-    fn item_details(&self, id: &str, slot: Slot, horizontal: bool) -> Element<'_, Message> {
+    fn item_details(
+        &self,
+        id: &str,
+        slot: Slot,
+        screen: crate::settings::desktop::islands::ScreenOrder,
+    ) -> Element<'_, Message> {
         let editor = &self.desktop;
         let accent = self.settings_accent();
         let idle = !editor.drag.active() && !self.native_busy;
@@ -554,11 +561,12 @@ impl Settings {
             row::with_children(vec![
                 label("Move to", 12., MUTED),
                 segmented(
-                    Region::ALL
+                    screen
+                        .regions()
                         .into_iter()
                         .map(|region| {
                             (
-                                region.title(horizontal).into(),
+                                screen.name(region).into(),
                                 slot.region == region,
                                 (idle && slot.region != region)
                                     .then_some(edit(Edit::MoveTo(slot, region))),
@@ -602,10 +610,14 @@ impl Settings {
                 .width(Length::Shrink)
                 .into(),
         ];
-        for (kind, region, horizontal) in self.desktop.placements(&info.id) {
+        for (kind, region, _) in self.desktop.placements(&info.id) {
             let here = kind == self.desktop.selected;
             title.push(pill(
-                format!("{} · {}", kind.title(), region.title(horizontal)),
+                format!(
+                    "{} · {}",
+                    kind.title(),
+                    self.desktop.screen_order(kind).name(region)
+                ),
                 if here { accent } else { MUTED },
             ));
         }
@@ -640,10 +652,6 @@ impl Settings {
     fn item_picker(&self, draft: &PanelDraft, region: Region) -> Element<'_, Message> {
         let editor = &self.desktop;
         let accent = self.settings_accent();
-        let horizontal = draft
-            .anchor()
-            .known()
-            .is_none_or(|anchor| anchor.horizontal());
         let placed = draft.applets().known().cloned().unwrap_or_default();
         let installed = editor.catalog.sorted();
         let searchable = installed.len() >= SEARCH_FROM;
@@ -655,7 +663,10 @@ impl Settings {
             })
             .collect();
         let mut rows: Vec<Element<'_, Message>> = vec![label(
-            format!("Add to the {}", region.title(horizontal)),
+            format!(
+                "Add to the {}",
+                editor.screen_order(draft.kind()).name(region)
+            ),
             12.,
             MUTED,
         )];

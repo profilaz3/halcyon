@@ -277,6 +277,10 @@ fn read_24h() -> bool {
         .unwrap_or(false)
 }
 pub(crate) const APPLET_ID: &str = "io.github.profilaz3.Halcyon.Activity";
+/// The session ledger of restarts into updates (see `crate::upgrade`).
+const RESTARTS: &str = "activity-island";
+/// How long the island must be left alone before restarting into an update.
+const RESTART_QUIET: Duration = Duration::from_secs(2);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Idle,
@@ -421,6 +425,11 @@ pub struct Applet {
     expiry_at: Option<Instant>,
     /// The timer, transfers, scrubber and outputs.
     ui: live::Ui,
+    /// A working update replaced the program: the new one, and the earliest
+    /// moment to restart into it (see `crate::upgrade`).
+    updated: Option<(crate::upgrade::Program, Instant)>,
+    /// When to restart into the update. Armed only while nothing is in use.
+    restart_at: Option<Instant>,
 }
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -484,6 +493,10 @@ pub enum Message {
     NoteRule(Option<preferences::AppRule>),
     /// The timer, transfers, scrubber and outputs.
     Live(live::Msg),
+    /// A working update replaced the program.
+    Updated(crate::upgrade::Program),
+    /// The quiet moment before restarting into the update came.
+    RestartDue(Duration),
     Noop,
 }
 impl Application for Applet {
@@ -555,6 +568,8 @@ impl Application for Applet {
                 rules_wish: None,
                 expiry_at: None,
                 ui: live::Ui::default(),
+                updated: None,
+                restart_at: None,
             },
             Task::none(),
         )
@@ -563,17 +578,20 @@ impl Application for Applet {
         Some(cosmic::applet::style())
     }
     fn subscription(&self) -> Subscription<Message> {
-        let mode = host::subscription(&self.core.applet).map(Message::PanelObserved);
-        if !self.active {
-            return mode;
-        }
         let mut all = vec![
-            mode,
-            bridge::client().map(Message::Backend),
-            notifications::subscription().map(Message::Notes),
-            transfers::subscription().map(|u| Message::Live(live::Msg::Transfer(u))),
-            downloads::subscription().map(|u| Message::Live(live::Msg::Transfer(u))),
+            host::subscription(&self.core.applet).map(Message::PanelObserved),
+            crate::upgrade::watch().map(Message::Updated),
         ];
+        if let Some(at) = self.restart_at {
+            all.push(crate::schedule::wake_at(at).map(Message::RestartDue));
+        }
+        if !self.active {
+            return Subscription::batch(all);
+        }
+        all.push(bridge::client().map(Message::Backend));
+        all.push(notifications::subscription().map(Message::Notes));
+        all.push(transfers::subscription().map(|u| Message::Live(live::Msg::Transfer(u))));
+        all.push(downloads::subscription().map(|u| Message::Live(live::Msg::Transfer(u))));
         let clock = (self.popup.is_some()
             && self.kind == Kind::Music
             && self.music_progress().is_some()
@@ -631,6 +649,35 @@ impl Application for Applet {
         Some(Message::PopupGone(id))
     }
     fn update(&mut self, message: Message) -> Task<Message> {
+        let task = self.handle(message);
+        self.arm_restart(Instant::now());
+        task
+    }
+    fn view(&self) -> Element<'_, Message> {
+        if !self.active {
+            return self
+                .core
+                .applet
+                .autosize_window(widget::Space::new().width(1.).height(1.))
+                .into();
+        }
+        if !self.supported {
+            return self
+                .core
+                .applet
+                .icon_button("view-more-symbolic")
+                .on_press(Message::Hold)
+                .into();
+        }
+        self.core.applet.autosize_window(self.capsule(false)).into()
+    }
+    fn view_window(&self, _: window::Id) -> Element<'_, Message> {
+        self.capsule(true)
+    }
+}
+impl Applet {
+    /// Every message, before the restart for an update is re-armed.
+    fn handle(&mut self, message: Message) -> Task<Message> {
         let now = Instant::now();
         if !self.active
             && matches!(
@@ -1348,33 +1395,59 @@ impl Application for Applet {
                     cosmic::app::Action::Surface(a),
                 ));
             }
+            Message::Updated(new) => match crate::upgrade::Ledger::session(RESTARTS).plan(&new) {
+                crate::upgrade::Plan::Restart { after } => self.updated = Some((new, now + after)),
+                crate::upgrade::Plan::Stay => eprintln!(
+                    "Halcyon was updated, but the Activity pill restarted often lately; it keeps the running version until the next sign-in"
+                ),
+            },
+            Message::RestartDue(early) => {
+                if self.restart_due(now + early)
+                    && let Some((new, _)) = self.updated.take()
+                {
+                    // Returns only when the restart cannot be recorded.
+                    crate::upgrade::restart(
+                        &crate::upgrade::Ledger::session(RESTARTS),
+                        &new,
+                        "the Activity pill",
+                    );
+                    self.restart_at = None;
+                }
+            }
             Message::Noop => {}
         }
         Task::none()
     }
-    fn view(&self) -> Element<'_, Message> {
-        if !self.active {
-            return self
-                .core
-                .applet
-                .autosize_window(widget::Space::new().width(1.).height(1.))
-                .into();
-        }
-        if !self.supported {
-            return self
-                .core
-                .applet
-                .icon_button("view-more-symbolic")
-                .on_press(Message::Hold)
-                .into();
-        }
-        self.core.applet.autosize_window(self.capsule(false)).into()
+    /// Nothing about the island is in use: no island open or on its way, no
+    /// reveal showing, no pointer on it, nothing starting.
+    fn idle(&self) -> bool {
+        self.popup.is_none()
+            && self.promote_popup.is_none()
+            && !self.held
+            && !self.hovered
+            && self.hover_deadline.is_none()
+            && self.leave_deadline.is_none()
+            && self.reveal_deadline.is_none()
+            && !self.motion.active()
+            && !self.starting
     }
-    fn view_window(&self, _: window::Id) -> Element<'_, Message> {
-        self.capsule(true)
+    /// Arms the restart into an update once the island has been left alone
+    /// for `RESTART_QUIET`, and disarms it as soon as it is in use again.
+    fn arm_restart(&mut self, now: Instant) {
+        let Some((_, earliest)) = &self.updated else {
+            return;
+        };
+        if self.idle() {
+            let earliest = *earliest;
+            self.restart_at
+                .get_or_insert_with(|| (now + RESTART_QUIET).max(earliest));
+        } else {
+            self.restart_at = None;
+        }
     }
-}
-impl Applet {
+    fn restart_due(&self, now: Instant) -> bool {
+        self.updated.is_some() && self.idle() && self.restart_at.is_some_and(|at| now >= at)
+    }
     /// Only the top edge has a slot to grow from. Other edges open as ordinary
     /// anchored popups, already complete.
     fn animates(&self) -> bool {

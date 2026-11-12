@@ -813,7 +813,7 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::DesktopDock,
         "Panel",
-        "top bar panel islands applets position size autohide shape compact full width",
+        "top bar panel islands island order reset arrange applets position size autohide shape compact full width",
         false,
     )
     .names_page()
