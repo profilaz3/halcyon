@@ -6734,6 +6734,7 @@ mod tests {
     include!("settings/search_label_tests.rs");
     include!("settings/corners_tests.rs");
     include!("settings/clock_stage_tests.rs");
+    include!("settings/glance_off_tests.rs");
 
     /// What Wallpaper & colors recommends for a solid color background.
     fn recommended_color(rgb: [f32; 3]) -> [u8; 3] {

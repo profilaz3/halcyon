@@ -484,6 +484,22 @@ fn composition(id: &str) -> Value {
         ),
         _ => unreachable!("known curated setup"),
     };
+    // At a glance hides the separate clock, weather and calendar while it is
+    // on. They stay selected underneath, so turning it off brings them back
+    // instead of leaving no time on the desktop.
+    let mut widgets = widgets;
+    if glance {
+        let list = widgets.as_array_mut().expect("widget list");
+        for (key, shown) in [
+            ("clock", true),
+            ("weather", weather),
+            ("calendar", id == "snow"),
+        ] {
+            if shown && !list.iter().any(|v| v == key) {
+                list.push(key.into());
+            }
+        }
+    }
     let mut value = json!({"enabled_widgets": widgets, "widget_positions": positions,
         "glance": {"enabled":glance,"initialized":true,"show_clock":true,
             "show_weather":weather,"show_calendar":id == "snow"},
@@ -655,8 +671,9 @@ fn spine() -> Preset {
         .as_mut()
         .unwrap()
         .source = Some(super::SourceLook::Bundled("halcyon-workbench".into()));
+    // The clock and weather stay selected under At a glance for when it is off.
     profile.widget_layout = Some(json!({
-        "enabled_widgets":["devbox"],
+        "enabled_widgets":["devbox","clock","weather"],
         "widget_positions":{"glance":[0.32,0.10],"devbox":[0.96,0.10]},
         "widget_sizes":{}, "glance":{"enabled":true,"initialized":true,"show_clock":true,
             "show_weather":true,"show_calendar":false},
@@ -1528,7 +1545,7 @@ mod tests {
         ).unwrap();
         let slow = fitted(preset("calm").unwrap(), &own, dir, false);
         let layout = slow.profile.widget_layout.as_ref().unwrap();
-        assert_eq!(layout["enabled_widgets"], json!([]));
+        assert_eq!(layout["enabled_widgets"], json!(["clock", "weather"]));
         assert_eq!(layout["glance"]["enabled"], true);
         assert_eq!(layout["notes"]["enabled"], true);
         assert!(
@@ -1736,8 +1753,24 @@ mod tests {
             let Some(layout) = &p.profile.widget_layout else { continue };
             let widgets = layout["enabled_widgets"].as_array().unwrap();
             let has = |w: &str| widgets.iter().any(|v| v == w);
-            assert!(!(has("clock") && has("weather")), "{}: clock and weather apart", p.id);
-            assert!(!(has("weather") && layout["glance"]["enabled"] == true), "{}", p.id);
+            let glance = &layout["glance"];
+            if glance["enabled"] == true {
+                // One card on the desktop, with the separate widgets kept
+                // selected underneath for when At a glance is turned off.
+                for (key, shown) in [
+                    ("clock", glance["show_clock"] != false),
+                    ("weather", glance["show_weather"] == true),
+                    ("calendar", glance["show_calendar"] == true),
+                ] {
+                    assert!(!shown || has(key), "{}: {key} kept under At a glance", p.id);
+                }
+            } else {
+                assert!(
+                    !(has("clock") && has("weather")),
+                    "{}: clock and weather apart",
+                    p.id
+                );
+            }
             let rain = p.profile.widget_style.as_ref().and_then(|s| s.get("rain"));
             match p.id {
                 "rain" | "snow" | "fog" => {
@@ -1773,7 +1806,10 @@ mod tests {
         }
         // Everyday: the time and weather top left, system and music on the right.
         let layout = preset("halcyon").unwrap().profile.widget_layout.unwrap();
-        assert_eq!(layout["enabled_widgets"], json!(["devbox"]));
+        assert_eq!(
+            layout["enabled_widgets"],
+            json!(["devbox", "clock", "weather"])
+        );
         assert_eq!(layout["glance"]["show_weather"], true);
         assert_eq!(layout["music"]["enabled"], true);
         for (widget, right) in [("glance", false), ("devbox", true), ("music", true)] {

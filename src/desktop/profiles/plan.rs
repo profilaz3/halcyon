@@ -2024,6 +2024,67 @@ fn native_palette_provenance(
     Ok(())
 }
 
+/// Daily overview hides the separate clock, weather and calendar while it is
+/// on, and they come back when it is turned off. A look whose widget list
+/// leaves them out while it turns Daily overview on would otherwise leave no
+/// time on the desktop once it is turned off. So the separate ones the person
+/// already shows stay selected, and a look that turns Daily overview on also
+/// selects the sections it shows. Nothing changes while it stays on.
+fn keep_daily_widgets_under_glance(
+    members: &mut [(&'static str, Option<serde_json::Value>)],
+    current: &serde_json::Value,
+    effective: &serde_json::Value,
+) {
+    let desired = |pointer: &str| {
+        members
+            .iter()
+            .find(|(p, _)| *p == pointer)
+            .map(|(_, value)| value.clone())
+    };
+    let glance_on = |value: Option<serde_json::Value>| value.and_then(|v| v.as_bool());
+    let now_on = glance_on(effective.pointer("/glance/enabled").cloned()) == Some(true);
+    let turned_on = match desired("/glance/enabled") {
+        Some(value) => glance_on(value) == Some(true) && !now_on,
+        None => false,
+    };
+    let stays_on = match desired("/glance/enabled") {
+        Some(value) => glance_on(value) == Some(true),
+        None => now_on,
+    };
+    if !stays_on {
+        return;
+    }
+    let Some(index) = members.iter().position(|(p, _)| *p == "/enabled_widgets") else {
+        return;
+    };
+    let Some(serde_json::Value::Array(mut list)) = members[index].1.clone() else {
+        return;
+    };
+    // The widget list the person has now, with the default when it is unset.
+    let shown_now = widget::get(current, "/enabled_widgets")
+        .or_else(|| effective.pointer("/enabled_widgets").cloned())
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default();
+    let section = |key: &str| {
+        desired(&format!("/glance/{key}"))
+            .flatten()
+            .or_else(|| effective.pointer(&format!("/glance/{key}")).cloned())
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    };
+    for (key, shown) in [
+        ("clock", "show_clock"),
+        ("weather", "show_weather"),
+        ("calendar", "show_calendar"),
+    ] {
+        let keep = shown_now.iter().any(|v| v == key) || (turned_on && section(shown));
+        if keep && !list.iter().any(|v| v == key) {
+            list.push(serde_json::Value::String(key.into()));
+        }
+    }
+    members[index].1 = Some(serde_json::Value::Array(list));
+}
+
 fn plan_widgets(
     (current, effective): &Loaded,
     section: &serde_json::Value,
@@ -2059,6 +2120,7 @@ fn plan_widgets(
     {
         members.push(("/appearance/accent", None));
     }
+    keep_daily_widgets_under_glance(&mut members, current, effective);
     // A portable layout applies to saved display variants too. Assignments
     // stay local; the transaction records each variant map for exact Undo.
     let mut display_edits = std::collections::BTreeMap::new();
