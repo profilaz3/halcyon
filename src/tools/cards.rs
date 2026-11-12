@@ -14,6 +14,8 @@ use cosmic::widget::image::Handle;
 use cosmic::widget::{column, container, icon, mouse_area, row, scrollable, text, text_editor};
 pub(crate) use devices::charging_icon;
 pub use devices::{devices, sample as sample_devices};
+#[cfg(test)]
+pub(crate) use devices::{fitted as devices_fitted, grid as devices_grid};
 use std::time::Instant;
 
 /// What a card's controls ask for.

@@ -3,7 +3,7 @@
 /// The Devices widget is off until chosen, has its own page and search
 /// words, and saves its switch like the other tools. With
 /// `DESKTOP_CARDS_LAYOUT_EVIDENCE` set, the page and the card are captured
-/// in both shades, the card with three devices and with none.
+/// in both shades, the card with three devices, four and none.
 #[test]
 fn devices_widget_is_off_until_chosen_and_renders_full_and_empty() {
     let name = "devices_widget_is_off_until_chosen_and_renders_full_and_empty";
@@ -49,8 +49,14 @@ fn devices_widget_is_off_until_chosen_and_renders_full_and_empty() {
             scene.width > 0. && scene.x >= 0. && scene.x + scene.width <= size.width,
             "{scene:?}"
         );
-        for device in ["WH-1000XM5", "MX Anywhere 3", "Pixel 8"] {
-            let text = native.text_bounds(app.settings_view(), device);
+        // Each name whole in the preview, on one line or broken onto two.
+        let shown = native.all_text(app.settings_view());
+        for device in ["Sony WH-1000XM5", "MX Anywhere 3", "Pixel 8"] {
+            let drawn = shown
+                .iter()
+                .find(|text| text.replace('\n', " ") == device)
+                .unwrap_or_else(|| panic!("{device} in the preview: {shown:?}"));
+            let text = native.text_bounds(app.settings_view(), drawn);
             assert!(text.width > 0., "{device} in the preview");
         }
         for (theme, shade) in [
@@ -70,7 +76,8 @@ fn devices_widget_is_off_until_chosen_and_renders_full_and_empty() {
     send_settings(&mut app, Message::Widget(Widget::Devices, false));
     assert!(!Config::load().widget_enabled(Widget::Devices));
 
-    // The card itself, as the desktop draws it, in a light and a dark style.
+    // The card itself, as the desktop draws it, in a light and a dark style,
+    // with three devices, four and none, at its default size and a larger one.
     use crate::desktop_theme::Family;
     let styled = |light: bool| {
         let mut config = Config::default();
@@ -85,8 +92,32 @@ fn devices_widget_is_off_until_chosen_and_renders_full_and_empty() {
     };
     let empty: Vec<crate::devices::Device> = Vec::new();
     let full = crate::tools::cards::sample_devices();
-    for (dims, label) in [(size, "default"), ([420., 260.], "large")] {
+    let mut four = full.clone();
+    four.push(crate::devices::Device {
+        id: "bt:AA:BB:CC:DD:EE:04".into(),
+        name: "Keychron K3 Pro".into(),
+        kind: crate::devices::Kind::Keyboard,
+        battery: Some(42),
+        charging: Some(false),
+        ..Default::default()
+    });
+    let mut ring = [0.; 2];
+    for (i, (dims, label)) in [(size, "default"), ([420., 260.], "large")]
+        .into_iter()
+        .enumerate()
+    {
         let mut native = crate::native_test::Native::new(Size::new(dims[0], dims[1]));
+        // Every device fits at both sizes, four included, measured in the
+        // card's own fonts.
+        {
+            let _style = crate::widget_style::scope(&styled(true));
+            for list in [&full, &four] {
+                let grid = crate::tools::cards::devices_grid(list, dims[0], dims[1]);
+                assert_eq!(grid.shown, list.len(), "{label} {grid:?}");
+                assert!(grid.tile_height() <= dims[1], "{label} {grid:?}");
+            }
+            ring[i] = crate::tools::cards::devices_grid(&full, dims[0], dims[1]).ring;
+        }
         for (theme, shade) in [
             (cosmic::Theme::light(), "light"),
             (cosmic::Theme::dark(), "dark"),
@@ -97,23 +128,48 @@ fn devices_widget_is_off_until_chosen_and_renders_full_and_empty() {
             };
             let none = native.text_bounds(card(&empty), "No devices connected");
             assert!(none.width > 0. && none.x + none.width <= dims[0]);
-            for device in &full {
-                let text = native.text_bounds(card(&full), &device.name);
-                assert!(
-                    text.width > 0. && text.y + text.height <= dims[1],
-                    "{label}"
+            for list in [&full, &four] {
+                // Each name whole, on one line or two, never cut short:
+                // measured in the card's own fonts, as the card measures.
+                let shown: Vec<String> = {
+                    let _style = crate::widget_style::scope(&config);
+                    let grid = crate::tools::cards::devices_grid(list, dims[0], dims[1]);
+                    list.iter()
+                        .map(|device| {
+                            crate::tools::cards::devices_fitted(
+                                &device.name,
+                                grid.name,
+                                grid.tile,
+                                grid.lines,
+                            )
+                            .unwrap_or_else(|| {
+                                panic!("{label} {shade} {} is cut short", device.name)
+                            })
+                        })
+                        .collect()
+                };
+                let drawn = native.all_text(card(list));
+                for (device, shown) in list.iter().zip(&shown) {
+                    assert!(drawn.contains(shown), "{label} {shown:?} in {drawn:?}");
+                    let text = native.text_bounds(card(list), shown);
+                    assert!(
+                        text.x >= 0.
+                            && text.x + text.width <= dims[0]
+                            && text.y + text.height <= dims[1] - 12.,
+                        "{label} {} {text:?}",
+                        device.name
+                    );
+                }
+            }
+            for (list, name) in [(&full, "full"), (&four, "four"), (&empty, "empty")] {
+                native.capture(
+                    card(list),
+                    &theme,
+                    &format!("devices-card-{label}-{name}-{shade}"),
                 );
             }
-            native.capture(
-                card(&full),
-                &theme,
-                &format!("devices-card-{label}-{shade}"),
-            );
-            native.capture(
-                card(&empty),
-                &theme,
-                &format!("devices-card-{label}-empty-{shade}"),
-            );
         }
     }
+    // A larger card grows its rings.
+    assert!(ring[1] > ring[0] + 20., "{ring:?}");
 }
