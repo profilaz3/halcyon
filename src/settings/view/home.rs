@@ -42,34 +42,6 @@ impl Settings {
         if self.canvas_visible() {
             return self.canvas_page();
         }
-        if self.legacy_layout_recovery() {
-            return column::with_children(vec![
-                heading(
-                    "Unfinished layout",
-                    "Review the recovered arrangement before starting a new edit.",
-                ),
-                self.placement_picture((self.window.height - 270.).clamp(180., 420.), false),
-                row::with_children(vec![
-                    button::standard("Cancel recovered layout")
-                        .id(cosmic::widget::Id::new("layout-recovery-cancel"))
-                        .on_press(Message::Placement(
-                            crate::settings::placement::Message::Cancel,
-                        ))
-                        .into(),
-                    button::suggested("Save recovered layout")
-                        .id(cosmic::widget::Id::new("layout-recovery-save"))
-                        .on_press(Message::Placement(
-                            crate::settings::placement::Message::Save,
-                        ))
-                        .into(),
-                ])
-                .spacing(8)
-                .wrap()
-                .into(),
-            ])
-            .spacing(16)
-            .into();
-        }
         // Arranging happens on the desktop itself; the list in Settings
         // stays one click away for arranging with the keyboard.
         let header = split(

@@ -475,7 +475,17 @@ impl Settings {
             let fresh = self
                 .latest_change_name()
                 .filter(|_| self.latest_change_fresh())
-                .map(|name| format!("Saved · {}", crate::settings::support::capitalized(&name)));
+                .map(|name| {
+                    // A kept unfinished layout says so rather than "Saved".
+                    let kept = self.layout_kept.is_some()
+                        && self.last_desktop_change.as_ref().map(|(_, _, id)| id)
+                            == self.layout_kept.as_ref();
+                    if kept {
+                        crate::settings::placement::KEPT_LAYOUT.to_string()
+                    } else {
+                        format!("Saved · {}", crate::settings::support::capitalized(&name))
+                    }
+                });
             if let Some(status) = fresh {
                 empty = false;
                 // The latest save opens the full list of changes.

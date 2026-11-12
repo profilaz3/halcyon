@@ -2772,11 +2772,7 @@ impl Settings {
     /// Position shares the landing's placement editor, right here in this tab.
     pub(super) fn open_position(&mut self, widget: crate::drawer::Widget) -> Task<Message> {
         self.object_tab = ObjectTab::Position;
-        let start = if self.legacy_layout_recovery() {
-            Task::none()
-        } else {
-            self.update_canvas(super::canvas::Message::Start)
-        };
+        let start = self.update_canvas(super::canvas::Message::Start);
         // Selecting comes after the editor opens; the listener is admitted then.
         let selection =
             self.update_placement(super::placement::Message::Select(widget.key().into()));

@@ -1,8 +1,8 @@
-//! Schematic desktop scene: both bars follow the current editor drafts.
+//! Whole-desktop miniatures of both bars, for Setups and sharing. The Dock
+//! and panel page draws its own close-up in `closeup`.
 use super::*;
 use cosmic::iced::Point;
 use cosmic::iced::widget::{pin, stack};
-use cosmic::widget::responsive;
 
 fn bar_color(background: Option<&PanelBackground>) -> Color {
     match background {
@@ -37,7 +37,7 @@ fn bar_metrics(draft: &PanelDraft, scale: f32) -> (Anchor, f32, f32) {
 
 /// cosmic-panel's `get_priority`: on a shared edge, higher priority sits
 /// closer to the screen edge.
-fn bar_priority(draft: &PanelDraft) -> u32 {
+pub(super) fn bar_priority(draft: &PanelDraft) -> u32 {
     let mut priority = 0;
     if draft.extend().known().copied().unwrap_or(true) {
         priority += 10000;
@@ -472,75 +472,4 @@ pub(in crate::settings::view) fn bars_on_output<'a>(
             )
         })
         .collect()
-}
-
-impl Settings {
-    pub(super) fn desktop_preview(&self, height: f32) -> Element<'_, Message> {
-        let accent = self.settings_accent();
-        let screen_size = self.placement.screen();
-        let editor = &self.desktop;
-        responsive(move |available| {
-            // Use the full scene width. Bar thickness follows the output scale;
-            // the wallpaper crops to the scene, while anchors stay in view.
-            let screen = [available.width.max(1.), available.height.max(1.)];
-            let scale =
-                (screen[0] / screen_size[0].max(1.)).min(screen[1] / screen_size[1].max(1.));
-            // Reuse the already decoded wallpaper. No image IO or provider work
-            // is started by the scene, including while a local edit is pending.
-            let mut layers: Vec<Element<'_, Message>> = vec![
-                cosmic::widget::space()
-                    .width(screen[0])
-                    .height(screen[1])
-                    .into(),
-            ];
-            layers.extend(self.home_backdrop(screen));
-            let drafts = PanelKind::ALL
-                .into_iter()
-                .filter_map(|kind| editor.draft(kind))
-                .filter(|d| {
-                    !editor.islands.installation.installed()
-                        || d.kind() != editor.selected
-                        || !d.islands().known().is_some_and(|s| s.enabled)
-                })
-                .collect();
-            layers.extend(bars(
-                editor.islands.installation.installed(),
-                drafts,
-                &editor.catalog,
-                Some(editor.selected),
-                screen,
-                scale,
-                accent,
-                Some(|kind| edit(Edit::Select(kind))),
-            ));
-            if let Some(draft) = editor.current().filter(|d| {
-                editor.islands.installation.installed()
-                    && d.listed()
-                    && d.islands().known().is_some_and(|s| s.enabled)
-            }) {
-                layers.push(preview_islands(
-                    draft,
-                    &editor.catalog,
-                    screen,
-                    scale,
-                    0.,
-                    accent,
-                    None,
-                    editor.islands.geometry.as_ref(),
-                    editor.islands.selected,
-                    &editor.island_output(),
-                    true,
-                ));
-            }
-            container(stack(layers).width(screen[0]).height(screen[1]).clip(true))
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .align_x(Alignment::Center)
-                .align_y(Alignment::Center)
-                .into()
-        })
-        .width(Length::Fill)
-        .height(height)
-        .into()
-    }
 }
