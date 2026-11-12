@@ -307,6 +307,68 @@ impl Sampler {
         m
     }
 }
+/// Hosts that serve video calls. A subdomain of any of them counts too.
+const CALL_HOSTS: [&str; 17] = [
+    "meet.google.com",
+    "zoom.us",
+    "zoom.com",
+    "zoomgov.com",
+    "teams.microsoft.com",
+    "teams.live.com",
+    "meet.jit.si",
+    "8x8.vc",
+    "webex.com",
+    "whereby.com",
+    "gotomeeting.com",
+    "meet.goto.com",
+    "bluejeans.com",
+    "chime.aws",
+    "join.skype.com",
+    "meet.ffmuc.net",
+    "around.co",
+];
+
+/// An https link with a host and no credentials.
+fn safe_https(value: &str) -> Option<reqwest::Url> {
+    reqwest::Url::parse(value).ok().filter(|url| {
+        url.scheme() == "https"
+            && url.has_host()
+            && url.username().is_empty()
+            && url.password().is_none()
+    })
+}
+
+/// Whether a host serves calls: a known provider, or a self-hosted Jitsi.
+pub fn is_call_host(host: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    CALL_HOSTS
+        .iter()
+        .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
+        || host.split('.').next() == Some("jitsi") && host.contains('.')
+}
+
+/// The first video-call link in free text such as a location or description.
+/// Only https links to a call host with a room path count.
+pub fn call_link(text: &str) -> Option<String> {
+    static LINKS: OnceLock<regex::Regex> = OnceLock::new();
+    let links = LINKS.get_or_init(|| regex::Regex::new(r#"https://[^\s<>"']+"#).unwrap());
+    links.find_iter(text).find_map(|found| {
+        // A link inside another scheme, such as `javascript:`, is not a link.
+        let before = &text[..found.start()];
+        let token = &before[before.rfind(char::is_whitespace).map_or(0, |i| i + 1)..];
+        if token.contains(':') {
+            return None;
+        }
+        let value = found
+            .as_str()
+            .trim_end_matches(['.', ',', ';', ')', ']'])
+            .replace("&amp;", "&");
+        let url = safe_https(&value)?;
+        (is_call_host(url.host_str()?) && url.path().trim_matches('/').len() > 0)
+            .then(|| url.into())
+    })
+}
+
 mod hardware {
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::{Path, PathBuf};
@@ -1138,17 +1200,19 @@ impl CalendarEvent {
             MeetingState::Later
         }
     }
-    pub fn join_url(&self) -> Option<&str> {
-        let url = self.meeting_url.as_deref()?;
-        reqwest::Url::parse(url)
-            .ok()
-            .filter(|u| {
-                u.scheme() == "https"
-                    && u.has_host()
-                    && u.username().is_empty()
-                    && u.password().is_none()
+    /// The call to join: the provider's own meeting link, else the first call
+    /// link found in the event URL, location or description. `None` when the
+    /// event has no call, so no Join action is offered.
+    pub fn join_url(&self) -> Option<String> {
+        self.meeting_url
+            .as_deref()
+            .filter(|url| safe_https(url).is_some())
+            .map(str::to_owned)
+            .or_else(|| {
+                [&self.url, &self.location, &self.description]
+                    .into_iter()
+                    .find_map(|text| call_link(text))
             })
-            .map(|_| url)
     }
     pub fn on_date(&self, day: chrono::NaiveDate) -> bool {
         if !self.all_day {
@@ -1561,6 +1625,80 @@ print(json.dumps({'updated_at': json.dumps(observed), 'projects': [], 'requested
         assert!(bad.join_url().is_none());
         bad.meeting_url = Some("https://user:password@example.com".into());
         assert!(bad.join_url().is_none());
+    }
+    #[test]
+    fn call_links_are_found_in_location_url_or_description() {
+        for (text, expected) in [
+            (
+                "Join: https://meet.google.com/abc-defg-hij.",
+                "https://meet.google.com/abc-defg-hij",
+            ),
+            (
+                "https://us02web.zoom.us/j/123?pwd=x&amp;a=b",
+                "https://us02web.zoom.us/j/123?pwd=x&a=b",
+            ),
+            (
+                "https://teams.microsoft.com/l/meetup-join/19%3a",
+                "https://teams.microsoft.com/l/meetup-join/19%3a",
+            ),
+            (
+                "Room (https://meet.jit.si/HalcyonStandup)",
+                "https://meet.jit.si/HalcyonStandup",
+            ),
+            (
+                "https://jitsi.example.org/weekly",
+                "https://jitsi.example.org/weekly",
+            ),
+            (
+                "https://acme.webex.com/meet/pat",
+                "https://acme.webex.com/meet/pat",
+            ),
+            (
+                "Agenda https://example.com then https://whereby.com/room",
+                "https://whereby.com/room",
+            ),
+            ("https://8x8.vc/company/room", "https://8x8.vc/company/room"),
+        ] {
+            assert_eq!(call_link(text).as_deref(), Some(expected), "{text}");
+        }
+        for text in [
+            "",
+            "Room 2, third floor",
+            "https://example.com/zoom.us/j/1",
+            "https://zoom.us.evil.invalid/j/1",
+            "https://notzoom.us/j/1",
+            "http://meet.google.com/abc",
+            "https://user:secret@zoom.us/j/1",
+            "javascript:alert('https://zoom.us/j/1')",
+            "https://zoom.us/",
+            "https://calendar.google.com/event?eid=1",
+        ] {
+            assert_eq!(call_link(text), None, "{text}");
+        }
+        let mut event = CalendarEvent {
+            title: "Standup".into(),
+            ..Default::default()
+        };
+        assert_eq!(event.join_url(), None, "no call link, no Join");
+        event.location = "Room 2".into();
+        event.description = "Notes at https://docs.example.com/x".into();
+        event.url = "https://calendar.example.com/e/1".into();
+        assert_eq!(event.join_url(), None);
+        event.url = "https://meet.jit.si/Standup".into();
+        assert_eq!(
+            event.join_url().as_deref(),
+            Some("https://meet.jit.si/Standup")
+        );
+        event.url.clear();
+        event.location = "https://zoom.us/j/42".into();
+        assert_eq!(event.join_url().as_deref(), Some("https://zoom.us/j/42"));
+        event.meeting_url = Some("https://provider.example/room".into());
+        assert_eq!(
+            event.join_url().as_deref(),
+            Some("https://provider.example/room"),
+            "the provider's own conference link wins"
+        );
+        assert_eq!(event.private_copy().join_url(), None);
     }
     #[test]
     fn cpu_handles_idle_load_and_counter_reset() {

@@ -294,6 +294,7 @@ pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/activity_island/network", "Activity network", Style, boolean;
     "/activity_island/bluetooth", "Activity Bluetooth", Style, boolean;
     "/activity_island/updates", "Activity updates", Style, boolean;
+    "/activity_island/style", "Activity island style", Style, |v| matches!(v.as_str(), Some("theme" | "dark"));
     "/activity_island/app_rules", "Activity app rules", Style, app_rules;
     "/calendar_private", "Calendar privacy", Style, boolean;
     "/widget_monitors/clock/display", "Widget display", Layout, |v| v.is_null() || v.as_str().is_some_and(crate::displays::valid_name);

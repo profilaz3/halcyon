@@ -24,7 +24,14 @@ pub(super) const CARD_HEIGHT: f32 = HEIGHT - META_Y + CARD_PAD;
 pub(super) const ATTACHED_WIDTH: f32 = COMPACT_WIDTH + 24.;
 /// Concave corners where an attached card meets the bar.
 pub(super) const SHOULDER: f32 = 12.;
-const CARD_RADIUS: f32 = 20.;
+const CARD_RADIUS: f32 = 22.;
+/// The open island's corners: the panel's own at the top, rounder below.
+const OPEN_RADIUS: f32 = 22.;
+/// A pill the island paints itself (the Dark style): as tall as the title
+/// line, centred in the slot, so it reads as a pill on any bar height.
+pub(super) const PILL: f32 = 28.;
+/// The open Dark island's top corners, under the bar.
+const PILL_OPEN_TOP: f32 = 18.;
 /// A very clear bar would leave the details unreadable over the wallpaper.
 const MIN_OPACITY: f32 = 0.7;
 
@@ -127,6 +134,37 @@ impl Surface<'_> {
     }
 }
 impl Surface<'_> {
+    /// The Dark style's resting pill, in this surface's coordinates.
+    fn pill(&self, b: Rectangle) -> Rectangle {
+        let height = PILL.min(self.frame.height);
+        Rectangle {
+            x: b.x + (b.width - self.slot_width) / 2.,
+            y: b.y
+                + (self.frame.height - height) / 2.
+                + if self.popup { self.frame.padding } else { 0. },
+            width: self.slot_width,
+            height,
+        }
+    }
+    /// The painted shape: the panel-owned rect, or for an own pill one that
+    /// grows from exactly the resting pill so nothing jumps.
+    fn shape(&self, b: Rectangle) -> Rectangle {
+        let rect = self.rect(b);
+        if !self.palette.own_pill {
+            return rect;
+        }
+        let pill = self.pill(b);
+        let p = if self.popup { self.progress } else { 0. };
+        let lerp = |a: f32, b: f32| a + (b - a) * p;
+        let x = lerp(pill.x, rect.x);
+        let y = lerp(pill.y, rect.y);
+        Rectangle {
+            x,
+            y,
+            width: lerp(pill.x + pill.width, rect.x + rect.width) - x,
+            height: lerp(pill.y + pill.height, rect.y + rect.height) - y,
+        }
+    }
     fn lift(&self) -> f32 {
         if self.tight && !self.chooser { TIGHT } else { 0. }
     }
@@ -477,32 +515,44 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
         if self.frame.attached && self.popup {
             return self.draw_attached(t, r, theme, style, l, cursor, v);
         }
-        let rect = self.rect(l.bounds());
-        let top_radius = self
-            .frame
-            .radius
-            .min((self.frame.height + 2. * self.frame.padding) / 2.)
-            .min(rect.width / 2.);
-        let bottom_radius = top_radius + (20. - top_radius) * self.progress;
+        let rect = self.shape(l.bounds());
+        let own = self.palette.own_pill;
+        let p = self.progress;
+        let (top_radius, bottom_radius) = if own {
+            let rest = rect.height.min(PILL) / 2.;
+            (
+                rest + (PILL_OPEN_TOP - rest) * p,
+                rest + (OPEN_RADIUS - rest) * p,
+            )
+        } else {
+            let top = self
+                .frame
+                .radius
+                .min((self.frame.height + 2. * self.frame.padding) / 2.)
+                .min(rect.width / 2.);
+            (top, top + (OPEN_RADIUS - top) * p)
+        };
         let radius = cosmic::iced::border::Radius {
             top_left: top_radius,
             top_right: top_radius,
             bottom_left: bottom_radius,
             bottom_right: bottom_radius,
         };
+        // Resting content belongs to the panel under "Follow the theme": the
+        // surface and its outline only appear as the popup grows. The Dark
+        // style paints its own pill at rest and open.
+        let shown = if own { 1. } else { p };
         r.fill_quad(
             renderer::Quad {
                 bounds: rect,
                 border: Border {
                     radius,
-                    // Resting content belongs to the panel. Its own outline only
-                    // appears as the popup grows beyond the panel.
-                    width: self.progress,
-                    color: alpha(self.palette.ink, 0.12 * self.progress),
+                    width: shown,
+                    color: alpha(self.palette.line, self.palette.line.a * shown),
                 },
                 ..Default::default()
             },
-            alpha(self.palette.surface, self.progress),
+            alpha(self.palette.surface, shown),
         );
         if let Some(clip) = rect.intersection(v) {
             r.with_layer(clip, |r| {
@@ -554,7 +604,7 @@ impl Surface<'_> {
                 color,
             );
         };
-        fill(track, alpha(self.palette.ink, 0.12 * reveal), r);
+        fill(track, alpha(self.palette.track, reveal), r);
         fill(
             Rectangle {
                 x: track.x + track.width * start.clamp(0., 1.),
@@ -580,16 +630,54 @@ impl Surface<'_> {
         v: &Rectangle,
     ) {
         let card = self.card(l.bounds());
-        let fill = alpha(self.palette.surface, self.frame.opacity.max(MIN_OPACITY));
+        let own = self.palette.own_pill;
+        let fill = if own {
+            self.palette.surface
+        } else {
+            alpha(self.palette.surface, self.frame.opacity.max(MIN_OPACITY))
+        };
+        if own {
+            // The resting pill reaches down to the card as it opens.
+            let pill = self.pill(l.bounds());
+            let p = self.progress;
+            let rest = pill.height / 2.;
+            let bottom = rest * (1. - p);
+            r.fill_quad(
+                renderer::Quad {
+                    bounds: Rectangle {
+                        height: pill.height + (card.y - pill.y - pill.height + 1.) * p,
+                        ..pill
+                    },
+                    border: Border {
+                        radius: cosmic::iced::border::Radius {
+                            top_left: rest,
+                            top_right: rest,
+                            bottom_left: bottom,
+                            bottom_right: bottom,
+                        },
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                fill,
+            );
+        }
         if card.height > 0.5 {
             let radius = (CARD_RADIUS * self.progress).min(card.height / 2.);
+            // An own card is its own shape under the bar; a panel-coloured one
+            // is the bar continued, so its top corners stay square.
+            let top = if own {
+                (SHOULDER * self.progress).min(card.height / 2.)
+            } else {
+                0.
+            };
             r.fill_quad(
                 renderer::Quad {
                     bounds: card,
                     border: Border {
                         radius: cosmic::iced::border::Radius {
-                            top_left: 0.,
-                            top_right: 0.,
+                            top_left: top,
+                            top_right: top,
                             bottom_left: radius,
                             bottom_right: radius,
                         },
@@ -600,7 +688,7 @@ impl Surface<'_> {
                 fill,
             );
             let s = (SHOULDER * self.progress).min(card.height).round();
-            if s >= 1. {
+            if s >= 1. && !own {
                 for (corner, centre) in [
                     (card.x - s, card.x - s),
                     (card.x + card.width, card.x + card.width + s),

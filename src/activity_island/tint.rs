@@ -57,8 +57,70 @@ pub fn dominant(rgba: &[u8]) -> Option<[u8; 3]> {
     Some(sums[bin].map(|c| ((c / w) * 255.).round().clamp(0., 255.) as u8))
 }
 
+/// The island's artwork tile is drawn from this many pixels a side: enough
+/// for a 44 px tile, small enough to cross the bridge in every snapshot.
+pub const THUMB: usize = 28;
+
+/// A square, centre-cropped RGB thumbnail of an RGBA picture, base64
+/// encoded for the bridge. None for an empty or malformed picture.
+pub fn thumbnail(rgba: &[u8], width: u32, height: u32) -> Option<String> {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let (w, h) = (width as usize, height as usize);
+    if w == 0 || h == 0 || rgba.len() < w * h * 4 {
+        return None;
+    }
+    let side = w.min(h);
+    let (x0, y0) = ((w - side) / 2, (h - side) / 2);
+    let mut out = Vec::with_capacity(THUMB * THUMB * 3);
+    for ty in 0..THUMB {
+        let (ya, yb) = (y0 + ty * side / THUMB, y0 + ((ty + 1) * side / THUMB).max(ty * side / THUMB + 1));
+        for tx in 0..THUMB {
+            let (xa, xb) = (x0 + tx * side / THUMB, x0 + ((tx + 1) * side / THUMB).max(tx * side / THUMB + 1));
+            let mut sum = [0u32; 3];
+            let mut n = 0u32;
+            for y in ya..yb.min(h) {
+                for x in xa..xb.min(w) {
+                    let i = (y * w + x) * 4;
+                    for (s, c) in sum.iter_mut().zip(&rgba[i..i + 3]) {
+                        *s += u32::from(*c);
+                    }
+                    n += 1;
+                }
+            }
+            out.extend(sum.map(|s| (s / n.max(1)) as u8));
+        }
+    }
+    Some(STANDARD.encode(out))
+}
+
+/// The thumbnail back as RGBA pixels, only when it has the expected size.
+pub fn thumbnail_pixels(encoded: &str) -> Option<Vec<u8>> {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    if encoded.len() > (THUMB * THUMB * 3).div_ceil(3) * 4 {
+        return None;
+    }
+    let rgb = STANDARD.decode(encoded).ok()?;
+    (rgb.len() == THUMB * THUMB * 3).then(|| {
+        rgb.chunks_exact(3)
+            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .collect()
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn thumbnails_round_trip_and_reject_malformed_input() {
+        let (w, h) = (90u32, 60u32);
+        let rgba: Vec<u8> = (0..w * h).flat_map(|_| [200, 40, 120, 255]).collect();
+        let encoded = super::thumbnail(&rgba, w, h).expect("thumbnail");
+        let pixels = super::thumbnail_pixels(&encoded).expect("pixels");
+        assert_eq!(pixels.len(), super::THUMB * super::THUMB * 4);
+        assert_eq!(&pixels[..4], &[200, 40, 120, 255]);
+        assert!(super::thumbnail(&rgba[..10], w, h).is_none());
+        assert!(super::thumbnail_pixels("not base64!").is_none());
+        assert!(super::thumbnail_pixels("AAAA").is_none());
+    }
     use super::*;
     fn picture(pixels: &[([u8; 3], usize)]) -> Vec<u8> {
         pixels

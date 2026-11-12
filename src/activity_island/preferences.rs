@@ -32,6 +32,28 @@ impl AppRuleEntry {
 }
 /// At most this many app rules are kept; the oldest give way.
 pub const APP_RULES: usize = 32;
+/// How the open island and its pill are painted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IslandStyle {
+    /// The panel's own colours, light or dark.
+    #[default]
+    Theme,
+    /// A near-black surface on any panel.
+    Dark,
+}
+impl IslandStyle {
+    pub const ALL: [Self; 2] = [Self::Theme, Self::Dark];
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Theme => "theme",
+            Self::Dark => "dark",
+        }
+    }
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|s| *s == self).unwrap_or(0)
+    }
+}
 pub const RULE_APP: usize = 48;
 pub const RULE_ENTRY: usize = 96;
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -57,6 +79,8 @@ pub struct Preferences {
     /// Devices connecting and disconnecting, with their battery.
     pub bluetooth: bool,
     pub updates: bool,
+    /// Follow the panel theme, or always dark.
+    pub style: IslandStyle,
     /// Per-app choices from the island's menu or Settings.
     #[serde(deserialize_with = "bounded_rules")]
     pub app_rules: Vec<AppRuleEntry>,
@@ -98,6 +122,7 @@ impl Default for Preferences {
             network: true,
             bluetooth: true,
             updates: true,
+            style: IslandStyle::Theme,
             app_rules: Vec::new(),
         }
     }

@@ -75,6 +75,16 @@ impl Settings {
         }
         controls = controls.push(toggle("Brief automatic reveals", "reveals", p.reveals, false));
         controls = controls.push(split(
+            label("Island style", 14., FG),
+            container(cosmic::widget::dropdown(
+                &["Follow the theme", "Dark"],
+                Some(p.style.index()),
+                Message::ActivityStyle,
+            ))
+            .id(cosmic::widget::Id::new("activity-preference-style"))
+            .into(),
+        ));
+        controls = controls.push(split(
             label("Meeting reminder", 14., FG),
             cosmic::widget::dropdown(
                 &["5 minutes", "10 minutes", "15 minutes"],
