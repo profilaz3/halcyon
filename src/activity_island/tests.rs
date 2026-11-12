@@ -207,6 +207,7 @@ fn native_controls_are_inert_when_collapsed_and_fit_scaled_surfaces() {
                 ends_at_ms: now + 1_800_000,
                 all_day: false,
                 join: None,
+                color: None,
             });
             let bytes = ui.render_scaled(app.capsule(true), &cosmic::Theme::dark(), scale);
             assert_eq!(
@@ -244,6 +245,7 @@ fn active_chooser_keeps_controls_accessible_without_permanent_tabs() {
         ends_at_ms: app.now_ms + 900_000,
         all_day: false,
         join: None,
+        color: None,
     });
     let mut ui = crate::native_test::Native::new(Size::new(WIDTH, HEIGHT));
     for (kind, id) in [
@@ -298,6 +300,7 @@ fn calendar_boundaries_expire_without_a_new_provider_snapshot() {
         ends_at_ms: base + 900_000,
         all_day: false,
         join: None,
+        color: None,
     });
     app.snapshot.focus.running = true;
     app.snapshot.focus.ends_at_ms = Some(base + 1_500_000);
@@ -341,6 +344,7 @@ fn a_meeting_link_becomes_the_main_action_and_empty_calendars_have_nothing_to_di
         ends_at_ms: base + 900_000,
         all_day: false,
         join: Some("https://meet.example.com/abc".into()),
+        color: None,
     });
     assert!(ui.text_bounds(app.capsule(true), "Join").width > 0.);
     let messages = click(&mut ui, &app, "activity-open-calendar");
@@ -351,6 +355,10 @@ fn a_meeting_link_becomes_the_main_action_and_empty_calendars_have_nothing_to_di
     );
     app.snapshot.calendar.as_mut().unwrap().join = None;
     assert!(ui.text_bounds(app.capsule(true), "Calendar settings").width > 0.);
+    // No call link, no Join: not on the card, not as a control.
+    assert!(!ui.all_text(app.capsule(true)).iter().any(|t| t.contains("Join")));
+    let messages = click(&mut ui, &app, "activity-open-calendar");
+    assert!(!messages.iter().any(|m| matches!(m, Message::Join(_))));
     assert!(ui.try_bounds(app.capsule(true), "activity-dismiss-calendar").is_some());
     app.snapshot.calendar = None;
     assert!(ui.try_bounds(app.capsule(true), "activity-dismiss-calendar").is_none());
@@ -370,6 +378,7 @@ fn automatic_priority_does_not_replace_an_open_activity() {
         ends_at_ms: now + 60_000,
         all_day: false,
         join: None,
+        color: None,
     });
     let _ = app.update(Message::Backend(ClientEvent::Snapshot(snapshot)));
     assert_eq!(app.kind, Kind::Music);
@@ -576,6 +585,7 @@ fn states_fit_native_surface_with_stable_activity_targets() {
                 ends_at_ms: base + 1_800_000,
                 all_day: false,
                 join: None,
+                color: None,
             });
         }
         if matches!(state, "calendar-now" | "calendar-later") {
@@ -587,6 +597,7 @@ fn states_fit_native_surface_with_stable_activity_targets() {
                 ends_at_ms: base + if later { 16_200_000 } else { 1_200_000 },
                 all_day: false,
                 join: None,
+                color: None,
             });
         }
         if state == "calendar-empty" {
@@ -894,6 +905,7 @@ fn content_says_one_thing_once_in_simple_words() {
         ends_at_ms: now + 8 * 3_600_000,
         all_day: false,
         join: None,
+        color: None,
     });
     assert_eq!(
         app.content().cue,
@@ -1003,6 +1015,7 @@ fn compact_capsule_and_opening_popup_match_so_nothing_jumps() {
             ends_at_ms: now + 1_800_000,
             all_day: false,
             join: None,
+            color: None,
         });
         if name == "offline" {
             let _ = app.update(Message::Backend(ClientEvent::Offline));
@@ -1023,7 +1036,7 @@ fn compact_capsule_and_opening_popup_match_so_nothing_jumps() {
         if let Some(root) = &root {
             std::fs::create_dir_all(root).unwrap();
             // Show the capsule on the panel it sits in, not on transparency.
-            let panel = Palette::for_panel(&app.core.applet).surface;
+            let panel = app.palette().surface;
             let bg = [panel.r, panel.g, panel.b].map(|c| c * 255.);
             let mut shown = compact[..rows * stride].to_vec();
             for px in shown.chunks_exact_mut(4) {
@@ -1243,7 +1256,7 @@ fn panel_palette_stays_readable_and_compact_surface_is_unpainted() {
         ("colored", Background::Color([0.25, 0.4, 0.55])),
     ] {
         app.core.applet.background = background;
-        let palette = Palette::for_panel(&app.core.applet);
+        let palette = app.palette();
         assert!(contrast(palette.ink, palette.surface) >= 4.5);
         for kind in [Kind::Music, Kind::Focus, Kind::Calendar] {
             assert!(contrast(palette.accent(kind), palette.surface) >= 4.5);
@@ -1655,6 +1668,7 @@ fn standard_bar_card_hangs_from_the_bar_and_renders_over_a_translucent_panel() {
             ends_at_ms: app.now_ms + 1_800_000,
             all_day: false,
             join: None,
+            color: None,
         });
         app.snapshot.system = vec![system::Activity {
             source: system::Source::Updates,
@@ -1710,7 +1724,7 @@ fn standard_bar_card_hangs_from_the_bar_and_renders_over_a_translucent_panel() {
                 assert_eq!(pixels[(row * pw + x) * 4 + 3], 0, "{state}: bar pixel {x}");
             }
             let Some(root) = &root else { continue };
-            let panel = Palette::for_panel(&app.core.applet).surface;
+            let panel = app.palette().surface;
             save_scene(
                 &root.join(format!("bar-{state}-{theme_name}.png")),
                 &pixels,
@@ -2023,7 +2037,7 @@ fn notifications_render_on_islands_and_standard_bars() {
                     &pixels,
                     (pw, ph),
                     &frame,
-                    Palette::for_panel(&app.core.applet).surface,
+                    app.palette().surface,
                     wall,
                     scale,
                 );
@@ -2069,7 +2083,7 @@ fn notifications_render_on_islands_and_standard_bars() {
                     (height * scale) as usize,
                 ),
                 &frame,
-                Palette::for_panel(&app.core.applet).surface,
+                app.palette().surface,
                 wall,
                 scale,
             );
@@ -2501,6 +2515,7 @@ fn notification_rules_summarise_more_than_three_and_honour_do_not_disturb() {
         ends_at_ms: now_ms + 900_000,
         all_day: false,
         join: None,
+        color: None,
     };
     app.last_reveal = None;
     snapshot.calendar = Some(meeting("soon", app.now_ms));
@@ -2842,7 +2857,7 @@ fn tier_one_states_render_for_review() {
                 &pixels,
                 ((frame.popup_width() * scale) as usize, (frame.popup_height() * scale) as usize),
                 &frame,
-                Palette::for_panel(&app.core.applet).surface,
+                app.palette().surface,
                 wall,
                 scale,
             );
@@ -3285,7 +3300,7 @@ fn notification_groups_recent_and_rules_render_for_review() {
                 &pixels,
                 ((frame.popup_width() * scale) as usize, (height * scale) as usize),
                 &frame,
-                Palette::for_panel(&app.core.applet).surface,
+                app.palette().surface,
                 wall,
                 scale,
             );
@@ -3783,6 +3798,37 @@ fn live_state_round_trips_through_the_bridge() {
         assert_eq!(serde_json::to_string(&back).unwrap(), text);
     }
 }
+#[test]
+fn the_island_style_round_trips_and_old_choices_stay_readable() {
+    use preferences::{IslandStyle, Preferences};
+    // Saved before the style existed: still loads, on the theme's colours.
+    let old: Preferences = serde_json::from_str(r#"{"media":true,"lead_minutes":10}"#).unwrap();
+    assert_eq!(old.style, IslandStyle::Theme);
+    assert_eq!(old.lead_minutes, 10);
+    let dark: Preferences = serde_json::from_str(r#"{"style":"dark"}"#).unwrap();
+    assert_eq!(dark.style, IslandStyle::Dark);
+    assert!(serde_json::to_string(&dark).unwrap().contains(r#""style":"dark""#));
+    for style in IslandStyle::ALL {
+        assert_eq!(IslandStyle::ALL[style.index()], style);
+        let text = format!(r#"{{"style":"{}"}}"#, style.key());
+        assert_eq!(serde_json::from_str::<Preferences>(&text).unwrap().style, style);
+    }
+    // Through the bridge, and into the palette the views draw with.
+    let mut app = app();
+    app.snapshot.preferences.style = IslandStyle::Dark;
+    let text = serde_json::to_string(&app.snapshot).unwrap();
+    let back = serde_json::from_str::<Snapshot>(&text).unwrap();
+    assert_eq!(back.preferences.style, IslandStyle::Dark);
+    assert_eq!(app.palette(), palette::Palette::dark());
+    app.snapshot.preferences.style = IslandStyle::Theme;
+    assert!(!app.palette().own_pill);
+    // An older snapshot without the newer fields still reads.
+    let mut value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    value["preferences"].as_object_mut().unwrap().remove("style");
+    value.as_object_mut().unwrap().remove("music_art");
+    let old = serde_json::from_value::<Snapshot>(value).unwrap();
+    assert_eq!(old.preferences.style, IslandStyle::Theme);
+}
 /// A copy at 62% whose rate has been steady long enough for an estimate.
 fn copying(app: &mut Applet) {
     let now = Instant::now();
@@ -3964,7 +4010,7 @@ fn live_activities_render_for_review() {
                 &pixels,
                 ((w * scale) as usize, (h * scale) as usize),
                 &frame,
-                Palette::for_panel(&app.core.applet).surface,
+                app.palette().surface,
                 wall,
                 scale,
             );
@@ -4024,4 +4070,313 @@ fn update_restart_waits_for_a_quiet_island() {
     app.arm_restart(now);
     assert_eq!(app.restart_at, Some(later));
     assert!(!app.restart_due(now + RESTART_QUIET));
+}
+
+/// A small gradient standing in for album art.
+fn artwork(app: &mut Applet) {
+    let (w, h) = (64usize, 64usize);
+    let mut rgba = Vec::with_capacity(w * h * 4);
+    for y in 0..h {
+        for x in 0..w {
+            rgba.extend([
+                (200 + x / 2) as u8,
+                (60 + y * 2) as u8,
+                (90 + (x + y) / 2) as u8,
+                255,
+            ]);
+        }
+    }
+    app.snapshot.music_art = tint::thumbnail(&rgba, w as u32, h as u32);
+    app.snapshot.music_tint = Some([226, 88, 64]);
+    app.keep_art();
+}
+fn system_card(app: &mut Applet, source: system::Source, title: &str, detail: &str, cue: &str) {
+    let mut a = activity(source, title, detail, None);
+    a.cue = cue.into();
+    a.urgent = source == system::Source::Power;
+    app.snapshot.system = vec![a];
+    app.kind = Kind::System(source);
+}
+fn meeting(app: &mut Applet, starts_in_ms: i64, join: Option<&str>, color: Option<[u8; 3]>) {
+    app.snapshot.calendar = Some(bridge::Calendar {
+        key: "meeting".into(),
+        title: "Design review".into(),
+        starts_at_ms: app.now_ms + starts_in_ms,
+        ends_at_ms: app.now_ms + starts_in_ms + 1_800_000,
+        all_day: false,
+        join: join.map(str::to_owned),
+        color,
+    });
+    app.kind = Kind::Calendar;
+}
+
+/// Every island state in each style: Follow the theme on a light and on a
+/// dark panel, and Dark. Ids listed per state must sit inside the surface.
+#[test]
+fn island_styles_render_for_review() {
+    use super::preferences::IslandStyle;
+    use cosmic::applet::cosmic_panel_config::CosmicPanelBackground;
+    use cosmic::iced::Size;
+    let Some(root) = std::env::var_os("HALCYON_ACTIVITY_EVIDENCE").map(std::path::PathBuf::from)
+    else {
+        return;
+    };
+    let root = root.join("island-styles");
+    let scale = 2f32;
+    type Setup = fn(&mut Applet);
+    let states: &[(&str, f32, &[&str], Setup)] = &[
+        ("idle-collapsed", 0., &[], |app| app.kind = Kind::Idle),
+        ("idle", 1., &["activity-dnd", "activity-timer", "activity-preferences"], |app| {
+            app.kind = Kind::Idle
+        }),
+        ("music-collapsed", 0., &[], |app| {
+            timed(app, 72_000);
+            artwork(app);
+        }),
+        (
+            "music",
+            1.,
+            &["activity-artwork", "activity-previous", "activity-pause", "activity-next", "activity-outputs"],
+            |app| {
+                timed(app, 72_000);
+                artwork(app);
+            },
+        ),
+        ("music-no-art-paused", 1., &["activity-artwork", "activity-play"], |app| {
+            app.snapshot.music = Some(bridge::Music {
+                playing: false,
+                ..music()
+            });
+            app.kind = Kind::Music;
+        }),
+        ("music-empty", 1., &["activity-music-settings"], |app| {
+            app.snapshot.music = None;
+            app.kind = Kind::Music;
+        }),
+        ("focus-collapsed", 0., &[], |app| {
+            app.snapshot.focus.running = true;
+            app.snapshot.focus.ready = false;
+            app.snapshot.focus.ends_at_ms = Some(app.now_ms + 900_000);
+            app.kind = Kind::Focus;
+        }),
+        ("focus-running", 1., &["activity-focus-action"], |app| {
+            app.snapshot.focus.running = true;
+            app.snapshot.focus.ready = false;
+            app.snapshot.focus.ends_at_ms = Some(app.now_ms + 900_000);
+            app.kind = Kind::Focus;
+        }),
+        ("focus-ready", 1., &["activity-focus-action"], |app| app.kind = Kind::Focus),
+        ("focus-paused", 1., &["activity-focus-action"], |app| {
+            app.snapshot.focus.ready = false;
+            app.snapshot.focus.remaining_ms = 754_000;
+            app.kind = Kind::Focus;
+        }),
+        ("focus-complete", 1., &["activity-focus-action"], |app| {
+            app.snapshot.focus.done = true;
+            app.kind = Kind::Focus;
+        }),
+        ("calendar-collapsed", 0., &[], |app| {
+            meeting(app, 180_000, Some("https://meet.google.com/abc-defg-hij"), Some([0x33, 0xb6, 0x79]))
+        }),
+        (
+            "calendar-soon-join",
+            1.,
+            &["activity-dismiss-calendar", "activity-open-calendar"],
+            |app| meeting(app, 180_000, Some("https://meet.google.com/abc-defg-hij"), Some([0x33, 0xb6, 0x79])),
+        ),
+        (
+            "calendar-now-no-link",
+            1.,
+            &["activity-dismiss-calendar", "activity-open-calendar"],
+            |app| meeting(app, -600_000, None, Some([0xd5, 0x00, 0x00])),
+        ),
+        ("calendar-later-default-colour", 1., &["activity-open-calendar"], |app| {
+            meeting(app, 12_600_000, None, None)
+        }),
+        ("calendar-empty", 1., &["activity-open-calendar"], |app| {
+            app.snapshot.calendar = None;
+            app.kind = Kind::Calendar;
+        }),
+        ("timer-collapsed", 0., &[], |app| {
+            app.snapshot.timer = Some(timer::Timer::start(5 * 60_000, app.now_ms - 72_000));
+            app.kind = Kind::Timer;
+        }),
+        (
+            "timer",
+            1.,
+            &["activity-timer-add", "activity-timer-cancel", "activity-timer-pause"],
+            |app| {
+                app.snapshot.timer = Some(timer::Timer::start(5 * 60_000, app.now_ms - 72_000));
+                app.kind = Kind::Timer;
+            },
+        ),
+        ("timer-done", 1., &["activity-timer-dismiss", "activity-timer-again"], |app| {
+            let mut t = timer::Timer::start(60_000, app.now_ms - 61_000);
+            t.expire(app.now_ms);
+            app.snapshot.timer = Some(t);
+            app.kind = Kind::Timer;
+        }),
+        ("timer-picker", 1., &["activity-timer-1", "activity-timer-start"], |app| {
+            app.kind = Kind::Idle;
+            app.ui.view = live::View::Picker;
+        }),
+        ("downloading", 1., &["activity-transfer-folder"], downloading),
+        ("download-done", 1., &["activity-transfer-open"], downloaded),
+        ("copying-collapsed", 0., &[], copying),
+        ("notification", 1., &["activity-note-dismiss"], |app| {
+            notify(app, note(1, "Chat", "user-available-symbolic", "Sam", "Running five minutes late, start without me"));
+            app.kind = Kind::Notification(1);
+        }),
+        ("notification-urgent", 1., &["activity-note-dismiss"], |app| {
+            let mut n = note(9, "Power", "battery-caution-symbolic", "Battery critically low", "5% left. Plug in now.");
+            n.urgent = true;
+            notify(app, n);
+            app.kind = Kind::Notification(9);
+        }),
+        ("system-power", 1., &["activity-system-settings"], |app| {
+            system_card(app, system::Source::Power, "Battery low", "About 20 minutes left", "9%")
+        }),
+        ("system-audio", 1., &["activity-system-settings"], |app| {
+            system_card(app, system::Source::Audio, "Headphones", "Now playing through WH-1000XM5", "")
+        }),
+        ("system-microphone", 1., &["activity-system-settings"], |app| {
+            system_card(app, system::Source::Microphone, "Microphone on", "Firefox", "")
+        }),
+        ("system-camera", 1., &["activity-system-settings"], |app| {
+            system_card(app, system::Source::Camera, "Camera on", "Video call", "")
+        }),
+        ("system-network", 1., &["activity-system-settings"], |app| {
+            system_card(app, system::Source::Network, "Connected", "Home Wi-Fi", "")
+        }),
+        ("system-bluetooth", 1., &["activity-system-settings"], |app| {
+            system_card(app, system::Source::Bluetooth, "Buds", "Connected", "70%")
+        }),
+        ("system-updates", 1., &["activity-system-settings"], |app| {
+            system_card(app, system::Source::Updates, "12 updates", "Ready to install", "")
+        }),
+        ("camera-dot-collapsed", 0., &["activity-privacy-camera"], |app| {
+            timed(app, 72_000);
+            app.snapshot.system = vec![activity(system::Source::Camera, "Camera on", "", None)];
+        }),
+        ("chooser", 1., &["activity-choice-timer"], |app| {
+            app.snapshot.music = Some(music());
+            app.kind = Kind::Music;
+            app.chooser = true;
+        }),
+        ("offline", 1., &["activity-settings", "activity-start"], |app| {
+            app.commands = None;
+        }),
+    ];
+    let styles = [
+        ("theme-light", IslandStyle::Theme, cosmic::Theme::light(), CosmicPanelBackground::Light, ([214., 196., 170.], [168., 186., 204.])),
+        ("theme-dark", IslandStyle::Theme, cosmic::Theme::dark(), CosmicPanelBackground::Dark, ([46., 58., 74.], [96., 84., 110.])),
+        // Dark on a light panel: the island owns its surface either way.
+        ("dark", IslandStyle::Dark, cosmic::Theme::light(), CosmicPanelBackground::Light, ([214., 196., 170.], [168., 186., 204.])),
+    ];
+    for attached in [false, true] {
+        for (style_name, style, theme, background, wall) in &styles {
+            for (name, p, ids, setup) in states {
+                // The Standard bar gets the open cards only.
+                if attached && *p < 1. {
+                    continue;
+                }
+                let mut app = app();
+                app.now_ms = chrono::Utc::now().timestamp_millis();
+                let _ = app.update(Message::Notes(notifications::Event::Ready(true)));
+                app.snapshot.preferences.style = *style;
+                app.core.applet.background = background.clone();
+                if attached {
+                    app.supported = true;
+                    app.panel_frame = host::Frame {
+                        height: 32.,
+                        padding: 4.,
+                        radius: 8.,
+                        attached: true,
+                        opacity: 0.85,
+                    };
+                }
+                setup(&mut app);
+                app.popup = Some(window::Id::unique());
+                app.held = true;
+                app.popup_extra = app.live_extra();
+                app.motion.retarget(*p, false, Instant::now());
+                let frame = app.frame();
+                let (w, h) = (frame.popup_width(), app.popup_height());
+                let mut ui = crate::native_test::Native::new(Size::new(w, h));
+                let label = format!("{name} {style_name} attached={attached}");
+                assert!(ui.duplicate_ids(app.capsule(true)).is_empty(), "{label}");
+                for id in *ids {
+                    let b = ui.bounds(app.capsule(true), id);
+                    assert!(
+                        b.width > 0. && b.x >= 0. && b.y >= 0. && b.x + b.width <= w + 0.5 && b.y + b.height <= h + 0.5,
+                        "{label}: {id} {b:?} outside {w}x{h}"
+                    );
+                }
+                let pixels = ui.render_scaled(app.capsule(true), theme, scale as f64);
+                let panel = Palette::new(&app.core.applet, IslandStyle::Theme).surface;
+                save_scene(
+                    &root.join(format!(
+                        "{}{name}-{style_name}.png",
+                        if attached { "standard-" } else { "" }
+                    )),
+                    &pixels,
+                    ((w * scale) as usize, (h * scale) as usize),
+                    &frame,
+                    panel,
+                    *wall,
+                    scale,
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn attached_card_joins_a_matching_bar_and_floats_below_otherwise() {
+    use super::preferences::IslandStyle;
+    use cosmic::applet::cosmic_panel_config::CosmicPanelBackground;
+    use cosmic::iced::Size;
+    for (style, joined) in [(IslandStyle::Theme, true), (IslandStyle::Dark, false)] {
+        let mut app = app();
+        app.now_ms = chrono::Utc::now().timestamp_millis();
+        app.snapshot.preferences.style = style;
+        app.core.applet.background = CosmicPanelBackground::Light;
+        app.supported = true;
+        app.panel_frame = host::Frame {
+            height: 32.,
+            padding: 4.,
+            radius: 8.,
+            attached: true,
+            opacity: 0.85,
+        };
+        let palette = app.palette();
+        assert_eq!(
+            palette.joins(Palette::new(&app.core.applet, IslandStyle::Theme).surface),
+            joined
+        );
+        timed(&mut app, 72_000);
+        artwork(&mut app);
+        app.popup = Some(window::Id::unique());
+        app.motion.retarget(1., false, Instant::now());
+        let frame = app.frame();
+        let (w, h) = (frame.popup_width(), app.popup_height());
+        let mut ui = crate::native_test::Native::new(Size::new(w, h));
+        // The artwork disc leads the card, under the title's glyph, with the
+        // title and artist beside it and the controls below.
+        let art = ui.bounds(app.capsule(true), "activity-artwork");
+        let glyph_x = (w - surface::ATTACHED_WIDTH) / 2. + 24.;
+        assert_eq!(art.size(), Size::new(surface::ART, surface::ART));
+        assert_eq!(art.x, glyph_x);
+        assert!(art.y >= frame.bar() + if joined { 0. } else { 6. });
+        let pause = ui.bounds(app.capsule(true), "activity-pause");
+        assert!(pause.y >= art.y + art.height);
+        assert!((pause.center().x - w / 2.).abs() < 1.);
+        let output = ui.bounds(app.capsule(true), "activity-outputs");
+        assert!(output.x > pause.x + pause.width && output.y == pause.y + 2.);
+        assert!(pause.y + pause.height <= h);
+        // Another card's details start under the glyph too, not indented.
+        app.commands = None;
+        let meta = ui.text_bounds(app.capsule(true), "Widgets and activities are paused");
+        assert!((meta.x - glyph_x).abs() < 1., "{meta:?} against {glyph_x}");
+    }
 }

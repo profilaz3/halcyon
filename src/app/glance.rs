@@ -1419,8 +1419,8 @@ mod tests {
                     let row_width = width - 2. * cards.glance_padding() - 4.;
                     let mut native = Native::new(Size::new(row_width, height));
                     let details_key = event.details_key();
-                    for (span, expected) in
-                        [(0, details_key.as_str()), (2, event.join_url().unwrap())]
+                    let join = event.join_url().unwrap();
+                    for (span, expected) in [(0, details_key.as_str()), (2, join.as_str())]
                     {
                         let bounds = paragraph.span_bounds(span);
                         assert!(!bounds.is_empty());

@@ -7,9 +7,7 @@ use super::*;
 use cosmic::iced::advanced::{Layout, Renderer as _, Widget, layout, renderer, widget::Tree};
 use cosmic::iced::{Border, Rectangle, Size, mouse};
 
-pub(super) const TIMER: Color = Color::from_rgb(1.0, 0.584, 0.0);
-pub(super) const JOB: Color = Color::from_rgb(0.039, 0.518, 1.0);
-pub(super) const DONE: Color = Color::from_rgb(0.204, 0.78, 0.349);
+use accent::{DONE, TIMER};
 /// The picker's presets and stepper need a little more than a card.
 const PICKER_EXTRA: f32 = 14.;
 const OUTPUT_ROW: f32 = 32.;
@@ -137,16 +135,9 @@ pub(super) fn shown_position(
     }
     (expected.clamp(0, total), total)
 }
-fn mix(a: Color, b: Color, t: f32) -> Color {
-    Color::from_rgb(
-        a.r + (b.r - a.r) * t,
-        a.g + (b.g - a.g) * t,
-        a.b + (b.b - a.b) * t,
-    )
-}
-/// The unlit part of a ring or scrubber: a line in the island's own ink.
+/// The unlit part of a ring or scrubber.
 fn track(palette: Palette) -> Color {
-    mix(palette.surface, palette.ink, 0.16)
+    palette.track
 }
 
 /// A progress ring, lit clockwise from the top. Drawn as round dots so it
@@ -289,8 +280,47 @@ pub(super) fn tabular<'a>(
     .align_y(cosmic::iced::Alignment::Center)
     .into()
 }
-/// A large round control. The primary one is a disc of the accent at low
-/// alpha with the glyph in the accent; the others are the island's ink.
+/// Text whose figures sit in equal cells while words keep their own width,
+/// so times such as "in 3 min · 10:00–10:30" never shift as they change.
+pub(super) fn tabular_text<'a>(value: &str, size: f32, color: Color) -> Element<'a, Message> {
+    let mut parts: Vec<Element<'a, Message>> = Vec::new();
+    let mut run = String::new();
+    let flush = |run: &mut String, parts: &mut Vec<Element<'a, Message>>| {
+        if !run.is_empty() {
+            parts.push(
+                widget::text(std::mem::take(run))
+                    .size(size)
+                    .wrapping(cosmic::iced::advanced::text::Wrapping::None)
+                    .class(cosmic::theme::Text::Color(color))
+                    .into(),
+            );
+        }
+    };
+    for c in value.chars() {
+        if c.is_ascii_digit() {
+            flush(&mut run, &mut parts);
+            parts.push(
+                widget::container(
+                    widget::text(c.to_string())
+                        .size(size)
+                        .wrapping(cosmic::iced::advanced::text::Wrapping::None)
+                        .class(cosmic::theme::Text::Color(color)),
+                )
+                .width((size * 0.62).ceil())
+                .align_x(cosmic::iced::Alignment::Center)
+                .into(),
+            );
+        } else {
+            run.push(c);
+        }
+    }
+    flush(&mut run, &mut parts);
+    widget::row(parts)
+        .align_y(cosmic::iced::Alignment::Center)
+        .into()
+}
+/// A large round control. The primary one is a deep disc of the accent with
+/// the glyph in the accent; the others are the island's ink on a quiet disc.
 fn round_style(
     palette: Palette,
     accent: Color,
@@ -327,6 +357,35 @@ fn round_style(
         disabled: Box::new(move |_| style(false, 0, true)),
     }
 }
+/// A 56px ring with the time left inside in tabular figures.
+fn ring_clock<'a>(
+    palette: Palette,
+    accent: Color,
+    reveal: f32,
+    fraction: f32,
+    left_ms: i64,
+) -> Element<'a, Message> {
+    cosmic::iced::widget::stack![
+        Ring {
+            size: 56.,
+            stroke: 4.,
+            fraction,
+            color: alpha(accent, reveal),
+            track: alpha(track(palette), reveal),
+        },
+        widget::container(tabular(
+            &timer_clock(left_ms),
+            if left_ms >= 3_600_000 { 10. } else { 13. },
+            alpha(palette.ink, reveal),
+            true,
+        ))
+        .width(56)
+        .height(56)
+        .align_x(cosmic::iced::Alignment::Center)
+        .align_y(cosmic::iced::Alignment::Center),
+    ]
+    .into()
+}
 
 impl Applet {
     pub(super) fn timer(&self) -> Option<timer::Timer> {
@@ -350,7 +409,9 @@ impl Applet {
     pub(super) fn live_panel(&self) -> bool {
         self.live()
             && !self.chooser
-            && (self.ui.view != View::Card || (self.kind == Kind::Timer && self.timer_live()))
+            && (self.ui.view != View::Card
+                || (self.kind == Kind::Timer && self.timer_live())
+                || (self.kind == Kind::Focus && self.focus_live()))
     }
     /// The open title line names the live view.
     pub(super) fn live_heading(&self, p: f32) -> Option<String> {
@@ -362,6 +423,9 @@ impl Applet {
             View::Outputs => Some("Output".into()),
             // The ring holds the time, so the title says what it is.
             View::Card if self.kind == Kind::Timer && self.timer_live() => Some("Timer".into()),
+            View::Card if self.kind == Kind::Focus && self.focus_live() => {
+                Some(self.snapshot.focus.label.clone())
+            }
             View::Card => None,
         }
     }
@@ -420,6 +484,13 @@ impl Applet {
         }
         match self.kind {
             Kind::Music => self.music_tint().map(|t| palette.readable(t)),
+            // The event's own calendar colour.
+            Kind::Calendar => self
+                .snapshot
+                .calendar
+                .as_ref()
+                .and_then(|c| c.color)
+                .map(|[r, g, b]| palette.readable(Color::from_rgb8(r, g, b))),
             Kind::Transfer
                 if self
                     .ui
@@ -487,8 +558,19 @@ impl Applet {
     }
     /// The collapsed timer's title: its time in tabular figures.
     pub(super) fn live_title<'a>(&self, palette: Palette, p: f32) -> Option<Element<'a, Message>> {
+        if p >= 0.5 || self.chooser {
+            return None;
+        }
+        if self.kind == Kind::Focus && self.focus_live() {
+            let f = &self.snapshot.focus;
+            let left = f
+                .ends_at_ms
+                .filter(|_| f.running)
+                .map_or(f.remaining_ms, |end| (end - self.now_ms).max(0));
+            return Some(tabular(&timer_clock(left), 14., palette.ink, true));
+        }
         let t = self.timer().filter(|t| !t.done)?;
-        (self.kind == Kind::Timer && p < 0.5 && !self.chooser).then(|| {
+        (self.kind == Kind::Timer).then(|| {
             tabular(
                 &timer_clock(t.remaining(self.now_ms)),
                 14.,
@@ -723,7 +805,7 @@ impl Applet {
                 "Dismiss",
                 tint,
                 reveal,
-                Role::Ghost,
+                Role::Quiet,
                 Some(Message::Live(Msg::TransferDismiss)),
             ));
         }
@@ -814,9 +896,9 @@ impl Applet {
             palette,
             widget::button::icon(widget::icon::from_name("audio-speakers-symbolic").symbolic(true))
                 .icon_size(16)
-                .padding(14)
-                .width(44)
-                .height(44)
+                .padding(12)
+                .width(40)
+                .height(40)
                 .id("activity-outputs".into())
                 .class(capsule_button(palette, tint, reveal, Role::Ghost))
                 .on_press(Message::Live(Msg::Outputs)),
@@ -866,6 +948,7 @@ impl Applet {
         match self.ui.view {
             View::Picker => self.picker_view(palette, accent, reveal),
             View::Outputs => self.outputs_view(palette, accent, reveal),
+            View::Card if self.kind == Kind::Focus => self.focus_view(palette, accent, reveal),
             View::Card => self.timer_view(palette, accent, reveal),
         }
     }
@@ -969,29 +1052,7 @@ impl Applet {
             return widget::Space::new().into();
         };
         let now = self.now_ms;
-        let ring = cosmic::iced::widget::stack![
-            Ring {
-                size: 56.,
-                stroke: 4.,
-                fraction: t.fraction(now),
-                color: alpha(accent, reveal),
-                track: alpha(track(palette), reveal),
-            },
-            widget::container(tabular(
-                &timer_clock(t.remaining(now)),
-                if t.remaining(now) >= 3_600_000 {
-                    10.
-                } else {
-                    13.
-                },
-                alpha(palette.ink, reveal),
-                true,
-            ))
-            .width(56)
-            .height(56)
-            .align_x(cosmic::iced::Alignment::Center)
-            .align_y(cosmic::iced::Alignment::Center),
-        ];
+        let ring = ring_clock(palette, accent, reveal, t.fraction(now), t.remaining(now));
         let line = match t.ends_at_ms {
             Some(end) => format!("Ends at {}", clock_time(end, self.format_24h)),
             None => "Paused".into(),
@@ -1047,14 +1108,33 @@ impl Applet {
         ])
         .spacing(6)
         .align_y(cosmic::iced::Alignment::Center);
+        self.ring_panel(palette, reveal, line, ring, controls.into())
+    }
+    /// The line under the title, then the ring at the reading edge and the
+    /// controls at the far edge: the timer and focus share one layout.
+    fn ring_panel<'a>(
+        &self,
+        palette: Palette,
+        reveal: f32,
+        line: String,
+        ring: Element<'a, Message>,
+        controls: Element<'a, Message>,
+    ) -> Element<'a, Message> {
+        // Floating, the line keeps the title's text column. Attached, it and
+        // the ring start under the title's glyph, like every card's details.
+        let (line_left, ring_left) = if self.frame().attached {
+            (12, 12)
+        } else {
+            (24, 8)
+        };
         widget::column([
             widget::container(self.text(line, 12., alpha(palette.quiet, reveal)))
-                .padding([0, 12])
+                .padding([0, 12, 0, line_left])
                 .into(),
             widget::row([
-                widget::container(ring).padding([0, 0, 0, 8]).into(),
+                widget::container(ring).padding([0, 0, 0, ring_left]).into(),
                 widget::Space::new().width(Length::Fill).into(),
-                controls.into(),
+                controls,
             ])
             .align_y(cosmic::iced::Alignment::Center)
             .width(Length::Fill)
@@ -1063,6 +1143,59 @@ impl Applet {
         .spacing(4)
         .width(Length::Fill)
         .into()
+    }
+    /// A focus or break session that is ready, counting or paused.
+    pub(super) fn focus_live(&self) -> bool {
+        let f = &self.snapshot.focus;
+        !f.done && !(f.running && f.ends_at_ms.is_some_and(|end| end <= self.now_ms))
+    }
+    /// The focus session as the timer shows itself: its ring with the time
+    /// inside, when it ends, and one accent control to start or pause.
+    fn focus_view<'a>(
+        &'a self,
+        palette: Palette,
+        accent: Color,
+        reveal: f32,
+    ) -> Element<'a, Message> {
+        let f = &self.snapshot.focus;
+        let now = self.now_ms;
+        let end = f.ends_at_ms.filter(|_| f.running);
+        let left = end.map_or(f.remaining_ms, |end| (end - now).max(0));
+        let fraction = match end {
+            Some(end) if f.remaining_ms > 0 => 1. - (end - now) as f32 / f.remaining_ms as f32,
+            _ => 0.,
+        };
+        let line = match end {
+            Some(end) => format!("Ends at {}", clock_time(end, self.format_24h)),
+            None if f.ready => {
+                if f.label == "Focus" {
+                    "Ready to focus".into()
+                } else {
+                    "Ready for a break".into()
+                }
+            }
+            None => "Paused".into(),
+        };
+        let (icon, label) = if f.running {
+            ("media-playback-pause-symbolic", "Pause")
+        } else if f.ready {
+            ("media-playback-start-symbolic", "Start")
+        } else {
+            ("media-playback-start-symbolic", "Resume")
+        };
+        let action = self.round(
+            palette,
+            accent,
+            reveal,
+            "activity-focus-action",
+            Self::tinted(icon, 20, alpha(accent, reveal)),
+            48.,
+            true,
+            label,
+            Message::Control(Command::Focus { key: f.key.clone() }),
+        );
+        let ring = ring_clock(palette, accent, reveal, fraction, left);
+        self.ring_panel(palette, reveal, line, ring, action)
     }
     fn outputs_view<'a>(
         &'a self,

@@ -78,8 +78,11 @@ impl Cards {
                             ends_at_ms: end,
                             all_day: false,
                             join: (!self.config.calendar_private)
-                                .then(|| event.join_url().map(str::to_owned))
+                                .then(|| event.join_url())
                                 .flatten(),
+                            color: event
+                                .source_color()
+                                .map(|c| [c.r, c.g, c.b].map(|v| (v * 255.).round() as u8)),
                         })
                     })
                     .min_by_key(|e| {
@@ -89,6 +92,9 @@ impl Cards {
                         )
                     })
             });
+        let art = playing
+            .and_then(|p| p.art_url.as_ref())
+            .and_then(|url| self.activity.tints.iter().find(|(u, ..)| u == url));
         Snapshot {
             calendar_minute: if calendar.is_some() {
                 now.div_euclid(60_000)
@@ -142,10 +148,8 @@ impl Cards {
             reduced_motion: !self.config.settings_animations,
             timer: self.activity.timer,
             music_seek: playing.is_some_and(|p| p.seek_request(0.).is_some()),
-            music_tint: playing
-                .and_then(|p| p.art_url.as_ref())
-                .and_then(|url| self.activity.tints.iter().find(|(u, _)| u == url))
-                .and_then(|(_, tint)| *tint),
+            music_tint: art.and_then(|(_, tint, _)| *tint),
+            music_art: art.and_then(|(_, _, thumb)| thumb.clone()),
         }
     }
     /// Applies a timer command (None: only see whether it ended) and keeps

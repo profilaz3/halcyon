@@ -249,37 +249,10 @@ pub(super) fn meeting_link(event: &Value) -> Option<String> {
     if let Some(url) = event["hangoutLink"].as_str().and_then(safe_link) {
         return Some(url);
     }
-    static LINKS: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let links = LINKS.get_or_init(|| regex::Regex::new(r#"https://[^\s<>"']+"#).unwrap());
-    for text in [event["description"].as_str(), event["location"].as_str()]
+    [event["description"].as_str(), event["location"].as_str()]
         .into_iter()
         .flatten()
-    {
-        for found in links.find_iter(text) {
-            let value = found
-                .as_str()
-                .trim_end_matches(['.', ',', ';', ')'])
-                .replace("&amp;", "&");
-            if let Some(link) = safe_link(&value) {
-                let url = reqwest::Url::parse(&link).ok()?;
-                let host = url.host_str()?;
-                if [
-                    "meet.google.com",
-                    "zoom.us",
-                    "teams.microsoft.com",
-                    "teams.live.com",
-                    "whereby.com",
-                    "webex.com",
-                ]
-                .iter()
-                .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
-                {
-                    return Some(link);
-                }
-            }
-        }
-    }
-    None
+        .find_map(crate::data::call_link)
 }
 fn description_text(input: &str) -> String {
     static TAGS: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();

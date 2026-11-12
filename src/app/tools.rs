@@ -331,8 +331,11 @@ impl Cards {
             .as_ref()
             .ok()
             .and_then(|art| crate::activity_island::tint::dominant(&art.rgba));
-        self.activity.tints.retain(|(cached, _)| *cached != url);
-        self.activity.tints.insert(0, (url.clone(), tint));
+        let thumb = result.as_ref().ok().and_then(|art| {
+            crate::activity_island::tint::thumbnail(&art.rgba, art.width, art.height)
+        });
+        self.activity.tints.retain(|(cached, ..)| *cached != url);
+        self.activity.tints.insert(0, (url.clone(), tint, thumb));
         self.activity.tints.truncate(ART_CACHE);
         // A failed picture is remembered too, so it is not fetched again.
         let handle = result

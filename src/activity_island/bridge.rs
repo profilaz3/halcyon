@@ -41,6 +41,9 @@ pub struct Snapshot {
     /// The artwork's dominant colour, worked out once per track.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub music_tint: Option<[u8; 3]>,
+    /// A small square of the artwork, `tint::THUMB` pixels a side, RGB in base64.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub music_art: Option<String>,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -84,6 +87,9 @@ pub struct Calendar {
     /// A checked https meeting link, never sent for private calendars.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub join: Option<String>,
+    /// The event's calendar colour, the card's accent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<[u8; 3]>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, tag = "action", rename_all = "snake_case")]
@@ -152,8 +158,9 @@ pub struct Owner {
     pub system: Vec<super::system::Activity>,
     pub clients: usize,
     pub timer: Option<super::timer::Timer>,
-    /// Artwork address and its dominant colour, as many as the art cache.
-    pub tints: Vec<(String, Option<[u8; 3]>)>,
+    /// Artwork address, its dominant colour and its island thumbnail, as
+    /// many as the art cache.
+    pub tints: Vec<(String, Option<[u8; 3]>, Option<String>)>,
     sender: watch::Sender<Snapshot>,
     identity: u64,
 }

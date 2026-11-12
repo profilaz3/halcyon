@@ -1207,6 +1207,60 @@ fn reactive_activity_preferences_are_reachable_saved_and_undoable() {
 }
 
 #[test]
+fn activity_island_style_is_chosen_saved_and_undone() {
+    use crate::activity_island::preferences::IslandStyle;
+    let name = "activity_island_style_is_chosen_saved_and_undone";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    seed(
+        &root.join("cosmic-root/config/cosmic"),
+        &[(
+            "com.system76.CosmicPanel.Panel",
+            "plugins_center",
+            "Some([\"io.github.profilaz3.Halcyon.Activity\"])",
+        )],
+    );
+    send_settings(&mut app, Message::DesktopEditor(desktop::Message::Refresh));
+    send_settings(
+        &mut app,
+        Message::OpenBar(crate::desktop::panels::PanelKind::Panel),
+    );
+    send_settings(
+        &mut app,
+        Message::ObjectTab(crate::settings::navigation::ObjectTab::Content),
+    );
+    let size = Size::new(1280., 900.);
+    send_settings(&mut app, Message::Resized(size));
+    let mut native = crate::native_test::Native::new(size);
+    assert_eq!(Config::load().activity_island.style, IslandStyle::Theme);
+    let b = native_reveal(&app, &mut native, "activity-preference-style");
+    assert!(b.x >= 0. && b.x + b.width <= size.width && b.y >= 0. && b.y + b.height <= size.height);
+    send_settings(&mut app, Message::ActivityStyle(1));
+    assert_eq!(Config::load().activity_island.style, IslandStyle::Dark);
+    assert!(Config::load().activity_island.media, "other choices are kept");
+    let b = native_reveal(&app, &mut native, "activity-preference-style");
+    assert!(b.width > 0. && b.y + b.height <= size.height);
+    native.capture(
+        app.settings_view(),
+        &cosmic::Theme::dark(),
+        "activity-island-style",
+    );
+    send_settings(&mut app, Message::UndoDesktop);
+    assert_eq!(Config::load().activity_island.style, IslandStyle::Theme, "the style undoes");
+}
+
+#[test]
 fn activity_app_rules_list_changes_resets_and_undoes() {
     use crate::activity_island::preferences::AppRule;
     let name = "activity_app_rules_list_changes_resets_and_undoes";

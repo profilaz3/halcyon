@@ -416,6 +416,7 @@ mod tests {
             ends_at_ms: a.now_ms + 7_200_000,
             all_day: false,
             join: None,
+            color: None,
         });
         assert_eq!(a.automatic_kind(), Kind::Idle);
         a.snapshot.calendar.as_mut().unwrap().starts_at_ms = a.now_ms + 120_000;
@@ -460,6 +461,7 @@ mod tests {
             ends_at_ms: a.now_ms + 1_800_000,
             all_day: false,
             join: None,
+            color: None,
         });
         assert_eq!(a.automatic_kind(), Kind::Calendar);
         a.dismissed_calendar = Some("event".into());
@@ -689,6 +691,7 @@ mod integration_tests {
             ends_at_ms: a.now_ms + 900_000,
             all_day: false,
             join: None,
+            color: None,
         });
     }
     #[test]

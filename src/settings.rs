@@ -621,6 +621,8 @@ pub enum Message {
     Explain(u64),
     ActivityPreference(&'static str, bool),
     ActivityLead(usize),
+    /// The island's look: follow the theme, or always dark.
+    ActivityStyle(usize),
     /// Sets, or with `None` removes, the island's rule for one listed app.
     ActivityAppRule(usize, Option<crate::activity_island::preferences::AppRule>),
     ReadSystemMotion,
@@ -2730,6 +2732,11 @@ impl Settings {
             Message::ActivityPreference(key, on) => self.save_activity(json!({key:on})),
             Message::ActivityLead(index) => {
                 self.save_activity(json!({"lead_minutes":([5,10,15][index.min(2)])}))
+            }
+            Message::ActivityStyle(index) => {
+                use crate::activity_island::preferences::IslandStyle;
+                let style = IslandStyle::ALL[index.min(IslandStyle::ALL.len() - 1)];
+                self.save_activity(json!({ "style": style.key() }))
             }
             Message::ActivityAppRule(index, rule) => {
                 let mut rules = self.config.activity_island.app_rules.clone();

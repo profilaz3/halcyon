@@ -48,7 +48,7 @@ impl Frame {
     }
     pub fn popup_height(self) -> f32 {
         if self.attached {
-            self.bar() + super::surface::CARD_HEIGHT
+            self.bar() + super::surface::CARD_ROOM
         } else {
             (super::HEIGHT + self.inset() + self.padding).max(self.bar())
         }

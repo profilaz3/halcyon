@@ -8,6 +8,7 @@ mod live;
 mod motion;
 mod notifications;
 mod outputs;
+mod palette;
 pub(crate) mod popups;
 pub mod preferences;
 mod quiet;
@@ -20,6 +21,9 @@ pub(crate) mod timer;
 pub(crate) mod tint;
 mod transfers;
 use bridge::{ClientEvent, Command, Snapshot};
+#[cfg(test)]
+use palette::contrast;
+use palette::{Palette, accent};
 use reactive::{NOTE_REVEAL, PENDING_PAUSE};
 use cosmic::app::{Core, Task};
 use cosmic::iced::{Color, Length, Subscription, keyboard, window};
@@ -37,8 +41,6 @@ const MOON: &str = "weather-clear-night-symbolic";
 const DOT: f32 = 6.;
 /// Room around a privacy dot that still opens its card.
 const DOT_REACH: f32 = 4.;
-const CAMERA_DOT: Color = Color::from_rgb(0.20, 0.78, 0.35);
-const MICROPHONE_DOT: Color = Color::from_rgb(1.0, 0.58, 0.0);
 const ICON_BADGE: f32 = 22.;
 const BADGE_WIDTH: f32 = 30.;
 const OVERVIEW_GAP: f32 = 2.;
@@ -72,79 +74,6 @@ fn note_age(at_ms: i64, now_ms: i64, format_24h: bool) -> String {
         _ => clock_time(at_ms, format_24h),
     }
 }
-/// The host owns the resting background, including Islands finishes. The
-/// expanded surface uses the panel's native palette and stays opaque for reading.
-#[derive(Clone, Copy)]
-struct Palette {
-    surface: Color,
-    ink: Color,
-    quiet: Color,
-}
-impl Palette {
-    fn for_panel(context: &cosmic::applet::Context) -> Self {
-        use cosmic::applet::cosmic_panel_config::CosmicPanelBackground;
-        let theme = context.theme().unwrap_or_else(cosmic::theme::active);
-        let native = theme.cosmic();
-        let surface = match context.background {
-            CosmicPanelBackground::Color(rgb) => Color::from_rgb(rgb[0], rgb[1], rgb[2]),
-            _ => native.background(false).base.into(),
-        };
-        let native_ink: Color = native.background(false).on.into();
-        let ink = if contrast(native_ink, surface) >= 4.5 {
-            native_ink
-        } else if contrast(Color::WHITE, surface) > contrast(Color::BLACK, surface) {
-            Color::WHITE
-        } else {
-            Color::BLACK
-        };
-        Self {
-            surface: alpha(surface, 1.),
-            ink,
-            quiet: Color::from_rgb(
-                surface.r + (ink.r - surface.r) * 0.72,
-                surface.g + (ink.g - surface.g) * 0.72,
-                surface.b + (ink.b - surface.b) * 0.72,
-            ),
-        }
-    }
-    /// Urgent alerts use one warm amber, kept readable on the panel.
-    fn warning(self) -> Color {
-        self.readable(Color::from_rgb8(240, 180, 70))
-    }
-    fn accent(self, kind: Kind) -> Color {
-        self.readable(kind.accent())
-    }
-    fn readable(self, color: Color) -> Color {
-        // Keep activity colors recognizable while ensuring readable labels on
-        // light or explicitly colored panels. This is bounded, with no IO.
-        for step in 0..=20 {
-            let t = step as f32 / 20.;
-            let candidate = Color::from_rgb(
-                color.r + (self.ink.r - color.r) * t,
-                color.g + (self.ink.g - color.g) * t,
-                color.b + (self.ink.b - color.b) * t,
-            );
-            if contrast(candidate, self.surface) >= 4.5 {
-                return candidate;
-            }
-        }
-        self.ink
-    }
-}
-fn contrast(a: Color, b: Color) -> f32 {
-    let luminance = |c: Color| {
-        let linear = |v: f32| {
-            if v <= 0.04045 {
-                v / 12.92
-            } else {
-                ((v + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * linear(c.r) + 0.7152 * linear(c.g) + 0.0722 * linear(c.b)
-    };
-    let (a, b) = (luminance(a), luminance(b));
-    (a.max(b) + 0.05) / (a.min(b) + 0.05)
-}
 /// The pointer rests this long before the capsule opens, so crossing it on the
 /// way to something else does nothing. Motion can only postpone it up to the cap.
 const HOVER_DELAY: Duration = Duration::from_millis(150);
@@ -173,6 +102,11 @@ enum Role {
     /// A small count that must read as a control on any panel.
     Badge,
 }
+impl Palette {
+    fn accent(self, kind: Kind) -> Color {
+        self.readable(kind.accent())
+    }
+}
 fn alpha(color: Color, a: f32) -> Color {
     Color { a, ..color }
 }
@@ -198,7 +132,11 @@ fn capsule_button(palette: Palette, tint: Color, reveal: f32, role: Role) -> cos
                     reveal,
                 )
             }
-            Role::Transport => alpha(tint, if disabled { 0.2 * reveal } else { reveal }),
+            // The primary round control: a deep disc of the accent.
+            Role::Transport => alpha(
+                tint,
+                if disabled { 0.08 } else { [0.2, 0.28, 0.36][level] } * reveal,
+            ),
             Role::Quiet if disabled => alpha(palette.ink, 0.03 * reveal),
             Role::Quiet => alpha(palette.ink, [0.07, 0.13, 0.18][level] * reveal),
             Role::Ghost if disabled => Color::TRANSPARENT,
@@ -207,7 +145,7 @@ fn capsule_button(palette: Palette, tint: Color, reveal: f32, role: Role) -> cos
         };
         cosmic::widget::button::Style {
             icon_color: Some(if role == Role::Transport {
-                alpha(palette.surface, ink)
+                alpha(tint, ink)
             } else if role == Role::Identity {
                 tint
             } else {
@@ -322,14 +260,14 @@ impl Kind {
     }
     fn accent(self) -> Color {
         match self {
-            Self::Idle => Color::from_rgb8(180, 190, 187),
-            Self::System(_) => Color::from_rgb8(150, 198, 224),
-            Self::Music => Color::from_rgb8(126, 213, 190),
-            Self::Focus => Color::from_rgb8(190, 165, 235),
-            Self::Calendar => Color::from_rgb8(230, 190, 105),
-            Self::Notification(_) => Color::from_rgb8(236, 160, 176),
-            Self::Timer => live::TIMER,
-            Self::Transfer => live::JOB,
+            Self::Idle => accent::IDLE,
+            Self::System(_) => accent::SYSTEM,
+            Self::Music => accent::MUSIC,
+            Self::Focus => accent::FOCUS,
+            Self::Calendar => accent::CALENDAR,
+            Self::Notification(_) => accent::NOTIFICATION,
+            Self::Timer => accent::TIMER,
+            Self::Transfer => accent::JOB,
         }
     }
     /// A stable widget id fragment.
@@ -351,6 +289,8 @@ pub struct Applet {
     popup: Option<window::Id>,
     motion: motion::Motion,
     snapshot: Snapshot,
+    /// The artwork tile, decoded once per picture from the snapshot.
+    art: Option<(String, widget::image::Handle)>,
     commands: Option<tokio::sync::mpsc::Sender<Command>>,
     kind: Kind,
     held: bool,
@@ -519,6 +459,7 @@ impl Application for Applet {
                 popup: None,
                 motion: motion::Motion::new(now),
                 snapshot: Snapshot::default(),
+                art: None,
                 commands: None,
                 kind: Kind::Idle,
                 held: false,
@@ -676,6 +617,28 @@ impl Application for Applet {
     }
 }
 impl Applet {
+    /// Decodes a new artwork thumbnail; the same picture is never decoded twice.
+    fn keep_art(&mut self) {
+        match &self.snapshot.music_art {
+            None => self.art = None,
+            Some(encoded) if self.art.as_ref().is_some_and(|(k, _)| k == encoded) => {}
+            Some(encoded) => {
+                let side = tint::DISC as u32;
+                self.art = tint::thumbnail_pixels(encoded)
+                    .and_then(|rgba| tint::disc(&rgba))
+                    .map(|rgba| {
+                        (
+                            encoded.clone(),
+                            widget::image::Handle::from_rgba(side, side, rgba),
+                        )
+                    });
+            }
+        }
+    }
+    /// Every surface, text and line colour the island draws, for its style.
+    fn palette(&self) -> Palette {
+        Palette::new(&self.core.applet, self.snapshot.preferences.style)
+    }
     /// Every message, before the restart for an update is re-armed.
     fn handle(&mut self, message: Message) -> Task<Message> {
         let now = Instant::now();
@@ -829,6 +792,7 @@ impl Applet {
                     self.music_sampled = now;
                     self.observe_system_deadlines(&snapshot, now);
                     self.snapshot = snapshot;
+                    self.keep_art();
                     if !self.snapshot.preferences.notifications {
                         self.notes.clear();
                         self.pending.clear();
@@ -1879,7 +1843,7 @@ impl Applet {
                 13.,
                 alpha(
                     if role == Role::Primary && press.is_some() {
-                        palette.surface
+                        palette.on_accent(tint)
                     } else {
                         palette.ink
                     },
@@ -1948,6 +1912,67 @@ impl Applet {
             widget::tooltip::Position::Top,
         )
     }
+    /// The track's artwork as a disc, or the music glyph on a disc of its
+    /// colour. It brings the player forward.
+    fn artwork<'a>(
+        &self,
+        palette: Palette,
+        tint: Color,
+        reveal: f32,
+        key: &str,
+    ) -> Element<'a, Message> {
+        const SIZE: f32 = surface::ART;
+        // The disc carries its own soft edge, so it is drawn unclipped.
+        let content: Element<'a, Message> = match &self.art {
+            Some((_, handle)) => widget::image(handle.clone())
+                .width(SIZE)
+                .height(SIZE)
+                .content_fit(cosmic::iced::ContentFit::Fill)
+                .opacity(reveal)
+                .into(),
+            None => {
+                let fill = alpha(palette.deep(tint), reveal);
+                widget::container(
+                    widget::icon::from_name(Kind::Music.icon())
+                        .symbolic(true)
+                        .size(18)
+                        .icon()
+                        .class(cosmic::theme::Svg::custom(move |_| {
+                            cosmic::iced::widget::svg::Style {
+                                color: Some(alpha(tint, reveal)),
+                            }
+                        })),
+                )
+                .width(SIZE)
+                .height(SIZE)
+                .align_x(cosmic::iced::Alignment::Center)
+                .align_y(cosmic::iced::Alignment::Center)
+                .class(cosmic::theme::Container::custom(move |_| {
+                    cosmic::widget::container::Style {
+                        background: Some(fill.into()),
+                        border: cosmic::iced::Border {
+                            radius: (SIZE / 2.).into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
+                }))
+                .into()
+            }
+        };
+        self.tip(
+            palette,
+            widget::button::custom(content)
+                .id("activity-artwork".into())
+                .width(SIZE)
+                .height(SIZE)
+                .padding(0)
+                .class(capsule_button(palette, tint, reveal, Role::Identity))
+                .on_press(Message::Control(Command::Raise { key: key.to_owned() })),
+            "Show player",
+            widget::tooltip::Position::Top,
+        )
+    }
     fn actions(&self, palette: Palette, tint: Color, reveal: f32) -> Element<'_, Message> {
         let now = self.now_ms;
         let mut row = widget::row([])
@@ -1960,11 +1985,7 @@ impl Applet {
                 "Settings",
                 tint,
                 reveal,
-                if self.commands.is_none() && !self.starting {
-                    Role::Ghost
-                } else {
-                    Role::Quiet
-                },
+                Role::Quiet,
                 Some(Message::Settings("general")),
             ));
             if self.commands.is_none() && !self.starting {
@@ -2059,7 +2080,7 @@ impl Applet {
                     "Clear all",
                     tint,
                     reveal,
-                    Role::Ghost,
+                    Role::Quiet,
                     Some(Message::NotesClear),
                 ));
             }
@@ -2090,11 +2111,7 @@ impl Applet {
                     "Dismiss",
                     tint,
                     reveal,
-                    if note.actions.is_empty() {
-                        Role::Quiet
-                    } else {
-                        Role::Ghost
-                    },
+                    Role::Quiet,
                     Some(Message::NoteDismiss(id)),
                 ));
                 for (index, (key, label)) in note.actions.iter().take(2).enumerate() {
@@ -2108,7 +2125,7 @@ impl Applet {
                         label,
                         tint,
                         reveal,
-                        if index == 0 { Role::Primary } else { Role::Ghost },
+                        if index == 0 { Role::Primary } else { Role::Quiet },
                         Some(Message::NoteAction(id, key.clone())),
                     ));
                 }
@@ -2121,7 +2138,7 @@ impl Applet {
                         "Clear all",
                         tint,
                         reveal,
-                        Role::Ghost,
+                        Role::Quiet,
                         Some(Message::NotesClear),
                     ));
                 }
@@ -2165,9 +2182,13 @@ impl Applet {
                         self.tip(palette, button, label, widget::tooltip::Position::Top)
                     };
                     let key = || m.key.clone();
+                    // The transport sits centred, the output button at the
+                    // end, balanced by an empty cell at the start.
                     row = row
-                        // Balances the output button so the transport stays centred.
-                        .push(widget::Space::new().width(44).height(44))
+                        .width(Length::Fill)
+                        .spacing(0)
+                        .push(widget::Space::new().width(40))
+                        .push(widget::Space::new().width(Length::Fill))
                         .push(transport(
                             "media-skip-backward-symbolic",
                             "Previous",
@@ -2199,6 +2220,7 @@ impl Applet {
                             Role::Ghost,
                             Command::Next { key: key() },
                         ))
+                        .push(widget::Space::new().width(Length::Fill))
                         .push(self.outputs_button(palette, tint, reveal));
                 }
                 None => {
@@ -2258,11 +2280,7 @@ impl Applet {
                         "Dismiss",
                         tint,
                         reveal,
-                        if join.is_some() {
-                            Role::Ghost
-                        } else {
-                            Role::Quiet
-                        },
+                        Role::Quiet,
                         Some(Message::Dismiss),
                     ));
                 }
@@ -2282,7 +2300,7 @@ impl Applet {
                         "Calendar settings",
                         tint,
                         reveal,
-                        if event { Role::Ghost } else { Role::Quiet },
+                        Role::Quiet,
                         Some(Message::Settings("calendar")),
                     ),
                 });
@@ -2298,7 +2316,7 @@ impl Applet {
         }
     }
     fn capsule(&self, popup: bool) -> Element<'_, Message> {
-        let palette = Palette::for_panel(&self.core.applet);
+        let palette = self.palette();
         let p = if popup { self.motion.value } else { 0. };
         let live = self.live();
         let recent_only = live && self.listing() && self.notes.is_empty();
@@ -2459,11 +2477,29 @@ impl Applet {
         } else {
             cue
         };
-        let title_width = (room - if cue.is_empty() { 0. } else { cue_width }).max(40.);
+        // Open on a track, the artwork disc leads the card: floating, it
+        // takes the glyph's place beside the title; attached, the card
+        // repeats the title beside it under the bar.
+        let art = popup
+            && live
+            && !self.chooser
+            && !listing
+            && !panel
+            && self.kind == Kind::Music
+            && self.snapshot.music.is_some();
+        let art_glyph = art && !attached && p >= 0.5;
+        let title_width = (room
+            - if cue.is_empty() { 0. } else { cue_width }
+            - if art_glyph { (surface::ART - 14.) * reveal } else { 0. })
+        .max(40.);
         let live_glyph = (live && !self.chooser && !heading)
             .then(|| self.live_glyph(palette, accent))
             .flatten();
-        let glyph = if let Some(glyph) = live_glyph {
+        let glyph = if art_glyph {
+            widget::Space::new()
+                .width(16. + (surface::ART - 14.) * reveal)
+                .into()
+        } else if let Some(glyph) = live_glyph {
             glyph
         } else if live
             && !self.chooser
@@ -2475,6 +2511,7 @@ impl Applet {
         } else {
             widget::icon::from_name(icon).symbolic(true).size(16).into()
         };
+        let header = (art && attached).then(|| title.clone());
         // A counting timer keeps its figures still.
         let title_text: Element<'_, Message> =
             match live.then(|| self.live_title(palette, p)).flatten() {
@@ -2509,7 +2546,7 @@ impl Applet {
             let camera = activity.source == system::Source::Camera;
             let muted = activity.title.ends_with("muted");
             let color = alpha(
-                if camera { CAMERA_DOT } else { MICROPHONE_DOT },
+                palette.readable(if camera { accent::CAMERA } else { accent::MICROPHONE }),
                 if muted { 0.45 } else { 1. },
             );
             let label = if activity.detail.is_empty() {
@@ -2646,8 +2683,28 @@ impl Applet {
             .height(32)
             .clip(true)
             .into()
+        } else if live && !self.chooser && matches!(self.kind, Kind::Calendar | Kind::Focus) {
+            // Times in equal cells, so a counting cue never shifts.
+            live::tabular_text(&meta, 12., alpha(palette.quiet, meta_reveal))
         } else {
             self.text(meta, 12., alpha(palette.quiet, meta_reveal))
+        };
+        let meta = match header {
+            Some(header) => widget::column([
+                widget::text(header)
+                    .size(14.)
+                    .font(cosmic::font::semibold())
+                    .wrapping(cosmic::iced::advanced::text::Wrapping::None)
+                    .ellipsize(cosmic::iced::advanced::text::Ellipsize::End(
+                        cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
+                    ))
+                    .class(cosmic::theme::Text::Color(alpha(palette.ink, meta_reveal)))
+                    .into(),
+                meta,
+            ])
+            .spacing(1)
+            .into(),
+            None => meta,
         };
         let badge = |content: Element<'static, Message>, id: &str, width: f32, press: Message| {
             widget::button::custom(
@@ -2788,6 +2845,10 @@ impl Applet {
             others_width: if others > 0 { others_width } else { 0. },
             balance: if others > 0 { balance } else { 0. },
             wrap_meta: note,
+            joined: palette.joins(
+                Palette::new(&self.core.applet, preferences::IslandStyle::Theme).surface,
+            ),
+            art,
             // Hand the title to the popup after its first frame. Restore it at
             // the exact resting frame before destroying the closing popup.
             show_content: popup || self.popup.is_none() || self.motion.value == 0.,
@@ -2807,18 +2868,17 @@ impl Applet {
                         if live {
                             accent
                         } else {
-                            // Strong but not stark: ink eased slightly toward the surface.
-                            Color::from_rgb(
-                                palette.ink.r + (palette.surface.r - palette.ink.r) * 0.18,
-                                palette.ink.g + (palette.surface.g - palette.ink.g) * 0.18,
-                                palette.ink.b + (palette.surface.b - palette.ink.b) * 0.18,
-                            )
+                            palette.soft_ink()
                         },
                         reveal,
                     )
                 },
                 activities,
                 times,
+                match self.snapshot.music.as_ref().filter(|_| art) {
+                    Some(m) => self.artwork(palette, accent, reveal, &m.key),
+                    None => widget::Space::new().into(),
+                },
             ],
             progress: p,
             popup,

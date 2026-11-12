@@ -344,7 +344,7 @@ pub(super) const STARTUP: SearchHit = hit(
 pub(super) const ACTIVITY_ISLAND: SearchHit = hit(
     Page::DesktopDock,
     "Activity pill",
-    "activity island capsule notifications do not disturb dnd camera microphone privacy bluetooth meetings music media",
+    "activity island capsule notifications do not disturb dnd camera microphone privacy bluetooth meetings music media style dark theme",
     false,
 )
 .at("panel-items")
