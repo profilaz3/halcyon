@@ -17,7 +17,12 @@ fn in_widget_service(cgroup: &str) -> bool {
     })
 }
 
-fn scope_command(executable: &Path, args: impl Iterator<Item = std::ffi::OsString>) -> Command {
+/// Whether this process runs inside the widgets' service.
+pub fn in_widget_service_now() -> bool {
+    fs::read_to_string("/proc/self/cgroup").is_ok_and(|cgroup| in_widget_service(&cgroup))
+}
+
+fn scope() -> Command {
     let mut command = Command::new("/usr/bin/systemd-run");
     // A scope moves the new process out of halcyon.service's cgroup while
     // retaining the caller's environment (Wayland, config overrides, etc.).
@@ -29,11 +34,32 @@ fn scope_command(executable: &Path, args: impl Iterator<Item = std::ffi::OsStrin
         "--quiet",
         "--slice=app.slice",
     ]);
+    command
+}
+
+fn scope_command(executable: &Path, args: impl Iterator<Item = std::ffi::OsString>) -> Command {
+    let mut command = scope();
     command.arg(format!(
         "--unit=halcyon-settings-{}.scope",
         std::process::id()
     ));
     command.arg("--").arg(executable).args(args);
+    command
+}
+
+/// `program` with `args`, in an application scope of its own when started
+/// from inside the widgets' service. Stopping or restarting the service
+/// (after an upgrade, say) ends everything in its control group, and a
+/// browser or editor opened from a widget must outlive it.
+pub fn independent_command(program: &Path, args: &[String], in_service: bool) -> Command {
+    let mut command = if in_service {
+        let mut command = scope();
+        command.arg("--").arg(program);
+        command
+    } else {
+        Command::new(program)
+    };
+    command.args(args);
     command
 }
 
@@ -237,6 +263,26 @@ mod tests {
             0,
             "inherit the session/config environment"
         );
+    }
+
+    #[test]
+    fn programs_opened_from_the_widget_service_outlive_it() {
+        let args = vec!["https://example.com/a b".to_string()];
+        let program = Path::new("/usr/bin/xdg-open");
+        let inside = independent_command(program, &args, true);
+        assert_eq!(inside.get_program(), "/usr/bin/systemd-run");
+        let inside: Vec<_> = inside.get_args().map(|s| s.to_str().unwrap()).collect();
+        assert!(inside.contains(&"--scope") && inside.contains(&"--slice=app.slice"));
+        assert!(
+            !inside.iter().any(|arg| arg.starts_with("--unit=")),
+            "each opened program gets a scope name of its own"
+        );
+        assert!(inside.ends_with(&["--", "/usr/bin/xdg-open", "https://example.com/a b"]));
+        // Started from a terminal or Settings: nothing to move out of.
+        let outside = independent_command(program, &args, false);
+        assert_eq!(outside.get_program(), "/usr/bin/xdg-open");
+        let outside: Vec<_> = outside.get_args().map(|s| s.to_str().unwrap()).collect();
+        assert_eq!(outside, ["https://example.com/a b"]);
     }
 
     #[test]

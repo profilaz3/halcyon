@@ -296,7 +296,7 @@ fn proposal_summary(c: &Composition) -> String {
             key => key,
         };
         let value = entry.desired.as_ref().map_or("System default".into(), |v| {
-            if key.namespace() == crate::desktop::wallpaper::NAMESPACE {
+            if crate::desktop::wallpaper::modes::is_background(key.namespace()) {
                 if let Ok(entry) = ron::from_str::<crate::desktop::wallpaper::BgEntry>(v.as_str()) {
                     use crate::desktop::wallpaper::{BgColor, BgSource};
                     return match entry.source {

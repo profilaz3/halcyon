@@ -93,7 +93,8 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(native - set(controller.SETTINGS_PAGES), set())
 
     def test_desktop_subpage_deep_links_and_old_desktop_page_all_route(self):
-        for page in ('desktop-dock', 'desktop-appearance', 'desktop-wallpaper', 'desktop-icons',
+        for page in ('home', 'desktop-panel', 'activity-island', 'effects', 'looks',
+                     'desktop-dock', 'weather-effects', 'desktop-appearance', 'desktop-wallpaper', 'desktop-icons',
                      'desktop-profiles', 'desktop-windows', 'desktop-motion',
                      'desktop-workspaces', 'desktop-window-rules', 'desktop-shortcuts',
                      'desktop-automation', 'desktop',

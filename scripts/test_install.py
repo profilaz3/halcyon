@@ -61,6 +61,9 @@ class InstallTests(unittest.TestCase):
         self.assertIn(f'Exec={local}/bin/halcyon --settings', launcher)
         unit = (self.home / '.config/systemd/user/halcyon.service').read_text()
         self.assertIn(f'ExecStart={local}/bin/halcyon', unit)
+        # An upgrade restart (exit 75) starts the widgets again.
+        self.assertIn('\nRestart=on-failure\n', unit)
+        self.assertIn('\nRestartForceExitStatus=75\n', unit)
         self.assertTrue((local / 'share/cosmic-ext-halcyon/google-calendar-setup.html').is_file())
         # Nothing is enabled or started on a fresh install.
         self.assertFalse(any('enable' in call or 'restart' in call for call in self.calls))

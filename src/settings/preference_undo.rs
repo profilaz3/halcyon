@@ -46,6 +46,9 @@ fn message_scope(config: &Config, message: &Message) -> Vec<String> {
         Message::Widget(widget, _) if widget.is_tool() => add(&[widget.key(), "enabled"]),
         Message::Widget(Widget::Glance, visible) => {
             add(&["glance", "enabled"]);
+            if !*visible && config.glance_off_restores_time() {
+                add(&["enabled_widgets"]);
+            }
             if *visible && !config.glance.initialized {
                 for key in ["initialized", "show_clock", "show_weather", "show_calendar"] {
                     add(&["glance", key]);

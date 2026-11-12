@@ -352,6 +352,14 @@ impl Config {
         }
         self.enabled_widgets.iter().any(|key| key == widget.key())
     }
+    /// Turning Daily overview off now would leave no clock, weather or calendar
+    /// of their own, so the same change brings back the clock and weather.
+    pub fn glance_off_restores_time(&self) -> bool {
+        self.glance.enabled
+            && ![Widget::Clock, Widget::Weather, Widget::Calendar]
+                .into_iter()
+                .any(|widget| self.widget_enabled(widget))
+    }
     /// The saved choice shown in Settings, independent of the master visibility switch.
     /// When Daily overview is enabled, its section choices replace standalone toggles.
     pub fn widget_selected(&self, widget: Widget) -> bool {
@@ -874,7 +882,7 @@ impl Config {
         let path = Self::path().ok_or("Configuration directory unavailable")?;
         self.save_widget_at(&path, widget, visible)
     }
-    fn save_widget_at(
+    pub(crate) fn save_widget_at(
         &mut self,
         path: &std::path::Path,
         widget: Widget,
@@ -921,6 +929,13 @@ impl Config {
                         glance.insert("initialized".into(), true.into());
                     }
                     glance.insert("enabled".into(), visible.into());
+                    // Never leave the desktop without the time: the separate
+                    // clock and weather come back where they were saved.
+                    if !visible && latest.glance_off_restores_time() {
+                        let mut widgets = latest.enabled_widgets.clone();
+                        widgets.extend(["clock".to_string(), "weather".to_string()]);
+                        value["enabled_widgets"] = serde_json::json!(widgets);
+                    }
                 } else if let Some(key) = section {
                     glance.insert(key.into(), visible.into());
                 }

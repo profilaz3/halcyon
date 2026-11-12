@@ -256,7 +256,7 @@ impl KeyRule {
             Some(prefix) => {
                 matches!(
                     self.namespace,
-                    Namespace::Exact(super::wallpaper::NAMESPACE)
+                    Namespace::Exact(name) if super::wallpaper::modes::is_background(name)
                 ) && self.version == 1
                     && prefix == super::wallpaper::OUTPUT_PREFIX
                     && key
@@ -453,6 +453,10 @@ pub struct DesktopPatch {
     pub(crate) epoch_guard: Option<u64>,
     pub(crate) palette_ack: Option<u64>,
     pub(crate) activity_display: bool,
+    /// Undo or Restore of a record that already names the per-mode
+    /// background namespaces: restore each exactly, copy nothing between
+    /// them (see `wallpaper::modes::mirror`).
+    pub(crate) exact_backgrounds: bool,
     /// The Dock or Panel item this patch adds, removes or moves, as the
     /// item editor names it, for the change's label and history.
     pub(crate) activity_item: Option<activity::ItemChange>,
@@ -917,6 +921,10 @@ impl DesktopStore {
     pub fn user_root(&self) -> &Path {
         &self.user_root
     }
+    /// The read-only default layers, first match wins.
+    pub fn system_roots(&self) -> &[PathBuf] {
+        &self.system_roots
+    }
     /// Where the lock and journal live (also legacy palette backups).
     pub fn state_dir(&self) -> &Path {
         &self.state_dir
@@ -966,6 +974,7 @@ impl DesktopStore {
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn undo(&self, change: &AppliedChange) -> Result<AppliedChange, DesktopError> {
         let mut patch = DesktopPatch::exact();
+        patch.exact_backgrounds = super::wallpaper::modes::names_modes(&change.entries);
         for entry in &change.entries {
             patch.set(entry.key.clone(), entry.after.clone(), entry.before.clone());
         }
@@ -1346,6 +1355,17 @@ impl DesktopStore {
         record: Record,
         id: String,
     ) -> Result<Committed, DesktopError> {
+        // Per-mode backgrounds: a background write reaches the shared
+        // namespace and both modes. Undo and Restore of a record made
+        // before the modes existed copy its shared values the same way.
+        let mirrored;
+        let patch = if !patch.exact_backgrounds && super::wallpaper::modes::per_mode(self) {
+            mirrored = super::wallpaper::modes::mirror(self, patch)?;
+            self.check(&mirrored, operation)?;
+            &mirrored
+        } else {
+            patch
+        };
         if patch.keys().any(|key| {
             key.namespace() == dock_islands_core::NAMESPACE
                 || key.namespace() == dock_islands_core::material::NAMESPACE

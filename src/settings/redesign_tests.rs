@@ -1136,14 +1136,8 @@ fn reactive_activity_preferences_are_reachable_saved_and_undoable() {
         )],
     );
     send_settings(&mut app, Message::DesktopEditor(desktop::Message::Refresh));
-    send_settings(
-        &mut app,
-        Message::OpenBar(crate::desktop::panels::PanelKind::Panel),
-    );
-    send_settings(
-        &mut app,
-        Message::ObjectTab(crate::settings::navigation::ObjectTab::Content),
-    );
+    // The island's options have their own page.
+    send_settings(&mut app, Message::Page(Page::ActivityIsland));
     for size in [Size::new(820., 600.), Size::new(1280., 900.)] {
         send_settings(&mut app, Message::Resized(size));
         let mut native = crate::native_test::Native::new(size);
@@ -1232,14 +1226,8 @@ fn activity_island_style_is_chosen_saved_and_undone() {
         )],
     );
     send_settings(&mut app, Message::DesktopEditor(desktop::Message::Refresh));
-    send_settings(
-        &mut app,
-        Message::OpenBar(crate::desktop::panels::PanelKind::Panel),
-    );
-    send_settings(
-        &mut app,
-        Message::ObjectTab(crate::settings::navigation::ObjectTab::Content),
-    );
+    // The island's options have their own page.
+    send_settings(&mut app, Message::Page(Page::ActivityIsland));
     let size = Size::new(1280., 900.);
     send_settings(&mut app, Message::Resized(size));
     let mut native = crate::native_test::Native::new(size);
@@ -1297,11 +1285,8 @@ fn activity_app_rules_list_changes_resets_and_undoes() {
     {
         let mut app = open_isolated_editor(&root);
         send_settings(&mut app, Message::DesktopEditor(desktop::Message::Refresh));
-        send_settings(&mut app, Message::OpenBar(crate::desktop::panels::PanelKind::Panel));
-        send_settings(
-            &mut app,
-            Message::ObjectTab(crate::settings::navigation::ObjectTab::Content),
-        );
+        // The island's options have their own page.
+        send_settings(&mut app, Message::Page(Page::ActivityIsland));
         let size = Size::new(820., 600.);
         send_settings(&mut app, Message::Resized(size));
         let mut native = crate::native_test::Native::new(size);
@@ -1320,11 +1305,8 @@ fn activity_app_rules_list_changes_resets_and_undoes() {
     .unwrap();
     let mut app = open_isolated_editor(&root);
     send_settings(&mut app, Message::DesktopEditor(desktop::Message::Refresh));
-    send_settings(&mut app, Message::OpenBar(crate::desktop::panels::PanelKind::Panel));
-    send_settings(
-        &mut app,
-        Message::ObjectTab(crate::settings::navigation::ObjectTab::Content),
-    );
+    // The island's options have their own page.
+    send_settings(&mut app, Message::Page(Page::ActivityIsland));
     for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
         send_settings(&mut app, Message::Resized(size));
         let mut native = crate::native_test::Native::new(size);

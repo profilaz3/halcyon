@@ -274,7 +274,7 @@ impl Settings {
         if matches.is_empty() && !self.search_query.trim().is_empty() {
             rows.push(label(
                 format!(
-                    "No settings match “{}”. Try another word, or browse Appearance, Wallpaper, Widgets or Dock and panel.",
+                    "No settings match “{}”. Try another word, or browse Home, Appearance, Wallpaper, Widgets, Panel or Dock.",
                     self.search_query.trim()
                 ),
                 14.,
@@ -593,7 +593,7 @@ impl Settings {
         } else if page.sidebar() == Page::Overview {
             page.canonical() == self.page.canonical()
         } else {
-            page.sidebar() == self.page.sidebar()
+            page.undo_group() == self.page.undo_group()
         }
     }
 
