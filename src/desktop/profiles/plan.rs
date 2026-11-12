@@ -354,7 +354,7 @@ fn native_domain(key: &ConfigKey) -> Domain {
         || *key == crate::desktop::islands::key(PanelKind::Panel)
     {
         Domain::Panel
-    } else if key.namespace() == wallpaper::NAMESPACE {
+    } else if wallpaper::modes::is_background(key.namespace()) {
         Domain::Wallpaper
     } else if key.namespace() == desktop_icons::NAMESPACE {
         Domain::DesktopIcons
@@ -949,13 +949,7 @@ pub fn plan(
         && super::themes::family(profile).is_some()
     {
         match WallpaperDraft::load(store) {
-            Ok(draft) => {
-                for key in draft.watch_keys() {
-                    result
-                        .patch
-                        .guard(key.clone(), draft.snapshot().user(&key).cloned());
-                }
-            }
+            Ok(draft) => draft.guard(&mut result.patch),
             Err(error) => result.blocking.push(error.to_string()),
         }
     }
@@ -1595,7 +1589,7 @@ fn plan_wallpaper(
             }
         };
         if snapshot.entry(&key).is_none() {
-            match store.load(std::slice::from_ref(&key)) {
+            match wallpaper::load_from(store, draft.namespace(), std::slice::from_ref(&key)) {
                 Ok(one) => {
                     snapshot.insert(key.clone(), one.entry(&key).cloned().unwrap_or_default())
                 }
@@ -1704,6 +1698,8 @@ fn plan_wallpaper(
         named.push((wallpaper::output_key(name).ok(), look));
     }
     for key in plan.patch.keys() {
+        // Written to the shown mode and copied to the others on Apply.
+        let key = &wallpaper::modes::logical(key);
         if let Some(label) = wallpaper::key_label(key) {
             let source = named
                 .iter()

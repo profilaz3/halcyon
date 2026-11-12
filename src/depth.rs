@@ -123,10 +123,9 @@ pub fn observe(output: &str) -> Option<BgEntry> {
     observe_from(&store, output)
 }
 fn observe_from(store: &DesktopStore, output: &str) -> Option<BgEntry> {
-    let mut keys = WallpaperDraft::keys();
-    keys.push(wallpaper::output_key(output).ok()?);
-    let snapshot = store.load(&keys).ok()?;
-    WallpaperDraft::from_parts(snapshot, vec![output.into()])
+    let key = wallpaper::output_key(output).ok()?;
+    WallpaperDraft::load_keys(store, &[key], vec![output.into()])
+        .ok()?
         .effective(&Target::Output(output.into()))
         .known()
         .cloned()

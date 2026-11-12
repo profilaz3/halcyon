@@ -394,7 +394,10 @@ fn domain_of(namespace: &str, key: &str) -> Option<RecoveryDomain> {
         n if n == super::panels::NAMESPACE || n.starts_with("com.system76.CosmicPanel.") => {
             DockPanel
         }
-        super::wallpaper::NAMESPACE | "com.system76.CosmicSettings.Wallpaper" => Wallpaper,
+        super::wallpaper::NAMESPACE
+        | super::wallpaper::modes::DARK
+        | super::wallpaper::modes::LIGHT
+        | "com.system76.CosmicSettings.Wallpaper" => Wallpaper,
         super::desktop_icons::NAMESPACE => DesktopIcons,
         super::shortcuts::NAMESPACE | super::shortcuts::PAUSED_NAMESPACE => Shortcuts,
         super::window_rules::NAMESPACE => WindowRules,
@@ -409,6 +412,8 @@ fn whole_namespace(namespace: &str) -> bool {
         || namespace.starts_with("com.system76.CosmicPanel.")
         || [
             super::wallpaper::NAMESPACE,
+            super::wallpaper::modes::DARK,
+            super::wallpaper::modes::LIGHT,
             super::shortcuts::NAMESPACE,
             super::shortcuts::PAUSED_NAMESPACE,
             super::window_rules::NAMESPACE,

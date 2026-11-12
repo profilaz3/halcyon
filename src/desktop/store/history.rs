@@ -137,6 +137,8 @@ impl DesktopStore {
     ) -> Result<(DesktopPatch, Option<WidgetPatch>), DesktopError> {
         if latest.owner == Owner::Recovery {
             let mut patch = DesktopPatch::exact();
+            patch.exact_backgrounds =
+                crate::desktop::wallpaper::modes::names_modes(latest.change.entries());
             for entry in latest.change.entries() {
                 let current = self.read_user(&entry.key)?;
                 if !exact_equal(&current, &entry.after) {
@@ -200,6 +202,8 @@ impl DesktopStore {
                 .find(|file| file.id == latest.id)
         });
         let mut patch = DesktopPatch::new();
+        patch.exact_backgrounds =
+            crate::desktop::wallpaper::modes::names_modes(latest.change.entries());
         for entry in latest.change.entries() {
             let mut expected = entry.after.clone();
             if let Some(derived) = file
@@ -352,7 +356,7 @@ impl DesktopStore {
             // derivation is already part of that same transaction.
             let owns_wallpaper = patch
                 .keys()
-                .any(|key| key.namespace() == crate::desktop::wallpaper::NAMESPACE);
+                .any(|key| crate::desktop::wallpaper::modes::is_background(key.namespace()));
             // Without following or an advanced native derivation, the exact
             // reversal remains valid, including absent keys and custom values
             // that the current builder does not generate.
@@ -399,9 +403,7 @@ impl DesktopStore {
                             .set(pointer, widget::get(&raw, pointer), desired)
                             .map_err(DesktopError::Io)?;
                     }
-                    for key in wallpaper.watch_keys() {
-                        patch.guard(key.clone(), wallpaper.snapshot().user(&key).cloned());
-                    }
+                    wallpaper.guard(&mut patch);
                     config.appearance.sync_colors.then_some(rgb)
                 } else {
                     None
