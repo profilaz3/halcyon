@@ -43,6 +43,8 @@ pub struct Note {
     /// How long the app wants it shown, in milliseconds; 0 for as long as
     /// the server keeps it.
     pub timeout_ms: u32,
+    /// A copy or download's percentage, from the `value` hint.
+    pub progress: Option<u8>,
 }
 impl Note {
     /// The app this notification groups and is ruled under.
@@ -267,6 +269,7 @@ pub(super) fn note(
         at_ms: 0,
         entry: desktop_entry(entry),
         timeout_ms: 0,
+        progress: super::transfers::note_progress(hint("value")),
     }
 }
 /// A desktop entry ID safe to look up as a file name, or empty.

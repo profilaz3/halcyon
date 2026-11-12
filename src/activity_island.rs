@@ -3,8 +3,10 @@
 pub(crate) mod bridge;
 mod host;
 mod inbox;
+mod live;
 mod motion;
 mod notifications;
+mod outputs;
 pub(crate) mod popups;
 pub mod preferences;
 mod quiet;
@@ -13,6 +15,9 @@ mod surface;
 pub(crate) mod system;
 #[cfg(test)]
 mod tests;
+pub(crate) mod timer;
+pub(crate) mod tint;
+mod transfers;
 use bridge::{ClientEvent, Command, Snapshot};
 use reactive::{NOTE_REVEAL, PENDING_PAUSE};
 use cosmic::app::{Core, Task};
@@ -277,6 +282,10 @@ pub enum Kind {
     Calendar,
     /// A desktop notification, by its daemon id.
     Notification(u32),
+    /// The quick timer, counting, paused or done.
+    Timer,
+    /// Copies and downloads in progress.
+    Transfer,
 }
 impl Kind {
     fn label(self) -> &'static str {
@@ -287,6 +296,8 @@ impl Kind {
             Self::Music => "Music",
             Self::Focus => "Focus",
             Self::Calendar => "Calendar",
+            Self::Timer => "Timer",
+            Self::Transfer => "Transfers",
         }
     }
     fn icon(self) -> &'static str {
@@ -297,6 +308,8 @@ impl Kind {
             Self::Music => "audio-x-generic-symbolic",
             Self::Focus => "alarm-symbolic",
             Self::Calendar => "x-office-calendar-symbolic",
+            Self::Timer => "alarm-symbolic",
+            Self::Transfer => "folder-download-symbolic",
         }
     }
     fn accent(self) -> Color {
@@ -307,6 +320,8 @@ impl Kind {
             Self::Focus => Color::from_rgb8(190, 165, 235),
             Self::Calendar => Color::from_rgb8(230, 190, 105),
             Self::Notification(_) => Color::from_rgb8(236, 160, 176),
+            Self::Timer => live::TIMER,
+            Self::Transfer => live::JOB,
         }
     }
     /// A stable widget id fragment.
@@ -318,6 +333,8 @@ impl Kind {
             Self::Calendar => "calendar".into(),
             Self::System(source) => source.label().to_lowercase(),
             Self::Notification(id) => format!("notification-{id}"),
+            Self::Timer => "timer".into(),
+            Self::Transfer => "transfer".into(),
         }
     }
 }
@@ -398,6 +415,8 @@ pub struct Applet {
     rules_wish: Option<(Vec<preferences::AppRuleEntry>, Instant)>,
     /// When the next notification's own timeout ends.
     expiry_at: Option<Instant>,
+    /// The timer, transfers, scrubber and outputs.
+    ui: live::Ui,
 }
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -459,6 +478,8 @@ pub enum Message {
     MenuClose,
     /// Set, or with `None` reset, the rule for the app in the open menu.
     NoteRule(Option<preferences::AppRule>),
+    /// The timer, transfers, scrubber and outputs.
+    Live(live::Msg),
     Noop,
 }
 impl Application for Applet {
@@ -529,6 +550,7 @@ impl Application for Applet {
                 menu: None,
                 rules_wish: None,
                 expiry_at: None,
+                ui: live::Ui::default(),
             },
             Task::none(),
         )
@@ -545,6 +567,7 @@ impl Application for Applet {
             mode,
             bridge::client().map(Message::Backend),
             notifications::subscription().map(Message::Notes),
+            transfers::subscription().map(|u| Message::Live(live::Msg::Transfer(u))),
         ];
         let clock = (self.popup.is_some()
             && self.kind == Kind::Music
@@ -562,7 +585,9 @@ impl Application for Applet {
                     .snapshot
                     .calendar
                     .as_ref()
-                    .is_some_and(|c| c.ends_at_ms > self.now_ms));
+                    .is_some_and(|c| c.ends_at_ms > self.now_ms))
+            // A running timer counts once a second, open or closed.
+            || (self.kind == Kind::Timer && self.timer().is_some_and(|t| t.running()));
         if let Some(at) = self
             .hover_deadline
             .into_iter()
@@ -572,6 +597,7 @@ impl Application for Applet {
             .chain(self.reveal_deadline)
             .chain(self.pending_at)
             .chain(self.expiry_at)
+            .chain(self.ui.jobs.deadline())
             .chain(clock.then_some(self.next_clock))
             .min()
         {
@@ -638,6 +664,7 @@ impl Application for Applet {
                     | Message::Backend(_)
                     | Message::Frame(_)
                     | Message::Wake(_)
+                    | Message::Live(_)
             )
         {
             return Task::none();
@@ -743,6 +770,9 @@ impl Application for Applet {
                     }
                     self.now_ms = chrono::Utc::now().timestamp_millis();
                     let system_reveal = self.new_system_reveal(&snapshot);
+                    // A timer just finished asks for the island first.
+                    let timer_due = snapshot.timer.is_some_and(|t| t.done)
+                        && !self.snapshot.timer.is_some_and(|t| t.done);
                     self.observe_playback(&snapshot, now);
                     self.music_sampled = now;
                     self.observe_system_deadlines(&snapshot, now);
@@ -780,7 +810,8 @@ impl Application for Applet {
                     if self.snapshot.quiet == Some(false) {
                         self.arm_pending(now);
                     }
-                    return Task::batch([popups, self.consider_reveal(system_reveal, now)]);
+                    let reveal = timer_due.then_some(Kind::Timer).or(system_reveal);
+                    return Task::batch([popups, self.consider_reveal(reveal, now)]);
                 }
             },
             Message::Enter(popup) => {
@@ -907,6 +938,7 @@ impl Application for Applet {
                     self.chooser = false;
                     self.list = false;
                     self.reset_inbox();
+                    self.ui.view = live::View::Card;
                     self.batch.clear();
                     self.revealed = false;
                     self.motion.retarget(0., false, now);
@@ -937,6 +969,9 @@ impl Application for Applet {
                     *at = at.checked_sub(early).unwrap_or(now);
                 }
                 self.now_ms = chrono::Utc::now().timestamp_millis();
+                if self.ui.jobs.tick(now + early) && self.popup.is_none() {
+                    self.kind = self.automatic_kind();
+                }
                 if self.paused_until.is_some_and(|at| at <= now) {
                     self.paused_until = None;
                     self.paused_key = None;
@@ -950,7 +985,9 @@ impl Application for Applet {
                     }
                 }
                 if self.reveal_deadline.is_some_and(|at| at <= now) {
-                    let critical = self.showing_critical().is_some();
+                    // A finished timer stays like a critical notice.
+                    let critical = self.showing_critical().is_some()
+                        || (self.kind == Kind::Timer && self.timer_done() && !self.chooser);
                     self.reveal_deadline = None;
                     if !self.held && !self.hovered {
                         if critical {
@@ -996,9 +1033,9 @@ impl Application for Applet {
             Message::Choose => {
                 self.reveal_deadline = None;
                 self.chooser = !self.chooser;
+                self.ui.view = live::View::Card;
                 return self.hold_popup();
             }
-            Message::Notes(event) => return self.note_event(event, now),
             Message::GroupToggle(_)
             | Message::GroupDismiss(_)
             | Message::RecentToggle
@@ -1008,6 +1045,12 @@ impl Application for Applet {
             | Message::NoteMenu(_)
             | Message::MenuClose
             | Message::NoteRule(_) => return self.inbox_update(message, now),
+            Message::Notes(event) => {
+                // A notification with a percentage is a job as well.
+                let job = self.note_transfer(&event, now);
+                return Task::batch([job, self.note_event(event, now)]);
+            }
+            Message::Live(msg) => return self.live_update(msg, now),
             Message::NoteAction(id, action) => {
                 let Some(note) = self.note(id) else {
                     return Task::none();
@@ -1169,6 +1212,7 @@ impl Application for Applet {
                 }
                 self.chooser = false;
                 self.list = false;
+                self.ui.view = live::View::Card;
                 self.batch.clear();
                 self.kind = kind;
                 self.capture_source();
@@ -1190,6 +1234,21 @@ impl Application for Applet {
                 // Escape leaves a rules menu before the island.
                 keyboard::Key::Named(keyboard::key::Named::Escape) if self.menu.is_some() => {
                     self.menu = None;
+                }
+                keyboard::Key::Named(keyboard::key::Named::Escape)
+                    if self.popup.is_some() && self.ui.view != live::View::Card =>
+                {
+                    return self.live_update(live::Msg::Back, now);
+                }
+                keyboard::Key::Named(
+                    named @ (keyboard::key::Named::ArrowLeft | keyboard::key::Named::ArrowRight),
+                ) if self.popup.is_some() && self.held && self.scrubbing() => {
+                    let step = if named == keyboard::key::Named::ArrowLeft {
+                        -live::SEEK_STEP
+                    } else {
+                        live::SEEK_STEP
+                    };
+                    return self.live_update(live::Msg::SeekBy(step), now);
                 }
                 keyboard::Key::Named(keyboard::key::Named::Escape) => {
                     if self.popup.is_some() && self.hovered {
@@ -1405,7 +1464,7 @@ impl Applet {
         self.popup_extra = if self.list || self.menu.is_some() {
             self.list_extra()
         } else {
-            0.
+            self.live_extra()
         };
         let id = window::Id::unique();
         self.capture_source();
@@ -1462,6 +1521,7 @@ impl Applet {
         self.chooser = false;
         self.list = false;
         self.reset_inbox();
+        self.ui.view = live::View::Card;
         self.arm_pause_grace();
         self.hover_deadline = None;
         self.leave_deadline = None;
@@ -1602,6 +1662,8 @@ impl Applet {
             Kind::Music => self.music_content(),
             Kind::Focus => self.focus_content(now),
             Kind::Calendar => self.calendar_content(now),
+            Kind::Timer => self.timer_content(),
+            Kind::Transfer => self.transfer_content(),
         };
         if let Some(problem) = &self.problem {
             content.meta.clone_from(problem);
@@ -1858,10 +1920,16 @@ impl Applet {
                 }
                 return row
                     .push(self.dnd_button(palette, tint, reveal))
+                    .push(self.timer_button(palette, tint, reveal))
                     .push(self.label_button(
                         palette,
                         "activity-preferences",
-                        "Activity settings",
+                        // A Standard bar's narrower card keeps the row on one line.
+                        if self.frame().attached {
+                            "Settings"
+                        } else {
+                            "Activity settings"
+                        },
                         tint,
                         reveal,
                         Role::Quiet,
@@ -2016,6 +2084,8 @@ impl Applet {
                     };
                     let key = || m.key.clone();
                     row = row
+                        // Balances the output button so the transport stays centred.
+                        .push(widget::Space::new().width(44).height(44))
                         .push(transport(
                             "media-skip-backward-symbolic",
                             "Previous",
@@ -2046,7 +2116,8 @@ impl Applet {
                             m.next,
                             Role::Ghost,
                             Command::Next { key: key() },
-                        ));
+                        ))
+                        .push(self.outputs_button(palette, tint, reveal));
                 }
                 None => {
                     row = row.push(self.label_button(
@@ -2086,6 +2157,8 @@ impl Applet {
                     (!elapsed).then(|| Message::Control(Command::Focus { key: f.key.clone() })),
                 ));
             }
+            Kind::Timer => return self.timer_actions(palette, tint, reveal),
+            Kind::Transfer => return self.transfer_actions(palette, tint, reveal),
             Kind::Calendar => {
                 // Only an upcoming event can be dismissed or joined.
                 let event = self
@@ -2166,7 +2239,8 @@ impl Applet {
                 {
                     palette.warning()
                 } else {
-                    palette.accent(self.kind)
+                    self.live_accent(palette)
+                        .unwrap_or_else(|| palette.accent(self.kind))
                 },
             )
         } else {
@@ -2190,6 +2264,12 @@ impl Applet {
         }
         let summary = self.summary().is_some();
         let listing = live && self.listing();
+        // The timer, the picker or the outputs fill the card below the title.
+        let panel = popup && live && self.live_panel();
+        if let Some(heading) = self.live_heading(p) {
+            title = heading;
+            cue.clear();
+        }
         // Open on the list, the title line names it.
         let heading = listing && p >= 0.5;
         if heading {
@@ -2297,7 +2377,12 @@ impl Applet {
             cue
         };
         let title_width = (room - if cue.is_empty() { 0. } else { cue_width }).max(40.);
-        let glyph = if live
+        let live_glyph = (live && !self.chooser && !heading)
+            .then(|| self.live_glyph(palette, accent))
+            .flatten();
+        let glyph = if let Some(glyph) = live_glyph {
+            glyph
+        } else if live
             && !self.chooser
             && !heading
             && self.summary().is_none()
@@ -2307,25 +2392,30 @@ impl Applet {
         } else {
             widget::icon::from_name(icon).symbolic(true).size(16).into()
         };
+        // A counting timer keeps its figures still.
+        let title_text: Element<'_, Message> =
+            match live.then(|| self.live_title(palette, p)).flatten() {
+                Some(clock) => clock,
+                None => widget::text(if self.chooser {
+                    "Activities".to_owned()
+                } else {
+                    title
+                })
+                .size(14.)
+                .font(cosmic::font::semibold())
+                .wrapping(cosmic::iced::advanced::text::Wrapping::None)
+                .ellipsize(cosmic::iced::advanced::text::Ellipsize::End(
+                    cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
+                ))
+                .class(cosmic::theme::Text::Color(palette.ink))
+                .into(),
+            };
         let mut identity = widget::row([])
             .push(glyph)
             .push(
-                widget::container(
-                    widget::text(if self.chooser {
-                        "Activities".to_owned()
-                    } else {
-                        title
-                    })
-                    .size(14.)
-                    .font(cosmic::font::semibold())
-                    .wrapping(cosmic::iced::advanced::text::Wrapping::None)
-                    .ellipsize(cosmic::iced::advanced::text::Ellipsize::End(
-                        cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
-                    ))
-                    .class(cosmic::theme::Text::Color(palette.ink)),
-                )
-                .width(Length::Shrink)
-                .max_width(title_width),
+                widget::container(title_text)
+                    .width(Length::Shrink)
+                    .max_width(title_width),
             )
             .spacing(8)
             .align_y(cosmic::iced::Alignment::Center);
@@ -2397,6 +2487,9 @@ impl Applet {
                     .class(cosmic::theme::Text::Color(accent)),
             );
         }
+        if let Some(ring) = live.then(|| self.live_trailing(palette, accent)).flatten() {
+            identity = identity.push(ring);
+        }
         // Keep the full hit target while moving the measured identity smoothly
         // from the capsule centre to the expanded reading edge.
         let leading = ((1. - p) * 1000.).round() as u16;
@@ -2436,6 +2529,10 @@ impl Applet {
                     && self.note(id).is_some_and(|n| n.default) =>
             {
                 Message::NoteAction(id, "default".into())
+            }
+            // Open on the picker or the outputs, the title goes back.
+            _ if live && p > 0.9 && self.ui.view != live::View::Card => {
+                Message::Live(live::Msg::Back)
             }
             _ => Message::Hold,
         });
@@ -2543,7 +2640,7 @@ impl Applet {
                 row = row.push(self.tip(
                     palette,
                     badge(
-                        self.kind_icon(*kind, 14),
+                        self.badge_icon(*kind, palette, 14),
                         &format!("activity-other-{}", kind.id()),
                         ICON_BADGE,
                         press,
@@ -2570,28 +2667,38 @@ impl Applet {
         let position = (self.kind == Kind::Music)
             .then(|| self.music_progress())
             .flatten();
+        let scrubber = live
+            .then(|| self.scrubber(palette, accent, reveal))
+            .flatten();
         let tight = position.is_none() && progress.is_none() && !note;
-        let times = position
-            .map(|(at, total)| {
-                let clock = |ms: i64| format!("{}:{:02}", ms / 60_000, ms / 1000 % 60);
-                widget::row([
-                    self.text(clock(at), 10., alpha(palette.quiet, reveal)),
-                    widget::Space::new().width(Length::Fill).into(),
-                    self.text(clock(total), 10., alpha(palette.quiet, reveal)),
-                ])
-                .into()
-            })
-            .unwrap_or_else(|| widget::Space::new().into());
+        let seeking = scrubber.is_some();
+        let times = if let Some(scrubber) = scrubber {
+            scrubber
+        } else {
+            position
+                .map(|(at, total)| {
+                    let clock = |ms: i64| format!("{}:{:02}", ms / 60_000, ms / 1000 % 60);
+                    widget::row([
+                        self.text(clock(at), 10., alpha(palette.quiet, reveal)),
+                        widget::Space::new().width(Length::Fill).into(),
+                        self.text(clock(total), 10., alpha(palette.quiet, reveal)),
+                    ])
+                    .into()
+                })
+                .unwrap_or_else(|| widget::Space::new().into())
+        };
         let extra = if popup { self.popup_extra } else { 0. };
         surface::Surface {
             palette,
             frame: self.frame(),
             slot_width: self.slot_width(),
             // The list takes the chooser's place below the title line.
-            chooser: self.chooser || listing,
+            chooser: self.chooser || listing || panel,
             extra,
             card_extra: if listing {
                 self.list_card_extra(extra)
+            } else if panel {
+                self.live_extra().clamp(0., extra)
             } else {
                 0.
             },
@@ -2609,6 +2716,8 @@ impl Applet {
                     self.chooser_view(palette, accent, reveal)
                 } else if listing {
                     self.list_view(palette, accent, reveal)
+                } else if panel {
+                    self.live_view(palette, accent, reveal)
                 } else {
                     self.actions(
                         palette,
@@ -2632,7 +2741,10 @@ impl Applet {
             popup,
             animate: popup && self.motion.active(),
             waiting: !popup && self.hover_deadline.is_some(),
-            bar: progress.map(|fraction| (fraction, accent)),
+            // The scrubber is the music's progress line.
+            bar: progress
+                .filter(|_| !seeking)
+                .map(|fraction| (fraction, accent)),
             tight,
         }
         .into()

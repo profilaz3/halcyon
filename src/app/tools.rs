@@ -267,9 +267,6 @@ impl Cards {
     }
 
     fn music_art_task(&mut self) -> Task<Message> {
-        if self.activity.clients > 0 && !self.provider_visible(Widget::Music) {
-            return Task::none();
-        }
         if !self.config.music_artwork() || self.tools.art_loading.is_some() {
             return Task::none();
         }
@@ -279,6 +276,14 @@ impl Cards {
         else {
             return Task::none();
         };
+        // For the island alone, only a picture already on this computer is
+        // cheap enough to read for its tint.
+        if self.activity.clients > 0
+            && !self.provider_visible(Widget::Music)
+            && !url.starts_with("file://")
+        {
+            return Task::none();
+        }
         if self.tools.art(&url).is_some() {
             return Task::none();
         }
@@ -297,6 +302,13 @@ impl Cards {
         if self.tools.art_loading.as_deref() == Some(url.as_str()) {
             self.tools.art_loading = None;
         }
+        let tint = result
+            .as_ref()
+            .ok()
+            .and_then(|art| crate::activity_island::tint::dominant(&art.rgba));
+        self.activity.tints.retain(|(cached, _)| *cached != url);
+        self.activity.tints.insert(0, (url.clone(), tint));
+        self.activity.tints.truncate(ART_CACHE);
         // A failed picture is remembered too, so it is not fetched again.
         let handle = result
             .map_err(|error| eprintln!("Music artwork: {error}"))

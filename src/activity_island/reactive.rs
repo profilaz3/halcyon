@@ -137,6 +137,10 @@ impl Applet {
     }
     pub(super) fn eligible_kinds(&self) -> Vec<Kind> {
         let mut kinds = Vec::new();
+        // A finished timer asks first; a counting one sits after Focus.
+        if self.timer_done() {
+            kinds.push(Kind::Timer);
+        }
         if self.calendar_eligible() {
             kinds.push(Kind::Calendar);
         }
@@ -152,8 +156,14 @@ impl Applet {
         {
             kinds.push(Kind::Focus);
         }
+        if self.timer_live() {
+            kinds.push(Kind::Timer);
+        }
         if self.media_eligible() {
             kinds.push(Kind::Music);
+        }
+        if !self.ui.jobs.is_empty() {
+            kinds.push(Kind::Transfer);
         }
         for source in [
             system::Source::Power,
@@ -332,6 +342,9 @@ impl Applet {
                 .class(capsule_button(palette, tint, reveal, Role::Ghost))
                 .on_press(Message::ShowRecent),
             );
+        }
+        if self.timer().is_none() {
+            list = list.push(self.timer_choice(palette, tint, reveal));
         }
         let dnd = self.snapshot.dnd;
         list = list.push(
@@ -604,7 +617,9 @@ impl Applet {
         {
             return Task::none();
         }
-        let urgent = matches!(kind,Kind::System(source) if self.system_activity(source).is_some_and(|a|a.urgent));
+        // A finished timer is as pressing as an urgent activity.
+        let urgent = kind == Kind::Timer
+            || matches!(kind,Kind::System(source) if self.system_activity(source).is_some_and(|a|a.urgent));
         if !urgent
             && self
                 .snapshot

@@ -497,6 +497,9 @@ impl Cards {
                 value["widget"].as_str()?,
             )?)),
             "focus" => Some(Message::FocusCommand(value["do"].as_str()?.to_string())),
+            "timer" => timer_command(&value).map(|command| {
+                Message::Activity(crate::activity_island::bridge::Event::Command(command))
+            }),
             "capture" if std::env::var_os("DESKTOP_CARDS_CAPTURE_DIR").is_some() => {
                 Some(Message::RequestCapture)
             }
@@ -1012,4 +1015,64 @@ fn switch<'a>(on: bool, color: Color, p: crate::config::Palette) -> Element<'a, 
             }
         }))
         .into()
+}
+
+/// `halcyon-ctl timer <minutes>`, `timer pause|resume|cancel`.
+fn timer_command(value: &serde_json::Value) -> Option<crate::activity_island::bridge::Command> {
+    use crate::activity_island::bridge::Command;
+    Some(match value["do"].as_str() {
+        Some("cancel") => Command::TimerCancel,
+        Some("pause") => Command::TimerPause,
+        Some("resume") => Command::TimerResume,
+        Some(_) => return None,
+        None => {
+            let minutes = value["minutes"]
+                .as_f64()
+                .filter(|m| *m > 0. && *m <= 1440.)?;
+            Command::TimerStart {
+                ms: (minutes * 60_000.).round() as i64,
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+mod timer_command_tests {
+    use super::timer_command;
+    use crate::activity_island::bridge::Command;
+    use serde_json::json;
+
+    #[test]
+    fn timer_commands_start_in_minutes_and_reject_odd_values() {
+        assert!(matches!(
+            timer_command(&json!({"action": "timer", "minutes": 5})),
+            Some(Command::TimerStart { ms: 300_000 })
+        ));
+        assert!(matches!(
+            timer_command(&json!({"action": "timer", "minutes": 2.5})),
+            Some(Command::TimerStart { ms: 150_000 })
+        ));
+        assert!(matches!(
+            timer_command(&json!({"action": "timer", "do": "cancel"})),
+            Some(Command::TimerCancel)
+        ));
+        assert!(matches!(
+            timer_command(&json!({"action": "timer", "do": "pause"})),
+            Some(Command::TimerPause)
+        ));
+        assert!(matches!(
+            timer_command(&json!({"action": "timer", "do": "resume"})),
+            Some(Command::TimerResume)
+        ));
+        for odd in [
+            json!({"action": "timer", "minutes": 0}),
+            json!({"action": "timer", "minutes": -1}),
+            json!({"action": "timer", "minutes": 1441}),
+            json!({"action": "timer", "minutes": "5"}),
+            json!({"action": "timer", "do": "explode"}),
+            json!({"action": "timer"}),
+        ] {
+            assert!(timer_command(&odd).is_none(), "{odd}");
+        }
+    }
 }
