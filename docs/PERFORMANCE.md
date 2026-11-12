@@ -76,6 +76,17 @@ the light 30 fps workloads sit at the iGPU's clock floor rather than
 reflecting their work. Rounding Eco's lens mip level to a whole level (one
 mip read instead of two) made no measurable difference and was not kept.
 
+Narrower, winding trails that fog over from their edges (four more
+condensation taps on the quarter-size texture) were measured afterwards in
+the same way, Balanced rain, old main against the branch:
+
+| Size | Mode | Old | New | New / old |
+|---|---|---:|---:|---:|
+| 1920x1080 | Procedural | 0.858 | 1.042 | 1.21x |
+| 1920x1080 | Hybrid | 0.756 | 0.949 | 1.26x |
+| 2560x1440 | Procedural | 1.469 | 1.398 | 0.95x |
+| 2560x1440 | Hybrid | 1.083 | 1.301 | 1.20x |
+
 Snow shimmer, from `rain_and_snow_visual_evidence`: the mean change of 32x32
 pixel tile brightness between consecutive fixed-time frames (0 to 255 luma).
 Flakes that move keep a tile steady; flakes that pop or alias change it.
