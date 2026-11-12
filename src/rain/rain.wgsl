@@ -67,30 +67,44 @@ fn lens_cover(q:vec2<f32>, radius:f32) -> f32 {
 fn drop_scale() -> f32 { return 0.55+p.frame.w*1.1; }
 fn pace() -> f32 { return 0.3+p.motion.x*1.4; }
 
-// Condensation beads, plus sparser beads that sliding drops leave behind in
-// their cleared paths (negative radius). Drawn once into a cached texture.
+// Condensation beads, plus smaller beads that sliding drops leave behind in
+// their cleared paths (negative radius). Drawn once into a cached texture, so
+// the neighbour search costs nothing per frame.
 @fragment fn static_beads(v:Vertex) -> @location(0) vec4<f32> {
     let xy=v.uv*vec2(p.frame.x,1.);
     let amount=p.frame.z;
     var field=vec4(0.);
     if amount<=0. {return field;}
     let size=0.75+p.frame.w*0.5;
+    // Patches of denser and sparser beading, as on real glass.
+    let patches=mix(0.35,1.45,noise(xy*4.+vec2(3.1,7.7)));
     // Eco skips the two finest, densest layers.
     for(var layer=select(2,0,p.atmosphere.z>0.);layer<4;layer+=1) {
         let residue=layer==3;
-        let tile=select(array<f32,4>(0.0125,0.0175,0.024,0.03)[layer],0.03,residue)*size;
-        let grid=xy/tile+vec2(f32(layer)*0.37,f32(layer)*0.61);
-        let cell=floor(grid);
-        let seed=hash3(cell+vec2(17.*f32(layer),5.));
-        let share=select(0.25+amount*0.65,0.15+amount*0.35,residue)*select(1.,0.7,layer==2);
-        if seed.x>share {continue;}
-        let radius=tile*select(mix(0.10,0.30,seed.z*seed.z),mix(0.09,0.20,seed.z),residue);
-        let center=vec2(0.5)+(seed.yz*2.-1.)*(0.5-radius/tile*1.3);
-        let raw=(fract(grid)-center)*tile/vec2(radius,radius*mix(0.82,1.08,seed.y));
-        let q=lens_shape(raw,seed,0.,0.);
-        let cover=lens_cover(q,radius)*select(0.92,0.8,residue);
-        if cover<=0. {continue;}
-        field=over(encode(q,cover,radius,!residue),field);
+        let tile=array<f32,4>(0.0125,0.0175,0.024,0.02)[layer]*size;
+        // Each layer's grid is turned by its own angle, and a bead may sit
+        // anywhere in most of its cell, so no rows or columns line up. The
+        // two nearest cells on each axis cover every bead that can reach.
+        let turn=array<f32,4>(0.43,-0.71,1.13,-0.29)[layer];
+        let axes=mat2x2<f32>(cos(turn),sin(turn),-sin(turn),cos(turn));
+        let grid=transpose(axes)*xy/tile+vec2(f32(layer)*0.37,f32(layer)*0.61);
+        let base=floor(grid-0.5);
+        let share=select(0.25+amount*0.65,0.3+amount*0.4,residue)*select(1.,0.7,layer==2)
+            *select(patches,1.,residue);
+        for(var n=0;n<4;n+=1) {
+            let cell=base+vec2(f32(n&1),f32(n>>1));
+            let seed=hash3(cell+vec2(17.*f32(layer),5.));
+            if seed.x>share {continue;}
+            let radius=tile*select(mix(0.10,0.30,seed.z*seed.z),mix(0.1,0.22,seed.z),residue);
+            let jitter=hash3(cell*1.7+vec2(3.3,9.1*f32(layer))).xy*2.-1.;
+            let center=(axes*(cell+0.5+jitter*0.45)-axes*vec2(f32(layer)*0.37,f32(layer)*0.61))*tile;
+            let raw=(xy-center)/vec2(radius,radius*mix(0.82,1.08,seed.y));
+            if dot(raw,raw)>4. {continue;}
+            let q=lens_shape(raw,seed,0.,0.);
+            let cover=lens_cover(q,radius)*select(0.92,0.8,residue);
+            if cover<=0. {continue;}
+            field=over(encode(q,cover,radius,!residue),field);
+        }
     }
     return field;
 }
@@ -154,17 +168,23 @@ fn runoff(index:u32, slot_index:u32, width:f32, scale:f32, seed:f32, slot:f32) -
     if center_y-radius*2.>1. {return hidden();}
     let sliding=smoothstep(0.,0.3,slip);
     let velocity=sliding*(1.+0.82*cos(surge*slip));
-    // Each drop takes its own winding path, so the drops of one lane never
-    // retrace a column: a slow and a fast meander, plus a sideways kink at
-    // every surge, eased so the path stays continuous.
+    // Each drop takes its own path, so the drops of one lane never retrace a
+    // column. A path runs mostly straight in segments of uneven length and
+    // jogs sideways where the drop met a bead or a dry patch, each jog eased
+    // over about a drop's height.
     let path=hash3(vec2(cycle*3.7+slot*17.,lane*2.3+seed));
-    let sway=0.012+width*0.2;
-    let kicks=surge*slip/6.283;
-    let kick=floor(kicks);
-    let jog=mix(hash(vec2(kick,lane+cycle*7.)),hash(vec2(kick+1.,lane+cycle*7.)),
-        smoothstep(0.,1.,fract(kicks)))*2.-1.;
-    let drift=sway*(sin(center_y*mix(10.,18.,path.x)+path.y*6.283)
-        +0.5*sin(center_y*mix(28.,45.,path.z)+path.x*9.)+0.6*jog);
+    let span=mix(0.08,0.24,path.x);
+    let along=descent/span;
+    var piece=floor(along);
+    let salt=lane*3.1+cycle*7.3+seed;
+    let start=piece+0.7*(hash(vec2(piece,salt))-0.5);
+    if along<start {piece-=1.;}
+    else if along>=piece+1.+0.7*(hash(vec2(piece+1.,salt))-0.5) {piece+=1.;}
+    let began=piece+0.7*(hash(vec2(piece,salt))-0.5);
+    let ease=smoothstep(0.,0.022/span,along-began);
+    let sway=0.006+width*0.1;
+    let drift=sway*(mix(hash(vec2(piece-1.,salt+0.5)),hash(vec2(piece,salt+0.5)),ease)*2.-1.)
+        +(path.y-0.5)*0.05*descent;
     let x=(lane+0.5+(path.z-0.5)*0.7)*width+drift+shear*center_y;
     // Runoff is rounder than a fresh splash: soften the outline's lobes.
     return lens_vertex(index,vec2(x,center_y),radius,1.+0.2*velocity,shear,traits,
@@ -297,7 +317,7 @@ fn tinted(uv:vec2<f32>, amount:f32) -> vec4<f32> {
     let bead=textureSampleLevel(beads,linear_sampler,v.uv,0.);
     if bead.w>0.001 {
         let beaded=smoothstep(0.45,0.95,fog);
-        let left=(1.-smoothstep(0.2,0.7,fog))*step(0.001,p.style.z);
+        let left=(1.-smoothstep(0.35,0.85,fog))*step(0.001,p.style.z);
         let under=vec4(bead.xy,abs(bead.z),bead.w)*select(left,beaded,bead.z>=0.);
         live=vec4(live.xy,abs(live.z),live.w)+under*(1.-clamp(live.w,0.,1.));
     }
