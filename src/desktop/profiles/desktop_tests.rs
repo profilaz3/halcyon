@@ -508,6 +508,7 @@ fn profile_apply_keeps_target_unused_bg_members() {
             source: BgSource::Color(BgColor::Single(Rgb::Hex("#336699".into()).srgb().unwrap())),
             filter_by_theme: true,
             rotation_frequency: 1234,
+            transition_duration: None,
             filter_method: FilterMethod::Linear,
             scaling_mode: ScalingMode::Zoom,
             sampling_method: SamplingMethod::Random,

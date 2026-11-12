@@ -60,6 +60,7 @@ fn edit_preserves_unused_and_untouched_entry_members() {
             source: BgSource::Path("/pictures/new.png".into()),
             filter_by_theme: true,
             rotation_frequency: 1234,
+            transition_duration: None,
             filter_method: FilterMethod::Nearest,
             scaling_mode: ScalingMode::Zoom,
             sampling_method: SamplingMethod::Random,
@@ -551,11 +552,19 @@ fn wildcard_rule_matches_only_valid_output_keys() {
     ] {
         assert!(rule_for(&refused).is_none(), "{refused}");
     }
+    // One display wildcard per background namespace (shared, dark, light).
     let wildcards: Vec<_> = crate::desktop::rules()
         .filter(|rule| rule.key.contains('*'))
-        .map(|rule| rule.key)
+        .map(|rule| match rule.namespace {
+            crate::desktop::store::Namespace::Exact(namespace) => (namespace, rule.key),
+            crate::desktop::store::Namespace::Entry(prefix) => (prefix, "entry"),
+        })
         .collect();
-    assert_eq!(wildcards, vec!["output.*"]);
+    let expected: Vec<_> = super::modes::NAMESPACES
+        .iter()
+        .map(|namespace| (*namespace, "output.*"))
+        .collect();
+    assert_eq!(wildcards, expected);
 }
 
 #[test]

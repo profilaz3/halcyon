@@ -29,6 +29,7 @@ use std::path::{Path, PathBuf};
 pub mod automatic;
 pub mod collection;
 pub mod media;
+pub mod modes;
 pub mod palette;
 
 pub const NAMESPACE: &str = "com.system76.CosmicBackground";
@@ -113,7 +114,7 @@ pub fn valid_output_name(name: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 fn output_name(key: &ConfigKey) -> Option<&str> {
-    (key.namespace() == NAMESPACE && key.version() == 1)
+    (modes::is_background(key.namespace()) && key.version() == 1)
         .then(|| key.key().strip_prefix(OUTPUT_PREFIX))
         .flatten()
 }
@@ -126,12 +127,38 @@ pub struct BgEntry {
     pub source: BgSource,
     pub filter_by_theme: bool,
     pub rotation_frequency: u64,
+    /// The fade between pictures in milliseconds (COSMIC 1.11 and later).
+    /// Kept as it was stored: absent stays absent, so older cosmic-bg
+    /// versions never see a member they would refuse.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "plain_duration"
+    )]
+    pub transition_duration: Option<u64>,
     #[serde(default)]
     pub filter_method: FilterMethod,
     #[serde(default)]
     pub scaling_mode: ScalingMode,
     #[serde(default)]
     pub sampling_method: SamplingMethod,
+}
+
+/// `transition_duration` is a plain number upstream, not `Some(..)`.
+mod plain_duration {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(value: &Option<u64>, serializer: S) -> Result<S::Ok, S::Error> {
+        match value {
+            Some(value) => serializer.serialize_u64(*value),
+            None => serializer.serialize_none(),
+        }
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<u64>, D::Error> {
+        u64::deserialize(deserializer).map(Some)
+    }
 }
 
 /// Upstream `Source`.
@@ -189,6 +216,7 @@ impl BgEntry {
             source,
             filter_by_theme: false,
             rotation_frequency: 900,
+            transition_duration: None,
             filter_method: FilterMethod::default(),
             scaling_mode: ScalingMode::default(),
             sampling_method: SamplingMethod::default(),
@@ -204,6 +232,7 @@ impl BgEntry {
             )),
             filter_by_theme: true,
             rotation_frequency: 3600,
+            transition_duration: None,
             filter_method: FilterMethod::default(),
             scaling_mode: ScalingMode::default(),
             sampling_method: SamplingMethod::default(),
@@ -318,40 +347,42 @@ pub fn check_same(value: &RawValue) -> Result<(), String> {
     decode_exact::<bool>(value).map(drop)
 }
 
-/// The four keys this app writes; `output.*` matches only valid display
-/// names in this namespace (see `KeyRule::matches`).
-pub static RULES: [KeyRule; 4] = [
-    KeyRule {
-        namespace: Namespace::Exact(NAMESPACE),
-        version: 1,
-        key: SHARED,
-        validate: check_entry,
-    },
-    KeyRule {
-        namespace: Namespace::Exact(NAMESPACE),
-        version: 1,
-        key: SAME_ON_ALL,
-        validate: check_same,
-    },
-    KeyRule {
-        namespace: Namespace::Exact(NAMESPACE),
-        version: 1,
-        key: BACKGROUNDS,
-        validate: check_list,
-    },
-    KeyRule {
-        namespace: Namespace::Exact(NAMESPACE),
-        version: 1,
-        key: "output.*",
-        validate: check_entry,
-    },
+/// The four keys this app writes, in the shared namespace and in both
+/// per-mode namespaces (`modes`); `output.*` matches only valid display
+/// names in these namespaces (see `KeyRule::matches`).
+pub static RULES: [KeyRule; 12] = [
+    rule(NAMESPACE, SHARED, check_entry),
+    rule(NAMESPACE, SAME_ON_ALL, check_same),
+    rule(NAMESPACE, BACKGROUNDS, check_list),
+    rule(NAMESPACE, "output.*", check_entry),
+    rule(modes::DARK, SHARED, check_entry),
+    rule(modes::DARK, SAME_ON_ALL, check_same),
+    rule(modes::DARK, BACKGROUNDS, check_list),
+    rule(modes::DARK, "output.*", check_entry),
+    rule(modes::LIGHT, SHARED, check_entry),
+    rule(modes::LIGHT, SAME_ON_ALL, check_same),
+    rule(modes::LIGHT, BACKGROUNDS, check_list),
+    rule(modes::LIGHT, "output.*", check_entry),
 ];
+
+const fn rule(
+    namespace: &'static str,
+    key: &'static str,
+    validate: fn(&RawValue) -> Result<(), String>,
+) -> KeyRule {
+    KeyRule {
+        namespace: Namespace::Exact(namespace),
+        version: 1,
+        key,
+        validate,
+    }
+}
 
 /// Write order within one change: entries before the list that refers to
 /// them, the mode last (cosmic-bg reloads per key event). Every other key
 /// ranks 0, so other domains keep their key order.
 pub fn write_rank(key: &ConfigKey) -> u8 {
-    if key.namespace() != NAMESPACE || key.version() != 1 {
+    if !modes::is_background(key.namespace()) || key.version() != 1 {
         return 0;
     }
     match key.key() {
@@ -364,18 +395,24 @@ pub fn write_rank(key: &ConfigKey) -> u8 {
 
 /// Short user-facing name of a background key, for notices.
 pub fn key_label(key: &ConfigKey) -> Option<String> {
-    if key.namespace() != NAMESPACE {
+    if !modes::is_background(key.namespace()) {
         return None;
     }
+    let mode = match key.namespace() {
+        modes::DARK => " in dark mode",
+        modes::LIGHT => " in light mode",
+        _ => "",
+    };
     if let Some(name) = output_name(key) {
-        return Some(format!("background for {name}"));
+        return Some(format!("background for {name}{mode}"));
     }
-    match key.key() {
-        SHARED => Some("shared background".into()),
-        BACKGROUNDS => Some("display list".into()),
-        SAME_ON_ALL => Some("same background on all displays".into()),
-        _ => None,
-    }
+    let label = match key.key() {
+        SHARED => "shared background",
+        BACKGROUNDS => "display list",
+        SAME_ON_ALL => "same background on all displays",
+        _ => return None,
+    };
+    Some(format!("{label}{mode}"))
 }
 
 /// Connected display connectors: `<fixture>/outputs` (one per line; none
@@ -816,6 +853,40 @@ pub struct WallpaperDraft {
     unreadable: BTreeMap<String, String>,
     edits: Edits,
     conflicts: Vec<ConfigKey>,
+    /// Where the values were read and where the plan writes them: the
+    /// shared namespace, or the per-mode one cosmic-bg shows (`modes`).
+    /// Everything else in the draft names keys by their shared names.
+    #[serde(default = "shared_namespace")]
+    namespace: String,
+    /// Whether this desktop keeps per-mode sets, so a change of mode or a
+    /// set cosmic-bg seeds can change what is shown.
+    #[serde(default)]
+    per_mode: bool,
+}
+
+fn shared_namespace() -> String {
+    NAMESPACE.into()
+}
+
+/// `keys` (shared names) read from `namespace`, under their shared names.
+pub fn load_from(
+    store: &DesktopStore,
+    namespace: &str,
+    keys: &[ConfigKey],
+) -> Result<Snapshot, DesktopError> {
+    let stored: Vec<ConfigKey> = keys
+        .iter()
+        .map(|key| modes::rehome(key, namespace))
+        .collect();
+    let loaded = store.load(&stored)?;
+    let mut snapshot = Snapshot::default();
+    for (key, stored) in keys.iter().zip(&stored) {
+        snapshot.insert(
+            key.clone(),
+            loaded.entry(stored).cloned().unwrap_or_default(),
+        );
+    }
+    Ok(snapshot)
 }
 
 impl WallpaperDraft {
@@ -830,18 +901,19 @@ impl WallpaperDraft {
     /// display is missed. An unreadable display entry is kept and noted.
     pub fn load(store: &DesktopStore) -> Result<Self, DesktopError> {
         let connected = discover_outputs(store);
+        let namespace = modes::current(store);
         for _ in 0..3 {
-            let list = store.load(&[list_key()])?;
+            let list = load_from(store, namespace, &[list_key()])?;
             let mut names: BTreeSet<String> = connected.iter().cloned().collect();
             names.extend(listed_names(list.effective(&list_key())));
-            let mut snapshot = store.load(&Self::keys())?;
+            let mut snapshot = load_from(store, namespace, &Self::keys())?;
             if snapshot.entry(&list_key()) != list.entry(&list_key()) {
                 continue;
             }
             let mut unreadable = BTreeMap::new();
             for name in names {
                 let key = output_key(&name)?;
-                match store.load(std::slice::from_ref(&key)) {
+                match load_from(store, namespace, std::slice::from_ref(&key)) {
                     Ok(one) => {
                         snapshot.insert(key.clone(), one.entry(&key).cloned().unwrap_or_default())
                     }
@@ -850,11 +922,15 @@ impl WallpaperDraft {
                     }
                 }
             }
-            if store.load(&[list_key()])?.entry(&list_key()) != list.entry(&list_key()) {
+            if load_from(store, namespace, &[list_key()])?.entry(&list_key())
+                != list.entry(&list_key())
+            {
                 continue;
             }
             let mut draft = Self::from_parts(snapshot, connected);
             draft.unreadable = unreadable;
+            draft.namespace = namespace.into();
+            draft.per_mode = modes::per_mode(store);
             return Ok(draft);
         }
         Err(DesktopError::Io(
@@ -868,11 +944,58 @@ impl WallpaperDraft {
             unreadable: BTreeMap::new(),
             edits: Edits::default(),
             conflicts: Vec::new(),
+            namespace: shared_namespace(),
+            per_mode: false,
         }
     }
-    /// Every key the draft read or tried to: the fixed keys and each
-    /// display's entry, also one that couldn't be read.
+    /// The fixed keys and `extra` (shared names) from the namespace
+    /// cosmic-bg shows now, without discovering displays.
+    pub fn load_keys(
+        store: &DesktopStore,
+        extra: &[ConfigKey],
+        connected: Vec<String>,
+    ) -> Result<Self, DesktopError> {
+        let namespace = modes::current(store);
+        let mut keys = Self::keys();
+        keys.extend(extra.iter().cloned());
+        let mut draft = Self::from_parts(load_from(store, namespace, &keys)?, connected);
+        draft.namespace = namespace.into();
+        draft.per_mode = modes::per_mode(store);
+        Ok(draft)
+    }
+    /// The namespace the draft reads and writes.
+    pub fn namespace(&self) -> &str {
+        &self.namespace
+    }
+    /// The stored key a shared name stands for in this draft.
+    fn stored(&self, key: &ConfigKey) -> ConfigKey {
+        modes::rehome(key, &self.namespace)
+    }
+    /// Every stored key the draft read or tried to (the fixed keys and each
+    /// display's entry, also one that couldn't be read). With per-mode sets,
+    /// the same names in all three namespaces and the theme mode, since
+    /// either picks which keys cosmic-bg shows.
     pub fn watch_keys(&self) -> Vec<ConfigKey> {
+        let names = self.read_keys();
+        if !self.per_mode {
+            return names.iter().map(|key| self.stored(key)).collect();
+        }
+        let mut keys: Vec<ConfigKey> = modes::NAMESPACES
+            .iter()
+            .flat_map(|namespace| names.iter().map(|key| modes::rehome(key, namespace)))
+            .collect();
+        keys.push(modes::mode_key());
+        keys
+    }
+    /// Requires every stored key the draft read to be unchanged when
+    /// `patch` is applied.
+    pub fn guard(&self, patch: &mut DesktopPatch) {
+        for key in self.read_keys() {
+            patch.guard(self.stored(&key), self.base.user(&key).cloned());
+        }
+    }
+    /// The shared names of every key the draft read or tried to.
+    fn read_keys(&self) -> Vec<ConfigKey> {
         let mut keys: Vec<ConfigKey> = Self::keys();
         let unreadable = self
             .unreadable
@@ -890,6 +1013,8 @@ impl WallpaperDraft {
     pub fn sync_metadata(&mut self, fresh: &Self) {
         self.connected = fresh.connected.clone();
         self.unreadable = fresh.unreadable.clone();
+        self.namespace = fresh.namespace.clone();
+        self.per_mode = fresh.per_mode;
     }
     pub fn snapshot(&self) -> &Snapshot {
         &self.base
@@ -1450,7 +1575,28 @@ impl WallpaperDraft {
         for key in self.depends_all() {
             patch.guard(key.clone(), user(&key));
         }
-        Plan { patch, blocked }
+        Plan {
+            patch: self.stored_patch(patch),
+            blocked,
+        }
+    }
+    /// `patch` (shared names) with every key at its stored place.
+    fn stored_patch(&self, patch: DesktopPatch) -> DesktopPatch {
+        if self.namespace == NAMESPACE {
+            return patch;
+        }
+        let mut stored = DesktopPatch::new();
+        for (key, entry) in patch.iter() {
+            stored.set(
+                self.stored(key),
+                entry.original.clone(),
+                entry.desired.clone(),
+            );
+        }
+        for (key, original) in patch.guards() {
+            stored.guard(self.stored(key), original.clone());
+        }
+        stored
     }
 
     /// The paths this draft makes newly shown somewhere: a changed source,
@@ -1533,10 +1679,11 @@ impl WallpaperDraft {
     /// Drops only the edits that read `keys` (or the current conflicts),
     /// adopts current values and keeps the other edits on their baselines.
     pub fn resolve_conflicts(&mut self, snapshot: Snapshot, keys: &[ConfigKey]) {
+        // A refused Apply names stored keys; the edits use shared names.
         let keys: Vec<ConfigKey> = if keys.is_empty() {
             self.conflicts.clone()
         } else {
-            keys.to_vec()
+            keys.iter().map(modes::logical).collect()
         };
         for part in self.parts() {
             if self.depends(&part).iter().any(|key| keys.contains(key)) {

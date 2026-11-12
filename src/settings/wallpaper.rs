@@ -1357,9 +1357,7 @@ impl WallpaperEditor {
             Some(polarity) => {
                 let draft = self.draft().expect("open");
                 let mut patch = draft.plan().patch;
-                for key in draft.watch_keys() {
-                    patch.guard(key.clone(), draft.snapshot().user(&key).cloned());
-                }
+                draft.guard(&mut patch);
                 let mut rest = draft.clone();
                 rest.discard();
                 self.core
@@ -1417,9 +1415,7 @@ impl WallpaperEditor {
                 self.set_notice(Notice::Busy(FINDING_COLORS.into()));
                 return;
             }
-            for key in draft.watch_keys() {
-                patch.guard(key.clone(), draft.snapshot().user(&key).cloned());
-            }
+            draft.guard(&mut patch);
         }
         if let Some(accent) = self.accent_patch()
             && let Err(error) = patch.merge(accent)
@@ -1443,9 +1439,7 @@ impl WallpaperEditor {
             match self.polarity() {
                 Ok(Some(polarity)) => {
                     let draft = self.draft().expect("open");
-                    for key in draft.watch_keys() {
-                        patch.guard(key.clone(), draft.snapshot().user(&key).cloned());
-                    }
+                    draft.guard(&mut patch);
                     let merged = match widgets.as_mut() {
                         Some(widgets) => widgets.merge(polarity).map_err(|overlaps| {
                             format!(
