@@ -173,5 +173,38 @@ class PackageTests(unittest.TestCase):
         self.assertFalse((root / "usr/share/cosmic-ext-halcyon/updates").exists())
 
 
+class UnitTests(unittest.TestCase):
+    """The widgets' user unit, as both the deb and the RPM ship it."""
+
+    def test_the_widgets_start_again_after_an_upgrade_restart(self):
+        # After a package upgrade the widgets exit with RESTART_STATUS (75)
+        # for systemd to start the new program (src/upgrade.rs).
+        self.assertIn("pub const RESTART_STATUS: i32 = 75;",
+                      (builder.REPO / "src/upgrade.rs").read_text())
+        # The RPM stages the same application payload as the deb.
+        self.assertIn("app.stage_application(",
+                      (builder.REPO / "packaging/build-rpm.py").read_text())
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "halcyon"
+            binary.write_text("#!/bin/sh\nexit 0\n")
+            with contextlib.redirect_stderr(io.StringIO()):
+                builder.stage_application(root / "payload", binary, [], None, builder.PACKAGE)
+            unit = (root / "payload/usr/lib/systemd/user/halcyon.service").read_text()
+        service = {}
+        section = None
+        for line in unit.splitlines():
+            if line.startswith("["):
+                section = line.strip("[]")
+            elif section == "Service" and "=" in line and not line.startswith("#"):
+                key, value = line.split("=", 1)
+                service[key] = value
+        self.assertEqual(service["ExecStart"], "/usr/bin/halcyon")
+        self.assertEqual(service["Restart"], "on-failure")
+        self.assertEqual(service["RestartForceExitStatus"], "75")
+        # Fewer than systemd's default five starts in ten seconds.
+        self.assertGreaterEqual(int(service["RestartSec"]), 3)
+
+
 if __name__ == "__main__":
     unittest.main()

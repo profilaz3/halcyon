@@ -1478,6 +1478,10 @@ impl cosmic::Application for Settings {
             self.config
                 .color_subscription()
                 .map(|_| Message::DesktopPaletteChanged),
+            // An upgrade replaced the program: look again, as on focus, so
+            // Updates offers Restart Settings. Settings never restarts by
+            // itself; Restart Settings saves the page's edits first.
+            crate::upgrade::watch().map(|_| Message::RefreshInstallation),
         ];
         if self.page.edits_wallpaper()
             && (self
