@@ -48,7 +48,12 @@ pub(super) struct Surface<'a> {
     pub frame: super::host::Frame,
     pub show_content: bool,
     pub slot_width: f32,
+    /// The chooser or the notification list fills the card below the title.
     pub chooser: bool,
+    /// Popup height beyond the frame's own, fixed when the popup opened.
+    pub extra: f32,
+    /// How much of `extra` the card grows into; the list's rows decide.
+    pub card_extra: f32,
     /// The badge or icon row beside the title, 0 when there is none.
     pub others_width: f32,
     /// How much of it the resting title mirrors on its left to stay centred.
@@ -88,7 +93,7 @@ impl Surface<'_> {
             x: (b.x + (b.width - width) / 2.).round(),
             y: b.y + self.frame.bar(),
             width: width.round(),
-            height: (CARD_HEIGHT - self.lift()) * self.progress,
+            height: (CARD_HEIGHT + self.card_extra - self.lift()) * self.progress,
         }
     }
     fn contains(&self, b: Rectangle, cursor: mouse::Cursor) -> bool {
@@ -114,7 +119,9 @@ impl Surface<'_> {
             x: b.x + (b.width - width) / 2.,
             y: b.y,
             width,
-            height: start + (self.frame.popup_height() - self.lift() - start) * self.progress,
+            height: start
+                + (self.frame.popup_height() + self.card_extra - self.lift() - start)
+                    * self.progress,
         }
     }
 }
@@ -144,7 +151,7 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
                 self.slot_width
             }),
             Length::Fixed(if self.popup {
-                self.frame.popup_height()
+                self.frame.popup_height() + self.extra
             } else {
                 self.frame.height
             }),
@@ -207,7 +214,7 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
             actions_y,
             action_inner,
             if self.chooser {
-                HEIGHT - 50.
+                HEIGHT - 50. + self.card_extra
             } else {
                 ACTIONS_HEIGHT
             },
@@ -254,7 +261,7 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
             Size::new(
                 outer_width,
                 if self.popup {
-                    self.frame.popup_height()
+                    self.frame.popup_height() + self.extra
                 } else {
                     self.frame.height
                 },

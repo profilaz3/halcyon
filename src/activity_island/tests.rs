@@ -1782,13 +1782,14 @@ fn note(id: u32, app: &str, icon: &str, title: &str, body: &str) -> notification
         urgent: false,
         low: false,
         resident: false,
+        at_ms: 0,
     }
 }
 fn notify(app: &mut Applet, note: notifications::Note) {
     let _ = app.update(Message::Notes(notifications::Event::Notify(note)));
 }
 #[test]
-fn notifications_lead_with_the_newest_and_list_the_rest_as_icons() {
+fn notifications_lead_with_the_newest_and_count_the_rest() {
     use cosmic::iced::Size;
     let mut app = app();
     app.snapshot.music = Some(music());
@@ -1807,27 +1808,56 @@ fn notifications_lead_with_the_newest_and_list_the_rest_as_icons() {
     assert_eq!(app.notes.len(), 2);
     assert_eq!(app.kind, Kind::Notification(1));
     notify(&mut app, note(3, "Chat", "user-available-symbolic", "Build channel", "Deploy is green"));
+    assert_eq!(app.kind, Kind::Notification(3));
     let frame = app.frame();
     let mut ui = crate::native_test::Native::new(Size::new(frame.popup_width(), frame.popup_height()));
     app.popup = Some(window::Id::unique());
     app.motion.retarget(0., false, Instant::now());
-    // Resting: the title, then one icon per other activity, all in the slot.
+    // Resting: the newest notification, a count of the others, then one
+    // icon per other activity, all in the slot.
     let title = ui.bounds(app.capsule(true), "activity-title");
-    for other in ["notification-1", "notification-2", "music"] {
-        let b = ui.bounds(app.capsule(true), &format!("activity-other-{other}"));
+    for other in ["note-count", "other-music"] {
+        let b = ui.bounds(app.capsule(true), &format!("activity-{other}"));
         assert!(b.x >= title.x + title.width - 1., "{other} sits after the title");
         assert!(b.x + b.width <= (frame.popup_width() + app.slot_width()) / 2.);
     }
-    assert!(ui.try_bounds(app.capsule(true), "activity-others").is_none());
+    assert!(ui.text_bounds(app.capsule(true), "+2").width > 0.);
+    for id in [
+        "activity-other-notification-1",
+        "activity-other-notification-2",
+        "activity-others",
+    ] {
+        assert!(ui.try_bounds(app.capsule(true), id).is_none(), "{id}");
+    }
+    assert!(matches!(
+        click(&mut ui, &app, "activity-note-count").as_slice(),
+        [Message::ShowNotes]
+    ));
     for m in click(&mut ui, &app, "activity-other-music") {
         let _ = app.update(m);
     }
     assert_eq!(app.kind, Kind::Music, "an icon selects its activity");
-    // A fourth other activity turns the last place into a count.
+    // Behind another activity, the newest notification stands for them all.
+    assert!(
+        ui.try_bounds(app.capsule(true), "activity-note-count")
+            .is_none()
+    );
+    assert!(matches!(
+        click(&mut ui, &app, "activity-other-notification-3").as_slice(),
+        [Message::ShowNotes]
+    ));
+    assert!(
+        ui.try_bounds(app.capsule(true), "activity-other-notification-1")
+            .is_none()
+    );
+    // The count follows each new one.
     notify(&mut app, note(4, "Calendar", "", "Room booked", ""));
     app.kind = Kind::Notification(4);
-    assert!(ui.try_bounds(app.capsule(true), "activity-other-music").is_none());
-    assert!(ui.try_bounds(app.capsule(true), "activity-others").is_some());
+    assert!(ui.text_bounds(app.capsule(true), "+3").width > 0.);
+    assert!(
+        ui.try_bounds(app.capsule(true), "activity-other-music")
+            .is_some()
+    );
     // Open: message, the app's buttons and Dismiss fit the card.
     app.kind = Kind::Notification(2);
     app.motion.retarget(1., false, Instant::now());
@@ -1948,11 +1978,24 @@ fn notifications_render_on_islands_and_standard_bars() {
             ("light", cosmic::Theme::light(), CosmicPanelBackground::Light, ([214., 196., 170.], [168., 186., 204.])),
         ] {
             app.core.applet.background = background;
-            for (state, p, urgent) in [("rest", 0., false), ("open", 1., false), ("urgent", 1., true)] {
+            for (state, p, urgent) in [
+                ("badge", 0., false),
+                ("open", 1., false),
+                ("urgent", 1., true),
+            ] {
                 app.kind = Kind::Notification(3);
                 app.notes[0].urgent = urgent;
                 app.motion.retarget(p, false, Instant::now());
                 assert!(ui.duplicate_ids(app.capsule(true)).is_empty());
+                if p == 0. {
+                    // Resting: the newest notification and a count of the others.
+                    let count = ui.bounds(app.capsule(true), "activity-note-count");
+                    assert!(
+                        count.x + count.width
+                            <= (frame.popup_width() + app.slot_width()) / 2. + 0.5,
+                        "{shape}: {count:?}"
+                    );
+                }
                 if p == 1. {
                     let edge = (frame.popup_width() - if attached { surface::ATTACHED_WIDTH } else { WIDTH }) / 2.;
                     for id in ["activity-note-dismiss", "activity-note-action-0", "activity-note-clear"] {
@@ -1982,8 +2025,305 @@ fn notifications_render_on_islands_and_standard_bars() {
                     scale,
                 );
             }
+            // Open on the list: every notification in a taller popup.
+            app.kind = Kind::Notification(3);
+            app.list = true;
+            app.popup_extra = app.list_extra();
+            app.motion.retarget(1., false, Instant::now());
+            let height = app.popup_height();
+            let mut tall = crate::native_test::Native::new(Size::new(frame.popup_width(), height));
+            assert!(tall.duplicate_ids(app.capsule(true)).is_empty());
+            let edge = (frame.popup_width()
+                - if attached {
+                    surface::ATTACHED_WIDTH
+                } else {
+                    WIDTH
+                })
+                / 2.;
+            for id in [
+                "activity-note-row-3",
+                "activity-note-row-2",
+                "activity-note-row-1",
+                "activity-note-row-dismiss-1",
+                "activity-note-clear",
+            ] {
+                let b = tall.bounds(app.capsule(true), id);
+                assert!(
+                    b.x >= edge - 0.5 && b.x + b.width <= frame.popup_width() - edge + 0.5,
+                    "{shape} list: {id} {b:?}"
+                );
+                assert!(b.y + b.height <= height, "{shape} list: {id} {b:?}");
+            }
+            let pixels = tall.render_scaled(app.capsule(true), &theme, scale as f64);
+            app.list = false;
+            app.popup_extra = 0.;
+            let Some(root) = &root else { continue };
+            save_scene(
+                &root.join(format!("note-{shape}-list-{theme_name}.png")),
+                &pixels,
+                (
+                    (frame.popup_width() * scale) as usize,
+                    (height * scale) as usize,
+                ),
+                &frame,
+                Palette::for_panel(&app.core.applet).surface,
+                wall,
+                scale,
+            );
         }
     }
+}
+
+/// Music and three notifications, newest first: Chat (no default action),
+/// Mail and Files, arriving 2 hours, 5 minutes and moments ago.
+fn listed() -> Applet {
+    let mut app = app();
+    app.snapshot.music = Some(music());
+    let _ = app.update(Message::Notes(notifications::Event::Ready(true)));
+    notify(
+        &mut app,
+        note(1, "Files", "folder-symbolic", "Copy finished", "3 files"),
+    );
+    notify(
+        &mut app,
+        note(
+            2,
+            "Mail",
+            "mail-mark-read-symbolic",
+            "Ana Ruiz",
+            "Lunch at noon?",
+        ),
+    );
+    let mut chat = note(
+        3,
+        "Chat",
+        "user-available-symbolic",
+        "Build channel",
+        "Deploy is green",
+    );
+    chat.default = false;
+    notify(&mut app, chat);
+    app.now_ms = app.notes[0].at_ms;
+    app.notes[1].at_ms -= 5 * 60_000;
+    app.notes[2].at_ms -= 2 * 3_600_000;
+    app
+}
+/// Opens the island by hand and lets it finish growing.
+fn open_list(app: &mut Applet) -> crate::native_test::Native {
+    let _ = app.update(Message::Hold);
+    app.motion.retarget(1., false, Instant::now());
+    let size = cosmic::iced::Size::new(app.frame().popup_width(), app.popup_height());
+    crate::native_test::Native::new(size)
+}
+#[test]
+fn notification_list_shows_every_notification_newest_first() {
+    let mut app = listed();
+    let mut ui = open_list(&mut app);
+    assert!(app.popup.is_some() && app.held && app.listing());
+    assert_eq!(app.popup_extra, app.list_extra());
+    assert!(app.popup_extra > 0., "the popup grows for the rows");
+    let height = app.popup_height();
+    assert_eq!(height, app.frame().popup_height() + app.popup_extra);
+    assert!(ui.text_bounds(app.capsule(true), "3 notifications").width > 0.);
+    assert!(ui.duplicate_ids(app.capsule(true)).is_empty());
+    // Newest first, each with its own dismiss, all inside the popup.
+    let mut last = 0.;
+    for id in [3, 2, 1] {
+        let row = ui.bounds(app.capsule(true), &format!("activity-note-row-{id}"));
+        let dismiss = ui.bounds(
+            app.capsule(true),
+            &format!("activity-note-row-dismiss-{id}"),
+        );
+        assert!(row.y > last, "row {id} sits below the one before");
+        assert!(
+            dismiss.x >= row.x + row.width - 0.5,
+            "row {id}: dismiss at its end"
+        );
+        assert!((dismiss.center_y() - row.center_y()).abs() < 1.);
+        assert!(dismiss.x + dismiss.width <= app.frame().popup_width());
+        assert!(row.y + row.height <= height, "row {id}: {row:?}");
+        last = row.y;
+    }
+    let clear = ui.bounds(app.capsule(true), "activity-note-clear");
+    assert!(
+        clear.y > last && clear.y + clear.height <= height,
+        "{clear:?}"
+    );
+    // One card at a time is gone, and so is the count.
+    for id in [
+        "activity-note-dismiss",
+        "activity-note-count",
+        "activity-other-notification-1",
+    ] {
+        assert!(ui.try_bounds(app.capsule(true), id).is_none(), "{id}");
+    }
+    assert!(
+        ui.try_bounds(app.capsule(true), "activity-other-music")
+            .is_some()
+    );
+    // App, message and when, as the preference allows.
+    let text = ui.all_text(app.capsule(true));
+    for line in [
+        "Build channel",
+        "Chat · Deploy is green",
+        "Mail · Lunch at noon?",
+        "now",
+        "5 min",
+    ] {
+        assert!(text.iter().any(|t| t == line), "{line}: {text:?}");
+    }
+    assert!(
+        text.contains(&clock_time(app.notes[2].at_ms, false)),
+        "{text:?}"
+    );
+    assert!(!text.iter().any(|t| t.starts_with("and ")));
+    app.snapshot.preferences.notification_text = false;
+    let text = ui.all_text(app.capsule(true));
+    assert!(text.iter().any(|t| t == "Chat") && !text.iter().any(|t| t.contains("Deploy")));
+    app.snapshot.preferences.notification_text = true;
+    // A row opens its notification, or its card when there is nothing to open.
+    assert!(matches!(
+        click(&mut ui, &app, "activity-note-row-2").as_slice(),
+        [Message::NoteAction(2, action)] if action == "default"
+    ));
+    let pressed = click(&mut ui, &app, "activity-note-row-3");
+    assert!(matches!(
+        pressed.as_slice(),
+        [Message::Select(Kind::Notification(3))]
+    ));
+    let _ = app.update(Message::Select(Kind::Notification(3)));
+    assert!(!app.listing());
+    assert!(
+        ui.try_bounds(app.capsule(true), "activity-note-dismiss")
+            .is_some()
+    );
+    // Closing forgets the list; opening by hand brings it back.
+    close(&mut app);
+    assert!(!app.list && app.popup.is_none());
+    let _ = open_list(&mut app);
+    assert!(app.listing());
+    // A single notification keeps its own card.
+    close(&mut app);
+    let _ = app.update(Message::NoteDismiss(3));
+    let _ = app.update(Message::NoteDismiss(2));
+    let _ = open_list(&mut app);
+    assert!(app.popup.is_some() && !app.listing() && app.popup_extra == 0.);
+}
+#[test]
+fn notification_list_dismisses_one_and_clears_all() {
+    let mut app = listed();
+    let mut ui = open_list(&mut app);
+    assert!(matches!(
+        click(&mut ui, &app, "activity-note-row-dismiss-2").as_slice(),
+        [Message::NoteDismiss(2)]
+    ));
+    let _ = app.update(Message::NoteDismiss(2));
+    assert!(app.note(2).is_none() && app.popup.is_some() && app.listing());
+    assert!(
+        ui.try_bounds(app.capsule(true), "activity-note-row-2")
+            .is_none()
+    );
+    assert!(ui.text_bounds(app.capsule(true), "2 notifications").width > 0.);
+    let first = ui.bounds(app.capsule(true), "activity-note-row-3");
+    let second = ui.bounds(app.capsule(true), "activity-note-row-1");
+    assert!(second.y > first.y);
+    // Dismissing the one the closed island showed moves on to the next.
+    let _ = app.update(Message::NoteDismiss(3));
+    assert_eq!(app.kind, Kind::Notification(1));
+    assert!(app.listing());
+    assert!(ui.text_bounds(app.capsule(true), "1 notification").width > 0.);
+    notify(&mut app, note(5, "Chat", "", "Later", ""));
+    assert!(app.listing(), "a new one joins the open list");
+    assert!(
+        ui.try_bounds(app.capsule(true), "activity-note-row-5")
+            .is_some()
+    );
+    assert!(matches!(
+        click(&mut ui, &app, "activity-note-clear").as_slice(),
+        [Message::NotesClear]
+    ));
+    let _ = app.update(Message::NotesClear);
+    assert!(app.notes.is_empty() && !app.listing());
+    assert_eq!(app.motion.target(), 0.);
+}
+#[test]
+fn notification_list_caps_its_rows_and_counts_the_rest() {
+    let mut app = app();
+    let _ = app.update(Message::Notes(notifications::Event::Ready(true)));
+    for id in 1..=7 {
+        notify(&mut app, note(id, "Mail", "", &format!("Message {id}"), ""));
+    }
+    for (shape, attached) in [("island", false), ("bar", true)] {
+        app.panel_frame = host::Frame {
+            height: 32.,
+            padding: 4.,
+            radius: 8.,
+            attached,
+            opacity: 1.,
+        };
+        let mut ui = open_list(&mut app);
+        assert_eq!(app.list_rows(), LIST_ROWS);
+        assert_eq!(app.popup_extra, list_height(LIST_ROWS) - LIST_ROOM);
+        let height = app.popup_height();
+        for id in 3..=7 {
+            let row = ui.bounds(app.capsule(true), &format!("activity-note-row-{id}"));
+            assert!(row.y + row.height <= height, "{shape}: row {id} {row:?}");
+        }
+        for id in 1..=2 {
+            let row = format!("activity-note-row-{id}");
+            assert!(
+                ui.try_bounds(app.capsule(true), &row).is_none(),
+                "{shape}: {row}"
+            );
+        }
+        let more = ui.text_bounds(app.capsule(true), "and 2 more");
+        let clear = ui.bounds(app.capsule(true), "activity-note-clear");
+        assert!(
+            (more.center_y() - clear.center_y()).abs() < 2.,
+            "{shape}: {more:?} {clear:?}"
+        );
+        assert!(clear.y + clear.height <= height, "{shape}: {clear:?}");
+        assert!(ui.text_bounds(app.capsule(true), "7 notifications").width > 0.);
+        close(&mut app);
+    }
+    // Never more than the panel keeps.
+    for id in 8..=30 {
+        notify(&mut app, note(id, "Mail", "", "More", ""));
+    }
+    assert_eq!(app.notes.len(), notifications::LIMIT);
+    let mut ui = open_list(&mut app);
+    let more = format!("and {} more", notifications::LIMIT - LIST_ROWS);
+    assert!(ui.text_bounds(app.capsule(true), &more).width > 0.);
+}
+#[test]
+fn notification_list_follows_the_keyboard() {
+    use cosmic::iced::advanced::widget::operation::focusable::focus_next;
+    let mut app = listed();
+    let mut ui = open_list(&mut app);
+    let targets: Vec<(String, cosmic::iced::Rectangle)> = [
+        "activity-note-row-3",
+        "activity-note-row-dismiss-3",
+        "activity-note-row-2",
+        "activity-note-row-dismiss-2",
+        "activity-note-row-1",
+        "activity-note-row-dismiss-1",
+        "activity-note-clear",
+    ]
+    .into_iter()
+    .map(|id| (id.to_owned(), ui.bounds(app.capsule(true), id)))
+    .collect();
+    let mut reached = Vec::new();
+    for _ in 0..16 {
+        ui.operate(app.capsule(true), Box::new(focus_next::<()>()));
+        if let Some(focus) = ui.focused(app.capsule(true))
+            && let Some((id, _)) = targets.iter().find(|(_, b)| *b == focus)
+            && !reached.contains(id)
+        {
+            reached.push(id.clone());
+        }
+    }
+    let order: Vec<String> = targets.iter().map(|(id, _)| id.clone()).collect();
+    assert_eq!(reached, order, "Tab walks the rows in reading order");
 }
 
 /// An island standing in for COSMIC's popups, with nothing open.
@@ -2088,13 +2428,44 @@ fn notification_rules_summarise_more_than_three_and_honour_do_not_disturb() {
     }
     assert!(ui.try_bounds(app.capsule(true), "activity-note-dismiss").is_none());
     // Its notifications are not listed again beside it, so the title fits.
-    assert!(ui.try_bounds(app.capsule(true), "activity-others").is_none());
-    assert!(ui.text_bounds(app.capsule(true), "4 new notifications").width > 0.);
-    assert!(matches!(click(&mut ui, &app, "activity-note-all").as_slice(), [Message::Choose]));
-    let _ = app.update(Message::Choose);
-    assert!(app.chooser && app.summary().is_none());
+    assert!(
+        ui.try_bounds(app.capsule(true), "activity-others")
+            .is_none()
+    );
+    assert!(
+        ui.text_bounds(app.capsule(true), "4 new notifications")
+            .width
+            > 0.
+    );
+    assert!(matches!(
+        click(&mut ui, &app, "activity-note-all").as_slice(),
+        [Message::ShowNotes]
+    ));
+    assert!(matches!(
+        click(&mut ui, &app, "activity-title").as_slice(),
+        [Message::ShowNotes]
+    ));
+    // The reveal's popup is too small for the rows: it reopens in hand.
+    let revealed = app.popup.unwrap();
+    let _ = app.update(Message::ShowNotes);
+    assert_eq!(app.promote_popup, Some(revealed));
+    assert!(app.held && app.list && app.summary().is_none() && app.reveal_deadline.is_none());
+    let _ = app.update(Message::PopupGone(revealed));
+    assert!(app.popup.is_some_and(|id| id != revealed));
+    assert!(app.listing() && app.held);
+    assert_eq!(app.popup_extra, app.list_extra());
+    app.motion.retarget(1., false, Instant::now());
+    let mut tall =
+        crate::native_test::Native::new(Size::new(frame.popup_width(), app.popup_height()));
+    assert!(tall.text_bounds(app.capsule(true), "4 notifications").width > 0.);
+    for id in 1..=4 {
+        assert!(
+            tall.try_bounds(app.capsule(true), &format!("activity-note-row-{id}"))
+                .is_some()
+        );
+    }
     close(&mut app);
-    assert!(app.batch.is_empty());
+    assert!(app.batch.is_empty() && !app.list);
     // A burst during a reveal also reads as one summary.
     wake(&mut app, NOTE_GAP);
     notify(&mut app, note(5, "Chat", "", "One", ""));

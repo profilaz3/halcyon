@@ -36,6 +36,8 @@ pub struct Note {
     pub low: bool,
     /// The app keeps the notification after an action.
     pub resident: bool,
+    /// When it arrived here, in Unix milliseconds; 0 until it does.
+    pub at_ms: i64,
 }
 #[derive(Clone, Debug)]
 pub enum Event {
@@ -229,6 +231,7 @@ pub(super) fn note(
         urgent,
         low,
         resident,
+        at_ms: 0,
     }
 }
 /// Plain, single-spaced text: notification bodies may carry simple markup.
