@@ -49,6 +49,8 @@ impl Cards {
                 return Task::none();
             }
         };
+        // Counted until applied: a restart into an update waits for it.
+        self.applying_colors += 1;
         cosmic::task::future(async move {
             let result = tokio::task::spawn_blocking(move || {
                 let store = DesktopStore::from_env().map_err(|error| error.to_string())?;

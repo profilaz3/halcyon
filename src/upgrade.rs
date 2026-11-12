@@ -3,9 +3,9 @@
 //! dpkg and rpm install a new `/usr/bin/halcyon` by renaming it over the old
 //! one. A process that is already running keeps the old file open, and
 //! Linux then names it “/usr/bin/halcyon (deleted)” in `/proc/self/exe`.
-//! The Activity applet would keep running the old program until the next
-//! sign-in. (The desktop widgets have the same problem; they don't use this
-//! yet, see the note on `restart`.)
+//! The Activity applet and the desktop widgets would keep running the old
+//! program until the next sign-in. Settings only notices: it offers Restart
+//! Settings, and never closes a window someone is using by itself.
 //!
 //! `watch` follows the program's folder with one inotify watch (no polling).
 //! Once the folder has been quiet for a moment, the file at the path differs
@@ -13,7 +13,9 @@
 //! the new program once. The process then waits until nobody is using it and
 //! exits with `RESTART_STATUS`. Its owner starts it again from the same path:
 //! COSMIC's panel restarts an applet that exits with a failure status, and
-//! hands a notification applet a fresh notification socket as it does.
+//! hands a notification applet a fresh notification socket as it does;
+//! `halcyon.service` restarts the desktop widgets (`RestartForceExitStatus`).
+//! Each kind of process keeps its own ledger (`Ledger::session`).
 //!
 //! A broken update cannot loop. A program that does not answer `--version`
 //! is never restarted into. Every restart is written to a small ledger in the

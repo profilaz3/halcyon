@@ -21,6 +21,7 @@ mod display_tests;
 mod glance;
 mod monitors;
 mod recipe;
+mod restart;
 #[cfg(test)]
 mod surface_lifecycle_tests;
 
@@ -284,6 +285,11 @@ pub enum Message {
     NoticeDismiss,
     NoticeDetails,
     RecoveryDetails,
+    /// A working update replaced the program (see `restart`).
+    Updated(crate::upgrade::Program),
+    /// The armed restart is due, this much earlier than the monotonic clock
+    /// reached it.
+    RestartDue(Duration),
 }
 
 /// A change made on the desktop that couldn't be saved, shown in the edge
@@ -393,6 +399,10 @@ pub struct Cards {
     /// The open widget menu: its popup and the widget it's for.
     menu: Option<(window::Id, Widget)>,
     recovery_details: bool,
+    /// Restarting into an update once the desktop is left alone.
+    restart: restart::Restart,
+    /// Wallpaper colors being written to the desktop.
+    applying_colors: u32,
 }
 impl cosmic::Application for Cards {
     type Executor = cosmic::executor::Default;
@@ -499,6 +509,8 @@ impl cosmic::Application for Cards {
             notice: None,
             menu: None,
             recovery_details: false,
+            restart: Default::default(),
+            applying_colors: 0,
         };
         // Output discovery creates the first probe, including on late startup.
         tasks.extend(app.refresh_visible_data());
@@ -520,6 +532,7 @@ impl cosmic::Application for Cards {
             self.activity
                 .subscription(self.config.activity_island.clone())
                 .map(Message::Activity),
+            self.restart_subscription(),
         ];
         if self.config.rain.wanted() {
             subscriptions.push(crate::rain::lifecycle::watch().map(Message::RainLifecycle));
@@ -596,6 +609,9 @@ impl cosmic::Application for Cards {
                         cosmic::iced::mouse::Event::CursorMoved { position } => {
                             if let Ok(mut pointer) = POINTER.lock() {
                                 *pointer = Some((id, position));
+                            }
+                            if let Ok(mut moved) = restart::POINTER_MOVED.lock() {
+                                *moved = Some(Instant::now());
                             }
                         }
                         cosmic::iced::mouse::Event::CursorLeft => {
@@ -753,6 +769,7 @@ impl cosmic::Application for Cards {
                 | Message::Woke(..)
         );
         let outer = !self.updating;
+        let input = restart::input(&msg);
         self.updating = true;
         // Include watcher/timer/command dispatches: any synchronous writer
         // reached while Arrange owns input must refuse contended locks.
@@ -765,6 +782,10 @@ impl cosmic::Application for Cards {
             return task;
         }
         self.updating = false;
+        if input {
+            self.restart.at = None;
+        }
+        self.arm_restart(Instant::now());
         let pending = std::mem::take(&mut self.rebuild_pending);
         let surfaces = if !self.output_known || self.selected_output.is_none() {
             Task::none()
@@ -1177,6 +1198,7 @@ impl Cards {
             }
             Message::WallpaperColorsReady(id, result) => self.wallpaper_colors_ready(id, result),
             Message::WallpaperColorsApplied(result) => {
+                self.applying_colors = self.applying_colors.saturating_sub(1);
                 if let Err(error) = result {
                     eprintln!("Wallpaper colors: {error}");
                 }
@@ -1443,6 +1465,16 @@ impl Cards {
             }
             Message::RecoveryDetails => {
                 self.recovery_details = !self.recovery_details;
+                Task::none()
+            }
+            Message::Updated(new) => {
+                let plan = Self::restart_ledger_plan(&new);
+                let in_service = crate::settings_lifecycle::in_widget_service_now();
+                self.updated(new, plan, in_service, Instant::now());
+                Task::none()
+            }
+            Message::RestartDue(early) => {
+                self.restart_wake(early);
                 Task::none()
             }
             Message::ShowControls => {
@@ -2129,10 +2161,13 @@ impl Cards {
         };
         cosmic::task::future(async move {
             let result = tokio::task::spawn_blocking(move || {
-                let status = std::process::Command::new(command)
-                    .args(args)
-                    .status()
-                    .map_err(|e| e.to_string())?;
+                // Outside the service's control group, so restarting the
+                // widgets (after an upgrade) leaves what they opened running.
+                let in_service = crate::settings_lifecycle::in_widget_service_now();
+                let status =
+                    crate::settings_lifecycle::independent_command(&command, &args, in_service)
+                        .status()
+                        .map_err(|e| e.to_string())?;
                 if status.success() {
                     Ok(())
                 } else {
