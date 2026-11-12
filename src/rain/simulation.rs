@@ -145,15 +145,17 @@ impl Simulation {
                 // heavier drops break free sooner.
                 if random(&mut self.seed) < dt * 1.4 / (1. + excess * 2.) {
                     d.hold = (0.15 + random(&mut self.seed) * 0.9) / (1. + excess);
+                    // It breaks free at an angle, so its path kinks.
+                    d.lean = random(&mut self.seed) * 2. - 1.;
                 }
             }
             let old_y = d.y;
             let old_x = d.x;
             if d.speed > 0.004 {
                 d.age = 0.;
-                d.lean = (d.lean + (random(&mut self.seed) - 0.5) * dt * 12.).clamp(-1., 1.);
+                d.lean = (d.lean + (random(&mut self.seed) - 0.5) * dt * 18.).clamp(-1., 1.);
                 d.y += d.speed * dt;
-                d.x += (d.lean * 0.22 + wind * 0.6) * d.speed * dt;
+                d.x += (d.lean * 0.45 + wind * 0.6) * d.speed * dt;
             }
             d.stretch = 1. + (d.speed * 2.2).min(0.5);
             d.trail_distance -= (d.x - old_x).hypot(d.y - old_y);

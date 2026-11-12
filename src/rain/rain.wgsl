@@ -8,9 +8,10 @@
 //   quads for the moving and fresh drops, blended in order. The static beads
 //   are cached once in the same encoding;
 // - a condensation field at a quarter of the water field's size that keeps
-//   its previous frame: moving drops wipe it clear and it fogs over again in
-//   4 to 30 seconds. It also carries the mist-blurred wallpaper the fog
-//   shows, so composition reads both in one sample;
+//   its previous frame: moving drops wipe a path about half their width, and
+//   fog creeps back in from its edges over 4 to 30 seconds. It also carries
+//   the mist-blurred wallpaper the fog shows, so composition reads both in
+//   one sample;
 // - full-resolution composition: the beads the condensation allows under
 //   this frame's drops, sharp wallpaper refracted through each drop, fogged
 //   glass between them, rim shading and highlights.
@@ -153,11 +154,18 @@ fn runoff(index:u32, slot_index:u32, width:f32, scale:f32, seed:f32, slot:f32) -
     if center_y-radius*2.>1. {return hidden();}
     let sliding=smoothstep(0.,0.3,slip);
     let velocity=sliding*(1.+0.82*cos(surge*slip));
-    let sway=width*0.2;
-    let drift=sway*(sin(center_y*mix(5.,11.,stream.y)+stream.z*6.283)
-        +0.35*sin(center_y*23.+traits.y*9.));
-    let room=max(0.,width*0.5-radius*1.6-sway*1.35);
-    let x=(lane+0.5)*width+(traits.y*2.-1.)*room*0.7+drift+shear*center_y;
+    // Each drop takes its own winding path, so the drops of one lane never
+    // retrace a column: a slow and a fast meander, plus a sideways kink at
+    // every surge, eased so the path stays continuous.
+    let path=hash3(vec2(cycle*3.7+slot*17.,lane*2.3+seed));
+    let sway=0.012+width*0.2;
+    let kicks=surge*slip/6.283;
+    let kick=floor(kicks);
+    let jog=mix(hash(vec2(kick,lane+cycle*7.)),hash(vec2(kick+1.,lane+cycle*7.)),
+        smoothstep(0.,1.,fract(kicks)))*2.-1.;
+    let drift=sway*(sin(center_y*mix(10.,18.,path.x)+path.y*6.283)
+        +0.5*sin(center_y*mix(28.,45.,path.z)+path.x*9.)+0.6*jog);
+    let x=(lane+0.5+(path.z-0.5)*0.7)*width+drift+shear*center_y;
     // Runoff is rounder than a fresh splash: soften the outline's lobes.
     return lens_vertex(index,vec2(x,center_y),radius,1.+0.2*velocity,shear,traits,
         vec4(1.-growth,0.32*sliding,0.35,radius),vec2(1.,select(0.,1.,slip>0.)));
@@ -228,16 +236,33 @@ const LANES:u32=512u;
     let blur=textureSampleLevel(wallpaper,feedback_sampler,v.uv,2.5+2.*p.motion.z).rgb;
     let last=textureSampleLevel(previous,feedback_sampler,v.uv,0.).a;
     if p.style.z<=0. {return vec4(blur,1.);}
-    let step=0.25/vec2<f32>(textureDimensions(previous));
+    let size=vec2<f32>(textureDimensions(previous));
+    let step=0.25/size;
+    // A sliding drop wipes a path narrower than itself: only the middle of
+    // the lens, about half its width, touches the glass hard enough.
     var wipe=0.;
     for(var i=0;i<4;i+=1) {
         let o=vec2(select(-1.,1.,(i&1)==1),select(-1.,1.,i>=2))*step;
         let f=textureSampleLevel(water,feedback_sampler,v.uv+o,0.);
-        if f.z>0. {wipe=max(wipe,clamp(f.w,0.,1.));}
+        if f.z>0. {
+            let q=f.xy/max(f.w,1e-4);
+            wipe=max(wipe,clamp(f.w,0.,1.)*(1.-smoothstep(0.3,0.6,abs(q.x))));
+        }
     }
-    // Trails decide how long a cleared path stays clear.
+    // Fog creeps back in from a path's edges, unevenly: the neighbours'
+    // fog diffuses in and speeds the regrowth, and each texel has its own
+    // pace, so an old path narrows, tapers and breaks into clear spots.
+    var near=0.;
+    for(var i=0;i<4;i+=1) {
+        let o=select(vec2(select(-1.,1.,i==1),0.),vec2(0.,select(-1.,1.,i==3)),i>=2)/size;
+        near+=textureSampleLevel(previous,feedback_sampler,v.uv+o,0.).a*0.25;
+    }
+    let dt=p.atmosphere.x;
+    let spread=mix(last,near,min(1.,dt*0.8));
+    // Trails decide how long a cleared path takes to fog over.
     let settle=4.+26.*p.style.z;
-    let fogged=min(1.,last+p.atmosphere.x/settle);
+    let regrow=mix(0.5,1.5,hash(floor(v.uv*size)))*(0.4+1.6*near);
+    let fogged=min(1.,spread+dt*regrow/settle);
     return vec4(blur,min(fogged,1.-smoothstep(0.12,0.55,wipe)));
 }
 
