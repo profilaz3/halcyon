@@ -35,14 +35,34 @@ const MICROPHONE_DOT: Color = Color::from_rgb(1.0, 0.58, 0.0);
 const ICON_BADGE: f32 = 22.;
 const BADGE_WIDTH: f32 = 30.;
 const OVERVIEW_GAP: f32 = 2.;
-fn overview_width(icons: usize, more: bool) -> f32 {
-    let items = icons + usize::from(more);
+/// The width of `icons` app icons and `badges` count badges side by side.
+fn overview_width(icons: usize, badges: usize) -> f32 {
+    let items = icons + badges;
     if items == 0 {
         return 0.;
     }
-    icons as f32 * ICON_BADGE
-        + if more { BADGE_WIDTH } else { 0. }
-        + (items - 1) as f32 * OVERVIEW_GAP
+    icons as f32 * ICON_BADGE + badges as f32 * BADGE_WIDTH + (items - 1) as f32 * OVERVIEW_GAP
+}
+/// Notifications listed in the open island, at most; the rest are counted.
+const LIST_ROWS: usize = 5;
+const ROW_HEIGHT: f32 = 44.;
+const ROW_GAP: f32 = 4.;
+/// Clear all beneath the rows, with a little air above it.
+const LIST_FOOTER: f32 = 40.;
+/// The room a card has below its title line, as the chooser uses it.
+const LIST_ROOM: f32 = HEIGHT - 50.;
+/// The height of a list of `rows` notifications and its footer.
+fn list_height(rows: usize) -> f32 {
+    rows as f32 * (ROW_HEIGHT + ROW_GAP) - ROW_GAP + LIST_FOOTER
+}
+/// How long ago a notification arrived, as a list row says it.
+fn note_age(at_ms: i64, now_ms: i64, format_24h: bool) -> String {
+    let minutes = (now_ms - at_ms).max(0) / 60_000;
+    match minutes {
+        0 => "now".into(),
+        1..60 => format!("{minutes} min"),
+        _ => clock_time(at_ms, format_24h),
+    }
 }
 /// The host owns the resting background, including Islands finishes. The
 /// expanded surface uses the panel's native palette and stays opaque for reading.
@@ -357,6 +377,10 @@ pub struct Applet {
     /// in hand. Pointing at it keeps it open but leaves this set, so a
     /// right-click or swipe can still send it away.
     revealed: bool,
+    /// The open island lists every notification instead of one.
+    list: bool,
+    /// Height the open popup has beyond its usual size, for the list.
+    popup_extra: f32,
 }
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -392,6 +416,8 @@ pub enum Message {
     NoteAction(u32, String),
     NoteDismiss(u32),
     NotesClear,
+    /// Open the island on the list of notifications.
+    ShowNotes,
     /// Switch COSMIC's Do Not Disturb.
     Dnd(bool),
     /// Middle button: play or pause.
@@ -462,6 +488,8 @@ impl Application for Applet {
                 batch: Vec::new(),
                 dnd_wish: None,
                 revealed: false,
+                list: false,
+                popup_extra: 0.,
             },
             Task::none(),
         )
@@ -552,6 +580,7 @@ impl Application for Applet {
                     | Message::NoteAction(..)
                     | Message::NoteDismiss(_)
                     | Message::NotesClear
+                    | Message::ShowNotes
                     | Message::Dnd(_)
                     | Message::Middle
                     | Message::Secondary
@@ -800,7 +829,8 @@ impl Application for Applet {
                     self.promote_popup = None;
                     self.popup = None;
                     let source = self.selected_source.clone();
-                    let open = self.open_popup();
+                    // Reopened in hand, it keeps what it was showing.
+                    let open = self.open_popup_sized();
                     self.selected_source = source;
                     return open;
                 }
@@ -815,6 +845,7 @@ impl Application for Applet {
                     self.arm_pause_grace();
                     self.kind = self.automatic_kind();
                     self.chooser = false;
+                    self.list = false;
                     self.batch.clear();
                     self.revealed = false;
                     self.motion.retarget(0., false, now);
@@ -941,6 +972,49 @@ impl Application for Applet {
                 });
                 return Task::batch([close, dismiss]);
             }
+            Message::ShowNotes => {
+                if !self.notes_shown() || self.notes.is_empty() {
+                    return Task::none();
+                }
+                self.chooser = false;
+                self.batch.clear();
+                self.reveal_deadline = None;
+                self.revealed = false;
+                self.hover_deadline = None;
+                self.leave_deadline = None;
+                self.hover_block = None;
+                // The list leads with what the closed island showed: an
+                // urgent notification, otherwise the newest.
+                if !matches!(self.kind, Kind::Notification(id) if self.note(id).is_some()) {
+                    let first = self
+                        .notes
+                        .iter()
+                        .find(|n| n.urgent)
+                        .unwrap_or(&self.notes[0]);
+                    self.kind = Kind::Notification(first.id);
+                }
+                self.capture_source();
+                self.list = true;
+                self.problem = None;
+                self.now_ms = chrono::Utc::now().timestamp_millis();
+                let Some(id) = self.popup else {
+                    self.held = true;
+                    self.paused_until = None;
+                    self.seen_pending();
+                    return self.open_popup_sized();
+                };
+                if !self.held || self.popup_extra < self.list_extra() {
+                    // A popup's size is fixed when it opens: reopen it in
+                    // hand and tall enough for the rows.
+                    self.held = true;
+                    self.promote_popup = Some(id);
+                    return self
+                        .update(Message::Surface(cosmic::surface::action::destroy_popup(id)));
+                }
+                if self.motion.target() == 0. {
+                    self.motion.retarget(1., self.animates(), now);
+                }
+            }
             Message::Middle => {
                 let Some(m) = self.snapshot.music.as_ref() else {
                     return Task::none();
@@ -997,6 +1071,7 @@ impl Application for Applet {
                     return Task::none();
                 }
                 self.chooser = false;
+                self.list = false;
                 self.batch.clear();
                 self.kind = kind;
                 self.capture_source();
@@ -1192,7 +1267,46 @@ impl Applet {
             self.open_popup()
         }
     }
+    /// Several notifications open as a list, unless one is being revealed.
+    fn wants_list(&self) -> bool {
+        self.notes_shown()
+            && self.notes.len() > 1
+            && !self.chooser
+            && !self.revealed
+            && self.summary().is_none()
+            && matches!(self.kind, Kind::Notification(_))
+    }
+    /// The open island is listing notifications.
+    fn listing(&self) -> bool {
+        self.list
+            && self.popup.is_some()
+            && !self.chooser
+            && self.notes_shown()
+            && !self.notes.is_empty()
+            && matches!(self.kind, Kind::Notification(_))
+    }
+    /// Height a list of the current notifications needs beyond the card.
+    fn list_extra(&self) -> f32 {
+        (list_height(self.notes.len().clamp(1, LIST_ROWS)) - LIST_ROOM).max(0.)
+    }
+    /// Rows that fit the open popup, at least one.
+    fn list_rows(&self) -> usize {
+        let room = LIST_ROOM + self.popup_extra;
+        (1..=self.notes.len().min(LIST_ROWS))
+            .rev()
+            .find(|rows| list_height(*rows) <= room + 0.5)
+            .unwrap_or(1)
+    }
+    fn popup_height(&self) -> f32 {
+        self.frame().popup_height() + self.popup_extra
+    }
     fn open_popup(&mut self) -> Task<Message> {
+        self.list = self.wants_list();
+        self.open_popup_sized()
+    }
+    /// Opens the popup for what is set to show, tall enough for a list.
+    fn open_popup_sized(&mut self) -> Task<Message> {
+        self.popup_extra = if self.list { self.list_extra() } else { 0. };
         let id = window::Id::unique();
         self.capture_source();
         self.popup = Some(id);
@@ -1210,10 +1324,7 @@ impl Applet {
                     let mut p = s.core.applet.get_popup_settings(
                         s.core.main_window_id().unwrap(),
                         id,
-                        Some((
-                            s.frame().popup_width() as u32,
-                            s.frame().popup_height() as u32,
-                        )),
+                        Some((s.frame().popup_width() as u32, s.popup_height() as u32)),
                         None,
                         None,
                     );
@@ -1233,7 +1344,7 @@ impl Applet {
                     };
                     p.positioner.size_limits = cosmic::iced::Limits::NONE
                         .width(s.frame().popup_width())
-                        .height(s.frame().popup_height());
+                        .height(s.popup_height());
                     p.positioner.constraint_adjustment = 3;
                     // COSMIC's popup proxy drops offsets from multi-rectangle
                     // input regions. Keep one bounded native popup input area;
@@ -1249,6 +1360,7 @@ impl Applet {
         self.promote_popup = None;
         self.held = false;
         self.chooser = false;
+        self.list = false;
         self.arm_pause_grace();
         self.hover_deadline = None;
         self.leave_deadline = None;
@@ -1661,7 +1773,7 @@ impl Applet {
                     tint,
                     reveal,
                     Role::Primary,
-                    Some(Message::Choose),
+                    Some(Message::ShowNotes),
                 ));
                 row = row.push(self.label_button(
                     palette,
@@ -1917,7 +2029,7 @@ impl Applet {
         // The bottom row waits until the outline has nearly reached it.
 
         let Content {
-            title,
+            mut title,
             mut cue,
             mut meta,
             progress,
@@ -1928,33 +2040,59 @@ impl Applet {
             cue.clear();
         }
         let summary = self.summary().is_some();
-        let others: Vec<Kind> = self
-            .eligible_kinds()
-            .into_iter()
-            .filter(|kind| *kind != self.kind)
-            // A summary already stands for its notifications.
-            .filter(|kind| {
-                !(summary && matches!(kind, Kind::Notification(id) if self.batch.contains(id)))
-            })
-            // A camera or microphone on is its dot beside the title, not an icon.
-            .filter(|kind| !(live && matches!(kind, Kind::System(source) if source.privacy())))
-            .collect();
-        // Up to three others show as icons; beyond that the last place says
-        // how many more and opens the list.
-        let (shown, more) = if others.len() > OVERVIEW {
-            (&others[..OVERVIEW - 1], others.len() - (OVERVIEW - 1))
+        let listing = live && self.listing();
+        // Open on the list, the title line names it.
+        let heading = listing && p >= 0.5;
+        if heading {
+            title = match self.notes.len() {
+                1 => "1 notification".into(),
+                count => format!("{count} notifications"),
+            };
+        }
+        // A notification in front stands for the others as a count; behind
+        // another activity, the newest one stands for them all as its icon.
+        let leads = !self.chooser && matches!(self.kind, Kind::Notification(_));
+        let mut more_notes = 0;
+        let mut others: Vec<Kind> = Vec::new();
+        for kind in self.eligible_kinds() {
+            if kind == self.kind
+                // A camera or microphone on is its dot beside the title, not an icon.
+                || (live && matches!(kind, Kind::System(source) if source.privacy()))
+            {
+                continue;
+            }
+            if matches!(kind, Kind::Notification(_)) {
+                if leads {
+                    // A summary or the list already stands for them.
+                    if !summary && !heading {
+                        more_notes += 1;
+                    }
+                    continue;
+                }
+                if others.iter().any(|k| matches!(k, Kind::Notification(_))) {
+                    continue;
+                }
+            }
+            others.push(kind);
+        }
+        let count_badge = usize::from(!self.chooser && more_notes > 0);
+        // Up to three places in all; beyond that the last place says how
+        // many more and opens the chooser.
+        let places = OVERVIEW - count_badge;
+        let (shown, more) = if others.len() > places {
+            (&others[..places - 1], others.len() - (places - 1))
         } else {
             (&others[..], 0)
         };
         let others_width = if self.chooser && !others.is_empty() {
             BADGE_WIDTH
         } else {
-            overview_width(shown.len(), more > 0)
+            overview_width(shown.len(), count_badge + usize::from(more > 0))
         };
         // A single badge keeps the resting title centred; a row of icons
         // takes the title's balancing space instead.
         let balance = if others_width <= BADGE_WIDTH { others_width } else { 0. };
-        let others = others.len();
+        let others = others.len() + count_badge;
         // The cue says when or how far along, so it keeps its full width and
         // the title gives way. This mirrors the title slot in `surface`.
         let compact = COMPACT_WIDTH.min(self.slot_width());
@@ -2000,6 +2138,7 @@ impl Applet {
         let title_width = (room - if cue.is_empty() { 0. } else { cue_width }).max(40.);
         let glyph = if live
             && !self.chooser
+            && !heading
             && self.summary().is_none()
             && matches!(self.kind, Kind::Notification(_))
         {
@@ -2126,11 +2265,12 @@ impl Applet {
         .on_press(match self.kind {
             // Open, the notification itself is the target, as in a popup.
             Kind::Notification(_) if live && p > 0.9 && self.summary().is_some() => {
-                Message::Choose
+                Message::ShowNotes
             }
             Kind::Notification(id)
                 if live
                     && !self.chooser
+                    && !listing
                     && p > 0.9
                     && self.note(id).is_some_and(|n| n.default) =>
             {
@@ -2151,7 +2291,7 @@ impl Applet {
             "Collapse (Esc)",
             widget::tooltip::Position::Bottom,
         );
-        let note = live && !self.chooser && matches!(self.kind, Kind::Notification(_));
+        let note = live && !self.chooser && !listing && matches!(self.kind, Kind::Notification(_));
         let meta = if note {
             // A notification's message may take a second line. Clipped, not
             // ellipsized: wrapped ellipsis keeps a space at the line start.
@@ -2202,6 +2342,27 @@ impl Applet {
             )
         } else {
             let mut row = widget::row([]).spacing(OVERVIEW_GAP);
+            if count_badge > 0 {
+                let label = match more_notes {
+                    1 => "1 more notification".to_owned(),
+                    count => format!("{count} more notifications"),
+                };
+                row = row.push(self.tip(
+                    palette,
+                    badge(
+                        self.text(
+                            format!("+{more_notes}"),
+                            11.,
+                            palette.accent(Kind::Notification(0)),
+                        ),
+                        "activity-note-count",
+                        BADGE_WIDTH,
+                        Message::ShowNotes,
+                    ),
+                    &label,
+                    widget::tooltip::Position::Bottom,
+                ));
+            }
             for kind in shown {
                 let label = match kind {
                     Kind::Notification(id) => self
@@ -2211,13 +2372,20 @@ impl Applet {
                         .unwrap_or_else(|| "Notification".into()),
                     kind => kind.label().into(),
                 };
+                // Behind another activity, the newest notification opens the
+                // list when there are more.
+                let press = if matches!(kind, Kind::Notification(_)) && self.notes.len() > 1 {
+                    Message::ShowNotes
+                } else {
+                    Message::Select(*kind)
+                };
                 row = row.push(self.tip(
                     palette,
                     badge(
                         self.kind_icon(*kind, 14),
                         &format!("activity-other-{}", kind.id()),
                         ICON_BADGE,
-                        Message::Select(*kind),
+                        press,
                     ),
                     &label,
                     widget::tooltip::Position::Bottom,
@@ -2253,11 +2421,19 @@ impl Applet {
                 .into()
             })
             .unwrap_or_else(|| widget::Space::new().into());
+        let extra = if popup { self.popup_extra } else { 0. };
         surface::Surface {
             palette,
             frame: self.frame(),
             slot_width: self.slot_width(),
-            chooser: self.chooser,
+            // The list takes the chooser's place below the title line.
+            chooser: self.chooser || listing,
+            extra,
+            card_extra: if listing {
+                (list_height(self.list_rows()) - LIST_ROOM).clamp(0., extra)
+            } else {
+                0.
+            },
             others_width: if others > 0 { others_width } else { 0. },
             balance: if others > 0 { balance } else { 0. },
             wrap_meta: note,
@@ -2270,6 +2446,8 @@ impl Applet {
                 meta,
                 if self.chooser {
                     self.chooser_view(palette, accent, reveal)
+                } else if listing {
+                    self.list_view(palette, accent, reveal)
                 } else {
                     self.actions(
                         palette,

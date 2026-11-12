@@ -547,3 +547,33 @@ directions because COSMIC's natural scrolling setting is not known to the
 applet. Closing a camera opened read-only raises no file event, so the dot
 can take up to 5s to go. Processes of other users are not visible, so their
 camera use is not shown.
+
+### Notification list (2026-11-12)
+
+Several notifications now read as one list instead of one card at a time.
+Before, every notification was kept (newest first, up to 20) but each was its
+own activity: the card showed one, and the rest were small icons or a "+N"
+that opened the activity chooser. Nothing was dropped; the shape hid them.
+
+- Closed: the newest notification leads (an urgent one first, as before) and
+  the others become one "+N" count beside the title, ahead of any other
+  activity icons. The count and its tooltip open the list. Behind another
+  activity, only the newest notification shows as an icon, and with more than
+  one waiting it opens the list too.
+- Open: with a notification in front and more than one present, the open
+  island shows the list. The title line reads "N notifications". Each row has
+  the app icon, the title (warning colour when urgent), how long ago it came
+  ("now", "N min", then the clock time), and the app name with the body when
+  notification text is on. Clicking a row runs its default action, or selects
+  it when it has none. Each row has its own Dismiss; Clear all sits below.
+- Size: up to five rows, then "and N more" beside Clear all. The popup is
+  sized once when it opens, at most 198px taller than the card; opening the
+  list from a smaller popup recreates it at the list's height, as promotion
+  already does. Rows that would not fit are counted, never clipped.
+- Summary: "N new notifications" Show all and its title now open the same
+  list rather than the chooser.
+- Unchanged: Do Not Disturb, the urgent and low rules, reveals and LIMIT; a
+  reveal still shows one notification as its card. Focus moves through the
+  rows, each row's Dismiss and then Clear all, in reading order.
+- Each notification now records when it arrived (`Note.at_ms`), in memory
+  only, for the row's age.
