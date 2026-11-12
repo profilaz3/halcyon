@@ -282,7 +282,12 @@ impl Settings {
             return None;
         }
         match message {
-            Message::DesktopEditor(edit) if self.page == Page::DesktopDock => {
+            Message::DesktopEditor(edit)
+                if matches!(
+                    self.page,
+                    Page::DesktopDock | Page::DesktopPanel | Page::ActivityIsland
+                ) =>
+            {
                 let display = self.desktop.display_snapshot();
                 let mut editor = std::mem::replace(&mut self.desktop, display);
                 let edit = edit.clone();

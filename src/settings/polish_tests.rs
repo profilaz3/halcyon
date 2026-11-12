@@ -895,12 +895,14 @@ fn rail_entries_keep_one_line_labels() {
     };
     let one = label.height;
     for text in [
-        "Looks",
-        "Appearance",
+        "Home",
         "Wallpaper",
-        "Weather",
+        "Effects",
         "Widgets",
+        "Panel",
         "Dock",
+        "Island",
+        "Appearance",
         "Windows",
         "Accessibility",
         "Halcyon",
@@ -925,7 +927,7 @@ fn rail_entries_keep_one_line_labels() {
     // The wide sidebar keeps the full name.
     send_settings(&mut app, Message::Resized(Size::new(1280., 800.)));
     let mut native = crate::native_test::Native::new(Size::new(1280., 800.));
-    assert!(!native.text_all(app.settings_view(), "Dock and panel").is_empty());
+    assert!(!native.text_all(app.settings_view(), "Activity island").is_empty());
 }
 
 /// Every sidebar root and the main subpages in the narrow layout, light and
@@ -1670,7 +1672,13 @@ fn windows_rows_match_the_other_pages() {
                     .chain(&effects)
                     .chain(["Frosted surfaces and blur"].iter())
                 {
-                    let found = native.text_all(app.settings_view(), title);
+                    // The sidebar has its own Effects entry; count the page.
+                    let page = native.bounds(app.settings_view(), "settings-viewport");
+                    let found: Vec<_> = native
+                        .text_all(app.settings_view(), title)
+                        .into_iter()
+                        .filter(|found| found.x >= page.x)
+                        .collect();
                     assert!(found.len() <= 1, "{title} is drawn once");
                     if let Some(found) = found.first() {
                         heights.insert(*title, found.height);

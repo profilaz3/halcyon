@@ -163,38 +163,19 @@ fn value_slider<'a>(
 }
 
 impl Settings {
-    /// The scene and keyboard object selector use the same selected bar.
-    /// This header scrolls with the inspector at compact window sizes.
+    /// Panel and Dock each have their own page; the header names the bar
+    /// it shows. This header scrolls with the inspector at compact sizes.
     pub(super) fn desktop_dock_header(&self) -> Element<'_, Message> {
         let accent = self.settings_accent();
         let editor = &self.desktop;
-        let title = split(
-            heading("Dock and panel", "The bars along the edges of your screen."),
+        let (title, about) = match editor.selected {
+            PanelKind::Dock => ("Dock", "The bar with your apps, along an edge of the screen."),
+            PanelKind::Panel => ("Panel", "The bar with the clock and system menus."),
+        };
+        split(
+            heading(title, about),
             super::windows::store_pill(editor.store(), accent),
-        );
-        if editor.store().is_none() {
-            return title;
-        }
-        // The two bars are independent halves of this page.
-        column::with_children(vec![
-            title,
-            segmented(
-                [("Dock", PanelKind::Dock), ("Panel", PanelKind::Panel)]
-                    .into_iter()
-                    .map(|(name, kind)| {
-                        (
-                            name.to_string(),
-                            editor.selected == kind,
-                            (editor.selected != kind).then_some(Message::OpenBar(kind)),
-                        )
-                    })
-                    .collect(),
-                accent,
-            ),
-        ])
-        .spacing(12)
-        .width(Length::Fill)
-        .into()
+        )
     }
 
     pub(super) fn dock_workspace(&self) -> Element<'_, Message> {

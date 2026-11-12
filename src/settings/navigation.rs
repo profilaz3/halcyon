@@ -12,12 +12,14 @@ mod ux_regressions;
 /// What a page changes, used by navigation and search-result context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Area {
-    Looks,
+    Home,
     Appearance,
     Wallpaper,
-    Weather,
+    Effects,
     Widgets,
-    Bars,
+    Panel,
+    Dock,
+    Island,
     Windows,
     Accessibility,
     App,
@@ -26,12 +28,14 @@ pub enum Area {
 impl Area {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Looks => "Looks",
+            Self::Home => "Home",
             Self::Appearance => "Appearance",
             Self::Wallpaper => "Wallpaper",
-            Self::Weather => "Weather",
+            Self::Effects => "Effects",
             Self::Widgets => "Widgets",
-            Self::Bars => "Dock and panel",
+            Self::Panel => "Panel",
+            Self::Dock => "Dock",
+            Self::Island => "Activity island",
             Self::Windows => "Windows",
             Self::Accessibility => "Accessibility",
             Self::App => "Halcyon",
@@ -85,6 +89,14 @@ impl SearchHit {
             _ => ObjectTab::Content,
         }
     }
+    /// The page this result opens: a bar's result opens that bar's page.
+    pub fn target(self) -> Page {
+        match self.bar {
+            Some(bar) if self.page.bar().is_some() => Page::of_bar(bar),
+            _ => self.page,
+        }
+    }
+
     pub fn anchor(self) -> &'static str {
         self.anchor
     }
@@ -342,13 +354,13 @@ pub(super) const STARTUP: SearchHit = hit(
 )
 .names_page();
 pub(super) const ACTIVITY_ISLAND: SearchHit = hit(
-    Page::DesktopDock,
-    "Activity pill",
-    "activity island capsule notifications do not disturb dnd camera microphone privacy bluetooth meetings music media style dark theme",
+    Page::ActivityIsland,
+    "Activity island",
+    "activity pill island capsule notifications do not disturb dnd camera microphone privacy bluetooth meetings music media style dark theme",
     false,
 )
-.at("panel-items")
-.bar(crate::desktop::panels::PanelKind::Panel);
+.names_page()
+.at("activity-island");
 pub(super) const SEE_THROUGH: SearchHit = hit(
     Page::Appearance,
     "Glass and transparency",
@@ -456,6 +468,13 @@ const SEARCH: &[SearchHit] = &[
         false,
     )
     .at("appearance-density"),
+    hit(
+        Page::Themes,
+        "Style by time of day",
+        "day night sunset sunrise moments widget style",
+        false,
+    )
+    .at("appearance-moments"),
     WIDGET_READABILITY,
     hit(
         Page::General,
@@ -670,7 +689,7 @@ const SEARCH: &[SearchHit] = &[
     .names_page(),
     DOCK_SEE_THROUGH,
     hit(
-        Page::DesktopDock,
+        Page::DesktopPanel,
         "See-through",
         "panel transparent transparency opacity glass see through",
         false,
@@ -730,7 +749,7 @@ const SEARCH: &[SearchHit] = &[
     .bar(crate::desktop::panels::PanelKind::Dock)
     .section(BAR_ADVANCED),
     hit(
-        Page::DesktopDock,
+        Page::DesktopPanel,
         "Spacing",
         "panel padding spacing gap between items inner edge",
         true,
@@ -748,7 +767,7 @@ const SEARCH: &[SearchHit] = &[
     .bar(crate::desktop::panels::PanelKind::Dock)
     .section(BAR_ADVANCED),
     hit(
-        Page::DesktopDock,
+        Page::DesktopPanel,
         "Hide timing",
         "panel timing hide delay slide speed duration reveal autohide",
         true,
@@ -766,7 +785,7 @@ const SEARCH: &[SearchHit] = &[
     .bar(crate::desktop::panels::PanelKind::Dock)
     .section(BAR_ADVANCED),
     hit(
-        Page::DesktopDock,
+        Page::DesktopPanel,
         "Panel corners",
         "panel corners radius rounded square pill",
         true,
@@ -776,8 +795,15 @@ const SEARCH: &[SearchHit] = &[
     .section(BAR_ADVANCED),
     hit(
         Page::WeatherEffects,
-        "Weather effects",
-        "wallpaper effects weather rain snow fog clouds cloud shadows living animated wallpaper",
+        "Effects",
+        "weather effects wallpaper effects rain snow fog clouds cloud shadows living animated wallpaper",
+        false,
+    )
+    .names_page(),
+    hit(
+        Page::Home,
+        "Home",
+        "home overview start everything whole desktop picture parts",
         false,
     )
     .names_page(),
@@ -808,30 +834,46 @@ const SEARCH: &[SearchHit] = &[
         "dock applets position size autohide blend gradient shape compact full width floating",
         false,
     )
-    .names_page()
-    .bar(crate::desktop::panels::PanelKind::Dock),
+    .names_page(),
     hit(
-        Page::DesktopDock,
+        Page::DesktopPanel,
         "Panel",
         "top bar panel islands island order reset arrange applets position size autohide shape compact full width",
         false,
     )
-    .names_page()
-    .bar(crate::desktop::panels::PanelKind::Panel),
+    .names_page(),
     hit(
         Page::DesktopDock,
         "Background",
-        "dock panel background match style follow look dark light color",
+        "dock background match style follow look dark light color",
         false,
     )
-    .at("dock-background"),
+    .at("dock-background")
+    .bar(crate::desktop::panels::PanelKind::Dock),
+    hit(
+        Page::DesktopPanel,
+        "Background",
+        "panel background match style follow look dark light color",
+        false,
+    )
+    .at("dock-background")
+    .bar(crate::desktop::panels::PanelKind::Panel),
     hit(
         Page::DesktopDock,
         "Visibility",
-        "dock panel autohide auto-hide hide behind windows always visible",
+        "dock autohide auto-hide hide behind windows always visible",
         false,
     )
-    .at("dock-visibility"),
+    .at("dock-visibility")
+    .bar(crate::desktop::panels::PanelKind::Dock),
+    hit(
+        Page::DesktopPanel,
+        "Visibility",
+        "panel autohide auto-hide hide behind windows always visible",
+        false,
+    )
+    .at("dock-visibility")
+    .bar(crate::desktop::panels::PanelKind::Panel),
     ACTIVITY_ISLAND,
     hit(
         Page::DesktopWindows,
@@ -991,46 +1033,46 @@ const ROWS: &[SearchHit] = &[
         .bar(PanelKind::Dock)
         .section(BAR_ADVANCED),
     hit(Page::DesktopDock, "Style", "", false).bar(PanelKind::Dock),
-    hit(Page::DesktopDock, "Between items", "", true)
+    hit(Page::DesktopPanel, "Between items", "", true)
         .at("dock-advanced")
         .bar(PanelKind::Panel)
         .section(BAR_ADVANCED),
-    hit(Page::DesktopDock, "Blend into wallpaper", "", false).bar(PanelKind::Panel),
-    hit(Page::DesktopDock, BAR_ADVANCED, "", true)
+    hit(Page::DesktopPanel, "Blend into wallpaper", "", false).bar(PanelKind::Panel),
+    hit(Page::DesktopPanel, BAR_ADVANCED, "", true)
         .at("dock-advanced")
         .bar(PanelKind::Panel)
         .section(BAR_ADVANCED),
-    hit(Page::DesktopDock, "Floating", "", false).bar(PanelKind::Panel),
-    hit(Page::DesktopDock, "Hide after", "", true)
+    hit(Page::DesktopPanel, "Floating", "", false).bar(PanelKind::Panel),
+    hit(Page::DesktopPanel, "Hide after", "", true)
         .at("dock-advanced")
         .bar(PanelKind::Panel)
         .section(BAR_ADVANCED),
-    hit(Page::DesktopDock, "Inner padding", "", true)
+    hit(Page::DesktopPanel, "Inner padding", "", true)
         .at("dock-advanced")
         .bar(PanelKind::Panel)
         .section(BAR_ADVANCED),
-    hit(Page::DesktopDock, "Keep style when maximized", "", true)
+    hit(Page::DesktopPanel, "Keep style when maximized", "", true)
         .at("dock-advanced")
         .bar(PanelKind::Panel)
         .section(BAR_ADVANCED),
-    hit(Page::DesktopDock, "Position", "", false).bar(PanelKind::Panel),
-    hit(Page::DesktopDock, "Reveal edge", "", true)
+    hit(Page::DesktopPanel, "Position", "", false).bar(PanelKind::Panel),
+    hit(Page::DesktopPanel, "Reveal edge", "", true)
         .at("dock-advanced")
         .bar(PanelKind::Panel)
         .section(BAR_ADVANCED),
-    hit(Page::DesktopDock, "Screen edge", "", false).bar(PanelKind::Panel),
-    hit(Page::DesktopDock, "See-through", "", false).bar(PanelKind::Panel),
-    hit(Page::DesktopDock, "Shape", "", false).bar(PanelKind::Panel),
-    hit(Page::DesktopDock, "Show after", "", true)
+    hit(Page::DesktopPanel, "Screen edge", "", false).bar(PanelKind::Panel),
+    hit(Page::DesktopPanel, "See-through", "", false).bar(PanelKind::Panel),
+    hit(Page::DesktopPanel, "Shape", "", false).bar(PanelKind::Panel),
+    hit(Page::DesktopPanel, "Show after", "", true)
         .at("dock-advanced")
         .bar(PanelKind::Panel)
         .section(BAR_ADVANCED),
-    hit(Page::DesktopDock, "Size", "", false).bar(PanelKind::Panel),
-    hit(Page::DesktopDock, "Slide duration", "", true)
+    hit(Page::DesktopPanel, "Size", "", false).bar(PanelKind::Panel),
+    hit(Page::DesktopPanel, "Slide duration", "", true)
         .at("dock-advanced")
         .bar(PanelKind::Panel)
         .section(BAR_ADVANCED),
-    hit(Page::DesktopDock, "Style", "", false).bar(PanelKind::Panel),
+    hit(Page::DesktopPanel, "Style", "", false).bar(PanelKind::Panel),
     hit(Page::DesktopIcons, "Show on the desktop", "", false),
     hit(Page::DesktopIcons, "Size", "", false),
     hit(Page::DesktopMotion, "Dock and panel slide speed", "", false),
@@ -1152,6 +1194,8 @@ pub(super) const NOT_INDEXED: &[(&str, &str)] = &[
     ("Move or resize", "on every widget page; the widget’s name finds it"),
     ("Make your own design", "a link on every widget page; “Widget builder” finds it"),
     ("More in COSMIC Settings", "a link out of Halcyon"),
+    ("Dock and panel", "Appearance's link to the bars' See-through; “see-through” finds it"),
+    ("Not on your panel", "the Activity island page's empty state; “island” finds the page"),
     ("Before Halcyon", "a group in the Changes list, which follows your history"),
     ("Changed Daily overview", "an entry in the Changes list"),
     ("Wallpaper from before Halcyon", "an entry in the Changes list"),
@@ -1490,19 +1534,24 @@ impl Page {
     pub(super) fn parent(self) -> Option<Self> {
         match self.canonical() {
             // Flat tabs and root landings have no parent.
-            Self::Overview
+            Self::Home
+            | Self::Overview
             | Self::Themes
-            | Self::DesktopProfiles
             | Self::DesktopWallpaper
             | Self::WeatherEffects
+            | Self::DesktopPanel
             | Self::DesktopDock
+            | Self::ActivityIsland
             | Self::DesktopWindows
             | Self::DesktopMotion
             | Self::General
             | Self::Changes => None,
             // Detail editors that open from rows on Appearance.
-            Self::Appearance | Self::DesktopAppearance => Some(Self::Themes),
-            Self::DesktopAutomation => Some(Self::DesktopProfiles),
+            // Looks and Time of day left the sidebar; Appearance leads to them.
+            Self::Appearance
+            | Self::DesktopAppearance
+            | Self::DesktopProfiles
+            | Self::DesktopAutomation => Some(Self::Themes),
             Self::AdaptiveLooks => Some(Self::DesktopAutomation),
             Self::PendingChanges => Some(Self::Changes),
             Self::DesktopWindowRules | Self::DesktopShortcuts => Some(Self::DesktopWindows),
@@ -1514,11 +1563,13 @@ impl Page {
     pub(super) fn area(self) -> Area {
         // The menu group a page sits in.
         match self.sidebar() {
+            Self::Home => Area::Home,
             Self::Themes => Area::Appearance,
-            Self::DesktopProfiles => Area::Looks,
             Self::DesktopWallpaper => Area::Wallpaper,
-            Self::WeatherEffects => Area::Weather,
-            Self::DesktopDock => Area::Bars,
+            Self::WeatherEffects => Area::Effects,
+            Self::DesktopPanel => Area::Panel,
+            Self::DesktopDock => Area::Dock,
+            Self::ActivityIsland => Area::Island,
             Self::DesktopWindows => Area::Windows,
             Self::DesktopMotion => Area::Accessibility,
             Self::General | Self::Changes => Area::App,
@@ -1738,9 +1789,13 @@ mod tests {
                 "{query}"
             );
         }
-        let page = search("weather effects")[0];
-        assert_eq!(page.page, Page::WeatherEffects);
-        assert!(page.names_page_result());
+        // The old name still finds the page, beside its weather switch.
+        let hits = search("weather effects");
+        assert!(hits.iter().all(|hit| hit.page == Page::WeatherEffects), "{hits:?}");
+        assert!(
+            hits.iter().take(2).any(|hit| hit.names_page_result() && hit.label == "Effects"),
+            "{hits:?}"
+        );
         assert_eq!(search("moving effect")[0].anchor(), "rain-controls");
         // Wallpaper itself stays where it was.
         assert_eq!(search("wallpaper")[0].page, Page::DesktopWallpaper);
@@ -1748,7 +1803,7 @@ mod tests {
         assert_eq!(Page::WeatherEffects.parent(), None);
         assert_eq!(Page::WeatherEffects.sidebar(), Page::WeatherEffects);
         assert_eq!(Page::WeatherEffects.usage_key(), "desktop-wallpaper");
-        assert_eq!(Page::WeatherEffects.nav_title(), "Weather");
+        assert_eq!(Page::WeatherEffects.nav_title(), "Effects");
     }
 
     #[test]
@@ -1814,26 +1869,40 @@ mod tests {
         assert_eq!(Page::parse("layout"), Page::Overview);
         assert_eq!(Page::parse("devbox"), Page::Devbox);
         assert_eq!(Page::parse("presets"), Page::DesktopProfiles);
-        assert_eq!(Page::parse("home"), Page::Overview);
+        assert_eq!(Page::parse("home"), Page::Home);
         assert_eq!(Page::parse("desktop"), Page::Overview);
         assert_eq!(Page::parse("widgets"), Page::Overview);
         assert_eq!(Page::parse("dock"), Page::DesktopDock);
-        assert_eq!(Page::parse("panel"), Page::DesktopDock);
+        assert_eq!(Page::parse("panel"), Page::DesktopPanel);
+        assert_eq!(Page::parse("island"), Page::ActivityIsland);
+        assert_eq!(Page::parse("effects"), Page::WeatherEffects);
+        // Old command keys still open something sensible.
+        assert_eq!(Page::parse("desktop-dock"), Page::DesktopDock);
+        assert_eq!(Page::parse("weather-effects"), Page::WeatherEffects);
+        assert_eq!(Page::parse("desktop-profiles"), Page::DesktopProfiles);
+        assert_eq!(Page::parse("no-such-page"), Page::Home);
         assert_eq!(Page::parse("settings"), Page::General);
         assert_eq!(Page::parse("adaptive"), Page::DesktopAutomation);
         assert_eq!(Page::Calendar.parent(), Some(Page::Overview));
         assert_eq!(Page::DesktopDock.parent(), None);
         assert_eq!(Page::DesktopWorkspaces.sidebar(), Page::DesktopWindows);
-        assert_eq!(Page::Moments.sidebar(), Page::DesktopProfiles);
+        // Looks and Time of day left the sidebar; Appearance leads to them.
+        assert_eq!(Page::Moments.sidebar(), Page::Themes);
+        assert_eq!(Page::DesktopProfiles.sidebar(), Page::Themes);
+        assert_eq!(Page::DesktopAutomation.sidebar(), Page::Themes);
+        assert_eq!(Page::DesktopProfiles.parent(), Some(Page::Themes));
+        assert_eq!(Page::DesktopAutomation.parent(), Some(Page::Themes));
         assert_eq!(
             entries,
             [
-                Page::DesktopProfiles,
-                Page::Themes,
+                Page::Home,
                 Page::DesktopWallpaper,
                 Page::WeatherEffects,
                 Page::Overview,
+                Page::DesktopPanel,
                 Page::DesktopDock,
+                Page::ActivityIsland,
+                Page::Themes,
                 Page::DesktopWindows,
                 Page::DesktopMotion,
                 Page::General
@@ -1846,7 +1915,7 @@ mod tests {
         }
         // Roots have no parent; detailed editors go Back to their root.
         assert_eq!(Page::DesktopAppearance.parent(), Some(Page::Themes));
-        assert_eq!(Page::Moments.parent(), Some(Page::DesktopProfiles));
+        assert_eq!(Page::Moments.parent(), Some(Page::Themes));
         assert_eq!(Page::DesktopMotion.parent(), None);
         assert_eq!(
             Page::DesktopWindowRules.parent(),
@@ -2334,6 +2403,15 @@ impl Settings {
             return back.then(|| (page.nav_title().into(), Message::Back));
         }
         let parent = self.page.parent()?;
+        // Looks hands off to its siblings under Appearance, such as Time of
+        // day, so they lead back to Looks.
+        if last.is_some_and(|route| {
+            route.page == Page::DesktopProfiles
+                && self.page != Page::DesktopProfiles
+                && Page::DesktopProfiles.parent() == Some(parent)
+        }) {
+            return Some((Page::DesktopProfiles.nav_title().into(), Message::Back));
+        }
         let back = last.is_some_and(|route| route.page == parent);
         Some((
             parent.nav_title().into(),
@@ -2421,7 +2499,9 @@ impl Settings {
         {
             self.select_monitor_preview(display);
         }
-        if route.page == Page::DesktopDock && route.bar != self.desktop.selected {
+        if matches!(route.page, Page::DesktopDock | Page::DesktopPanel | Page::ActivityIsland)
+            && route.bar != self.desktop.selected
+        {
             let _ = self
                 .desktop
                 .update(super::desktop::Message::Select(route.bar));

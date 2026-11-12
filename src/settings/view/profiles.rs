@@ -1656,7 +1656,7 @@ impl Settings {
             } else if !self.desktop.islands.installation.installed() {
                 "The standard panel is used until Islands is installed and enabled."
             } else if preview_panel.and_then(|p| p.islands().known().cloned()).is_some_and(|s| !s.enabled) {
-                "This saves the arrangement for when you turn Islands on in Dock and panel."
+                "This saves the arrangement for when you turn Islands on in Panel."
             } else {
                 "Applies with Panel below. Your applets and display-specific arrangements are kept."
             }, 12., MUTED));
