@@ -1,6 +1,7 @@
 //! The Dock and panel page's picture: a close-up of the selected bar on the
 //! band of wallpaper where it really sits. Bars draw near their real size so
-//! applets read; whole-desktop miniatures stay in `preview`.
+//! applets read; whole-desktop miniatures stay in `preview`. The setup
+//! wizard draws every bar this way, each with its name.
 use super::*;
 use crate::desktop::panels::Background as PanelBackground;
 use cosmic::iced::Point;
@@ -453,6 +454,7 @@ fn islands<'a>(
     selected: Option<Section>,
     output: &str,
     on_press: Option<Message>,
+    selectable: bool,
 ) -> Vec<Element<'a, Message>> {
     let look = Look::of(draft);
     let horizontal = look.horizontal();
@@ -517,9 +519,11 @@ fn islands<'a>(
         let outline = (selected == Some(Section::ALL[i])).then_some(accent);
         let body = surface(run, &look, size, alpha, outline);
         let message = on_press.clone().or_else(|| {
-            Some(edit(Edit::Islands(
-                crate::settings::desktop::islands::Edit::Select(Section::ALL[i]),
-            )))
+            selectable.then(|| {
+                edit(Edit::Islands(
+                    crate::settings::desktop::islands::Edit::Select(Section::ALL[i]),
+                ))
+            })
         });
         let along = look.margin + span.start as f32 * look.zoom;
         layers.push(
@@ -533,9 +537,10 @@ fn islands<'a>(
 
 /// The part of the wallpaper behind `frame`: a band along `anchor`, zoomed
 /// past the screen's width so the bar and the desktop share one scale.
+/// Without an anchor, the middle of the screen.
 fn wallpaper_band(
     handle: &cosmic::widget::image::Handle,
-    anchor: Anchor,
+    anchor: Option<Anchor>,
     screen: [f32; 2],
     frame: [f32; 2],
 ) -> Option<cosmic::iced::Rectangle<u32>> {
@@ -556,10 +561,11 @@ fn wallpaper_band(
         seen = [sw, sw * frame[1] / frame[0]];
     }
     let corner = match anchor {
-        Anchor::Top => [(sw - seen[0]) / 2., 0.],
-        Anchor::Bottom => [(sw - seen[0]) / 2., sh - seen[1]],
-        Anchor::Left => [0., (sh - seen[1]) / 2.],
-        Anchor::Right => [sw - seen[0], (sh - seen[1]) / 2.],
+        Some(Anchor::Top) => [(sw - seen[0]) / 2., 0.],
+        Some(Anchor::Bottom) => [(sw - seen[0]) / 2., sh - seen[1]],
+        Some(Anchor::Left) => [0., (sh - seen[1]) / 2.],
+        Some(Anchor::Right) => [sw - seen[0], (sh - seen[1]) / 2.],
+        None => [(sw - seen[0]) / 2., (sh - seen[1]) / 2.],
     };
     // The desktop covers the screen with the wallpaper, centred.
     let cover = (sw / image[0]).max(sh / image[1]);
@@ -619,7 +625,10 @@ impl Settings {
             ];
             // The already decoded wallpaper: no image work starts here.
             let band = self.profiles.home_image().and_then(|handle| {
-                Some((handle, wallpaper_band(handle, look.anchor, screen, frame)?))
+                Some((
+                    handle,
+                    wallpaper_band(handle, Some(look.anchor), screen, frame)?,
+                ))
             });
             match band {
                 Some((handle, crop)) => layers.push(
@@ -666,6 +675,7 @@ impl Settings {
                         subject.then_some(editor.islands.selected).flatten(),
                         &editor.island_output(),
                         on_press,
+                        true,
                     ));
                 } else {
                     drawn.push(whole_bar(
@@ -709,9 +719,9 @@ impl Settings {
     }
 }
 
-/// A small chip on the far side from the bar.
-fn note<'a>(words: &'static str, look: &Look, frame: [f32; 2]) -> Element<'a, Message> {
-    let chip = container(label(words, 12., Color::WHITE))
+/// Light words on a dark pill, readable on any wallpaper.
+fn chip<'a>(words: impl Into<String>) -> cosmic::widget::Container<'a, Message, cosmic::Theme> {
+    container(label(words.into(), 12., Color::WHITE))
         .padding([4, 10])
         .class(cosmic::theme::Container::custom(|_| {
             cosmic::iced::widget::container::Style {
@@ -722,7 +732,12 @@ fn note<'a>(words: &'static str, look: &Look, frame: [f32; 2]) -> Element<'a, Me
                 },
                 ..Default::default()
             }
-        }));
+        }))
+}
+
+/// A small chip on the far side from the bar.
+fn note<'a>(words: &'static str, look: &Look, frame: [f32; 2]) -> Element<'a, Message> {
+    let chip = chip(words);
     let at = match look.anchor {
         Anchor::Top => Point::new(12., frame[1] - 36.),
         Anchor::Bottom | Anchor::Left => Point::new(frame[0] - 12. - 260., 12.),
@@ -735,3 +750,155 @@ fn note<'a>(words: &'static str, look: &Look, frame: [f32; 2]) -> Element<'a, Me
     .position(at)
     .into()
 }
+
+/// What a bar is called in the setup wizard's picture, with what it does
+/// when you aren't using it.
+fn named(draft: &PanelDraft) -> String {
+    let name = match draft.kind() {
+        PanelKind::Dock => "Dock",
+        PanelKind::Panel => "Panel",
+    };
+    match caption(draft) {
+        Some(words) => format!("{name}: {}", words.to_lowercase()),
+        None => name.to_string(),
+    }
+}
+
+impl Settings {
+    /// The setup wizard's picture: every bar close up on `wallpaper`, as the
+    /// wizard's choices would leave it, each named beside it. Nothing in it
+    /// can be pressed.
+    pub(in crate::settings::view) fn wizard_bars_closeup<'a>(
+        &'a self,
+        drafts: Vec<PanelDraft>,
+        wallpaper: Option<cosmic::widget::image::Handle>,
+        height: f32,
+    ) -> Element<'a, Message> {
+        let accent = self.settings_accent();
+        let screen = self.placement.screen();
+        let editor = &self.desktop;
+        let installed = editor.islands.installation.installed();
+        responsive(move |available| {
+            let frame = [available.width.max(1.), height];
+            let mut layers: Vec<Element<'_, Message>> = vec![
+                cosmic::widget::space()
+                    .width(frame[0])
+                    .height(frame[1])
+                    .into(),
+            ];
+            let band = wallpaper
+                .as_ref()
+                .and_then(|handle| Some((handle, wallpaper_band(handle, None, screen, frame)?)));
+            match band {
+                Some((handle, crop)) => layers.push(
+                    cosmic::widget::image(handle.clone())
+                        .crop(crop)
+                        .width(frame[0])
+                        .height(frame[1])
+                        .content_fit(cosmic::iced::ContentFit::Cover)
+                        .border_radius(10.)
+                        .into(),
+                ),
+                None => layers.extend(self.home_backdrop(frame)),
+            }
+            // Bars sharing an edge stack outward by priority, like
+            // cosmic-panel; a bar that is turned off is a faint shape.
+            let mut bars: Vec<&PanelDraft> = drafts.iter().collect();
+            bars.sort_by_key(|draft| std::cmp::Reverse(super::preview::bar_priority(draft)));
+            let mut insets: Vec<(Anchor, f32, usize)> = Vec::new();
+            let mut chips: Vec<Element<'_, Message>> = Vec::new();
+            for draft in bars {
+                let look = Look::of(draft);
+                let at = insets.iter().position(|(edge, _, _)| *edge == look.anchor);
+                let (inset, shared) = at.map_or((0., 0), |i| (insets[i].1, insets[i].2));
+                let alpha = presence(draft, true);
+                let islands_on = installed && draft.islands().known().is_some_and(|s| s.enabled);
+                if islands_on {
+                    layers.extend(islands(
+                        draft,
+                        &editor.catalog,
+                        frame,
+                        inset,
+                        alpha,
+                        accent,
+                        None,
+                        None,
+                        &editor.island_output(),
+                        None,
+                        false,
+                    ));
+                } else {
+                    layers.push(whole_bar(
+                        draft,
+                        &editor.catalog,
+                        frame,
+                        inset,
+                        alpha,
+                        accent,
+                        None,
+                    ));
+                }
+                let depth = if draft.listed() { look.depth() } else { 0. };
+                match at {
+                    Some(i) => {
+                        insets[i].1 += depth;
+                        insets[i].2 += 1;
+                    }
+                    None => insets.push((look.anchor, depth, 1)),
+                }
+                // Beside the bar, toward the middle of the picture. A second
+                // bar on the same edge names itself at the other end.
+                let off = inset + look.depth().max(look.thickness) + 8.;
+                let centred = !look.extend && shared == 0;
+                let along = match (centred, shared) {
+                    (true, _) => Alignment::Center,
+                    (false, 0) => Alignment::Start,
+                    _ => Alignment::End,
+                };
+                let tag = chip(named(draft));
+                let tag: Element<'_, Message> = if look.horizontal() {
+                    let y = match look.anchor {
+                        Anchor::Top => off,
+                        _ => frame[1] - off - CHIP_HEIGHT,
+                    };
+                    pin(container(tag)
+                        .width(frame[0])
+                        .padding([0., 12.])
+                        .align_x(along))
+                    .position(Point::new(0., y))
+                    .into()
+                } else {
+                    let x = match look.anchor {
+                        Anchor::Left => off,
+                        _ => 0.,
+                    };
+                    let width = (frame[0] - off).max(1.);
+                    pin(container(tag)
+                        .width(width)
+                        .height(frame[1])
+                        .padding([12., 0.])
+                        .align_x(if look.anchor == Anchor::Left {
+                            Alignment::Start
+                        } else {
+                            Alignment::End
+                        })
+                        .align_y(along))
+                    .position(Point::new(x, 0.))
+                    .into()
+                };
+                chips.push(tag);
+            }
+            layers.extend(chips);
+            container(stack(layers).width(frame[0]).height(frame[1]).clip(true))
+                .width(Length::Fill)
+                .height(frame[1])
+                .into()
+        })
+        .width(Length::Fill)
+        .height(height)
+        .into()
+    }
+}
+
+/// A chip's height: 12 px words and its padding.
+const CHIP_HEIGHT: f32 = 24.;

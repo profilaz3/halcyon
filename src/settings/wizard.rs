@@ -109,6 +109,14 @@ impl Shape {
             Self::Square => 0,
         }
     }
+    /// The shape a bar with corner `radius` has; a bar without one is a pill.
+    pub fn of_radius(radius: Option<u32>) -> Self {
+        match radius {
+            Some(0) => Self::Square,
+            Some(radius) if radius < 40 => Self::Rounded,
+            _ => Self::Pill,
+        }
+    }
 }
 
 /// The dock and panel choices. The default is what every starter look sets.
@@ -203,11 +211,7 @@ impl Bars {
     /// keeps) the person's own setup.
     pub fn current(store: &DesktopStore, islands_available: bool) -> Self {
         use crate::desktop::panels::{AutoHide, PanelDraft, PanelKind};
-        let shape = |radius: Option<u32>| match radius {
-            Some(0) => Shape::Square,
-            Some(radius) if radius < 40 => Shape::Rounded,
-            _ => Shape::Pill,
-        };
+        let shape = Shape::of_radius;
         let dock = PanelDraft::load(store, PanelKind::Dock).ok();
         let panel = PanelDraft::load(store, PanelKind::Panel).ok();
         Self {
@@ -634,6 +638,11 @@ impl Wizard {
     /// Whether the dock and panel step holds choices of its own.
     pub fn has_bar_choices(&self) -> bool {
         self.touched.any()
+    }
+
+    /// Which dock and panel values this step will write over the look.
+    pub fn bar_choices(&self) -> Touched {
+        self.touched
     }
 
     /// Saves progress after a choice made outside `update`.

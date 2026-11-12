@@ -2557,6 +2557,7 @@ impl Settings {
             KeptTarget::SetupChoices => {
                 self.setup_kept = false;
                 self.wizard = Some(super::open_wizard());
+                self.desktop.read_for_preview();
                 Task::none()
             }
         }
