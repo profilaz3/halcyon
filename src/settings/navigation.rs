@@ -517,7 +517,7 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::Devbox,
         "Memory",
-        "system monitor devbox ram memory usage cache swap readings history graph sparkline",
+        "system monitor devbox ram memory usage cache swap readings bar",
         false,
     )
     .at("devbox-memory")
@@ -525,7 +525,7 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::Devbox,
         "Disk",
-        "system monitor devbox disk usage storage readings history graph sparkline",
+        "system monitor devbox disk usage storage readings bar",
         false,
     )
     .at("devbox-disk")
@@ -1974,13 +1974,15 @@ mod tests {
             assert_eq!(hit.anchor(), anchor, "{query}");
             assert!(!hit.advanced, "{query}");
         }
+        // Memory and Disk show bars, so only CPU, Network and GPU have a
+        // history graph to find.
         let hits = search("history");
-        assert_eq!(hits.len(), 6);
+        assert_eq!(hits.len(), 4);
         assert_eq!(
             hits.iter()
                 .filter(|hit| hit.page == Page::Devbox && !hit.advanced)
                 .count(),
-            5
+            3
         );
         assert!(
             hits.iter()

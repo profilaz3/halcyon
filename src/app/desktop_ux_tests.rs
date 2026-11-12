@@ -326,3 +326,54 @@ fn dt14_idle_music_card_shrinks_to_one_line() {
         native.capture(card(), &theme, &format!("dt14-music-idle-{shade}"));
     }
 }
+
+/// Review pictures of the System monitor and the idle Music card, written
+/// only when `DESKTOP_CARDS_LAYOUT_EVIDENCE` names a folder.
+#[test]
+fn evidence_monitor_and_music_cards() {
+    let sample = settings_preview::monitor_sample();
+    let histories = history::MetricHistories::settings_sample(&sample.metrics);
+    let all: Config = serde_json::from_value(serde_json::json!({
+        "devbox":{"cpu":true,"memory":true,"disk":true,"network":true,"gpu":true,
+            "uptime":false,"services":false,"swap":true,"memory_cache":true,
+            "history":{"cpu":true,"memory":true,"disk":true,"network":true,"gpu":true}}
+    }))
+    .unwrap();
+    let plain: Config = serde_json::from_value(serde_json::json!({
+        "devbox":{"uptime":false,"services":false}
+    }))
+    .unwrap();
+    for (theme, shade) in [
+        (cosmic::Theme::light(), "light"),
+        (cosmic::Theme::dark(), "dark"),
+    ] {
+        for (config, name) in [(&all, "history"), (&plain, "bars")] {
+            let height = devbox::natural_height(config, sample.metrics.gpus.len());
+            let mut native = Native::new(Size::new(360., height));
+            native.capture(
+                devbox::view(config, &sample.metrics, &histories, height),
+                &theme,
+                &format!("monitor-{name}-{shade}"),
+            );
+        }
+        let config = Config::default();
+        let mut native = Native::new(Size::new(360., 140.));
+        native.capture(
+            crate::tools::cards::music::<Message>(
+                crate::tools::cards::MusicView {
+                    feed: None,
+                    player: None,
+                    art: None,
+                    now: Instant::now(),
+                    manually_selected: false,
+                    problem: false,
+                },
+                &config,
+                None,
+                Some([360., 140.]),
+            ),
+            &theme,
+            &format!("music-idle-{shade}"),
+        );
+    }
+}

@@ -703,7 +703,7 @@ impl Settings {
                 }
                 if metric == DevboxSection::Memory {
                     details.push(split(
-                        label("Show cache", 12., FG),
+                        label("Show cache size", 12., FG),
                         toggler(d.memory_cache)
                             .on_toggle_maybe(
                                 visible.then_some(|value| Message::Devbox("memory_cache", value)),
@@ -719,10 +719,9 @@ impl Settings {
                             .into(),
                     ));
                 }
+                // Memory and Disk show a bar: what is in use now is the point.
                 let history = match metric {
                     DevboxSection::Cpu => Some(d.history.cpu),
-                    DevboxSection::Memory => Some(d.history.memory),
-                    DevboxSection::Disk => Some(d.history.disk),
                     DevboxSection::Network => Some(d.history.network),
                     DevboxSection::Gpu => Some(d.history.gpu),
                     _ => None,

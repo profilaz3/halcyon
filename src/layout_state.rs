@@ -371,6 +371,8 @@ pub fn effective_explicit_size(
 /// Shared automatic geometry for built-in and personal system widgets.
 /// The System monitor's title slot, drawn by `app::devbox`.
 pub const DEVBOX_TITLE_HEIGHT: f32 = 23.;
+/// Each reading's indicator slot while any history graph is on.
+pub const DEVBOX_GRAPH_HEIGHT: f32 = 28.;
 pub fn devbox_height(config: &crate::config::Config, gpu_count: usize) -> f32 {
     config.recipes.devbox.as_ref().map_or_else(
         || devbox_content_height(&config.devbox, gpu_count),
@@ -385,18 +387,10 @@ pub fn devbox_content_height(
     gpu_count: usize,
 ) -> f32 {
     use crate::config::DevboxSection;
-    let history = DevboxSection::ALL.into_iter().any(|section| {
-        section.enabled(preferences)
-            && match section {
-                DevboxSection::Cpu => preferences.history.cpu,
-                DevboxSection::Memory => preferences.history.memory,
-                DevboxSection::Disk => preferences.history.disk,
-                DevboxSection::Network => preferences.history.network,
-                DevboxSection::Gpu => preferences.history.gpu,
-                _ => false,
-            }
-    });
-    let section_height = 16. + 4. + if history { 14. } else { 5. };
+    let history = DevboxSection::ALL
+        .into_iter()
+        .any(|section| section.graphed(preferences));
+    let section_height = 16. + 4. + if history { DEVBOX_GRAPH_HEIGHT } else { 5. };
     let heights: Vec<f32> = preferences
         .ordered_sections()
         .into_iter()
