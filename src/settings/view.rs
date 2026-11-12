@@ -1,3 +1,4 @@
+mod activate;
 mod adaptive;
 mod automation;
 mod calendar;
@@ -13,6 +14,8 @@ mod desktop_icons;
 pub(super) mod explain;
 pub(super) mod focus;
 pub(super) mod home;
+pub(super) mod home_picture;
+mod island;
 mod layered;
 mod materials;
 mod moments;
@@ -535,7 +538,9 @@ impl Settings {
             );
         if scene && width >= 584. {
             width - (width * 0.40).clamp(248., 420.) - 16.
-        } else if matches!(self.page, Page::Themes | Page::DesktopDock) && width >= 576. {
+        } else if matches!(self.page, Page::Themes | Page::DesktopDock | Page::DesktopPanel)
+            && width >= 576.
+        {
             (width - 16.) / 2.
         } else if !scene && width >= 600. {
             (width * 0.34).clamp(224., 340.)
@@ -637,11 +642,13 @@ impl Settings {
             Page::Focus => self.focus_page(),
             Page::Devices => self.devices_page(),
             Page::General => self.general_page(),
-            Page::DesktopDock => {
+            Page::Home => self.home_page(),
+            Page::DesktopDock | Page::DesktopPanel => {
                 column::with_children(vec![self.desktop_dock_header(), self.dock_workspace()])
                     .spacing(20)
                     .into()
             }
+            Page::ActivityIsland => self.activity_island_page(),
             // On a short viewport the sample window scrolls with the controls
             // so the basic controls stay visible.
             Page::DesktopAppearance if !self.appearance_pinned() => column::with_children(vec![
@@ -769,7 +776,7 @@ impl Settings {
                 vec![
                     layered::opaque(column::with_children(vec![
                         container(match self.page {
-                            Page::DesktopDock => self.desktop_dock_header(),
+                            Page::DesktopDock | Page::DesktopPanel => self.desktop_dock_header(),
                             _ => self.system_appearance_header(),
                         })
                         .width(Length::Fill)
@@ -874,6 +881,9 @@ impl Settings {
     /// Entries come from the shared nav model so selection, search and Back
     /// keep one source of truth.
     fn sidebar(&self, _accent: Color) -> Element<'_, Message> {
+        // Eleven roots, Search and Changes share a 600 px tall window, so
+        // the rail's labels sit on tight lines.
+        const RAIL_LINE: f32 = 14.;
         let rail = self.rail();
         let kept = self.kept_previews();
         let entry = |id: cosmic::widget::segmented_button::Entity| -> Element<'_, Message> {
@@ -887,6 +897,9 @@ impl Settings {
             };
             let title = text::body(name.to_owned())
                 .size(if rail { 12 } else { 15 })
+                .line_height(cosmic::iced::widget::text::LineHeight::Absolute(
+                    (if rail { RAIL_LINE } else { 21. }).into(),
+                ))
                 .class(if active {
                     cosmic::theme::Text::Custom(|theme| cosmic::iced::widget::text::Style {
                         color: Some(theme.cosmic().accent_text_color().into()),
@@ -933,7 +946,7 @@ impl Settings {
                 )))
                 .class(nav_style(active, self.settings_accent()))
                 .selected(active)
-                .padding(if rail { [4, 2] } else { [11, 12] })
+                .padding(if rail { [3, 2] } else { [9, 12] })
                 .width(Length::Fill)
                 .on_press(Message::NavSelected(id))
                 .into()
@@ -946,7 +959,12 @@ impl Settings {
                             .size(18)
                             .icon()
                             .into(),
-                        text::body("Search").size(12).into(),
+                        text::body("Search")
+                            .size(12)
+                            .line_height(cosmic::iced::widget::text::LineHeight::Absolute(
+                                RAIL_LINE.into(),
+                            ))
+                            .into(),
                     ])
                     .spacing(2)
                     .width(Length::Fill)
@@ -955,7 +973,7 @@ impl Settings {
                 .id(cosmic::widget::Id::new("rail-search"))
                 .class(nav_style(self.search_open, self.settings_accent()))
                 .selected(self.search_open)
-                .padding([4, 2])
+                .padding([3, 2])
                 .width(Length::Fill)
                 .on_press(Message::FocusSearch)
                 .into(),
@@ -1048,7 +1066,9 @@ impl Settings {
         // scrolls with the rest instead of covering the selected entry. The
         // rail keeps all nine roots and Changes inside an 820×600 window.
         let list = column::with_children(vec![
-            column::with_children(groups).spacing(14).into(),
+            column::with_children(groups)
+                .spacing(if rail { 8 } else { 14 })
+                .into(),
             self.changes_entry(rail),
         ])
         .spacing(if rail { 4 } else { 14 });

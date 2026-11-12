@@ -619,3 +619,58 @@ fn ax07_arrange_buttons_keep_their_words_on_one_line() {
         }
     }
 }
+
+// Home: Tab reaches the tiles, Space picks one and Enter on it again opens
+// its page; every part and tile has a name.
+#[test]
+fn home_tiles_take_tab_space_and_enter() {
+    if child("home_tiles_take_tab_space_and_enter") {
+        return;
+    }
+    use crate::settings::tests::{send_settings, settle_settings};
+    let (mut app, initial) = Settings::init(Core::default(), Page::Home);
+    settle_settings(&mut app, initial);
+    send_settings(&mut app, Message::Resized(SIZE));
+    let mut native = Native::new(SIZE);
+    let nodes = native.a11y(app.settings_view());
+    for page in crate::settings::view::home_picture::PARTS {
+        assert!(
+            nodes
+                .iter()
+                .any(|(role, name, _)| *role == Role::Button
+                    && name.as_deref() == Some(page.nav_title())),
+            "{page:?}: {nodes:?}"
+        );
+    }
+    let reached = (0..120).any(|_| {
+        tab(&mut native, || app.settings_view());
+        let tile = native.bounds(app.settings_view(), "home-tile-desktop-motion");
+        native
+            .focused(app.settings_view())
+            .is_some_and(|focus| tile.intersects(&focus))
+    });
+    assert!(reached, "Tab reaches the Accessibility tile");
+    let (messages, status) = key_on(&app, &mut native, space());
+    assert_eq!(status, Status::Captured);
+    assert!(
+        matches!(&messages[..], [Message::HomePart(Page::DesktopMotion)]),
+        "{messages:?}"
+    );
+    for message in messages {
+        send_settings(&mut app, message);
+    }
+    assert_eq!((app.page, app.home_part), (Page::Home, Some(Page::DesktopMotion)));
+    let (messages, _) = key_on(
+        &app,
+        &mut native,
+        named(key::Named::Enter, key::Code::Enter),
+    );
+    assert!(
+        matches!(&messages[..], [Message::HomePart(Page::DesktopMotion)]),
+        "{messages:?}"
+    );
+    for message in messages {
+        send_settings(&mut app, message);
+    }
+    assert_eq!(app.page, Page::DesktopMotion);
+}

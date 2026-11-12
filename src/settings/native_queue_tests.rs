@@ -253,8 +253,8 @@ fn task2r2_style_toggle_defers_while_helper_holds_transaction_locks() {
     assert_eq!(raw["setup_dismissed"], true);
     assert_eq!(raw["widgets_visible"], false);
     assert_eq!(raw["widget_font"], "Fira Sans");
-    // Dismissing setup navigates to Overview once the queue drains.
-    assert_eq!(app.page, Page::Overview);
+    // Dismissing setup navigates to Home once the queue drains.
+    assert_eq!(app.page, Page::Home);
     assert!(!app.native_busy && app.native_deferred.is_empty());
     // Dismissing setup left Appearance before the queued switch could
     // apply, so it waits as a kept Appearance change and is not lost.

@@ -98,7 +98,7 @@ fn ia06_glass_lists_every_surface_and_opens_its_control() {
         native_reveal(&app, &mut native, "material-open-windows");
         for text in [
             "Other surfaces",
-            "Dock and panel › See-through",
+            "Dock › See-through",
             "Windows › Frosted surfaces and blur",
         ] {
             assert_eq!(

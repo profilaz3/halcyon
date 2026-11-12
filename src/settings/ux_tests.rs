@@ -519,12 +519,15 @@ fn native_task_navigation_and_widget_switches_keep_layout_drafts() {
         );
         click(&mut app, &mut native, "nav-desktop-dock");
         assert_eq!(app.page, Page::DesktopDock);
-        click(&mut app, &mut native, "nav-desktop-profiles");
+        // Looks opens from Appearance, which stays lit in the sidebar.
+        click(&mut app, &mut native, "nav-themes");
+        click(&mut app, &mut native, "appearance-looks");
+        assert_eq!(app.page, Page::DesktopProfiles);
         click(&mut app, &mut native, "presets-schedules");
         assert_eq!(app.page, Page::DesktopAutomation);
         assert_eq!(
             app.nav_model.active_data::<Page>(),
-            Some(&Page::DesktopProfiles)
+            Some(&Page::Themes)
         );
         assert_eq!(app.back_title().as_deref(), Some("Looks"));
         assert!(
@@ -586,7 +589,10 @@ fn split_sidebar_keyboard_navigation_keeps_focus_and_drafts() {
     // Arrows walk the root destinations, then the pinned Changes, and
     // retain focus across changes.
     for (name, page) in [
+        (Named::ArrowDown, Page::DesktopPanel),
         (Named::ArrowDown, Page::DesktopDock),
+        (Named::ArrowDown, Page::ActivityIsland),
+        (Named::ArrowDown, Page::Themes),
         (Named::ArrowDown, Page::DesktopWindows),
         (Named::ArrowDown, Page::DesktopMotion),
         (Named::ArrowDown, Page::General),
@@ -594,9 +600,9 @@ fn split_sidebar_keyboard_navigation_keeps_focus_and_drafts() {
         (Named::ArrowUp, Page::General),
         (Named::ArrowUp, Page::DesktopMotion),
         (Named::ArrowUp, Page::DesktopWindows),
-        (Named::Home, Page::DesktopProfiles),
-        (Named::ArrowUp, Page::DesktopProfiles),
-        (Named::ArrowDown, Page::Themes),
+        (Named::Home, Page::Home),
+        (Named::ArrowUp, Page::Home),
+        (Named::ArrowDown, Page::DesktopWallpaper),
         (Named::End, Page::Changes),
         (Named::ArrowDown, Page::Changes),
     ] {
@@ -2256,21 +2262,24 @@ fn ux_native_every_route_and_tab_renders_without_repeated_names() {
 
 #[test]
 fn ux_native_nine_roots_and_every_old_route_resolves() {
+    assert_eq!(Page::SIDEBAR[0].1, &[Page::Home]);
     assert_eq!(
-        Page::SIDEBAR[0].1,
+        Page::SIDEBAR[1].1,
         &[
-            Page::DesktopProfiles,
-            Page::Themes,
             Page::DesktopWallpaper,
             Page::WeatherEffects,
             Page::Overview,
+            Page::DesktopPanel,
             Page::DesktopDock,
+            Page::ActivityIsland,
+            Page::Themes,
             Page::DesktopWindows,
             Page::DesktopMotion,
             Page::General
         ]
     );
     for (page, root) in [
+        (Page::Home, Page::Home),
         (Page::Overview, Page::Overview),
         (Page::WidgetLayout, Page::Overview),
         (Page::Desktop, Page::Overview),
@@ -2290,6 +2299,8 @@ fn ux_native_nine_roots_and_every_old_route_resolves() {
         (Page::DesktopIcons, Page::DesktopWallpaper),
         (Page::WeatherEffects, Page::WeatherEffects),
         (Page::DesktopDock, Page::DesktopDock),
+        (Page::DesktopPanel, Page::DesktopPanel),
+        (Page::ActivityIsland, Page::ActivityIsland),
         (Page::DesktopWindows, Page::DesktopWindows),
         (Page::DesktopWorkspaces, Page::DesktopWindows),
         (Page::DesktopWindowRules, Page::DesktopWindows),
@@ -2297,10 +2308,11 @@ fn ux_native_nine_roots_and_every_old_route_resolves() {
         (Page::Themes, Page::Themes),
         (Page::Appearance, Page::Themes),
         (Page::DesktopAppearance, Page::Themes),
-        (Page::Moments, Page::DesktopProfiles),
-        (Page::DesktopProfiles, Page::DesktopProfiles),
-        (Page::DesktopAutomation, Page::DesktopProfiles),
-        (Page::AdaptiveLooks, Page::DesktopProfiles),
+        // Looks left the sidebar; its pages lead back to Appearance.
+        (Page::Moments, Page::Themes),
+        (Page::DesktopProfiles, Page::Themes),
+        (Page::DesktopAutomation, Page::Themes),
+        (Page::AdaptiveLooks, Page::Themes),
         (Page::General, Page::General),
         (Page::DesktopMotion, Page::DesktopMotion),
         (Page::PendingChanges, Page::Changes),
@@ -2309,9 +2321,15 @@ fn ux_native_nine_roots_and_every_old_route_resolves() {
         assert_eq!(page.sidebar(), root, "{page:?}");
         assert_eq!(Page::parse(page.key()).sidebar(), root, "{page:?}");
     }
-    assert_eq!(Page::ALL.len(), 34, "a new route must be mapped here too");
+    assert_eq!(Page::ALL.len(), 37, "a new route must be mapped here too");
     for (alias, page) in [
-        ("home", Page::Overview),
+        ("home", Page::Home),
+        ("panel", Page::DesktopPanel),
+        ("dock", Page::DesktopDock),
+        ("island", Page::ActivityIsland),
+        ("desktop-dock", Page::DesktopDock),
+        ("desktop-profiles", Page::DesktopProfiles),
+        ("looks", Page::DesktopProfiles),
         ("layout", Page::Overview),
         ("setups", Page::DesktopProfiles),
         ("presets", Page::DesktopProfiles),

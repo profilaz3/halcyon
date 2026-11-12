@@ -255,9 +255,7 @@ pub fn prepare(store: &DesktopStore) -> Result<Option<Prepared>, String> {
     } else {
         DesktopPatch::new()
     };
-    for key in draft.watch_keys() {
-        patch.guard(key.clone(), draft.snapshot().user(&key).cloned());
-    }
+    draft.guard(&mut patch);
     let mut widgets = WidgetPatch::new();
     if config.appearance.wallpaper_colors {
         for (pointer, desired) in [
@@ -336,9 +334,7 @@ fn acknowledge(store: &DesktopStore, analyzed: &Source) -> Result<(), String> {
         return Err("Wallpaper changed before acknowledgement".into());
     }
     let mut patch = DesktopPatch::new();
-    for key in draft.watch_keys() {
-        patch.guard(key.clone(), draft.snapshot().user(&key).cloned());
-    }
+    draft.guard(&mut patch);
     store
         .apply_palette(
             &patch,

@@ -122,6 +122,18 @@ impl SessionDrafts {
             }
         }
     }
+    /// Removes a record for good, readable or not.
+    fn forget(&mut self, store: &DesktopStore, kind: Kind) -> Result<(), String> {
+        let path = path(store, kind)?;
+        match fs::remove_file(&path) {
+            Ok(()) => sync_parent(&path)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
+        }
+        self.known.insert(kind, None);
+        self.unreadable.remove(&kind);
+        Ok(())
+    }
     fn checkpoint<T: Serialize>(
         &mut self,
         store: &DesktopStore,
@@ -341,16 +353,27 @@ impl Settings {
             Ok(None) => {}
             Err(error) => errors.push(error),
         }
-        match session.load(&store, Kind::Layout) {
+        // An unfinished layout is kept without asking (see
+        // `keep_recovered_layout`). A damaged one is dropped: the current
+        // layout stays, and the record goes so it can't come back.
+        let layout = match session.load(&store, Kind::Layout) {
             Ok(Some(saved)) => match self.placement.restore_session(saved) {
-                Ok(()) => session.recovered += 1,
-                Err(error) => {
-                    session.unreadable.insert(Kind::Layout);
-                    errors.push(format!("{}: {error}", Kind::Layout.title()));
+                Ok(()) => {
+                    self.keep_recovered_layout();
+                    Some(self.status.clone())
+                }
+                Err(_) => {
+                    self.drop_recovered_layout();
+                    Some(super::placement::DROPPED_LAYOUT.to_string())
                 }
             },
-            Ok(None) => {}
-            Err(error) => errors.push(error),
+            Ok(None) => None,
+            Err(_) => Some(super::placement::DROPPED_LAYOUT.to_string()),
+        };
+        if layout.is_some()
+            && let Err(error) = session.forget(&store, Kind::Layout)
+        {
+            errors.push(format!("{}: {error}", Kind::Layout.title()));
         }
         match session.load(&store, Kind::Canvas) {
             Ok(Some(saved)) => match self.restore_canvas(saved) {
@@ -373,6 +396,10 @@ impl Settings {
             },
             Ok(None) => {}
             Err(error) => errors.push(error),
+        }
+        if let Some(note) = layout {
+            self.status = note;
+            self.error = false;
         }
         if session.recovered > 0 {
             self.status = format!(

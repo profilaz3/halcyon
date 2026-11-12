@@ -365,7 +365,7 @@ fn corners_pages_and_searches_render_at_both_sizes() {
         first("spacing"),
         (
             "Spacing",
-            "Dock and panel › Dock › Corners, spacing and timing".into()
+            "Dock › Corners, spacing and timing".into()
         )
     );
 }

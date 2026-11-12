@@ -40,7 +40,7 @@ impl Settings {
                             .into(),
                     );
                 }
-                // Islands and Blend turn on in Dock and panel. This is where
+                // Islands and Blend turn on in Panel. This is where
                 // to look when the Islands panel won't start.
                 addons.extend(self.panel_troubleshooting());
                 if let Check::Failed(error) = &self.updates.check

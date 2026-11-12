@@ -385,10 +385,8 @@ fn background_patch(store: &DesktopStore, picture: &Path) -> Result<DesktopPatch
     wallpaper::check_path(picture)
         .map_err(|_| format!("The palette wallpaper is missing: {}", picture.display()))?;
     // Only the shared entry is edited: the fixed keys are all it reads.
-    let snapshot = store
-        .load(&WallpaperDraft::keys())
-        .map_err(|error| error.to_string())?;
-    let mut draft = WallpaperDraft::from_parts(snapshot, Vec::new());
+    let mut draft =
+        WallpaperDraft::load_keys(store, &[], Vec::new()).map_err(|error| error.to_string())?;
     if let Some(Setting::Unsupported(_)) = draft.entry(&Target::Shared) {
         return Err(
             "The shared background is set elsewhere with settings this version does not support; nothing was changed."
@@ -1068,6 +1066,7 @@ mod tests {
                 source,
                 filter_by_theme: true,
                 rotation_frequency: 1234,
+                transition_duration: None,
                 filter_method: FilterMethod::Nearest,
                 scaling_mode: ScalingMode::Fit([0.1, 0.2, 0.3]),
                 sampling_method: SamplingMethod::Random,

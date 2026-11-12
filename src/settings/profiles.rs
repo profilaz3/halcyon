@@ -2430,7 +2430,7 @@ pub fn change_domains(change: &LatestChange) -> BTreeSet<Domain> {
             Domain::Dock
         } else if namespace == PanelKind::Panel.namespace() {
             Domain::Panel
-        } else if namespace == wallpaper::NAMESPACE {
+        } else if wallpaper::modes::is_background(namespace) {
             Domain::Wallpaper
         } else if namespace == crate::desktop::desktop_icons::NAMESPACE {
             Domain::DesktopIcons

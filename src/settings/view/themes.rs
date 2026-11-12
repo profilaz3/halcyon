@@ -311,18 +311,24 @@ impl Settings {
             ),
         ));
         // A day or night widget style overrides the style above, so while
-        // one shows, say so; choosing them lives on Looks › Time of day.
-        if let Some(phase) = self.config.moments.active {
-            rows.push(self.link_row_state(
-                "Style by time of day",
-                format!(
-                    "Showing the {} style · Opens Looks › Time of day",
-                    phase.title().to_lowercase()
-                ),
-                Message::Page(Page::Moments),
-                "appearance-moments".into(),
-            ));
-        }
+        // one shows, say so. Time of day, which also switches whole looks,
+        // opens from here.
+        rows.push(self.link_row_state(
+            "Style by time of day",
+            match self.config.moments.active {
+                Some(phase) => format!("Showing the {} style", phase.title().to_lowercase()),
+                None => "Day and night styles for widgets, or whole looks".into(),
+            },
+            Message::Page(Page::Moments),
+            "appearance-moments".into(),
+        ));
+        // Looks left the sidebar; whole-desktop looks open from here.
+        rows.push(self.link_row_state(
+            "Looks",
+            "Saved desktops: style, wallpaper, bars and widgets together",
+            Message::Page(Page::DesktopProfiles),
+            "appearance-looks".into(),
+        ));
         group(Some("Surfaces"), rows)
     }
 

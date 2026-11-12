@@ -203,7 +203,7 @@ fn time_of_day_one_page_switches_whole_look_or_widget_style() {
     // The old Day and night style page opens Time of day, ready for widgets.
     send_settings(&mut app, Message::Page(Page::Moments));
     assert_eq!(app.page, Page::DesktopAutomation);
-    assert_eq!(Page::Moments.sidebar(), Page::DesktopProfiles);
+    assert_eq!(Page::Moments.sidebar(), Page::Themes);
     assert_eq!(Page::DesktopAutomation.nav_title(), "Time of day");
     let city = City {
         name: "Sydney".into(),

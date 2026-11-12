@@ -126,6 +126,10 @@ impl Tools {
             devices: Vec::new(),
         }
     }
+    /// No note being written, saved, checked or waiting for Undo.
+    pub(super) fn settled(&self) -> bool {
+        self.draft.is_none() && self.discarded.is_none() && !self.checking_note
+    }
     fn players(&self) -> &[music::Player] {
         match &self.feed {
             Some(music::Feed::Players(players)) => players,

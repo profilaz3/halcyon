@@ -1566,3 +1566,138 @@ fn a_hiding_look_releases_reserved_space_even_from_a_stale_capture() {
     let styled = preview_panel_style(draft(), &look, false);
     assert_eq!(styled.value::<bool>("exclusive_zone").known(), Some(&false));
 }
+
+/// Applies `profile`'s widget layout to `desk` with `config` as the app's
+/// preferences, then turns Daily overview off the way Settings does.
+fn apply_layout_then_glance_off(
+    desk: &Desk,
+    config: Value,
+    profile: &Profile,
+) -> (Value, crate::config::Config) {
+    fs::write(&desk.config, config.to_string()).unwrap();
+    let plan = plan(
+        &desk.store(),
+        &desk.installed(),
+        profile,
+        &[Domain::WidgetLayout].into(),
+    );
+    apply(&desk.store(), &plan).unwrap();
+    let applied = desk.json();
+    let mut after = crate::config::Config::from_bytes(&fs::read(&desk.config).unwrap()).unwrap();
+    after
+        .save_widget_at(&desk.config, crate::drawer::Widget::Glance, false)
+        .unwrap();
+    (applied, after)
+}
+
+#[test]
+fn tidal_then_glance_off_brings_back_the_clock() {
+    use crate::drawer::Widget;
+    let desk = desk(
+        "profile-tidal-glance-off",
+        Srgb::new(0.2, 0.6, 0.4),
+        Srgb::new(0.8, 0.3, 0.2),
+        "teal",
+    );
+    let tidal = crate::desktop::profiles::preset("tidal").unwrap().profile;
+    let (applied, after) = apply_layout_then_glance_off(
+        &desk,
+        json!({"enabled_widgets": ["clock"], "widget_positions": {"clock": [0.1, 0.2]},
+               "glance": {"enabled": false}}),
+        &tidal,
+    );
+    // Tidal shows one At a glance card and keeps the separate ones underneath.
+    assert_eq!(applied["glance"]["enabled"], true);
+    assert_eq!(applied["enabled_widgets"], json!(["clock", "weather"]));
+    let shown = crate::config::Config::from_bytes(applied.to_string().as_bytes()).unwrap();
+    assert!(!shown.widget_visible(Widget::Clock));
+    assert!(shown.widget_visible(Widget::Glance));
+    // Turning it off shows the clock where it was, without the fallback.
+    assert!(!after.glance.enabled);
+    assert!(after.widget_visible(Widget::Clock));
+    assert!(after.widget_visible(Widget::Weather));
+    assert_eq!(after.enabled_widgets, ["clock", "weather"]);
+    assert_eq!(after.widget_positions["clock"], [0.1, 0.2]);
+}
+
+#[test]
+fn every_look_that_turns_glance_on_keeps_the_clock_underneath() {
+    use crate::drawer::Widget;
+    let desk = desk(
+        "profile-looks-glance-off",
+        Srgb::new(0.2, 0.6, 0.4),
+        Srgb::new(0.8, 0.3, 0.2),
+        "teal",
+    );
+    let looks = crate::desktop::profiles::presets()
+        .into_iter()
+        .filter(|p| {
+            p.profile
+                .widget_layout
+                .as_ref()
+                .is_some_and(|l| l["glance"]["enabled"] == true)
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        looks.iter().any(|p| p.id == "tidal"),
+        "the looks were found"
+    );
+    for look in looks {
+        let (applied, after) = apply_layout_then_glance_off(
+            &desk,
+            json!({"enabled_widgets": [], "glance": {"enabled": false}}),
+            &look.profile,
+        );
+        assert_eq!(applied["glance"]["enabled"], true, "{}", look.id);
+        assert!(after.widget_visible(Widget::Clock), "{}", look.id);
+    }
+}
+
+#[test]
+fn an_older_look_with_nothing_underneath_still_leaves_the_clock() {
+    use crate::drawer::Widget;
+    let desk = desk(
+        "profile-old-glance-off",
+        Srgb::new(0.2, 0.6, 0.4),
+        Srgb::new(0.8, 0.3, 0.2),
+        "teal",
+    );
+    let mut old = Profile::new("Older look").unwrap();
+    old.widget_layout = Some(json!({
+        "enabled_widgets": [],
+        "glance": {"enabled": true, "initialized": true, "show_clock": true,
+                   "show_weather": false, "show_calendar": false}
+    }));
+    // From separate widgets: the clock the person had stays selected.
+    let (applied, after) = apply_layout_then_glance_off(
+        &desk,
+        json!({"enabled_widgets": ["clock", "devbox"], "glance": {"enabled": false}}),
+        &old,
+    );
+    assert_eq!(applied["enabled_widgets"], json!(["clock"]));
+    assert!(after.widget_visible(Widget::Clock));
+    assert!(
+        !after.widget_visible(Widget::Devbox),
+        "the look's own choice"
+    );
+    // From nothing at all: the look's clock section is selected underneath.
+    let (applied, after) = apply_layout_then_glance_off(
+        &desk,
+        json!({"enabled_widgets": [], "glance": {"enabled": false}}),
+        &old,
+    );
+    assert_eq!(applied["enabled_widgets"], json!(["clock"]));
+    assert!(after.widget_visible(Widget::Clock));
+    // Already on with nothing underneath (the state that look left behind):
+    // applying it again changes nothing, and turning it off still brings
+    // back the clock and weather.
+    let (applied, after) = apply_layout_then_glance_off(
+        &desk,
+        json!({"enabled_widgets": [],
+               "glance": {"enabled": true, "initialized": true, "show_weather": false}}),
+        &old,
+    );
+    assert_eq!(applied["enabled_widgets"], json!([]));
+    assert!(after.widget_visible(Widget::Clock));
+    assert!(after.widget_visible(Widget::Weather));
+}

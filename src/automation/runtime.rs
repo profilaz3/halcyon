@@ -206,6 +206,10 @@ impl Automator {
             .as_ref()
             .is_some_and(Automation::watches_displays)
     }
+    /// A switch is under way.
+    pub fn busy(&self) -> bool {
+        self.busy
+    }
     /// When to evaluate next (`None`: nothing to do until a file changes).
     pub fn wake(&self) -> Option<Instant> {
         if self.busy {

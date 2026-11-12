@@ -307,8 +307,9 @@ def restore():
 
 # Every page the native Settings window accepts (`Page::key` in src/settings.rs), plus the old
 # `layout` alias for Widgets.
-SETTINGS_PAGES = ('adaptive', 'builder', 'moments', 'overview', 'pending', 'themes', 'presets', 'schedules', 'widget-style', 'system-monitor', 'daily-overview', 'focus-timer', 'app-settings', 'appearance', 'widgets', 'layout', 'glance', 'calendar', 'weather', 'devbox', 'clock',
-                  'projects', 'music', 'notes', 'focus', 'devices', 'general', 'desktop', 'desktop-dock',
+SETTINGS_PAGES = ('home', 'adaptive', 'builder', 'moments', 'overview', 'pending', 'themes', 'presets', 'schedules', 'widget-style', 'system-monitor', 'daily-overview', 'focus-timer', 'app-settings', 'appearance', 'widgets', 'layout', 'glance', 'calendar', 'weather', 'devbox', 'clock',
+                  'projects', 'music', 'notes', 'focus', 'devices', 'general', 'desktop', 'desktop-panel', 'desktop-dock', 'activity-island',
+                  'panel', 'dock', 'island', 'effects', 'looks',
                   'desktop-appearance', 'desktop-wallpaper', 'weather-effects', 'desktop-icons', 'desktop-profiles',
                   'desktop-windows', 'desktop-workspaces', 'desktop-motion', 'desktop-window-rules',
                   'desktop-shortcuts', 'desktop-automation', 'changes')

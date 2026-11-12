@@ -102,7 +102,10 @@ impl Settings {
                 button::text("Identify")
                     .on_press(Message::IdentifyDisplays)
                     .into(),
-                button::text("Dock and panel")
+                button::text("Panel")
+                    .on_press(Message::Page(Page::DesktopPanel))
+                    .into(),
+                button::text("Dock")
                     .on_press(Message::Page(Page::DesktopDock))
                     .into(),
             ])
