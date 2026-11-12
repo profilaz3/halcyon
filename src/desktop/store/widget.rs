@@ -283,6 +283,7 @@ pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/activity_island/media", "Activity media", Style, boolean;
     "/activity_island/calendar", "Activity meetings", Style, boolean;
     "/activity_island/reveals", "Activity reveals", Style, boolean;
+    "/activity_island/shelf", "Activity file shelf", Style, boolean;
     "/activity_island/lead_minutes", "Activity reminder", Style, |v| matches!(v.as_u64(),Some(5|10|15));
     "/activity_island/notifications", "Activity notifications", Style, boolean;
     "/activity_island/notification_text", "Activity message text", Style, boolean;

@@ -74,6 +74,7 @@ impl Settings {
             }
         }
         controls = controls.push(toggle("Brief automatic reveals", "reveals", p.reveals, false));
+        controls = controls.push(toggle("File shelf", "shelf", p.shelf, false));
         controls = controls.push(split(
             label("Island style", 14., FG),
             container(cosmic::widget::dropdown(

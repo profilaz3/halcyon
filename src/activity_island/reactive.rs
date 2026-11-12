@@ -43,7 +43,8 @@ impl Applet {
     }
     pub(super) fn slot_width(&self) -> f32 {
         if self.kind == Kind::Idle && self.live() {
-            112.
+            // The shelf's tray and count sit beside the title.
+            112. + self.shelf_trailing_width()
         } else {
             COMPACT_WIDTH
         }

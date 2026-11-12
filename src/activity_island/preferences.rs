@@ -63,6 +63,8 @@ pub struct Preferences {
     pub media: bool,
     pub calendar: bool,
     pub reveals: bool,
+    /// Files dropped on the island, kept on its shelf.
+    pub shelf: bool,
     pub lead_minutes: u8,
     /// Desktop notifications the panel shares with notification applets.
     pub notifications: bool,
@@ -111,6 +113,7 @@ impl Default for Preferences {
             media: true,
             calendar: true,
             reveals: true,
+            shelf: true,
             lead_minutes: 5,
             notifications: true,
             notification_text: true,

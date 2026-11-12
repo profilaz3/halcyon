@@ -4380,3 +4380,295 @@ fn attached_card_joins_a_matching_bar_and_floats_below_otherwise() {
         assert!((meta.x - glyph_x).abs() < 1., "{meta:?} against {glyph_x}");
     }
 }
+
+/// A picture, a document, a folder and a link, as files dropped on the shelf.
+fn shelf_fixture(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "halcyon-island-shelf-{name}-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Projects")).unwrap();
+    image::RgbImage::from_fn(160, 120, |x, y| {
+        image::Rgb(if y < 70 {
+            [70 + (x / 4) as u8, 140 + (y / 2) as u8, 220]
+        } else {
+            [200 - (x / 5) as u8, 170 + (y / 4) as u8, 110]
+        })
+    })
+    .save(dir.join("Beach.png"))
+    .unwrap();
+    // Sparse: a size without the bytes.
+    std::fs::File::create(dir.join("Quarterly report.pdf"))
+        .unwrap()
+        .set_len(2_457_600)
+        .unwrap();
+    std::fs::write(dir.join("notes.txt"), b"x").unwrap();
+    std::fs::write(dir.join("song.flac"), b"x").unwrap();
+    dir
+}
+fn shelve(app: &mut Applet, dir: &std::path::Path, more: bool) {
+    use super::shelf::Target;
+    let mut targets = vec![
+        Target::Path(dir.join("Beach.png")),
+        Target::Path(dir.join("Quarterly report.pdf")),
+        Target::Path(dir.join("Projects")),
+        Target::Url("https://www.example.com/docs/getting-started".into()),
+    ];
+    if more {
+        targets.push(Target::Path(dir.join("notes.txt")));
+        targets.push(Target::Path(dir.join("song.flac")));
+    }
+    app.shelf.add(targets);
+    app.shelf.decode_thumbs();
+}
+
+/// The shelf in each style, floating and under a Standard bar: the drop
+/// zone, the pill's count, the empty shelf and the list with its actions.
+#[test]
+fn island_shelf_renders_for_review() {
+    use super::preferences::IslandStyle;
+    use cosmic::applet::cosmic_panel_config::CosmicPanelBackground;
+    use cosmic::iced::Size;
+    let Some(root) = std::env::var_os("HALCYON_ACTIVITY_EVIDENCE").map(std::path::PathBuf::from)
+    else {
+        return;
+    };
+    let root = root.join("island-shelf");
+    let dir = shelf_fixture("evidence");
+    let scale = 2f32;
+    type Setup = fn(&mut Applet, &std::path::Path);
+    let states: &[(&str, f32, &[&str], Setup)] = &[
+        ("pill-count-collapsed", 0., &["activity-shelf-count"], |app, dir| shelve(app, dir, false)),
+        (
+            "idle-quick-action",
+            1.,
+            &["activity-shelf", "activity-dnd", "activity-timer", "activity-preferences"],
+            |app, dir| shelve(app, dir, false),
+        ),
+        ("drop-zone", 1., &["activity-shelf-zone"], |app, _| {
+            app.shelf.open = true;
+            app.shelf.over = true;
+        }),
+        ("drop-zone-over-shelf", 1., &["activity-shelf-zone"], |app, dir| {
+            shelve(app, dir, false);
+            app.shelf.open = true;
+            app.shelf.over = true;
+        }),
+        ("empty", 1., &["activity-shelf-empty"], |app, _| app.shelf.open = true),
+        (
+            "mixed",
+            1.,
+            &[
+                "activity-shelf-row-0",
+                "activity-shelf-row-3",
+                "activity-shelf-remove-0",
+                "activity-shelf-open",
+                "activity-shelf-folder",
+                "activity-shelf-copy",
+                "activity-shelf-clear",
+            ],
+            |app, dir| {
+                shelve(app, dir, false);
+                app.shelf.open = true;
+            },
+        ),
+        (
+            "send-to-phone",
+            1.,
+            &["activity-shelf-open", "activity-shelf-send-0", "activity-shelf-clear"],
+            |app, dir| {
+                shelve(app, dir, false);
+                app.shelf.put_device("Pixel 8");
+                app.shelf.selected = 1;
+                app.shelf.open = true;
+            },
+        ),
+        (
+            "link-selected",
+            1.,
+            &["activity-shelf-open", "activity-shelf-copy", "activity-shelf-clear"],
+            |app, dir| {
+                shelve(app, dir, false);
+                app.shelf.selected = 3;
+                app.shelf.open = true;
+            },
+        ),
+        (
+            "scrolling",
+            1.,
+            &["activity-shelf-row-0", "activity-shelf-row-3", "activity-shelf-clear"],
+            |app, dir| {
+                shelve(app, dir, true);
+                app.shelf.open = true;
+            },
+        ),
+    ];
+    let styles = [
+        ("theme-light", IslandStyle::Theme, cosmic::Theme::light(), CosmicPanelBackground::Light, ([214., 196., 170.], [168., 186., 204.])),
+        ("theme-dark", IslandStyle::Theme, cosmic::Theme::dark(), CosmicPanelBackground::Dark, ([46., 58., 74.], [96., 84., 110.])),
+        ("dark", IslandStyle::Dark, cosmic::Theme::light(), CosmicPanelBackground::Light, ([214., 196., 170.], [168., 186., 204.])),
+    ];
+    for attached in [false, true] {
+        for (style_name, style, theme, background, wall) in &styles {
+            for (name, p, ids, setup) in states {
+                if attached && *p < 1. {
+                    continue;
+                }
+                let mut app = app();
+                app.now_ms = chrono::Utc::now().timestamp_millis();
+                app.kind = Kind::Idle;
+                app.supported = true;
+                app.snapshot.preferences.style = *style;
+                app.core.applet.background = background.clone();
+                if attached {
+                    app.panel_frame = host::Frame {
+                        height: 32.,
+                        padding: 4.,
+                        radius: 8.,
+                        attached: true,
+                        opacity: 0.85,
+                    };
+                }
+                setup(&mut app, &dir);
+                app.popup = Some(window::Id::unique());
+                app.held = true;
+                app.popup_extra = if app.shelf_shown() { app.shelf_extra() } else { app.live_extra() };
+                app.motion.retarget(*p, false, Instant::now());
+                let frame = app.frame();
+                let (w, h) = (frame.popup_width(), app.popup_height());
+                let mut ui = crate::native_test::Native::new(Size::new(w, h));
+                let label = format!("{name} {style_name} attached={attached}");
+                assert!(ui.duplicate_ids(app.capsule(true)).is_empty(), "{label}");
+                for id in *ids {
+                    let b = ui.bounds(app.capsule(true), id);
+                    assert!(
+                        b.width > 0. && b.x >= 0. && b.y >= 0. && b.x + b.width <= w + 0.5 && b.y + b.height <= h + 0.5,
+                        "{label}: {id} {b:?} outside {w}x{h}"
+                    );
+                }
+                let pixels = ui.render_scaled(app.capsule(true), theme, scale as f64);
+                let panel = Palette::new(&app.core.applet, IslandStyle::Theme).surface;
+                save_scene(
+                    &root.join(format!(
+                        "{}{name}-{style_name}.png",
+                        if attached { "standard-" } else { "" }
+                    )),
+                    &pixels,
+                    ((w * scale) as usize, (h * scale) as usize),
+                    &frame,
+                    panel,
+                    *wall,
+                    scale,
+                );
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn shelf_drag_opens_a_drop_zone_and_a_drop_keeps_the_files() {
+    use super::shelf::Msg;
+    let dir = shelf_fixture("drop");
+    let mut app = app();
+    app.kind = Kind::Idle;
+    let now = Instant::now();
+    let _ = app.update(Message::Shelf(Msg::DragEnter));
+    // Open, but not in hand: a grab would take the drag away.
+    assert!(app.popup.is_some() && !app.held);
+    assert!(app.shelf.over && app.shelf_shown());
+    // The pointer leaving for the drag does not close the island under it.
+    app.leave_deadline = Some(now);
+    let _ = app.update(Message::Wake(Duration::ZERO));
+    assert!(app.popup.is_some() && app.shelf.over);
+    // Crossing between the pill and the island leaves, then enters again.
+    let _ = app.update(Message::Shelf(Msg::DragLeave));
+    assert!(!app.shelf.over && app.leave_deadline.is_some());
+    let _ = app.update(Message::Shelf(Msg::DragEnter));
+    assert!(app.leave_deadline.is_none());
+    let list = format!(
+        "file://{}\r\nhttps://example.com/a\r\nfile:///no/such/file\r\n",
+        dir.join("Quarterly report.pdf").display()
+    )
+    .replace(' ', "%20");
+    let _ = app.update(Message::Shelf(Msg::Dropped(list.into_bytes())));
+    assert_eq!(app.shelf.items.len(), 2);
+    assert_eq!(app.shelf.items[0].name, "Quarterly report.pdf");
+    // Dropped, the island stays open in hand on the list.
+    assert!(app.held && app.shelf_shown() && !app.shelf.over);
+    // Its title goes back to the card.
+    app.popup = Some(window::Id::unique());
+    app.popup_extra = app.shelf_extra();
+    app.motion.retarget(1., false, now);
+    let mut ui = crate::native_test::Native::new(cosmic::iced::Size::new(
+        app.frame().popup_width(),
+        app.popup_height(),
+    ));
+    let pressed = click(&mut ui, &app, "activity-title");
+    assert!(pressed.iter().any(|m| matches!(m, Message::Shelf(Msg::Back))));
+    let pressed = click(&mut ui, &app, "activity-shelf-remove-1");
+    assert!(pressed.iter().any(|m| matches!(m, Message::Shelf(Msg::Remove(1)))));
+    let _ = app.update(Message::Shelf(Msg::Remove(1)));
+    assert_eq!(app.shelf.items.len(), 1);
+    let _ = app.update(Message::Shelf(Msg::Back));
+    assert!(!app.shelf_shown());
+    let _ = app.update(Message::Shelf(Msg::Clear));
+    assert!(app.shelf.items.is_empty());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn shelf_drop_of_nothing_usable_closes_and_switched_off_ignores_drags() {
+    use super::shelf::Msg;
+    let mut app = app();
+    app.kind = Kind::Idle;
+    let _ = app.update(Message::Shelf(Msg::DragEnter));
+    let _ = app.update(Message::Shelf(Msg::Dropped(b"mailto:someone@example.com".to_vec())));
+    assert!(app.shelf.items.is_empty() && !app.shelf.open);
+
+    let dir = shelf_fixture("off");
+    let mut app = super::tests::app();
+    app.kind = Kind::Idle;
+    shelve(&mut app, &dir, false);
+    app.snapshot.preferences.shelf = false;
+    let _ = app.update(Message::Shelf(Msg::DragEnter));
+    assert!(app.popup.is_none() && !app.shelf.over);
+    let palette = app.palette();
+    assert!(app.shelf_trailing(palette).is_none());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn shelf_shows_from_the_idle_card_and_forgets_vanished_files() {
+    use super::shelf::Msg;
+    let dir = shelf_fixture("show");
+    let mut app = app();
+    app.kind = Kind::Idle;
+    shelve(&mut app, &dir, false);
+    app.popup = Some(window::Id::unique());
+    app.held = true;
+    app.motion.retarget(1., false, Instant::now());
+    let mut ui = crate::native_test::Native::new(cosmic::iced::Size::new(
+        app.frame().popup_width(),
+        app.popup_height(),
+    ));
+    let pressed = click(&mut ui, &app, "activity-shelf");
+    assert!(pressed.iter().any(|m| matches!(m, Message::Shelf(Msg::Show))));
+    std::fs::remove_file(dir.join("Quarterly report.pdf")).unwrap();
+    let _ = app.update(Message::Shelf(Msg::Show));
+    assert!(app.shelf_shown());
+    assert_eq!(app.shelf.items.len(), 3);
+    assert!(app.shelf.items.iter().all(|i| i.name != "Quarterly report.pdf"));
+    // A closed island puts the shelf away.
+    let _ = app.destroy_popup();
+    assert!(!app.shelf.open);
+    // Choosing an activity leaves the shelf too.
+    timed(&mut app, 72_000);
+    app.kind = Kind::Idle;
+    app.shelf.open = true;
+    let _ = app.update(Message::Select(Kind::Music));
+    assert_eq!(app.kind, Kind::Music);
+    assert!(!app.shelf.open);
+    let _ = std::fs::remove_dir_all(dir);
+}

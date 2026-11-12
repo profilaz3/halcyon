@@ -13,6 +13,7 @@ pub(crate) mod popups;
 pub mod preferences;
 mod quiet;
 mod reactive;
+mod shelf;
 mod surface;
 pub(crate) mod system;
 #[cfg(test)]
@@ -365,6 +366,8 @@ pub struct Applet {
     expiry_at: Option<Instant>,
     /// The timer, transfers, scrubber and outputs.
     ui: live::Ui,
+    /// Files and links dropped on the island.
+    shelf: shelf::Shelf,
     /// A working update replaced the program: the new one, and the earliest
     /// moment to restart into it (see `crate::upgrade`).
     updated: Option<(crate::upgrade::Program, Instant)>,
@@ -433,6 +436,8 @@ pub enum Message {
     NoteRule(Option<preferences::AppRule>),
     /// The timer, transfers, scrubber and outputs.
     Live(live::Msg),
+    /// The file shelf.
+    Shelf(shelf::Msg),
     /// A working update replaced the program.
     Updated(crate::upgrade::Program),
     /// The quiet moment before restarting into the update came.
@@ -509,6 +514,7 @@ impl Application for Applet {
                 rules_wish: None,
                 expiry_at: None,
                 ui: live::Ui::default(),
+                shelf: shelf::Shelf::load(),
                 updated: None,
                 restart_at: None,
             },
@@ -610,10 +616,11 @@ impl Application for Applet {
                 .on_press(Message::Hold)
                 .into();
         }
-        self.core.applet.autosize_window(self.capsule(false)).into()
+        let pill = self.shelf_target(self.capsule(false));
+        self.core.applet.autosize_window(pill).into()
     }
     fn view_window(&self, _: window::Id) -> Element<'_, Message> {
-        self.capsule(true)
+        self.shelf_target(self.capsule(true))
     }
 }
 impl Applet {
@@ -680,6 +687,7 @@ impl Applet {
                     | Message::Frame(_)
                     | Message::Wake(_)
                     | Message::Live(_)
+                    | Message::Shelf(_)
             )
         {
             return Task::none();
@@ -955,6 +963,7 @@ impl Applet {
                     self.list = false;
                     self.reset_inbox();
                     self.ui.view = live::View::Card;
+                    self.shelf_closed();
                     self.batch.clear();
                     self.revealed = false;
                     self.motion.retarget(0., false, now);
@@ -1041,7 +1050,7 @@ impl Applet {
                 }
                 if self.leave_deadline.is_some_and(|at| at <= now) {
                     self.leave_deadline = None;
-                    if !self.held && !self.hovered {
+                    if !self.held && !self.hovered && !self.shelf.over {
                         return self.update(Message::Close);
                     }
                 }
@@ -1067,6 +1076,7 @@ impl Applet {
                 return Task::batch([job, self.note_event(event, now)]);
             }
             Message::Live(msg) => return self.live_update(msg, now),
+            Message::Shelf(msg) => return self.shelf_update(msg, now),
             Message::NoteAction(id, action) => {
                 let Some(note) = self.note(id) else {
                     return Task::none();
@@ -1229,6 +1239,7 @@ impl Applet {
                 self.chooser = false;
                 self.list = false;
                 self.ui.view = live::View::Card;
+                self.shelf.open = false;
                 self.batch.clear();
                 self.kind = kind;
                 self.capture_source();
@@ -1505,6 +1516,8 @@ impl Applet {
     fn open_popup_sized(&mut self) -> Task<Message> {
         self.popup_extra = if self.list || self.menu.is_some() {
             self.list_extra()
+        } else if self.shelf_shown() {
+            self.shelf_extra()
         } else {
             self.live_extra()
         };
@@ -1564,6 +1577,7 @@ impl Applet {
         self.list = false;
         self.reset_inbox();
         self.ui.view = live::View::Card;
+        self.shelf_closed();
         self.arm_pause_grace();
         self.hover_deadline = None;
         self.leave_deadline = None;
@@ -2018,17 +2032,29 @@ impl Applet {
         }
         match self.kind {
             Kind::Idle => {
-                if self.notes_shown() && self.has_recent() {
+                let recent = self.notes_shown() && self.has_recent();
+                if recent {
                     row = row.push(self.recent_button(palette, tint, reveal));
                 }
-                return row
+                let shelf = self.shelf_enabled();
+                if shelf {
+                    row = row.push(self.shelf_button(palette, tint, reveal));
+                }
+                row = row
                     .push(self.dnd_button(palette, tint, reveal))
-                    .push(self.timer_button(palette, tint, reveal))
+                    .push(self.timer_button(palette, tint, reveal));
+                // Beside the shelf, settings keeps the row on one line as a glyph.
+                if shelf && (recent || self.frame().attached) {
+                    return row
+                        .push(self.shelf_settings_button(palette, tint, reveal))
+                        .into();
+                }
+                return row
                     .push(self.label_button(
                         palette,
                         "activity-preferences",
                         // A Standard bar's narrower card keeps the row on one line.
-                        if self.frame().attached {
+                        if self.frame().attached || shelf {
                             "Settings"
                         } else {
                             "Activity settings"
@@ -2320,7 +2346,12 @@ impl Applet {
         let p = if popup { self.motion.value } else { 0. };
         let live = self.live();
         let recent_only = live && self.listing() && self.notes.is_empty();
-        let (icon, accent) = if recent_only {
+        // Open on the shelf, or something dragged over the island.
+        let shelf = popup && live && !self.chooser && !self.listing() && self.shelf_shown();
+        let shelf_title = shelf && p >= 0.5;
+        let (icon, accent) = if shelf {
+            (shelf::ICON, self.shelf_accent(palette))
+        } else if recent_only {
             (
                 Kind::Notification(0).icon(),
                 palette.accent(Kind::Notification(0)),
@@ -2366,9 +2397,13 @@ impl Applet {
         let summary = self.summary().is_some();
         let listing = live && self.listing();
         // The timer, the picker or the outputs fill the card below the title.
-        let panel = popup && live && self.live_panel();
-        if let Some(heading) = self.live_heading(p) {
+        let panel = popup && live && self.live_panel() && !shelf;
+        if let Some(heading) = self.live_heading(p).filter(|_| !shelf) {
             title = heading;
+            cue.clear();
+        }
+        if shelf_title {
+            title = self.shelf_heading();
             cue.clear();
         }
         // Open on the list, the title line names it.
@@ -2382,7 +2417,7 @@ impl Applet {
             };
         }
         // Resting, two or more from one app read as that app and a count.
-        if live && p < 0.5 && !self.chooser && self.summary().is_none()
+        if live && p < 0.5 && !self.chooser && !shelf && self.summary().is_none()
             && let Kind::Notification(id) = self.kind
             && let Some(n) = self.note(id).filter(|n| !n.urgent)
         {
@@ -2460,7 +2495,12 @@ impl Applet {
             cue.chars().count() as f32 * 7. + 12.
         };
         let dnd = live && self.snapshot.dnd;
+        // Resting with nothing going on, the shelf shows how many it holds.
+        let shelf_count = (live && p < 0.5 && !self.chooser && self.kind == Kind::Idle)
+            .then(|| self.shelf_trailing(palette))
+            .flatten();
         let room = slot
+            - if shelf_count.is_some() { self.shelf_trailing_width() } else { 0. }
             - 24.
             - privacy.len() as f32 * (DOT + 2. * DOT_REACH)
             - if privacy.is_empty() { 0. } else { 8. }
@@ -2482,6 +2522,7 @@ impl Applet {
         // repeats the title beside it under the bar.
         let art = popup
             && live
+            && !shelf
             && !self.chooser
             && !listing
             && !panel
@@ -2492,7 +2533,7 @@ impl Applet {
             - if cue.is_empty() { 0. } else { cue_width }
             - if art_glyph { (surface::ART - 14.) * reveal } else { 0. })
         .max(40.);
-        let live_glyph = (live && !self.chooser && !heading)
+        let live_glyph = (live && !self.chooser && !heading && !shelf)
             .then(|| self.live_glyph(palette, accent))
             .flatten();
         let glyph = if art_glyph {
@@ -2501,6 +2542,8 @@ impl Applet {
                 .into()
         } else if let Some(glyph) = live_glyph {
             glyph
+        } else if shelf {
+            shelf::tinted(icon, 16, accent)
         } else if live
             && !self.chooser
             && !heading
@@ -2514,7 +2557,10 @@ impl Applet {
         let header = (art && attached).then(|| title.clone());
         // A counting timer keeps its figures still.
         let title_text: Element<'_, Message> =
-            match live.then(|| self.live_title(palette, p)).flatten() {
+            match (live && !shelf_title)
+                .then(|| self.live_title(palette, p))
+                .flatten()
+            {
                 Some(clock) => clock,
                 None => widget::text(if self.chooser {
                     "Activities".to_owned()
@@ -2607,8 +2653,14 @@ impl Applet {
                     .class(cosmic::theme::Text::Color(accent)),
             );
         }
-        if let Some(ring) = live.then(|| self.live_trailing(palette, accent)).flatten() {
+        if let Some(ring) = (live && !shelf)
+            .then(|| self.live_trailing(palette, accent))
+            .flatten()
+        {
             identity = identity.push(ring);
+        }
+        if let Some(count) = shelf_count {
+            identity = identity.push(count);
         }
         // Keep the full hit target while moving the measured identity smoothly
         // from the capsule centre to the expanded reading edge.
@@ -2637,6 +2689,8 @@ impl Applet {
         .height(28)
         .class(capsule_button(palette, accent, 1., Role::Identity))
         .on_press(match self.kind {
+            // Open on the shelf, the title goes back to the card.
+            _ if shelf && p > 0.9 => Message::Shelf(shelf::Msg::Back),
             // Open, the notification itself is the target, as in a popup.
             Kind::Notification(_) if live && p > 0.9 && self.summary().is_some() => {
                 Message::ShowNotes
@@ -2669,7 +2723,7 @@ impl Applet {
             "Collapse (Esc)",
             widget::tooltip::Position::Bottom,
         );
-        let note = live && !self.chooser && !listing && matches!(self.kind, Kind::Notification(_));
+        let note = live && !self.chooser && !listing && !shelf && matches!(self.kind, Kind::Notification(_));
         let meta = if note {
             // A notification's message may take a second line. Clipped, not
             // ellipsized: wrapped ellipsis keeps a space at the line start.
@@ -2833,12 +2887,14 @@ impl Applet {
             frame: self.frame(),
             slot_width: self.slot_width(),
             // The list takes the chooser's place below the title line.
-            chooser: self.chooser || listing || panel,
+            chooser: self.chooser || listing || panel || shelf,
             extra,
             card_extra: if listing {
                 self.list_card_extra(extra)
             } else if panel {
                 self.live_extra().clamp(0., extra)
+            } else if shelf {
+                self.shelf_extra().clamp(0., extra)
             } else {
                 0.
             },
@@ -2862,6 +2918,8 @@ impl Applet {
                     self.list_view(palette, accent, reveal)
                 } else if panel {
                     self.live_view(palette, accent, reveal)
+                } else if shelf {
+                    self.shelf_view(palette, reveal)
                 } else {
                     self.actions(
                         palette,
