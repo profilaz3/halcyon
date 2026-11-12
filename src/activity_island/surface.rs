@@ -15,10 +15,24 @@ const ACTIONS_Y: f32 = 76.;
 const ACTIONS_HEIGHT: f32 = 44.;
 /// Without a progress line the actions move up and the card ends sooner.
 const TIGHT: f32 = 18.;
-/// Space between a Standard bar's lower edge and the first detail line.
-const CARD_PAD: f32 = 10.;
-/// An attached card holds everything below the title line.
-pub(super) const CARD_HEIGHT: f32 = HEIGHT - META_Y + CARD_PAD;
+/// A card in a colour of its own floats this far below a Standard bar.
+const GAP: f32 = 6.;
+/// An attached card's inner margin above its first line: small where it
+/// continues the bar under the title, the card's own padding where it floats.
+const JOINED_TOP: f32 = 4.;
+const DETACHED_TOP: f32 = 12.;
+const CARD_BOTTOM: f32 = 14.;
+/// The music artwork disc beside the title and artist.
+pub(super) const ART: f32 = 40.;
+/// Music on a Standard bar: the header, the scrubber and the controls.
+const MUSIC_BODY: f32 = ART + 6. + 15. + 4. + ACTIONS_HEIGHT;
+/// Where music's floating artwork, scrubber and controls sit, leaving the
+/// same margin below the controls as above the artwork.
+const MUSIC_ART_Y: f32 = 10.;
+const MUSIC_TIMES_Y: f32 = 55.;
+const MUSIC_ACTIONS_Y: f32 = 72.;
+/// Room a Standard bar's popup keeps below the bar for its tallest card.
+pub(super) const CARD_ROOM: f32 = GAP + DETACHED_TOP + MUSIC_BODY + CARD_BOTTOM;
 /// An attached card keeps the title's text column: the resting capsule plus
 /// its own margin on each side.
 pub(super) const ATTACHED_WIDTH: f32 = COMPACT_WIDTH + 24.;
@@ -67,7 +81,13 @@ pub(super) struct Surface<'a> {
     pub balance: f32,
     /// The details may wrap onto a second line (a notification's message).
     pub wrap_meta: bool,
-    /// In reading and keyboard order: title, pin, details, actions, activities.
+    /// On a Standard bar the card continues the bar, in its colour. When the
+    /// island has a colour of its own the card floats beneath it instead.
+    pub joined: bool,
+    /// Music's artwork disc leads the card, beside the title and artist.
+    pub art: bool,
+    /// In reading and keyboard order: title, pin, details, actions,
+    /// activities, times, artwork.
     pub children: Vec<Element<'a, Message>>,
     pub progress: f32,
     pub popup: bool,
@@ -99,10 +119,29 @@ impl Surface<'_> {
         let width = self.slot_width + (ATTACHED_WIDTH - self.slot_width) * self.progress;
         Rectangle {
             x: (b.x + (b.width - width) / 2.).round(),
-            y: b.y + self.frame.bar(),
+            y: b.y + self.card_top(),
             width: width.round(),
-            height: (CARD_HEIGHT + self.card_extra - self.lift()) * self.progress,
+            height: self.card_height() * self.progress,
         }
+    }
+    /// An attached card's top edge, in popup coordinates.
+    fn card_top(&self) -> f32 {
+        self.frame.bar() + if self.joined { 0. } else { GAP }
+    }
+    /// An attached card's first line, in popup coordinates.
+    fn content_top(&self) -> f32 {
+        self.card_top() + if self.joined { JOINED_TOP } else { DETACHED_TOP }
+    }
+    /// An attached card's full height: its margins around what it holds.
+    fn card_height(&self) -> f32 {
+        let body = if self.chooser {
+            HEIGHT - 50. + self.card_extra
+        } else if self.art {
+            MUSIC_BODY
+        } else {
+            ACTIONS_Y - META_Y - self.lift() + ACTIONS_HEIGHT
+        };
+        self.content_top() - self.card_top() + body + CARD_BOTTOM
     }
     fn contains(&self, b: Rectangle, cursor: mouse::Cursor) -> bool {
         if self.frame.attached && self.popup {
@@ -219,23 +258,51 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
             (outer_width + w) / 2. - inset,
         );
         let inner = right - left;
-        // Details share the title's text column; actions may use the card's
-        // full width, centred.
-        let (card_left, card_inner, action_left, action_inner, drop) = if attached {
+        // Attached details start under the title's glyph, with no indent;
+        // actions may use the card's full width, centred.
+        let (card_left, card_inner, action_left, action_inner) = if attached {
             let w = self.slot_width + (ATTACHED_WIDTH - self.slot_width) * p;
             let edge = (outer_width - w) / 2.;
-            (
-                edge + 24.,
-                w - 48.,
-                edge + 12.,
-                w - 24.,
-                self.frame.bar() + CARD_PAD - META_Y - top,
-            )
+            (edge + 24., w - 48., edge + 12., w - 24.)
         } else {
-            (left, inner, left, inner, 0.)
+            (left, inner, left, inner)
         };
         let rise = if attached { 0. } else { 6. * p };
         let lift = self.lift();
+        // The first line of an attached card, and what follows it.
+        let first = self.content_top() - top;
+        let art = if self.art { ART + 10. } else { 0. };
+        let (meta, times_y, actions_y, art_y) = match (attached, self.art) {
+            (true, true) => (
+                (card_left + art, first + 2., card_inner - art, ART - 4.),
+                first + ART + 6.,
+                first + ART + 6. + 15. + 4.,
+                first,
+            ),
+            (true, false) => (
+                (card_left, first, card_inner, 0.),
+                first + 26.,
+                first + if self.chooser { 0. } else { ACTIONS_Y - META_Y - lift },
+                first,
+            ),
+            (false, true) => (
+                (left + art, META_Y, inner - art, 0.),
+                MUSIC_TIMES_Y,
+                MUSIC_ACTIONS_Y,
+                MUSIC_ART_Y,
+            ),
+            (false, false) => (
+                (left + TEXT_INDENT, META_Y, inner - TEXT_INDENT, 0.),
+                58.,
+                if self.chooser { 40. } else { ACTIONS_Y - lift },
+                MUSIC_ART_Y,
+            ),
+        };
+        let meta_height = match meta.3 {
+            0. if self.wrap_meta => 32.,
+            0. => 18.,
+            height => height,
+        };
         let mut place = |index: usize, x: f32, y: f32, width: f32, height: f32| {
             self.children[index]
                 .as_widget_mut()
@@ -246,7 +313,6 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
                 )
                 .move_to(Point::new(x, y + top))
         };
-        let actions_y = drop + if self.chooser { 40. } else { ACTIONS_Y - lift };
         let actions = place(
             3,
             0.,
@@ -275,13 +341,7 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
                 PIN_WIDTH,
                 28.,
             ),
-            place(
-                2,
-                card_left + TEXT_INDENT,
-                META_Y + drop,
-                card_inner - TEXT_INDENT,
-                if self.wrap_meta { 32. } else { 18. },
-            ),
+            place(2, meta.0, meta.1, meta.2, meta_height),
             actions.move_to(Point::new(
                 action_left + (action_inner - width) / 2.,
                 top + actions_y,
@@ -294,7 +354,8 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
                 others,
                 20.,
             ),
-            place(5, card_left, 58. + drop, card_inner, 15.),
+            place(5, card_left, times_y, card_inner, 15.),
+            place(6, card_left, art_y, ART, ART),
         ];
         layout::Node::with_children(
             Size::new(
@@ -563,7 +624,7 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
                     .zip(l.children())
                     .enumerate()
                 {
-                    if !(self.chooser && matches!(i, 2 | 5))
+                    if !(self.chooser && matches!(i, 2 | 5 | 6))
                         && (i == 0 || i == 4 || self.progress > 0.45)
                     {
                         c.as_widget().draw(t, r, theme, style, l, cursor, &clip)
@@ -584,9 +645,12 @@ impl Surface<'_> {
             return;
         }
         let reveal = ((self.progress - 0.5) / 0.4).clamp(0., 1.);
+        // Floating details are indented to the title's text; attached ones
+        // start where the line does.
+        let indent = if self.frame.attached { 0. } else { TEXT_INDENT };
         let track = Rectangle {
-            x: details.bounds().x - TEXT_INDENT,
-            width: rect.width - 2. * (details.bounds().x - TEXT_INDENT - rect.x),
+            x: details.bounds().x - indent,
+            width: rect.width - 2. * (details.bounds().x - indent - rect.x),
             y: details.bounds().y + details.bounds().height + 4.,
             height: 3.,
             ..details.bounds()
@@ -615,9 +679,11 @@ impl Surface<'_> {
             r,
         );
     }
-    /// A Standard bar keeps its title in place. The card hangs from the bar's
-    /// lower edge in the bar's own colour and opacity, joined by concave
-    /// shoulders so the two read as one shape.
+    /// A Standard bar keeps its title in place. A card in the bar's own
+    /// colour hangs from its lower edge, joined by concave shoulders so the
+    /// two read as one shape. A card in a colour of its own floats a few
+    /// pixels below instead, a clean rounded card with a fine outline, while
+    /// its pill stays in the bar.
     #[allow(clippy::too_many_arguments)]
     fn draw_attached(
         &self,
@@ -630,65 +696,60 @@ impl Surface<'_> {
         v: &Rectangle,
     ) {
         let card = self.card(l.bounds());
-        let own = self.palette.own_pill;
-        let fill = if own {
-            self.palette.surface
-        } else {
+        let p = self.progress;
+        let fill = if self.joined {
             alpha(self.palette.surface, self.frame.opacity.max(MIN_OPACITY))
+        } else {
+            self.palette.surface
         };
-        if own {
-            // The resting pill reaches down to the card as it opens.
+        if self.palette.own_pill {
             let pill = self.pill(l.bounds());
-            let p = self.progress;
-            let rest = pill.height / 2.;
-            let bottom = rest * (1. - p);
             r.fill_quad(
                 renderer::Quad {
-                    bounds: Rectangle {
-                        height: pill.height + (card.y - pill.y - pill.height + 1.) * p,
-                        ..pill
-                    },
+                    bounds: pill,
                     border: Border {
-                        radius: cosmic::iced::border::Radius {
-                            top_left: rest,
-                            top_right: rest,
-                            bottom_left: bottom,
-                            bottom_right: bottom,
-                        },
+                        radius: (pill.height / 2.).into(),
                         ..Default::default()
                     },
                     ..Default::default()
                 },
-                fill,
+                self.palette.surface,
             );
         }
         if card.height > 0.5 {
-            let radius = (CARD_RADIUS * self.progress).min(card.height / 2.);
-            // An own card is its own shape under the bar; a panel-coloured one
-            // is the bar continued, so its top corners stay square.
-            let top = if own {
-                (SHOULDER * self.progress).min(card.height / 2.)
+            let radius = CARD_RADIUS.min(card.height / 2.).min(card.width / 2.);
+            let (radius, border) = if self.joined {
+                // The bar continued: square on top, rounding as it opens.
+                (
+                    cosmic::iced::border::Radius {
+                        top_left: 0.,
+                        top_right: 0.,
+                        bottom_left: radius * p,
+                        bottom_right: radius * p,
+                    },
+                    Border::default(),
+                )
             } else {
-                0.
+                let radius = radius.into();
+                (
+                    radius,
+                    Border {
+                        radius,
+                        width: 1.,
+                        color: alpha(self.palette.line, self.palette.line.a * p),
+                    },
+                )
             };
             r.fill_quad(
                 renderer::Quad {
                     bounds: card,
-                    border: Border {
-                        radius: cosmic::iced::border::Radius {
-                            top_left: top,
-                            top_right: top,
-                            bottom_left: radius,
-                            bottom_right: radius,
-                        },
-                        ..Default::default()
-                    },
+                    border: Border { radius, ..border },
                     ..Default::default()
                 },
                 fill,
             );
-            let s = (SHOULDER * self.progress).min(card.height).round();
-            if s >= 1. && !own {
+            let s = (SHOULDER * p).min(card.height).round();
+            if s >= 1. && self.joined {
                 for (corner, centre) in [
                     (card.x - s, card.x - s),
                     (card.x + card.width, card.x + card.width + s),
@@ -728,23 +789,18 @@ impl Surface<'_> {
         }
         let children = self.children.iter().zip(&t.children).zip(l.children());
         for (i, ((c, t), l)) in children.enumerate() {
-            match i {
-                // The title line belongs to the bar and is never clipped by the card.
-                0 | 1 | 4 => {
-                    if i == 0 || i == 4 || self.progress > 0.45 {
-                        c.as_widget().draw(t, r, theme, style, l, cursor, v)
-                    }
-                }
-                _ => {}
+            // The title line belongs to the bar and is never clipped by the card.
+            if i == 0 || i == 4 || (i == 1 && p > 0.45) {
+                c.as_widget().draw(t, r, theme, style, l, cursor, v)
             }
         }
         if let Some(clip) = card.intersection(v) {
             r.with_layer(clip, |r| {
                 let children = self.children.iter().zip(&t.children).zip(l.children());
                 for (i, ((c, t), l)) in children.enumerate() {
-                    if matches!(i, 2 | 3 | 5)
-                        && !(self.chooser && matches!(i, 2 | 5))
-                        && self.progress > 0.45
+                    if matches!(i, 2 | 3 | 5 | 6)
+                        && !(self.chooser && matches!(i, 2 | 5 | 6))
+                        && p > 0.45
                     {
                         c.as_widget().draw(t, r, theme, style, l, cursor, &clip)
                     }

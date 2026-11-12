@@ -123,6 +123,11 @@ impl Palette {
         }
     }
     /// Strong but not stark: ink eased slightly toward the surface.
+    /// The island reads as part of a panel of this colour: it follows the
+    /// theme, or its own colour is all but the same.
+    pub fn joins(self, panel: Color) -> bool {
+        !self.own_pill || contrast(self.surface, panel) < 1.1
+    }
     pub fn soft_ink(self) -> Color {
         mix(self.ink, self.surface, 0.18)
     }

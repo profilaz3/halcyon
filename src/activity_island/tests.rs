@@ -4121,6 +4121,7 @@ fn island_styles_render_for_review() {
     else {
         return;
     };
+    let root = root.join("island-styles");
     let scale = 2f32;
     type Setup = fn(&mut Applet);
     let states: &[(&str, f32, &[&str], Setup)] = &[
@@ -4327,5 +4328,55 @@ fn island_styles_render_for_review() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn attached_card_joins_a_matching_bar_and_floats_below_otherwise() {
+    use super::preferences::IslandStyle;
+    use cosmic::applet::cosmic_panel_config::CosmicPanelBackground;
+    use cosmic::iced::Size;
+    for (style, joined) in [(IslandStyle::Theme, true), (IslandStyle::Dark, false)] {
+        let mut app = app();
+        app.now_ms = chrono::Utc::now().timestamp_millis();
+        app.snapshot.preferences.style = style;
+        app.core.applet.background = CosmicPanelBackground::Light;
+        app.supported = true;
+        app.panel_frame = host::Frame {
+            height: 32.,
+            padding: 4.,
+            radius: 8.,
+            attached: true,
+            opacity: 0.85,
+        };
+        let palette = app.palette();
+        assert_eq!(
+            palette.joins(Palette::new(&app.core.applet, IslandStyle::Theme).surface),
+            joined
+        );
+        timed(&mut app, 72_000);
+        artwork(&mut app);
+        app.popup = Some(window::Id::unique());
+        app.motion.retarget(1., false, Instant::now());
+        let frame = app.frame();
+        let (w, h) = (frame.popup_width(), app.popup_height());
+        let mut ui = crate::native_test::Native::new(Size::new(w, h));
+        // The artwork disc leads the card, under the title's glyph, with the
+        // title and artist beside it and the controls below.
+        let art = ui.bounds(app.capsule(true), "activity-artwork");
+        let glyph_x = (w - surface::ATTACHED_WIDTH) / 2. + 24.;
+        assert_eq!(art.size(), Size::new(surface::ART, surface::ART));
+        assert_eq!(art.x, glyph_x);
+        assert!(art.y >= frame.bar() + if joined { 0. } else { 6. });
+        let pause = ui.bounds(app.capsule(true), "activity-pause");
+        assert!(pause.y >= art.y + art.height);
+        assert!((pause.center().x - w / 2.).abs() < 1.);
+        let output = ui.bounds(app.capsule(true), "activity-outputs");
+        assert!(output.x > pause.x + pause.width && output.y == pause.y + 2.);
+        assert!(pause.y + pause.height <= h);
+        // Another card's details start under the glyph too, not indented.
+        app.commands = None;
+        let meta = ui.text_bounds(app.capsule(true), "Widgets and activities are paused");
+        assert!((meta.x - glyph_x).abs() < 1., "{meta:?} against {glyph_x}");
     }
 }

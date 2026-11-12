@@ -623,13 +623,15 @@ impl Applet {
             None => self.art = None,
             Some(encoded) if self.art.as_ref().is_some_and(|(k, _)| k == encoded) => {}
             Some(encoded) => {
-                let side = tint::THUMB as u32;
-                self.art = tint::thumbnail_pixels(encoded).map(|rgba| {
-                    (
-                        encoded.clone(),
-                        widget::image::Handle::from_rgba(side, side, rgba),
-                    )
-                });
+                let side = tint::DISC as u32;
+                self.art = tint::thumbnail_pixels(encoded)
+                    .and_then(|rgba| tint::disc(&rgba))
+                    .map(|rgba| {
+                        (
+                            encoded.clone(),
+                            widget::image::Handle::from_rgba(side, side, rgba),
+                        )
+                    });
             }
         }
     }
@@ -1910,8 +1912,8 @@ impl Applet {
             widget::tooltip::Position::Top,
         )
     }
-    /// The track's artwork, or the music glyph on a tile of its colour. It
-    /// brings the player forward.
+    /// The track's artwork as a disc, or the music glyph on a disc of its
+    /// colour. It brings the player forward.
     fn artwork<'a>(
         &self,
         palette: Palette,
@@ -1919,13 +1921,13 @@ impl Applet {
         reveal: f32,
         key: &str,
     ) -> Element<'a, Message> {
-        const SIZE: f32 = 44.;
+        const SIZE: f32 = surface::ART;
+        // The disc carries its own soft edge, so it is drawn unclipped.
         let content: Element<'a, Message> = match &self.art {
             Some((_, handle)) => widget::image(handle.clone())
                 .width(SIZE)
                 .height(SIZE)
-                .content_fit(cosmic::iced::ContentFit::Cover)
-                .border_radius([10.; 4])
+                .content_fit(cosmic::iced::ContentFit::Fill)
                 .opacity(reveal)
                 .into(),
             None => {
@@ -1949,7 +1951,7 @@ impl Applet {
                     cosmic::widget::container::Style {
                         background: Some(fill.into()),
                         border: cosmic::iced::Border {
-                            radius: 10.0.into(),
+                            radius: (SIZE / 2.).into(),
                             ..Default::default()
                         },
                         ..Default::default()
@@ -1983,11 +1985,7 @@ impl Applet {
                 "Settings",
                 tint,
                 reveal,
-                if self.commands.is_none() && !self.starting {
-                    Role::Ghost
-                } else {
-                    Role::Quiet
-                },
+                Role::Quiet,
                 Some(Message::Settings("general")),
             ));
             if self.commands.is_none() && !self.starting {
@@ -2082,7 +2080,7 @@ impl Applet {
                     "Clear all",
                     tint,
                     reveal,
-                    Role::Ghost,
+                    Role::Quiet,
                     Some(Message::NotesClear),
                 ));
             }
@@ -2113,11 +2111,7 @@ impl Applet {
                     "Dismiss",
                     tint,
                     reveal,
-                    if note.actions.is_empty() {
-                        Role::Quiet
-                    } else {
-                        Role::Ghost
-                    },
+                    Role::Quiet,
                     Some(Message::NoteDismiss(id)),
                 ));
                 for (index, (key, label)) in note.actions.iter().take(2).enumerate() {
@@ -2131,7 +2125,7 @@ impl Applet {
                         label,
                         tint,
                         reveal,
-                        if index == 0 { Role::Primary } else { Role::Ghost },
+                        if index == 0 { Role::Primary } else { Role::Quiet },
                         Some(Message::NoteAction(id, key.clone())),
                     ));
                 }
@@ -2144,7 +2138,7 @@ impl Applet {
                         "Clear all",
                         tint,
                         reveal,
-                        Role::Ghost,
+                        Role::Quiet,
                         Some(Message::NotesClear),
                     ));
                 }
@@ -2188,10 +2182,13 @@ impl Applet {
                         self.tip(palette, button, label, widget::tooltip::Position::Top)
                     };
                     let key = || m.key.clone();
+                    // The transport sits centred, the output button at the
+                    // end, balanced by an empty cell at the start.
                     row = row
-                        // The artwork balances the output button so the
-                        // transport stays centred.
-                        .push(self.artwork(palette, tint, reveal, &m.key))
+                        .width(Length::Fill)
+                        .spacing(0)
+                        .push(widget::Space::new().width(40))
+                        .push(widget::Space::new().width(Length::Fill))
                         .push(transport(
                             "media-skip-backward-symbolic",
                             "Previous",
@@ -2223,6 +2220,7 @@ impl Applet {
                             Role::Ghost,
                             Command::Next { key: key() },
                         ))
+                        .push(widget::Space::new().width(Length::Fill))
                         .push(self.outputs_button(palette, tint, reveal));
                 }
                 None => {
@@ -2282,11 +2280,7 @@ impl Applet {
                         "Dismiss",
                         tint,
                         reveal,
-                        if join.is_some() {
-                            Role::Ghost
-                        } else {
-                            Role::Quiet
-                        },
+                        Role::Quiet,
                         Some(Message::Dismiss),
                     ));
                 }
@@ -2306,7 +2300,7 @@ impl Applet {
                         "Calendar settings",
                         tint,
                         reveal,
-                        if event { Role::Ghost } else { Role::Quiet },
+                        Role::Quiet,
                         Some(Message::Settings("calendar")),
                     ),
                 });
@@ -2483,11 +2477,29 @@ impl Applet {
         } else {
             cue
         };
-        let title_width = (room - if cue.is_empty() { 0. } else { cue_width }).max(40.);
+        // Open on a track, the artwork disc leads the card: floating, it
+        // takes the glyph's place beside the title; attached, the card
+        // repeats the title beside it under the bar.
+        let art = popup
+            && live
+            && !self.chooser
+            && !listing
+            && !panel
+            && self.kind == Kind::Music
+            && self.snapshot.music.is_some();
+        let art_glyph = art && !attached && p >= 0.5;
+        let title_width = (room
+            - if cue.is_empty() { 0. } else { cue_width }
+            - if art_glyph { (surface::ART - 14.) * reveal } else { 0. })
+        .max(40.);
         let live_glyph = (live && !self.chooser && !heading)
             .then(|| self.live_glyph(palette, accent))
             .flatten();
-        let glyph = if let Some(glyph) = live_glyph {
+        let glyph = if art_glyph {
+            widget::Space::new()
+                .width(16. + (surface::ART - 14.) * reveal)
+                .into()
+        } else if let Some(glyph) = live_glyph {
             glyph
         } else if live
             && !self.chooser
@@ -2499,6 +2511,7 @@ impl Applet {
         } else {
             widget::icon::from_name(icon).symbolic(true).size(16).into()
         };
+        let header = (art && attached).then(|| title.clone());
         // A counting timer keeps its figures still.
         let title_text: Element<'_, Message> =
             match live.then(|| self.live_title(palette, p)).flatten() {
@@ -2676,6 +2689,23 @@ impl Applet {
         } else {
             self.text(meta, 12., alpha(palette.quiet, meta_reveal))
         };
+        let meta = match header {
+            Some(header) => widget::column([
+                widget::text(header)
+                    .size(14.)
+                    .font(cosmic::font::semibold())
+                    .wrapping(cosmic::iced::advanced::text::Wrapping::None)
+                    .ellipsize(cosmic::iced::advanced::text::Ellipsize::End(
+                        cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
+                    ))
+                    .class(cosmic::theme::Text::Color(alpha(palette.ink, meta_reveal)))
+                    .into(),
+                meta,
+            ])
+            .spacing(1)
+            .into(),
+            None => meta,
+        };
         let badge = |content: Element<'static, Message>, id: &str, width: f32, press: Message| {
             widget::button::custom(
                 widget::container(content)
@@ -2815,6 +2845,10 @@ impl Applet {
             others_width: if others > 0 { others_width } else { 0. },
             balance: if others > 0 { balance } else { 0. },
             wrap_meta: note,
+            joined: palette.joins(
+                Palette::new(&self.core.applet, preferences::IslandStyle::Theme).surface,
+            ),
+            art,
             // Hand the title to the popup after its first frame. Restore it at
             // the exact resting frame before destroying the closing popup.
             show_content: popup || self.popup.is_none() || self.motion.value == 0.,
@@ -2841,6 +2875,10 @@ impl Applet {
                 },
                 activities,
                 times,
+                match self.snapshot.music.as_ref().filter(|_| art) {
+                    Some(m) => self.artwork(palette, accent, reveal, &m.key),
+                    None => widget::Space::new().into(),
+                },
             ],
             progress: p,
             popup,

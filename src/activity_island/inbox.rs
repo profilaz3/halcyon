@@ -747,7 +747,7 @@ impl Applet {
                 "Clear",
                 tint,
                 reveal,
-                Role::Ghost,
+                Role::Quiet,
                 Some(Message::RecentClear),
             ));
         }
@@ -924,7 +924,7 @@ impl Applet {
                     "Clear all",
                     tint,
                     reveal,
-                    Role::Ghost,
+                    Role::Quiet,
                     Some(Message::NotesClear),
                 ),
             ])

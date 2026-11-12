@@ -805,7 +805,7 @@ impl Applet {
                 "Dismiss",
                 tint,
                 reveal,
-                Role::Ghost,
+                Role::Quiet,
                 Some(Message::Live(Msg::TransferDismiss)),
             ));
         }
@@ -896,9 +896,9 @@ impl Applet {
             palette,
             widget::button::icon(widget::icon::from_name("audio-speakers-symbolic").symbolic(true))
                 .icon_size(16)
-                .padding(14)
-                .width(44)
-                .height(44)
+                .padding(12)
+                .width(40)
+                .height(40)
                 .id("activity-outputs".into())
                 .class(capsule_button(palette, tint, reveal, Role::Ghost))
                 .on_press(Message::Live(Msg::Outputs)),
@@ -1120,12 +1120,19 @@ impl Applet {
         ring: Element<'a, Message>,
         controls: Element<'a, Message>,
     ) -> Element<'a, Message> {
+        // Floating, the line keeps the title's text column. Attached, it and
+        // the ring start under the title's glyph, like every card's details.
+        let (line_left, ring_left) = if self.frame().attached {
+            (12, 12)
+        } else {
+            (24, 8)
+        };
         widget::column([
             widget::container(self.text(line, 12., alpha(palette.quiet, reveal)))
-                .padding([0, 12, 0, 24])
+                .padding([0, 12, 0, line_left])
                 .into(),
             widget::row([
-                widget::container(ring).padding([0, 0, 0, 8]).into(),
+                widget::container(ring).padding([0, 0, 0, ring_left]).into(),
                 widget::Space::new().width(Length::Fill).into(),
                 controls,
             ])

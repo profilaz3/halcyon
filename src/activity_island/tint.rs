@@ -107,8 +107,67 @@ pub fn thumbnail_pixels(encoded: &str) -> Option<Vec<u8>> {
     })
 }
 
+/// The artwork disc is drawn from this many pixels a side, so it stays smooth
+/// at twice its 40 px size.
+pub const DISC: usize = 96;
+
+/// The thumbnail as a round picture: smoothly enlarged, with an
+/// anti-aliased edge. Colour runs right to the edge, so the soft rim takes
+/// the picture's own colour and never a light or dark fringe.
+pub fn disc(pixels: &[u8]) -> Option<Vec<u8>> {
+    if pixels.len() != THUMB * THUMB * 4 {
+        return None;
+    }
+    let scale = THUMB as f32 / DISC as f32;
+    let centre = DISC as f32 / 2.;
+    let sample = |x: usize, y: usize, c: usize| f32::from(pixels[(y * THUMB + x) * 4 + c]);
+    let mut out = Vec::with_capacity(DISC * DISC * 4);
+    for y in 0..DISC {
+        let sy = ((y as f32 + 0.5) * scale - 0.5).clamp(0., (THUMB - 1) as f32);
+        let (y0, fy) = (sy.floor() as usize, sy.fract());
+        let y1 = (y0 + 1).min(THUMB - 1);
+        for x in 0..DISC {
+            let sx = ((x as f32 + 0.5) * scale - 0.5).clamp(0., (THUMB - 1) as f32);
+            let (x0, fx) = (sx.floor() as usize, sx.fract());
+            let x1 = (x0 + 1).min(THUMB - 1);
+            for c in 0..3 {
+                let top = sample(x0, y0, c) * (1. - fx) + sample(x1, y0, c) * fx;
+                let bottom = sample(x0, y1, c) * (1. - fx) + sample(x1, y1, c) * fx;
+                out.push((top * (1. - fy) + bottom * fy).round() as u8);
+            }
+            let distance =
+                ((x as f32 + 0.5 - centre).powi(2) + (y as f32 + 0.5 - centre).powi(2)).sqrt();
+            out.push(((centre - distance + 0.5).clamp(0., 1.) * 255.).round() as u8);
+        }
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn artwork_disc_is_round_with_a_soft_edge_in_the_picture_colour() {
+        let pixels: Vec<u8> = (0..super::THUMB * super::THUMB)
+            .flat_map(|_| [30, 200, 90, 255])
+            .collect();
+        let disc = super::disc(&pixels).expect("disc");
+        let side = super::DISC;
+        assert_eq!(disc.len(), side * side * 4);
+        let at = |x: usize, y: usize| &disc[(y * side + x) * 4..(y * side + x) * 4 + 4];
+        for (x, y) in [(0, 0), (side - 1, 0), (0, side - 1), (side - 1, side - 1)] {
+            assert_eq!(at(x, y)[3], 0, "corner {x},{y} is clear");
+        }
+        assert_eq!(at(side / 2, side / 2), &[30, 200, 90, 255]);
+        // Along the rim some pixels are partly covered, and every one keeps
+        // the picture's colour rather than a fringe.
+        let rim: Vec<&[u8]> = (0..side)
+            .map(|y| at(side / 2 + (side as f32 / 2. * 0.7071) as usize, y))
+            .filter(|p| p[3] > 0 && p[3] < 255)
+            .collect();
+        assert!(!rim.is_empty());
+        assert!(rim.iter().all(|p| p[..3] == [30, 200, 90]));
+        assert!(super::disc(&pixels[..8]).is_none());
+    }
     #[test]
     fn thumbnails_round_trip_and_reject_malformed_input() {
         let (w, h) = (90u32, 60u32);
