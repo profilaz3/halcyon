@@ -1122,7 +1122,7 @@ impl Applet {
     ) -> Element<'a, Message> {
         widget::column([
             widget::container(self.text(line, 12., alpha(palette.quiet, reveal)))
-                .padding([0, 12])
+                .padding([0, 12, 0, 24])
                 .into(),
             widget::row([
                 widget::container(ring).padding([0, 0, 0, 8]).into(),
