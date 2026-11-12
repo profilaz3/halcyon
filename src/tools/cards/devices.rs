@@ -527,23 +527,33 @@ mod tests {
         assert_eq!(arrange(3, [384., 192.], &long).unwrap().lines, 2);
         assert_eq!(arrange(3, [244., 80.], &long).unwrap().lines, 1);
         // A name is broken at the space that balances its two lines, and
-        // only cut short when two lines are still too narrow.
-        assert_eq!(fitted("Pixel 8", 10., 58., 2).as_deref(), Some("Pixel 8"));
+        // only cut short when two lines are still too narrow. Widths come
+        // from the font that is installed, so the test holds with any font.
+        let w = |text: &str| one_line(text, 10.);
+        let sony = "Sony WH-1000XM5";
         assert_eq!(
-            fitted("Sony WH-1000XM5", 10., 58., 2).as_deref(),
-            Some("Sony\nWH-1000XM5")
+            fitted("Pixel 8", 10., w("Pixel 8") + 1., 2).as_deref(),
+            Some("Pixel 8")
         );
         assert_eq!(
-            fitted("MX Anywhere 3", 10., 58., 2).as_deref(),
+            fitted(sony, 10., w("WH-1000XM5") + 1., 2).as_deref(),
+            Some("Sony\nWH-1000XM5")
+        );
+        let anywhere = w("MX").max(w("Anywhere 3")) + 1.;
+        assert!(anywhere < w("MX Anywhere 3") && anywhere < w("MX Anywhere"));
+        assert_eq!(
+            fitted("MX Anywhere 3", 10., anywhere, 2).as_deref(),
             Some("MX\nAnywhere 3")
         );
         // A hyphen is a break too, when the word after a space is too wide.
+        let hyphen = w("Sony WH-").max(w("1000XM5")) + 1.;
+        assert!(hyphen < w("WH-1000XM5"), "this font breaks the premise");
         assert_eq!(
-            fitted("Sony WH-1000XM5", 10., 50., 2).as_deref(),
+            fitted(sony, 10., hyphen, 2).as_deref(),
             Some("Sony WH-\n1000XM5")
         );
-        assert_eq!(fitted("Sony WH-1000XM5", 10., 58., 1), None);
-        assert_eq!(fitted("Sony WH-1000XM5", 10., 30., 2), None);
+        assert_eq!(fitted(sony, 10., w(sony) - 1., 1), None);
+        assert_eq!(fitted(sony, 10., w("1000XM5") - 1., 2), None);
         // Too many for the card: none of these fit, so fewer are shown.
         assert!(arrange(16, default, &names).is_none());
     }
