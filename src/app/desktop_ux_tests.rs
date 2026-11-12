@@ -334,7 +334,7 @@ fn dt14_idle_music_card_keeps_its_slot_and_offers_the_last_track() {
     stopped.status = music::Playback::Stopped;
     stopped.title.clear();
     let feed = music::Feed::Players(vec![stopped.clone()]);
-    let resumable = || {
+    let resumable_at = |[width, height]: [f32; 2]| {
         card(
             MusicView {
                 feed: Some(&feed),
@@ -347,11 +347,40 @@ fn dt14_idle_music_card_keeps_its_slot_and_offers_the_last_track() {
             },
             &config,
             Some(Message::Tool),
-            Some([480., 360.]),
+            Some([width, height]),
         )
     };
-    let title = native.text_bounds(resumable(), &last.title);
-    assert!(title.y > 100. && title.y < 180., "centred: {title:?}");
+    let resumable = || resumable_at([480., 360.]);
+    // One row like the playing card: artwork, the title over "artist ·
+    // where it played", and Resume at the row's end, centred in the card.
+    // 360×144 is the size the card has on a real desktop.
+    for size in [[480., 360.], [360., 144.]] {
+        let mut native = Native::new(Size::new(size[0], size[1]));
+        let title = native.text_bounds(resumable_at(size), &last.title);
+        let subtitle = native.text_bounds(
+            resumable_at(size),
+            &format!("{} · Last played in {}", last.author, last.player),
+        );
+        let resume = native.bounds(resumable_at(size), "music-resume");
+        let middle = size[1] / 2.;
+        assert!(subtitle.y > title.y, "{title:?} {subtitle:?}");
+        assert!(
+            (resume.center().y - middle).abs() < 6.,
+            "Resume centred in the card: {resume:?} at {size:?}"
+        );
+        assert!(
+            ((title.y + subtitle.y + subtitle.height) / 2. - middle).abs() < 8.,
+            "text centred in the card: {title:?} {subtitle:?} at {size:?}"
+        );
+        assert!(
+            resume.x >= subtitle.x + subtitle.width && resume.x + resume.width <= size[0],
+            "Resume ends the row: {resume:?} at {size:?}"
+        );
+        assert!(
+            size[0] - (resume.x + resume.width) < 32.,
+            "{resume:?} at {size:?}"
+        );
+    }
     let resume = native.bounds(resumable(), "music-resume");
     let press = cosmic::iced::Event::Mouse(cosmic::iced::mouse::Event::ButtonPressed(
         cosmic::iced::mouse::Button::Left,
@@ -383,7 +412,10 @@ fn dt14_idle_music_card_keeps_its_slot_and_offers_the_last_track() {
             Some([480., 360.]),
         )
     };
-    native.text_bounds(closed(), &format!("{} isn’t open", last.player));
+    native.text_bounds(
+        closed(),
+        &format!("{} · {} isn’t open", last.author, last.player),
+    );
     let resume = native.bounds(closed(), "music-resume");
     assert!(native.event(closed(), press, resume.center()).0.is_empty());
     for (theme, shade) in [
@@ -392,6 +424,11 @@ fn dt14_idle_music_card_keeps_its_slot_and_offers_the_last_track() {
     ] {
         native.capture(nothing(), &theme, &format!("dt14-music-idle-{shade}"));
         native.capture(resumable(), &theme, &format!("dt14-music-last-{shade}"));
+        Native::new(Size::new(360., 144.)).capture(
+            resumable_at([360., 144.]),
+            &theme,
+            &format!("dt14-music-last-360x144-{shade}"),
+        );
     }
 }
 

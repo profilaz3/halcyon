@@ -719,52 +719,44 @@ fn last_played<'a, M: Clone + 'static>(
             .into(),
         });
     }
-    let author = if last.author.is_empty() {
-        "Last played".to_string()
-    } else {
-        last.author.clone()
-    };
-    top.push(
-        column::with_children(vec![
-            line(last.title.clone(), 15., p.foreground),
-            line(author, 11., p.muted),
-        ])
-        .spacing(3)
-        .width(Length::Fill)
-        .into(),
-    );
     let resume = on.zip(resumer).map(|(on, player)| {
         on(Action::Music(music::TransportRequest {
             bus: player.bus.clone(),
             command: music::Command::Play,
         }))
     });
+    // Artist, then where it played: "Aura · Last played in Music".
     let source = if resumer.is_some() {
-        format!("Last played · {}", last.player)
+        format!("Last played in {}", last.player)
     } else {
         format!("{} isn’t open", last.player)
     };
-    column::with_children(vec![
-        row::with_children(top)
-            .spacing(10)
-            .height(44.)
-            .align_y(Alignment::Center)
-            .into(),
-        row::with_children(vec![
-            container(control("media-playback-start-symbolic", 16, resume, p, true))
-                .id(cosmic::widget::Id::new("music-resume"))
-                .into(),
-            container(line(source, 11., p.muted))
-                .width(Length::Fill)
-                .align_x(Alignment::End)
-                .into(),
+    let subtitle = if last.author.is_empty() {
+        source
+    } else {
+        format!("{} · {source}", last.author)
+    };
+    top.push(
+        column::with_children(vec![
+            line(last.title.clone(), 15., p.foreground),
+            line(subtitle, 11., p.muted),
         ])
-        .spacing(5)
-        .align_y(Alignment::Center)
+        .spacing(3)
+        .width(Length::Fill)
         .into(),
-    ])
-    .spacing(6)
-    .into()
+    );
+    // One row like the playing card, with Resume at its end; the card
+    // centres the row in its height.
+    top.push(
+        container(control("media-playback-start-symbolic", 16, resume, p, true))
+            .id(cosmic::widget::Id::new("music-resume"))
+            .into(),
+    );
+    row::with_children(top)
+        .spacing(10)
+        .height(44.)
+        .align_y(Alignment::Center)
+        .into()
 }
 
 /// Everything the Notes card shows.
