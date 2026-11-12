@@ -594,6 +594,8 @@ pub enum Message {
     Explain(u64),
     ActivityPreference(&'static str, bool),
     ActivityLead(usize),
+    /// Sets, or with `None` removes, the island's rule for one listed app.
+    ActivityAppRule(usize, Option<crate::activity_island::preferences::AppRule>),
     ReadSystemMotion,
     /// The system's “enable animations”; `None` when it can't be read.
     SystemMotion(u64, Option<bool>),
@@ -2688,6 +2690,17 @@ impl Settings {
             Message::ActivityPreference(key, on) => self.save_activity(json!({key:on})),
             Message::ActivityLead(index) => {
                 self.save_activity(json!({"lead_minutes":([5,10,15][index.min(2)])}))
+            }
+            Message::ActivityAppRule(index, rule) => {
+                let mut rules = self.config.activity_island.app_rules.clone();
+                match (rules.get_mut(index), rule) {
+                    (Some(entry), Some(rule)) => entry.rule = rule,
+                    (Some(_), None) => {
+                        rules.remove(index);
+                    }
+                    (None, _) => return Task::none(),
+                }
+                self.save_activity(json!({ "app_rules": rules }));
             }
             Message::SettingsAnimations(on) => self.save(json!({"settings_animations": on})),
             Message::ShowExplanations(on) => {

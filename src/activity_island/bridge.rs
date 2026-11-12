@@ -86,6 +86,15 @@ pub enum Command {
     /// Bring the player's window forward.
     Raise { key: String },
     Focus { key: String },
+    /// Set, or with no rule reset, what the island does with an app's
+    /// notifications. Only the app's name and desktop entry cross.
+    NoteRule {
+        app: String,
+        #[serde(default)]
+        entry: String,
+        #[serde(default)]
+        rule: Option<super::preferences::AppRule>,
+    },
 }
 #[derive(Clone, Debug)]
 pub enum Event {
@@ -228,11 +237,11 @@ pub fn socket_path() -> Option<PathBuf> {
         let path = crate::config::Config::path()?;
         let digest = Sha256::digest(path.as_os_str().as_encoded_bytes());
         let key: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
-        format!("preview-{key}-v3.sock")
+        format!("preview-{key}-v4.sock")
     } else {
-        // v3: Do Not Disturb, camera and Bluetooth sources, Raise. A
-        // mismatched applet and desktop wait for each other, never misread.
-        "session-v3.sock".into()
+        // v4: per-app notification rules. A mismatched applet and
+        // desktop wait for each other, never misread.
+        "session-v4.sock".into()
     };
     Some(directory.join(name))
 }

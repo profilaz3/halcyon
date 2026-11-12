@@ -1783,6 +1783,8 @@ fn note(id: u32, app: &str, icon: &str, title: &str, body: &str) -> notification
         low: false,
         resident: false,
         at_ms: 0,
+        entry: String::new(),
+        timeout_ms: 0,
     }
 }
 fn notify(app: &mut Applet, note: notifications::Note) {
@@ -2251,7 +2253,8 @@ fn notification_list_caps_its_rows_and_counts_the_rest() {
     let mut app = app();
     let _ = app.update(Message::Notes(notifications::Event::Ready(true)));
     for id in 1..=7 {
-        notify(&mut app, note(id, "Mail", "", &format!("Message {id}"), ""));
+        // One app each, so none of them group.
+        notify(&mut app, note(id, &format!("App {id}"), "", &format!("Message {id}"), ""));
     }
     for (shape, attached) in [("island", false), ("bar", true)] {
         app.panel_frame = host::Frame {
@@ -2288,7 +2291,7 @@ fn notification_list_caps_its_rows_and_counts_the_rest() {
     }
     // Never more than the panel keeps.
     for id in 8..=30 {
-        notify(&mut app, note(id, "Mail", "", "More", ""));
+        notify(&mut app, note(id, &format!("App {id}"), "", "More", ""));
     }
     assert_eq!(app.notes.len(), notifications::LIMIT);
     let mut ui = open_list(&mut app);
@@ -2302,10 +2305,13 @@ fn notification_list_follows_the_keyboard() {
     let mut ui = open_list(&mut app);
     let targets: Vec<(String, cosmic::iced::Rectangle)> = [
         "activity-note-row-3",
+        "activity-note-row-more-3",
         "activity-note-row-dismiss-3",
         "activity-note-row-2",
+        "activity-note-row-more-2",
         "activity-note-row-dismiss-2",
         "activity-note-row-1",
+        "activity-note-row-more-1",
         "activity-note-row-dismiss-1",
         "activity-note-clear",
     ]
@@ -2313,7 +2319,7 @@ fn notification_list_follows_the_keyboard() {
     .map(|id| (id.to_owned(), ui.bounds(app.capsule(true), id)))
     .collect();
     let mut reached = Vec::new();
-    for _ in 0..16 {
+    for _ in 0..24 {
         ui.operate(app.capsule(true), Box::new(focus_next::<()>()));
         if let Some(focus) = ui.focused(app.capsule(true))
             && let Some((id, _)) = targets.iter().find(|(_, b)| *b == focus)
@@ -2458,11 +2464,9 @@ fn notification_rules_summarise_more_than_three_and_honour_do_not_disturb() {
     let mut tall =
         crate::native_test::Native::new(Size::new(frame.popup_width(), app.popup_height()));
     assert!(tall.text_bounds(app.capsule(true), "4 notifications").width > 0.);
-    for id in 1..=4 {
-        assert!(
-            tall.try_bounds(app.capsule(true), &format!("activity-note-row-{id}"))
-                .is_some()
-        );
+    // Both from Mail read as one group.
+    for id in ["activity-note-row-4", "activity-note-row-2", "activity-note-group-Mail"] {
+        assert!(tall.try_bounds(app.capsule(true), id).is_some(), "{id}");
     }
     close(&mut app);
     assert!(app.batch.is_empty() && !app.list);
@@ -2836,6 +2840,449 @@ fn tier_one_states_render_for_review() {
                 &root.join(format!("tier1-{name}-{theme_name}.png")),
                 &pixels,
                 ((frame.popup_width() * scale) as usize, (frame.popup_height() * scale) as usize),
+                &frame,
+                Palette::for_panel(&app.core.applet).surface,
+                wall,
+                scale,
+            );
+        }
+    }
+}
+
+fn right_click(ui: &mut crate::native_test::Native, app: &Applet, id: &str) -> Vec<Message> {
+    use cosmic::iced::{Event, mouse};
+    let at = ui.bounds(app.capsule(true), id).center();
+    ui.event(
+        app.capsule(true),
+        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)),
+        at,
+    )
+    .0
+}
+fn slack(id: u32, title: &str, body: &str) -> notifications::Note {
+    let mut n = note(id, "Slack", "user-available-symbolic", title, body);
+    n.entry = "com.slack.Slack".into();
+    n
+}
+/// Files once, Slack four times with one reply action, then an urgent Slack.
+fn grouped() -> Applet {
+    let mut app = app();
+    app.snapshot.music = Some(music());
+    let _ = app.update(Message::Notes(notifications::Event::Ready(true)));
+    notify(&mut app, note(1, "Files", "folder-symbolic", "Copy finished", "3 files"));
+    notify(&mut app, slack(2, "Ana", "Standup moved"));
+    let mut reply = slack(3, "Build", "Deploy is green");
+    reply.actions = vec![("reply".into(), "Reply".into())];
+    notify(&mut app, reply);
+    notify(&mut app, slack(4, "Lee", "Lunch?"));
+    notify(&mut app, slack(5, "Ana", "Running late"));
+    let mut urgent = slack(6, "Incident", "Payments are down");
+    urgent.urgent = true;
+    notify(&mut app, urgent);
+    app.now_ms = app.notes[0].at_ms;
+    app
+}
+const SLACK: &str = "com.slack.Slack";
+/// Reopens a popup that asked to grow, as the shell does.
+fn regrow(app: &mut Applet) -> crate::native_test::Native {
+    if let Some(id) = app.promote_popup {
+        let _ = app.update(Message::PopupGone(id));
+    }
+    app.motion.retarget(1., false, Instant::now());
+    crate::native_test::Native::new(cosmic::iced::Size::new(
+        app.frame().popup_width(),
+        app.popup_height(),
+    ))
+}
+#[test]
+fn notification_groups_gather_an_app_and_keep_urgent_ones_on_top() {
+    let mut app = grouped();
+    assert_eq!(
+        app.lines(),
+        vec![
+            inbox::Line::Note(6),
+            inbox::Line::Group(SLACK.into(), vec![5, 4, 3, 2]),
+            inbox::Line::Note(1),
+        ]
+    );
+    // Closed, the pill counts the app's notifications.
+    app.kind = Kind::Notification(5);
+    app.popup = Some(window::Id::unique());
+    app.motion.retarget(0., false, Instant::now());
+    let mut ui = crate::native_test::Native::new(cosmic::iced::Size::new(
+        app.frame().popup_width(),
+        app.frame().popup_height(),
+    ));
+    let text = ui.all_text(app.capsule(true));
+    assert!(text.iter().any(|t| t == "Slack · 4"), "{text:?}");
+    app.popup = None;
+    app.kind = Kind::Notification(6);
+    let mut ui = open_list(&mut app);
+    assert!(app.listing());
+    assert!(ui.duplicate_ids(app.capsule(true)).is_empty());
+    assert!(ui.text_bounds(app.capsule(true), "6 notifications").width > 0.);
+    let text = ui.all_text(app.capsule(true));
+    for line in ["Slack · 4 new", "Ana · Running late", "Incident"] {
+        assert!(text.iter().any(|t| t == line), "{line}: {text:?}");
+    }
+    // Urgent on top, the group, then the single row; members stay folded.
+    let group = format!("activity-note-group-{SLACK}");
+    let urgent = ui.bounds(app.capsule(true), "activity-note-row-6");
+    let head = ui.bounds(app.capsule(true), &group);
+    let files = ui.bounds(app.capsule(true), "activity-note-row-1");
+    assert!(urgent.y < head.y && head.y < files.y);
+    for id in 2..=5 {
+        assert!(ui.try_bounds(app.capsule(true), &format!("activity-note-row-{id}")).is_none());
+    }
+    assert!(!text.iter().any(|t| t.starts_with("and ")), "{text:?}");
+    // Opening the group lists its notifications in place, newest first.
+    assert!(matches!(
+        click(&mut ui, &app, &group).as_slice(),
+        [Message::GroupToggle(key)] if key == SLACK
+    ));
+    let _ = app.update(Message::GroupToggle(SLACK.into()));
+    assert_eq!(app.open_group.as_deref(), Some(SLACK));
+    assert!(app.promote_popup.is_some(), "the popup grows for the members");
+    let mut ui = regrow(&mut app);
+    assert!(app.popup.is_some() && app.listing());
+    assert_eq!(app.popup_extra, app.list_extra());
+    let height = app.popup_height();
+    let mut last = ui.bounds(app.capsule(true), &group).y;
+    for id in [5, 4, 3, 2] {
+        let row = ui.bounds(app.capsule(true), &format!("activity-note-row-{id}"));
+        assert!(row.y > last && row.y + row.height <= height, "member {id}: {row:?}");
+        // Members carry no More of their own; the group does.
+        assert!(ui.try_bounds(app.capsule(true), &format!("activity-note-row-more-{id}")).is_none());
+        let dismiss = ui.bounds(app.capsule(true), &format!("activity-note-row-dismiss-{id}"));
+        assert!((dismiss.center_y() - row.center_y()).abs() < 1.);
+        last = row.y;
+    }
+    let files = ui.bounds(app.capsule(true), "activity-note-row-1");
+    assert!(files.y > last && files.y + files.height <= height);
+    assert!(matches!(
+        click(&mut ui, &app, "activity-note-row-action-3-0").as_slice(),
+        [Message::NoteAction(3, key)] if key == "reply"
+    ));
+    assert!(matches!(
+        click(&mut ui, &app, "activity-note-row-dismiss-4").as_slice(),
+        [Message::NoteDismiss(4)]
+    ));
+    // One group at a time.
+    notify(&mut app, note(7, "Mail", "", "First", ""));
+    notify(&mut app, note(8, "Mail", "", "Second", ""));
+    let _ = app.update(Message::GroupToggle("Mail".into()));
+    assert_eq!(app.open_group.as_deref(), Some("Mail"));
+    let _ = app.update(Message::GroupToggle("Mail".into()));
+    assert!(app.open_group.is_none());
+    // The group's dismiss clears the group; the urgent one stays.
+    let mut ui = regrow(&mut app);
+    assert!(matches!(
+        click(&mut ui, &app, &format!("activity-note-group-dismiss-{SLACK}")).as_slice(),
+        [Message::GroupDismiss(key)] if key == SLACK
+    ));
+    let _ = app.update(Message::GroupDismiss(SLACK.into()));
+    let left: Vec<u32> = app.notes.iter().map(|n| n.id).collect();
+    assert_eq!(left, vec![8, 7, 6, 1]);
+    let recent: Vec<u32> = app.recent.iter().map(|r| r.note.id).collect();
+    assert_eq!(recent, vec![5, 4, 3, 2], "Recent, newest first");
+    assert!(app.recent.iter().all(|r| !r.alive));
+    assert!(app.listing());
+    // A single notification from an app is a plain row.
+    let _ = app.update(Message::NoteDismiss(8));
+    assert!(!app.lines().iter().any(|l| matches!(l, inbox::Line::Group(..))));
+    // Right-click on a row opens its app's rules and raises nothing.
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    app.commands = Some(tx);
+    let mut ui = regrow(&mut app);
+    for message in right_click(&mut ui, &app, "activity-note-row-7") {
+        let _ = app.update(message);
+    }
+    assert_eq!(app.menu.as_ref().map(|m| m.app.as_str()), Some("Mail"));
+    assert!(rx.try_recv().is_err(), "the player stays where it is");
+}
+#[test]
+fn recent_keeps_twenty_in_memory_and_opens_what_it_can() {
+    let mut app = app();
+    let _ = app.update(Message::Notes(notifications::Event::Ready(true)));
+    for id in 1..=25 {
+        notify(&mut app, note(id, &format!("App {id}"), "", &format!("Note {id}"), ""));
+        let _ = app.update(Message::NoteDismiss(id));
+    }
+    assert_eq!(app.recent.len(), inbox::RECENT);
+    assert_eq!(app.recent[0].note.id, 25);
+    assert_eq!(app.recent[inbox::RECENT - 1].note.id, 6);
+    // The same id comes back once, at the top.
+    notify(&mut app, note(10, "App 10", "", "Again", ""));
+    assert!(app.recent.iter().all(|r| r.note.id != 10), "live again, not recent");
+    let _ = app.update(Message::NoteDismiss(10));
+    assert_eq!(app.recent.iter().filter(|r| r.note.id == 10).count(), 1);
+    assert_eq!(app.recent[0].note.id, 10);
+    // Closed by the app: gone from the server. Timed out: still there.
+    notify(&mut app, note(40, "Mail", "", "Closed", ""));
+    notify(&mut app, note(41, "Mail", "", "Timed out", ""));
+    let _ = app.update(Message::Notes(notifications::Event::Closed(40)));
+    let _ = app.update(Message::Notes(notifications::Event::Expired(41)));
+    assert!(app.notes.is_empty());
+    let alive = |app: &Applet, id| app.recent.iter().find(|r| r.note.id == id).map(|r| r.alive);
+    assert_eq!(alive(&app, 40), Some(false));
+    assert_eq!(alive(&app, 41), Some(true));
+    // Its own timeout moves a notification to Recent without polling.
+    let mut timed = note(42, "Mail", "", "Short lived", "");
+    timed.timeout_ms = 5_000;
+    notify(&mut app, timed);
+    assert!(app.expiry_at.is_some(), "one deadline for the soonest timeout");
+    app.notes[0].at_ms -= 6_000;
+    app.expiry_at = Some(Instant::now());
+    let _ = app.update(Message::Wake(Duration::ZERO));
+    assert!(app.note(42).is_none() && alive(&app, 42) == Some(true));
+    assert!(app.expiry_at.is_none());
+    // With nothing live, the island still reaches Recent.
+    let mut ui = crate::native_test::Native::new(cosmic::iced::Size::new(
+        app.frame().popup_width(),
+        app.frame().popup_height(),
+    ));
+    app.popup = Some(window::Id::unique());
+    app.motion.retarget(1., false, Instant::now());
+    let shown = ui.bounds(app.capsule(true), "activity-recent-show");
+    assert!(shown.width > 0.);
+    app.popup = None;
+    let _ = app.update(Message::ShowRecent);
+    assert!(app.listing() && app.recent_open && app.notes.is_empty());
+    let mut ui = regrow(&mut app);
+    assert!(ui.text_bounds(app.capsule(true), "Recent").width > 0.);
+    assert!(ui.text_bounds(app.capsule(true), "Recent · 20").width > 0.);
+    assert!(ui.try_bounds(app.capsule(true), "activity-note-clear").is_none());
+    // Alive and openable: a button. Gone, with no app known: plain text.
+    assert!(ui.try_bounds(app.capsule(true), "activity-recent-row-42").is_some());
+    assert!(ui.try_bounds(app.capsule(true), "activity-recent-row-40").is_none());
+    assert!(ui.all_text(app.capsule(true)).iter().any(|t| t == "Closed"));
+    assert!(matches!(
+        click(&mut ui, &app, "activity-recent-row-42").as_slice(),
+        [Message::RecentOpen(42)]
+    ));
+    let _ = app.update(Message::RecentOpen(42));
+    assert_eq!(alive(&app, 42), Some(false), "opened once, it is gone");
+    let _ = app.update(Message::RecentOpen(40));
+    // Clear empties it and closes an island with nothing else.
+    let _ = app.update(Message::ShowRecent);
+    let mut ui = regrow(&mut app);
+    assert!(matches!(
+        click(&mut ui, &app, "activity-recent-clear").as_slice(),
+        [Message::RecentClear]
+    ));
+    let _ = app.update(Message::RecentClear);
+    assert!(app.recent.is_empty() && app.motion.target() == 0.);
+    // Turning notifications off forgets it.
+    notify(&mut app, note(50, "Mail", "", "Kept", ""));
+    let _ = app.update(Message::NoteDismiss(50));
+    let mut snapshot = app.snapshot.clone();
+    snapshot.preferences.notifications = false;
+    let _ = app.update(Message::Backend(ClientEvent::Snapshot(snapshot)));
+    assert!(app.recent.is_empty());
+}
+#[test]
+fn recent_and_notification_content_never_leave_memory() {
+    let mut app = grouped();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+    app.commands = Some(tx);
+    let _ = app.update(Message::NotesClear);
+    assert_eq!(app.recent.len(), 6);
+    let _ = open_list(&mut app);
+    let _ = app.update(Message::RecentToggle);
+    let _ = app.update(Message::NoteMenu(5));
+    let _ = app.update(Message::NoteRule(Some(preferences::AppRule::ListOnly)));
+    // The only thing sent for saving is the app's rule: no titles, no bodies.
+    let mut sent = Vec::new();
+    while let Ok(command) = rx.try_recv() {
+        sent.push(command);
+    }
+    assert!(
+        matches!(sent.as_slice(), [Command::NoteRule { app, entry, rule: Some(preferences::AppRule::ListOnly) }]
+            if app == "Slack" && entry == SLACK),
+        "{sent:?}"
+    );
+    let saved = serde_json::to_string(&sent).unwrap()
+        + &serde_json::to_string(&app.snapshot.preferences).unwrap();
+    for secret in ["Running late", "Payments are down", "Copy finished", "Ana"] {
+        assert!(!saved.contains(secret), "{secret} in {saved}");
+    }
+}
+#[test]
+fn app_rules_mute_always_show_and_list_only() {
+    use preferences::AppRule;
+    let (mut app, mut snapshot) = revealing();
+    // Right-click on a row, a group or the More button offers the rules.
+    for id in 1..=3 {
+        notify(&mut app, slack(id, &format!("Message {id}"), ""));
+        close(&mut app);
+    }
+    notify(&mut app, note(4, "Files", "folder-symbolic", "Copy finished", ""));
+    close(&mut app);
+    let mut ui = open_list(&mut app);
+    assert!(app.listing());
+    let group = format!("activity-note-group-{SLACK}");
+    let menu = |pressed: Vec<Message>| {
+        pressed.iter().find_map(|m| match m {
+            Message::NoteMenu(id) => Some(*id),
+            _ => None,
+        })
+    };
+    assert_eq!(menu(right_click(&mut ui, &app, &group)), Some(3));
+    assert_eq!(menu(right_click(&mut ui, &app, "activity-note-row-4")), Some(4));
+    assert!(matches!(
+        click(&mut ui, &app, &format!("activity-note-group-more-{SLACK}")).as_slice(),
+        [Message::NoteMenu(3)]
+    ));
+    assert!(matches!(
+        click(&mut ui, &app, "activity-note-row-more-4").as_slice(),
+        [Message::NoteMenu(4)]
+    ));
+    let _ = app.update(Message::NoteMenu(3));
+    let mut ui = regrow(&mut app);
+    assert!(ui.duplicate_ids(app.capsule(true)).is_empty());
+    let text = ui.all_text(app.capsule(true));
+    for line in ["Slack", "Mute this app", "Always show", "List only, don’t pop up", "Reset to default"] {
+        assert!(text.iter().any(|t| t == line), "{line}: {text:?}");
+    }
+    for id in ["activity-rule-back", "activity-rule-mute", "activity-rule-reset"] {
+        let b = ui.bounds(app.capsule(true), id);
+        assert!(b.y + b.height <= app.popup_height(), "{id}: {b:?}");
+    }
+    // Escape leaves the menu first, then the island.
+    let escape = || Message::Key(keyboard::Key::Named(keyboard::key::Named::Escape));
+    let _ = app.update(escape());
+    assert!(app.menu.is_none() && app.popup.is_some());
+    // Mute: the app's notifications go, and its arrivals only count.
+    let _ = app.update(Message::NoteMenu(3));
+    assert!(matches!(click(&mut ui, &app, "activity-rule-mute").as_slice(), [Message::NoteRule(Some(AppRule::Mute))]));
+    let _ = app.update(Message::NoteRule(Some(AppRule::Mute)));
+    assert_eq!(app.snapshot.preferences.rule_for("Slack", SLACK), Some(AppRule::Mute));
+    assert!(app.notes.iter().all(|n| n.app != "Slack"));
+    assert_eq!(app.muted, 3);
+    // The desktop's echo without the rule yet does not undo it.
+    let _ = app.update(Message::Backend(ClientEvent::Snapshot(snapshot.clone())));
+    assert_eq!(app.snapshot.preferences.rule_for("Slack", SLACK), Some(AppRule::Mute));
+    snapshot.preferences.app_rules = app.snapshot.preferences.app_rules.clone();
+    let _ = app.update(Message::Backend(ClientEvent::Snapshot(snapshot.clone())));
+    close(&mut app);
+    notify(&mut app, slack(5, "Muted", ""));
+    assert!(app.popup.is_none() && app.note(5).is_none() && app.muted == 4);
+    let _ = app.update(Message::NoteDismiss(4));
+    assert!(app.recent.iter().all(|r| r.note.app != "Slack"));
+    let _ = app.update(Message::ShowRecent);
+    let ui_text = regrow(&mut app).all_text(app.capsule(true));
+    assert!(ui_text.iter().any(|t| t == "4 from muted apps"), "{ui_text:?}");
+    close(&mut app);
+    // Always show: shown even when the island only lists, but not in
+    // Do Not Disturb unless urgent.
+    snapshot.preferences.reveals = false;
+    preferences_rule(&mut app, &mut snapshot, "Mail", Some(AppRule::Always));
+    notify(&mut app, note(6, "Chat", "", "Listed", ""));
+    assert!(app.popup.is_none() && app.note(6).is_some());
+    notify(&mut app, note(7, "Mail", "", "Shown", ""));
+    settle(&mut app);
+    assert!(app.popup.is_some() && app.kind == Kind::Notification(7));
+    close(&mut app);
+    snapshot.dnd = true;
+    let _ = app.update(Message::Backend(ClientEvent::Snapshot(snapshot.clone())));
+    notify(&mut app, note(8, "Mail", "", "Quiet", ""));
+    settle(&mut app);
+    assert!(app.popup.is_none());
+    let mut urgent = note(9, "Mail", "", "Loud", "");
+    urgent.urgent = true;
+    notify(&mut app, urgent);
+    settle(&mut app);
+    assert!(app.popup.is_some() && app.kind == Kind::Notification(9));
+    close(&mut app);
+    snapshot.dnd = false;
+    // List only: listed, never shown.
+    snapshot.preferences.reveals = true;
+    preferences_rule(&mut app, &mut snapshot, "Calendar", Some(AppRule::ListOnly));
+    notify(&mut app, note(10, "Calendar", "", "Listed only", ""));
+    settle(&mut app);
+    assert!(app.popup.is_none() && app.note(10).is_some());
+    // Reset: back to the default, which shows it.
+    preferences_rule(&mut app, &mut snapshot, "Calendar", None);
+    assert!(app.snapshot.preferences.rule_for("Calendar", "").is_none());
+    notify(&mut app, note(11, "Calendar", "", "Shown again", ""));
+    settle(&mut app);
+    assert!(app.popup.is_some() && app.kind == Kind::Notification(11));
+}
+/// Lets the pause after the island closed pass, so what waits shows.
+fn settle(app: &mut Applet) {
+    if app.popup.is_none() && !app.pending.is_empty() {
+        wake(app, PENDING_PAUSE + NOTE_GAP);
+    }
+}
+/// Sets a rule the way the desktop echoes it back.
+fn preferences_rule(
+    app: &mut Applet,
+    snapshot: &mut Snapshot,
+    name: &str,
+    rule: Option<preferences::AppRule>,
+) {
+    snapshot.preferences.set_rule(name, "", rule);
+    app.rules_wish = None;
+    let _ = app.update(Message::Backend(ClientEvent::Snapshot(snapshot.clone())));
+    assert_eq!(app.snapshot.preferences.rule_for(name, ""), rule);
+}
+#[test]
+fn notification_groups_recent_and_rules_render_for_review() {
+    use cosmic::applet::cosmic_panel_config::CosmicPanelBackground;
+    let root = std::env::var_os("HALCYON_ACTIVITY_EVIDENCE").map(std::path::PathBuf::from);
+    let scale = 2f32;
+    type Setup = fn(&mut Applet);
+    let states: [(&str, Setup); 5] = [
+        ("grouped", |_| {}),
+        ("group-open", |app| {
+            let _ = app.update(Message::GroupToggle(SLACK.into()));
+        }),
+        ("recent", |app| {
+            let _ = app.update(Message::NoteDismiss(1));
+            let _ = app.update(Message::Notes(notifications::Event::Closed(6)));
+        }),
+        ("recent-open", |app| {
+            let _ = app.update(Message::NoteDismiss(1));
+            let _ = app.update(Message::Notes(notifications::Event::Closed(6)));
+            app.muted = 2;
+            let _ = app.update(Message::RecentToggle);
+        }),
+        ("menu", |app| {
+            let _ = app.update(Message::NoteMenu(5));
+        }),
+    ];
+    for (theme_name, theme, background, wall) in [
+        ("dark", cosmic::Theme::dark(), CosmicPanelBackground::Dark, ([46., 58., 74.], [96., 84., 110.])),
+        ("light", cosmic::Theme::light(), CosmicPanelBackground::Light, ([214., 196., 170.], [168., 186., 204.])),
+    ] {
+        for (name, setup) in states {
+            let mut app = grouped();
+            app.core.applet.background = background.clone();
+            let _ = open_list(&mut app);
+            setup(&mut app);
+            let mut ui = regrow(&mut app);
+            assert!(app.listing(), "{name}");
+            assert!(ui.duplicate_ids(app.capsule(true)).is_empty(), "{name}");
+            let frame = app.frame();
+            let height = app.popup_height();
+            let edge = (frame.popup_width() - WIDTH) / 2.;
+            for id in [
+                "activity-note-clear",
+                "activity-recent-toggle",
+                "activity-recent-clear",
+                "activity-rule-reset",
+            ] {
+                if let Some(b) = ui.try_bounds(app.capsule(true), id) {
+                    assert!(b.x >= edge - 0.5 && b.x + b.width <= frame.popup_width() - edge + 0.5, "{name}: {id} {b:?}");
+                    assert!(b.y + b.height <= height + 0.5, "{name}: {id} {b:?}");
+                }
+            }
+            let pixels = ui.render_scaled(app.capsule(true), &theme, scale as f64);
+            let Some(root) = &root else { continue };
+            save_scene(
+                &root.join(format!("inbox-{name}-{theme_name}.png")),
+                &pixels,
+                ((frame.popup_width() * scale) as usize, (height * scale) as usize),
                 &frame,
                 Palette::for_panel(&app.core.applet).surface,
                 wall,

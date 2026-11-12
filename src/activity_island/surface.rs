@@ -376,7 +376,10 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
             {
                 match button {
                     mouse::Button::Middle => shell.publish(Message::Middle),
-                    mouse::Button::Right => shell.publish(Message::Secondary),
+                    // A notification row's own menu takes its right-click.
+                    mouse::Button::Right if !shell.is_event_captured() => {
+                        shell.publish(Message::Secondary)
+                    }
                     _ => {}
                 }
             }

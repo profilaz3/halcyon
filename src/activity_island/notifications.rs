@@ -38,14 +38,40 @@ pub struct Note {
     pub resident: bool,
     /// When it arrived here, in Unix milliseconds; 0 until it does.
     pub at_ms: i64,
+    /// The app's desktop entry, when it names a plausible one.
+    pub entry: String,
+    /// How long the app wants it shown, in milliseconds; 0 for as long as
+    /// the server keeps it.
+    pub timeout_ms: u32,
+}
+impl Note {
+    /// The app this notification groups and is ruled under.
+    pub fn app_key(&self) -> &str {
+        if self.entry.is_empty() {
+            &self.app
+        } else {
+            &self.entry
+        }
+    }
+}
+/// A notification that left the list this session. Kept in memory only.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Recent {
+    pub note: Note,
+    /// Still held by the server, so opening it reaches the app.
+    pub alive: bool,
+    /// The app's desktop file, to open the app once the notification is gone.
+    pub app_path: Option<std::path::PathBuf>,
 }
 #[derive(Clone, Debug)]
 pub enum Event {
     /// Whether the panel connection is up.
     Ready(bool),
     Notify(Note),
-    /// Dismissed, answered or withdrawn by its app. Expiry is not a close.
+    /// Dismissed, answered or withdrawn by its app.
     Closed(u32),
+    /// Timed out on the server; it may still be there to open.
+    Expired(u32),
 }
 
 static PANEL: OnceCell<Option<zbus::Connection>> = OnceCell::const_new();
@@ -122,7 +148,7 @@ pub fn subscription() -> Subscription<Event> {
                             None => std::future::pending().await,
                         }
                     } => match message {
-                        Some(Ok(message)) => closed_id(&message).map(Event::Closed),
+                        Some(Ok(message)) => closed_event(&message),
                         Some(Err(_)) => None,
                         None => {
                             closed = None;
@@ -154,10 +180,14 @@ async fn closed_stream(session: &zbus::Connection) -> Option<zbus::MessageStream
         .await
         .ok()
 }
-fn closed_id(message: &zbus::Message) -> Option<u32> {
+fn closed_event(message: &zbus::Message) -> Option<Event> {
     let (id, reason): (u32, u32) = message.body().deserialize().ok()?;
-    // 1 is expiry: the popup timed out, the notification still stands.
-    (reason != 1).then_some(id)
+    // 1 is expiry: the popup timed out, the notification may still stand.
+    Some(if reason == 1 {
+        Event::Expired(id)
+    } else {
+        Event::Closed(id)
+    })
 }
 type Notify = (
     String,
@@ -177,9 +207,12 @@ fn parse(message: &zbus::Message) -> Option<Note> {
     {
         return None;
     }
-    let (app, id, icon, summary, body, actions, hints, _): Notify =
+    let (app, id, icon, summary, body, actions, hints, timeout): Notify =
         message.body().deserialize().ok()?;
-    Some(note(id, &app, &icon, &summary, &body, &actions, &hints))
+    let mut note = note(id, &app, &icon, &summary, &body, &actions, &hints);
+    // At most a day: a longer wish is as good as never.
+    note.timeout_ms = u32::try_from(timeout).unwrap_or(0).min(86_400_000);
+    Some(note)
 }
 pub(super) fn note(
     id: u32,
@@ -232,7 +265,23 @@ pub(super) fn note(
         low,
         resident,
         at_ms: 0,
+        entry: desktop_entry(entry),
+        timeout_ms: 0,
     }
+}
+/// A desktop entry ID safe to look up as a file name, or empty.
+pub(super) fn desktop_entry(entry: &str) -> String {
+    let entry = entry.strip_suffix(".desktop").unwrap_or(entry);
+    if entry.is_empty()
+        || entry.len() > 96
+        || entry.starts_with('.')
+        || !entry
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return String::new();
+    }
+    entry.to_owned()
 }
 /// Plain, single-spaced text: notification bodies may carry simple markup.
 pub(super) fn clean(text: &str, limit: usize) -> String {
@@ -281,6 +330,43 @@ pub async fn invoke(id: u32, action: String) -> Result<(), String> {
     .and_then(Result::ok)
     .map(|_| ())
     .ok_or_else(|| "Could not open the notification".into())
+}
+/// The installed desktop file for `entry`, first in XDG precedence.
+pub(super) fn entry_path(entry: &str) -> Option<std::path::PathBuf> {
+    if desktop_entry(entry) != entry {
+        return None;
+    }
+    crate::desktop::applets::application_dirs(dirs::data_dir(), std::env::var("XDG_DATA_DIRS").ok())
+        .into_iter()
+        .map(|dir| dir.join(format!("{entry}.desktop")))
+        .find(|path| path.is_file())
+}
+/// Starts an app by its desktop file, the way a launcher would.
+pub async fn open_app(path: std::path::PathBuf) -> Result<(), String> {
+    let failed = || "Could not open the app".to_owned();
+    let status = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tokio::process::Command::new("gio")
+            .arg("launch")
+            .arg(&path)
+            .kill_on_drop(true)
+            .status(),
+    )
+    .await;
+    match status {
+        Ok(Ok(status)) if status.success() => Ok(()),
+        _ => {
+            let entry = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .ok_or_else(failed)?;
+            tokio::process::Command::new("gtk-launch")
+                .arg(entry)
+                .spawn()
+                .map(|_| ())
+                .map_err(|_| failed())
+        }
+    }
 }
 /// Closes notifications as if dismissed from a popup; their apps hear it.
 pub async fn dismiss(ids: Vec<u32>) -> Result<(), String> {
@@ -335,6 +421,10 @@ mod tests {
         assert!(n.urgent && n.default && !n.resident);
         assert_eq!(n.title, "Calendar");
         assert_eq!(n.icon, "org.gnome.Calendar");
+        assert_eq!(
+            (n.entry.as_str(), n.app_key()),
+            ("org.gnome.Calendar", "org.gnome.Calendar")
+        );
         assert_eq!(n.body, "Stand-up now");
         assert_eq!(
             n.actions,
@@ -351,5 +441,11 @@ mod tests {
         hints.insert("urgency".into(), OwnedValue::from(0u8));
         let n = note(9, "Sync", "", "Synced", "", &[], &hints);
         assert!(n.low && !n.urgent);
+        assert_eq!(n.app_key(), "Sync");
+        // An entry is only ever a plain ID, never a path.
+        for bad in ["../../bin/sh", "/usr/share/x", ".hidden", "a b", "x;y"] {
+            assert_eq!(desktop_entry(bad), "", "{bad}");
+        }
+        assert_eq!(desktop_entry("org.Slack.desktop"), "org.Slack");
     }
 }

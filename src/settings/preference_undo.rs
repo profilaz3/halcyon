@@ -126,6 +126,7 @@ fn message_scope(config: &Config, message: &Message) -> Vec<String> {
         }
         Message::SidebarSlide(_) => add(&["sidebar_slide"]),
         Message::ActivityPreference(key, _) => add(&["activity_island", key]),
+        Message::ActivityAppRule(..) => add(&["activity_island", "app_rules"]),
         Message::ActivityLead(_) => add(&["activity_island", "lead_minutes"]),
         Message::SettingsAnimations(_) => add(&["settings_animations"]),
         Message::ShowExplanations(_) => add(&["show_explanations"]),

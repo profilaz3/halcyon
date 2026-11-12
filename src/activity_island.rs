@@ -2,6 +2,7 @@
 //! The desktop supplies a bounded projection of its existing providers.
 pub(crate) mod bridge;
 mod host;
+mod inbox;
 mod motion;
 mod notifications;
 pub(crate) mod popups;
@@ -52,6 +53,7 @@ const LIST_FOOTER: f32 = 40.;
 /// The room a card has below its title line, as the chooser uses it.
 const LIST_ROOM: f32 = HEIGHT - 50.;
 /// The height of a list of `rows` notifications and its footer.
+#[cfg(test)]
 fn list_height(rows: usize) -> f32 {
     rows as f32 * (ROW_HEIGHT + ROW_GAP) - ROW_GAP + LIST_FOOTER
 }
@@ -381,6 +383,21 @@ pub struct Applet {
     list: bool,
     /// Height the open popup has beyond its usual size, for the list.
     popup_extra: f32,
+    /// Notifications that left the list this session, newest first. Kept
+    /// in memory only, like `notes`, and bounded.
+    recent: Vec<notifications::Recent>,
+    /// The Recent section is open.
+    recent_open: bool,
+    /// Arrivals from muted apps this session.
+    muted: usize,
+    /// The app group open in the list, by app key; one at a time.
+    open_group: Option<String>,
+    /// The app whose rules menu is open.
+    menu: Option<inbox::MenuTarget>,
+    /// App rules as just chosen here, until the desktop reports them.
+    rules_wish: Option<(Vec<preferences::AppRuleEntry>, Instant)>,
+    /// When the next notification's own timeout ends.
+    expiry_at: Option<Instant>,
 }
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -427,6 +444,21 @@ pub enum Message {
     /// A touchpad swipe over the island.
     Swipe,
     PopupsSet(Result<bool, String>),
+    /// Open or close an app's group in the list.
+    GroupToggle(String),
+    /// Dismiss every notification in an app's group.
+    GroupDismiss(String),
+    RecentToggle,
+    RecentClear,
+    /// Open a recent notification, or its app.
+    RecentOpen(u32),
+    /// Open the island on the Recent list.
+    ShowRecent,
+    /// Open the rules menu for the app of a notification, live or recent.
+    NoteMenu(u32),
+    MenuClose,
+    /// Set, or with `None` reset, the rule for the app in the open menu.
+    NoteRule(Option<preferences::AppRule>),
     Noop,
 }
 impl Application for Applet {
@@ -490,6 +522,13 @@ impl Application for Applet {
                 revealed: false,
                 list: false,
                 popup_extra: 0.,
+                recent: Vec::new(),
+                recent_open: false,
+                muted: 0,
+                open_group: None,
+                menu: None,
+                rules_wish: None,
+                expiry_at: None,
             },
             Task::none(),
         )
@@ -532,6 +571,7 @@ impl Application for Applet {
             .chain(self.paused_until)
             .chain(self.reveal_deadline)
             .chain(self.pending_at)
+            .chain(self.expiry_at)
             .chain(clock.then_some(self.next_clock))
             .min()
         {
@@ -581,6 +621,15 @@ impl Application for Applet {
                     | Message::NoteDismiss(_)
                     | Message::NotesClear
                     | Message::ShowNotes
+                    | Message::GroupToggle(_)
+                    | Message::GroupDismiss(_)
+                    | Message::RecentToggle
+                    | Message::RecentClear
+                    | Message::RecentOpen(_)
+                    | Message::ShowRecent
+                    | Message::NoteMenu(_)
+                    | Message::MenuClose
+                    | Message::NoteRule(_)
                     | Message::Dnd(_)
                     | Message::Middle
                     | Message::Secondary
@@ -684,6 +733,14 @@ impl Application for Applet {
                             snapshot.dnd = wish;
                         }
                     }
+                    // So does a rule just chosen in the island.
+                    if let Some((wish, until)) = &self.rules_wish {
+                        if snapshot.preferences.app_rules == *wish || now >= *until {
+                            self.rules_wish = None;
+                        } else {
+                            snapshot.preferences.app_rules = wish.clone();
+                        }
+                    }
                     self.now_ms = chrono::Utc::now().timestamp_millis();
                     let system_reveal = self.new_system_reveal(&snapshot);
                     self.observe_playback(&snapshot, now);
@@ -693,7 +750,10 @@ impl Application for Applet {
                     if !self.snapshot.preferences.notifications {
                         self.notes.clear();
                         self.pending.clear();
+                        self.recent.clear();
+                        self.muted = 0;
                     }
+                    self.drop_muted();
                     let popups = self.sync_popups();
                     self.refresh_deadline(now);
                     self.problem = None;
@@ -705,7 +765,7 @@ impl Application for Applet {
                     }
                     let critical = self.showing_critical();
                     if (self.snapshot.quiet != Some(false)
-                        || !self.snapshot.preferences.reveals
+                        || (!self.snapshot.preferences.reveals && !self.showing_always())
                         || (self.snapshot.dnd && critical.is_none()))
                         && self.reveal_deadline.is_some()
                     {
@@ -846,6 +906,7 @@ impl Application for Applet {
                     self.kind = self.automatic_kind();
                     self.chooser = false;
                     self.list = false;
+                    self.reset_inbox();
                     self.batch.clear();
                     self.revealed = false;
                     self.motion.retarget(0., false, now);
@@ -868,6 +929,7 @@ impl Application for Applet {
                     &mut self.paused_until,
                     &mut self.reveal_deadline,
                     &mut self.pending_at,
+                    &mut self.expiry_at,
                 ]
                 .into_iter()
                 .flatten()
@@ -902,6 +964,9 @@ impl Application for Applet {
                         return self.update(Message::Close);
                     }
                 }
+                if self.expiry_at.is_some_and(|at| at <= now) {
+                    self.expire_notes();
+                }
                 if self.pending_at.is_some_and(|at| at <= now) {
                     self.pending_at = None;
                     let shown = self.flush_pending(now);
@@ -934,6 +999,15 @@ impl Application for Applet {
                 return self.hold_popup();
             }
             Message::Notes(event) => return self.note_event(event, now),
+            Message::GroupToggle(_)
+            | Message::GroupDismiss(_)
+            | Message::RecentToggle
+            | Message::RecentClear
+            | Message::RecentOpen(_)
+            | Message::ShowRecent
+            | Message::NoteMenu(_)
+            | Message::MenuClose
+            | Message::NoteRule(_) => return self.inbox_update(message, now),
             Message::NoteAction(id, action) => {
                 let Some(note) = self.note(id) else {
                     return Task::none();
@@ -948,6 +1022,9 @@ impl Application for Applet {
                 return Task::batch([close, run]);
             }
             Message::NoteDismiss(id) => {
+                if let Some(note) = self.note(id).cloned() {
+                    self.remember(note, false);
+                }
                 self.forget_note(id);
                 let next = self.eligible_kinds().into_iter().find(|k| matches!(k, Kind::Notification(_)));
                 let follow = match next {
@@ -963,7 +1040,15 @@ impl Application for Applet {
                 return Task::batch([follow, dismiss]);
             }
             Message::NotesClear => {
-                let ids: Vec<u32> = self.notes.drain(..).map(|n| n.id).collect();
+                let notes: Vec<notifications::Note> = self.notes.drain(..).collect();
+                let ids: Vec<u32> = notes.iter().map(|n| n.id).collect();
+                // Oldest first, so Recent keeps them newest first.
+                for note in notes.into_iter().rev() {
+                    self.remember(note, false);
+                }
+                self.open_group = None;
+                // The closing card keeps its heading, not Recent's.
+                self.list = false;
                 self.pending.clear();
                 self.batch.clear();
                 let close = self.update(Message::Close);
@@ -973,7 +1058,7 @@ impl Application for Applet {
                 return Task::batch([close, dismiss]);
             }
             Message::ShowNotes => {
-                if !self.notes_shown() || self.notes.is_empty() {
+                if !self.notes_shown() || (self.notes.is_empty() && !self.has_recent()) {
                     return Task::none();
                 }
                 self.chooser = false;
@@ -985,12 +1070,9 @@ impl Application for Applet {
                 self.hover_block = None;
                 // The list leads with what the closed island showed: an
                 // urgent notification, otherwise the newest.
-                if !matches!(self.kind, Kind::Notification(id) if self.note(id).is_some()) {
-                    let first = self
-                        .notes
-                        .iter()
-                        .find(|n| n.urgent)
-                        .unwrap_or(&self.notes[0]);
+                if !matches!(self.kind, Kind::Notification(id) if self.note(id).is_some())
+                    && let Some(first) = self.notes.iter().find(|n| n.urgent).or(self.notes.first())
+                {
                     self.kind = Kind::Notification(first.id);
                 }
                 self.capture_source();
@@ -1039,6 +1121,21 @@ impl Application for Applet {
                 }
                 return self.update(Message::Close);
             }
+            // Held open on one notification, the right button offers its
+            // app's rules, as a list row does.
+            Message::Secondary
+                if self.popup.is_some()
+                    && !self.chooser
+                    && !self.listing()
+                    && matches!(self.kind, Kind::Notification(id) if self.note(id).is_some()) =>
+            {
+                if let Kind::Notification(id) = self.kind {
+                    return self.update(Message::NoteMenu(id));
+                }
+            }
+            // A row's own right-click opened its rules, or the list is
+            // open: the player is not raised from under it.
+            Message::Secondary if self.listing() => {}
             Message::Secondary => {
                 if let Some(m) = self.snapshot.music.as_ref().filter(|_| self.live()) {
                     let key = m.key.clone();
@@ -1090,6 +1187,10 @@ impl Application for Applet {
                 }
             }
             Message::Key(key) => match key.as_ref() {
+                // Escape leaves a rules menu before the island.
+                keyboard::Key::Named(keyboard::key::Named::Escape) if self.menu.is_some() => {
+                    self.menu = None;
+                }
                 keyboard::Key::Named(keyboard::key::Named::Escape) => {
                     if self.popup.is_some() && self.hovered {
                         self.hover_block = Some(now + ESCAPE_HOVER_BLOCK);
@@ -1276,26 +1377,21 @@ impl Applet {
             && self.summary().is_none()
             && matches!(self.kind, Kind::Notification(_))
     }
-    /// The open island is listing notifications.
+    /// The open island is listing notifications, Recent or an app's rules.
     fn listing(&self) -> bool {
-        self.list
-            && self.popup.is_some()
+        self.popup.is_some()
             && !self.chooser
             && self.notes_shown()
-            && !self.notes.is_empty()
-            && matches!(self.kind, Kind::Notification(_))
+            && (self.menu.is_some()
+                || (self.list && (!self.notes.is_empty() || self.has_recent())))
+            && (self.notes.is_empty() || matches!(self.kind, Kind::Notification(_)))
     }
-    /// Height a list of the current notifications needs beyond the card.
-    fn list_extra(&self) -> f32 {
-        (list_height(self.notes.len().clamp(1, LIST_ROWS)) - LIST_ROOM).max(0.)
-    }
-    /// Rows that fit the open popup, at least one.
-    fn list_rows(&self) -> usize {
-        let room = LIST_ROOM + self.popup_extra;
-        (1..=self.notes.len().min(LIST_ROWS))
-            .rev()
-            .find(|rows| list_height(*rows) <= room + 0.5)
-            .unwrap_or(1)
+    /// Closed, the island forgets which group, section or menu was open.
+    fn reset_inbox(&mut self) {
+        self.open_group = None;
+        self.recent_open = false;
+        self.menu = None;
+        self.arm_expiry();
     }
     fn popup_height(&self) -> f32 {
         self.frame().popup_height() + self.popup_extra
@@ -1306,7 +1402,11 @@ impl Applet {
     }
     /// Opens the popup for what is set to show, tall enough for a list.
     fn open_popup_sized(&mut self) -> Task<Message> {
-        self.popup_extra = if self.list { self.list_extra() } else { 0. };
+        self.popup_extra = if self.list || self.menu.is_some() {
+            self.list_extra()
+        } else {
+            0.
+        };
         let id = window::Id::unique();
         self.capture_source();
         self.popup = Some(id);
@@ -1361,6 +1461,7 @@ impl Applet {
         self.held = false;
         self.chooser = false;
         self.list = false;
+        self.reset_inbox();
         self.arm_pause_grace();
         self.hover_deadline = None;
         self.leave_deadline = None;
@@ -1651,6 +1752,30 @@ impl Applet {
         .on_press_maybe(press)
         .into()
     }
+    /// Recent notifications, with how many.
+    fn recent_button<'a>(&self, palette: Palette, tint: Color, reveal: f32) -> Element<'a, Message> {
+        self.tip(
+            palette,
+            widget::button::custom(
+                widget::row([
+                    widget::icon::from_name("document-open-recent-symbolic")
+                        .symbolic(true)
+                        .size(16)
+                        .into(),
+                    self.text(self.recent.len().to_string(), 12., alpha(palette.ink, reveal)),
+                ])
+                .spacing(6)
+                .align_y(cosmic::iced::Alignment::Center),
+            )
+            .id("activity-recent-show".into())
+            .height(32)
+            .padding([0, 12])
+            .class(capsule_button(palette, tint, reveal, Role::Quiet))
+            .on_press(Message::ShowRecent),
+            "Recent notifications",
+            widget::tooltip::Position::Top,
+        )
+    }
     /// COSMIC's Do Not Disturb, lit while on.
     fn dnd_button<'a>(&self, palette: Palette, tint: Color, reveal: f32) -> Element<'a, Message> {
         let on = self.snapshot.dnd;
@@ -1728,6 +1853,9 @@ impl Applet {
         }
         match self.kind {
             Kind::Idle => {
+                if self.notes_shown() && self.has_recent() {
+                    row = row.push(self.recent_button(palette, tint, reveal));
+                }
                 return row
                     .push(self.dnd_button(palette, tint, reveal))
                     .push(self.label_button(
@@ -1834,6 +1962,8 @@ impl Applet {
                         Some(Message::NoteAction(id, key.clone())),
                     ));
                 }
+                // The app's rules stay in reach from the keyboard.
+                room -= 36.;
                 if self.notes.len() > 1 && width("Clear all") <= room {
                     row = row.push(self.label_button(
                         palette,
@@ -1845,6 +1975,19 @@ impl Applet {
                         Some(Message::NotesClear),
                     ));
                 }
+                row = row.push(self.tip(
+                    palette,
+                    widget::button::icon(widget::icon::from_name("view-more-symbolic").symbolic(true))
+                        .id("activity-note-more".into())
+                        .icon_size(16)
+                        .padding(8)
+                        .width(32)
+                        .height(32)
+                        .class(capsule_button(palette, tint, reveal, Role::Ghost))
+                        .on_press(Message::NoteMenu(id)),
+                    "More",
+                    widget::tooltip::Position::Top,
+                ));
             }
             Kind::Music => match &self.snapshot.music {
                 Some(m) => {
@@ -2003,7 +2146,13 @@ impl Applet {
         let palette = Palette::for_panel(&self.core.applet);
         let p = if popup { self.motion.value } else { 0. };
         let live = self.live();
-        let (icon, accent) = if live {
+        let recent_only = live && self.listing() && self.notes.is_empty();
+        let (icon, accent) = if recent_only {
+            (
+                Kind::Notification(0).icon(),
+                palette.accent(Kind::Notification(0)),
+            )
+        } else if live {
             (
                 if self.chooser {
                     "view-list-symbolic"
@@ -2044,10 +2193,22 @@ impl Applet {
         // Open on the list, the title line names it.
         let heading = listing && p >= 0.5;
         if heading {
-            title = match self.notes.len() {
-                1 => "1 notification".into(),
-                count => format!("{count} notifications"),
+            title = match (&self.menu, self.notes.len()) {
+                (Some(target), _) => target.app.clone(),
+                (None, 0) => "Recent".into(),
+                (None, 1) => "1 notification".into(),
+                (None, count) => format!("{count} notifications"),
             };
+        }
+        // Resting, two or more from one app read as that app and a count.
+        if live && p < 0.5 && !self.chooser && self.summary().is_none()
+            && let Kind::Notification(id) = self.kind
+            && let Some(n) = self.note(id).filter(|n| !n.urgent)
+        {
+            let count = self.group_ids(n.app_key()).len();
+            if count > 1 {
+                title = format!("{} · {count}", n.app);
+            }
         }
         // A notification in front stands for the others as a count; behind
         // another activity, the newest one stands for them all as its icon.
@@ -2430,7 +2591,7 @@ impl Applet {
             chooser: self.chooser || listing,
             extra,
             card_extra: if listing {
-                (list_height(self.list_rows()) - LIST_ROOM).clamp(0., extra)
+                self.list_card_extra(extra)
             } else {
                 0.
             },
