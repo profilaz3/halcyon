@@ -165,6 +165,9 @@ impl Applet {
         if !self.ui.jobs.is_empty() {
             kinds.push(Kind::Transfer);
         }
+        if self.devices_eligible() {
+            kinds.push(Kind::Devices);
+        }
         for source in [
             system::Source::Power,
             system::Source::Audio,
@@ -622,6 +625,7 @@ impl Applet {
         }
         // A finished timer is as pressing as an urgent activity.
         let urgent = kind == Kind::Timer
+            || (kind == Kind::Devices && self.devices_pressing())
             || matches!(kind,Kind::System(source) if self.system_activity(source).is_some_and(|a|a.urgent));
         if !urgent
             && self

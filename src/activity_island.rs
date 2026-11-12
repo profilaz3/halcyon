@@ -1,6 +1,7 @@
 //! Native Activity island: a fixed panel slot and an overlapping popup.
 //! The desktop supplies a bounded projection of its existing providers.
 pub(crate) mod bridge;
+mod devices;
 mod downloads;
 mod host;
 mod inbox;
@@ -232,6 +233,8 @@ pub enum Kind {
     Timer,
     /// Copies and downloads in progress.
     Transfer,
+    /// A device connecting or running low, or the list of devices.
+    Devices,
 }
 impl Kind {
     fn label(self) -> &'static str {
@@ -244,6 +247,7 @@ impl Kind {
             Self::Calendar => "Calendar",
             Self::Timer => "Timer",
             Self::Transfer => "Transfers",
+            Self::Devices => "Devices",
         }
     }
     fn icon(self) -> &'static str {
@@ -256,6 +260,7 @@ impl Kind {
             Self::Calendar => "x-office-calendar-symbolic",
             Self::Timer => "alarm-symbolic",
             Self::Transfer => "folder-download-symbolic",
+            Self::Devices => "bluetooth-symbolic",
         }
     }
     fn accent(self) -> Color {
@@ -268,6 +273,7 @@ impl Kind {
             Self::Notification(_) => accent::NOTIFICATION,
             Self::Timer => accent::TIMER,
             Self::Transfer => accent::JOB,
+            Self::Devices => accent::SYSTEM,
         }
     }
     /// A stable widget id fragment.
@@ -281,6 +287,7 @@ impl Kind {
             Self::Notification(id) => format!("notification-{id}"),
             Self::Timer => "timer".into(),
             Self::Transfer => "transfer".into(),
+            Self::Devices => "devices".into(),
         }
     }
 }
@@ -365,6 +372,8 @@ pub struct Applet {
     expiry_at: Option<Instant>,
     /// The timer, transfers, scrubber and outputs.
     ui: live::Ui,
+    /// Device banners and the list of devices.
+    devices: devices::Island,
     /// A working update replaced the program: the new one, and the earliest
     /// moment to restart into it (see `crate::upgrade`).
     updated: Option<(crate::upgrade::Program, Instant)>,
@@ -433,6 +442,8 @@ pub enum Message {
     NoteRule(Option<preferences::AppRule>),
     /// The timer, transfers, scrubber and outputs.
     Live(live::Msg),
+    /// Connected devices and their battery.
+    Devices(devices::Msg),
     /// A working update replaced the program.
     Updated(crate::upgrade::Program),
     /// The quiet moment before restarting into the update came.
@@ -509,6 +520,7 @@ impl Application for Applet {
                 rules_wish: None,
                 expiry_at: None,
                 ui: live::Ui::default(),
+                devices: devices::Island::default(),
                 updated: None,
                 restart_at: None,
             },
@@ -826,8 +838,11 @@ impl Applet {
                     if self.snapshot.quiet == Some(false) {
                         self.arm_pending(now);
                     }
+                    let system_reveal = self.device_reveal(system_reveal, now);
                     let reveal = timer_due.then_some(Kind::Timer).or(system_reveal);
-                    return Task::batch([popups, self.consider_reveal(reveal, now)]);
+                    let reveal = self.consider_reveal(reveal, now);
+                    self.settle_device_banner(now);
+                    return Task::batch([popups, reveal]);
                 }
             },
             Message::Enter(popup) => {
@@ -943,6 +958,7 @@ impl Applet {
                 }
                 if self.popup == Some(id) {
                     self.popup = None;
+                    self.devices.close();
                     self.held = false;
                     self.hovered = false;
                     self.popup_entered = false;
@@ -1067,6 +1083,7 @@ impl Applet {
                 return Task::batch([job, self.note_event(event, now)]);
             }
             Message::Live(msg) => return self.live_update(msg, now),
+            Message::Devices(msg) => return self.devices_update(msg, now),
             Message::NoteAction(id, action) => {
                 let Some(note) = self.note(id) else {
                     return Task::none();
@@ -1706,6 +1723,7 @@ impl Applet {
             Kind::Calendar => self.calendar_content(now),
             Kind::Timer => self.timer_content(),
             Kind::Transfer => self.transfer_content(),
+            Kind::Devices => self.devices_content(),
         };
         if let Some(problem) = &self.problem {
             content.meta.clone_from(problem);
@@ -2021,14 +2039,16 @@ impl Applet {
                 if self.notes_shown() && self.has_recent() {
                     row = row.push(self.recent_button(palette, tint, reveal));
                 }
-                return row
-                    .push(self.dnd_button(palette, tint, reveal))
-                    .push(self.timer_button(palette, tint, reveal))
-                    .push(self.label_button(
+                let devices = self.devices_button(palette, tint, reveal);
+                let attached = self.frame().attached;
+                // A Standard bar's narrower card keeps the row on one line.
+                let settings = if attached && devices.is_some() {
+                    self.devices_settings_button(palette, tint, reveal)
+                } else {
+                    self.label_button(
                         palette,
                         "activity-preferences",
-                        // A Standard bar's narrower card keeps the row on one line.
-                        if self.frame().attached {
+                        if attached || devices.is_some() {
                             "Settings"
                         } else {
                             "Activity settings"
@@ -2037,9 +2057,26 @@ impl Applet {
                         reveal,
                         Role::Quiet,
                         Some(Message::Settings("panel")),
-                    ))
+                    )
+                };
+                return row
+                    .push(self.dnd_button(palette, tint, reveal))
+                    .push(self.timer_button(palette, tint, reveal))
+                    .push_maybe(devices)
+                    .push(settings)
                     .into();
             }
+            Kind::System(system::Source::Bluetooth) | Kind::Devices if !self.devices.card => {
+                let settings = self.kind != Kind::Devices
+                    || self
+                        .devices
+                        .banner
+                        .as_ref()
+                        .is_some_and(|b| b.device.id.starts_with("bt:"));
+                return self.devices_actions(palette, tint, reveal, settings);
+            }
+            // The open list has no buttons of its own.
+            Kind::Devices => {}
             Kind::System(source) => {
                 return self.label_button(
                     palette,
@@ -2490,7 +2527,8 @@ impl Applet {
         let art_glyph = art && !attached && p >= 0.5;
         let title_width = (room
             - if cue.is_empty() { 0. } else { cue_width }
-            - if art_glyph { (surface::ART - 14.) * reveal } else { 0. })
+            - if art_glyph { (surface::ART - 14.) * reveal } else { 0. }
+            - if live { self.devices_trailing_room() } else { 0. })
         .max(40.);
         let live_glyph = (live && !self.chooser && !heading)
             .then(|| self.live_glyph(palette, accent))

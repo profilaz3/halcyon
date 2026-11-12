@@ -8,6 +8,9 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct InstanceId(std::borrow::Cow<'static, str>);
+/// Widget kinds added after the instance format, in the order they arrived.
+const LATER_KINDS: [Widget; 1] = [Widget::Devices];
+
 impl InstanceId {
     pub fn legacy(kind: Widget) -> Self {
         Self(std::borrow::Cow::Borrowed(match kind {
@@ -20,6 +23,7 @@ impl InstanceId {
             Widget::Music => "legacy:music",
             Widget::Notes => "legacy:notes",
             Widget::Focus => "legacy:focus",
+            Widget::Devices => "legacy:devices",
         }))
     }
     pub fn new() -> Result<Self, String> {
@@ -128,10 +132,25 @@ impl Document {
             }
             _ => return Err("Unsupported widget design version".into()),
         }
-        let document: Self =
+        let mut document: Self =
             serde_json::from_value(header).map_err(|e| format!("Widget design is damaged: {e}"))?;
+        document.admit_later_kinds();
         document.validate()?;
         Ok(document)
+    }
+    /// A design saved before a widget kind existed gains that kind as its
+    /// built-in, with no local values, so the runtime still has every
+    /// identity it expects. Missing older kinds stay an error.
+    fn admit_later_kinds(&mut self) {
+        for kind in LATER_KINDS {
+            self.instances
+                .entry(InstanceId::legacy(kind))
+                .or_insert_with(|| Instance {
+                    kind,
+                    recipe: RecipeId::builtin(kind),
+                    values: BTreeMap::new(),
+                });
+        }
     }
     pub fn bytes(&self) -> Result<Vec<u8>, String> {
         self.validate()?;

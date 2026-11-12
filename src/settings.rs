@@ -84,6 +84,7 @@ pub enum Page {
     Music,
     Notes,
     Focus,
+    Devices,
     General,
     Desktop,
     /// Dock & Panel editor, a subpage of Pop!_OS.
@@ -139,7 +140,7 @@ impl Page {
     )];
     /// Pinned below the roots, at the bottom of the sidebar.
     const PINNED: Self = Self::Changes;
-    const ALL: [Self; 33] = [
+    const ALL: [Self; 34] = [
         Self::Overview,
         Self::WidgetLayout,
         Self::PendingChanges,
@@ -154,6 +155,7 @@ impl Page {
         Self::Music,
         Self::Notes,
         Self::Focus,
+        Self::Devices,
         Self::General,
         Self::Desktop,
         Self::DesktopDock,
@@ -278,6 +280,7 @@ impl Page {
             Self::Music => Some(Widget::Music),
             Self::Notes => Some(Widget::Notes),
             Self::Focus => Some(Widget::Focus),
+            Self::Devices => Some(Widget::Devices),
             _ => None,
         }
     }
@@ -297,6 +300,7 @@ impl Page {
             Self::Music => "music",
             Self::Notes => "notes",
             Self::Focus => "focus",
+            Self::Devices => "devices",
             Self::General => "general",
             Self::Desktop => "desktop",
             Self::DesktopDock => "desktop-dock",
@@ -334,6 +338,7 @@ impl Page {
             Self::Music => "Music",
             Self::Notes => "Notes",
             Self::Focus => "Focus timer",
+            Self::Devices => "Devices",
             Self::General => "Halcyon",
             Self::Desktop => "Desktop",
             Self::DesktopDock => "Dock and panel",
@@ -429,6 +434,7 @@ impl Page {
             Self::Music => "audio-x-generic-symbolic",
             Self::Notes => "accessories-text-editor-symbolic",
             Self::Focus => "alarm-symbolic",
+            Self::Devices => "bluetooth-symbolic",
             Self::General => "preferences-system-symbolic",
             Self::DesktopWallpaper => "preferences-desktop-wallpaper-symbolic",
             Self::WeatherEffects => "weather-showers-symbolic",
@@ -6734,6 +6740,7 @@ mod tests {
     include!("settings/search_label_tests.rs");
     include!("settings/corners_tests.rs");
     include!("settings/clock_stage_tests.rs");
+    include!("settings/devices_tests.rs");
 
     /// What Wallpaper & colors recommends for a solid color background.
     fn recommended_color(rgb: [f32; 3]) -> [u8; 3] {

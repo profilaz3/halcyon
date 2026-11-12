@@ -635,6 +635,7 @@ impl Settings {
             Page::Music => self.music_page(),
             Page::Notes => self.notes_page(),
             Page::Focus => self.focus_page(),
+            Page::Devices => self.devices_page(),
             Page::General => self.general_page(),
             Page::DesktopDock => {
                 column::with_children(vec![self.desktop_dock_header(), self.dock_workspace()])

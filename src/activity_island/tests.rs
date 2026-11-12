@@ -1739,7 +1739,7 @@ fn standard_bar_card_hangs_from_the_bar_and_renders_over_a_translucent_panel() {
 }
 
 /// The popup over a gradient wallpaper and the panel's translucent bar.
-fn save_scene(
+pub(super) fn save_scene(
     path: &std::path::Path,
     pixels: &[u8],
     (pw, ph): (usize, usize),

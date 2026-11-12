@@ -2,6 +2,7 @@
 //! previews in Settings. Each takes the palette and card look from the
 //! configuration, like every other widget, and an optional action mapper:
 //! without one the card is drawn without controls that respond.
+mod devices;
 pub(crate) mod recipe;
 use super::{focus, music, notes};
 use crate::config::{Config, Palette};
@@ -11,6 +12,8 @@ use cosmic::iced::advanced::text as advanced_text;
 use cosmic::iced::{Alignment, Background, Border, Color, Font, Length, mouse};
 use cosmic::widget::image::Handle;
 use cosmic::widget::{column, container, icon, mouse_area, row, scrollable, text, text_editor};
+pub(crate) use devices::charging_icon;
+pub use devices::{devices, sample as sample_devices};
 use std::time::Instant;
 
 /// What a card's controls ask for.

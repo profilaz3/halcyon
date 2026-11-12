@@ -29,7 +29,7 @@ const OFF_DESKTOP: [f32; 2] = [-10000., 0.];
 
 /// Who keeps their spot when two widgets would overlap: earlier ones stay,
 /// later ones move clear.
-const PLACEMENT_ORDER: [Widget; 9] = [
+const PLACEMENT_ORDER: [Widget; 10] = [
     Widget::Glance,
     Widget::Clock,
     Widget::Weather,
@@ -37,6 +37,7 @@ const PLACEMENT_ORDER: [Widget; 9] = [
     Widget::Devbox,
     Widget::Projects,
     Widget::Focus,
+    Widget::Devices,
     Widget::Notes,
     Widget::Music,
 ];
@@ -212,6 +213,7 @@ impl Cards {
                 Widget::Music => 9,
                 Widget::Notes => 10,
                 Widget::Focus => 11,
+                Widget::Devices => 13,
             }],
         )
     }
@@ -1821,7 +1823,9 @@ impl Cards {
             Widget::Projects => self.projects_card(),
             Widget::Calendar => self.calendar_card(),
             Widget::Glance => self.glance(),
-            Widget::Music | Widget::Notes | Widget::Focus => self.tool_card(widget),
+            Widget::Music | Widget::Notes | Widget::Focus | Widget::Devices => {
+                self.tool_card(widget)
+            }
         };
         let card = self.with_menu(widget, card);
         // Matches the surface's shadow margin (see the layer surface sizes).

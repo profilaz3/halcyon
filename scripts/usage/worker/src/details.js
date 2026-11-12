@@ -6,7 +6,7 @@ export const PAGES = {
   overview: 'Widgets', layout: 'Arrange widgets', pending: 'Recover unfinished work',
   appearance: 'Glass and transparency', widgets: 'Widgets', glance: 'Daily overview', calendar: 'Calendar',
   weather: 'Weather', devbox: 'System monitor', clock: 'Clock', projects: 'Projects', music: 'Music',
-  notes: 'Notes', focus: 'Focus timer', general: 'Halcyon', desktop: 'Desktop', 'desktop-dock': 'Dock and panel',
+  notes: 'Notes', focus: 'Focus timer', devices: 'Devices', general: 'Halcyon', desktop: 'Desktop', 'desktop-dock': 'Dock and panel',
   'desktop-appearance': 'Fonts and icons', 'desktop-wallpaper': 'Wallpaper', 'desktop-icons': 'Icons on the desktop',
   'desktop-profiles': 'Looks', themes: 'Appearance', 'desktop-windows': 'Windows',
   'desktop-workspaces': 'Workspaces', 'desktop-motion': 'Accessibility',

@@ -40,7 +40,8 @@ WIDGETS = {'calendar': 'Calendar — today and meeting links', 'projects': 'Proj
            'glance': 'Daily overview — clock, weather and agenda together',
            'music': 'Music — now playing and playback controls',
            'notes': 'Notes — a note on the desktop',
-           'focus': 'Focus timer — work and break sessions'}
+           'focus': 'Focus timer — work and break sessions',
+           'devices': 'Devices — battery of headphones, mice and phones'}
 FOCUS_ACTIONS = ('start', 'pause', 'toggle', 'reset', 'skip')
 
 def atomic(path, value):
@@ -307,7 +308,7 @@ def restore():
 # Every page the native Settings window accepts (`Page::key` in src/settings.rs), plus the old
 # `layout` alias for Widgets.
 SETTINGS_PAGES = ('adaptive', 'builder', 'moments', 'overview', 'pending', 'themes', 'presets', 'schedules', 'widget-style', 'system-monitor', 'daily-overview', 'focus-timer', 'app-settings', 'appearance', 'widgets', 'layout', 'glance', 'calendar', 'weather', 'devbox', 'clock',
-                  'projects', 'music', 'notes', 'focus', 'general', 'desktop', 'desktop-dock',
+                  'projects', 'music', 'notes', 'focus', 'devices', 'general', 'desktop', 'desktop-dock',
                   'desktop-appearance', 'desktop-wallpaper', 'weather-effects', 'desktop-icons', 'desktop-profiles',
                   'desktop-windows', 'desktop-workspaces', 'desktop-motion', 'desktop-window-rules',
                   'desktop-shortcuts', 'desktop-automation', 'changes')

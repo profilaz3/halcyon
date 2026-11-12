@@ -163,7 +163,7 @@ macro_rules! fields {
 }
 
 /// Every member a profile, its Undo or its recovery may write.
-pub static FIELDS: [WidgetField; 109] = fields![
+pub static FIELDS: [WidgetField; 112] = fields![
     "/recipes/music", "Music recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Music);
     "/recipes/focus", "Focus recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Focus);
     "/recipes/devbox", "System recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::System);
@@ -262,9 +262,11 @@ pub static FIELDS: [WidgetField; 109] = fields![
     "/music/enabled", "Music", Layout, boolean;
     "/notes/enabled", "Notes", Layout, boolean;
     "/focus/enabled", "Focus timer", Layout, boolean;
+    "/devices/enabled", "Devices", Layout, boolean;
     "/widget_positions/music", "Music position", Layout, position;
     "/widget_positions/notes", "Notes position", Layout, position;
     "/widget_positions/focus", "Focus position", Layout, position;
+    "/widget_positions/devices", "Devices position", Layout, position;
     "/widget_sizes/clock", "Clock size", Layout, size;
     "/widget_sizes/weather", "Weather size", Layout, size;
     "/widget_sizes/calendar", "Calendar size", Layout, size;
@@ -274,6 +276,7 @@ pub static FIELDS: [WidgetField; 109] = fields![
     "/widget_sizes/music", "Music size", Layout, size;
     "/widget_sizes/notes", "Notes size", Layout, size;
     "/widget_sizes/focus", "Focus size", Layout, size;
+    "/widget_sizes/devices", "Devices size", Layout, size;
 ];
 
 // Local preferences participate in transactions and Undo but are never
@@ -293,6 +296,8 @@ pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/activity_island/camera", "Activity camera", Style, boolean;
     "/activity_island/network", "Activity network", Style, boolean;
     "/activity_island/bluetooth", "Activity Bluetooth", Style, boolean;
+    "/activity_island/device_banners", "Activity device banners", Style, boolean;
+    "/activity_island/low_battery", "Activity low battery", Style, boolean;
     "/activity_island/updates", "Activity updates", Style, boolean;
     "/activity_island/style", "Activity island style", Style, |v| matches!(v.as_str(), Some("theme" | "dark"));
     "/activity_island/app_rules", "Activity app rules", Style, app_rules;
@@ -324,6 +329,9 @@ pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/widget_monitors/focus/display", "Widget display", Layout, |v| v.is_null() || v.as_str().is_some_and(crate::displays::valid_name);
     "/widget_monitors/focus/hide_disconnected", "Disconnected widget", Layout, boolean;
     "/monitor_layouts/focus", "Display layout", Layout, monitor_layout;
+    "/widget_monitors/devices/display", "Widget display", Layout, |v| v.is_null() || v.as_str().is_some_and(crate::displays::valid_name);
+    "/widget_monitors/devices/hide_disconnected", "Disconnected widget", Layout, boolean;
+    "/monitor_layouts/devices", "Display layout", Layout, monitor_layout;
     "/widget_display", "Widget display", Layout, |v| v.is_null() || v.as_str().is_some_and(crate::displays::valid_name);
     "/appearance/match_wallpaper", "Matching wallpaper", Style, boolean;
     "/appearance/match_cosmic_colors", "Follow COSMIC colors", Style, boolean;
@@ -356,8 +364,8 @@ pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/focus/notify", "Focus notifications", Style, boolean;
 ];
 
-/// The desktop tool a member belongs to (`music`, `notes`, `focus`), if
-/// any. Tool members are version 4 profile members, and are captured only
+/// The desktop tool a member belongs to (`music`, `notes`, `focus`,
+/// `devices`), if any. Tool members are version 4 profile members, and are captured only
 /// once that tool has been set up.
 pub fn tool_of(pointer: &str) -> Option<&'static str> {
     let rest = pointer
@@ -365,12 +373,14 @@ pub fn tool_of(pointer: &str) -> Option<&'static str> {
         .or_else(|| pointer.strip_prefix("/widget_sizes/"))
         .or_else(|| pointer.strip_prefix('/'))?;
     let name = rest.split('/').next()?;
-    ["music", "notes", "focus"].into_iter().find(|tool| {
-        *tool == name
-            && (rest.contains('/')
-                || pointer.starts_with("/widget_positions/")
-                || pointer.starts_with("/widget_sizes/"))
-    })
+    ["music", "notes", "focus", "devices"]
+        .into_iter()
+        .find(|tool| {
+            *tool == name
+                && (rest.contains('/')
+                    || pointer.starts_with("/widget_positions/")
+                    || pointer.starts_with("/widget_sizes/"))
+        })
 }
 
 /// The allowlisted member at `pointer`.

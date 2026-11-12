@@ -150,6 +150,16 @@ impl Cards {
             music_seek: playing.is_some_and(|p| p.seek_request(0.).is_some()),
             music_tint: art.and_then(|(_, tint, _)| *tint),
             music_art: art.and_then(|(_, _, thumb)| thumb.clone()),
+            devices: if self.config.activity_island.system {
+                self.tools
+                    .devices
+                    .iter()
+                    .take(bridge::DEVICES)
+                    .cloned()
+                    .collect()
+            } else {
+                Vec::new()
+            },
         }
     }
     /// Applies a timer command (None: only see whether it ended) and keeps

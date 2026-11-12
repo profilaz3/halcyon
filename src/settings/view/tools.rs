@@ -516,6 +516,17 @@ impl Settings {
         ];
         self.widget_template(Widget::Focus, "Focus timer", Some(preview), items)
     }
+
+    /// Devices has nothing to set besides on and off: the card shows three
+    /// example devices so the look can be judged.
+    pub(super) fn devices_page(&self) -> Element<'_, Message> {
+        let preview = cards::devices(
+            &cards::sample_devices(),
+            &self.config,
+            Some(self.tool_preview_size(Widget::Devices)),
+        );
+        self.widget_template(Widget::Devices, "Devices", Some(preview), Vec::new())
+    }
 }
 
 impl Settings {

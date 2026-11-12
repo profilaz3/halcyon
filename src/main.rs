@@ -8,6 +8,7 @@ mod depth;
 mod design;
 mod desktop;
 mod desktop_theme;
+mod devices;
 mod displays;
 mod drawer;
 mod installation;

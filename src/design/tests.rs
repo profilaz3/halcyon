@@ -19,7 +19,7 @@ fn fixture() -> Value {
 fn fb16_model_roundtrip_preserves_all_legacy_choices_and_disabled_instances() {
     let raw = fixture();
     let doc = Document::from_legacy(&raw).unwrap();
-    assert_eq!(doc.instances.len(), 9);
+    assert_eq!(doc.instances.len(), Widget::ALL.len());
     for kind in Widget::ALL {
         assert_eq!(doc.instances[&InstanceId::legacy(kind)].kind, kind);
     }
@@ -147,6 +147,28 @@ fn fb16_model_unsupported_instance_set_cannot_silently_project_or_recreate() {
     assert!(doc.validate().is_ok());
     assert!(doc.check_runtime().is_err());
     assert!(doc.project(&raw).is_err());
+}
+#[test]
+fn a_design_saved_before_devices_existed_still_projects() {
+    let raw = fixture();
+    let mut doc = Document::from_legacy(&raw).unwrap();
+    doc.instances.remove(&InstanceId::legacy(Widget::Devices));
+    let bytes = serde_json::to_vec_pretty(&doc).unwrap();
+    let upgraded = Document::parse(&bytes).unwrap();
+    let devices = &upgraded.instances[&InstanceId::legacy(Widget::Devices)];
+    assert_eq!(devices.kind, Widget::Devices);
+    assert!(devices.values.is_empty());
+    assert!(upgraded.check_runtime().is_ok());
+    assert!(upgraded.project(&raw).is_ok());
+    // An older kind that went missing is still damage, not an upgrade.
+    let mut damaged = Document::from_legacy(&raw).unwrap();
+    damaged.instances.remove(&InstanceId::legacy(Widget::Clock));
+    let bytes = serde_json::to_vec_pretty(&damaged).unwrap();
+    assert!(
+        Document::parse(&bytes)
+            .and_then(|d| d.check_runtime())
+            .is_err()
+    );
 }
 #[test]
 fn fb16_model_ids_are_stable_bounded_and_not_names_or_indices() {

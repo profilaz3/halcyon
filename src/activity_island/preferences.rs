@@ -78,6 +78,10 @@ pub struct Preferences {
     pub network: bool,
     /// Devices connecting and disconnecting, with their battery.
     pub bluetooth: bool,
+    /// A short banner when a device connects, with its battery.
+    pub device_banners: bool,
+    /// A reveal when a device's battery falls to 20% and to 10%.
+    pub low_battery: bool,
     pub updates: bool,
     /// Follow the panel theme, or always dark.
     pub style: IslandStyle,
@@ -121,6 +125,8 @@ impl Default for Preferences {
             camera: true,
             network: true,
             bluetooth: true,
+            device_banners: true,
+            low_battery: true,
             updates: true,
             style: IslandStyle::Theme,
             app_rules: Vec::new(),

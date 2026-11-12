@@ -257,6 +257,7 @@ fn widget_page(group: Option<&str>) -> Page {
         Some("Music") => Page::Music,
         Some("Notes") => Page::Notes,
         Some("Focus") => Page::Focus,
+        Some("Devices") => Page::Devices,
         Some("Projects") => Page::Projects,
         Some("Activity") => Page::DesktopDock,
         Some("Time of day") => Page::DesktopAutomation,

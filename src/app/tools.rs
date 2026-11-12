@@ -75,6 +75,8 @@ pub(super) struct Tools {
     pub music_shown: bool,
     pub spectrum_key: Option<String>,
     pub audio_bins: [f32; crate::tools::visualizer::BINS],
+    /// Connected devices and their battery, while someone shows them.
+    pub devices: Vec<crate::devices::Device>,
 }
 
 impl Tools {
@@ -98,6 +100,7 @@ impl Tools {
             music_shown: false,
             spectrum_key: None,
             audio_bins: [0.; crate::tools::visualizer::BINS],
+            devices: Vec::new(),
         }
     }
     pub(super) fn sample() -> Self {
@@ -120,6 +123,7 @@ impl Tools {
             music_shown: false,
             spectrum_key: None,
             audio_bins: [0.; crate::tools::visualizer::BINS],
+            devices: Vec::new(),
         }
     }
     fn players(&self) -> &[music::Player] {
@@ -250,6 +254,11 @@ impl Cards {
                 },
                 &self.config,
                 (!self.tools.checking_note).then_some(on_desktop as fn(Action) -> Message),
+                Some(self.widget_size(widget)),
+            ),
+            Widget::Devices => cards::devices(
+                &self.tools.devices,
+                &self.config,
                 Some(self.widget_size(widget)),
             ),
             _ => cards::focus(

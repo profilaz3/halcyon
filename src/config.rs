@@ -72,6 +72,7 @@ pub struct Config {
     pub music: MusicPreferences,
     pub notes: NotesPreferences,
     pub focus: FocusPreferences,
+    pub devices: DevicesPreferences,
     /// The edge sidebar slides in and out; off, it appears and hides at
     /// once (Pop!_OS › Motion).
     pub sidebar_slide: bool,
@@ -128,6 +129,7 @@ impl Default for Config {
             music: MusicPreferences::default(),
             notes: NotesPreferences::default(),
             focus: FocusPreferences::default(),
+            devices: DevicesPreferences::default(),
             sidebar_slide: true,
             settings_animations: true,
             show_explanations: false,
@@ -348,6 +350,7 @@ impl Config {
             Widget::Music => return self.music.enabled,
             Widget::Notes => return self.notes.enabled,
             Widget::Focus => return self.focus.enabled,
+            Widget::Devices => return self.devices.enabled,
             _ => {}
         }
         self.enabled_widgets.iter().any(|key| key == widget.key())
@@ -1558,6 +1561,12 @@ pub struct NotesPreferences {
     pub size: NotesSize,
 }
 
+/// The Devices widget: connected devices and their battery. Off until chosen.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct DevicesPreferences {
+    pub enabled: bool,
+}
 /// Focus timer durations and behavior. The running session (phase, end
 /// time, completed rounds) is runtime state in its own file.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -1635,9 +1644,12 @@ impl RefreshIntervals {
             Widget::Weather => self.weather,
             Widget::Calendar => self.calendar,
             Widget::Projects => self.projects,
-            Widget::Clock | Widget::Glance | Widget::Music | Widget::Notes | Widget::Focus => {
-                self.clock
-            }
+            Widget::Clock
+            | Widget::Glance
+            | Widget::Music
+            | Widget::Notes
+            | Widget::Focus
+            | Widget::Devices => self.clock,
         }
     }
     pub fn duration(&self, widget: Widget) -> std::time::Duration {
@@ -1651,7 +1663,8 @@ impl RefreshIntervals {
             | Widget::Glance
             | Widget::Music
             | Widget::Notes
-            | Widget::Focus => (1, 60),
+            | Widget::Focus
+            | Widget::Devices => (1, 60),
             Widget::Weather => (300, 10800),
             Widget::Calendar => (60, 3600),
             Widget::Projects => (10, 600),
@@ -1663,9 +1676,12 @@ impl RefreshIntervals {
             Widget::Weather => &[300, 900, 1800, 3600],
             Widget::Calendar => &[60, 120, 300, 600, 1800],
             Widget::Projects => &[10, 30, 60, 120, 300],
-            Widget::Clock | Widget::Glance | Widget::Music | Widget::Notes | Widget::Focus => {
-                &[1, 15, 30, 60]
-            }
+            Widget::Clock
+            | Widget::Glance
+            | Widget::Music
+            | Widget::Notes
+            | Widget::Focus
+            | Widget::Devices => &[1, 15, 30, 60],
         }
     }
     pub fn label(seconds: u64) -> String {
