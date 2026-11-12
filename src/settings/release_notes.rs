@@ -19,6 +19,59 @@ pub(super) struct Release {
 
 pub(super) const RELEASES: &[Release] = &[
     Release {
+        version: "0.6.5",
+        notes: &[
+            Note {
+                title: "Match the weather",
+                body: "Rain, snow, fog and cloud shadows on your wallpaper can follow the Weather widget.",
+                place: Some(navigation::MATCH_WEATHER),
+                link: None,
+            },
+            Note {
+                title: "Clock stage",
+                body: "The Clock page shows a small copy of your screen. Drag the clock to move or resize it.",
+                place: None,
+                link: None,
+            },
+            Note {
+                title: "The scene covers the clock",
+                body: "Now on your own wallpapers too, and Scene lighting tints the digits with the sky.",
+                place: Some(navigation::SCENE_COVERS_CLOCK),
+                link: None,
+            },
+            Note {
+                title: "Islands setup",
+                body: "Pick Islands under Shape and Halcyon shows one clear next step to finish switching.",
+                place: None,
+                link: None,
+            },
+            Note {
+                title: "Changes",
+                body: "Your history by day, at the bottom of the sidebar. Undo any change on its own.",
+                place: Some(navigation::CHANGES),
+                link: None,
+            },
+            Note {
+                title: "Time of day",
+                body: "One page switches your whole look or just the widget style for Day, Evening and Night.",
+                place: Some(navigation::TIME_OF_DAY),
+                link: None,
+            },
+            Note {
+                title: "Settings, tidied up",
+                body: "Explanations behind a ?, search by the names you see, and every control works by keyboard.",
+                place: None,
+                link: None,
+            },
+            Note {
+                title: "Lighter on your computer",
+                body: "Much less CPU while idle and far less video memory.",
+                place: None,
+                link: None,
+            },
+        ],
+    },
+    Release {
         version: "0.6.1",
         notes: &[
             Note {

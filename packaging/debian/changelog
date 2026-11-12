@@ -1,3 +1,15 @@
+cosmic-ext-halcyon (0.6.5) unstable; urgency=medium
+
+  * Let rain, snow, fog and cloud shadows on the wallpaper match the weather.
+  * Add a Clock stage to place and resize the clock on a copy of the screen.
+  * Let the scene cover the clock on your own wallpapers, with scene lighting.
+  * Guide Islands setup with one clear next step and plain reasons.
+  * List changes by day with Open and per-change Undo.
+  * Tidy Settings; improve search, keyboard and screen reader support.
+  * Reduce idle CPU and video memory use; fix Windows page controls.
+
+ -- profilaz3 <261673162+profilaz3@users.noreply.github.com>  Thu, 12 Nov 2026 12:00:00 +0000
+
 cosmic-ext-halcyon (0.6.1) unstable; urgency=medium
 
   * Send usage reports directly to the new Halcyon collector.
