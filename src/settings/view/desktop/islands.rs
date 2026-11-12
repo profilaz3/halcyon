@@ -77,6 +77,20 @@ impl Settings {
             .align_y(Alignment::Center)
             .into(),
         ));
+        // Moved islands rename the Items above; one step puts them back.
+        let screen = self.desktop.screen_order(draft.kind());
+        if screen.rearranged() {
+            items.push(split(
+                detail_state(
+                    "Island order",
+                    "Items follow the islands as they sit on screen",
+                ),
+                button::standard("Reset order")
+                    .id("islands-reset-order".into())
+                    .on_press(change(IslandEdit::ResetOrder))
+                    .into(),
+            ));
+        }
         if !self.desktop.arranging() {
             items.push(
                 button::standard("Arrange on screen…")
@@ -96,15 +110,19 @@ impl Settings {
         ));
         // Keyboard and pointer alternatives to dragging, only while arranging.
         let groups = draft.applets().known().cloned().unwrap_or_default();
-        let horizontal = draft.anchor().known().is_none_or(|a| a.horizontal());
         let mut selected = Vec::new();
-        for (i, region) in Region::ALL.into_iter().enumerate() {
+        for region in screen.regions() {
             if groups.list(region).is_empty() {
                 continue;
             }
+            let section = match region {
+                Region::Start => Section::Start,
+                Region::Center => Section::Center,
+                Region::End => Section::End,
+            };
             selected.push(
-                button::text(region.title(horizontal))
-                    .on_press(change(IslandEdit::Select(Section::ALL[i])))
+                button::text(screen.name(region))
+                    .on_press(change(IslandEdit::Select(section)))
                     .into(),
             );
         }

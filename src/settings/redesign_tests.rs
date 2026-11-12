@@ -1519,3 +1519,205 @@ fn islands_shape_shows_one_step_then_layout_controls() {
         "panel-shape-islands-running",
     );
 }
+
+/// Islands moved on screen rename the Items to match, so the first heading is
+/// the island on the left; one Reset order puts them back as left, middle,
+/// right, and Arrange on screen stays where it was.
+#[test]
+fn islands_order_names_items_as_the_screen_shows_them_and_resets() {
+    let name = "islands_order_names_items_as_the_screen_shows_them_and_resets";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::desktop::panels::{PanelKind, Region};
+    use dock_islands_core::Section;
+    let root = isolated_root();
+    let key = crate::desktop::islands::key(PanelKind::Panel);
+    // The order Arrange on screen leaves after dragging the middle island first.
+    let mut moved = dock_islands_core::Settings {
+        enabled: true,
+        gap: 40,
+        ..Default::default()
+    };
+    moved.default_layout.together.order = [Section::Center, Section::Start, Section::End];
+    seed(
+        &root.join("cosmic-root/config/cosmic"),
+        &[
+            (key.namespace(), key.key(), &ron::to_string(&moved).unwrap()),
+            (
+                "com.system76.CosmicPanel.Panel",
+                "plugins_wings",
+                "Some(([\"com.system76.CosmicAppletWorkspaces\"],[\"com.system76.CosmicAppletAudio\"]))",
+            ),
+            (
+                "com.system76.CosmicPanel.Panel",
+                "plugins_center",
+                "Some([\"com.system76.CosmicAppletTime\"])",
+            ),
+        ],
+    );
+    let mut app = open_isolated_editor(&root);
+    let store = app.desktop.store().unwrap().clone();
+    crate::desktop::islands::fixture_installed(store.fixture_root().unwrap());
+    send_settings(
+        &mut app,
+        Message::DesktopEditor(desktop::Message::Select(PanelKind::Panel)),
+    );
+    app.desktop.islands.installation = crate::desktop::islands::Installation::discover(&store);
+    app.desktop.islands.compatible = true;
+    assert!(app.desktop.islands.installation.installed());
+    assert_eq!(
+        app.desktop.current().unwrap().islands().known().unwrap(),
+        &moved
+    );
+    let screen = app.desktop.screen_order(PanelKind::Panel);
+    assert_eq!(
+        screen.regions(),
+        [Region::Center, Region::Start, Region::End]
+    );
+    assert!(screen.rearranged());
+
+    // Read top to bottom, the Items list runs left to right across the screen.
+    let headings = |app: &Settings, native: &mut crate::native_test::Native| {
+        ["Left island", "Middle island", "Right island"]
+            .map(|title| native.text_bounds(app.settings_view(), title).y)
+    };
+    let adds = |app: &Settings, native: &mut crate::native_test::Native| {
+        ["applets-add-start", "applets-add-center", "applets-add-end"]
+            .map(|id| native.bounds(app.settings_view(), id).y)
+    };
+    let shots = [
+        (Size::new(820., 600.), "820x600"),
+        (Size::new(1280., 800.), "1280x800"),
+    ];
+    for (size, label) in shots {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        // Twice: a repeated widget ID only fails on the second render.
+        assert!(native.duplicate_ids(app.settings_view()).is_empty());
+        assert!(native.duplicate_ids(app.settings_view()).is_empty());
+        native_reveal(&app, &mut native, "islands-reset-order");
+        native.text_bounds(app.settings_view(), "Island order");
+        native.text_bounds(
+            app.settings_view(),
+            "Items follow the islands as they sit on screen",
+        );
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "islands-arrange")
+                .is_some()
+        );
+        for (theme, tone) in [
+            (cosmic::Theme::dark(), "dark"),
+            (cosmic::Theme::light(), "light"),
+        ] {
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("islands-order-moved-{label}-{tone}"),
+            );
+        }
+        native_reveal(&app, &mut native, "applets-add-end");
+        let [left, middle, right] = headings(&app, &mut native);
+        assert!(left < middle && middle < right, "{left} {middle} {right}");
+        // The middle part's items lead, as its island does on screen.
+        let [start, center, end] = adds(&app, &mut native);
+        assert!(center < start && start < end, "{center} {start} {end}");
+        for (theme, tone) in [
+            (cosmic::Theme::dark(), "dark"),
+            (cosmic::Theme::light(), "light"),
+        ] {
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("islands-order-moved-items-{label}-{tone}"),
+            );
+        }
+    }
+
+    let size = Size::new(820., 600.);
+    send_settings(&mut app, Message::Resized(size));
+    let mut native = crate::native_test::Native::new(size);
+    native_click(&mut app, &mut native, "islands-reset-order");
+    // Apply checks the panel again; the fixture has none to answer, a
+    // running Islands panel does.
+    app.desktop.islands.compatible = true;
+    let reset = app
+        .desktop
+        .current()
+        .unwrap()
+        .islands()
+        .known()
+        .cloned()
+        .unwrap();
+    assert_eq!(reset.default_layout.together.order, Section::ALL);
+    assert_eq!(
+        reset,
+        dock_islands_core::Settings {
+            default_layout: Default::default(),
+            ..moved.clone()
+        },
+        "only the order changes"
+    );
+    assert!(reset.outputs.is_empty(), "no display entry is made up");
+    // Reset applies at once, like the island's other direct edits.
+    let saved = std::fs::read_to_string(store.user_path(&key)).unwrap();
+    assert_eq!(
+        ron::from_str::<dock_islands_core::Settings>(&saved).unwrap(),
+        reset
+    );
+    assert!(!app.desktop.screen_order(PanelKind::Panel).rearranged());
+
+    for (size, label) in shots {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        assert!(native.duplicate_ids(app.settings_view()).is_empty());
+        assert!(native.duplicate_ids(app.settings_view()).is_empty());
+        native_reveal(&app, &mut native, "islands-arrange");
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "islands-reset-order")
+                .is_none(),
+            "nothing to reset in the natural order"
+        );
+        assert!(
+            !native
+                .all_text(app.settings_view())
+                .iter()
+                .any(|t| t == "Island order")
+        );
+        for (theme, tone) in [
+            (cosmic::Theme::dark(), "dark"),
+            (cosmic::Theme::light(), "light"),
+        ] {
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("islands-order-reset-{label}-{tone}"),
+            );
+        }
+        native_reveal(&app, &mut native, "applets-add-end");
+        let [left, middle, right] = headings(&app, &mut native);
+        assert!(left < middle && middle < right);
+        let [start, center, end] = adds(&app, &mut native);
+        assert!(start < center && center < end, "{start} {center} {end}");
+        for (theme, tone) in [
+            (cosmic::Theme::dark(), "dark"),
+            (cosmic::Theme::light(), "light"),
+        ] {
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("islands-order-reset-items-{label}-{tone}"),
+            );
+        }
+    }
+}

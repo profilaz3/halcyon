@@ -3971,3 +3971,57 @@ fn live_activities_render_for_review() {
         }
     }
 }
+/// An update waits for the island to be left alone, a quiet moment longer,
+/// and any use puts it off again. The exit itself is never reached here: no
+/// test sends Updated, which would read the session's restart ledger.
+#[test]
+fn update_restart_waits_for_a_quiet_island() {
+    let mut app = app();
+    let program = crate::upgrade::Program::running().unwrap();
+    let now = Instant::now();
+    assert!(app.idle(), "a fresh island is idle");
+    app.arm_restart(now);
+    assert_eq!(app.restart_at, None, "nothing to restart into");
+
+    app.updated = Some((program.clone(), now));
+    app.hovered = true;
+    app.arm_restart(now);
+    assert_eq!(app.restart_at, None, "a pointer on it puts it off");
+    assert!(!app.restart_due(now + Duration::from_secs(60)));
+
+    app.hovered = false;
+    app.arm_restart(now);
+    assert_eq!(app.restart_at, Some(now + RESTART_QUIET));
+    // Later messages keep the first quiet moment rather than pushing it on.
+    app.arm_restart(now + Duration::from_secs(1));
+    assert_eq!(app.restart_at, Some(now + RESTART_QUIET));
+    assert!(!app.restart_due(now + Duration::from_secs(1)));
+    assert!(app.restart_due(now + RESTART_QUIET));
+
+    // Opening it disarms; a due wake-up while it is open does nothing.
+    app.popup = Some(window::Id::unique());
+    app.arm_restart(now + RESTART_QUIET);
+    assert_eq!(app.restart_at, None);
+    assert!(!app.restart_due(now + Duration::from_secs(60)));
+    let _ = app.update(Message::RestartDue(Duration::ZERO));
+    assert!(app.updated.is_some(), "the update is still waiting");
+    for busy in [
+        |a: &mut Applet| a.held = true,
+        |a: &mut Applet| a.reveal_deadline = Some(Instant::now()),
+        |a: &mut Applet| a.starting = true,
+    ] {
+        let mut other = self::app();
+        other.updated = Some((program.clone(), now));
+        busy(&mut other);
+        other.arm_restart(now);
+        assert_eq!(other.restart_at, None);
+    }
+
+    // A backed-off update waits for its own time even when idle sooner.
+    app.popup = None;
+    let later = now + Duration::from_secs(30);
+    app.updated = Some((program, later));
+    app.arm_restart(now);
+    assert_eq!(app.restart_at, Some(later));
+    assert!(!app.restart_due(now + RESTART_QUIET));
+}

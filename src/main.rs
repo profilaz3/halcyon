@@ -29,6 +29,7 @@ mod system_theme;
 #[cfg(test)]
 mod test_env;
 mod tools;
+mod upgrade;
 mod usage;
 mod watch;
 mod widget_presentation;

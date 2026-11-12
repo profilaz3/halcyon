@@ -60,6 +60,7 @@ pub(super) fn completion(message: &Message) -> Option<Message> {
                             | desktop::islands::Edit::End(_)
                             | desktop::islands::Edit::Move(_)
                             | desktop::islands::Edit::GapFinished
+                            | desktop::islands::Edit::ResetOrder
                     )
             ) =>
         {

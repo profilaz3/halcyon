@@ -19,6 +19,69 @@ pub enum Edit {
     Move(i32),
     End(bool),
     Group(bool),
+    /// Back to start, middle, end, on the display being edited.
+    ResetOrder,
+}
+/// How a bar's three parts read on screen. A plain bar reads start to end;
+/// islands follow their saved order once the Islands panel shows them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScreenOrder {
+    order: [Region; 3],
+    islands: bool,
+    horizontal: bool,
+}
+impl ScreenOrder {
+    /// The parts, first on screen first.
+    pub fn regions(self) -> [Region; 3] {
+        self.order
+    }
+    /// Islands are on screen and not in their natural order.
+    pub fn rearranged(self) -> bool {
+        self.islands && self.order != Region::ALL
+    }
+    /// What the screen shows there: “Left island” for whichever part sits
+    /// first along a top or bottom bar, “Left” on a plain bar.
+    pub fn name(self, region: Region) -> &'static str {
+        if !self.islands {
+            return region.title(self.horizontal);
+        }
+        match (
+            self.order.iter().position(|r| *r == region),
+            self.horizontal,
+        ) {
+            (Some(0), true) => "Left island",
+            (Some(0), false) => "Top island",
+            (Some(2), true) => "Right island",
+            (Some(2), false) => "Bottom island",
+            _ => "Middle island",
+        }
+    }
+}
+fn region(section: Section) -> Region {
+    match section {
+        Section::Start => Region::Start,
+        Section::Center => Region::Center,
+        Section::End => Region::End,
+    }
+}
+/// Puts the islands back as start, middle, end. Separate islands keep the
+/// places they were spread to; only which island sits where changes.
+fn reset_order(s: &mut Settings, output: &str) {
+    let mode = s.placement;
+    let layout = match s.outputs.get_mut(output) {
+        Some(layout) => layout,
+        None => &mut s.default_layout,
+    };
+    match mode {
+        Placement::Together => layout.together.order = Section::ALL,
+        Placement::Separate => {
+            let separate = &mut layout.separate;
+            let mut places = separate.order.map(|id| separate.positions[id.index()]);
+            places.sort_unstable();
+            separate.order = Section::ALL;
+            separate.positions = places;
+        }
+    }
 }
 #[derive(Default)]
 pub struct State {
@@ -40,6 +103,41 @@ pub struct Lease {
     pub(super) kind: PanelKind,
 }
 impl DesktopEditor {
+    /// The order `kind`'s bar shows its parts in right now.
+    pub fn screen_order(&self, kind: PanelKind) -> ScreenOrder {
+        let draft = self.draft(kind);
+        let horizontal = draft
+            .and_then(|d| d.anchor().known().copied())
+            .is_none_or(|anchor| anchor.horizontal());
+        let settings = draft
+            .and_then(|d| d.islands().known().cloned())
+            .filter(|s| {
+                s.enabled && self.islands.compatible && self.islands.installation.installed()
+            });
+        let Some(settings) = settings else {
+            return ScreenOrder {
+                order: Region::ALL,
+                islands: false,
+                horizontal,
+            };
+        };
+        let output = if kind == self.selected {
+            self.island_output()
+        } else {
+            match draft.map(PanelDraft::output) {
+                Some(Setting::Known(Output::Name(name))) => name,
+                _ => String::new(),
+            }
+        };
+        ScreenOrder {
+            order: settings
+                .layout(&output)
+                .order(settings.placement)
+                .map(region),
+            islands: true,
+            horizontal,
+        }
+    }
     pub fn arranging(&self) -> bool {
         self.islands.lease.is_some()
     }
@@ -277,11 +375,7 @@ impl DesktopEditor {
                 self.islands.selected = Some(s);
                 self.islands.group = false;
                 self.focus = Some(Slot {
-                    region: match s {
-                        Section::Start => Region::Start,
-                        Section::Center => Region::Center,
-                        Section::End => Region::End,
-                    },
+                    region: region(s),
                     index: 0,
                 });
             }
@@ -291,6 +385,10 @@ impl DesktopEditor {
                     self.islands.selected = None;
                     self.select_island_handle(Handle::Group);
                 }
+            }
+            Edit::ResetOrder => {
+                let output = self.island_output();
+                self.set_island_draft(|s| reset_order(s, &output));
             }
             Edit::Check => self.check_islands(),
             Edit::Sync => {
@@ -738,5 +836,89 @@ mod runtime_tests {
             ..status
         });
         assert!(editor.islands.geometry.is_some());
+    }
+}
+
+#[cfg(test)]
+mod order_tests {
+    use super::*;
+
+    #[test]
+    fn screen_names_follow_the_island_order_on_each_edge() {
+        let moved = [Region::Center, Region::Start, Region::End];
+        let across = ScreenOrder {
+            order: moved,
+            islands: true,
+            horizontal: true,
+        };
+        assert_eq!(across.name(Region::Center), "Left island");
+        assert_eq!(across.name(Region::Start), "Middle island");
+        assert_eq!(across.name(Region::End), "Right island");
+        assert!(across.rearranged());
+        let down = ScreenOrder {
+            horizontal: false,
+            ..across
+        };
+        assert_eq!(down.name(Region::Center), "Top island");
+        assert_eq!(down.name(Region::End), "Bottom island");
+        // A plain bar keeps its own words and never offers a reset.
+        let plain = ScreenOrder {
+            islands: false,
+            ..across
+        };
+        assert_eq!(plain.name(Region::Center), "Middle");
+        assert!(!plain.rearranged());
+        let natural = ScreenOrder {
+            order: Region::ALL,
+            ..across
+        };
+        assert!(!natural.rearranged());
+        assert_eq!(natural.name(Region::Start), "Left island");
+    }
+
+    #[test]
+    fn reset_order_touches_only_the_order_of_the_display_in_use() {
+        let mut s = Settings {
+            enabled: true,
+            placement: Placement::Together,
+            ..Default::default()
+        };
+        s.default_layout.together.order = [Section::Center, Section::Start, Section::End];
+        s.default_layout.together.position = 7000;
+        s.default_layout.separate.order = [Section::End, Section::Start, Section::Center];
+        let mut other = s.default_layout.clone();
+        other.together.order = [Section::End, Section::Center, Section::Start];
+        s.outputs.insert("HDMI-A-1".into(), other.clone());
+
+        let mut reset = s.clone();
+        reset_order(&mut reset, "DP-1");
+        assert!(!reset.outputs.contains_key("DP-1"), "no entry is made up");
+        assert_eq!(reset.default_layout.together.order, Section::ALL);
+        assert_eq!(reset.default_layout.together.position, 7000);
+        assert_eq!(reset.default_layout.separate, s.default_layout.separate);
+        assert_eq!(reset.outputs["HDMI-A-1"], other);
+
+        let mut reset = s.clone();
+        reset_order(&mut reset, "HDMI-A-1");
+        assert_eq!(reset.outputs["HDMI-A-1"].together.order, Section::ALL);
+        assert_eq!(reset.default_layout, s.default_layout);
+        assert!(reset.validate().is_ok());
+    }
+
+    #[test]
+    fn reset_order_keeps_where_separate_islands_were_spread() {
+        let mut s = Settings {
+            enabled: true,
+            placement: Placement::Separate,
+            ..Default::default()
+        };
+        // Middle island pushed to the left edge, the start one a third in.
+        s.default_layout.separate.order = [Section::Center, Section::Start, Section::End];
+        s.default_layout.separate.positions = [3000, 0, 10000];
+        reset_order(&mut s, "");
+        assert_eq!(s.default_layout.separate.order, Section::ALL);
+        assert_eq!(s.default_layout.separate.positions, [0, 3000, 10000]);
+        assert_eq!(s.default_layout.together.order, Section::ALL);
+        assert!(s.validate().is_ok());
     }
 }
