@@ -978,6 +978,11 @@ impl PlacementEditor {
     }
 }
 
+/// The footer's words for a kept unfinished layout, beside its Undo.
+pub(super) const KEPT_LAYOUT: &str = "Kept your unfinished layout";
+pub(super) const DROPPED_LAYOUT: &str =
+    "Couldn’t keep your unfinished layout. Your current layout is unchanged.";
+
 const FOREGROUND: Color = Color::from_rgb(0.94, 0.93, 0.97);
 const MUTED: Color = Color::from_rgb(0.65, 0.64, 0.71);
 
@@ -1011,11 +1016,42 @@ fn line<'a>(width: f32, height: f32, color: Color) -> Element<'a, super::Message
 }
 
 impl Settings {
-    pub(super) fn legacy_layout_recovery(&self) -> bool {
-        self.canvas.is_none()
-            && (self.placement.dirty() || !self.placement.session_actions.is_empty())
+    /// An unfinished layout found on reopening is kept without asking: it is
+    /// saved like any layout change, so Undo and Changes can put it back. A
+    /// draft that can't be saved is dropped and the current layout stays.
+    /// Returns whether the draft was kept.
+    pub(super) fn keep_recovered_layout(&mut self) -> bool {
+        if self.canvas.is_some() || !self.placement.dirty() {
+            return false;
+        }
+        // Recorded as the same action a Save click makes, so it is undoable.
+        let _ = crate::desktop::actions::in_action("Widget arrangement", || {
+            self.update_placement(Message::Save)
+        });
+        let kept = !self.error && !self.placement.dirty();
+        if kept {
+            self.layout_kept = self.placement.session_actions.last().map(|r| r.id.clone());
+            self.placement.session_actions.clear();
+            self.refresh_latest_change();
+            self.status = KEPT_LAYOUT.into();
+        } else {
+            self.drop_recovered_layout();
+            self.status = DROPPED_LAYOUT.into();
+        }
+        self.error = false;
+        kept
     }
-    pub(super) fn finish_layout_recovery(&mut self) {
+    /// Back to the layout on disk. Nothing already saved is reverted.
+    pub(super) fn drop_recovered_layout(&mut self) {
+        if self.canvas.is_some() {
+            return;
+        }
+        self.placement.cancel_drag();
+        self.placement.cancel();
+        if let Ok(config) = Config::try_load() {
+            self.config = config;
+        }
+        self.placement.refresh(&self.config);
         self.placement.session_actions.clear();
     }
     fn placement_card<'a>(

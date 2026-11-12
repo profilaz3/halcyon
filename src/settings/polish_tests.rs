@@ -1,7 +1,9 @@
 // The existing private desktop fixture drives actual native widget trees.
+// An unfinished widget layout found on reopening is kept at once, with no
+// review page, and stays one Undo away; a damaged one is dropped.
 #[test]
-fn polish050_recovered_legacy_layout_can_be_saved_or_cancelled() {
-    let name = "polish050_recovered_legacy_layout_can_be_saved_or_cancelled";
+fn polish050_recovered_layout_is_kept_without_asking() {
+    let name = "polish050_recovered_layout_is_kept_without_asking";
     if desktop_test_child(
         name,
         DesktopEnv {
@@ -13,7 +15,11 @@ fn polish050_recovered_legacy_layout_can_be_saved_or_cancelled() {
         return;
     }
     let root = isolated_root();
-    for save in [false, true] {
+    let record = crate::desktop::DesktopStore::from_env()
+        .unwrap()
+        .state_file("settings-form-layout.json")
+        .unwrap();
+    for damaged in [false, true] {
         let mut app = open_isolated_editor(&root);
         send_settings(&mut app, Message::Page(Page::Overview));
         let before = std::fs::read(Config::path().unwrap()).unwrap();
@@ -21,33 +27,55 @@ fn polish050_recovered_legacy_layout_can_be_saved_or_cancelled() {
         let _ = app.update_placement(placement::Message::Nudge([1, 0], true));
         assert!(app.placement.dirty());
         app.checkpoint_session_drafts();
+        assert!(record.exists(), "the unfinished layout was not recorded");
+        if damaged {
+            std::fs::write(&record, b"{ not a layout").unwrap();
+        }
         drop(app);
         let (mut app, initial) = Settings::init(Core::default(), Page::Overview);
         settle_settings(&mut app, initial);
-        assert!(app.legacy_layout_recovery());
-        assert!(!app.placement_active());
+        assert!(!app.error, "{}", app.status);
+        assert!(!app.placement.dirty());
+        assert!(!record.exists(), "the record would come back next time");
+        let after = std::fs::read(Config::path().unwrap()).unwrap();
         let mut native = crate::native_test::Native::new(Size::new(820., 600.));
         for id in ["layout-recovery-save", "layout-recovery-cancel"] {
-            native_reveal(&app, &mut native, id);
+            assert!(
+                native.try_bounds(app.settings_view(), id).is_none(),
+                "the review page is gone: {id}"
+            );
         }
+        let words = native.all_text(app.settings_view());
+        assert!(!words.iter().any(|t| t == "Unfinished layout"), "{words:?}");
         native.capture(
             app.settings_view(),
             &cosmic::Theme::dark(),
-            "polish050-recovered-layout",
-        );
-        send_settings(
-            &mut app,
-            Message::Placement(if save {
-                placement::Message::Save
+            if damaged {
+                "polish050-dropped-layout"
             } else {
-                placement::Message::Cancel
-            }),
+                "polish050-kept-layout"
+            },
         );
-        assert!(!app.error, "{}", app.status);
-        assert!(!app.legacy_layout_recovery());
-        if save {
-            send_settings(&mut app, Message::UndoDesktop);
+        if damaged {
+            assert_eq!(app.status, placement::DROPPED_LAYOUT);
+            assert_eq!(after, before);
+            continue;
         }
+        assert_ne!(after, before, "the unfinished layout was not saved");
+        assert_eq!(app.status, placement::KEPT_LAYOUT);
+        assert!(app.layout_kept.is_some());
+        // A short note beside Undo, not a page to review.
+        assert!(
+            words.iter().any(|t| t == placement::KEPT_LAYOUT),
+            "{words:?}"
+        );
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "settings-undo")
+                .is_some()
+        );
+        send_settings(&mut app, Message::UndoDesktop);
+        assert!(!app.error, "{}", app.status);
         assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
     }
 }
@@ -2007,4 +2035,175 @@ fn interrupted_change_banner_names_what_was_changing() {
     assert!(store.pending_recovery().unwrap().is_none(), "keeping clears it");
     assert!(native.try_bounds(app.settings_view(), "recovery-keep").is_none());
     assert!(app.workspaces.recovery().is_none(), "Workspaces below follows");
+}
+
+/// The Dock and panel picture is a close-up of the selected bar on its own
+/// edge, at a size where its applets read, for every edge and style.
+#[test]
+fn previews_dock_and_panel_closeups_show_the_bar_at_a_readable_size() {
+    let name = "previews_dock_and_panel_closeups_show_the_bar_at_a_readable_size";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::desktop::panels::{Anchor, AutoHide, PanelKind};
+    let root = isolated_root();
+    let cosmic = root.join("cosmic-root");
+    // The real applets and pinned apps, read from the installed entries.
+    let apps = cosmic.join("applications");
+    std::fs::create_dir_all(&apps).unwrap();
+    let pinned = [
+        "firefox",
+        "com.system76.CosmicFiles",
+        "com.system76.CosmicTerm",
+        "com.system76.CosmicEdit",
+        "com.system76.CosmicStore",
+        "com.system76.CosmicSettings",
+    ];
+    let applets = [
+        "com.system76.CosmicAppList",
+        "com.system76.CosmicAppletWorkspaces",
+        "com.system76.CosmicAppletTime",
+        "com.system76.CosmicAppletNetwork",
+        "com.system76.CosmicAppletAudio",
+        "com.system76.CosmicAppletBattery",
+        "com.system76.CosmicAppletNotifications",
+        "com.system76.CosmicAppletPower",
+        "com.system76.CosmicPanelAppButton",
+        "com.system76.CosmicPanelLauncherButton",
+        "com.system76.CosmicPanelWorkspacesButton",
+    ];
+    for id in pinned.iter().chain(&applets) {
+        let entry = std::path::Path::new("/usr/share/applications").join(format!("{id}.desktop"));
+        let text = std::fs::read_to_string(&entry).unwrap_or_else(|_| {
+            format!("[Desktop Entry]\nName={id}\nIcon={id}\nX-CosmicApplet=true\n")
+        });
+        std::fs::write(apps.join(format!("{id}.desktop")), text).unwrap();
+    }
+    let favorites = format!("{:?}", pinned);
+    seed(
+        &cosmic.join("config/cosmic"),
+        &[
+            ("com.system76.CosmicAppList", "favorites", &favorites),
+            ("com.system76.CosmicPanel.Panel", "size", "XS"),
+            (
+                "com.system76.CosmicPanel.Panel",
+                "plugins_wings",
+                "Some(([\"com.system76.CosmicAppletWorkspaces\"],[\"com.system76.CosmicAppletNetwork\",\"com.system76.CosmicAppletAudio\",\"com.system76.CosmicAppletBattery\",\"com.system76.CosmicAppletNotifications\",\"com.system76.CosmicAppletPower\"]))",
+            ),
+            (
+                "com.system76.CosmicPanel.Panel",
+                "plugins_center",
+                "Some([\"com.system76.CosmicAppletTime\"])",
+            ),
+            ("com.system76.CosmicPanel.Dock", "anchor", "Bottom"),
+            ("com.system76.CosmicPanel.Dock", "expand_to_edges", "false"),
+            ("com.system76.CosmicPanel.Dock", "anchor_gap", "true"),
+            ("com.system76.CosmicPanel.Dock", "margin", "8"),
+            ("com.system76.CosmicPanel.Dock", "border_radius", "16"),
+            ("com.system76.CosmicPanel.Dock", "plugins_wings", "None"),
+            (
+                "com.system76.CosmicPanel.Dock",
+                "plugins_center",
+                "Some([\"com.system76.CosmicPanelLauncherButton\",\"com.system76.CosmicPanelWorkspacesButton\",\"com.system76.CosmicPanelAppButton\",\"com.system76.CosmicAppList\"])",
+            ),
+        ],
+    );
+    let shots = [
+        (Size::new(820., 600.), "820x600"),
+        (Size::new(1280., 800.), "1280x800"),
+    ];
+    let capture = |app: &mut Settings, case: &str| {
+        for kind in [PanelKind::Dock, PanelKind::Panel] {
+            send_settings(app, Message::DesktopEditor(desktop::Message::Select(kind)));
+            let tab = match kind {
+                PanelKind::Dock => "dock",
+                PanelKind::Panel => "panel",
+            };
+            for (size, label) in shots {
+                send_settings(app, Message::Resized(size));
+                let mut native = crate::native_test::Native::new(size);
+                assert!(native.duplicate_ids(app.settings_view()).is_empty());
+                let scene = native.bounds(app.settings_view(), "desktop-scene");
+                // A band with room for the bar, not a letterbox.
+                assert!(scene.height >= 110., "{case} {tab} {label}: {scene:?}");
+                assert!(scene.height <= 300., "{case} {tab} {label}: {scene:?}");
+                for (theme, mode) in [
+                    (cosmic::Theme::light(), "light"),
+                    (cosmic::Theme::dark(), "dark"),
+                ] {
+                    native.capture(
+                        app.settings_view(),
+                        &theme,
+                        &format!("previews-{case}-{tab}-{label}-{mode}"),
+                    );
+                }
+            }
+        }
+    };
+    let mut app = open_isolated_editor(&root);
+    send_settings(&mut app, Message::Page(Page::DesktopDock));
+    let dock = app.desktop.draft(PanelKind::Dock).unwrap();
+    assert_eq!(dock.anchor().known(), Some(&Anchor::Bottom));
+    assert!(
+        app.desktop
+            .catalog
+            .icons("com.system76.CosmicAppList")
+            .len()
+            > 3
+    );
+    capture(&mut app, "top-panel-bottom-dock");
+
+    // A changed setting shows at once: the dock moves to the left edge.
+    send_settings(
+        &mut app,
+        Message::DesktopEditor(desktop::Message::Select(PanelKind::Dock)),
+    );
+    send_settings(
+        &mut app,
+        Message::DesktopEditor(desktop::Message::Anchor(Anchor::Left)),
+    );
+    capture(&mut app, "left-dock");
+
+    send_settings(
+        &mut app,
+        Message::DesktopEditor(desktop::Message::Select(PanelKind::Dock)),
+    );
+    send_settings(
+        &mut app,
+        Message::DesktopEditor(desktop::Message::Anchor(Anchor::Bottom)),
+    );
+    send_settings(
+        &mut app,
+        Message::DesktopEditor(desktop::Message::AutoHide(AutoHide::Always)),
+    );
+    capture(&mut app, "auto-hide-dock");
+    send_settings(&mut app, Message::DesktopEditor(desktop::Message::Discard));
+    drop(app);
+
+    // The panel split into islands.
+    let key = crate::desktop::islands::key(PanelKind::Panel);
+    let on = dock_islands_core::Settings {
+        enabled: true,
+        ..Default::default()
+    };
+    seed(
+        &cosmic.join("config/cosmic"),
+        &[(key.namespace(), key.key(), &ron::to_string(&on).unwrap())],
+    );
+    let mut app = open_isolated_editor(&root);
+    let store = app.desktop.store().unwrap().clone();
+    crate::desktop::islands::fixture_installed(store.fixture_root().unwrap());
+    app.desktop.islands.installation = crate::desktop::islands::Installation::discover(&store);
+    app.desktop.islands.compatible = true;
+    assert!(app.desktop.islands.installation.installed());
+    send_settings(&mut app, Message::Page(Page::DesktopDock));
+    capture(&mut app, "segmented-panel");
 }

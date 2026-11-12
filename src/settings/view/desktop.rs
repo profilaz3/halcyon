@@ -16,6 +16,7 @@ mod islands;
 mod panel;
 mod penumbra;
 pub(super) mod preview;
+mod closeup;
 
 pub(super) const WARN: Color = Color::from_rgb(0.96, 0.78, 0.45);
 pub(super) const ERROR: Color = Color::from_rgb(0.96, 0.58, 0.54);
@@ -201,10 +202,7 @@ impl Settings {
         let editor = &self.desktop;
         let mut parts = Vec::new();
         if editor.current().is_some_and(|draft| draft.installed()) {
-            parts.push(self.scene_frame(
-                self.desktop_preview((self.content_width() * 0.22).clamp(130., 180.)),
-                "",
-            ));
+            parts.push(self.scene_frame(self.bar_closeup(), ""));
         }
         parts.push(self.desktop_dock_page());
         column::with_children(parts).spacing(20).into()

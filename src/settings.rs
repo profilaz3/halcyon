@@ -865,6 +865,9 @@ pub struct Settings {
     /// The latest change when this window opened; the Undo bar offers only
     /// changes made since, so an old change doesn't follow you around.
     undo_baseline: Option<String>,
+    /// The change that kept an unfinished layout on reopening, so the
+    /// footer can say so beside its Undo.
+    layout_kept: Option<String>,
     /// The color picker that is open, if any; one at a time.
     color_well: Option<color_well::Well>,
     /// The widget font list that is open, and its search.
@@ -1142,6 +1145,7 @@ impl cosmic::Application for Settings {
             last_desktop_change: None,
             last_desktop_summary: None,
             undo_baseline: navigation::latest_desktop_change().map(|(_, _, id)| id),
+            layout_kept: None,
             color_well: None,
             font_menu: None,
             font_search: String::new(),
@@ -1844,8 +1848,7 @@ impl cosmic::Application for Settings {
             && matches!(&message, Message::Placement(edit) if !matches!(edit,
                 placement::Message::Select(_) | placement::Message::ClearSelection
                 | placement::Message::Cancel | placement::Message::Undo | placement::Message::Escape
-                | placement::Message::CancelDrag | placement::Message::Leave | placement::Message::Guides(_))
-                && !(matches!(edit, placement::Message::Save) && self.legacy_layout_recovery()))
+                | placement::Message::CancelDrag | placement::Message::Leave | placement::Message::Guides(_)))
         {
             // Landing previews never commit gestures, including delayed input
             // from a canvas that was just applied or cancelled.
@@ -2683,24 +2686,11 @@ impl Settings {
                 // column reorder in progress owns it until drop or cancel.
                 if self.reorder.source.is_some()
                     || self.devbox_reorder.source.is_some()
-                    || (!self.placement_active()
-                        && !(self.legacy_layout_recovery()
-                            && matches!(
-                                message,
-                                placement::Message::Save
-                                    | placement::Message::Cancel
-                                    | placement::Message::Undo
-                            )))
+                    || !self.placement_active()
                 {
                     return Task::none();
                 }
-                let recovering =
-                    self.legacy_layout_recovery() && matches!(message, placement::Message::Save);
-                let task = self.update_placement(message);
-                if recovering && !self.error && !self.placement.dirty() {
-                    self.finish_layout_recovery();
-                }
-                return task;
+                return self.update_placement(message);
             }
             Message::DesktopEditor(message) => {
                 let bar = matches!(message, desktop::Message::Select(_));
