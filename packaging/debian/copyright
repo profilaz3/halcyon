@@ -9,8 +9,18 @@ License: GPL-3.0-or-later
 Comment: Artwork origins are documented in ASSETS.md. Dependency declarations
  and their license texts are provided in THIRD_PARTY.md and
  THIRD_PARTY_LICENSES.txt. Dependencies retain their respective licenses.
- The two GPL-3.0-only dependencies make the combined binary GPL version 3,
- as explained in THIRD_PARTY.md; Halcyon's own source is GPL-3.0-or-later.
+ The GPL-3.0-only dependencies and the GPL-3.0-only rain glass shader make
+ the combined binary GPL version 3 only, as explained in THIRD_PARTY.md;
+ Halcyon's own source is GPL-3.0-or-later.
+
+Files: src/rain/glass.wgsl
+Copyright: motixo and Cosmic Forge contributors
+ 2026 profilaz3 and Halcyon contributors
+License: GPL-3.0-only
+Comment: Water lens outline and lighting adapted from Cosmic Forge
+ (https://github.com/motixo/cosmic-forge-shaders, shaders/rain-glass.frag at
+ revision e3dba3b36aa03afb14c0c0641bef8cd61bd3f996). The shader is compiled
+ into the halcyon binary.
 
 Files: usr/lib/cosmic-ext-halcyon-islands/cosmic-panel-islands
 Copyright: System76, Inc. and cosmic-panel contributors

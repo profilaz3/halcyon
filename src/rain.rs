@@ -83,7 +83,7 @@ impl Default for Preferences {
             size: 30,
             speed: 45,
             wind: 0,
-            mist: 15,
+            mist: 30,
             refraction: 55,
             quality: Quality::Balanced,
             pause_on_battery: true,

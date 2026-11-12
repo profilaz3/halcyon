@@ -74,6 +74,8 @@ fn rain_gpu_benchmark() {
     .unwrap();
     let mut results = Vec::new();
     let stress = std::env::var_os("HALCYON_EFFECT_STRESS").is_some();
+    // Optional comma-separated effect names (rain, snow, fog, clouds) limit the run.
+    let only = std::env::var("HALCYON_RAIN_BENCH_EFFECT").ok();
     let cases = if stress {
         vec![
             (3840, 2160, Quality::Eco, 1),
@@ -83,11 +85,14 @@ fn rain_gpu_benchmark() {
             (2560, 1440, Quality::Balanced, 2),
         ]
     } else {
-        vec![
-            (1920, 1080, Quality::Balanced, 1),
-            (2560, 1440, Quality::Balanced, 1),
-            (3840, 2160, Quality::Balanced, 1),
-        ]
+        let mut cases = Vec::new();
+        for (width, height) in [(1920, 1080), (2560, 1440)] {
+            for quality in [Quality::Eco, Quality::Balanced, Quality::Smooth] {
+                cases.push((width, height, quality, 1));
+            }
+        }
+        cases.push((3840, 2160, Quality::Balanced, 1));
+        cases
     };
     for (width, height, quality, displays) in cases {
         let pixels = source
@@ -147,6 +152,13 @@ fn rain_gpu_benchmark() {
             (Effect::Fog, Mode::Procedural),
             (Effect::Clouds, Mode::Procedural),
         ] {
+            if only.as_deref().is_some_and(|only| {
+                !only
+                    .split(',')
+                    .any(|name| format!("{effect:?}").eq_ignore_ascii_case(name.trim()))
+            }) {
+                continue;
+            }
             let mut preferences = Preferences {
                 enabled: true,
                 mode,
@@ -201,6 +213,7 @@ fn rain_gpu_benchmark() {
                             Vec::new()
                         },
                         fade: 1.,
+                        warmup: Vec::new(),
                     })
                     .collect();
                 let prep_started = Instant::now();

@@ -25,7 +25,7 @@ release targets Pop!_OS 24.04 with COSMIC.
 | Controller | `halcyon-ctl` (start, stop, settings, focus commands, used by shortcuts) |
 | User service | `halcyon.service` |
 | Homepage | https://github.com/profilaz3/halcyon |
-| License | GPL-3.0-or-later (metadata: CC0-1.0) |
+| License | GPL-3.0-or-later AND GPL-3.0-only (Halcyon's own code is GPL-3.0-or-later; the rain glass shader adapted from Cosmic Forge is GPL-3.0-only, see THIRD_PARTY.md. Metadata: CC0-1.0) |
 | Maintainer | profilaz3 <261673162+profilaz3@users.noreply.github.com> |
 
 ## Layout under a prefix

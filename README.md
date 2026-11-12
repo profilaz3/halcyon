@@ -130,4 +130,4 @@ Bind `halcyon --toggle drawer` to a key in **COSMIC Settings → Keyboard → Ke
 
 [Calendar setup](docs/CALENDAR.md) · [Report a bug](https://github.com/profilaz3/halcyon/issues) · [Build & contribute](docs/DEVELOPMENT.md) · [Privacy](docs/PRIVACY.md)
 
-[GPL-3.0-or-later](LICENSE) · [Third-party notices](THIRD_PARTY.md) · [Screenshots](docs/screenshots/055/README.md) · [Illustration sources](docs/presentation/055-readme/README.md)
+[GPL-3.0-or-later AND GPL-3.0-only](LICENSE) · [Third-party notices](THIRD_PARTY.md) · [Screenshots](docs/screenshots/055/README.md) · [Illustration sources](docs/presentation/055-readme/README.md)

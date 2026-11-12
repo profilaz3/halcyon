@@ -1,7 +1,13 @@
 //! Persistent, per-surface GPU resources; the pipeline/device are Iced's own.
 //! The effect field is smaller than the wallpaper. Static beads and background
 //! mipmaps are cached; moving drops never trigger image decoding or readbacks.
-use super::{Effect, Mode, Preferences, simulation::Simulation, weather::Level};
+//! Rain keeps one more small texture between frames: the condensation on the
+//! glass, which moving drops wipe away and which slowly fogs over again.
+use super::{
+    Effect, Mode, Preferences,
+    simulation::{INSTANCE, LIMIT, Simulation},
+    weather::Level,
+};
 use crate::desktop::wallpaper::media::Pixels;
 use cosmic::iced::widget::shader::{self, Action, Viewport};
 use cosmic::iced::{Event, Rectangle, mouse, wgpu, window};
@@ -215,25 +221,45 @@ impl<M> shader::Program<M> for Program {
         } else {
             Vec::new()
         };
+        let time = self.fixed_time.unwrap_or(state.time);
+        let mut warmup = Vec::new();
+        // A fixed-time capture has no history, so replay the last seconds to
+        // show the paths drops have wiped through the condensation.
+        let replay = self
+            .fixed_time
+            .filter(|_| p.effect == Effect::Rain && p.intensity > 0)
+            .map(|t| ((t.clamp(0., 60.) * 30.) as usize).min(WARMUP))
+            .unwrap_or(0);
         if p.hybrid() && (!state.seeded || state.density != Some(p.intensity)) {
             let mut sim = Simulation::default();
             let aspect = (bounds.width / bounds.height.max(1.)).clamp(0.1, 10.);
             sim.seed(aspect, p);
-            for _ in 0..self
+            let steps = self
                 .fixed_time
-                .map(|t| 60 + (t.clamp(0., 60.) * 30.) as u32)
-                .unwrap_or(0)
-            {
+                .map(|t| 60 + (t.clamp(0., 60.) * 30.) as usize)
+                .unwrap_or(0);
+            for step in 0..steps {
                 sim.step(1. / 30., aspect, p);
+                let left = steps - 1 - step;
+                if left > 0 && left <= replay {
+                    warmup.push((time - left as f32 / 30., sim.instances(p.trails)));
+                }
             }
             drops = sim.instances(p.trails);
+        } else {
+            warmup.extend(
+                (1..=replay)
+                    .rev()
+                    .map(|left| (time - left as f32 / 30., Vec::new())),
+            );
         }
         Primitive {
             scene: self.scene.clone(),
             preferences: p.clone(),
-            time: self.fixed_time.unwrap_or(state.time),
+            time,
             drops,
             fade: self.opacity(state),
+            warmup,
         }
     }
 }
@@ -242,20 +268,29 @@ pub struct Primitive {
     pub scene: Arc<Scene>,
     pub preferences: Preferences,
     pub time: f32,
-    pub drops: Vec<[f32; 5]>,
+    pub drops: Vec<[f32; INSTANCE]>,
     /// The scene's opacity over the plain wallpaper, from 0 to 1.
     pub fade: f32,
+    /// Earlier frames (time and drops, 1/30 s apart) replayed once before a
+    /// fixed-time frame, so condensation shows wiped paths. Empty when live.
+    pub warmup: Vec<(f32, Vec<[f32; INSTANCE]>)>,
 }
+/// At most eight seconds of frames are replayed before a fixed-time capture.
+const WARMUP: usize = 240;
 pub struct Pipeline {
     background_format: wgpu::TextureFormat,
     params: wgpu::BindGroupLayout,
     textures: wgpu::BindGroupLayout,
+    feedback: wgpu::BindGroupLayout,
     mip_layout: wgpu::BindGroupLayout,
     static_pass: wgpu::RenderPipeline,
     procedural: wgpu::RenderPipeline,
+    condense: wgpu::RenderPipeline,
     atmosphere: wgpu::RenderPipeline,
     drops: wgpu::RenderPipeline,
     composite: wgpu::RenderPipeline,
+    compose_snow: wgpu::RenderPipeline,
+    compose_atmosphere: wgpu::RenderPipeline,
     mipmap: wgpu::RenderPipeline,
     sampler: wgpu::Sampler,
 }
@@ -267,13 +302,25 @@ struct Resources {
     instances: wgpu::Buffer,
     fields: Fields,
     rain: bool,
+    effect: Effect,
     last_field: Option<[f32; 24]>,
     dynamic_dirty: bool,
-    last_drops: Vec<[f32; 5]>,
+    last_drops: Vec<[f32; INSTANCE]>,
+    /// The time of the last frame, for how far condensation has returned.
+    last_time: Option<f32>,
+    /// A fixed-time replay waiting for the next render: uniforms for every
+    /// step and the final frame, the steps' drops and their counts.
+    warmup: Option<Warmup>,
+    warm_time: Option<f32>,
     size: [u32; 2],
     bounds: Rectangle,
     static_key: [u8; 2],
     static_dirty: bool,
+}
+struct Warmup {
+    params: wgpu::Buffer,
+    drops: Option<wgpu::Buffer>,
+    counts: Vec<u32>,
 }
 fn floats(values: impl IntoIterator<Item = f32>) -> Vec<u8> {
     values.into_iter().flat_map(f32::to_le_bytes).collect()
@@ -346,13 +393,13 @@ fn render_pipeline(
             shader_location: 0,
         },
         wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32,
+            format: wgpu::VertexFormat::Float32x3,
             offset: 16,
             shader_location: 1,
         },
     ];
     let buffers = [wgpu::VertexBufferLayout {
-        array_stride: 20,
+        array_stride: (INSTANCE * 4) as u64,
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &attrs,
     }];
@@ -386,7 +433,10 @@ impl shader::Pipeline for Pipeline {
     fn new(device: &wgpu::Device, _: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Halcyon rain"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("rain.wgsl").into()),
+            // glass.wgsl is GPL-3.0-only code adapted from Cosmic Forge.
+            source: wgpu::ShaderSource::Wgsl(
+                concat!(include_str!("glass.wgsl"), include_str!("rain.wgsl")).into(),
+            ),
         });
         let params = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Rain parameters"),
@@ -401,7 +451,8 @@ impl shader::Pipeline for Pipeline {
                 count: None,
             }],
         });
-        let textures = texture_layout(device, 4, "Rain textures");
+        let textures = texture_layout(device, 5, "Rain textures");
+        let feedback = texture_layout(device, 4, "Rain condensation");
         let mip_layout = texture_layout(device, 2, "Wallpaper mipmaps");
         let mip_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Wallpaper downsample"),
@@ -417,12 +468,23 @@ impl shader::Pipeline for Pipeline {
             false,
             None,
         );
+        // Drops are premultiplied by coverage; a later drop lies on top.
         let procedural = render_pipeline(
             device,
             &shader,
             &[&params],
+            "procedural_vertex",
+            "lens_fragment",
+            wgpu::TextureFormat::Rgba16Float,
+            false,
+            Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+        );
+        let condense = render_pipeline(
+            device,
+            &shader,
+            &[&params, &feedback],
             "fullscreen",
-            "procedural",
+            "condense",
             wgpu::TextureFormat::Rgba16Float,
             false,
             None,
@@ -437,34 +499,33 @@ impl shader::Pipeline for Pipeline {
             false,
             None,
         );
-        let add = wgpu::BlendComponent {
-            src_factor: wgpu::BlendFactor::One,
-            dst_factor: wgpu::BlendFactor::One,
-            operation: wgpu::BlendOperation::Add,
-        };
         let drops = render_pipeline(
             device,
             &shader,
             &[&params],
             "drop_vertex",
-            "drop_fragment",
+            "lens_fragment",
             wgpu::TextureFormat::Rgba16Float,
             true,
-            Some(wgpu::BlendState {
-                color: add,
-                alpha: add,
-            }),
+            Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
         );
-        let composite = render_pipeline(
-            device,
-            &shader,
-            &[&params, &textures],
-            "composite_vertex",
-            "composite",
-            format,
-            false,
-            Some(wgpu::BlendState::ALPHA_BLENDING),
-        );
+        // Composition is opaque, so it replaces the target rather than blending
+        // over it: the pass never reads what lies underneath.
+        let compose = |fragment| {
+            render_pipeline(
+                device,
+                &shader,
+                &[&params, &textures],
+                "composite_vertex",
+                fragment,
+                format,
+                false,
+                None,
+            )
+        };
+        let composite = compose("composite");
+        let compose_snow = compose("compose_snow");
+        let compose_atmosphere = compose("compose_atmosphere");
         let background_format = if format.is_srgb() {
             wgpu::TextureFormat::Rgba8UnormSrgb
         } else {
@@ -491,12 +552,16 @@ impl shader::Pipeline for Pipeline {
             background_format,
             params,
             textures,
+            feedback,
             mip_layout,
             static_pass,
             procedural,
+            condense,
             atmosphere,
             drops,
             composite,
+            compose_snow,
+            compose_atmosphere,
             mipmap,
             sampler,
         }
@@ -509,8 +574,9 @@ impl Resources {
         pipeline: &Pipeline,
         pixels: &Pixels,
         size: [u32; 2],
-        rain: bool,
+        effect: Effect,
     ) -> Self {
+        let rain = effect == Effect::Rain;
         let mip_count = if rain {
             (pixels.width.max(pixels.height).ilog2() + 1).min(7)
         } else {
@@ -598,11 +664,11 @@ impl Resources {
         });
         let instances = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Bounded rain drops"),
-            size: (super::simulation::LIMIT * 20) as u64,
+            size: (LIMIT * INSTANCE * 4) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let fields = Fields::new(device, pipeline, &view, size, rain);
+        let fields = Fields::new(device, pipeline, &view, size, effect);
         Self {
             device: device.clone(),
             _background: background,
@@ -611,9 +677,13 @@ impl Resources {
             instances,
             fields,
             rain,
+            effect,
             last_field: None,
             dynamic_dirty: true,
             last_drops: Vec::new(),
+            last_time: None,
+            warmup: None,
+            warm_time: None,
             size,
             bounds: Rectangle::default(),
             static_key: [255, 255],
@@ -627,7 +697,17 @@ struct Fields {
     static_view: wgpu::TextureView,
     _dynamic: wgpu::Texture,
     dynamic_view: wgpu::TextureView,
-    composite: wgpu::BindGroup,
+    /// Rain only: condensation (alpha) and the blurred wallpaper it shows
+    /// (rgb), in two textures that take turns as the previous frame and the
+    /// next one.
+    fog: Vec<(wgpu::Texture, wgpu::TextureView)>,
+    /// Reads condensation `i` and writes the other one.
+    feedback: Vec<wgpu::BindGroup>,
+    /// Composes with condensation `i`.
+    composite: Vec<wgpu::BindGroup>,
+    current: usize,
+    /// New condensation textures start fully fogged.
+    fresh: bool,
 }
 impl Fields {
     fn new(
@@ -635,8 +715,9 @@ impl Fields {
         pipeline: &Pipeline,
         view: &wgpu::TextureView,
         size: [u32; 2],
-        rain: bool,
+        effect: Effect,
     ) -> Self {
+        let rain = effect == Effect::Rain;
         let static_texture = rain.then(|| {
             texture(
                 device,
@@ -650,10 +731,11 @@ impl Fields {
             .as_ref()
             .map(|t| t.create_view(&Default::default()))
             .unwrap_or_else(|| view.clone());
+        // Snow is drawn at full resolution during composition.
         let dynamic = texture(
             device,
             "Moving wallpaper effect",
-            size,
+            if effect == Effect::Snow { [1, 1] } else { size },
             if rain {
                 wgpu::TextureFormat::Rgba16Float
             } else {
@@ -662,35 +744,108 @@ impl Fields {
             1,
         );
         let dynamic_view = dynamic.create_view(&Default::default());
-        let composite = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Rain composition"),
-            layout: &pipeline.textures,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&pipeline.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&dynamic_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&static_view),
-                },
-            ],
-        });
+        let fog: Vec<_> = if rain {
+            let fog_size = [(size[0] / 4).clamp(8, 480), (size[1] / 4).clamp(8, 480)];
+            (0..2)
+                .map(|_| {
+                    let t = texture(
+                        device,
+                        "Rain condensation",
+                        fog_size,
+                        wgpu::TextureFormat::Rgba16Float,
+                        1,
+                    );
+                    let v = t.create_view(&Default::default());
+                    (t, v)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        // Binding 1 is always the sampler; the view given for it is unused.
+        fn textures<'a>(
+            sampler: &'a wgpu::Sampler,
+            views: &[&'a wgpu::TextureView],
+        ) -> Vec<wgpu::BindGroupEntry<'a>> {
+            views
+                .iter()
+                .enumerate()
+                .map(|(binding, view)| wgpu::BindGroupEntry {
+                    binding: binding as u32,
+                    resource: if binding == 1 {
+                        wgpu::BindingResource::Sampler(sampler)
+                    } else {
+                        wgpu::BindingResource::TextureView(view)
+                    },
+                })
+                .collect()
+        }
+        let feedback = fog
+            .iter()
+            .map(|(_, previous)| {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Rain condensation"),
+                    layout: &pipeline.feedback,
+                    entries: &textures(
+                        &pipeline.sampler,
+                        &[previous, previous, &dynamic_view, view],
+                    ),
+                })
+            })
+            .collect();
+        let condensation: Vec<_> = if rain {
+            fog.iter().map(|(_, v)| v).collect()
+        } else {
+            vec![&static_view]
+        };
+        let composite = condensation
+            .iter()
+            .map(|condensation| {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Rain composition"),
+                    layout: &pipeline.textures,
+                    entries: &textures(
+                        &pipeline.sampler,
+                        &[view, view, &dynamic_view, condensation, &static_view],
+                    ),
+                })
+            })
+            .collect();
         Self {
             _static: static_texture,
             static_view,
             _dynamic: dynamic,
             dynamic_view,
+            fog,
+            feedback,
             composite,
+            current: 0,
+            fresh: true,
         }
+    }
+    /// Advance condensation by one frame from the current water field.
+    fn condense(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        pipeline: &Pipeline,
+        params: &wgpu::BindGroup,
+    ) {
+        if self.fog.is_empty() {
+            return;
+        }
+        let next = 1 - self.current;
+        let mut draw = pass(
+            encoder,
+            &self.fog[next].1,
+            wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+            "Rain condensation",
+        );
+        draw.set_pipeline(&pipeline.condense);
+        draw.set_bind_group(0, params, &[]);
+        draw.set_bind_group(1, &self.feedback[self.current], &[]);
+        draw.draw(0..3, 0..1);
+        drop(draw);
+        self.current = next;
     }
 }
 fn pass<'a>(
@@ -754,23 +909,27 @@ impl shader::Primitive for Primitive {
             return;
         }
         let mut slot = self.scene.resources.lock().unwrap();
-        if slot.as_ref().is_none_or(|r| {
-            r.device != *device || r.rain != (self.preferences.effect == Effect::Rain)
-        }) {
+        let effect = self.preferences.effect;
+        if slot
+            .as_ref()
+            .is_none_or(|r| r.device != *device || r.rain != (effect == Effect::Rain))
+        {
             *slot = Some(Resources::new(
                 device,
                 queue,
                 pipeline,
                 &self.scene.pixels,
                 size,
-                self.preferences.effect == Effect::Rain,
+                effect,
             ));
         }
         let r = slot.as_mut().unwrap();
-        if r.size != size {
+        if r.size != size || r.effect != effect {
             let view = r._background.create_view(&Default::default());
-            r.fields = Fields::new(device, pipeline, &view, size, r.rain);
+            r.fields = Fields::new(device, pipeline, &view, size, effect);
+            r.effect = effect;
             r.size = size;
+            r.warm_time = None;
             r.static_dirty = true;
             r.dynamic_dirty = true;
         }
@@ -850,6 +1009,18 @@ impl shader::Primitive for Primitive {
         ]);
         values[16..20].copy_from_slice(&extra);
         values[20..].copy_from_slice(&tint);
+        if r.rain {
+            // One field texel, for antialiased drop edges.
+            values[17] = 1. / r.size[1] as f32;
+            // Eco draws fewer layers of water.
+            values[18] = if p.quality == super::Quality::Eco {
+                0.
+            } else {
+                1.
+            };
+        }
+        // One output pixel, so snowflakes never shrink below it.
+        values[23] = 1. / full.height.max(1.);
         // Crop changes only composition, so scrolling cannot invalidate a frozen field.
         r.dynamic_dirty |= r.last_drops != self.drops || r.last_field.as_ref() != Some(&values);
         r.last_drops.clone_from(&self.drops);
@@ -857,22 +1028,27 @@ impl shader::Primitive for Primitive {
         // So does a fade: only composition reads it.
         values[11] = self.fade.clamp(0., 1.);
         values[12..16].copy_from_slice(&crop);
-        let mut bytes = [0u8; 96];
-        for (chunk, value) in bytes.chunks_exact_mut(4).zip(values) {
-            chunk.copy_from_slice(&value.to_le_bytes());
+        if r.rain {
+            // Seconds of condensation since the last frame. A jump back (a
+            // new scene, a restarted clock) or a long pause adds little.
+            values[16] = match r.last_time {
+                Some(last) if self.time >= last => (self.time - last).min(0.25),
+                _ => 0.,
+            };
+            r.last_time = Some(self.time);
         }
-        queue.write_buffer(&r.uniform, 0, &bytes);
+        queue.write_buffer(&r.uniform, 0, &floats(values));
         if !self.drops.is_empty() {
             queue.write_buffer(
                 &r.instances,
                 0,
-                &floats(
-                    self.drops
-                        .iter()
-                        .take(super::simulation::LIMIT)
-                        .flat_map(|v| *v),
-                ),
+                &floats(self.drops.iter().take(LIMIT).flatten().copied()),
             );
+        }
+        if r.rain && !self.warmup.is_empty() && r.warm_time != Some(self.time) {
+            r.warm_time = Some(self.time);
+            r.warmup = Some(warmup(device, queue, &self.warmup, values));
+            r.dynamic_dirty = true;
         }
     }
     fn render(
@@ -919,28 +1095,44 @@ impl shader::Primitive for Primitive {
             drop(draw);
             r.static_dirty = false;
         }
-        if r.dynamic_dirty {
-            let mut draw = pass(
-                encoder,
-                &r.fields.dynamic_view,
-                wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                "Rain field",
-            );
-            draw.set_bind_group(0, &r.params, &[]);
-            if self.preferences.effect != Effect::Rain {
-                draw.set_pipeline(&pipeline.atmosphere);
-                draw.draw(0..3, 0..1);
-            } else if self.preferences.mode == Mode::Procedural {
-                draw.set_pipeline(&pipeline.procedural);
-                draw.draw(0..3, 0..1);
-            } else {
-                draw.set_pipeline(&pipeline.drops);
-                draw.set_vertex_buffer(0, r.instances.slice(..));
-                draw.draw(
-                    0..6,
-                    0..self.drops.len().min(super::simulation::LIMIT) as u32,
+        if r.fields.fresh && r.rain {
+            for (_, view) in &r.fields.fog {
+                pass(
+                    encoder,
+                    view,
+                    wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                    "Fogged glass",
                 );
             }
+        }
+        r.fields.fresh = false;
+        if let Some(warm) = r.warmup.take() {
+            let block = UNIFORM as u64;
+            for (step, &count) in warm.counts.iter().enumerate() {
+                encoder.copy_buffer_to_buffer(
+                    &warm.params,
+                    step as u64 * block,
+                    &r.uniform,
+                    0,
+                    block,
+                );
+                let drops = warm.drops.as_ref().map(|buffer| {
+                    let start = (step * LIMIT * INSTANCE * 4) as u64;
+                    (
+                        buffer.slice(start..start + (LIMIT * INSTANCE * 4) as u64),
+                        count,
+                    )
+                });
+                self.field(pipeline, encoder, r, drops);
+                r.fields.condense(encoder, pipeline, &r.params);
+            }
+            let last = warm.counts.len() as u64 * block;
+            encoder.copy_buffer_to_buffer(&warm.params, last, &r.uniform, 0, block);
+        }
+        if r.dynamic_dirty && self.preferences.effect != Effect::Snow {
+            let count = self.drops.len().min(LIMIT) as u32;
+            self.field(pipeline, encoder, r, Some((r.instances.slice(..), count)));
+            r.fields.condense(encoder, pipeline, &r.params);
         }
         r.dynamic_dirty = false;
         let mut draw = pass(encoder, target, wgpu::LoadOp::Load, "Rain composition");
@@ -953,10 +1145,131 @@ impl shader::Primitive for Primitive {
             1.,
         );
         draw.set_scissor_rect(clip.x, clip.y, clip.width, clip.height);
-        draw.set_pipeline(&pipeline.composite);
+        draw.set_pipeline(match self.preferences.effect {
+            Effect::Rain => &pipeline.composite,
+            Effect::Snow => &pipeline.compose_snow,
+            _ => &pipeline.compose_atmosphere,
+        });
         draw.set_bind_group(0, &r.params, &[]);
-        draw.set_bind_group(1, &r.fields.composite, &[]);
+        draw.set_bind_group(
+            1,
+            &r.fields.composite[r.fields.current.min(r.fields.composite.len() - 1)],
+            &[],
+        );
         draw.draw(0..3, 0..1);
+    }
+}
+/// Bytes of one uniform block.
+const UNIFORM: usize = 96;
+impl Primitive {
+    /// Draw the moving water, fog or cloud field.
+    fn field(
+        &self,
+        pipeline: &Pipeline,
+        encoder: &mut wgpu::CommandEncoder,
+        r: &Resources,
+        drops: Option<(wgpu::BufferSlice<'_>, u32)>,
+    ) {
+        let mut draw = pass(
+            encoder,
+            &r.fields.dynamic_view,
+            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+            "Rain field",
+        );
+        draw.set_bind_group(0, &r.params, &[]);
+        if self.preferences.effect != Effect::Rain {
+            draw.set_pipeline(&pipeline.atmosphere);
+            draw.draw(0..3, 0..1);
+            return;
+        }
+        if self.preferences.mode == Mode::Procedural {
+            draw.set_pipeline(&pipeline.procedural);
+            for range in procedural_draws(&r.last_field.unwrap_or_default()) {
+                if !range.is_empty() {
+                    draw.draw(0..6, range);
+                }
+            }
+        } else if let Some((instances, count)) = drops.filter(|(_, count)| *count > 0) {
+            draw.set_pipeline(&pipeline.drops);
+            draw.set_vertex_buffer(0, instances);
+            draw.draw(0..6, 0..count);
+        }
+    }
+}
+/// Procedural rain's lens quads: two impact grids of `CELLS` slots and three
+/// runoff sets of `LANES`, laid out as in rain.wgsl.
+const CELLS: u32 = 8192;
+const LANES: u32 = 512;
+/// The instance ranges that can reach the glass, in drawing order, from the
+/// frame's uniform values (aspect, wind and detail). Eco draws neither the
+/// finer impacts nor the narrow runoff lanes. The shader hides any slot that
+/// still falls outside.
+fn procedural_draws(values: &[f32; 24]) -> [std::ops::Range<u32>; 5] {
+    let aspect = values[0].clamp(0., 64.);
+    let detail = values[18] > 0.;
+    let shear = (values[5] * 0.3).abs();
+    let cells = |tile: f32| {
+        let columns = (aspect / tile).ceil() as u32 + 3;
+        (columns * ((1. / tile).ceil() as u32 + 3)).min(CELLS)
+    };
+    let lanes = |width: f32| (((aspect + shear) / width).ceil() as u32 + 4).min(LANES);
+    let span = |first: u32, count: u32| first..first + count;
+    let runoff = 2 * CELLS;
+    [
+        span(0, cells(0.05)),
+        span(CELLS, if detail { cells(0.034) } else { 0 }),
+        span(runoff, if detail { lanes(0.034) } else { 0 }),
+        span(runoff + LANES, lanes(0.07)),
+        span(runoff + 2 * LANES, lanes(0.07)),
+    ]
+}
+/// Upload a fixed-time replay: one uniform block per step, then the frame's own.
+fn warmup(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    steps: &[(f32, Vec<[f32; INSTANCE]>)],
+    last: [f32; 24],
+) -> Warmup {
+    let steps = &steps[steps.len().saturating_sub(WARMUP)..];
+    let mut blocks = Vec::with_capacity((steps.len() + 1) * UNIFORM);
+    for (time, _) in steps {
+        let mut values = last;
+        values[1] = *time;
+        values[16] = 1. / 30.;
+        blocks.extend(floats(values));
+    }
+    blocks.extend(floats(last));
+    let params = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Rain replay uniforms"),
+        size: blocks.len() as u64,
+        usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&params, 0, &blocks);
+    let stride = LIMIT * INSTANCE;
+    let drops = steps.iter().any(|(_, d)| !d.is_empty()).then(|| {
+        let mut values = vec![0.; steps.len() * stride];
+        for (step, (_, drops)) in steps.iter().enumerate() {
+            for (i, v) in drops.iter().take(LIMIT).flatten().enumerate() {
+                values[step * stride + i] = *v;
+            }
+        }
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Rain replay drops"),
+            size: (values.len() * 4) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&buffer, 0, &floats(values));
+        buffer
+    });
+    Warmup {
+        params,
+        drops,
+        counts: steps
+            .iter()
+            .map(|(_, d)| d.len().min(LIMIT) as u32)
+            .collect(),
     }
 }
 const MIPMAP: &str = r#"
@@ -993,12 +1306,43 @@ impl Scene {
                 bytes(&r._background)
                     + bytes(&r.fields._dynamic)
                     + r.fields._static.as_ref().map(bytes).unwrap_or(0)
+                    + r.fields.fog.iter().map(|(t, _)| bytes(t)).sum::<u64>()
             })
             .unwrap_or(0)
     }
 }
 #[cfg(test)]
 mod optimization_tests {
+    #[test]
+    fn rain_procedural_draws_cover_the_glass_and_skip_unused_slots() {
+        use super::{CELLS, LANES, procedural_draws};
+        let mut values = [0.; 24];
+        values[0] = 16. / 9.;
+        values[18] = 1.;
+        let full = procedural_draws(&values);
+        // Wide enough for every cell and lane on a 16:9 glass, far below the
+        // slots a full draw would run.
+        assert_eq!(full[0].len(), 39 * 23);
+        assert_eq!(full[1].start, CELLS);
+        assert_eq!(full[1].len(), 56 * 33);
+        assert!(full[3].len() >= 29 && full[3].len() < 40);
+        assert_eq!(full[4].start, 2 * CELLS + 2 * LANES);
+        let total: usize = full.iter().map(|r| r.len()).sum();
+        assert!(total < 3500, "{total}");
+        values[18] = 0.;
+        let eco = procedural_draws(&values);
+        assert!(eco[1].is_empty() && eco[2].is_empty());
+        assert_eq!(eco[0], full[0]);
+        // Wind slants the lanes, so more of them reach the glass; extreme
+        // shapes stay within the slots the shader lays out.
+        values[5] = -1.;
+        assert!(procedural_draws(&values)[3].len() > eco[3].len());
+        values[0] = 1e9;
+        values[18] = 1.;
+        let wide = procedural_draws(&values);
+        assert!(wide[0].len() as u32 <= CELLS && wide[2].len() as u32 <= LANES);
+        assert!(wide.windows(2).all(|w| w[0].end <= w[1].start));
+    }
     use super::*;
     use shader::{Pipeline as _, Primitive as _};
     #[test]
@@ -1032,6 +1376,7 @@ mod optimization_tests {
             time: 2.,
             drops: Vec::new(),
             fade: 1.,
+            warmup: Vec::new(),
         };
         let viewport = Viewport::with_physical_size(cosmic::iced::Size::new(1280, 720), 1.);
         let mut bounds = Rectangle {
@@ -1049,7 +1394,8 @@ mod optimization_tests {
             assert_eq!(r.fields._dynamic.format(), wgpu::TextureFormat::R16Float);
             r._background.clone()
         };
-        assert_eq!(scene.texture_bytes(), 64 * 64 * 4 + 320 * 180 * 2);
+        // Snow is drawn during composition, so its field is a placeholder.
+        assert_eq!(scene.texture_bytes(), 64 * 64 * 4 + 2);
         bounds.width = 1280.;
         bounds.height = 720.;
         primitive.prepare(&mut pipeline, &device, &queue, &bounds, &viewport);
