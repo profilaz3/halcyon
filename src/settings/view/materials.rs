@@ -201,7 +201,7 @@ impl Settings {
             vec![
                 elsewhere(
                     "Dock and panel",
-                    "Dock and panel › See-through",
+                    "Dock › See-through",
                     "material-open-dock",
                     crate::settings::navigation::DOCK_SEE_THROUGH,
                 ),

@@ -56,10 +56,9 @@ fn search_result_paths_never_repeat_a_step() {
             .crumb()
     };
     assert_eq!(crumb("dark", "Mode"), "Appearance");
-    assert_eq!(crumb("dock", "Dock"), "Dock and panel");
     assert_eq!(
         crumb("dock spacing", "Spacing"),
-        "Dock and panel › Dock › Corners, spacing and timing"
+        "Dock › Corners, spacing and timing"
     );
     assert_eq!(
         crumb("window corners", "Window corners"),
@@ -86,10 +85,11 @@ fn every_screen() -> Vec<(navigation::SearchHit, navigation::ObjectTab)> {
         } else {
             &[AppSettingsPage::Operation]
         };
-        let bars: &[Option<PanelKind>] = if page == Page::DesktopDock {
-            &[Some(PanelKind::Dock), Some(PanelKind::Panel)]
-        } else {
-            &[None]
+        // Each bar has its own page; the island sits on the panel.
+        let bars: &[Option<PanelKind>] = match page {
+            Page::DesktopDock => &[Some(PanelKind::Dock)],
+            Page::DesktopPanel | Page::ActivityIsland => &[Some(PanelKind::Panel)],
+            _ => &[None],
         };
         for &destination in destinations {
             for &bar in bars {

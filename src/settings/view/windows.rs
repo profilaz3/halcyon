@@ -120,6 +120,7 @@ impl Settings {
             heading("Windows", "How windows open, line up and take focus."),
             store_pill(self.windows.store(), accent),
         ));
+        items.push(self.home_glance(Page::DesktopWindows));
         if let Some(banner) = recovery_banner(
             editor.recovery(),
             editor.writable(),
