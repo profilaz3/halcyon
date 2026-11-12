@@ -538,8 +538,8 @@ Modelled on the behaviour reviewed in zickrian/isle, minus screen sharing.
   reveal. Mouse wheels scroll in lines and are ignored. Resting to open and
   closing after leaving are unchanged.
 - Protocol: `Snapshot.dnd` and `Command::Raise` were added, so the socket is
-  now `session-v3.sock` (`preview-{key}-v3.sock`). Island and desktop must be
-  installed together.
+  now `session-v3.sock` (`preview-{key}-v3.sock`; v4 since app rules).
+  Island and desktop must be installed together.
 
 Known limits: there is no idle detection, so "until someone is there" means
 until the pointer reaches the island or it is dismissed. Swipe accepts both
@@ -577,3 +577,33 @@ that opened the activity chooser. Nothing was dropped; the shape hid them.
   rows, each row's Dismiss and then Clear all, in reading order.
 - Each notification now records when it arrived (`Note.at_ms`), in memory
   only, for the row's age.
+
+### Groups, Recent and app rules (2026-11-12)
+
+- Groups: two or more notifications from one app (by desktop entry, else app
+  name) are one row, "Slack · 4 new", with the newest title and message
+  beneath. Activating it opens the group in place, newest first, each with its
+  own Dismiss and actions; one group is open at a time and its Dismiss clears
+  the group. Urgent notifications always stand alone above the groups. The
+  pill and the "+N" count still count notifications; closed, the pill title
+  reads "Slack · 4". An open group that would not fit moves to the top.
+- Recent: what was dismissed, timed out (its own `expire_timeout`, one wake
+  deadline, no polling) or closed by the app. Session only, in memory, last
+  20, one entry per id. Under the list as "Recent · N", folded by default,
+  with Clear. A row runs the notification while the server still holds it,
+  else opens the app from its desktop entry, else is plain text. With nothing
+  live, the idle island shows a Recent button and the chooser a Recent row.
+- App rules: right-click a row or group, or its More button, for Mute this
+  app, Always show, List only and Reset to default, shown in place of the
+  list (Escape goes back). Stored in `activity_island.app_rules` as
+  `{app, entry, rule}` (at most 32), sent with `Command::NoteRule`, which
+  carries only the app and its entry. Muted apps are never listed or kept;
+  Recent counts their arrivals. Always show reveals even when the island only
+  lists, still behind Do Not Disturb unless urgent. Settings lists the rules
+  under Activity island with a rule picker and Reset per app.
+- Protocol: `Command::NoteRule` was added, so the socket is now
+  `session-v4.sock` (`preview-{key}-v4.sock`).
+
+Known limits: Always show reveals the island even when COSMIC's own popups
+are on, so both can show. List only cannot stop COSMIC's popup when the island
+does not replace popups.

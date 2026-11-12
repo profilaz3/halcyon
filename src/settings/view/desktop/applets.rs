@@ -11,7 +11,7 @@ const SEARCH_FROM: usize = 8;
 
 impl Settings {
     pub(super) fn activity_preferences(&self) -> Element<'_, Message> {
-        let p = self.config.activity_island;
+        let p = &self.config.activity_island;
         let toggle = |name: &'static str, key: &'static str, on: bool, nested: bool| {
             let row = split(
                 label(name, if nested { 13. } else { 14. }, FG),
@@ -56,7 +56,8 @@ impl Settings {
                     "notification_text",
                     p.notification_text,
                     true,
-                ));
+                ))
+                .push(self.activity_app_rules());
         }
         controls = controls.push(toggle("System activities", "system", p.system, false));
         if p.system {
@@ -87,6 +88,53 @@ impl Settings {
             .into(),
         ));
         container(controls).id("activity-preferences").into()
+    }
+    /// Per-app notification rules chosen in the island. A muted app can
+    /// always be unmuted here.
+    fn activity_app_rules(&self) -> Element<'_, Message> {
+        use crate::activity_island::preferences::AppRule;
+        const RULES: [AppRule; 3] = [AppRule::Mute, AppRule::Always, AppRule::ListOnly];
+        let rules = &self.config.activity_island.app_rules;
+        let mut list =
+            cosmic::widget::column::with_children([label("App rules", 13., FG)]).spacing(8);
+        if rules.is_empty() {
+            list = list.push(label(
+                "No app rules yet. Right-click a notification in the island to add one.",
+                12.,
+                MUTED,
+            ));
+        }
+        for (index, rule) in rules.iter().enumerate() {
+            let mut name =
+                cosmic::widget::column::with_children([label(rule.app.clone(), 13., FG)]);
+            if !rule.entry.is_empty() {
+                name = name.push(label(rule.entry.clone(), 11., MUTED));
+            }
+            let controls = row::with_children(vec![
+                container(cosmic::widget::dropdown(
+                    &["Muted", "Always show", "List only"],
+                    RULES.iter().position(|r| *r == rule.rule),
+                    move |choice| Message::ActivityAppRule(index, RULES.get(choice).copied()),
+                ))
+                .id(cosmic::widget::Id::new(format!(
+                    "activity-app-rule-{index}"
+                )))
+                .into(),
+                button::text("Reset")
+                    .id(cosmic::widget::Id::new(format!(
+                        "activity-app-rule-reset-{index}"
+                    )))
+                    .on_press(Message::ActivityAppRule(index, None))
+                    .into(),
+            ])
+            .spacing(8)
+            .align_y(Alignment::Center);
+            list = list.push(split(name.into(), controls.into()));
+        }
+        container(list)
+            .id("activity-app-rules")
+            .padding([0, 0, 0, 20])
+            .into()
     }
     /// A top panel without the Activity island offers to add it, centred.
     pub(super) fn add_activity_island(

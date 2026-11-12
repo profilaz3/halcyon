@@ -66,6 +66,13 @@ fn monitor_layout(value: &Value) -> bool {
                 && l.size.is_none_or(crate::layout::valid_size)
         })
 }
+/// Activity island app rules, as the island itself would store them.
+fn app_rules(value: &Value) -> bool {
+    use crate::activity_island::preferences::{APP_RULES, AppRuleEntry, valid_rule};
+    serde_json::from_value::<Vec<AppRuleEntry>>(value.clone()).is_ok_and(|rules| {
+        rules.len() <= APP_RULES && rules.iter().all(|r| valid_rule(&r.app, &r.entry))
+    })
+}
 fn boolean(value: &Value) -> bool {
     value.is_boolean()
 }
@@ -287,6 +294,7 @@ pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/activity_island/network", "Activity network", Style, boolean;
     "/activity_island/bluetooth", "Activity Bluetooth", Style, boolean;
     "/activity_island/updates", "Activity updates", Style, boolean;
+    "/activity_island/app_rules", "Activity app rules", Style, app_rules;
     "/calendar_private", "Calendar privacy", Style, boolean;
     "/widget_monitors/clock/display", "Widget display", Layout, |v| v.is_null() || v.as_str().is_some_and(crate::displays::valid_name);
     "/widget_monitors/clock/hide_disconnected", "Disconnected widget", Layout, boolean;

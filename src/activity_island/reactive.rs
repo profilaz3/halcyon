@@ -305,6 +305,34 @@ impl Applet {
                 .on_press(Message::NotesClear),
             );
         }
+        if self.has_recent() && self.notes_shown() {
+            list = list.push(
+                widget::button::custom(
+                    widget::row([
+                        widget::icon::from_name("document-open-recent-symbolic")
+                            .symbolic(true)
+                            .size(16)
+                            .into(),
+                        widget::container(self.text("Recent", 13., alpha(palette.ink, reveal)))
+                            .width(Length::Fill)
+                            .into(),
+                        self.text(
+                            self.recent.len().to_string(),
+                            12.,
+                            alpha(palette.quiet, reveal),
+                        ),
+                    ])
+                    .spacing(10)
+                    .align_y(cosmic::iced::Alignment::Center),
+                )
+                .id("activity-choice-recent".into())
+                .width(Length::Fill)
+                .height(32)
+                .padding([6, 10])
+                .class(capsule_button(palette, tint, reveal, Role::Ghost))
+                .on_press(Message::ShowRecent),
+            );
+        }
         let dnd = self.snapshot.dnd;
         list = list.push(
             widget::button::custom(
@@ -337,119 +365,6 @@ impl Applet {
             .height(Length::Fill)
             .width(Length::Fill)
             .into()
-    }
-    /// Every notification, newest first: a row opens one, its own button
-    /// dismisses it, and Clear all closes them together. Rows beyond the
-    /// popup's room are counted rather than scrolled.
-    pub(super) fn list_view(
-        &self,
-        palette: Palette,
-        tint: Color,
-        reveal: f32,
-    ) -> Element<'_, Message> {
-        let rows = self.list_rows();
-        let text = self.snapshot.preferences.notification_text;
-        let center = cosmic::iced::Alignment::Center;
-        let mut list = widget::column([]).spacing(super::ROW_GAP);
-        for n in self.notes.iter().take(rows) {
-            let kind = Kind::Notification(n.id);
-            let detail = if text && !n.body.is_empty() {
-                format!("{} · {}", n.app, n.body)
-            } else {
-                n.app.clone()
-            };
-            let ink = if n.urgent {
-                palette.warning()
-            } else {
-                palette.ink
-            };
-            let lines = widget::column([
-                widget::row([
-                    widget::container(self.text(n.title.clone(), 13., alpha(ink, reveal)))
-                        .width(Length::Fill)
-                        .into(),
-                    self.text(
-                        super::note_age(n.at_ms, self.now_ms, self.format_24h),
-                        11.,
-                        alpha(palette.quiet, reveal),
-                    ),
-                ])
-                .spacing(8)
-                .align_y(center)
-                .into(),
-                self.text(detail, 12., alpha(palette.quiet, reveal)),
-            ])
-            .spacing(2);
-            let open = widget::button::custom(
-                widget::row([self.kind_icon(kind, 20), lines.into()])
-                    .spacing(10)
-                    .align_y(center),
-            )
-            .id(format!("activity-note-row-{}", n.id).into())
-            .width(Length::Fill)
-            .height(super::ROW_HEIGHT)
-            .padding([4, 10])
-            .class(capsule_button(palette, tint, reveal, Role::Ghost))
-            // Like the popup it stands for: the notification itself, or
-            // its card when the app gave it nothing to open.
-            .on_press(if n.default {
-                Message::NoteAction(n.id, "default".into())
-            } else {
-                Message::Select(kind)
-            });
-            let dismiss = self.tip(
-                palette,
-                widget::button::icon(
-                    widget::icon::from_name("window-close-symbolic").symbolic(true),
-                )
-                .id(format!("activity-note-row-dismiss-{}", n.id).into())
-                .icon_size(14)
-                .padding(7)
-                .width(28)
-                .height(28)
-                .class(capsule_button(palette, tint, reveal, Role::Ghost))
-                .on_press(Message::NoteDismiss(n.id)),
-                "Dismiss",
-                widget::tooltip::Position::Top,
-            );
-            list = list.push(
-                widget::row([open.into(), dismiss])
-                    .spacing(2)
-                    .align_y(center),
-            );
-        }
-        let more = self.notes.len().saturating_sub(rows);
-        let footer = widget::row([
-            widget::container(if more > 0 {
-                self.text(
-                    format!("and {more} more"),
-                    12.,
-                    alpha(palette.quiet, reveal),
-                )
-            } else {
-                widget::Space::new().into()
-            })
-            .width(Length::Fill)
-            .padding([0, 10])
-            .into(),
-            self.label_button(
-                palette,
-                "activity-note-clear",
-                "Clear all",
-                tint,
-                reveal,
-                Role::Ghost,
-                Some(Message::NotesClear),
-            ),
-        ])
-        .spacing(4)
-        .align_y(center);
-        list.push(widget::container(footer).padding(cosmic::iced::Padding {
-            top: super::LIST_FOOTER - 32. - super::ROW_GAP,
-            ..Default::default()
-        }))
-        .width(Length::Fill)
-        .into()
     }
 }
 
@@ -983,20 +898,8 @@ impl Applet {
     }
     /// An app icon for a notification, the kind's symbol otherwise.
     pub(super) fn kind_icon<'a>(&self, kind: Kind, size: u16) -> Element<'a, Message> {
-        if let Kind::Notification(id) = kind
-            && let Some(icon) = self.note(id).map(|n| n.icon.as_str()).filter(|i| !i.is_empty())
-        {
-            let handle = if icon.starts_with('/') {
-                widget::icon::from_path(std::path::PathBuf::from(icon))
-            } else {
-                widget::icon::from_name(icon)
-                    .size(size)
-                    .fallback(Some(widget::icon::IconFallback::Names(vec![
-                        "preferences-system-notifications-symbolic".into(),
-                    ])))
-                    .handle()
-            };
-            return widget::icon(handle).size(size).into();
+        if let Kind::Notification(id) = kind {
+            return self.note_icon(self.note(id), size);
         }
         widget::icon::from_name(kind.icon())
             .symbolic(true)
@@ -1016,9 +919,19 @@ impl Applet {
                 self.notes_ready = ready;
                 self.sync_popups()
             }
-            notifications::Event::Closed(id) => {
+            notifications::Event::Closed(id) | notifications::Event::Expired(id) => {
+                let alive = matches!(event, notifications::Event::Expired(_));
                 let shown = self.kind == Kind::Notification(id) && self.popup.is_some();
+                if let Some(note) = self.note(id).cloned() {
+                    self.remember(note, alive);
+                } else if !alive {
+                    // Gone from the server: Recent can no longer open it.
+                    for r in self.recent.iter_mut().filter(|r| r.note.id == id) {
+                        r.alive = false;
+                    }
+                }
                 self.forget_note(id);
+                self.arm_expiry();
                 if shown {
                     match self
                         .eligible_kinds()
@@ -1037,9 +950,21 @@ impl Applet {
                 }
                 note.at_ms = chrono::Utc::now().timestamp_millis();
                 let id = note.id;
+                // A replaced notification is live again, not recent.
+                self.recent.retain(|r| r.note.id != id);
+                if self.rule(&note) == Some(preferences::AppRule::Mute) {
+                    self.forget_note(id);
+                    self.muted += 1;
+                    return Task::none();
+                }
                 self.notes.retain(|n| n.id != id);
                 self.notes.insert(0, note);
-                self.notes.truncate(notifications::LIMIT);
+                // The oldest give way to Recent, still open on the server.
+                while self.notes.len() > notifications::LIMIT {
+                    let old = self.notes.pop().expect("more than the limit");
+                    self.remember(old, true);
+                }
+                self.arm_expiry();
                 let notes = &self.notes;
                 self.pending.retain(|p| notes.iter().any(|n| n.id == *p));
                 if self.popup.is_none() {
@@ -1050,11 +975,23 @@ impl Applet {
         }
     }
     /// Reveals stand in for COSMIC's popups: off with them, or by choice.
+    /// An app set to Always show is revealed either way.
     fn note_reveals(&self) -> bool {
-        self.notes_shown()
-            && self.popups == Some(true)
-            && self.snapshot.preferences.reveals
-            && self.host_reveals
+        self.notes_shown() && self.host_reveals
+    }
+    /// Whether this notification may be revealed on arrival, before Do Not
+    /// Disturb has its say.
+    pub(super) fn reveals(&self, note: &notifications::Note) -> bool {
+        if !self.note_reveals() {
+            return false;
+        }
+        match self.rule(note) {
+            Some(preferences::AppRule::Always) => true,
+            Some(_) => false,
+            None => {
+                !note.low && self.popups == Some(true) && self.snapshot.preferences.reveals
+            }
+        }
     }
     /// The critical notification an automatic reveal is showing.
     pub(super) fn showing_critical(&self) -> Option<u32> {
@@ -1098,13 +1035,17 @@ impl Applet {
     }
     /// Drop what may no longer show; critical notifications go first.
     fn tidy_pending(&mut self) {
-        let (notes, dnd) = (&self.notes, self.snapshot.dnd);
-        self.pending.retain(|id| {
-            notes
-                .iter()
-                .find(|n| n.id == *id)
-                .is_some_and(|n| !n.low && (n.urgent || !dnd))
-        });
+        let dnd = self.snapshot.dnd;
+        let keep: Vec<u32> = self
+            .pending
+            .iter()
+            .copied()
+            .filter(|id| {
+                self.note(*id)
+                    .is_some_and(|n| self.reveals(n) && (n.urgent || !dnd))
+            })
+            .collect();
+        self.pending = keep;
         let urgent = |id: &u32| self.notes.iter().any(|n| n.id == *id && n.urgent);
         let (mut first, rest): (Vec<u32>, Vec<u32>) =
             self.pending.iter().copied().partition(urgent);
@@ -1128,7 +1069,7 @@ impl Applet {
             return Task::none();
         };
         let urgent = note.urgent;
-        if note.low || !self.note_reveals() || (self.snapshot.dnd && !urgent) {
+        if !self.reveals(note) || (self.snapshot.dnd && !urgent) {
             return Task::none();
         }
         let kind = Kind::Notification(id);

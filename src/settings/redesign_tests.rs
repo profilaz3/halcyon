@@ -1207,6 +1207,131 @@ fn reactive_activity_preferences_are_reachable_saved_and_undoable() {
 }
 
 #[test]
+fn activity_app_rules_list_changes_resets_and_undoes() {
+    use crate::activity_island::preferences::AppRule;
+    let name = "activity_app_rules_list_changes_resets_and_undoes";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let root = isolated_root();
+    // The Activity island on the panel, so its settings show.
+    seed(
+        &root.join("cosmic-root/config/cosmic"),
+        &[(
+            "com.system76.CosmicPanel.Panel",
+            "plugins_center",
+            "Some([\"io.github.profilaz3.Halcyon.Activity\"])",
+        )],
+    );
+    let rules = |config: &Config| {
+        config
+            .activity_island
+            .app_rules
+            .iter()
+            .map(|r| (r.app.clone(), r.rule))
+            .collect::<Vec<_>>()
+    };
+    // Empty, the list says how a rule is made.
+    {
+        let mut app = open_isolated_editor(&root);
+        send_settings(&mut app, Message::DesktopEditor(desktop::Message::Refresh));
+        send_settings(&mut app, Message::OpenBar(crate::desktop::panels::PanelKind::Panel));
+        send_settings(
+            &mut app,
+            Message::ObjectTab(crate::settings::navigation::ObjectTab::Content),
+        );
+        let size = Size::new(820., 600.);
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        native_reveal(&app, &mut native, "activity-app-rules");
+        assert!(
+            native
+                .all_text(app.settings_view())
+                .iter()
+                .any(|t| t.starts_with("No app rules yet. Right-click a notification"))
+        );
+    }
+    Config::save_activity_preferences(json!({"app_rules": [
+        {"app": "Slack", "entry": "com.slack.Slack", "rule": "mute"},
+        {"app": "Mail", "rule": "list_only"},
+    ]}))
+    .unwrap();
+    let mut app = open_isolated_editor(&root);
+    send_settings(&mut app, Message::DesktopEditor(desktop::Message::Refresh));
+    send_settings(&mut app, Message::OpenBar(crate::desktop::panels::PanelKind::Panel));
+    send_settings(
+        &mut app,
+        Message::ObjectTab(crate::settings::navigation::ObjectTab::Content),
+    );
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        for id in ["activity-app-rule-0", "activity-app-rule-reset-0", "activity-app-rule-1"] {
+            let b = native_reveal(&app, &mut native, id);
+            assert!(b.x >= 0. && b.x + b.width <= size.width, "{id} fits: {b:?}");
+        }
+        let text = native.all_text(app.settings_view());
+        // The dropdowns draw their own labels; the captures show them.
+        for shown in ["App rules", "Slack", "com.slack.Slack", "Mail", "Reset"] {
+            assert!(text.iter().any(|t| t == shown), "{shown} in {text:?}");
+        }
+        for (theme, suffix) in [
+            (cosmic::Theme::dark(), "dark"),
+            (cosmic::Theme::light(), "light"),
+        ] {
+            native_reveal(&app, &mut native, "activity-app-rules");
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("activity-app-rules-{}-{suffix}", size.width),
+            );
+        }
+    }
+    // A muted app is unmuted here, and the change undoes.
+    send_settings(&mut app, Message::ActivityAppRule(0, Some(AppRule::Always)));
+    assert_eq!(
+        rules(&Config::load()),
+        [("Slack".into(), AppRule::Always), ("Mail".into(), AppRule::ListOnly)]
+    );
+    assert_eq!(Config::load().activity_island.app_rules[0].entry, "com.slack.Slack");
+    send_settings(&mut app, Message::UndoDesktop);
+    assert_eq!(rules(&Config::load())[0], ("Slack".into(), AppRule::Mute));
+    // Reset removes the rule; the others and the other choices stay.
+    let mut native = crate::native_test::Native::new(Size::new(1280., 800.));
+    native_reveal(&app, &mut native, "activity-app-rule-reset-0");
+    native_click(&mut app, &mut native, "activity-app-rule-reset-0");
+    assert_eq!(rules(&Config::load()), [("Mail".into(), AppRule::ListOnly)]);
+    assert!(Config::load().activity_island.notifications);
+    send_settings(&mut app, Message::UndoDesktop);
+    assert_eq!(rules(&Config::load()).len(), 2, "reset undoes");
+    // Out of range does nothing.
+    send_settings(&mut app, Message::ActivityAppRule(9, None));
+    assert_eq!(rules(&Config::load()).len(), 2);
+    // Rules never enter shared setups, and the store checks their shape.
+    assert!(
+        crate::desktop::store::widget::FIELDS
+            .iter()
+            .all(|f| !f.pointer.starts_with("/activity_island/"))
+    );
+    let field = crate::desktop::store::widget::LOCAL_FIELDS
+        .iter()
+        .find(|f| f.pointer == "/activity_island/app_rules")
+        .expect("app rules are a local field");
+    assert!(field.accepts(&json!([{"app": "Slack", "rule": "always"}])));
+    assert!(!field.accepts(&json!([{"app": "", "rule": "always"}])));
+    assert!(!field.accepts(&json!([{"app": "Slack", "entry": "../x", "rule": "mute"}])));
+    assert!(!field.accepts(&json!([{"app": "Slack", "rule": "loud"}])));
+}
+
+#[test]
 fn whats_new_opens_from_updates_and_each_note_leads_to_its_setting() {
     let name = "whats_new_opens_from_updates_and_each_note_leads_to_its_setting";
     if desktop_test_child(

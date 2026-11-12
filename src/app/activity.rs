@@ -19,7 +19,7 @@ fn key(value: &str) -> String {
 }
 impl Cards {
     pub(super) fn publish_activity(&mut self) {
-        let next = self.config.activity_island;
+        let next = self.config.activity_island.clone();
         if self.activity.preferences.takes_popups() && !next.takes_popups() {
             crate::activity_island::popups::restore_soon();
         }
@@ -94,7 +94,7 @@ impl Cards {
             } else {
                 0
             },
-            preferences: self.config.activity_island,
+            preferences: self.config.activity_island.clone(),
             music_source: playing.map(|p| key(&format!("{}:{:?}", p.bus, p.owner))),
             quiet: Some(self.activity.quiet),
             dnd: self.activity.dnd,
@@ -169,8 +169,12 @@ impl Cards {
                     return Task::batch(self.refresh_visible_data());
                 }
             }
+            Event::Command(Command::NoteRule { app, entry, rule }) => {
+                return self.save_note_rule(&app, &entry, rule);
+            }
             Event::Command(command) => {
                 let music_command = match command {
+                    Command::NoteRule { .. } => return Task::none(),
                     Command::Focus { key } => {
                         if key == focus_key(&self.tools.focus) {
                             return self.update_tool(crate::tools::cards::Action::FocusToggle);
@@ -199,6 +203,31 @@ impl Cards {
             }
         }
         Task::none()
+    }
+}
+impl Cards {
+    /// An app rule chosen in the island: saved like a Settings change, so
+    /// Settings lists it and the island hears it back in the next snapshot.
+    fn save_note_rule(
+        &mut self,
+        app: &str,
+        entry: &str,
+        rule: Option<crate::activity_island::preferences::AppRule>,
+    ) -> Task<Message> {
+        let mut next = self.config.activity_island.clone();
+        next.set_rule(app, entry, rule);
+        if next.app_rules == self.config.activity_island.app_rules {
+            return Task::none();
+        }
+        match crate::config::Config::save_activity_preferences(
+            serde_json::json!({ "app_rules": next.app_rules }),
+        ) {
+            Ok(config) => self.apply_config(config),
+            Err(error) => {
+                eprintln!("Activity island rule not saved: {error}");
+                Task::none()
+            }
+        }
     }
 }
 /// What the player says it can do. Raising asks nothing of playback, as on

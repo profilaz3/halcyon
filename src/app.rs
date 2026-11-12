@@ -515,7 +515,7 @@ impl cosmic::Application for Cards {
     fn subscription(&self) -> Subscription<Message> {
         let mut subscriptions = vec![
             self.activity
-                .subscription(self.config.activity_island)
+                .subscription(self.config.activity_island.clone())
                 .map(Message::Activity),
         ];
         if self.config.rain.wanted() {
