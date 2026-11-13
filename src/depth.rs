@@ -119,7 +119,7 @@ impl Request {
         self.style_config().filter(eligible)
     }
     /// The clock's style as a whole configuration, eligible for depth or not.
-    fn style_config(&self) -> Option<Config> {
+    pub(crate) fn style_config(&self) -> Option<Config> {
         if !self.style.is_object() {
             return None;
         }

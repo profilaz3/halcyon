@@ -11,6 +11,8 @@ pub(super) struct State {
     surfaces: Vec<Surface>,
     next: u64,
     native_state: Option<(std::path::PathBuf, Option<crate::watch::FileStamp>)>,
+    /// What cosmic-bg's state file said, and which cosmic-bg wrote it.
+    native_seen: Option<Seen>,
     pub lifecycle: lifecycle::State,
     /// The scene the surfaces show. When it goes quiet (calm weather, or the
     /// effect turned off) it fades out before the surfaces are removed; a
@@ -19,6 +21,28 @@ pub(super) struct State {
     retiring: Option<u64>,
     /// The clock behind the glass and the output it stands on.
     behind: Option<(crate::displays::WlOutput, Arc<gpu::Behind>)>,
+}
+/// cosmic-bg's state file and the cosmic-bg process running when it was read.
+pub(super) type Seen = (Option<Vec<u8>>, Option<(u32, u64)>);
+/// What a rewrite of cosmic-bg's state file means.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Receipt {
+    /// The same cosmic-bg wrote the same pictures again: its rotation timer
+    /// rewrites the file every few minutes even for a single picture.
+    Same,
+    /// A new cosmic-bg wrote the same pictures: its new Background surfaces
+    /// now lie over the effect's, so the effect's are made again on top.
+    Restarted,
+    /// The pictures changed.
+    Changed,
+}
+pub(super) fn receipt(before: Option<&Seen>, now: &Seen) -> Receipt {
+    match before {
+        Some((content, _)) if *content != now.0 => Receipt::Changed,
+        Some((_, Some(process))) if now.1 == Some(*process) => Receipt::Same,
+        Some(_) => Receipt::Restarted,
+        None => Receipt::Changed,
+    }
 }
 struct Surface {
     output: crate::displays::Output,
@@ -186,8 +210,12 @@ impl State {
         self.surfaces
             .iter()
             .filter_map(|s| s.picture.clone().map(|p| (p, s.stamp)))
-            .chain(self.native_state.iter().cloned())
             .collect()
+    }
+    /// cosmic-bg's state file, watched apart from the pictures: it is
+    /// rewritten without any picture changing.
+    pub fn receipt_path(&self) -> Option<(std::path::PathBuf, Option<crate::watch::FileStamp>)> {
+        self.native_state.clone()
     }
     pub fn ready(
         &mut self,
@@ -329,6 +357,26 @@ impl Cards {
             },
         )
     }
+    /// cosmic-bg rewrote its state file. Only a change of picture reloads
+    /// the wallpaper (and the clock cut from it); a new cosmic-bg only makes
+    /// the effect's surfaces again; a timed rewrite changes nothing.
+    pub(super) fn rain_receipt(&mut self) -> Task<Message> {
+        let Some((path, stamp)) = self.rain.native_state.as_mut() else {
+            return Task::none();
+        };
+        *stamp = crate::watch::file_stamp(path);
+        let now = (media::read_state(path), media::cosmic_bg_process());
+        let before = self.rain.native_seen.replace(now.clone());
+        match receipt(before.as_ref(), &now) {
+            Receipt::Same => Task::none(),
+            Receipt::Restarted => self.rain.invalidate(),
+            Receipt::Changed => {
+                self.depth.invalidate();
+                let rain = self.rain.invalidate();
+                Task::batch([rain, self.wallpaper_colors_changed()])
+            }
+        }
+    }
     pub(super) fn rain_sync(&mut self) -> Task<Message> {
         if !self.config.rain.wanted() {
             self.rain.lifecycle = Default::default();
@@ -365,6 +413,7 @@ impl Cards {
             // including restarts with the same image. Remap above its new
             // Background layer without changing its config or owning its PID.
             self.rain.native_state = Some((path.clone(), crate::watch::file_stamp(&path)));
+            self.rain.native_seen = Some((media::read_state(&path), media::cosmic_bg_process()));
         }
         let mut tasks = Vec::new();
         let mut kept = Vec::new();

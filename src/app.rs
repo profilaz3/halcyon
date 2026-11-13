@@ -172,6 +172,8 @@ pub enum Message {
     RainRetired(u64),
     /// Look for rain surfaces whose frames stopped coming.
     RainWatch(Instant),
+    /// cosmic-bg rewrote its state file.
+    RainReceipt,
     RainReady(
         window::Id,
         u64,
@@ -592,6 +594,10 @@ impl cosmic::Application for Cards {
                 subscriptions.push(
                     crate::watch::image_files(paths).map(|_| Message::WallpaperColorsChanged),
                 );
+            }
+            if let Some(receipt) = self.rain.receipt_path() {
+                subscriptions
+                    .push(crate::watch::image_files(vec![receipt]).map(|_| Message::RainReceipt));
             }
         }
         if let Some(deadline) = self.wake_deadline() {
@@ -1168,6 +1174,7 @@ impl Cards {
             }
             Message::RainRetired(generation) => self.rain.retired(generation),
             Message::RainWatch(now) => self.rain.watch(now),
+            Message::RainReceipt => self.rain_receipt(),
             Message::RainReady(id, generation, entry, pixels, stamp) => {
                 self.rain.ready(id, generation, entry, pixels, stamp);
                 Task::none()

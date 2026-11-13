@@ -1101,3 +1101,158 @@ fn rain_procedural_field_continues_across_the_hourly_wrap() {
         );
     }
 }
+
+/// With wallpaper depth, the clock stands between the Ridge's sky and its
+/// ridge under every effect: the rain surface draws the cut clock, so the
+/// ridge stays in front of it and the effect covers both. Writes captures
+/// to `HALCYON_RAIN_EVIDENCE` when it is set.
+#[test]
+fn rain_effects_keep_the_ridge_in_front_of_the_depth_clock() {
+    if std::env::var_os("HALCYON_RAIN_GPU_TEST").is_none() {
+        return;
+    }
+    use crate::widget_style::resolver::{ClockFace, ClockSurface, ClockWeight};
+    let (width, height) = (1920u32, 1080u32);
+    // cosmic-bg's Zoom: cover the output, centred.
+    let wallpaper = image::load_from_memory(crate::depth::PICTURE)
+        .unwrap()
+        .resize_to_fill(width, height, image::imageops::FilterType::Triangle)
+        .to_rgba8();
+    let mut config = crate::config::Config::default();
+    config.appearance.family = Some(crate::desktop_theme::Family::Soft);
+    config.appearance.wallpaper_light = false;
+    config.clock.depth = true;
+    config.clock.lighting = crate::depth::Lighting::Off;
+    config.clock.face = Some(ClockFace::Digital);
+    config.clock.surface = Some(ClockSurface::None);
+    config.clock.weight = Some(ClockWeight::Bold);
+    config.clock.italic = Some(false);
+    config.clock.show_date = false;
+    config.clock.scale = 200;
+    let frame = crate::depth::Frame {
+        screen: [width as f32, height as f32],
+        origin: [560., 188.],
+        size: [800., 330.],
+        scale: 1.,
+    };
+    let time = chrono::NaiveDate::from_ymd_opt(2026, 11, 13)
+        .unwrap()
+        .and_hms_opt(18, 59, 0)
+        .unwrap();
+    let cut = crate::depth::public_clock(
+        &config,
+        frame.clone(),
+        crate::desktop::wallpaper::ScalingMode::Zoom,
+        time,
+    )
+    .expect("the Ridge cuts the clock");
+    let plain = crate::depth::draw_plain(&config, &frame, time).unwrap();
+    assert_eq!((plain.width, plain.height), (cut.width, cut.height));
+    // Ink the ridge hides, and ink left standing in the sky, in output
+    // pixels.
+    let (x0, y0) = (frame.origin[0] as u32, frame.origin[1] as u32);
+    let mut hidden = Vec::new();
+    let mut kept = Vec::new();
+    for (i, (p, c)) in plain
+        .rgba
+        .chunks_exact(4)
+        .zip(cut.rgba.chunks_exact(4))
+        .enumerate()
+    {
+        let at = (x0 + i as u32 % cut.width, y0 + i as u32 / cut.width);
+        if p[3] > 200 && c[3] < 8 {
+            hidden.push(at);
+        } else if p[3] > 200 && c[3] > 200 {
+            kept.push(at);
+        }
+    }
+    assert!(
+        hidden.len() > 2_000 && kept.len() > 2_000,
+        "{} {}",
+        hidden.len(),
+        kept.len()
+    );
+    let behind = std::sync::Arc::new(gpu::Behind {
+        pixels: cut.clone(),
+        rect: [
+            frame.origin[0] / width as f32,
+            frame.origin[1] / height as f32,
+            frame.size[0] / width as f32,
+            frame.size[1] / height as f32,
+        ],
+    });
+    let scene = gpu::Scene::new(crate::desktop::wallpaper::media::Pixels {
+        width,
+        height,
+        rgba: wallpaper.clone().into_raw(),
+    });
+    let mut native =
+        crate::native_test::Native::with_backend(Size::new(width as f32, height as f32), "wgpu");
+    let theme = cosmic::Theme::dark();
+    let evidence = std::env::var_os("HALCYON_RAIN_EVIDENCE").map(std::path::PathBuf::from);
+    let save = |name: &str, image: &image::RgbaImage| {
+        if let Some(root) = &evidence {
+            std::fs::create_dir_all(root).unwrap();
+            image.save(root.join(format!("{name}.png"))).unwrap();
+            let crop = image::imageops::crop_imm(image, 500, 140, 920, 440).to_image();
+            crop.save(root.join(format!("{name}-crop.png"))).unwrap();
+        }
+    };
+    // Effects off: the cut clock on its own surface over the wallpaper.
+    let mut off = wallpaper.clone();
+    let clock = image::RgbaImage::from_raw(cut.width, cut.height, cut.rgba.clone()).unwrap();
+    image::imageops::overlay(&mut off, &clock, x0 as i64, y0 as i64);
+    save("ridge-depth-off", &off);
+    let near = |a: &image::Rgba<u8>, b: &image::Rgba<u8>| {
+        a.0.iter()
+            .zip(b.0)
+            .take(3)
+            .map(|(a, b)| u32::from(a.abs_diff(b)))
+            .sum::<u32>()
+            < 30
+    };
+    for effect in [Effect::Rain, Effect::Snow, Effect::Fog, Effect::Clouds] {
+        let mut render = |with: bool| {
+            scene.set_behind(with.then(|| behind.clone()));
+            let view: cosmic::Element<'_, ()> = cosmic::iced::widget::Shader::new(gpu::Program {
+                scene: scene.clone(),
+                preferences: Preferences {
+                    enabled: true,
+                    effect,
+                    mode: Mode::Procedural,
+                    intensity: 60,
+                    ..Default::default()
+                },
+                running: false,
+                fixed_time: Some(11.),
+                fade: Default::default(),
+            })
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+            image::RgbaImage::from_raw(width, height, native.render(view, &theme)).unwrap()
+        };
+        let bare = render(false);
+        let shown = render(true);
+        scene.set_behind(None);
+        save(&format!("ridge-depth-{effect:?}").to_lowercase(), &shown);
+        let share = |points: &[(u32, u32)], same: bool| {
+            points
+                .iter()
+                .filter(|(x, y)| near(bare.get_pixel(*x, *y), shown.get_pixel(*x, *y)) == same)
+                .count() as f64
+                / points.len() as f64
+        };
+        // Where the ridge stands in front, the glass shows the ridge as it
+        // would without a clock; drops may still bend a little clock in.
+        let ridge = share(&hidden, true);
+        // In the sky the clock shows through the effect.
+        let sky = share(&kept, false);
+        println!("{effect:?}: ridge unchanged {ridge:.3}, clock seen in the sky {sky:.3}");
+        assert!(
+            ridge > 0.95,
+            "{effect:?}: the clock shows over the ridge ({ridge})"
+        );
+        assert!(sky > 0.6, "{effect:?}: the clock is lost ({sky})");
+    }
+}

@@ -107,8 +107,49 @@ pub(super) fn usable_origin(
 }
 
 impl Cards {
+    /// Where the clock lies on its whole output: the output, the output's
+    /// logical size, and where the area that layer surfaces may use starts
+    /// on it. Panels that keep space move that area off the output's corner;
+    /// they say which edges they keep. None when nothing explains the space
+    /// kept, so the clock is not placed on a guess.
+    pub(super) fn clock_spot(&mut self) -> Option<(crate::displays::Output, [f32; 2], [f32; 2])> {
+        let output = self.widget_output(Widget::Clock)?.clone();
+        let logical = output.info.logical_size?;
+        let logical = [logical.0 as f32, logical.1 as f32];
+        let screen = self.widget_screen(Widget::Clock);
+        let inset = if (0..2).all(|i| (logical[i] - screen[i]).abs() < 1.) {
+            [0., 0.]
+        } else {
+            let name = output.name()?.to_owned();
+            let now = Instant::now();
+            let fresh = self.glass.reserved.as_ref().is_some_and(|(n, at, _)| {
+                *n == name && now.saturating_duration_since(*at) < PANELS
+            });
+            if !fresh {
+                let store = crate::desktop::DesktopStore::from_env().ok()?;
+                let reserved = [PanelKind::Panel, PanelKind::Dock]
+                    .into_iter()
+                    .filter_map(|kind| PanelDraft::load(&store, kind).ok()?.reserves(&name))
+                    .collect();
+                self.glass.reserved = Some((name, now, reserved));
+            }
+            let (_, _, reserved) = self.glass.reserved.as_ref()?;
+            usable_origin(logical, screen, reserved)?
+        };
+        // The measured area keeps a fractional scale's precision, which the
+        // output's integer logical size rounds away: use it on every axis
+        // nothing keeps space on.
+        let full = [0, 1].map(|i| {
+            if (logical[i] - screen[i]).abs() < 1. {
+                screen[i]
+            } else {
+                logical[i]
+            }
+        });
+        Some((output, full, inset))
+    }
     /// Where the clock lies behind the glass, if it can: its output, and its
-    /// frame for drawing and place on the output as a fraction of it.
+    /// frame on the whole output for drawing and place on it as a fraction.
     fn glass_place(&mut self) -> Option<(Place, crate::depth::Frame)> {
         if !self.output_known
             || self.layout_editor.active
@@ -123,42 +164,20 @@ impl Cards {
         if !self.rain.drawn_on(&output.handle) {
             return None;
         }
-        let full = output.info.logical_size?;
-        let full = [full.0 as f32, full.1 as f32];
-        let screen = self.widget_screen(Widget::Clock);
-        let handle = output.handle.clone();
+        let (output, full, inset) = self.clock_spot()?;
         let scale = (output.info.scale_factor.max(1) as f32).min(2.);
-        let name = output.name().map(str::to_owned);
-        let inset = if (0..2).all(|i| (full[i] - screen[i]).abs() < 1.) {
-            [0., 0.]
-        } else {
-            let name = name?;
-            let now = Instant::now();
-            let fresh = self.glass.reserved.as_ref().is_some_and(|(n, at, _)| {
-                *n == name && now.saturating_duration_since(*at) < PANELS
-            });
-            if !fresh {
-                let store = crate::desktop::DesktopStore::from_env().ok()?;
-                let reserved = [PanelKind::Panel, PanelKind::Dock]
-                    .into_iter()
-                    .filter_map(|kind| PanelDraft::load(&store, kind).ok()?.reserves(&name))
-                    .collect();
-                self.glass.reserved = Some((name, now, reserved));
-            }
-            let (_, _, reserved) = self.glass.reserved.as_ref()?;
-            usable_origin(full, screen, reserved)?
-        };
+        let placed = self.placed_position(Widget::Clock).map(f32::round);
         let frame = crate::depth::Frame {
-            screen,
-            origin: self.placed_position(Widget::Clock).map(f32::round),
+            screen: full,
+            origin: [inset[0] + placed[0], inset[1] + placed[1]],
             size: self.widget_size(Widget::Clock),
             scale,
         };
         let place = Place {
-            output: handle,
+            output: output.handle,
             rect: [
-                (inset[0] + frame.origin[0]) / full[0],
-                (inset[1] + frame.origin[1]) / full[1],
+                frame.origin[0] / full[0],
+                frame.origin[1] / full[1],
                 frame.size[0] / full[0],
                 frame.size[1] / full[1],
             ],
@@ -182,8 +201,18 @@ impl Cards {
             self.rain.set_behind(None);
             return Task::none();
         };
-        // A clock that wallpaper depth already cut stands behind the glass
-        // as it is, so it stays behind the scene's foreground too.
+        // While the clock cut by the scene is on its way, it stays on its
+        // own surface rather than showing uncut behind the glass first.
+        if crate::depth::eligible(&self.config) && self.depth.waiting() {
+            if self.glass.place.is_some() || self.glass.picture.is_some() {
+                self.glass.clear();
+                self.rain.set_behind(None);
+            }
+            return Task::none();
+        }
+        // A clock that wallpaper depth cut stands behind the glass as it is:
+        // the scene's foreground stays in front of it, and the drops bend
+        // both together.
         if let Some(cut) = self.depth.pixels.clone() {
             let same = self.glass.place.as_ref() == Some(&place)
                 && self.glass.picture.is_some()
