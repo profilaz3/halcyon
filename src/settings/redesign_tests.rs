@@ -1192,6 +1192,10 @@ fn reactive_activity_preferences_are_reachable_saved_and_undoable() {
         }
         send_settings(&mut app, Message::ActivityPreference("bluetooth", false));
         assert!(!Config::load().activity_island.bluetooth && Config::load().activity_island.camera);
+        assert!(Config::load().activity_island.shelf, "the file shelf starts on");
+        send_settings(&mut app, Message::ActivityPreference("shelf", false));
+        assert!(!Config::load().activity_island.shelf, "the file shelf switch saves");
+        send_settings(&mut app, Message::ActivityPreference("shelf", true));
         native.capture(
             app.settings_view(),
             &cosmic::Theme::dark(),

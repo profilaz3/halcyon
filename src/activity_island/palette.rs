@@ -18,6 +18,8 @@ pub(super) mod accent {
     pub const NOTIFICATION: Color = Color::from_rgb(0.925, 0.627, 0.690);
     pub const TIMER: Color = Color::from_rgb(1.0, 0.624, 0.039);
     pub const JOB: Color = Color::from_rgb(0.243, 0.651, 1.0);
+    /// Files kept on the shelf.
+    pub const SHELF: Color = Color::from_rgb(0.204, 0.780, 0.690);
     /// Finished, connected, a camera in use.
     pub const DONE: Color = Color::from_rgb(0.196, 0.843, 0.294);
     /// Urgent notifications and failures.
@@ -178,7 +180,7 @@ pub(super) fn contrast(a: Color, b: Color) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    const ACCENTS: [Color; 11] = [
+    const ACCENTS: [Color; 12] = [
         accent::IDLE,
         accent::SYSTEM,
         accent::MUSIC,
@@ -190,6 +192,7 @@ mod tests {
         accent::DONE,
         accent::URGENT,
         accent::MICROPHONE,
+        accent::SHELF,
     ];
     fn surfaces() -> Vec<(&'static str, Palette)> {
         vec![
