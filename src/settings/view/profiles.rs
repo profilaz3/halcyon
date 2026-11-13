@@ -2290,6 +2290,14 @@ impl Settings {
                 ids.push(id);
             }
         }
+        // Handcrafted looks from resources/looks, by file name.
+        ids.extend(
+            crate::desktop::profiles::built_in_looks()
+                .iter()
+                .map(|look| look.id)
+                .filter(|id| !ids.contains(id))
+                .collect::<Vec<_>>(),
+        );
         ids.push(crate::desktop::profiles::CLEAN);
         let tiles = ids
             .into_iter()

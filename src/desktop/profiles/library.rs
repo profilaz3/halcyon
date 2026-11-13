@@ -202,6 +202,17 @@ impl<'a> ProfileLibrary<'a> {
         self.create(&profile)
     }
 
+    /// Replaces the stored profile `id` with `profile`, atomically. The look
+    /// must already exist; Before Themes keeps what it captured.
+    pub fn save(&self, id: &ProfileId, profile: &Profile) -> Result<(), ProfileError> {
+        if id.as_str() == "before-themes" {
+            return Err(ProfileError::Invalid(
+                "Your original appearance stays as it was captured. Save a copy instead.".into(),
+            ));
+        }
+        self.replace(id, profile)
+    }
+
     /// Deletes exactly the stored profile `id`.
     pub fn delete(&self, id: &ProfileId) -> Result<(), ProfileError> {
         if id.as_str() == "before-themes" {

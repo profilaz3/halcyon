@@ -1,4 +1,4 @@
-//! The profile record (`desktop-cards-profile`, up to version 9).
+//! The profile record (`desktop-cards-profile`, up to version 21).
 //!
 //! Version 2 adds the `windows` and `workspaces` sections and per-variant
 //! window `gaps` under Appearance; version 3 adds `wallpaper` and
@@ -51,7 +51,9 @@ pub const FORMAT: &str = "desktop-cards-profile";
 /// Frozen composition provenance requires version 10.
 /// Clock face, weight, italic and surface choices retain version 9.
 /// Clock scene lighting requires version 20; wallpaper rain keeps 19.
-pub const VERSION: u32 = 20;
+/// A one-line description requires version 21.
+pub const VERSION: u32 = 21;
+pub const VERSION_20: u32 = 20;
 pub const VERSION_19: u32 = 19;
 pub const VERSION_18: u32 = 18;
 pub const VERSION_17: u32 = 17;
@@ -76,6 +78,8 @@ pub const VERSION_2: u32 = 2;
 pub const LEGACY_VERSION: u32 = 1;
 pub const MAX_PROFILE_BYTES: usize = 256 * 1024;
 const MAX_NAME: usize = 80;
+/// The longest one-line description a look may carry.
+pub const MAX_DESCRIPTION: usize = 160;
 const SECTIONS_V1: [&str; 8] = [
     "format",
     "version",
@@ -892,6 +896,9 @@ pub struct Profile {
     pub format: String,
     pub version: u32,
     pub name: String,
+    /// One line about the look (version 21).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dock: Option<PanelLook>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -927,6 +934,15 @@ pub fn valid_name(name: &str) -> bool {
         && !name.chars().any(char::is_control)
 }
 
+/// A look description: trimmed, 1 to 160 characters, on one line.
+pub fn valid_description(text: &str) -> bool {
+    let trimmed = text.trim();
+    !trimmed.is_empty()
+        && trimmed == text
+        && text.chars().count() <= MAX_DESCRIPTION
+        && !text.chars().any(char::is_control)
+}
+
 fn is_false(value: &bool) -> bool {
     !*value
 }
@@ -941,6 +957,7 @@ impl Profile {
             format: FORMAT.into(),
             version: VERSION,
             name: name.to_string(),
+            description: None,
             dock: None,
             panel: None,
             appearance: None,
@@ -1012,8 +1029,11 @@ impl Profile {
     }
     /// The version this record is written as.
     pub fn written_version(&self) -> u32 {
-        if self.has_lighting() {
+        if self.description.is_some() {
             return VERSION;
+        }
+        if self.has_lighting() {
+            return VERSION_20;
         }
         if self.has_rain() {
             return VERSION_19;
@@ -1283,7 +1303,19 @@ impl Profile {
                 ));
             }
         }
-        if self.has_lighting() && self.version < VERSION {
+        if let Some(text) = &self.description {
+            if self.version < VERSION {
+                return Err(ProfileError::Invalid(
+                    "A look description needs look format version 21".into(),
+                ));
+            }
+            if !valid_description(text) {
+                return Err(ProfileError::Invalid(
+                    "A look description can be 1 to 160 characters, on one line.".into(),
+                ));
+            }
+        }
+        if self.has_lighting() && self.version < VERSION_20 {
             return Err(ProfileError::Invalid(
                 "Clock scene lighting needs look format version 20".into(),
             ));
@@ -1476,7 +1508,9 @@ pub fn import_local(bytes: &[u8]) -> Result<Profile, ProfileError> {
     };
     // The version a section first appears in.
     let since = |key: &str| {
-        if key == "package" {
+        if key == "description" {
+            Some(VERSION)
+        } else if key == "package" {
             Some(VERSION_14)
         } else if key == "composition" {
             Some(VERSION_10)

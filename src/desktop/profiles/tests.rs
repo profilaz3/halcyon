@@ -688,6 +688,48 @@ fn library_stores_named_profiles_by_generated_id_and_loading_creates_nothing() {
 }
 
 #[test]
+fn library_save_replaces_exactly_one_look_and_keeps_before_themes() {
+    let fixture = Fixture::new("profile-library-save");
+    let store = fixture.store();
+    let library = ProfileLibrary::new(&store);
+    let first = library.create(&Profile::new("Desk").unwrap()).unwrap();
+    let other = library.create(&Profile::new("Other").unwrap()).unwrap();
+    let mut edited = Profile::new("Desk, edited").unwrap();
+    edited.version = VERSION;
+    edited.description = Some("A quiet desk for long afternoons.".into());
+    library.save(&first, &edited).unwrap();
+    assert_eq!(library.load(&first).unwrap(), edited);
+    assert_eq!(library.load(&other).unwrap().name, "Other");
+    assert_eq!(library.list().unwrap().len(), 2, "saving creates nothing");
+    let missing = ProfileId::parse("p-missing").unwrap();
+    assert!(matches!(
+        library.save(&missing, &edited),
+        Err(ProfileError::NotFound(_))
+    ));
+    let before = ProfileId::parse("before-themes").unwrap();
+    assert!(library.save(&before, &edited).is_err());
+}
+
+#[test]
+fn descriptions_need_version_21_and_one_short_line() {
+    let mut profile = Profile::new("Described").unwrap();
+    profile.description = Some("Soft light and room to think.".into());
+    assert_eq!(profile.written_version(), VERSION);
+    let exported = export(&profile).unwrap();
+    let loaded = import(&exported.bytes).unwrap();
+    assert_eq!(loaded.description, profile.description);
+    let mut old = serde_json::from_slice::<Value>(&exported.bytes).unwrap();
+    old["version"] = json!(VERSION_20);
+    assert!(import(&serde_json::to_vec(&old).unwrap()).is_err());
+    for bad in ["", " padded", "two\nlines", &"x".repeat(161)] {
+        assert!(!valid_description(bad), "{bad:?}");
+    }
+    assert!(valid_description(&"x".repeat(160)));
+    profile.description = None;
+    assert!(profile.written_version() < VERSION);
+}
+
+#[test]
 fn library_escapes_through_symlinks_are_refused_before_anything_is_created() {
     use std::os::unix::fs::symlink;
     let profile = Profile::new("Desk").unwrap();

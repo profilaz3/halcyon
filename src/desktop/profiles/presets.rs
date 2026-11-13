@@ -664,7 +664,10 @@ pub fn occasion(id: &str) -> &'static str {
         "rose" => "Build something",
         "evening" => "Switch off from work",
         CLEAN => "Just your wallpaper",
-        _ => "Your desktop, your way",
+        _ => built_in_looks()
+            .iter()
+            .find(|look| look.id == id)
+            .map_or("Your desktop, your way", |look| look.description),
     }
 }
 
@@ -707,7 +710,88 @@ pub fn presets() -> Vec<Preset> {
 
 /// Additional studio layouts do not change the first-run wizard's choices.
 pub fn studio_presets() -> Vec<Preset> {
-    presets().into_iter().chain([spine(), ridge()]).collect()
+    presets()
+        .into_iter()
+        .chain([spine(), ridge()])
+        .chain(built_in_looks().iter().cloned())
+        .collect()
+}
+
+pub(super) mod resources {
+    // `FILES`: every `resources/looks/<id>.json`, embedded by build.rs.
+    include!(concat!(env!("OUT_DIR"), "/built_in_looks.rs"));
+}
+
+/// A handcrafted look shipped as `resources/looks/<id>.json`: its ID (the
+/// file name) and the parsed record, or why it can't be used.
+pub fn parse_built_in(id: &str, text: &str) -> Result<Profile, String> {
+    let profile = import(text.as_bytes()).map_err(|error| format!("{id}: {error}"))?;
+    if CODE_IDS.contains(&id) || RENAMED.iter().any(|(old, _)| *old == id) {
+        return Err(format!("{id}: this ID belongs to a code look"));
+    }
+    if id.starts_with("adaptive-") {
+        return Err(format!("{id}: adaptive- IDs are reserved"));
+    }
+    if super::built_in::personal_member(&profile).is_some() {
+        return Err(format!("{id}: a built-in look can't carry personal data"));
+    }
+    Ok(profile)
+}
+
+/// IDs the code presets own, which a data file may never take.
+const CODE_IDS: [&str; 16] = [
+    "halcyon",
+    "calm",
+    "evening",
+    "focus",
+    "paper",
+    "rose",
+    "tidal",
+    "paper-studio",
+    "carbon",
+    "rain",
+    "snow",
+    "fog",
+    CLEAN,
+    "ridge",
+    "spine",
+    "adaptive",
+];
+
+/// The looks shipped as data files, parsed once. A file that doesn't parse
+/// is left out (the tests refuse it before release).
+pub fn built_in_looks() -> &'static [Preset] {
+    static LOOKS: std::sync::OnceLock<Vec<Preset>> = std::sync::OnceLock::new();
+    LOOKS.get_or_init(|| {
+        resources::FILES
+            .iter()
+            .filter_map(|(id, text)| {
+                let profile = parse_built_in(id, text).ok()?;
+                // Parsed once for the life of the app: the description
+                // lives as long as the ID does.
+                let description: &'static str = Box::leak(
+                    profile
+                        .description
+                        .clone()
+                        .unwrap_or_default()
+                        .into_boxed_str(),
+                );
+                Some(Preset {
+                    id,
+                    description,
+                    profile,
+                })
+            })
+            .collect()
+    })
+}
+
+/// The embedded data file of built-in look `id`, as shipped.
+pub fn built_in_file(id: &str) -> Option<&'static str> {
+    resources::FILES
+        .iter()
+        .find(|(known, _)| *known == id)
+        .map(|(_, text)| *text)
 }
 fn ridge() -> Preset {
     let mut profile = presets()
@@ -795,6 +879,9 @@ pub fn preset(id: &str) -> Option<Preset> {
     }
     if id == "spine" {
         return Some(spine());
+    }
+    if let Some(look) = built_in_looks().iter().find(|look| look.id == id) {
+        return Some(look.clone());
     }
     let id = RENAMED
         .iter()
@@ -936,7 +1023,10 @@ mod tests {
         use crate::desktop::profiles::{Domain, Installed, apply, plan};
         let spine = super::preset("spine").unwrap();
         assert!(super::presets().iter().all(|p| p.id != "spine"));
-        assert_eq!(super::studio_presets().len(), super::presets().len() + 2);
+        assert_eq!(
+            super::studio_presets().len(),
+            super::presets().len() + 2 + super::built_in_looks().len()
+        );
         assert_eq!(
             spine.profile.panel.as_ref().unwrap().anchor,
             Some(Anchor::Left)
@@ -2069,5 +2159,30 @@ mod tests {
         fixture.system(PANEL, "anchor", "Left");
         let side = plan(&store, &installed, &p, &selected);
         assert!(side.patch().keys().all(|k| !k.key().starts_with("plugins_")));
+    }
+
+    #[test]
+    fn built_in_looks_plan_cleanly_on_a_default_install() {
+        let (fixture, store) = desk("built-in-plan");
+        let installed = Installed::discover(&store);
+        let dir = crate::desktop::wallpaper::bundled_dir(&store);
+        let config =
+            crate::config::Config::from_bytes(&std::fs::read(store.app_config().unwrap()).unwrap())
+                .unwrap();
+        assert!(!super::built_in_looks().is_empty());
+        for look in super::built_in_looks() {
+            let p = fitted(look.clone(), &config, &dir, false).profile;
+            let selected = p.domains().into_iter().collect();
+            let before = fixture.tree();
+            let plan = plan(&store, &installed, &p, &selected);
+            assert!(plan.can_apply(), "{}: {:?}", look.id, plan.blocking_reasons());
+            assert_eq!(fixture.tree(), before, "{}: planning wrote", look.id);
+            assert!(
+                studio_presets().iter().any(|known| known.id == look.id),
+                "{}",
+                look.id
+            );
+            assert_eq!(preset(look.id).as_ref(), Some(look));
+        }
     }
 }

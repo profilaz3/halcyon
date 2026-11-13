@@ -1,0 +1,199 @@
+{
+  "format": "desktop-cards-profile",
+  "version": 21,
+  "name": "Harbor",
+  "description": "Clouds drifting over open water, the time and weather together, and room to breathe.",
+  "dock": {
+    "island_gap": 12,
+    "floating": true,
+    "margin": 6,
+    "autohide": "Always",
+    "opacity": 0.94,
+    "border_radius": 160,
+    "spacing": 6,
+    "padding": 8,
+    "background": "ThemeDefault"
+  },
+  "panel": {
+    "island_gap": 12,
+    "islands": {
+      "version": 1,
+      "enabled": true,
+      "placement": "Together",
+      "gap": 10,
+      "default_layout": {
+        "together": {
+          "order": [
+            "Center",
+            "Start",
+            "End"
+          ],
+          "position": 5000
+        },
+        "separate": {
+          "order": [
+            "Start",
+            "Center",
+            "End"
+          ],
+          "positions": [
+            0,
+            5000,
+            10000
+          ]
+        }
+      },
+      "outputs": {}
+    },
+    "floating": true,
+    "margin": 6,
+    "opacity": 0.94,
+    "border_radius": 160,
+    "spacing": 6,
+    "padding": 2,
+    "background": "ThemeDefault"
+  },
+  "appearance": {
+    "mode": "dark",
+    "interface_font": {
+      "family": "Fira Sans",
+      "weight": "Normal",
+      "stretch": "Normal",
+      "style": "Normal"
+    },
+    "icon_theme": "Pop",
+    "light": {
+      "accent": "#167a7f",
+      "background": "#e1f9fa",
+      "primary": "#d7eeef",
+      "outline": "auto",
+      "outline_width": 2,
+      "corners": "Round",
+      "gaps": [
+        10,
+        14
+      ]
+    },
+    "dark": {
+      "accent": "#6ac2c6",
+      "background": "#1f3334",
+      "primary": "#293d3e",
+      "outline": "auto",
+      "outline_width": 2,
+      "corners": "Round",
+      "gaps": [
+        10,
+        14
+      ]
+    }
+  },
+  "widget_style": {
+    "appearance": {
+      "family": "soft",
+      "native_mode_palettes": 1,
+      "surface": null,
+      "opacity": 94,
+      "corner_radius": 25,
+      "border_opacity": 20,
+      "accent": [
+        106,
+        194,
+        198
+      ],
+      "color_source": "custom",
+      "sync_colors": true,
+      "wallpaper_colors": true,
+      "contrast_assist": false,
+      "wallpaper_light": false,
+      "color_policy": "wallpaper"
+    },
+    "theme": "ocean",
+    "glance": {
+      "style": "transparent",
+      "own_background": true,
+      "density": "comfortable"
+    },
+    "devbox": {
+      "cpu": true,
+      "gpu": true,
+      "memory": true,
+      "disk": true,
+      "network": true,
+      "uptime": true,
+      "swap": false,
+      "services": false
+    },
+    "clock": {
+      "face": "digital",
+      "surface": "none",
+      "scale": 150,
+      "alignment": "left",
+      "center_vertically": true,
+      "weight": "light",
+      "italic": false
+    },
+    "clock_font": null,
+    "rain": {
+      "enabled": true,
+      "effect": "clouds",
+      "clouds": {
+        "coverage": 35,
+        "softness": 75,
+        "speed": 15,
+        "wind": 15,
+        "strength": 20
+      }
+    }
+  },
+  "widget_layout": {
+    "enabled_widgets": [
+      "clock",
+      "weather"
+    ],
+    "widget_positions": {
+      "glance": [
+        0.04,
+        0.09
+      ],
+      "music": [
+        0.96,
+        0.87
+      ]
+    },
+    "glance": {
+      "enabled": true,
+      "initialized": true,
+      "show_clock": true,
+      "show_weather": true,
+      "show_calendar": false
+    },
+    "notes": {
+      "enabled": false
+    },
+    "music": {
+      "enabled": true
+    },
+    "focus": {
+      "enabled": false
+    }
+  },
+  "windows": {
+    "active_hint": true,
+    "show_minimize": true,
+    "show_maximize": true
+  },
+  "wallpaper": {
+    "background": {
+      "source": {
+        "bundled": "ocean"
+      },
+      "fit": "fill"
+    }
+  },
+  "desktop_icons": {
+    "icon_size": 100,
+    "spacing": 150,
+    "show_drives": false,
+    "show_trash": true
+  }
+}
