@@ -1115,20 +1115,20 @@ fn plan_panel(
     if installed_islands {
         if let Some(islands) = &look.islands {
             if let Some(current) = draft.islands().known().cloned() {
-                // Including a look's Panel brings its islands with it: the
+                // Including a look's bar brings its islands with it: the
                 // installed add-on turns on (or off) as the look draws it,
-                // so Apply matches the preview. Excluding Panel keeps both.
+                // so Apply matches the preview. Excluding the bar keeps both.
                 let mut desired = keep_arrangement(islands.clone(), current.clone());
                 if vertical {
                     // Islands are horizontal only; a side panel stays standard.
                     desired.enabled = current.enabled;
                 }
                 if desired.enabled != current.enabled {
-                    part.changes.push(if desired.enabled {
-                        "Panel Islands on".into()
-                    } else {
-                        "Panel Islands off".into()
-                    });
+                    part.changes.push(format!(
+                        "{} Islands {}",
+                        kind.title(),
+                        if desired.enabled { "on" } else { "off" }
+                    ));
                 }
                 draft.set_islands(desired);
             } else {
