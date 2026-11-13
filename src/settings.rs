@@ -2607,9 +2607,22 @@ impl Settings {
                         profiles::packages::Edit::Close,
                     )));
                 }
+                if self.page == Page::DesktopProfiles
+                    && let Some(draft) = &self.profiles.studio
+                    && (draft.picking.is_some() || draft.reviewing)
+                {
+                    // Back closes a studio picker or the review first.
+                    let edit = if draft.picking.is_some() {
+                        profiles::studio::Edit::Open(None)
+                    } else {
+                        profiles::studio::Edit::Review(false)
+                    };
+                    return self.handle(Message::Profiles(profiles::Message::Studio(edit)));
+                }
                 if self.history.is_empty()
                     && self.page == Page::DesktopProfiles
                     && (self.profiles.mix.is_some()
+                        || self.profiles.studio.is_some()
                         || self.profiles.profile().is_some()
                         || self.profiles.selection() != &profiles::Selection::Current)
                 {
@@ -4932,6 +4945,12 @@ impl Settings {
                 | Edit::MixClosePicker
                 | Edit::MixPick(..)
                 | Edit::Package(profiles::packages::Edit::Open | profiles::packages::Edit::Close)
+                | Edit::Studio(
+                    profiles::studio::Edit::Start(_)
+                        | profiles::studio::Edit::Close
+                        | profiles::studio::Edit::Review(_)
+                        | profiles::studio::Edit::Delete(true)
+                )
         );
         let before = self.profiles.selection().clone();
         let outcome = self.profiles.update(message);
@@ -4941,6 +4960,7 @@ impl Settings {
                 [
                     "settings-content",
                     "mix-scroll",
+                    "studio-scroll",
                     "setup-scroll",
                     "package-scroll",
                 ]
@@ -4987,6 +5007,9 @@ impl Settings {
             }
             Outcome::Dialog(request) => {
                 return Task::batch([self.media_tasks(), profile_dialog(request)]);
+            }
+            Outcome::Copy(text) => {
+                return Task::batch([self.media_tasks(), cosmic::iced::clipboard::write(text)]);
             }
         };
         media

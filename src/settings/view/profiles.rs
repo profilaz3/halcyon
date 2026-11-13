@@ -19,6 +19,7 @@ mod looks;
 /// Reasons shown before the rest is counted.
 mod mix;
 mod packages;
+mod studio;
 
 const SHORT: usize = 3;
 
@@ -1646,6 +1647,7 @@ impl Settings {
             && !editor.theme_loading()
             && editor.theme_problem().is_none();
         let mut library_actions: Vec<Element<'_, Message>> = Vec::new();
+        library_actions.extend(self.studio_edit_button(available));
         if editor.mix.is_none() {
             library_actions.push(
                 button::text("Save a copy…")
@@ -2133,6 +2135,17 @@ impl Settings {
         if let Some(package) = &self.profiles.package {
             return self.package_page(package);
         }
+        if self.profiles.studio.is_some() && self.page == Page::DesktopProfiles {
+            return column::with_children(vec![
+                heading(
+                    "Look studio",
+                    "Make a look part by part. Your desktop stays as it is until you apply.",
+                ),
+                self.studio_page(),
+            ])
+            .spacing(16)
+            .into();
+        }
         let editor = &self.profiles;
         let accent = self.settings_accent();
         let reviewing = editor.mix.is_some()
@@ -2182,20 +2195,27 @@ impl Settings {
         }
         if !reviewing && self.help_open == Some("looks-more") {
             items.push(
-                row::with_children(vec![
-                    cosmic::iced::widget::space().width(Length::Fill).into(),
-                    button::standard("Mix looks…")
-                        .id(cosmic::widget::Id::new("mix-start"))
-                        .on_press(edit(Edit::MixStart))
-                        .into(),
-                    button::standard("Import a look…")
-                        .id(cosmic::widget::Id::new("discovery-import"))
-                        .on_press_maybe(
-                            (editor.writable() && !self.native_busy).then_some(edit(Edit::Import)),
-                        )
-                        .into(),
-                ])
+                row::with_children(
+                    [cosmic::iced::widget::space().width(Length::Fill).into()]
+                        .into_iter()
+                        .chain(self.studio_starts())
+                        .chain([
+                            button::standard("Mix looks…")
+                                .id(cosmic::widget::Id::new("mix-start"))
+                                .on_press(edit(Edit::MixStart))
+                                .into(),
+                            button::standard("Import a look…")
+                                .id(cosmic::widget::Id::new("discovery-import"))
+                                .on_press_maybe(
+                                    (editor.writable() && !self.native_busy)
+                                        .then_some(edit(Edit::Import)),
+                                )
+                                .into(),
+                        ])
+                        .collect::<Vec<_>>(),
+                )
                 .spacing(6)
+                .wrap()
                 .into(),
             );
         }
@@ -2290,6 +2310,14 @@ impl Settings {
                 ids.push(id);
             }
         }
+        // Handcrafted looks from resources/looks, by file name.
+        ids.extend(
+            crate::desktop::profiles::built_in_looks()
+                .iter()
+                .map(|look| look.id)
+                .filter(|id| !ids.contains(id))
+                .collect::<Vec<_>>(),
+        );
         ids.push(crate::desktop::profiles::CLEAN);
         let tiles = ids
             .into_iter()
@@ -2380,6 +2408,9 @@ impl Settings {
         if editor.package.is_some() {
             return column::with_children(vec![self.simple_status(), self.package_actions()])
                 .into();
+        }
+        if editor.studio.is_some() && self.page == Page::DesktopProfiles {
+            return self.studio_actions();
         }
         // Repair/reset previews can be based on Current without selecting a
         // preset. Their active profile still needs an explicit confirmation.

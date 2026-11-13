@@ -644,6 +644,8 @@ impl Settings {
             // The builder is an edit mode, like arranging: it cancels.
             button::text(if discard_id == "recipe-discard" {
                 "Cancel"
+            } else if discard_id == "studio-close" {
+                "Close"
             } else {
                 "Discard"
             })

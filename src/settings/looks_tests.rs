@@ -328,3 +328,107 @@ fn looks_screenshots_gallery_parts_islands_and_compare() {
         looks_capture(&app, &mut native, "carbon");
     }
 }
+
+fn studio_send(app: &mut Settings, edit: profiles::studio::Edit) {
+    looks_send(app, profiles::Message::Studio(edit));
+}
+
+/// Captures the studio scrolled to `y`, in both tones.
+fn studio_capture(app: &Settings, native: &mut crate::native_test::Native, name: &str, y: f32) {
+    assert!(
+        native.duplicate_ids(app.settings_view()).is_empty(),
+        "{name}: {:?}",
+        native.duplicate_ids(app.settings_view())
+    );
+    native.scroll(app.settings_view(), "settings-content", y);
+    for (theme, tone) in [
+        (cosmic::Theme::dark(), "dark"),
+        (cosmic::Theme::light(), "light"),
+    ] {
+        native.capture(
+            app.settings_view(),
+            &theme,
+            &format!("studio-{name}-{}-{tone}", native.size.width),
+        );
+    }
+}
+
+#[test]
+fn looks_screenshots_studio() {
+    use profiles::studio::{Edit as Studio, Element as Part, Pick, Start};
+    let name = "looks_screenshots_studio";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let root = isolated_root();
+    let mut app = looks_desktop(&root);
+    let desktop = app.profiles.store().unwrap().user_root().to_path_buf();
+    let before = crate::desktop::store::tests::tree(&desktop);
+    for size in [Size::new(1280., 800.), Size::new(820., 800.)] {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        let tiles = if size.width > 1000. { 470. } else { 380. };
+        looks_send(
+            &mut app,
+            profiles::Message::Select(profiles::Selection::Current),
+        );
+        studio_send(&mut app, Studio::Start(Start::Desktop));
+        studio_send(&mut app, Studio::Name("Evening harbor".into()));
+        studio_send(
+            &mut app,
+            Studio::Description("Warm evening light, soft corners".into()),
+        );
+        studio_send(
+            &mut app,
+            Studio::Pick(Part::Wallpaper, Pick::Wallpaper("halcyon-evening")),
+        );
+        studio_send(&mut app, Studio::Pick(Part::Weather, Pick::Weather("snow")));
+        studio_send(&mut app, Studio::Pick(Part::Windows, Pick::Corners(1)));
+        studio_capture(&app, &mut native, "draft", 0.);
+        looks_send(&mut app, profiles::Message::Highlight(Some(Domain::Dock)));
+        studio_capture(&app, &mut native, "tiles", tiles);
+        looks_send(&mut app, profiles::Message::Highlight(None));
+        studio_send(&mut app, Studio::Open(Some(Part::Wallpaper)));
+        studio_capture(&app, &mut native, "wallpaper-picker", tiles);
+        studio_send(&mut app, Studio::Open(Some(Part::Panel)));
+        studio_capture(&app, &mut native, "panel-picker", tiles);
+        studio_send(&mut app, Studio::Open(Some(Part::Colors)));
+        studio_capture(&app, &mut native, "colors-picker", tiles);
+        studio_send(&mut app, Studio::Open(None));
+        studio_send(&mut app, Studio::Save);
+        studio_capture(&app, &mut native, "saved", 0.);
+        studio_send(&mut app, Studio::Menu(true));
+        studio_capture(&app, &mut native, "menu", 0.);
+        studio_send(&mut app, Studio::Delete(false));
+        studio_capture(&app, &mut native, "delete", 0.);
+        studio_send(&mut app, Studio::Delete(false));
+        studio_send(&mut app, Studio::MakeBuiltIn);
+        studio_capture(&app, &mut native, "built-in", 0.);
+        let mut personal = app.profiles.studio.as_ref().unwrap().profile.clone();
+        personal.wallpaper = Some(
+            serde_json::from_value(serde_json::json!({
+                "background": {"source": {"image": "/home/someone/cat.jpg"}, "fit": "fill"}
+            }))
+            .unwrap(),
+        );
+        app.profiles.studio.as_mut().unwrap().profile = personal;
+        studio_send(&mut app, Studio::MakeBuiltIn);
+        studio_capture(&app, &mut native, "built-in-refused", 0.);
+        studio_send(&mut app, Studio::Review(true));
+        studio_capture(&app, &mut native, "review", tiles);
+        studio_send(&mut app, Studio::Close);
+        assert!(app.profiles.studio.is_none());
+    }
+    assert_eq!(
+        crate::desktop::store::tests::tree(&desktop),
+        before,
+        "the studio never wrote the desktop"
+    );
+}

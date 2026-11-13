@@ -198,8 +198,8 @@ fn own_wallpaper_masks_and_paths_never_travel() {
     profile.version = profile.written_version();
     assert_eq!(
         profile.version,
-        profiles::VERSION,
-        "no version past scene lighting"
+        profiles::VERSION_20,
+        "lighting needs only the scene lighting version"
     );
     let shared = profiles::export(&profile).unwrap().bytes;
     for bytes in [shared.clone(), profiles::export_local(&profile).unwrap()] {
