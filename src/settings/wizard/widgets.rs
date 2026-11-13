@@ -210,7 +210,9 @@ impl Draft {
                     .collect();
                 match parts.split_last() {
                     Some((last, [])) => format!("Daily overview ({last})"),
-                    Some((last, rest)) => format!("Daily overview ({} and {last})", rest.join(", ")),
+                    Some((last, rest)) => {
+                        format!("Daily overview ({} and {last})", rest.join(", "))
+                    }
                     None => w.title().to_owned(),
                 }
             })
@@ -732,6 +734,7 @@ mod tests {
                     position: [50., 50.],
                 })
                 .collect(),
+            output: None,
         };
         let d = Draft::new(&c, &raw, &s);
         (c, raw, s, d)

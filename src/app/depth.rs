@@ -463,6 +463,15 @@ mod tests {
         config.rain.enabled = true;
         config.rain.effect = effect;
         let (mut cards, _) = Cards::init(Core::default(), config);
+        // How much of the time the ridge hides depends on its digits, and a
+        // clock mostly hidden is drawn plain: a fixed time keeps the cut.
+        let at = chrono::NaiveDate::from_ymd_opt(2026, 11, 13)
+            .and_then(|day| day.and_hms_opt(10, 10, 0))
+            .unwrap();
+        cards.clock_at = chrono::TimeZone::from_local_datetime(&chrono::Local, &at)
+            .single()
+            .unwrap();
+        cards.next_clock = std::time::Instant::now() + std::time::Duration::from_secs(3600);
         let wire = crate::displays::test_support::Wire::new();
         let mut output = info(Some("DP-1"), (1920, 1080));
         output.modes.push(cosmic::cctk::sctk::output::Mode {
@@ -582,7 +591,7 @@ mod tests {
             cards
                 .config
                 .widget_positions
-                .insert("clock".into(), [0.5, 0.3]);
+                .insert("clock".into(), [0.5, 0.25]);
             cards.layout_editor.active = false;
             let _ = cards.update(Message::Preview);
             cards.rain.ready_for_test();
@@ -630,5 +639,147 @@ mod tests {
             Receipt::Changed
         );
         assert_eq!(receipt(None, &before), Receipt::Changed);
+    }
+
+    /// The clock recipe the report came from: a face and a date, stacked.
+    fn face_and_date() -> crate::recipes::Recipe {
+        serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "id": "r-6e1beedf0418a1000575316a47514616",
+            "revision": "e8c8e85fd20d86ed08ff1e9724cf9669dcb16087d213d14e209f680730f77620",
+            "name": "My clock",
+            "kind": "clock",
+            "parts": ["face", "date"],
+            "caption": "Make room for today",
+            "compact": "stack",
+            "wide": "stack"
+        }))
+        .unwrap()
+    }
+    #[test]
+    fn clock_date_follows_show_the_date_on_every_clock() {
+        if crate::displays::test_support::isolated(
+            "app::depth::tests::clock_date_follows_show_the_date_on_every_clock",
+        ) {
+            return;
+        }
+        use crate::native_test::Native;
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 11, 13)
+            .unwrap()
+            .and_hms_opt(21, 47, 0)
+            .unwrap();
+        let date = "Friday, November 13";
+        let size = [512., 547.];
+        let dates = |view: Element<'_, Message>| {
+            Native::new(cosmic::iced::Size::new(size[0], size[1]))
+                .text_all(view, date)
+                .len()
+        };
+        for recipe in [None, Some(face_and_date())] {
+            for show in [true, false] {
+                let mut config = Config::default();
+                config.clock.show_date = show;
+                config.recipes.clock = recipe.clone();
+                let mine = recipe.is_some();
+                // The desktop's clock surface, and the Settings preview.
+                assert_eq!(
+                    dates(super::clock::view(&config, now, size)) > 0,
+                    show,
+                    "desktop, recipe {mine}, date {show}"
+                );
+                assert_eq!(
+                    dates(crate::app::settings_clock_preview_at(&config, size, now)) > 0,
+                    show,
+                    "preview, recipe {mine}, date {show}"
+                );
+            }
+        }
+        // A clock made only of a date keeps it.
+        let mut config = Config::default();
+        config.clock.show_date = false;
+        let mut only = face_and_date();
+        only.parts = vec![crate::recipes::Part::Date];
+        config.recipes.clock = Some(only);
+        assert!(dates(super::clock::view(&config, now, size)) > 0);
+        // Arrange draws the clock on its own surface; the date follows too.
+        let (mut cards, _wire) = ridge_desktop(crate::rain::Effect::Rain);
+        cards.config.recipes.clock = Some(face_and_date());
+        cards.clock_at = chrono::TimeZone::from_local_datetime(&chrono::Local, &now)
+            .single()
+            .unwrap();
+        cards.layout_editor.active = true;
+        let _ = cards.update(Message::Preview);
+        let size = cards.widget_size(Widget::Clock);
+        let arranged = |cards: &Cards| {
+            Native::new(cosmic::iced::Size::new(size[0], size[1]))
+                .text_all(cards.clock(), date)
+                .len()
+        };
+        assert_eq!(arranged(&cards), 0);
+        cards.config.clock.show_date = true;
+        assert!(arranged(&cards) > 0);
+    }
+    #[test]
+    fn depth_and_glass_draw_the_clock_again_when_the_date_is_toggled() {
+        if crate::displays::test_support::isolated(
+            "app::depth::tests::depth_and_glass_draw_the_clock_again_when_the_date_is_toggled",
+        ) {
+            return;
+        }
+        let (mut cards, _wire) = ridge_desktop(crate::rain::Effect::Rain);
+        let before = settle(&mut cards);
+        assert!(!before.style_config().unwrap().clock.show_date);
+        let without = cards.depth.pixels.clone().unwrap();
+        assert!(cards.clock_behind_glass());
+        // Ink in the clock's lowest rows, where the date goes.
+        let low_ink = |pixels: &crate::desktop::wallpaper::media::Pixels| {
+            let rows = pixels.height as usize;
+            pixels
+                .rgba
+                .chunks_exact(4 * pixels.width as usize)
+                .skip(rows * 85 / 100)
+                .flat_map(|row| row.chunks_exact(4))
+                .filter(|p| p[3] > 128)
+                .count()
+        };
+        let plain = |request: &crate::depth::Request| {
+            let time =
+                chrono::NaiveDateTime::parse_from_str(&request.time, "%Y-%m-%dT%H:%M:%S").unwrap();
+            crate::depth::draw_plain(&request.style_config().unwrap(), &request.frame, time)
+                .unwrap()
+        };
+        // Turned on, the cut clock is asked for again with the date, and
+        // the glass takes it when it comes.
+        cards.config.clock.show_date = true;
+        let _ = cards.update(Message::Preview);
+        assert_ne!(cards.depth.key, None);
+        let after = settle(&mut cards);
+        assert!(after.style_config().unwrap().clock.show_date);
+        if let Some(out) = std::env::var_os("HALCYON_DATE_EVIDENCE") {
+            for (name, p) in [("before", plain(&before)), ("after", plain(&after))] {
+                image::RgbaImage::from_raw(p.width, p.height, p.rgba)
+                    .unwrap()
+                    .save(std::path::Path::new(&out).join(format!("{name}.png")))
+                    .unwrap();
+            }
+        }
+        assert!(
+            low_ink(&plain(&after)) > low_ink(&plain(&before)) + 300,
+            "{} {}",
+            low_ink(&plain(&after)),
+            low_ink(&plain(&before))
+        );
+        let with = cards.depth.pixels.clone().unwrap();
+        assert_ne!(with.rgba, without.rgba);
+        let (_, behind) = cards.glass.picture.clone().unwrap();
+        assert_eq!(behind.pixels, *with);
+        // And turned off again, it goes.
+        cards.config.clock.show_date = false;
+        let _ = cards.update(Message::Preview);
+        let again = settle(&mut cards);
+        assert!(!again.style_config().unwrap().clock.show_date);
+        assert_eq!(cards.depth.pixels.as_deref(), Some(&*without));
+        let (_, behind) = cards.glass.picture.clone().unwrap();
+        assert_eq!(behind.pixels, *without);
     }
 }

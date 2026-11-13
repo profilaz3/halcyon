@@ -2189,6 +2189,7 @@ mod tests {
                 size: [360., 180.],
                 position: [100., 100.],
             }],
+            output: None,
         };
         let mut defaults = snapshot.clone();
         defaults.widgets[0].position = [1518., 450.];

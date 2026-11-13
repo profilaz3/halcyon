@@ -6,7 +6,6 @@
 //! layout editor stays crisp on its own surface, and so does a clock whose
 //! place on the output cannot be told.
 use super::*;
-use crate::desktop::panels::{Anchor, PanelDraft, PanelKind};
 use crate::desktop::wallpaper::media::{Pixels, worker};
 use crate::rain::gpu::Behind;
 use std::sync::Arc;
@@ -26,7 +25,7 @@ pub(super) struct State {
     cut: Option<Arc<Pixels>>,
     /// The edges panels keep on an output, read now and then rather than on
     /// every update.
-    reserved: Option<(String, Instant, Vec<(Anchor, u32)>)>,
+    reserved: Option<(String, Instant, Vec<(crate::desktop::panels::Anchor, u32)>)>,
 }
 /// How long the panels' kept edges are trusted before reading them again.
 const PANELS: Duration = Duration::from_secs(20);
@@ -70,42 +69,6 @@ impl State {
     }
 }
 
-/// Where the area that layer surfaces may use starts on a `full` output,
-/// when panels keep `screen` of it: the panels that keep space say which
-/// edges they keep it on. With panels on both opposite edges, the space is
-/// shared by their thickness. None when the panels do not explain it.
-pub(super) fn usable_origin(
-    full: [f32; 2],
-    screen: [f32; 2],
-    reserved: &[(Anchor, u32)],
-) -> Option<[f32; 2]> {
-    let axis = |kept: f32, before: Anchor, after: Anchor| -> Option<f32> {
-        if kept < 1. {
-            return Some(0.);
-        }
-        let thickness = |edge| -> f32 {
-            reserved
-                .iter()
-                .filter(|(anchor, _)| *anchor == edge)
-                .map(|(_, t)| *t as f32)
-                .sum()
-        };
-        match (thickness(before), thickness(after)) {
-            (0., 0.) => None,
-            (_, 0.) => Some(kept),
-            (0., _) => Some(0.),
-            (a, b) => Some((kept * a / (a + b)).round()),
-        }
-    };
-    if screen.iter().zip(full).any(|(s, f)| *s > f + 1.) {
-        return None;
-    }
-    Some([
-        axis(full[0] - screen[0], Anchor::Left, Anchor::Right)?,
-        axis(full[1] - screen[1], Anchor::Top, Anchor::Bottom)?,
-    ])
-}
-
 impl Cards {
     /// Where the clock lies on its whole output: the output, the output's
     /// logical size, and where the area that layer surfaces may use starts
@@ -117,36 +80,24 @@ impl Cards {
         let logical = output.info.logical_size?;
         let logical = [logical.0 as f32, logical.1 as f32];
         let screen = self.widget_screen(Widget::Clock);
-        let inset = if (0..2).all(|i| (logical[i] - screen[i]).abs() < 1.) {
-            [0., 0.]
-        } else {
-            let name = output.name()?.to_owned();
+        let name = output.name().map(str::to_owned);
+        let reserved = &mut self.glass.reserved;
+        let frame = crate::layout_state::output_frame(logical, screen, || {
+            let name = name?;
             let now = Instant::now();
-            let fresh = self.glass.reserved.as_ref().is_some_and(|(n, at, _)| {
+            let fresh = reserved.as_ref().is_some_and(|(n, at, _)| {
                 *n == name && now.saturating_duration_since(*at) < PANELS
             });
             if !fresh {
-                let store = crate::desktop::DesktopStore::from_env().ok()?;
-                let reserved = [PanelKind::Panel, PanelKind::Dock]
-                    .into_iter()
-                    .filter_map(|kind| PanelDraft::load(&store, kind).ok()?.reserves(&name))
-                    .collect();
-                self.glass.reserved = Some((name, now, reserved));
+                *reserved = Some((
+                    name.clone(),
+                    now,
+                    crate::layout_state::reserved_edges(&name),
+                ));
             }
-            let (_, _, reserved) = self.glass.reserved.as_ref()?;
-            usable_origin(logical, screen, reserved)?
-        };
-        // The measured area keeps a fractional scale's precision, which the
-        // output's integer logical size rounds away: use it on every axis
-        // nothing keeps space on.
-        let full = [0, 1].map(|i| {
-            if (logical[i] - screen[i]).abs() < 1. {
-                screen[i]
-            } else {
-                logical[i]
-            }
-        });
-        Some((output, full, inset))
+            reserved.as_ref().map(|(_, _, edges)| edges.clone())
+        })?;
+        Some((output, frame.size, frame.origin))
     }
     /// Where the clock lies behind the glass, if it can: its output, and its
     /// frame on the whole output for drawing and place on it as a fraction.
@@ -281,9 +232,53 @@ impl Cards {
     }
 }
 
+/// The desktop as Settings tests see it.
+#[cfg(test)]
+impl Cards {
+    /// A desktop on one output named `name` of `logical` size, whose area
+    /// for widgets measures `area` (panels keep the rest).
+    pub(crate) fn on_output_for_test(
+        config: Config,
+        name: &str,
+        logical: (i32, i32),
+        area: [f32; 2],
+    ) -> (Self, crate::displays::test_support::Wire) {
+        use crate::displays::{OutputEvent, test_support::info};
+        let (mut cards, _) = Self::init(Core::default(), config);
+        let wire = crate::displays::test_support::Wire::new();
+        let mut output = info(Some(name), logical);
+        output.modes.push(cosmic::cctk::sctk::output::Mode {
+            dimensions: logical,
+            refresh_rate: 60_000,
+            current: true,
+            preferred: true,
+        });
+        cards
+            .displays
+            .update(OutputEvent::Created(Some(output)), wire.output(1));
+        let _ = cards.reconcile_output();
+        cards.screen_size = area;
+        cards.output_known = true;
+        (cards, wire)
+    }
+    /// The clock's box on its whole output, where the desktop puts it.
+    pub(crate) fn clock_on_output(&mut self) -> Option<[f32; 4]> {
+        let (_, _, inset) = self.clock_spot()?;
+        let placed = self.placed_position(Widget::Clock);
+        let size = self.widget_size(Widget::Clock);
+        Some([inset[0] + placed[0], inset[1] + placed[1], size[0], size[1]])
+    }
+    /// The clock's own surface, as the desktop draws it.
+    pub(crate) fn clock_surface(&self) -> Element<'_, Message> {
+        self.clock()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::desktop::panels::Anchor;
+    use crate::layout_state::usable_origin;
     #[test]
     fn glass_finds_where_the_usable_area_starts_from_the_panels() {
         let full = [1920., 1080.];

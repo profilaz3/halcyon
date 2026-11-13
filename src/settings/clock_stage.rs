@@ -273,17 +273,70 @@ pub(super) fn picture_contrast(
     let ink = crate::widget_style::luminance(ink);
     Some((ink.max(middle) + 0.05) / (ink.min(middle) + 0.05))
 }
-/// The desktop's depth frame for a clock at `position`: whole pixels, kept
-/// on the screen.
-pub(super) fn frame(position: [f32; 2], size: [f32; 2], screen: [f32; 2]) -> crate::depth::Frame {
+/// What the stage shows: the whole output, and the area on it that widgets
+/// use (panels that keep space make it smaller and move it off the corner).
+/// Widget places are in the area; the picture covers the whole output.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct Screen {
+    pub whole: [f32; 2],
+    pub origin: [f32; 2],
+    pub area: [f32; 2],
+}
+impl Screen {
+    pub(super) fn of(snapshot: &crate::layout_state::Snapshot) -> Self {
+        let area = known(snapshot.screen);
+        match snapshot.output {
+            Some(output)
+                if output.size.iter().all(|v| v.is_finite() && *v >= 1.)
+                    && (0..2).all(|i| {
+                        output.origin[i] >= 0. && output.origin[i] + area[i] <= output.size[i] + 1.
+                    }) =>
+            {
+                Self {
+                    whole: output.size,
+                    origin: output.origin,
+                    area,
+                }
+            }
+            _ => area.into(),
+        }
+    }
+    /// A point in the area, on the whole output.
+    pub(super) fn on_output(&self, point: [f32; 2]) -> [f32; 2] {
+        [point[0] + self.origin[0], point[1] + self.origin[1]]
+    }
+    /// A point on the whole output, in the area.
+    pub(super) fn in_area(&self, point: [f32; 2]) -> [f32; 2] {
+        [point[0] - self.origin[0], point[1] - self.origin[1]]
+    }
+}
+/// A screen whose area is the whole output.
+impl From<[f32; 2]> for Screen {
+    fn from(area: [f32; 2]) -> Self {
+        let area = known(area);
+        Self {
+            whole: area,
+            origin: [0., 0.],
+            area,
+        }
+    }
+}
+/// The desktop's depth frame for a clock at `position` in the area: on the
+/// whole output, as the desktop cuts it, in whole pixels, kept in the area.
+pub(super) fn frame(
+    position: [f32; 2],
+    size: [f32; 2],
+    screen: impl Into<Screen>,
+) -> crate::depth::Frame {
+    let screen = screen.into();
     crate::depth::Frame {
-        screen,
-        origin: [0, 1].map(|i| {
+        screen: screen.whole,
+        origin: screen.on_output([0, 1].map(|i| {
             position[i]
                 .round()
-                .min((screen[i] - size[i]).floor())
+                .min((screen.area[i] - size[i]).floor())
                 .max(0.)
-        }),
+        })),
         size,
         scale: 1.,
     }
@@ -295,7 +348,11 @@ impl Settings {
     pub(super) fn clock_stage_open(&self) -> bool {
         self.page == Page::Clock && self.canvas.is_none() && !self.canvas_visible()
     }
-    /// The clock's place on the stage's screen: position and size.
+    /// The stage's screen: the clock's output and the area widgets use.
+    pub(super) fn clock_stage_screen(&self) -> Screen {
+        Screen::of(self.placement.preview_snapshot())
+    }
+    /// The clock's place in the area widgets use: position and size.
     pub(super) fn clock_stage_place(&self) -> Option<([f32; 2], [f32; 2])> {
         Some((
             self.placement.widget_position(Widget::Clock.key())?,
@@ -325,12 +382,14 @@ impl Settings {
             return None;
         };
         let (position, size) = self.clock_stage_place()?;
-        let screen = known(self.placement.preview_snapshot().screen);
+        let screen = self.clock_stage_screen();
+        let [x, y] = screen.on_output(position);
+        let whole = screen.whole;
         let area = [
-            position[0] / screen[0],
-            position[1] / screen[1],
-            (position[0] + size[0]) / screen[0],
-            (position[1] + size[1]) / screen[1],
+            x / whole[0],
+            y / whole[1],
+            (x + size[0]) / whole[0],
+            (y + size[1]) / whole[1],
         ];
         picture_contrast(style.ink.value, pixels, [*width, *height], area)
     }
@@ -367,7 +426,7 @@ impl Settings {
             return None;
         }
         let (position, size) = self.clock_stage_place()?;
-        let screen = self.placement.preview_snapshot().screen;
+        let screen = self.clock_stage_screen();
         crate::depth::Request::new(
             &self.config,
             frame(position, size, screen),
@@ -385,7 +444,7 @@ impl Settings {
             return Task::none();
         }
         self.clock_stage_display();
-        let screen = self.placement.preview_snapshot().screen;
+        let screen = self.clock_stage_screen().whole;
         // A 16:9 screen showing the Home picture already has it, fitted the
         // same way, so only other shapes and pictures are drawn here.
         let backdrop = self
@@ -558,12 +617,14 @@ impl Settings {
                     return Task::none();
                 }
                 self.clock_stage_display();
-                let screen = self.placement.preview_snapshot().screen;
+                let screen = self.clock_stage_screen();
                 let spot = self
                     .clock_stage_place()
                     .and_then(|(at, size)| self.clock_stage.suggested(&frame(at, size, screen)));
+                // The scene's spot is on the whole output; places are in
+                // the area widgets use.
                 if let Some(spot) = spot
-                    && self.placement.place_widget(clock, spot)
+                    && self.placement.place_widget(clock, screen.in_area(spot))
                 {
                     return self.update_placement(placement::Message::Save);
                 }
@@ -655,6 +716,8 @@ pub(super) fn focus_check() -> Task<Message> {
 }
 
 pub(super) const CLOCK_ID: &str = "clock-stage-clock";
+/// The stage's picture of the whole output.
+pub(super) const SCREEN_ID: &str = "clock-stage-screen";
 
 /// Finds whether the stage clock holds keyboard focus.
 #[derive(Default)]

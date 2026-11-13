@@ -39,6 +39,21 @@ fn minimum(part: Part) -> f32 {
         _ => 18.,
     }
 }
+/// The recipe as `config` shows it: a clock's date part follows Show the
+/// date, like the built-in clock's date, unless it is all the clock has.
+pub(super) fn shown<'a>(recipe: &'a Recipe, config: &Config) -> std::borrow::Cow<'a, Recipe> {
+    if recipe.kind == Kind::Clock
+        && !config.clock.show_date
+        && recipe.parts.contains(&Part::Date)
+        && recipe.parts.iter().any(|part| *part != Part::Date)
+    {
+        let mut recipe = recipe.clone();
+        recipe.parts.retain(|part| *part != Part::Date);
+        std::borrow::Cow::Owned(recipe)
+    } else {
+        std::borrow::Cow::Borrowed(recipe)
+    }
+}
 /// Space between a built widget's card edge and its parts.
 const INSET: f32 = 14.;
 pub(super) fn plan(recipe: &Recipe, size: [f32; 2], status: bool) -> Plan {
@@ -134,6 +149,7 @@ pub(super) fn view(
     context: Context,
     size: [f32; 2],
 ) -> Element<'static, Message> {
+    let recipe = &*shown(recipe, config);
     let _scope = crate::widget_style::scope(config);
     let palette = if recipe.kind == Kind::Clock {
         config.wallpaper_palette()

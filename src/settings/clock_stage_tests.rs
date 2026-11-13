@@ -1135,3 +1135,301 @@ fn clock_stage_warns_when_the_clock_is_hard_to_read_on_the_picture() {
             .is_none()
     );
 }
+
+/// The stage is the desktop scaled down: the whole output with the area
+/// panels leave, the clock box where and as large as the desktop puts it,
+/// and a drag or resize there lands exactly where the desktop then shows
+/// the clock. Writes side by side captures to `HALCYON_STAGE_EVIDENCE`.
+#[test]
+fn clock_stage_is_the_desktop_scaled_down() {
+    if desktop_test_child(
+        "clock_stage_is_the_desktop_scaled_down",
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::desktop::wallpaper::{BgEntry, BgSource, bundled_dir, bundled_path};
+    use crate::displays::{OutputEvent, test_support::info};
+    use crate::native_test::Native;
+    use crate::settings::clock_stage::{self as stage, Edit};
+    use cosmic::iced::{Event, Point, mouse};
+    let root = isolated_root();
+    let fixture = root.join("cosmic-root");
+    let (probe, _) = Settings::init(Core::default(), Page::DesktopWallpaper);
+    let bundled = bundled_dir(probe.wallpaper.store().unwrap());
+    drop(probe);
+    let ridge = bundled_path(&bundled, "halcyon-ridge");
+    std::fs::create_dir_all(&bundled).unwrap();
+    std::fs::write(&ridge, crate::depth::PICTURE).unwrap();
+    // The Ridge picture, and a top panel that keeps the top 40 px.
+    seed(
+        &fixture.join("config/cosmic"),
+        &[
+            (
+                "com.system76.CosmicBackground",
+                "all",
+                &ron::to_string(&BgEntry::new("all", BgSource::Path(ridge.clone()))).unwrap(),
+            ),
+            (
+                "com.system76.CosmicPanel",
+                "entries",
+                "[\"Panel\",\"Dock\"]",
+            ),
+            ("com.system76.CosmicPanel.Panel", "anchor", "Top"),
+            ("com.system76.CosmicPanel.Panel", "exclusive_zone", "true"),
+            ("com.system76.CosmicPanel.Panel", "autohide", "Never"),
+            ("com.system76.CosmicPanel.Panel", "size", "XS"),
+            ("com.system76.CosmicPanel.Panel", "margin", "6"),
+            ("com.system76.CosmicPanel.Panel", "output", "All"),
+            ("com.system76.CosmicPanel.Dock", "exclusive_zone", "false"),
+        ],
+    );
+    let wire = crate::displays::test_support::Wire::new();
+    let output = || {
+        let mut output = info(Some("DP-1"), (1920, 1080));
+        output.modes.push(cosmic::cctk::sctk::output::Mode {
+            dimensions: (1920, 1080),
+            refresh_rate: 60_000,
+            current: true,
+            preferred: true,
+        });
+        output
+    };
+    let area = [1920., 1040.];
+    // The desktop for the saved config: its clock box on the whole output.
+    let desktop = || {
+        let (mut cards, wire) =
+            crate::app::Cards::on_output_for_test(Config::load(), "DP-1", (1920, 1080), area);
+        let rect = cards
+            .clock_on_output()
+            .expect("the desktop places the clock");
+        (cards, wire, rect)
+    };
+    let size = Size::new(1280., 900.);
+    let open = |n: u32, published: &crate::layout_state::Snapshot| {
+        crate::layout_state::publish(published, crate::layout_state::next_generation());
+        let (mut app, initial) = Settings::init(Core::default(), Page::Clock);
+        settle_settings(&mut app, initial);
+        send_settings(
+            &mut app,
+            Message::DisplayOutput(OutputEvent::Created(Some(output())), wire.output(n)),
+        );
+        drive_wallpaper(&mut app);
+        send_settings(&mut app, Message::Resized(size));
+        app
+    };
+    // The stage's clock box, measured in what it draws, on the output.
+    let drawn = |app: &Settings, native: &mut Native| {
+        let picture = native.bounds(app.settings_view(), stage::SCREEN_ID);
+        let body = native.bounds(app.settings_view(), stage::CLOCK_ID);
+        let scale = picture.width / 1920.;
+        assert!((picture.height / scale - 1080.).abs() < 1., "{picture:?}");
+        (
+            [
+                (body.x - picture.x) / scale,
+                (body.y - picture.y) / scale,
+                body.width / scale,
+                body.height / scale,
+            ],
+            scale,
+            picture,
+        )
+    };
+    let near =
+        |a: [f32; 4], b: [f32; 4], within: f32| (0..4).all(|i| (a[i] - b[i]).abs() <= within);
+    let recipe = serde_json::json!({
+        "version": 1,
+        "id": "r-6e1beedf0418a1000575316a47514616",
+        "revision": "e8c8e85fd20d86ed08ff1e9724cf9669dcb16087d213d14e209f680730f77620",
+        "name": "My clock",
+        "kind": "clock",
+        "parts": ["face", "date"],
+        "caption": "Make room for today",
+        "compact": "stack",
+        "wide": "stack"
+    });
+    let cases = [
+        (
+            "recipe",
+            json!({
+                "widget_positions": {"clock": [0.0, 0.0]},
+                "widget_sizes": {"clock": [512.0, 547.0]},
+                "clock": {"alignment": "left", "center_vertically": true, "scale": 170,
+                          "show_date": false},
+                "recipes": {"clock": recipe}
+            }),
+        ),
+        (
+            "middle-200",
+            json!({"widget_positions": {"clock": [0.5, 0.25]}, "clock": {"scale": 200}}),
+        ),
+        (
+            "low-200",
+            json!({
+                "widget_positions": {"clock": [0.3, 0.8]},
+                "widget_sizes": {"clock": [800.0, 330.0]},
+                "clock": {"scale": 200}
+            }),
+        ),
+        (
+            "corner-100",
+            json!({"widget_positions": {"clock": [1.0, 1.0]}, "clock": {"scale": 100}}),
+        ),
+    ];
+    let evidence = std::env::var_os("HALCYON_STAGE_EVIDENCE").map(std::path::PathBuf::from);
+    for (n, (name, case)) in cases.iter().enumerate() {
+        let mut value = json!({"theme": "teal", "enabled_widgets": ["clock"]});
+        for (key, member) in case.as_object().unwrap() {
+            value[key] = member.clone();
+        }
+        std::fs::write(Config::path().unwrap(), serde_json::to_vec(&value).unwrap()).unwrap();
+        let (cards, _desktop_wire, rect) = desktop();
+        let app = open(n as u32 + 1, &cards.layout_snapshot());
+        let mut native = Native::new(size);
+        let (shown, scale, picture) = drawn(&app, &mut native);
+        if let Some(root) = &evidence {
+            std::fs::create_dir_all(root).unwrap();
+            // The desktop: the picture as cosmic-bg covers the output, the
+            // panel's strip, and the clock's own surface where it sits.
+            let mut screen_image = image::load_from_memory(crate::depth::PICTURE)
+                .unwrap()
+                .resize_to_fill(1920, 1080, image::imageops::FilterType::Triangle)
+                .to_rgba8();
+            for y in 0..40 {
+                for x in 0..1920 {
+                    screen_image.put_pixel(x, y, image::Rgba([24, 24, 28, 255]));
+                }
+            }
+            let clock_size = Size::new(rect[2], rect[3]);
+            let pixels =
+                Native::new(clock_size).render(cards.clock_surface(), &cosmic::Theme::dark());
+            let surface =
+                image::RgbaImage::from_raw(rect[2] as u32, rect[3] as u32, pixels).unwrap();
+            image::imageops::overlay(
+                &mut screen_image,
+                &surface,
+                rect[0].round() as i64,
+                rect[1].round() as i64,
+            );
+            let desktop_image = image::imageops::resize(
+                &screen_image,
+                960,
+                540,
+                image::imageops::FilterType::Triangle,
+            );
+            let settings = image::RgbaImage::from_raw(
+                size.width as u32,
+                size.height as u32,
+                native.render(app.settings_view(), &cosmic::Theme::dark()),
+            )
+            .unwrap();
+            let stage_image = image::imageops::crop_imm(
+                &settings,
+                picture.x.round() as u32,
+                picture.y.round() as u32,
+                picture.width.round() as u32,
+                picture.height.round() as u32,
+            )
+            .to_image();
+            let stage_image = image::imageops::resize(
+                &stage_image,
+                960,
+                540,
+                image::imageops::FilterType::Triangle,
+            );
+            let mut both =
+                image::RgbaImage::from_pixel(960 * 2 + 16, 540, image::Rgba([0, 0, 0, 255]));
+            image::imageops::overlay(&mut both, &desktop_image, 0, 0);
+            image::imageops::overlay(&mut both, &stage_image, 960 + 16, 0);
+            both.save(root.join(format!("stage-vs-desktop-{name}.png")))
+                .unwrap();
+        }
+        let screen = app.clock_stage_screen();
+        assert_eq!(
+            (screen.whole, screen.origin, screen.area),
+            ([1920., 1080.], [0., 40.], area),
+            "{name}"
+        );
+        let (position, clock) = app.clock_stage_place().unwrap();
+        let placed = screen.on_output(position);
+        assert!(
+            near([placed[0], placed[1], clock[0], clock[1]], rect, 0.5),
+            "{name}: Settings {placed:?} {clock:?}, desktop {rect:?}"
+        );
+        // Within a stage pixel of the desktop's box.
+        assert!(
+            near(shown, rect, 1. / scale),
+            "{name}: {shown:?} vs {rect:?}"
+        );
+        // The corner handle sits at the box's corner.
+        let handle = native.bounds(app.settings_view(), "clock-stage-handle");
+        let corner = [
+            picture.x + (rect[0] + rect[2]) * scale,
+            picture.y + (rect[1] + rect[3]) * scale,
+        ];
+        assert!(
+            (handle.x + handle.width - corner[0]).abs() <= 1.
+                && (handle.y + handle.height - corner[1]).abs() <= 1.,
+            "{name}: handle {handle:?}, corner {corner:?}"
+        );
+    }
+
+    // Dragged on the stage, the clock lands where the desktop then shows it.
+    let (cards, _desktop_wire, _) = desktop();
+    let mut app = open(9, &cards.layout_snapshot());
+    let mut native = Native::new(size);
+    let (before, scale, _) = drawn(&app, &mut native);
+    let body = native.bounds(app.settings_view(), stage::CLOCK_ID);
+    let send = |app: &mut Settings, native: &mut Native, event: mouse::Event, at: Point| {
+        for message in native.event(app.settings_view(), Event::Mouse(event), at).0 {
+            send_settings(app, message);
+        }
+    };
+    let grab = body.center();
+    send(
+        &mut app,
+        &mut native,
+        mouse::Event::CursorMoved { position: grab },
+        grab,
+    );
+    send(
+        &mut app,
+        &mut native,
+        mouse::Event::ButtonPressed(mouse::Button::Left),
+        grab,
+    );
+    assert!(app.clock_stage.dragging());
+    let to = Point::new(grab.x - 120., grab.y - 60.);
+    send(
+        &mut app,
+        &mut native,
+        mouse::Event::CursorMoved { position: to },
+        to,
+    );
+    send(
+        &mut app,
+        &mut native,
+        mouse::Event::ButtonReleased(mouse::Button::Left),
+        to,
+    );
+    send_settings(&mut app, Message::ClockStage(Edit::Release));
+    assert!(!app.error, "{}", app.status);
+    // One step larger, saved too.
+    send_settings(&mut app, Message::ClockStage(Edit::Step(2)));
+    assert!(!app.error, "{}", app.status);
+    let (stage_rect, _, _) = drawn(&app, &mut native);
+    assert!(
+        (stage_rect[0] - before[0]).abs() > 100. / scale * 0.5,
+        "{stage_rect:?} from {before:?}"
+    );
+    let (_, _, rect) = desktop();
+    assert!(
+        near(stage_rect, rect, 1. / scale),
+        "after editing: stage {stage_rect:?}, desktop {rect:?}"
+    );
+}
