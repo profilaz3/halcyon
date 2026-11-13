@@ -1721,17 +1721,21 @@ fn arrange_card_buttons_take_the_click_before_the_drag() {
     let mut native = overlay(&cards);
     for widget in [Widget::Weather, Widget::Clock] {
         for id in ["settings", "remove"] {
-            let point = native
-                .bounds(
-                    cards.layout_view(),
-                    &format!("arrange-{id}-{}", widget.key()),
-                )
-                .center();
+            let button = native.bounds(
+                cards.layout_view(),
+                &format!("arrange-{id}-{}", widget.key()),
+            );
+            let point = button.center();
             let at = cards.position_from(widget, &cards.layout_editor.draft);
             let size = cards.widget_size(widget);
+            // On the card's top edge, mostly outside it, so the card's own
+            // content stays uncovered.
             assert!(
-                point.x > at[0] && point.x < at[0] + size[0] && point.y > at[1],
-                "{widget:?} {id} inside its card"
+                button.x > at[0]
+                    && button.x + button.width < at[0] + size[0]
+                    && button.y < at[1]
+                    && button.y + button.height > at[1],
+                "{widget:?} {id} on its card's top edge"
             );
             native.event(
                 cards.layout_view(),
