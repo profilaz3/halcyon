@@ -679,7 +679,7 @@ fn masks_clear_the_corners_and_keep_the_center_with_soft_edges() {
             (size - 1, 0),
             (0, size - 1),
             (size - 1, size - 1),
-            (14, 14),
+            (12, 12),
         ] {
             assert_eq!(at(x, y), 0., "{shape:?} corner {x},{y}");
         }
@@ -761,6 +761,26 @@ fn tint_turns_a_blue_folder_to_the_accent_and_leaves_gray_alone() {
 }
 
 #[test]
+fn tint_gives_an_all_gray_folder_the_accent_but_keeps_white_marks() {
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect x="4" y="12" width="56" height="44" rx="4" fill="#8a8a8a"/><rect x="4" y="8" width="24" height="8" rx="2" fill="#6e6e6e"/><rect x="24" y="30" width="16" height="12" fill="#ffffff"/></svg>"##;
+    let mut icon = raster::svg(svg.as_bytes(), 64).unwrap();
+    let before = icon.clone();
+    let accent = [0x26, 0xa2, 0x69];
+    overlay::tint(&mut icon, accent);
+    let (accent_h, ..) = overlay::hue_saturation(accent);
+    let hsl = |pixel: &image::Rgba<u8>| overlay::hue_saturation([pixel[0], pixel[1], pixel[2]]);
+    let (h, s, l) = hsl(icon.get_pixel(12, 50));
+    let (.., old_l) = hsl(before.get_pixel(12, 50));
+    assert!((h - accent_h).abs() < 8., "hue {h} vs {accent_h}");
+    assert!(s > 0.4, "{s}");
+    assert!((l - old_l).abs() < 0.03, "lightness kept: {l} {old_l}");
+    // The tab stays darker than the body, the white mark stays white.
+    assert!(hsl(icon.get_pixel(16, 10)).2 < l);
+    assert_eq!(icon.get_pixel(32, 36), before.get_pixel(32, 36));
+    assert_eq!(icon.get_pixel(0, 0), before.get_pixel(0, 0));
+}
+
+#[test]
 fn overlay_generates_shaped_apps_and_tinted_folders_in_alternating_slots() {
     let temp = Temp::new("overlay");
     let paths = temp.paths();
@@ -823,8 +843,8 @@ fn overlay_generates_shaped_apps_and_tinted_folders_in_alternating_slots() {
             .starts_with(&root)
     );
     assert_eq!(
-        overlay::recorded_base(&paths, &slot).as_deref(),
-        Some("Base")
+        overlay::recorded(&paths, &slot).map(|record| record.base),
+        Some("Base".to_string())
     );
     // The next build goes to the other slot; then the first is removed.
     let next = overlay::generate(&paths, &request, Some(&slot), &|_, _| {}).unwrap();
@@ -976,4 +996,138 @@ fn try_a_real_pack() {
         request.apps.len(),
         started.elapsed()
     );
+}
+
+#[test]
+fn overlay_record_round_trips_and_ignores_folders_halcyon_did_not_write() {
+    let temp = Temp::new("recorded");
+    let paths = temp.paths();
+    let request = overlay::Request {
+        base: "Papirus-Dark".into(),
+        shape: overlay::Shape::Squircle,
+        tint: Some([0x26, 0xa2, 0x69]),
+        dark: true,
+        apps: Vec::new(),
+    };
+    let index = overlay::index_for(&request);
+    // The shade sits in the theme section, before the first directory.
+    let shade = index.find("X-Halcyon-Shade=dark").unwrap();
+    assert!(shade < index.find("\n[").unwrap(), "{index}");
+    let slot = overlay::SLOTS[0];
+    fs::create_dir_all(paths.icons.join(slot)).unwrap();
+    fs::write(paths.icons.join(slot).join("index.theme"), &index).unwrap();
+    assert_eq!(
+        overlay::recorded(&paths, slot),
+        Some(overlay::Recorded {
+            base: "Papirus-Dark".into(),
+            shape: overlay::Shape::Squircle,
+            tint: Some([0x26, 0xa2, 0x69]),
+            dark: true,
+        })
+    );
+    // Light, untinted.
+    let light = overlay::index_for(&overlay::Request {
+        tint: None,
+        dark: false,
+        ..request
+    });
+    fs::write(paths.icons.join(slot).join("index.theme"), light).unwrap();
+    let record = overlay::recorded(&paths, slot).unwrap();
+    assert_eq!((record.tint, record.dark), (None, false));
+    // A folder with a slot's name but no marker, a theme that is no slot,
+    // and an overlay naming another overlay as its base are not records.
+    let other = overlay::SLOTS[1];
+    fs::create_dir_all(paths.icons.join(other)).unwrap();
+    fs::write(
+        paths.icons.join(other).join("index.theme"),
+        "[Icon Theme]\nName=Mine\nX-Halcyon-Base=Adwaita\n",
+    )
+    .unwrap();
+    assert_eq!(overlay::recorded(&paths, other), None);
+    fs::create_dir_all(paths.icons.join("Adwaita")).unwrap();
+    fs::write(paths.icons.join("Adwaita/index.theme"), &index).unwrap();
+    assert_eq!(overlay::recorded(&paths, "Adwaita"), None);
+    let looped = index.replace(
+        "X-Halcyon-Base=Papirus-Dark",
+        &format!("X-Halcyon-Base={other}"),
+    );
+    fs::write(paths.icons.join(slot).join("index.theme"), looped).unwrap();
+    assert_eq!(overlay::recorded(&paths, slot), None);
+}
+
+#[test]
+fn fixture_source_pages_searches_sorts_and_copies_without_network() {
+    use super::source::Source;
+    let temp = Temp::new("source");
+    let dir = temp.0.join("catalog");
+    fs::create_dir_all(dir.join("files")).unwrap();
+    fs::write(dir.join("catalog.json"), PAGE).unwrap();
+    fs::write(dir.join("files/1166289-1"), b"archive").unwrap();
+    let source = Source::Fixture(dir.clone());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let page = source
+            .page(ocs::Sort::Popular, String::new(), 0)
+            .await
+            .unwrap();
+        assert_eq!((page.total, page.packs.len()), (8, 8));
+        let downloads: Vec<_> = page.packs.iter().map(|pack| pack.downloads).collect();
+        assert!(
+            downloads.windows(2).all(|pair| pair[0] >= pair[1]),
+            "{downloads:?}"
+        );
+        // Past the end: nothing more.
+        let next = source
+            .page(ocs::Sort::Popular, String::new(), 1)
+            .await
+            .unwrap();
+        assert!(next.packs.is_empty());
+        // Search looks at name, author and summary, ignoring case.
+        let tela = source
+            .page(ocs::Sort::Newest, " TELA ".into(), 0)
+            .await
+            .unwrap();
+        assert!(
+            tela.packs
+                .iter()
+                .all(|pack| pack.name.to_lowercase().contains("tela"))
+        );
+        assert_eq!(tela.total, 2);
+        let curated = source.curated().await.unwrap();
+        assert_eq!(curated.first().map(|pack| pack.id), Some(1166289));
+        let pack = source.pack(1166289).await.unwrap();
+        assert_eq!(pack.name, "Papirus");
+        assert!(source.pack(1).await.is_err());
+        // The download copies the archive and reports progress to the end.
+        let dest = temp.0.join("dl/papirus");
+        let mut steps = Vec::new();
+        source
+            .download(&pack.files[0].link, &dest, 1024, |progress| {
+                steps.push(progress.done)
+            })
+            .await
+            .unwrap();
+        assert_eq!(fs::read(&dest).unwrap(), b"archive");
+        assert_eq!(steps.last(), Some(&7));
+        // Over the size limit, nothing is copied.
+        let small = temp.0.join("dl/small");
+        assert!(
+            source
+                .download(&pack.files[0].link, &small, 4, |_| {})
+                .await
+                .is_err()
+        );
+        assert!(!small.exists());
+        // Offline fails every request.
+        assert!(
+            Source::Offline
+                .page(ocs::Sort::Popular, String::new(), 0)
+                .await
+                .is_err()
+        );
+        assert!(Source::Offline.curated().await.is_err());
+    });
 }

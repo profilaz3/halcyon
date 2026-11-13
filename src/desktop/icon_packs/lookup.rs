@@ -171,11 +171,6 @@ impl Resolver {
         })
     }
 
-    /// Whether the theme exists in the search directories.
-    pub fn has(&mut self, id: &str) -> bool {
-        self.theme(id).is_some()
-    }
-
     /// The theme, what it inherits depth first, and hicolor last.
     pub fn chain(&mut self, id: &str) -> Vec<String> {
         let mut out = Vec::new();

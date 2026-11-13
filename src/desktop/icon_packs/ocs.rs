@@ -411,6 +411,22 @@ pub async fn fetch(sort: Sort, search: String, page: u32) -> Result<CatalogPage,
     parse(&bounded(response, MAX_RESPONSE).await?, page)
 }
 
+/// One pack with fresh download links (they are signed and expire).
+pub async fn fetch_pack(id: u64) -> Result<Pack, String> {
+    let client = client()?;
+    let response = client
+        .get(format!("{ENDPOINT}/{id}"))
+        .query(&[("format", "json")])
+        .send()
+        .await
+        .map_err(|error| describe(&error))?;
+    parse(&bounded(response, MAX_RESPONSE).await?, 0)?
+        .packs
+        .into_iter()
+        .find(|pack| pack.id == id)
+        .ok_or_else(|| "This pack is no longer offered".to_string())
+}
+
 /// The curated packs, in their order; one that can't be found is left out.
 pub async fn fetch_curated() -> Result<Vec<Pack>, String> {
     let client = client()?;

@@ -12,6 +12,7 @@ pub mod lookup;
 pub mod ocs;
 pub mod overlay;
 pub mod raster;
+pub mod source;
 
 #[cfg(test)]
 mod tests;

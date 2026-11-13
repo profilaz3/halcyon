@@ -228,21 +228,70 @@ pub fn index_theme(base: &str, shape: Shape, tint: Option<[u8; 3]>) -> String {
     text
 }
 
+/// The overlay's `index.theme` for `request`: [`index_theme`] with the
+/// shade its tiles were drawn for, so a change of shade is noticed.
+pub fn index_for(request: &Request) -> String {
+    let text = index_theme(&request.base, request.shape, request.tint);
+    let shade = format!(
+        "X-Halcyon-Shade={}\n",
+        if request.dark { "dark" } else { "light" }
+    );
+    match text.find("\n\n[") {
+        Some(end) => format!("{}\n{shade}{}", &text[..end], &text[end + 1..]),
+        None => text + &shade,
+    }
+}
+
+/// What an overlay slot was built from, as its `index.theme` records it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Recorded {
+    pub base: String,
+    pub shape: Shape,
+    pub tint: Option<[u8; 3]>,
+    pub dark: bool,
+}
+
+/// Reads the record of the overlay in `slot`, if Halcyon wrote it.
+pub fn recorded(paths: &Paths, slot: &str) -> Option<Recorded> {
+    if !is_overlay(slot) {
+        return None;
+    }
+    let bytes = super::read(&paths.icons.join(slot).join("index.theme"), 64 * 1024)?;
+    let text = String::from_utf8_lossy(&bytes);
+    if !text.contains(&format!("{MARKER}=true")) {
+        return None;
+    }
+    let value = |key: &str| {
+        text.lines()
+            .find_map(|line| line.strip_prefix(key)?.strip_prefix('='))
+            .map(str::trim)
+    };
+    let base = value("X-Halcyon-Base")
+        .filter(|base| super::valid_id(base) && !is_overlay(base))?
+        .to_string();
+    let shape = Shape::ALL
+        .into_iter()
+        .find(|shape| Some(shape.key()) == value("X-Halcyon-Shape"))
+        .unwrap_or_default();
+    let tint = value("X-Halcyon-Tint").and_then(|hex| {
+        let hex = hex.strip_prefix('#')?;
+        let number = u32::from_str_radix(hex, 16)
+            .ok()
+            .filter(|_| hex.len() == 6)?;
+        Some([(number >> 16) as u8, (number >> 8) as u8, number as u8])
+    });
+    Some(Recorded {
+        base,
+        shape,
+        tint,
+        dark: value("X-Halcyon-Shade") == Some("dark"),
+    })
+}
+
 /// Whether `dir` is an overlay Halcyon wrote.
 pub fn ours(dir: &Path) -> bool {
     super::read(&dir.join("index.theme"), 64 * 1024)
         .is_some_and(|bytes| String::from_utf8_lossy(&bytes).contains(&format!("{MARKER}=true")))
-}
-
-/// The base recorded in an overlay's index, for when Halcyon's own record is
-/// gone.
-pub fn recorded_base(paths: &Paths, slot: &str) -> Option<String> {
-    let bytes = super::read(&paths.icons.join(slot).join("index.theme"), 64 * 1024)?;
-    String::from_utf8_lossy(&bytes)
-        .lines()
-        .find_map(|line| line.strip_prefix("X-Halcyon-Base="))
-        .map(|base| base.trim().to_string())
-        .filter(|base| super::valid_id(base) && !is_overlay(base))
 }
 
 /// Removes Halcyon's overlay slots, except `keep`. A folder of that name
@@ -325,15 +374,18 @@ pub fn hue_saturation(color: [u8; 3]) -> (f32, f32, f32) {
 /// Recolors the colored parts of `icon` toward `accent`. Hues move by the
 /// same turn that takes the icon's main hue to the accent's, saturation
 /// scales by the accent's, lightness (and with it the shading) stays, and
-/// gray pixels stay gray.
+/// gray pixels stay gray. A folder drawn all in gray (COSMIC's own) has no
+/// hue to turn, so its mid tones take the accent instead.
 pub fn tint(icon: &mut RgbaImage, accent: [u8; 3]) {
     let (accent_h, accent_s, _) = hue_saturation(accent);
     // The icon's main hue: a saturation weighted circular mean.
     let (mut sx, mut sy, mut ss, mut weight) = (0f32, 0f32, 0f32, 0f32);
+    let mut opaque = 0f32;
     for pixel in icon.pixels() {
         if pixel[3] < 32 {
             continue;
         }
+        opaque += f32::from(pixel[3]) / 255.;
         let (r, g, b) = unit(pixel);
         let (h, s, l) = hsl(r, g, b);
         let w =
@@ -343,7 +395,8 @@ pub fn tint(icon: &mut RgbaImage, accent: [u8; 3]) {
         ss += s * w;
         weight += w;
     }
-    if weight < 1e-3 {
+    if weight < 0.02 * opaque {
+        colorize(icon, accent_h, accent_s);
         return;
     }
     let reference_h = sy.atan2(sx).to_degrees();
@@ -363,6 +416,26 @@ pub fn tint(icon: &mut RgbaImage, accent: [u8; 3]) {
         pixel[0] = byte(r + (nr - r) * blend);
         pixel[1] = byte(g + (ng - g) * blend);
         pixel[2] = byte(b + (nb - b) * blend);
+    }
+}
+
+/// Gives a gray icon the accent's hue: mid tones take most of the color,
+/// while near white paper and near black marks stay neutral.
+fn colorize(icon: &mut RgbaImage, hue: f32, saturation: f32) {
+    for pixel in icon.pixels_mut() {
+        if pixel[3] == 0 {
+            continue;
+        }
+        let (r, g, b) = unit(pixel);
+        let (_, s, l) = hsl(r, g, b);
+        let tone = smoothstep(0.1, 0.3, l) * (1. - smoothstep(0.8, 0.94, l));
+        if tone <= 0. {
+            continue;
+        }
+        let (nr, ng, nb) = rgb(hue, (saturation * 0.85).max(s), l);
+        pixel[0] = byte(r + (nr - r) * tone);
+        pixel[1] = byte(g + (ng - g) * tone);
+        pixel[2] = byte(b + (nb - b) * tone);
     }
 }
 
@@ -419,11 +492,12 @@ fn bounds(icon: &RgbaImage) -> Option<(u32, u32, u32, u32)> {
 
 /// The average color of the icon's outer edge, sampled inward from its
 /// box along rays from the center.
-fn edge_color(icon: &RgbaImage, (x, y, w, h): (u32, u32, u32, u32)) -> [f32; 3] {
+fn edge_color(icon: &RgbaImage, (x, y, w, h): (u32, u32, u32, u32)) -> ([f32; 3], f32) {
     let (cx, cy) = (x as f32 + w as f32 / 2., y as f32 + h as f32 / 2.);
     let reach = (w.max(h) as f32) * 0.75;
     let mut sum = [0f32; 3];
     let mut count = 0f32;
+    let mut seen = Vec::with_capacity(96);
     for step in 0..96 {
         let angle = step as f32 / 96. * std::f32::consts::TAU;
         let (dx, dy) = (angle.cos(), angle.sin());
@@ -441,6 +515,7 @@ fn edge_color(icon: &RgbaImage, (x, y, w, h): (u32, u32, u32, u32)) -> [f32; 3] 
                     sum[1] += g;
                     sum[2] += b;
                     count += 1.;
+                    seen.push([r, g, b]);
                     break;
                 }
             }
@@ -448,9 +523,18 @@ fn edge_color(icon: &RgbaImage, (x, y, w, h): (u32, u32, u32, u32)) -> [f32; 3] 
         }
     }
     if count == 0. {
-        return [0.5; 3];
+        return ([0.5; 3], 1.);
     }
-    sum.map(|channel| channel / count)
+    let mean = sum.map(|channel| channel / count);
+    // How far the rim strays from its mean: low for a one color rim.
+    let spread = seen
+        .iter()
+        .map(|c| {
+            ((c[0] - mean[0]).powi(2) + (c[1] - mean[1]).powi(2) + (c[2] - mean[2]).powi(2)).sqrt()
+        })
+        .sum::<f32>()
+        / count;
+    (mean, spread)
 }
 
 /// The icon's most common saturated color, or `None` when it is mostly
@@ -488,12 +572,13 @@ fn mix(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
 }
 
 /// The tile behind an icon that doesn't fill its shape: a pale tint of its
-/// main color in light mode, a deep one in dark mode, or a neutral gray.
+/// main color in light mode, graphite with a hint of it in dark mode (a
+/// deeper tint turns warm colors brown), or a neutral gray.
 fn backdrop(icon: &RgbaImage, dark: bool) -> ([f32; 3], [f32; 3]) {
-    let (white, black) = ([1.; 3], [0.13; 3]);
+    let white = [1.; 3];
     match (dominant(icon), dark) {
         (Some(color), false) => (mix(color, white, 0.88), mix(color, white, 0.78)),
-        (Some(color), true) => (mix(color, black, 0.52), mix(color, black, 0.64)),
+        (Some(color), true) => (mix(color, [0.3; 3], 0.9), mix(color, [0.21; 3], 0.92)),
         (None, false) => ([0.98; 3], [0.92; 3]),
         (None, true) => ([0.33; 3], [0.25; 3]),
     }
@@ -505,9 +590,10 @@ fn over(dst: &mut RgbaImage, src: &RgbaImage, left: i64, top: i64) {
 }
 
 /// One app icon at `WORK` size masked to `shape`. Icons that already fill
-/// a square (or a rounder silhouette) are scaled to the shape over their
-/// own edge color, so a round icon becomes a full shape; any other icon is
-/// set inside the shape on a tile.
+/// a square are scaled to cover the shape, and a rounder silhouette with a
+/// one color rim is set over that color, so a round icon becomes a full
+/// shape; any other icon is set inside the shape on a tile, a round one
+/// with a multicolored rim nearly filling it.
 pub fn shape_icon(icon: &RgbaImage, shape: Shape, dark: bool, mask: &[f32]) -> RgbaImage {
     let size = icon.width();
     let Some(bbox) = bounds(icon) else {
@@ -529,8 +615,9 @@ pub fn shape_icon(icon: &RgbaImage, shape: Shape, dark: bool, mask: &[f32]) -> R
     let side = size - 2 * margin;
     let crop = image::imageops::crop_imm(icon, bx, by, bw, bh).to_image();
     let mut out = RgbaImage::new(size, size);
-    if (0.86..=1.16).contains(&aspect) && fill >= 0.76 && center {
-        let edge = edge_color(icon, bbox);
+    let round = (0.86..=1.16).contains(&aspect) && fill >= 0.76 && center;
+    let (edge, spread) = edge_color(icon, bbox);
+    if round && (fill >= 0.94 || spread < 0.14) {
         let color = Rgba([byte(edge[0]), byte(edge[1]), byte(edge[2]), 255]);
         for pixel in out.pixels_mut() {
             *pixel = color;
@@ -557,7 +644,13 @@ pub fn shape_icon(icon: &RgbaImage, shape: Shape, dark: bool, mask: &[f32]) -> R
             let color = mix(top, bottom, t);
             *pixel = Rgba([byte(color[0]), byte(color[1]), byte(color[2]), 255]);
         }
-        let target = (side as f32 * if shape == Shape::Circle { 0.66 } else { 0.72 }) as u32;
+        let share = match (round, shape) {
+            (true, Shape::Circle) => 0.76,
+            (true, _) => 0.82,
+            (false, Shape::Circle) => 0.66,
+            (false, _) => 0.72,
+        };
+        let target = (side as f32 * share) as u32;
         let scale = target as f32 / bw.max(bh) as f32;
         let (w, h) = (
             ((bw as f32 * scale).round() as u32).max(1),
@@ -720,11 +813,8 @@ pub fn generate(
                 progress(done.fetch_add(1, Ordering::Relaxed) + 1, total);
             });
         });
-        fs::write(
-            staging.join("index.theme"),
-            index_theme(&request.base, request.shape, request.tint),
-        )
-        .map_err(|error| error.to_string())?;
+        fs::write(staging.join("index.theme"), index_for(request))
+            .map_err(|error| error.to_string())?;
         if fs::symlink_metadata(&target).is_ok() {
             fs::remove_dir_all(&target).map_err(|error| error.to_string())?;
         }
