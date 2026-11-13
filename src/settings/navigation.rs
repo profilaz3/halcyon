@@ -998,8 +998,8 @@ const ROWS: &[SearchHit] = &[
     hit(Page::DesktopAppearance, "Fixed-width font", "", false),
     hit(
         Page::DesktopAppearance,
-        "Icon theme",
-        "icons icon pack themes",
+        "Icons",
+        "icon theme icon pack themes",
         false,
     )
     .at("appearance-icons"),
