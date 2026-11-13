@@ -681,6 +681,12 @@ impl Settings {
         // An active COSMIC window shows the planned window colors and its
         // outline, which a theme now coordinates too.
         let show_window = !matches!(self.page, Page::DesktopProfiles | Page::Overview);
+        // A part of the picture answers a click only on its own menu: the
+        // widgets on Widgets, the window on Appearance. Parts that another
+        // sidebar page edits are drawn but inert; the labelled shortcuts
+        // below the picture are the way there.
+        let page = self.page;
+        let own = move |part: Page| interactive && page.owns(part);
         let mut objects: Vec<Element<'_, Message>> = Vec::new();
         if interactive {
             objects.push(
@@ -764,7 +770,7 @@ impl Settings {
                     }
                 }));
             let background = wallpaper.unwrap_or_else(|| backdrop.into());
-            let background = if interactive {
+            let background = if own(Page::DesktopWallpaper) {
                 button::custom(background)
                     .class(super::home::hotspot(accent, 9.))
                     .padding(0)
@@ -804,9 +810,14 @@ impl Settings {
                 } else {
                     card(widget, size, &config, scale)
                 };
-                let sample = if interactive {
+                let sample = if own(super::home::widget_page(widget)) {
                     button::custom(sample)
                         .class(super::home::hotspot(accent, 6.))
+                        .id(cosmic::widget::Id::new(format!(
+                            "scene-widget-{}",
+                            widget.key()
+                        )))
+                        .name(widget.title())
                         .padding(0)
                         .on_press(Message::Page(super::home::widget_page(widget)))
                         .into()
@@ -827,9 +838,11 @@ impl Settings {
             if let Some(draft) = preview.appearance.as_ref().filter(|_| show_window) {
                 let size = [screen[0] * 0.36, (screen[1] * 0.34).max(64.)];
                 let window = schematic_window(draft.preview(draft.active_variant()), size);
-                let window = if interactive {
+                let window = if own(Page::DesktopAppearance) {
                     button::custom(window)
                         .class(super::home::hotspot(accent, 6.))
+                        .id(cosmic::widget::Id::new("scene-part-window"))
+                        .name("Window appearance")
                         .padding(0)
                         .on_press(Message::Page(Page::DesktopAppearance))
                         .into()
@@ -853,7 +866,7 @@ impl Settings {
                 screen,
                 scale,
                 accent,
-                interactive.then_some(Message::OpenBar as fn(_) -> Message),
+                &|kind| own(Page::of_bar(kind)).then_some(Message::OpenBar(kind)),
                 self.placement.display.as_deref().unwrap_or(""),
             ));
             container(stack(layers).width(screen[0]).height(screen[1]).clip(true))
@@ -871,8 +884,8 @@ impl Settings {
         .width(Length::Fill)
         .height(height);
         if interactive && matches!(self.page, Page::Overview | Page::Themes) {
-            // The list beside the picture names every object on the landing;
-            // Appearance edits by clicking the preview itself.
+            // The list beside the picture names every widget on the landing;
+            // Appearance edits the window by clicking the preview itself.
             scene.into()
         } else if interactive {
             let mut content = vec![scene.into()];

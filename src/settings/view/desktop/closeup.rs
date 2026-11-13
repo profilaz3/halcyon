@@ -660,7 +660,10 @@ impl Settings {
                 let alpha = presence(draft, subject);
                 let islands_on = editor.islands.installation.installed()
                     && draft.islands().known().is_some_and(|s| s.enabled);
-                let on_press = (!subject).then(|| edit(Edit::Select(draft.kind())));
+                // The other bar has its own page: here it is drawn only,
+                // never a way there.
+                let on_press = (!subject && self.page.owns(Page::of_bar(draft.kind())))
+                    .then(|| edit(Edit::Select(draft.kind())));
                 if islands_on {
                     drawn.extend(islands(
                         draft,
@@ -675,7 +678,7 @@ impl Settings {
                         subject.then_some(editor.islands.selected).flatten(),
                         &editor.island_output(),
                         on_press,
-                        true,
+                        subject,
                     ));
                 } else {
                     drawn.push(whole_bar(
