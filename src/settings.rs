@@ -28,6 +28,7 @@ mod display_tests;
 mod drafts;
 mod escape;
 mod legacy;
+mod icon_packs;
 mod moments;
 mod monitors;
 mod motion;
@@ -703,6 +704,8 @@ pub enum Message {
     EditWidgetLayout(Widget),
     DesktopEditor(desktop::Message),
     SystemAppearance(system_appearance::Message),
+    /// Icon themes, the pack browser, app icon shape and accent folders.
+    IconPacks(icon_packs::Message),
     Profiles(profiles::Message),
     Windows(windows::Message),
     Workspaces(workspaces::Message),
@@ -1024,6 +1027,7 @@ pub struct Settings {
     canvas: Option<canvas::Draft>,
     desktop: desktop::DesktopEditor,
     system_appearance: system_appearance::AppearanceEditor,
+    icon_packs: icon_packs::IconPacks,
     profiles: profiles::ProfilesEditor,
     windows: windows::WindowsEditor,
     workspaces: workspaces::WorkspacesEditor,
@@ -1301,6 +1305,7 @@ impl cosmic::Application for Settings {
             canvas: None,
             desktop: desktop::DesktopEditor::default(),
             system_appearance: system_appearance::AppearanceEditor::default(),
+            icon_packs: icon_packs::IconPacks::default(),
             profiles: profiles::ProfilesEditor::default(),
             windows: windows::WindowsEditor::default(),
             workspaces: workspaces::WorkspacesEditor::default(),
@@ -1434,6 +1439,11 @@ impl cosmic::Application for Settings {
             app.profiles.open_home();
         }
         let media = app.media_tasks();
+        let icons = if page == Page::DesktopAppearance {
+            app.open_icon_packs()
+        } else {
+            Task::none()
+        };
         #[cfg(test)]
         view::profiles::prepare_look_images();
         let gallery = if view::profiles::look_images_ready() {
@@ -1464,6 +1474,7 @@ impl cosmic::Application for Settings {
                 title,
                 service,
                 media,
+                icons,
                 gallery,
                 tools,
                 calendar,
@@ -2978,6 +2989,7 @@ impl Settings {
                     ]);
                 }
             }
+            Message::IconPacks(message) => return self.update_icon_packs(message),
             Message::Profiles(message) => return self.update_profiles(message),
             // The note card's "Write a note" puts the cursor in the editor
             // below it.
@@ -3095,7 +3107,7 @@ impl Settings {
                     self.notice = self.config.meeting_notice_minutes.clamp(1, 60) as u16;
                 }
                 self.tools.refresh();
-                let mut tasks = Vec::new();
+                let mut tasks = vec![self.sync_icon_packs()];
                 if let Some(path) = settings_command_path() {
                     if let Ok(bytes) = std::fs::read(&path) {
                         let _ = std::fs::remove_file(path);
@@ -3703,6 +3715,11 @@ impl Settings {
                         Task::none()
                     },
                     self.media_tasks(),
+                    if page == Page::DesktopAppearance {
+                        self.open_icon_packs()
+                    } else {
+                        Task::none()
+                    },
                     tools,
                     if page == Page::Calendar {
                         self.calendar.check(false)
@@ -6864,6 +6881,7 @@ mod tests {
     include!("settings/corners_tests.rs");
     include!("settings/clock_stage_tests.rs");
     include!("settings/devices_tests.rs");
+    include!("settings/icon_packs_tests.rs");
     include!("settings/glance_off_tests.rs");
 
     /// What Wallpaper & colors recommends for a solid color background.

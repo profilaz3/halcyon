@@ -68,6 +68,14 @@ rrule = "=0.14.0"
 # See docs/future-builder/FB14.md for the comparison with ort.
 tract-onnx = "=0.23.10"
 tract-linalg = { version = "=0.23.10", features = ["multithread-mm"] }
+# Icon packs: pure-Rust readers for the archive formats Pling serves
+# (tar.gz, tar.xz; zip is read with flate2 directly). tar, flate2, resvg
+# and rayon are the versions the lockfile already builds through iced.
+tar = { version = "=0.4.46", default-features = false }
+flate2 = "=1.1.9"
+lzma-rs = "=0.3.0"
+resvg = { version = "=0.45.1", default-features = false }
+rayon = "=1.12.0"
 
 [patch.crates-io]
 # Generated DST gaps must be skipped before COUNT is consumed. See the patch
@@ -121,6 +129,12 @@ opt-level = 3
 [profile.dev.package.crc32fast]
 opt-level = 3
 [profile.dev.package.tiny-skia]
+opt-level = 3
+[profile.dev.package.resvg]
+opt-level = 3
+[profile.dev.package.usvg]
+opt-level = 3
+[profile.dev.package.lzma-rs]
 opt-level = 3
 [profile.dev.package.tiny-skia-path]
 opt-level = 3
