@@ -16,6 +16,8 @@ pub(super) struct State {
     key: Option<Vec<u8>>,
     cancel: Option<watch::Sender<bool>>,
     pub image: Option<Handle>,
+    /// The same cut clock as pixels, for behind the rain glass.
+    pub pixels: Option<std::sync::Arc<crate::desktop::wallpaper::media::Pixels>>,
     /// The picture being analysed, by content, and how to stop it.
     analysing: Option<(String, watch::Sender<bool>)>,
     /// Pictures whose analysis failed; not tried again until restart.
@@ -48,6 +50,7 @@ impl State {
         self.id = self.id.wrapping_add(1);
         self.key = None;
         self.image = None;
+        self.pixels = None;
     }
     pub fn invalidate(&mut self) {
         self.cancel();
@@ -88,9 +91,11 @@ impl State {
             found: crate::depth::Found::Ridge,
             pixels: None,
         });
-        self.image = rendered
+        self.pixels = rendered.pixels.map(std::sync::Arc::new);
+        self.image = self
             .pixels
-            .map(|p| Handle::from_rgba(p.width, p.height, p.rgba));
+            .as_ref()
+            .map(|p| Handle::from_rgba(p.width, p.height, p.rgba.clone()));
         match rendered.found {
             crate::depth::Found::Unknown { key }
                 if !self.failed.contains(&key)

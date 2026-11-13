@@ -124,6 +124,7 @@ pub(crate) use settings_preview::{
     SettingsSamples, settings_devbox_preview, settings_projects_preview, settings_weather_preview,
     settings_weather_preview_at, settings_weather_preview_sized,
 };
+mod glass;
 #[cfg(test)]
 mod look_render_tests;
 mod rain;
@@ -169,6 +170,8 @@ pub enum Message {
     RainLifecycle(crate::rain::lifecycle::State),
     /// A quiet scene finished fading out; its surfaces can go.
     RainRetired(u64),
+    /// Look for rain surfaces whose frames stopped coming.
+    RainWatch(Instant),
     RainReady(
         window::Id,
         u64,
@@ -178,6 +181,8 @@ pub enum Message {
     ),
     DepthObserved(u64, Option<crate::desktop::wallpaper::BgEntry>),
     DepthReady(u64, Option<crate::depth::Rendered>),
+    /// The clock drawn for behind the rain glass, or nothing.
+    GlassReady(u64, Option<crate::desktop::wallpaper::media::Pixels>),
     /// The picture with this content key was analysed, or failed.
     DepthAnalysed(String, bool),
     WallpaperColorsReady(
@@ -429,6 +434,7 @@ pub struct Cards {
     wake_generation: u64,
     depth: depth::State,
     rain: rain::State,
+    glass: glass::State,
     wallpaper_color_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// The edge menu's strip and the state of its customized list.
     edge: edge::EdgeState,
@@ -544,6 +550,7 @@ impl cosmic::Application for Cards {
             wake_generation: 0,
             depth: Default::default(),
             rain: Default::default(),
+            glass: Default::default(),
             wallpaper_color_generation: Default::default(),
             edge: Default::default(),
             notice: None,
@@ -577,6 +584,9 @@ impl cosmic::Application for Cards {
         ];
         if self.config.rain.wanted() {
             subscriptions.push(crate::rain::lifecycle::watch().map(Message::RainLifecycle));
+            if self.rain.animating() {
+                subscriptions.push(cosmic::iced::time::every(rain::WATCH).map(Message::RainWatch));
+            }
             let paths = self.rain.paths();
             if !paths.is_empty() {
                 subscriptions.push(
@@ -845,10 +855,11 @@ impl cosmic::Application for Cards {
         let depth = self.depth_sync();
         let spectrum = self.sync_spectrum();
         let rain = self.rain_sync();
+        let glass = self.glass_sync();
         if activity_dirty {
             self.publish_activity();
         }
-        Task::batch([task, surfaces, depth, spectrum, rain])
+        Task::batch([task, surfaces, depth, spectrum, rain, glass])
     }
     fn style(&self) -> Option<cosmic::iced::theme::Style> {
         Some(cosmic::iced::theme::Style {
@@ -1156,6 +1167,7 @@ impl Cards {
                 Task::none()
             }
             Message::RainRetired(generation) => self.rain.retired(generation),
+            Message::RainWatch(now) => self.rain.watch(now),
             Message::RainReady(id, generation, entry, pixels, stamp) => {
                 self.rain.ready(id, generation, entry, pixels, stamp);
                 Task::none()
@@ -1250,6 +1262,7 @@ impl Cards {
                 let rain = self.rain.invalidate();
                 Task::batch([rain, self.wallpaper_colors_changed()])
             }
+            Message::GlassReady(id, pixels) => self.glass_ready(id, pixels),
             Message::DepthObserved(id, entry) => {
                 self.depth.observe(id, entry);
                 Task::none()
@@ -2358,6 +2371,15 @@ impl Cards {
         })
     }
     fn clock(&self) -> Element<'_, Message> {
+        // The rain surface draws the clock behind its glass; this surface
+        // keeps its place, empty.
+        if self.clock_behind_glass() {
+            let size = self.widget_size(Widget::Clock);
+            return cosmic::widget::Space::new()
+                .width(size[0])
+                .height(size[1])
+                .into();
+        }
         if let Some(view) = self.depth_view() {
             return view;
         }

@@ -1,3 +1,29 @@
+## Natural rain drops and the clock behind the glass, 2026-11-13
+
+Procedural rain now draws a trail of tiny beads behind each sliding drop,
+and the composite reads one more texture: the clock's picture behind the
+glass (a 1x1 transparent texel when there is none). The trails are the
+cost. Each trail is drawn as ten quads stacked down its path, each only as
+wide as the path's sway inside it plus the reach of its widest bead; one
+quad covering the full sway cost about 0.4 ms more at 2560x1440 Balanced.
+A bead row checks its distance before the path sums. Hybrid rain got
+cheaper: its left-behind beads are capped at half the pool.
+
+Single `rain_gpu_benchmark` runs on the same iGPU, `main` at e53a162
+against the branch, GPU milliseconds (single runs, so expect the 30%
+spread described below):
+
+| Size | Mode | Quality | Old | New | New / old |
+|---|---|---|---:|---:|---:|
+| 1920x1080 | Procedural | Eco | 1.135 | 1.160 | 1.02x |
+| 1920x1080 | Procedural | Balanced | 1.211 | 1.304 | 1.08x |
+| 1920x1080 | Hybrid | Balanced | 1.091 | 0.897 | 0.82x |
+| 2560x1440 | Procedural | Eco | 1.198 | 1.206 | 1.01x |
+| 2560x1440 | Procedural | Balanced | 1.475 | 1.723 | 1.17x |
+| 2560x1440 | Hybrid | Balanced | 1.668 | 1.465 | 0.88x |
+| 3840x2160 | Procedural | Balanced | 2.957 | 3.035 | 1.03x |
+| 3840x2160 | Hybrid | Balanced | 2.916 | 2.681 | 0.92x |
+
 ## Rain on glass and snow, 2026-11-12
 
 Rain now refracts the wallpaper through lens-shaped drops on fogged glass,

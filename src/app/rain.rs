@@ -2,7 +2,9 @@
 use super::*;
 use crate::desktop::wallpaper::{BgEntry, BgSource, media};
 use crate::rain::{Preferences, gpu, lifecycle, weather};
-use cosmic::iced::platform_specific::shell::commands::layer_surface::destroy_layer_surface;
+use cosmic::iced::platform_specific::shell::commands::layer_surface::{
+    destroy_layer_surface, set_size,
+};
 use std::sync::Arc;
 #[derive(Default)]
 pub(super) struct State {
@@ -15,6 +17,8 @@ pub(super) struct State {
     /// pause removes them at once.
     shown: Option<(Preferences, Option<weather::Level>)>,
     retiring: Option<u64>,
+    /// The clock behind the glass and the output it stands on.
+    behind: Option<(crate::displays::WlOutput, Arc<gpu::Behind>)>,
 }
 struct Surface {
     output: crate::displays::Output,
@@ -24,6 +28,59 @@ struct Surface {
     picture: Option<std::path::PathBuf>,
     stamp: Option<crate::watch::FileStamp>,
     cancel: tokio::sync::watch::Sender<bool>,
+    watchdog: Watchdog,
+}
+/// A layer surface draws its next frame only when the compositor's frame
+/// callback for the last one arrives. A frame that fails to present (a
+/// timed out, outdated or lost swapchain image) is never committed, so its
+/// callback never comes and the animation stops on that frame until
+/// something else reconfigures the surface. The watchdog notices a surface
+/// whose animation should be running but has not drawn for `STALL`, and
+/// re-arms it with a configure that keeps its size. It backs off while a
+/// surface stays stalled, and resets once frames flow again.
+#[derive(Debug, Default, Clone, Copy)]
+pub(super) struct Watchdog {
+    /// When the scene was attached, so a surface that never drew counts too.
+    since: Option<Instant>,
+    nudged: Option<Instant>,
+    backoff: Duration,
+}
+/// How long an animating surface may go without drawing.
+pub(super) const STALL: Duration = Duration::from_secs(3);
+/// How often the watchdog looks while rain animates.
+pub(super) const WATCH: Duration = Duration::from_secs(2);
+const LONGEST: Duration = Duration::from_secs(60);
+impl Watchdog {
+    fn attached(&mut self, now: Instant) {
+        *self = Self {
+            since: Some(now),
+            ..Default::default()
+        };
+    }
+    /// True when the surface should be re-armed now. `drawn` is when its
+    /// scene last drew a frame.
+    pub(super) fn check(&mut self, drawn: Option<Instant>, now: Instant) -> bool {
+        let Some(since) = self.since else {
+            return false;
+        };
+        let last = drawn.map_or(since, |drawn| drawn.max(since));
+        if now.saturating_duration_since(last) < STALL {
+            if self.nudged.is_some_and(|nudged| last > nudged) {
+                self.nudged = None;
+                self.backoff = Duration::ZERO;
+            }
+            return false;
+        }
+        if self
+            .nudged
+            .is_some_and(|nudged| now.saturating_duration_since(nudged) < self.backoff)
+        {
+            return false;
+        }
+        self.nudged = Some(now);
+        self.backoff = (self.backoff * 2).clamp(STALL, LONGEST);
+        true
+    }
 }
 impl Drop for Surface {
     fn drop(&mut self) {
@@ -48,6 +105,82 @@ impl State {
             return Task::none();
         }
         self.invalidate()
+    }
+    /// Give every surface a small scene, as if its wallpaper had arrived.
+    #[cfg(test)]
+    pub fn ready_for_test(&mut self) {
+        let surfaces: Vec<_> = self.surfaces.iter().map(|s| (s.id, s.generation)).collect();
+        for (id, generation) in surfaces {
+            self.ready(
+                id,
+                generation,
+                None,
+                Some(media::Pixels {
+                    width: 1,
+                    height: 1,
+                    rgba: vec![0, 0, 0, 255],
+                }),
+                None,
+            );
+        }
+    }
+    /// Whether a scene is on screen and staying there.
+    pub fn showing(&self) -> bool {
+        self.shown.is_some() && self.retiring.is_none()
+    }
+    /// Whether the rain surface on `output` has its scene.
+    pub fn drawn_on(&self, output: &crate::displays::WlOutput) -> bool {
+        self.surfaces
+            .iter()
+            .any(|s| s.output.handle == *output && s.image.is_some())
+    }
+    /// Put a picture behind the glass on its output, and nothing behind it
+    /// elsewhere.
+    pub fn set_behind(&mut self, behind: Option<(crate::displays::WlOutput, Arc<gpu::Behind>)>) {
+        for surface in &self.surfaces {
+            if let Some(scene) = &surface.image {
+                scene.set_behind(
+                    behind
+                        .as_ref()
+                        .filter(|(output, _)| surface.output.handle == *output)
+                        .map(|(_, b)| b.clone()),
+                );
+            }
+        }
+        self.behind = behind;
+    }
+    /// Whether the rain surface on `output` shows a picture behind its glass.
+    pub fn shows_behind(&self, output: &crate::displays::WlOutput) -> bool {
+        self.showing()
+            && self.surfaces.iter().any(|s| {
+                s.output.handle == *output
+                    && s.image
+                        .as_ref()
+                        .is_some_and(|scene| scene.behind().is_some())
+            })
+    }
+    /// Whether the shown scene should be animating, so its surfaces must
+    /// keep drawing.
+    pub fn animating(&self) -> bool {
+        self.retiring.is_none()
+            && self.shown.as_ref().is_some_and(|(p, _)| p.animates())
+            && self.surfaces.iter().any(|s| s.image.is_some())
+    }
+    /// Re-arm every animating surface whose frames stopped coming.
+    pub fn watch(&mut self, now: Instant) -> Task<Message> {
+        if !self.animating() {
+            return Task::none();
+        }
+        Task::batch(self.surfaces.iter_mut().filter_map(|s| {
+            let drawn = s.image.as_ref()?.drawn();
+            s.watchdog.check(drawn, now).then(|| {
+                eprintln!(
+                    "Rain surface {:?} stopped drawing; re-arming its frames",
+                    s.id
+                );
+                set_size(s.id, None, None)
+            })
+        }))
     }
     pub fn paths(&self) -> Vec<(std::path::PathBuf, Option<crate::watch::FileStamp>)> {
         self.surfaces
@@ -77,7 +210,13 @@ impl State {
                 }
             });
             surface.image = pixels.map(gpu::Scene::new);
+            if let (Some(scene), Some((output, behind))) = (&surface.image, &self.behind)
+                && surface.output.handle == *output
+            {
+                scene.set_behind(Some(behind.clone()));
+            }
             surface.stamp = stamp;
+            surface.watchdog.attached(Instant::now());
         }
     }
 }
@@ -267,6 +406,7 @@ impl Cards {
                 picture: None,
                 stamp: None,
                 cancel,
+                watchdog: Watchdog::default(),
             });
             tasks.push(get_layer_surface(SctkLayerSurfaceSettings {
                 id,
@@ -315,6 +455,7 @@ mod tests {
             picture: None,
             stamp: None,
             cancel,
+            watchdog: Watchdog::default(),
         });
         let task = app.handle_update(Message::SurfaceResized(
             id,
@@ -335,6 +476,94 @@ mod tests {
         );
     }
     #[test]
+    fn rain_watchdog_rearms_stalled_frames_with_backoff_and_resets_when_they_flow() {
+        let start = Instant::now();
+        let at = |secs: f32| start + Duration::from_secs_f32(secs);
+        let mut dog = Watchdog::default();
+        assert!(!dog.check(None, at(100.)), "nothing attached yet");
+        dog.attached(start);
+        assert!(!dog.check(None, at(2.)), "a new surface gets time to draw");
+        assert!(dog.check(None, at(3.5)), "one that never drew is re-armed");
+        // Frames flowing: drawn a moment ago on every look.
+        let mut drawn = at(4.);
+        assert!(!dog.check(Some(drawn), at(5.)));
+        assert_eq!(dog.backoff, Duration::ZERO, "frames resumed, so it resets");
+        for tick in 0..1000 {
+            drawn = at(6. + tick as f32 * 2.);
+            assert!(!dog.check(Some(drawn), drawn + Duration::from_millis(40)));
+        }
+        // Then the frames stop for good: nudges come at growing intervals,
+        // never more often than every `STALL` nor rarer than a minute.
+        let stopped = drawn;
+        let mut nudges = Vec::new();
+        for tick in 1..=400 {
+            let now = stopped + WATCH * tick;
+            if dog.check(Some(stopped), now) {
+                nudges.push(now);
+            }
+        }
+        let gaps: Vec<_> = nudges.windows(2).map(|w| w[1] - w[0]).collect();
+        assert!(nudges.len() > 10, "{nudges:?}");
+        assert!(gaps.windows(2).all(|w| w[1] >= w[0]), "{gaps:?}");
+        assert!(
+            gaps.iter().all(|g| *g >= STALL && *g <= LONGEST + WATCH),
+            "{gaps:?}"
+        );
+        // One frame after a nudge, and it is healthy again.
+        let last = *nudges.last().unwrap();
+        let fresh = last + Duration::from_millis(30);
+        assert!(!dog.check(Some(fresh), fresh + WATCH));
+        assert_eq!(dog.nudged, None);
+        assert!(dog.check(Some(fresh), fresh + STALL + WATCH));
+        assert_eq!(
+            dog.backoff, STALL,
+            "a new stall starts from the shortest wait"
+        );
+    }
+    #[test]
+    fn rain_watch_rearms_only_animating_surfaces_that_stopped() {
+        let wire = crate::displays::test_support::Wire::new();
+        let output = crate::displays::Output {
+            handle: wire.output(7),
+            info: crate::displays::test_support::info(Some("Rain-test"), (1920, 1080)),
+        };
+        let (cancel, _) = tokio::sync::watch::channel(false);
+        let id = window::Id::unique();
+        let mut state = State::default();
+        state.surfaces.push(Surface {
+            output,
+            id,
+            generation: 3,
+            image: None,
+            picture: None,
+            stamp: None,
+            cancel,
+            watchdog: Watchdog::default(),
+        });
+        let later = Instant::now() + STALL * 2;
+        let quiet = |task: Task<Message>| cosmic::iced::runtime::task::into_stream(task).is_none();
+        assert!(!state.animating());
+        assert!(quiet(state.watch(later)), "no scene yet");
+        state.ready(
+            id,
+            3,
+            None,
+            Some(media::Pixels {
+                width: 1,
+                height: 1,
+                rgba: vec![1, 2, 3, 255],
+            }),
+            None,
+        );
+        assert!(!state.animating(), "nothing shown yet");
+        state.shown = Some((Preferences::default(), None));
+        assert!(state.animating());
+        assert!(!quiet(state.watch(later)), "never drew: re-armed");
+        state.retiring = Some(9);
+        assert!(!state.animating(), "a fading scene is allowed to stop");
+        assert!(quiet(state.watch(later + LONGEST)));
+    }
+    #[test]
     fn rain_surface_completion_is_fenced_and_removal_cancels_owned_work() {
         let wire = crate::displays::test_support::Wire::new();
         let output = crate::displays::Output {
@@ -352,6 +581,7 @@ mod tests {
             picture: None,
             stamp: None,
             cancel,
+            watchdog: Watchdog::default(),
         });
         let pixels = || {
             Some(media::Pixels {

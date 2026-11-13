@@ -57,6 +57,9 @@ pub struct Request {
     /// is used, which is all a public preview may consult.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scenes: Option<std::path::PathBuf>,
+    /// Draw the clock alone, uncut, to stand behind the rain glass.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub plain: bool,
 }
 impl Request {
     pub fn new(
@@ -82,6 +85,29 @@ impl Request {
             style,
             time: time.format("%Y-%m-%dT%H:%M:00").to_string(),
             scenes: None,
+            plain: false,
+        })
+    }
+    /// A request for the clock alone, to stand behind the rain glass.
+    pub fn plain(config: &Config, frame: Frame, time: chrono::NaiveDateTime) -> Option<Self> {
+        frame.pixels()?;
+        if !behind_glass(config) {
+            return None;
+        }
+        let value = serde_json::to_value(config).ok()?;
+        let mut style = serde_json::json!({});
+        for field in widget::fields(widget::WidgetGroup::Style) {
+            if let Some(value) = widget::get(&value, field.pointer) {
+                widget::put(&mut style, field.pointer, Some(value)).ok()?;
+            }
+        }
+        Some(Self {
+            frame,
+            background: BgEntry::new("all", BgSource::Color(wallpaper::BgColor::Single([0.; 3]))),
+            style,
+            time: time.format("%Y-%m-%dT%H:%M:00").to_string(),
+            scenes: None,
+            plain: true,
         })
     }
     /// The same request, also allowed to use analysed pictures from `root`.
@@ -90,6 +116,10 @@ impl Request {
         self
     }
     fn config(&self) -> Option<Config> {
+        self.style_config().filter(eligible)
+    }
+    /// The clock's style as a whole configuration, eligible for depth or not.
+    fn style_config(&self) -> Option<Config> {
         if !self.style.is_object() {
             return None;
         }
@@ -100,9 +130,21 @@ impl Request {
             }
         }
         crate::config::check_config_value(&value).ok()?;
-        let config = Config::from_bytes(&serde_json::to_vec(&value).ok()?).ok()?;
-        eligible(&config).then_some(config)
+        Config::from_bytes(&serde_json::to_vec(&value).ok()?).ok()
     }
+}
+
+/// Whether the desktop clock can stand behind the rain glass: a bare clock
+/// (no card behind it), not a recipe, not glance and not contrast assist,
+/// which keeps every widget crisp on top.
+pub fn behind_glass(config: &Config) -> bool {
+    use crate::widget_style::resolver::Surface;
+    let _scope = crate::widget_style::scope(config);
+    let style = crate::widget_style::presentation(config, config.wallpaper_palette(), true);
+    config.recipes.clock.is_none()
+        && !config.glance.enabled
+        && style.surface.value == Surface::None
+        && !config.appearance.contrast_assist
 }
 
 pub fn eligible(config: &Config) -> bool {
@@ -342,6 +384,15 @@ fn draw(config: &Config, frame: &Frame, time: chrono::NaiveDateTime) -> Option<(
     Some((pixels, face))
 }
 
+/// The clock drawn alone, straight RGBA, uncut.
+pub(crate) fn draw_plain(
+    config: &Config,
+    frame: &Frame,
+    time: chrono::NaiveDateTime,
+) -> Option<Pixels> {
+    draw(config, frame, time).map(|(pixels, _)| pixels)
+}
+
 /// What the clock stands in front of: a mask for a picture of `source`
 /// pixels, and that picture at the mask's size for lighting.
 struct Matte<'a> {
@@ -444,6 +495,8 @@ pub enum Found {
         key: String,
         judgement: scene::Judgement,
     },
+    /// The clock alone, for behind the rain glass.
+    Plain,
 }
 
 /// The render worker's answer: what it found, and the cut clock when the
@@ -483,6 +536,15 @@ fn judging_time(time: chrono::NaiveDateTime) -> chrono::NaiveDateTime {
 /// The Ridge picture keeps its drawn matte; any other picture uses its
 /// analysis from `request.scenes`, if there is one.
 pub fn render_scene(request: &Request) -> Option<Rendered> {
+    if request.plain {
+        let config = request.style_config().filter(behind_glass)?;
+        let time =
+            chrono::NaiveDateTime::parse_from_str(&request.time, "%Y-%m-%dT%H:%M:%S").ok()?;
+        return Some(Rendered {
+            found: Found::Plain,
+            pixels: draw_plain(&config, &request.frame, time),
+        });
+    }
     let BgSource::Path(path) = &request.background.source else {
         return None;
     };

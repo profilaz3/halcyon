@@ -49,7 +49,11 @@ The rain-on-glass wallpaper effect's water lens outline and lighting
 rain-glass shader in [motixo/cosmic-forge-shaders](https://github.com/motixo/cosmic-forge-shaders)
 (`shaders/rain-glass.frag`, revision `e3dba3b36aa03afb14c0c0641bef8cd61bd3f996`),
 under GPL-3.0-only. They were ported from GLSL to WGSL and are evaluated per
-drop in Halcyon's own water field. The file retains its SPDX license notice
+drop in Halcyon's own water field. Halcyon has modified both: the outline's
+lobes scale with a roughness and a time-varying oscillation, with a teardrop
+taper for sliding drops, and the lighting shows a flipped, slightly magnified
+view with a soft highlight, a light caustic and a thin dark rim. The file
+lists these changes in its header. The file retains its SPDX license notice
 and the Cosmic Forge copyright; the full GPL version 3 text is in `LICENSE`.
 Nothing from BigWings' Heartfelt Shadertoy (CC BY-NC-SA), which Cosmic Forge
 names as a visual reference, is used: Halcyon's drop placement, motion,
