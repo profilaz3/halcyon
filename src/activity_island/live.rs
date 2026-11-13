@@ -410,6 +410,7 @@ impl Applet {
         self.live()
             && !self.chooser
             && (self.ui.view != View::Card
+                || (self.kind == Kind::Devices && self.devices.card)
                 || (self.kind == Kind::Timer && self.timer_live())
                 || (self.kind == Kind::Focus && self.focus_live()))
     }
@@ -421,6 +422,7 @@ impl Applet {
         match self.ui.view {
             View::Picker => Some("New timer".into()),
             View::Outputs => Some("Output".into()),
+            View::Card if self.kind == Kind::Devices && self.devices.card => Some("Devices".into()),
             // The ring holds the time, so the title says what it is.
             View::Card if self.kind == Kind::Timer && self.timer_live() => Some("Timer".into()),
             View::Card if self.kind == Kind::Focus && self.focus_live() => {
@@ -464,6 +466,7 @@ impl Applet {
     /// Height the live view needs beyond the card.
     pub(super) fn live_extra(&self) -> f32 {
         match self.ui.view {
+            View::Card if self.kind == Kind::Devices && self.devices.card => self.devices_extra(),
             View::Card => 0.,
             View::Picker => PICKER_EXTRA,
             View::Outputs => {
@@ -483,6 +486,7 @@ impl Applet {
             return Some(palette.readable(TIMER));
         }
         match self.kind {
+            Kind::Devices => self.devices_accent(palette),
             Kind::Music => self.music_tint().map(|t| palette.readable(t)),
             // The event's own calendar colour.
             Kind::Calendar => self
@@ -513,6 +517,7 @@ impl Applet {
             return Some(Self::tinted("alarm-symbolic", 16, accent));
         }
         match self.kind {
+            Kind::Devices => self.devices_glyph(accent),
             Kind::Timer if self.timer_live() => {
                 let t = self.timer()?;
                 Some(
@@ -585,6 +590,9 @@ impl Applet {
         palette: Palette,
         accent: Color,
     ) -> Option<Element<'a, Message>> {
+        if self.kind == Kind::Devices && !self.chooser {
+            return self.devices_trailing(palette, accent);
+        }
         if self.kind != Kind::Transfer || self.chooser {
             return None;
         }
@@ -948,6 +956,7 @@ impl Applet {
         match self.ui.view {
             View::Picker => self.picker_view(palette, accent, reveal),
             View::Outputs => self.outputs_view(palette, accent, reveal),
+            View::Card if self.kind == Kind::Devices => self.devices_view(palette, accent, reveal),
             View::Card if self.kind == Kind::Focus => self.focus_view(palette, accent, reveal),
             View::Card => self.timer_view(palette, accent, reveal),
         }
@@ -1338,7 +1347,7 @@ impl Applet {
     }
     /// Grows the open island to fit the live view: a popup's size is fixed
     /// when it opens, so it reopens in hand when it needs more room.
-    fn regrow(&mut self, now: Instant) -> Task<Message> {
+    pub(super) fn regrow(&mut self, now: Instant) -> Task<Message> {
         self.reveal_deadline = None;
         self.revealed = false;
         self.hover_deadline = None;

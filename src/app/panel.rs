@@ -316,7 +316,7 @@ impl Cards {
                     Widget::Projects => self.next_projects = now,
                     Widget::Clock => self.next_clock = now,
                     Widget::Notes => self.reload_note(),
-                    Widget::Glance | Widget::Music | Widget::Focus => {}
+                    Widget::Glance | Widget::Music | Widget::Focus | Widget::Devices => {}
                 }
             }
         }

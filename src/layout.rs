@@ -107,6 +107,14 @@ pub fn tool_position(
     screen: Size,
 ) -> Point {
     use crate::drawer::Widget;
+    // Devices waits in the bottom right corner, clear of the centred tools.
+    if widget == Widget::Devices {
+        return clamp(
+            [screen[0] - size[0] - 48., screen[1] - size[1] - 96.],
+            size,
+            screen,
+        );
+    }
     let x = (screen[0] - size[0]) / 2.;
     let y = match widget {
         Widget::Music => screen[1] - size[1] - 96.,
@@ -132,6 +140,7 @@ pub fn minimum_size(widget: crate::drawer::Widget) -> Size {
         Music => [300., 140.],
         Notes => [260., 180.],
         Focus => [280., 160.],
+        Devices => [260., 140.],
         Weather | Devbox | Projects => [300., 180.],
     }
 }

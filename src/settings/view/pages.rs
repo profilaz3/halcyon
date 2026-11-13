@@ -81,6 +81,7 @@ fn widget_page(widget: Widget) -> Page {
         Widget::Music => Page::Music,
         Widget::Notes => Page::Notes,
         Widget::Focus => Page::Focus,
+        Widget::Devices => Page::Devices,
     }
 }
 
@@ -101,6 +102,7 @@ impl Settings {
             Widget::Music => "What’s playing, with play and pause.",
             Widget::Notes => "A note that stays on your desktop.",
             Widget::Focus => "A timer for focused work and breaks.",
+            Widget::Devices => "The battery of your headphones, mouse and phone.",
             Widget::Projects => "For people who write code: what changed in each project.",
             Widget::Devbox => "How busy your computer is.",
         };

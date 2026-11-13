@@ -959,9 +959,9 @@ impl Applet {
             widget::tooltip::Position::Top,
         )
     }
-    /// Activity settings as a glyph, where the shelf leaves no room for
-    /// its label.
-    pub(super) fn shelf_settings_button<'a>(
+    /// Activity settings as a glyph, where the shelf or the devices button
+    /// leaves no room for its label.
+    pub(super) fn settings_glyph_button<'a>(
         &self,
         palette: Palette,
         tint: Color,

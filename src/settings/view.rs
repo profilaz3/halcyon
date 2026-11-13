@@ -640,6 +640,7 @@ impl Settings {
             Page::Music => self.music_page(),
             Page::Notes => self.notes_page(),
             Page::Focus => self.focus_page(),
+            Page::Devices => self.devices_page(),
             Page::General => self.general_page(),
             Page::Home => self.home_page(),
             Page::DesktopDock | Page::DesktopPanel => {

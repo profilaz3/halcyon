@@ -105,7 +105,7 @@ class ControllerTests(unittest.TestCase):
                     settings.assert_called_once_with(page)
 
     def test_tool_pages_toggles_and_focus_commands_reach_the_desktop(self):
-        for page in ('music', 'notes', 'focus'):
+        for page in ('music', 'notes', 'focus', 'devices'):
             with patch.object(controller.sys, 'argv', ['desktop-cards', 'settings', '--page', page]):
                 with patch.object(controller, 'settings') as settings:
                     controller.main()
@@ -115,6 +115,9 @@ class ControllerTests(unittest.TestCase):
             with patch.object(controller.sys, 'argv', ['desktop-cards', 'toggle', 'notes']):
                 controller.main()
             self.assertEqual(json.loads(command.read_text()), {'action': 'toggle', 'widget': 'notes'})
+            with patch.object(controller.sys, 'argv', ['desktop-cards', 'toggle', 'devices']):
+                controller.main()
+            self.assertEqual(json.loads(command.read_text()), {'action': 'toggle', 'widget': 'devices'})
             with patch.object(controller.sys, 'argv', ['desktop-cards', 'focus', 'toggle']):
                 controller.main()
             self.assertEqual(json.loads(command.read_text()), {'action': 'focus', 'do': 'toggle'})

@@ -68,6 +68,8 @@ impl Settings {
                 ("Camera in use", "camera", p.camera),
                 ("Network", "network", p.network),
                 ("Bluetooth devices", "bluetooth", p.bluetooth),
+                ("Device connected", "device_banners", p.device_banners),
+                ("Low battery", "low_battery", p.low_battery),
                 ("Software updates", "updates", p.updates),
             ] {
                 controls = controls.push(toggle(name, key, on, true));

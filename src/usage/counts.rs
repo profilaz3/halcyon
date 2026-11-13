@@ -27,6 +27,7 @@ pub const PAGES: &[&str] = &[
     "music",
     "notes",
     "focus",
+    "devices",
     "general",
     "desktop",
     "desktop-dock",

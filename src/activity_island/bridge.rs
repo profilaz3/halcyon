@@ -44,7 +44,12 @@ pub struct Snapshot {
     /// A small square of the artwork, `tint::THUMB` pixels a side, RGB in base64.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub music_art: Option<String>,
+    /// Connected devices with their battery, at most `DEVICES`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub devices: Vec<crate::devices::Device>,
 }
+/// The most devices a snapshot carries.
+pub const DEVICES: usize = 8;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MusicTiming {

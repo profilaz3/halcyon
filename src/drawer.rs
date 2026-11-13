@@ -16,9 +16,10 @@ pub enum Widget {
     Music,
     Notes,
     Focus,
+    Devices,
 }
 impl Widget {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Calendar,
         Self::Projects,
         Self::Devbox,
@@ -28,6 +29,7 @@ impl Widget {
         Self::Music,
         Self::Notes,
         Self::Focus,
+        Self::Devices,
     ];
     /// The widgets that existed before desktop tools; their surfaces share
     /// one geometry and are recreated together.
@@ -42,7 +44,7 @@ impl Widget {
     pub const CARDS: [Self; 4] = [Self::Calendar, Self::Projects, Self::Devbox, Self::Weather];
     /// Tools keep their visibility in their own config section (like Glance)
     /// and have a surface of their own while shown, placed freely.
-    pub const TOOLS: [Self; 3] = [Self::Music, Self::Notes, Self::Focus];
+    pub const TOOLS: [Self; 4] = [Self::Music, Self::Notes, Self::Focus, Self::Devices];
     pub fn is_tool(self) -> bool {
         Self::TOOLS.contains(&self)
     }
@@ -62,6 +64,7 @@ impl Widget {
             Self::Music => "music",
             Self::Notes => "notes",
             Self::Focus => "focus",
+            Self::Devices => "devices",
         }
     }
     pub fn title(self) -> &'static str {
@@ -75,6 +78,7 @@ impl Widget {
             Self::Music => "Music",
             Self::Notes => "Notes",
             Self::Focus => "Focus timer",
+            Self::Devices => "Devices",
         }
     }
     pub fn icon(self) -> &'static str {
@@ -88,6 +92,7 @@ impl Widget {
             Self::Music => "audio-x-generic-symbolic",
             Self::Notes => "accessories-text-editor-symbolic",
             Self::Focus => "alarm-symbolic",
+            Self::Devices => "bluetooth-symbolic",
         }
     }
     pub fn parse(key: &str) -> Option<Self> {
@@ -345,7 +350,12 @@ pub fn card_layout_with_devbox(
         Widget::Projects => 300.,
         Widget::Devbox => devbox_height,
         Widget::Weather => crate::widget_presentation::WEATHER_SIZE[1],
-        Widget::Clock | Widget::Glance | Widget::Music | Widget::Notes | Widget::Focus => 0.,
+        Widget::Clock
+        | Widget::Glance
+        | Widget::Music
+        | Widget::Notes
+        | Widget::Focus
+        | Widget::Devices => 0.,
     };
     let total: f32 = widgets.iter().map(|w| desired(*w)).sum();
     let gaps = widgets.len().saturating_sub(1) as f32 * CARD_GAP;

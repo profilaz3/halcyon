@@ -238,6 +238,8 @@ pub enum Message {
     Tool(crate::tools::cards::Action),
     Audio(crate::tools::visualizer::Event),
     MusicFeed(crate::tools::music::Feed),
+    /// Connected devices, from `crate::devices`.
+    Devices(Vec<crate::devices::Device>),
     MusicArt(String, Result<crate::tools::music::Art, String>),
     ToolDone(Result<(), String>),
     MusicControlDone(Result<Vec<crate::tools::music::Player>, String>),
@@ -309,7 +311,7 @@ static POINTER: std::sync::Mutex<Option<(window::Id, cosmic::iced::Point)>> =
 pub struct Cards {
     activity: crate::activity_island::bridge::Owner,
     core: Core,
-    ids: [window::Id; 13],
+    ids: [window::Id; 14],
     layout_editor: layout::LayoutEditor,
     surface_geometry: Option<layout::SurfaceGeometry>,
     displays: crate::displays::Registry,
@@ -554,6 +556,9 @@ impl cosmic::Application for Cards {
         if self.music_demand() {
             subscriptions.push(crate::tools::music::watch().map(Message::MusicFeed));
         }
+        if self.devices_demand() {
+            subscriptions.push(crate::devices::subscription().map(Message::Devices));
+        }
         if self.visualizer_demand() {
             subscriptions.push(crate::tools::visualizer::watch().map(Message::Audio));
         }
@@ -758,6 +763,7 @@ impl cosmic::Application for Cards {
             &msg,
             Message::Activity(_)
                 | Message::MusicFeed(_)
+                | Message::Devices(_)
                 | Message::MusicControlDone(_)
                 | Message::FocusCommand(_)
                 | Message::MusicArt(..)
@@ -1700,6 +1706,10 @@ impl Cards {
             Message::MusicFeed(feed) => {
                 let task = self.music_feed(feed);
                 Task::batch([task, self.capture_if_changed()])
+            }
+            Message::Devices(devices) => {
+                self.tools.devices = devices;
+                Task::none()
             }
             Message::MusicArt(url, result) => {
                 let task = self.music_art(url, result);

@@ -34,6 +34,12 @@ impl Cards {
             || (self.activity.clients > 0 && self.config.activity_island.media))
             && !self.layout_editor.active
     }
+    /// Devices are followed while the island is connected or the Devices
+    /// widget is shown.
+    pub(super) fn devices_demand(&self) -> bool {
+        self.provider_visible(Widget::Devices)
+            || (self.activity.clients > 0 && self.config.activity_island.system)
+    }
 
     pub(super) fn reconcile_weather(&mut self, now: Instant) {
         let key = self.config.location.as_ref().and_then(Key::new);

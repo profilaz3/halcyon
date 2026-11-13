@@ -356,7 +356,7 @@ pub(super) const STARTUP: SearchHit = hit(
 pub(super) const ACTIVITY_ISLAND: SearchHit = hit(
     Page::ActivityIsland,
     "Activity island",
-    "activity pill island capsule notifications do not disturb dnd camera microphone privacy bluetooth meetings music media style dark theme shelf files drop tray",
+    "activity pill island capsule notifications do not disturb dnd camera microphone privacy bluetooth devices battery low battery device connected headphones meetings music media style dark theme shelf files drop tray",
     false,
 )
 .names_page()
@@ -684,6 +684,13 @@ const SEARCH: &[SearchHit] = &[
         Page::Focus,
         "Focus timer",
         "focus timer pomodoro breaks notifications",
+        false,
+    )
+    .names_page(),
+    hit(
+        Page::Devices,
+        "Devices",
+        "devices battery bluetooth headphones mouse keyboard controller phone kde connect gsconnect",
         false,
     )
     .names_page(),
@@ -2293,6 +2300,7 @@ pub(super) fn widget_of(page: Page) -> Option<crate::drawer::Widget> {
         Page::Music => Widget::Music,
         Page::Notes => Widget::Notes,
         Page::Focus => Widget::Focus,
+        Page::Devices => Widget::Devices,
         _ => return None,
     })
 }
@@ -2308,6 +2316,7 @@ pub(super) fn widget_page(widget: crate::drawer::Widget) -> Page {
         Widget::Music => Page::Music,
         Widget::Notes => Page::Notes,
         Widget::Focus => Page::Focus,
+        Widget::Devices => Page::Devices,
     }
 }
 
