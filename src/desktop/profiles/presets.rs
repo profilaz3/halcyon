@@ -175,7 +175,7 @@ const LOOKS: [Look; 12] = [
 /// The wallpaper effect a weather setup turns on. Every other built-in
 /// setup turns the effect off (see `fitted`), so switching away from rain
 /// does not leave it falling on another picture.
-fn atmosphere(id: &str) -> Option<Value> {
+pub fn atmosphere(id: &str) -> Option<Value> {
     Some(match id {
         "rain" => json!({"enabled": true, "effect": "rain", "intensity": 50, "trails": 45,
             "size": 32, "speed": 45, "wind": -6, "mist": 22, "refraction": 60}),

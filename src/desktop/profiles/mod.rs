@@ -34,9 +34,9 @@ pub use desktop_look::{DISPLAY_ARRANGEMENT, DISPLAY_BACKGROUNDS, OWN_WALLPAPER};
 pub use format::{
     AppearanceLook, Applets, BackgroundLook, ColorChoice, Corners, DesktopIconsLook, DisplaysName,
     Domain, Exported, FitName, FrostedLook, Glass, GradientLook, LEGACY_VERSION, LOCAL_ONLY,
-    MAX_PROFILE_BYTES, ModeName, OrderName, PanelLook, Profile, ProfileError, Rgb, SlideshowLook,
-    SourceLook, SpacingChoice, TilingScope, TypingActionName, VERSION, VERSION_2, VERSION_20,
-    VariantLook, WallpaperLook, WindowLook, WindowsBehaviorLook, WorkspaceLayoutName,
+    MAX_DESCRIPTION, MAX_PROFILE_BYTES, ModeName, OrderName, PanelLook, Profile, ProfileError, Rgb,
+    SlideshowLook, SourceLook, SpacingChoice, TilingScope, TypingActionName, VERSION, VERSION_2,
+    VERSION_20, VariantLook, WallpaperLook, WindowLook, WindowsBehaviorLook, WorkspaceLayoutName,
     WorkspaceModeName, WorkspacesLook, export, export_local, import, import_local,
     valid_description,
 };
@@ -47,8 +47,9 @@ pub use plan::{
 #[cfg(test)]
 pub(crate) use presets::islands_composition;
 pub use presets::{
-    CLEAN, Preset, built_in_file, built_in_looks, colors_line, fitted, islands_available,
-    islands_description, missing, occasion, parse_built_in, preset, presets, studio_presets,
+    CLEAN, Preset, atmosphere, built_in_file, built_in_looks, colors_line, fitted,
+    islands_available, islands_description, missing, occasion, parse_built_in, preset, presets,
+    studio_presets,
 };
 
 #[cfg(test)]

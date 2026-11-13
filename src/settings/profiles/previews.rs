@@ -42,6 +42,7 @@ pub(super) struct PreviewStep {
     theme_override: Option<Profile>,
     custom: Option<String>,
     mix: Option<mix::Draft>,
+    studio: Option<Box<studio::Draft>>,
     label: &'static str,
     baseline: Option<profiles::PreviewBaseline>,
     source: Option<profiles::PreviewBaseline>,
@@ -61,6 +62,7 @@ pub struct ParkedPreview {
     custom: Option<String>,
     mix: Option<mix::Draft>,
     package: Option<packages::Draft>,
+    studio: Option<studio::Draft>,
     baseline: Option<profiles::PreviewBaseline>,
     source: Option<profiles::PreviewBaseline>,
     steps: Vec<PreviewStep>,
@@ -91,6 +93,8 @@ pub(in crate::settings) struct SavedPreview {
     mix: Option<mix::Draft>,
     #[serde(default, with = "json_payload")]
     package: Option<packages::Draft>,
+    #[serde(default, with = "json_payload")]
+    studio: Option<studio::Draft>,
     #[serde(default)]
     baseline: Option<profiles::PreviewBaseline>,
     #[serde(default)]
@@ -152,6 +156,7 @@ impl ProfilesEditor {
         self.selection != Selection::Current
             || self.profile().is_some()
             || self.mix.is_some()
+            || self.studio.is_some()
             || self.has_custom_input()
     }
     fn has_custom_input(&self) -> bool {
@@ -178,6 +183,7 @@ impl ProfilesEditor {
         match kind {
             PreviewKind::Theme => {
                 self.has_custom_input()
+                    || self.studio.is_some()
                     || self.plan.as_ref().is_some_and(|plan| {
                         !plan.is_empty()
                             || !plan.blocking_reasons().is_empty()
@@ -198,6 +204,7 @@ impl ProfilesEditor {
             custom: self.custom.clone(),
             mix: self.mix.clone(),
             package: self.package.clone(),
+            studio: self.studio.clone(),
             baseline: self.preview_baseline.clone(),
             source: self.preview_source.clone(),
             steps: self.steps.clone(),
@@ -268,6 +275,7 @@ impl ProfilesEditor {
         self.custom = parked.custom;
         self.mix = parked.mix;
         self.package = parked.package;
+        self.studio = parked.studio;
         self.steps = parked.steps;
         self.color_options = parked.color_options;
         self.touched = true;
@@ -277,6 +285,7 @@ impl ProfilesEditor {
             parked.review_required || (self.preview_baseline.is_none() && self.profile().is_some());
         self.queue_theme_colors();
         self.replan_retained();
+        self.studio_cache();
     }
     /// Older callers choose a whole domain. Resolve its conflicting values
     /// individually so unrelated intent within that domain is preserved.
@@ -308,6 +317,7 @@ impl ProfilesEditor {
             && before.theme_override == self.theme_override
             && before.custom == self.custom
             && before.mix == self.mix
+            && before.studio.as_deref() == self.studio.as_ref()
             && before.color_options == self.color_options;
         if same {
             return;
@@ -324,6 +334,7 @@ impl ProfilesEditor {
             theme_override: self.theme_override.clone(),
             custom: self.custom.clone(),
             mix: self.mix.clone(),
+            studio: self.studio.clone().map(Box::new),
             label,
             baseline: self.preview_baseline.clone(),
             source: self.preview_source.clone(),
@@ -344,12 +355,14 @@ impl ProfilesEditor {
         self.excluded = step.excluded;
         self.custom = step.custom;
         self.mix = step.mix;
+        self.studio = step.studio.map(|draft| *draft);
         self.color_options = step.color_options;
         self.preview_baseline = step.baseline;
         self.preview_source = step.source;
         self.session_review = step.review_required;
         self.queue_theme_colors();
         self.replan_retained();
+        self.studio_cache();
         self.steps = steps;
         self.touched = step.touched;
         true
@@ -375,6 +388,7 @@ impl ProfilesEditor {
             custom: self.custom.clone(),
             mix: self.mix.clone(),
             package: self.package.clone(),
+            studio: self.studio.clone(),
             baseline: self.preview_baseline.clone(),
             source: self.preview_source.clone(),
             color_options: self.color_options.clone(),
@@ -392,6 +406,7 @@ impl ProfilesEditor {
                 custom: parked.custom.clone(),
                 mix: parked.mix.clone(),
                 package: parked.package.clone(),
+                studio: parked.studio.clone(),
                 baseline: parked.baseline.clone(),
                 source: parked.source.clone(),
                 color_options: parked.color_options.clone(),
@@ -439,6 +454,9 @@ impl ProfilesEditor {
             if let Some(package) = &item.package {
                 package.profile.validate().map_err(|e| e.to_string())?;
             }
+            if let Some(studio) = &item.studio {
+                studio.validate()?;
+            }
             restored.push(ParkedPreview {
                 kind: item.kind,
                 title: item.title,
@@ -448,6 +466,7 @@ impl ProfilesEditor {
                 custom: item.custom,
                 mix: item.mix,
                 package: item.package,
+                studio: item.studio,
                 baseline: item.baseline,
                 source: item.source,
                 steps: Vec::new(),

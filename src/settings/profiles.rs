@@ -30,6 +30,7 @@ pub mod mix;
 pub mod packages;
 pub mod previews;
 mod sharing;
+pub mod studio;
 
 static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
 /// Backdrops fill a Settings scene. Four stable handles cap retained CPU pixels
@@ -115,6 +116,8 @@ pub enum Message {
     MixPick(profiles::mix::Component, Selection),
     MixQuery(String),
     MixPage(usize),
+    /// The Look studio: a look made part by part.
+    Studio(studio::Edit),
     Select(Selection),
     /// Local browser/view state; never included in a desktop transaction.
     Collection(bool),
@@ -184,6 +187,7 @@ impl Message {
                 Self::MixStart
                     | Self::RemixSelected
                     | Self::MixPick(..)
+                    | Self::Studio(studio::Edit::Start(_))
                     | Self::Package(packages::Edit::Open)
             )
     }
@@ -202,7 +206,7 @@ impl Message {
                 | Self::Undo
                 | Self::Recover
                 | Self::KeepRecovery
-        )
+        ) || matches!(self, Self::Studio(edit) if edit.writes())
     }
 }
 
@@ -237,6 +241,8 @@ pub enum Outcome {
     /// Focus the name field.
     FocusName,
     Dialog(Request),
+    /// Put this text on the clipboard.
+    Copy(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -246,6 +252,9 @@ enum Pending {
     /// left on this computer, for the notice.
     Export(String, Vec<&'static str>),
     Image(String, bool),
+    /// Make built-in to a chosen file: what it left out, and the fonts and
+    /// icons it may fall back from.
+    BuiltIn(Vec<&'static str>, Vec<String>),
 }
 
 #[derive(Clone, Debug)]
@@ -482,6 +491,11 @@ pub struct ProfilesEditor {
     color_options: colors::Options,
     pub package: Option<packages::Draft>,
     pub mix: Option<mix::Draft>,
+    pub studio: Option<studio::Draft>,
+    /// The open studio picker's choices, drawn from the draft.
+    studio_choices: Vec<studio::Choice>,
+    /// Icons from the draft's icon theme, for its tile.
+    studio_icons: Vec<PathBuf>,
     share_pending: Option<(u64, String, bool)>,
     share_source: Option<super::sharing::Scene>,
     share_cancel: Option<tokio::sync::watch::Sender<bool>>,
@@ -1006,7 +1020,7 @@ impl ProfilesEditor {
     /// Changes whenever anything visible changes; used by capture mode.
     pub fn state_key(&self) -> String {
         format!(
-            "{:?}:{:?}:{:?}:{:?}:{:?}:{}:{:?}:{}:{}:{:?}:{:?}:{}:{:?}:{}:{}:{}:{:?}:{}:{:?}",
+            "{:?}:{:?}:{:?}:{:?}:{:?}:{}:{:?}:{}:{}:{:?}:{:?}:{}:{:?}:{}:{}:{}:{:?}:{}:{:?}:{:?}",
             self.selection,
             self.excluded,
             self.plan,
@@ -1032,6 +1046,15 @@ impl ProfilesEditor {
             )),
             self.discovery_query,
             (self.highlight, self.hold),
+            self.studio.as_ref().map(|d| (
+                &d.profile.name,
+                &d.profile.description,
+                d.picking,
+                &d.query,
+                (d.reviewing, d.confirm_delete, d.menu),
+                &d.built,
+                (d.dirty(), d.can_undo(), d.can_redo()),
+            )),
         )
     }
 
@@ -1305,6 +1328,9 @@ impl ProfilesEditor {
         // otherwise the applied look's color does (see `preserve_custom`).
         let pending = self.profile().filter(|p| p.appearance_only).cloned();
         self.mix = None;
+        self.studio = None;
+        self.studio_choices.clear();
+        self.studio_icons.clear();
         self.theme_override = None;
         self.theme_pending = None;
         self.theme_source = None;
@@ -1940,6 +1966,7 @@ impl ProfilesEditor {
                 }
             }
             Message::Package(edit) => return self.package_edit(edit),
+            Message::Studio(edit) => return self.studio_edit(edit),
             Message::MixPick(part, selection) => self.pick_mix(part, selection),
             Message::MixQuery(query) => {
                 if let Some(draft) = &mut self.mix {
@@ -2275,6 +2302,9 @@ impl ProfilesEditor {
 
     fn exported(&mut self, id: u64, result: Result<Option<PathBuf>, String>) {
         let (name, omitted) = match self.finish(id) {
+            Some(Pending::BuiltIn(removed, fallbacks)) => {
+                return self.built_in_exported(removed, fallbacks, result);
+            }
             Some(Pending::Export(name, omitted)) => (name, omitted),
             Some(Pending::Image(name, omitted)) => (
                 name,
