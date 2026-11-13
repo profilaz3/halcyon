@@ -701,8 +701,9 @@ fn comfort_navigation_and_scene_shortcuts_are_reachable_without_writes() {
             "comfortable visible navigation: {bounds:?}"
         );
     }
-    // Appearance has no separate list of shortcuts: parts of the preview
-    // itself open their settings. The sample window sits in the middle.
+    // Appearance has no separate list of shortcuts. The sample window in
+    // the middle of its preview belongs to Fonts and icons, a sidebar root
+    // of its own, so it is drawn only there.
     assert!(
         native
             .try_bounds(app.settings_view(), "scene-objects-toggle")
@@ -716,6 +717,25 @@ fn comfort_navigation_and_scene_shortcuts_are_reachable_without_writes() {
     );
     {
         use cosmic::iced::{Event, mouse};
+        for event in [
+            mouse::Event::CursorMoved { position: point },
+            mouse::Event::ButtonPressed(mouse::Button::Left),
+            mouse::Event::ButtonReleased(mouse::Button::Left),
+        ] {
+            for message in native
+                .event(app.settings_view(), Event::Mouse(event), point)
+                .0
+            {
+                send_settings(&mut app, message);
+            }
+        }
+    }
+    assert_eq!(app.page, Page::Themes);
+    // The sidebar is the way in.
+    let entry = native.bounds(app.settings_view(), "nav-desktop-appearance");
+    {
+        use cosmic::iced::{Event, mouse};
+        let point = entry.center();
         for event in [
             mouse::Event::CursorMoved { position: point },
             mouse::Event::ButtonPressed(mouse::Button::Left),

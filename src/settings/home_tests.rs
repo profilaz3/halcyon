@@ -412,17 +412,30 @@ fn previews_only_act_on_their_own_page() {
         );
     }
 
-    // Appearance: the sample window opens its own subpage; the wallpaper,
-    // bars and widgets are drawn only.
+    // Appearance: the sample window belongs to Fonts and icons, a root of
+    // its own, so like the wallpaper, bars and widgets it is drawn only.
     let own = assert_picture_stays(&mut app, &mut native, Page::Themes, "desktop-scene");
     assert!(
-        own.contains(&Page::DesktopAppearance),
-        "the sample window still opens Fonts and icons: {own:?}"
+        own.is_empty(),
+        "nothing in Appearance's preview leads away: {own:?}"
     );
-    let stops = picture_stops(&app, &mut native, "desktop-scene");
-    let window = native.bounds(app.settings_view(), "scene-part-window");
-    assert_eq!(stops, vec![window], "only the window takes focus");
+    assert!(
+        picture_stops(&app, &mut native, "desktop-scene").is_empty(),
+        "nothing in Appearance's preview takes focus"
+    );
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "scene-part-window")
+            .is_none(),
+        "the sample window is not a button"
+    );
     let scene = native.bounds(app.settings_view(), "desktop-scene");
+    let window = scene.center();
+    assert_eq!(
+        native.pointer(app.settings_view(), window),
+        mouse::Interaction::None,
+        "no hand over the sample window"
+    );
     let corner = Point::new(scene.x + scene.width * 0.08, scene.y + scene.height * 0.55);
     assert_eq!(
         native.pointer(app.settings_view(), corner),
@@ -434,8 +447,12 @@ fn previews_only_act_on_their_own_page() {
         corner,
         "preview-scope-themes-hover-wallpaper",
     );
-    native_click(&mut app, &mut native, "scene-part-window");
-    assert_eq!(app.page, Page::DesktopAppearance);
+    native.capture_hover(
+        app.settings_view(),
+        &theme,
+        window,
+        "preview-scope-themes-hover-window",
+    );
 
     // Widgets: each widget opens its page; the wallpaper and bars don't.
     let own = assert_picture_stays(&mut app, &mut native, Page::Overview, "desktop-scene");
@@ -508,4 +525,135 @@ fn previews_only_act_on_their_own_page() {
         }
     }
     assert_eq!(app.page, Page::DesktopWallpaper);
+}
+
+// Fonts and icons is a sidebar root of its own, right after Appearance:
+// the sidebar opens it and lights it, it has no Back, and searching for
+// icons or fonts lands there. Captured at 1280x800 in dark.
+#[test]
+fn fonts_and_icons_is_a_sidebar_root_after_appearance() {
+    let name = "fonts_and_icons_is_a_sidebar_root_after_appearance";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let roots: Vec<Page> = Page::SIDEBAR
+        .iter()
+        .flat_map(|(_, pages)| pages.iter().copied())
+        .collect();
+    let at = roots.iter().position(|page| *page == Page::Themes).unwrap();
+    assert_eq!(
+        roots.get(at + 1),
+        Some(&Page::DesktopAppearance),
+        "{roots:?}"
+    );
+    assert_eq!(Page::DesktopAppearance.sidebar(), Page::DesktopAppearance);
+    assert_eq!(Page::DesktopAppearance.parent(), None);
+    assert_eq!(Page::DesktopAppearance.root_title(), "Fonts and icons");
+    // One record still covers the system appearance draft.
+    assert_eq!(
+        Page::DesktopAppearance.undo_group(),
+        Page::Themes.undo_group()
+    );
+
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    let size = Size::new(1280., 800.);
+    send_settings(&mut app, Message::Resized(size));
+    send_settings(&mut app, Message::Page(Page::Home));
+    let mut native = crate::native_test::Native::new(size);
+    let theme = cosmic::Theme::dark();
+
+    // The entry sits directly below Appearance, named in full.
+    let entry = |native: &mut crate::native_test::Native, app: &Settings, page: Page| {
+        native.bounds(app.settings_view(), &format!("nav-{}", page.key()))
+    };
+    let appearance = entry(&mut native, &app, Page::Themes);
+    let fonts = entry(&mut native, &app, Page::DesktopAppearance);
+    let windows = entry(&mut native, &app, Page::DesktopWindows);
+    assert!(
+        appearance.y < fonts.y && fonts.y < windows.y,
+        "{appearance:?} {fonts:?} {windows:?}"
+    );
+    for page in roots
+        .iter()
+        .filter(|page| **page != Page::DesktopAppearance)
+    {
+        let other = entry(&mut native, &app, *page);
+        assert!(
+            !(other.y > appearance.y && other.y < fonts.y),
+            "{page:?} sits between Appearance and Fonts and icons"
+        );
+    }
+    let text = native.all_text(app.settings_view());
+    assert!(text.iter().any(|t| t == "Fonts and icons"), "{text:?}");
+
+    // Selecting it opens the page and lights its own entry. Back behaves
+    // as on Windows, another root: it only retraces history.
+    let back = |app: &Settings, native: &mut crate::native_test::Native| {
+        (
+            app.back_title(),
+            native
+                .try_bounds(app.settings_view(), "settings-back")
+                .is_some(),
+        )
+    };
+    native_click(&mut app, &mut native, "nav-desktop-windows");
+    let windows_back = back(&app, &mut native);
+    send_settings(&mut app, Message::Page(Page::Home));
+    native_click(&mut app, &mut native, "nav-desktop-appearance");
+    assert_eq!(app.page, Page::DesktopAppearance);
+    assert_eq!(
+        app.nav_model.active_data::<Page>(),
+        Some(&Page::DesktopAppearance)
+    );
+    assert_eq!(back(&app, &mut native), windows_back);
+    assert_ne!(app.back_title().as_deref(), Some("Appearance"));
+    native.capture(
+        app.settings_view(),
+        &theme,
+        "fonts-and-icons-sidebar-1280x800-dark",
+    );
+
+    // Appearance no longer has a row that leads there.
+    send_settings(&mut app, Message::Page(Page::Themes));
+    assert_eq!(app.nav_model.active_data::<Page>(), Some(&Page::Themes));
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "themes-fonts-icons")
+            .is_none()
+    );
+    // A fresh window, so no entry keeps focus from the clicks above.
+    crate::native_test::Native::new(size).capture(
+        app.settings_view(),
+        &theme,
+        "appearance-after-fonts-move-1280x800-dark",
+    );
+
+    // Search for icons or fonts lands on it, with its entry lit.
+    for query in ["icons", "font", "fonts"] {
+        let hit = super::navigation::search(query)[0];
+        assert_eq!(hit.page, Page::DesktopAppearance, "{query}: {hit:?}");
+        // It is placed under its own root, not under Appearance.
+        assert!(
+            !hit.crumb().contains("Appearance"),
+            "{query}: {}",
+            hit.crumb()
+        );
+        send_settings(&mut app, Message::Page(Page::Home));
+        send_settings(&mut app, Message::SearchResult(hit));
+        assert_eq!(app.page, Page::DesktopAppearance, "{query}");
+        assert_eq!(
+            app.nav_model.active_data::<Page>(),
+            Some(&Page::DesktopAppearance),
+            "{query}"
+        );
+    }
 }

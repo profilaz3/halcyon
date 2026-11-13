@@ -881,8 +881,8 @@ impl Settings {
     /// Entries come from the shared nav model so selection, search and Back
     /// keep one source of truth.
     fn sidebar(&self, _accent: Color) -> Element<'_, Message> {
-        // Eleven roots, Search and Changes share a 600 px tall window, so
-        // the rail's labels sit on tight lines.
+        // Twelve roots, Search and Changes share a 600 px tall window, so
+        // the rail's labels sit on tight lines and its entries touch.
         const RAIL_LINE: f32 = 14.;
         let rail = self.rail();
         let kept = self.kept_previews();
@@ -1007,7 +1007,7 @@ impl Settings {
                 .collect();
             groups.push(
                 column::with_children(items)
-                    .spacing(if rail { 2 } else { 6 })
+                    .spacing(if rail { 0 } else { 4 })
                     .into(),
             );
         }
@@ -1064,10 +1064,10 @@ impl Settings {
         }
         // Changes comes last in the same list, so at large scaling it
         // scrolls with the rest instead of covering the selected entry. The
-        // rail keeps all nine roots and Changes inside an 820×600 window.
+        // rail keeps every root and Changes inside an 820×600 window.
         let list = column::with_children(vec![
             column::with_children(groups)
-                .spacing(if rail { 8 } else { 14 })
+                .spacing(if rail { 4 } else { 14 })
                 .into(),
             self.changes_entry(rail),
         ])
@@ -1075,7 +1075,7 @@ impl Settings {
         let content = container(
             scrollable(
                 container(list)
-                    .padding(if rail { [10, 6, 6, 6] } else { [12, 8, 12, 8] })
+                    .padding(if rail { [6, 6, 6, 6] } else { [12, 8, 12, 8] })
                     .width(Length::Fill),
             )
             .id(cosmic::widget::Id::new(super::navigation::SIDEBAR))

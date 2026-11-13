@@ -593,6 +593,7 @@ fn split_sidebar_keyboard_navigation_keeps_focus_and_drafts() {
         (Named::ArrowDown, Page::DesktopDock),
         (Named::ArrowDown, Page::ActivityIsland),
         (Named::ArrowDown, Page::Themes),
+        (Named::ArrowDown, Page::DesktopAppearance),
         (Named::ArrowDown, Page::DesktopWindows),
         (Named::ArrowDown, Page::DesktopMotion),
         (Named::ArrowDown, Page::General),
@@ -600,6 +601,7 @@ fn split_sidebar_keyboard_navigation_keeps_focus_and_drafts() {
         (Named::ArrowUp, Page::General),
         (Named::ArrowUp, Page::DesktopMotion),
         (Named::ArrowUp, Page::DesktopWindows),
+        (Named::ArrowUp, Page::DesktopAppearance),
         (Named::Home, Page::Home),
         (Named::ArrowUp, Page::Home),
         (Named::ArrowDown, Page::DesktopWallpaper),
@@ -2273,6 +2275,7 @@ fn ux_native_nine_roots_and_every_old_route_resolves() {
             Page::DesktopDock,
             Page::ActivityIsland,
             Page::Themes,
+            Page::DesktopAppearance,
             Page::DesktopWindows,
             Page::DesktopMotion,
             Page::General
@@ -2307,7 +2310,7 @@ fn ux_native_nine_roots_and_every_old_route_resolves() {
         (Page::DesktopShortcuts, Page::DesktopWindows),
         (Page::Themes, Page::Themes),
         (Page::Appearance, Page::Themes),
-        (Page::DesktopAppearance, Page::Themes),
+        (Page::DesktopAppearance, Page::DesktopAppearance),
         // Looks left the sidebar; its pages lead back to Appearance.
         (Page::Moments, Page::Themes),
         (Page::DesktopProfiles, Page::Themes),
