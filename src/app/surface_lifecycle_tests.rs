@@ -4,6 +4,7 @@
 //! instead of waiting off screen, and a second display is measured by thin
 //! strips rather than a window its size.
 use super::*;
+use crate::config::edge_menu::Side;
 use crate::config::monitors::WidgetMonitor;
 use crate::displays::WlOutput;
 use crate::displays::{
@@ -51,6 +52,11 @@ impl Desk {
                             LayerAction::Destroy(id) => {
                                 self.destroyed.push(id);
                                 self.open.remove(&id);
+                            }
+                            LayerAction::Margin { id, margin } => {
+                                if let Some(surface) = self.open.get_mut(&id) {
+                                    surface.margin = margin;
+                                }
                             }
                             _ => {}
                         },
@@ -683,4 +689,122 @@ fn unplugging_a_second_display_closes_its_strips_and_plugging_it_back_opens_new_
         2,
         "the old strips are gone"
     );
+}
+
+/// The edge menu set to Off: no strip and no hover area at the edge, only an
+/// invisible probe that still measures the display, and the menu still opens
+/// from `halcyon --toggle drawer`. Turning it back on brings the strip live.
+#[test]
+fn edge_menu_off_leaves_nothing_at_the_edge_and_the_toggle_still_opens_it() {
+    if isolated(
+        "app::surface_lifecycle_tests::edge_menu_off_leaves_nothing_at_the_edge_and_the_toggle_still_opens_it",
+    ) {
+        return;
+    }
+    let mut config = clock_and_focus();
+    config.sidebar_slide = false;
+    config.edge_menu.enabled = false;
+    let (mut cards, mut desk, _wire) = start(config);
+    assert_eq!(desk.names(), ["arrange", "clock", "focus", "height-probe"]);
+    let probe = &desk.open[&cards.ids[3]];
+    assert_eq!(probe.input_zone, Some(vec![]), "takes no pointer input");
+    assert_eq!(probe.layer, Layer::Bottom);
+    assert!(!cards.is_edge_strip(cards.ids[3]));
+    assert_eq!(cards.screen_size, [1920., 1080.], "and still measures");
+    // `halcyon --toggle drawer` opens it all the same.
+    desk.send(&mut cards, Message::DrawerToggle);
+    assert!(cards.sidebar.visible);
+    assert!(desk.open.contains_key(&cards.ids[2]));
+    desk.send(&mut cards, Message::DrawerToggle);
+    desk.send(&mut cards, Message::Animate);
+    assert!(!desk.open.contains_key(&cards.ids[2]));
+    // Back on, live: the strip replaces the probe on the right.
+    let mut config = cards.config.clone();
+    config.edge_menu.enabled = true;
+    let task = cards.apply_config(config);
+    desk.run(&mut cards, task);
+    assert_eq!(desk.names(), ["arrange", "clock", "edge", "focus"]);
+    let strip = &desk.open[&cards.ids[3]];
+    assert_eq!(strip.anchor, Anchor::RIGHT | Anchor::TOP | Anchor::BOTTOM);
+    assert_eq!(strip.input_zone, None);
+    assert!(cards.is_edge_strip(cards.ids[3]));
+}
+
+/// Side, position and length move the strip and the menu, live.
+#[test]
+fn edge_menu_side_position_and_length_place_the_strip_and_the_menu() {
+    if isolated(
+        "app::surface_lifecycle_tests::edge_menu_side_position_and_length_place_the_strip_and_the_menu",
+    ) {
+        return;
+    }
+    let mut config = clock_and_focus();
+    config.sidebar_slide = false;
+    let (mut cards, mut desk, _wire) = start(config);
+    let set = |cards: &mut Cards, desk: &mut Desk, change: &dyn Fn(&mut Config)| {
+        let mut config = cards.config.clone();
+        change(&mut config);
+        let task = cards.apply_config(config);
+        desk.run(cards, task);
+    };
+    // The left edge: the full strip and the menu both move there.
+    set(&mut cards, &mut desk, &|c| c.edge_menu.side = Side::Left);
+    let strip = &desk.open[&cards.ids[3]];
+    assert_eq!(strip.namespace, "halcyon-edge");
+    assert_eq!(strip.anchor, Anchor::LEFT | Anchor::TOP | Anchor::BOTTOM);
+    desk.send(&mut cards, Message::ShowControls);
+    desk.send(&mut cards, Message::Animate);
+    let menu = &desk.open[&cards.ids[2]];
+    assert_eq!(menu.anchor, Anchor::LEFT, "centred on the left edge");
+    assert_eq!((menu.margin.left, menu.margin.right), (0, 0));
+    // An open menu follows a change at once.
+    set(&mut cards, &mut desk, &|c| c.edge_menu.side = Side::Right);
+    assert_eq!(desk.open[&cards.ids[2]].anchor, Anchor::RIGHT);
+    desk.send(&mut cards, Message::HideControls);
+    desk.send(&mut cards, Message::Animate);
+    // Part of the edge, at the top: a strip of its own, held off the bottom.
+    set(&mut cards, &mut desk, &|c| {
+        c.edge_menu.length = 40;
+        c.edge_menu.position = 0;
+    });
+    assert_eq!(
+        desk.names(),
+        ["arrange", "clock", "edge", "focus", "height-probe"]
+    );
+    let part = cards.edge.part.expect("a strip over part of the edge");
+    let strip = &desk.open[&part.id];
+    assert_eq!(strip.namespace, "halcyon-edge");
+    assert_eq!(strip.anchor, Anchor::RIGHT | Anchor::TOP | Anchor::BOTTOM);
+    assert_eq!((strip.margin.top, strip.margin.bottom), (0, 648));
+    assert!(cards.is_edge_strip(part.id));
+    assert_eq!(desk.open[&cards.ids[3]].input_zone, Some(vec![]));
+    // The menu opens beside it, hanging from the top.
+    desk.send(&mut cards, Message::ShowControls);
+    desk.send(&mut cards, Message::Animate);
+    let menu = &desk.open[&cards.ids[2]];
+    assert_eq!(menu.anchor, Anchor::RIGHT | Anchor::TOP);
+    assert_eq!(menu.margin.top, 0);
+    desk.send(&mut cards, Message::HideControls);
+    desk.send(&mut cards, Message::Animate);
+    // At the bottom: the same strip moves without being replaced.
+    set(&mut cards, &mut desk, &|c| c.edge_menu.position = 100);
+    assert_eq!(cards.edge.part.map(|p| p.id), Some(part.id));
+    let strip = &desk.open[&part.id];
+    assert_eq!((strip.margin.top, strip.margin.bottom), (648, 0));
+    desk.send(&mut cards, Message::ShowControls);
+    desk.send(&mut cards, Message::Animate);
+    let menu = &desk.open[&cards.ids[2]];
+    assert_eq!(menu.anchor, Anchor::RIGHT | Anchor::TOP);
+    assert_eq!(
+        menu.margin.top,
+        1080 - drawer::SIDEBAR_HEIGHT as i32,
+        "kept on screen"
+    );
+    desk.send(&mut cards, Message::HideControls);
+    desk.send(&mut cards, Message::Animate);
+    // Full length again: the partial strip goes and the full one is back.
+    set(&mut cards, &mut desk, &|c| c.edge_menu.length = 100);
+    assert!(cards.edge.part.is_none());
+    assert!(!desk.open.contains_key(&part.id));
+    assert_eq!(desk.names(), ["arrange", "clock", "edge", "focus"]);
 }

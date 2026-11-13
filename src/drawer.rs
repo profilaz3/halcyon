@@ -101,7 +101,7 @@ impl Widget {
 }
 
 pub const SIDEBAR_WIDTH: u32 = 212;
-pub const SIDEBAR_HEIGHT: u32 = 580;
+pub const SIDEBAR_HEIGHT: u32 = 618;
 /// The rail's layout, top down; `FIRST_ROW` is where the draggable rows
 /// start, so a pointer position maps to a row.
 pub const RAIL_PADDING: f32 = 12.;
@@ -126,6 +126,9 @@ pub struct Sidebar {
     /// Opened from the keyboard (`halcyon --toggle drawer`): the row the
     /// keyboard is on. The menu holds the keyboard only then.
     pub focus: Option<usize>,
+    /// How long the pointer rests on the edge strip before the menu opens;
+    /// `None` when only a click on the strip opens it.
+    pub dwell: Option<Duration>,
     dismiss_at: Option<Instant>,
     reveal_at: Option<Instant>,
     last_frame: Instant,
@@ -140,6 +143,7 @@ impl Sidebar {
             pointer: Point::ORIGIN,
             drag: None,
             focus: None,
+            dwell: Some(EDGE_DWELL),
             dismiss_at: None,
             reveal_at: None,
             last_frame: Instant::now(),
@@ -165,8 +169,8 @@ impl Sidebar {
             if !entered {
                 self.reveal_at = None;
             } else if !self.visible {
-                if !was_hovered {
-                    self.reveal_at = Some(now + EDGE_DWELL);
+                if !was_hovered && let Some(dwell) = self.dwell {
+                    self.reveal_at = Some(now + dwell);
                     self.last_frame = now;
                 }
                 self.dismiss_at = None;
@@ -243,6 +247,10 @@ pub enum DrawerItem {
     Widget(Widget),
     Arrange,
     Settings,
+    /// Opens the menu's page in Settings.
+    Customize,
+    /// The customized menu's item at this index of its list.
+    Entry(usize),
 }
 /// What a key does in the open edge menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -428,6 +436,22 @@ mod tests {
         assert!(!sidebar.visible);
         assert!(sidebar.margin() < -(SIDEBAR_WIDTH as i32));
         assert!(!sidebar.animating());
+    }
+    #[test]
+    fn click_only_never_opens_on_hover_and_the_delay_is_the_setting() {
+        let now = Instant::now();
+        let mut sidebar = Sidebar::new();
+        sidebar.dwell = None;
+        sidebar.hover(true, true, now);
+        sidebar.tick(now + Duration::from_secs(10), true);
+        assert!(!sidebar.visible, "click only");
+        sidebar.dwell = Some(Duration::from_millis(250));
+        sidebar.hover(true, false, now);
+        sidebar.hover(true, true, now);
+        sidebar.tick(now + Duration::from_millis(249), true);
+        assert!(!sidebar.visible);
+        sidebar.tick(now + Duration::from_millis(250), true);
+        assert!(sidebar.visible);
     }
     #[test]
     fn brief_edge_visits_cancel_and_reentry_starts_a_new_second() {

@@ -193,7 +193,11 @@ impl Settings {
             vec![
                 group_row(
                     "Widget controls",
-                    "A side panel to show, hide and reorder widgets. Hold the pointer at the right edge for a second, or use Open now.",
+                    if self.config.edge_menu.enabled {
+                        "A side panel to show, hide and reorder widgets. Rest the pointer on the screen edge, or use Open now."
+                    } else {
+                        "A side panel to show, hide and reorder widgets. The edge strip is off; use Open now or halcyon --toggle drawer."
+                    },
                     button::standard("Open now")
                         .on_press_maybe(
                             (self.service_known && self.service.running && !self.busy && !preview())
@@ -206,6 +210,12 @@ impl Settings {
                     "Animate the controls as they open",
                     self.config.sidebar_slide,
                     Message::SidebarSlide,
+                ),
+                self.subpage_row(
+                    "Edge menu",
+                    "Turn the screen edge strip off, move it, or pick what the menu lists",
+                    Page::EdgeMenu,
+                    "widgets-edge-menu",
                 ),
             ],
         ))

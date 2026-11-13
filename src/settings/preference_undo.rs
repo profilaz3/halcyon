@@ -152,6 +152,17 @@ impl Settings {
     /// and drag handlers clear their source when finishing.
     pub(super) fn preference_scope(&self, message: &Message) -> Vec<String> {
         let mut fields = message_scope(&self.config, message);
+        if let Message::EdgeMenu(edit) = message {
+            if let Some(key) = super::edge_menu::scope(&self.edge_menu, edit) {
+                fields.push(pointer(&["edge_menu", key]));
+            }
+            // A section title being typed is kept before any other change.
+            if self.edge_menu.title.is_some()
+                && !matches!(edit, super::edge_menu::Edit::TitleText(..))
+            {
+                fields.push(pointer(&["edge_menu", "items"]));
+            }
+        }
         if matches!(message, Message::Placement(super::placement::Message::Save)) {
             fields.extend(self.placement.changed_fields());
         }

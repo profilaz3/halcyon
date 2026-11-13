@@ -18,6 +18,7 @@ mod desktop_ux_tests;
 mod devbox;
 #[cfg(test)]
 mod display_tests;
+mod edge;
 mod glance;
 mod monitors;
 mod recipe;
@@ -115,6 +116,9 @@ mod panel;
 mod projects;
 mod providers;
 mod settings_preview;
+pub(crate) use edge::{
+    availability as edge_availability, item_icon as edge_item_icon, item_title as edge_item_title,
+};
 pub(crate) use settings_preview::{
     SettingsSamples, settings_devbox_preview, settings_projects_preview, settings_weather_preview,
     settings_weather_preview_at, settings_weather_preview_sized,
@@ -271,6 +275,23 @@ pub enum Message {
     Switched(Vec<(crate::automation::Due, crate::automation::run::Ran)>),
     /// `halcyon --toggle drawer`: open the edge menu for the keyboard, or close it.
     DrawerToggle,
+    /// A click on the edge strip: the menu opens at once.
+    EdgeClick,
+    /// An item of the customized edge menu, by its place in the list.
+    EdgeItem(usize),
+    /// "Customize this menu": the edge menu's page in Settings.
+    EdgeCustomize,
+    /// Widgets › Show widgets, from the edge menu.
+    SetWidgetsVisible(bool),
+    /// Do Not Disturb, the island's and COSMIC's switch.
+    SetDnd(bool),
+    /// The wallpaper's weather effect on or off.
+    SetWeatherEffect(bool),
+    /// Opens an installed app by its desktop entry ID.
+    LaunchApp(String),
+    /// Switches to a Look from the edge menu.
+    ApplyLook(crate::automation::ProfileRef, String),
+    LookApplied(Result<(), String>),
     /// A key on the edge menu or the widget menu (others are dropped).
     KeyInput(
         window::Id,
@@ -403,6 +424,8 @@ pub struct Cards {
     depth: depth::State,
     rain: rain::State,
     wallpaper_color_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// The edge menu's strip and the state of its customized list.
+    edge: edge::EdgeState,
     notice: Option<Notice>,
     /// The open widget menu: its popup and the widget it's for.
     menu: Option<(window::Id, Widget)>,
@@ -432,7 +455,8 @@ impl cosmic::Application for Cards {
         // pixels and the space outside rounded card corners.
         core.set_auto_blur(Default::default());
         let ids = std::array::from_fn(|_| window::Id::unique());
-        let sidebar = Sidebar::new();
+        let mut sidebar = Sidebar::new();
+        sidebar.dwell = config.edge_menu.dwell();
         let mut tasks = Vec::new();
         let today = Local::now().date_naive();
         let month = today.with_day(1).unwrap();
@@ -514,6 +538,7 @@ impl cosmic::Application for Cards {
             depth: Default::default(),
             rain: Default::default(),
             wallpaper_color_generation: Default::default(),
+            edge: Default::default(),
             notice: None,
             menu: None,
             recovery_details: false,
@@ -529,6 +554,7 @@ impl cosmic::Application for Cards {
             crate::activity_island::timer::load_from(&path, chrono::Utc::now().timestamp_millis())
         });
         app.publish_activity();
+        app.refresh_edge_available();
         tasks.push(cosmic::task::future(async {
             tokio::time::sleep(std::time::Duration::from_secs(20)).await;
             Message::Activity(crate::activity_island::bridge::Event::Settled)
@@ -840,8 +866,12 @@ impl Cards {
         if id == self.ids[2] {
             return self.control_rail();
         }
-        if id == self.ids[3] {
-            return self.edge_handle();
+        if id == self.ids[3] || self.edge.part.is_some_and(|part| part.id == id) {
+            return if self.is_edge_strip(id) {
+                self.edge_handle()
+            } else {
+                empty_surface()
+            };
         }
         if Widget::ALL
             .into_iter()
@@ -894,12 +924,9 @@ impl Cards {
             } else {
                 KeyboardInteractivity::None
             },
-            anchor: Anchor::RIGHT,
-            margin: IcedMargin {
-                right: margin,
-                ..Default::default()
-            },
-            size: Some((Some(drawer::SIDEBAR_WIDTH), Some(drawer::SIDEBAR_HEIGHT))),
+            anchor: self.controls_anchor().0,
+            margin: self.controls_margin(margin),
+            size: Some((Some(drawer::SIDEBAR_WIDTH), Some(self.controls_height()))),
             exclusive_zone: 0,
             namespace: "halcyon-controls".into(),
             ..Default::default()
@@ -918,6 +945,10 @@ impl Cards {
             return Task::none();
         }
         self.controls_open = needed;
+        if needed {
+            // Apps installed or removed, folders made or gone since.
+            self.refresh_edge_available();
+        }
         let destroy =
             cosmic::iced::platform_specific::shell::commands::layer_surface::destroy_layer_surface(
                 self.ids[2],
@@ -927,21 +958,6 @@ impl Cards {
         } else {
             destroy
         }
-    }
-    /// The thin screen-edge strip that opens the edge menu. It also measures
-    /// the usable height of the display (see `Message::SurfaceResized`).
-    fn edge_surface(&self, id: window::Id) -> Task<Message> {
-        get_layer_surface(SctkLayerSurfaceSettings {
-            id,
-            output: self.layer_output(),
-            layer: Layer::Overlay,
-            keyboard_interactivity: KeyboardInteractivity::None,
-            anchor: Anchor::RIGHT | Anchor::TOP | Anchor::BOTTOM,
-            size: Some((Some(2), Some(0))),
-            exclusive_zone: 0,
-            namespace: "halcyon-edge".into(),
-            ..Default::default()
-        })
     }
     fn layer_output(&self) -> IcedOutput {
         IcedOutput::Output(
@@ -1063,10 +1079,12 @@ impl Cards {
         self.controls_open = false;
         self.work_area = [None; 2];
         self.forget_tool_surfaces();
+        self.edge.kind = None;
+        let old_strip = self.edge.part.take().map(|part| part.id);
         let old_ids =
             std::mem::replace(&mut self.ids, std::array::from_fn(|_| window::Id::unique()));
         let old_probes = old_probes.into_iter().flat_map(|p| p.ids);
-        let destroy = Task::batch(old_ids.into_iter().chain(old_probes).map(
+        let destroy = Task::batch(old_ids.into_iter().chain(old_probes).chain(old_strip).map(
             cosmic::iced::platform_specific::shell::commands::layer_surface::destroy_layer_surface,
         ));
         destroy
@@ -1253,7 +1271,7 @@ impl Cards {
             }
             Message::Animate => {
                 self.sidebar.tick(Instant::now(), self.config.sidebar_slide);
-                set_margin(self.ids[2], 0, self.sidebar.margin(), 0, 0)
+                self.slide_controls()
             }
             Message::Hover(edge, entered) => {
                 self.sidebar.hover(edge, entered, Instant::now());
@@ -1275,6 +1293,9 @@ impl Cards {
                 // A previously queued Create can finish after migration's
                 // Destroy. Its fresh ID cannot impersonate the new epoch;
                 // close that late surface as well as ignoring its geometry.
+                if self.edge.part.is_some_and(|part| part.id == id) {
+                    return Task::none();
+                }
                 if !self.ids.contains(&id) && id != window::Id::NONE {
                     return cosmic::iced::platform_specific::shell::commands::layer_surface::destroy_layer_surface(id);
                 }
@@ -1321,7 +1342,7 @@ impl Cards {
                         } else {
                             Task::none()
                         };
-                        return Task::batch([widgets, arrange]);
+                        return Task::batch([widgets, arrange, self.sync_edge_strip()]);
                     }
                 }
                 Task::none()
@@ -1433,6 +1454,31 @@ impl Cards {
             Message::SetWidgetVisible(widget, visible) => self.set_widget_visible(widget, visible),
             Message::SaveOrder(order) => self.save_widget_order(order),
             Message::DrawerToggle => self.drawer_toggle(),
+            Message::EdgeClick => {
+                if !self.sidebar.visible {
+                    self.sidebar.show(Instant::now());
+                }
+                Task::none()
+            }
+            Message::EdgeItem(index) => self.edge_item(index),
+            Message::EdgeCustomize => self.customize_edge_menu(),
+            Message::SetWidgetsVisible(visible) => self.set_widgets_visible(visible),
+            Message::SetDnd(on) => self.set_dnd(on),
+            Message::SetWeatherEffect(on) => self.set_weather_effect(on),
+            Message::LaunchApp(app) => self.launch("gtk-launch", vec![app]),
+            Message::ApplyLook(look, name) => self.apply_look(look, name),
+            Message::LookApplied(result) => {
+                if let Err(error) = result {
+                    eprintln!("Look not applied: {error}");
+                    self.raise_notice(
+                        "Couldn’t switch the Look",
+                        "Nothing was changed.",
+                        error,
+                        None,
+                    );
+                }
+                Task::none()
+            }
             Message::KeyInput(id, key, modifiers) => {
                 if self.menu.is_some_and(|(menu, _)| menu == id) {
                     if matches!(
@@ -2183,6 +2229,9 @@ impl Cards {
     fn launch(&self, command: &str, args: Vec<String>) -> Task<Message> {
         let command = if command == crate::paths::CONTROLLER {
             crate::paths::controller()
+        } else if command == "gtk-launch" {
+            // Opens a desktop entry as the launcher would, by its ID.
+            std::path::PathBuf::from("gtk-launch")
         } else {
             std::path::PathBuf::from("/usr/bin/xdg-open")
         };

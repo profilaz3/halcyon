@@ -116,13 +116,15 @@ fn ax04_toggle_opens_the_edge_menu_for_the_keyboard_and_moves_through_it() {
     }
     let mut cards = cards();
     let items = cards.drawer_items();
-    assert_eq!(items.last(), Some(&drawer::DrawerItem::Settings));
-    assert_eq!(items[items.len() - 2], drawer::DrawerItem::Arrange);
+    // "Customize this menu" closes the list, under Arrange and Settings.
+    assert_eq!(items.last(), Some(&drawer::DrawerItem::Customize));
+    assert_eq!(items[items.len() - 2], drawer::DrawerItem::Settings);
+    assert_eq!(items[items.len() - 3], drawer::DrawerItem::Arrange);
     let _ = cards.update(Message::DrawerToggle);
     assert!(cards.sidebar.visible);
     assert_eq!(cards.sidebar.focus, Some(0));
     capture_rail(&cards, "ax04-drawer-focus");
-    // Up from the top wraps to Settings; down wraps back.
+    // Up from the top wraps to Customize; down wraps back.
     press(&mut cards, Key::Named(Named::ArrowUp), Modifiers::empty());
     assert_eq!(cards.sidebar.focus, Some(items.len() - 1));
     press(&mut cards, Key::Named(Named::Tab), Modifiers::empty());
@@ -519,4 +521,261 @@ fn arrange_overlay_capture() {
     let done = narrow.bounds(cards.layout_view(), "arrange-done");
     assert!(done.x + done.width <= 820. - 8., "{done:?}");
     narrow.capture(cards.layout_view(), &theme, "arrange-overlay-narrow");
+}
+
+/// A customized edge menu at its own height, in both themes, when a capture
+/// folder is set.
+fn capture_custom_rail(cards: &Cards, name: &str) {
+    let size = Size::new(drawer::SIDEBAR_WIDTH as f32, cards.controls_height() as f32);
+    for (theme, shade) in [
+        (cosmic::Theme::light(), "light"),
+        (cosmic::Theme::dark(), "dark"),
+    ] {
+        Native::new(size).capture(cards.control_rail(), &theme, &format!("{name}-{shade}"));
+    }
+}
+
+/// Every item type a customized menu can hold, with an app that is
+/// installed, one that was removed, a folder and an entry from a newer
+/// Halcyon.
+fn custom_menu_config(root: &std::path::Path) -> (Config, std::path::PathBuf) {
+    use crate::config::edge_menu::{Action, Item, Kind};
+    let apps = root.join("data/applications");
+    std::fs::create_dir_all(&apps).unwrap();
+    std::fs::write(
+        apps.join("org.example.Player.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Player\nIcon=multimedia-player\nExec=sentinel-run\n",
+    )
+    .unwrap();
+    let folder = root.join("Projects");
+    std::fs::create_dir_all(&folder).unwrap();
+    let app = |id: &str, name: &str, icon: &str| {
+        Item::new(Kind::App {
+            app: id.into(),
+            name: name.into(),
+            icon: icon.into(),
+        })
+    };
+    let mut items = vec![
+        Item::title("Apps"),
+        app("org.example.Player", "Player", "multimedia-player"),
+        app("org.example.Gone", "Gone", ""),
+        Item::new(Kind::Folder {
+            path: folder.to_string_lossy().into_owned(),
+            name: "Projects".into(),
+        }),
+        Item::new(Kind::Separator),
+        Item::widget(Widget::Weather),
+    ];
+    items.extend(Action::ALL.map(Item::action));
+    items.push(Item::new(Kind::Look {
+        look: crate::automation::ProfileRef::Preset("night".into()),
+        name: "Night".into(),
+    }));
+    let mut config = Config::load();
+    config.edge_menu.items = Some(items);
+    let mut value = serde_json::to_value(&config).unwrap();
+    value["edge_menu"]["items"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"type": "hologram", "depth": 3}));
+    std::fs::write(Config::path().unwrap(), value.to_string()).unwrap();
+    (Config::load(), folder)
+}
+
+/// Each item of a customized menu sends the message the desktop already
+/// handles for it; titles, separators, a removed app and an unknown entry
+/// send nothing.
+#[test]
+fn edge_items_trigger_their_existing_actions_and_missing_apps_are_unavailable() {
+    if isolated("edge_items_trigger_their_existing_actions_and_missing_apps_are_unavailable") {
+        return;
+    }
+    use crate::activity_island::bridge::{Command, Event};
+    use crate::config::edge_menu::Action;
+    let root = std::path::PathBuf::from(std::env::var_os("DESKTOP_CARDS_DESKTOP_ROOT").unwrap());
+    let (config, folder) = custom_menu_config(&root);
+    let items = config.edge_items();
+    assert_eq!(items.len(), 6 + Action::ALL.len() + 2);
+    let cards = cards();
+    let message = |index: usize| cards.edge_item_message(index);
+    let at = |action: Action| 6 + Action::ALL.iter().position(|a| *a == action).unwrap();
+    assert!(message(0).is_none(), "a title");
+    assert!(matches!(message(1), Some(Message::LaunchApp(id)) if id == "org.example.Player"));
+    assert!(!cards.edge_available(2), "a removed app");
+    assert!(message(2).is_none());
+    assert!(matches!(message(3), Some(Message::Open(path)) if path == folder.to_string_lossy()));
+    assert!(message(4).is_none(), "a separator");
+    assert!(matches!(
+        message(5),
+        Some(Message::ToggleWidget(Widget::Weather))
+    ));
+    let shown = cards.config.widgets_visible;
+    assert!(
+        matches!(message(at(Action::ShowWidgets)), Some(Message::SetWidgetsVisible(v)) if v == !shown)
+    );
+    assert!(matches!(
+        message(at(Action::Arrange)),
+        Some(Message::Arrange)
+    ));
+    assert!(matches!(
+        message(at(Action::Settings)),
+        Some(Message::Settings)
+    ));
+    assert!(matches!(
+        message(at(Action::DoNotDisturb)),
+        Some(Message::SetDnd(true))
+    ));
+    assert!(matches!(
+        message(at(Action::Timer)),
+        Some(Message::Activity(Event::Command(Command::TimerStart {
+            ms: 300_000
+        })))
+    ));
+    assert!(matches!(message(at(Action::Focus)), Some(Message::FocusCommand(c)) if c == "toggle"));
+    let rain = cards.config.rain.enabled;
+    assert!(
+        matches!(message(at(Action::WeatherEffect)), Some(Message::SetWeatherEffect(v)) if v == !rain)
+    );
+    let look = items.len() - 2;
+    assert!(matches!(
+        message(look),
+        Some(Message::ApplyLook(crate::automation::ProfileRef::Preset(id), name))
+            if id == "night" && name == "Night"
+    ));
+    let unknown = items.len() - 1;
+    assert!(!cards.edge_available(unknown));
+    assert!(message(unknown).is_none(), "from a newer Halcyon");
+    // A screen reader hears every row's name and state.
+    let mut cards = cards;
+    let _ = cards.update(Message::DrawerToggle);
+    let names: Vec<String> = rail_for(&cards)
+        .a11y(cards.control_rail())
+        .into_iter()
+        .filter_map(|(_, name, _)| name)
+        .collect();
+    for wanted in [
+        "Player",
+        "Gone, Unavailable",
+        "Projects",
+        "Do not disturb, off",
+    ] {
+        assert!(names.iter().any(|n| n == wanted), "{wanted}: {names:?}");
+    }
+}
+
+fn rail_for(cards: &Cards) -> Native {
+    Native::new(Size::new(
+        drawer::SIDEBAR_WIDTH as f32,
+        cards.controls_height() as f32,
+    ))
+}
+
+/// The keyboard reaches every item of a customized menu and "Customize this
+/// menu"; Alt+arrows move an item and save the order; Customize closes the
+/// menu on its way to Settings.
+#[test]
+fn custom_edge_menu_keyboard_moves_and_customize() {
+    if isolated("custom_edge_menu_keyboard_moves_and_customize") {
+        return;
+    }
+    use crate::config::edge_menu::Kind;
+    let root = std::path::PathBuf::from(std::env::var_os("DESKTOP_CARDS_DESKTOP_ROOT").unwrap());
+    let (config, _) = custom_menu_config(&root);
+    let items = config.edge_items();
+    let mut cards = cards();
+    let drawer = cards.drawer_items();
+    let focusable = items.iter().filter(|item| item.focusable()).count();
+    assert_eq!(drawer.len(), focusable + 1);
+    assert_eq!(
+        drawer[0],
+        drawer::DrawerItem::Entry(1),
+        "the title is skipped"
+    );
+    assert_eq!(drawer.last(), Some(&drawer::DrawerItem::Customize));
+    let _ = cards.update(Message::DrawerToggle);
+    assert_eq!(cards.sidebar.focus, Some(0));
+    capture_custom_rail(&cards, "edge-menu-custom");
+    // Alt+Down moves Player below Gone and saves; the keyboard stays on it.
+    press(&mut cards, Key::Named(Named::ArrowDown), Modifiers::ALT);
+    let player = |items: &[crate::config::edge_menu::Item]| {
+        items
+            .iter()
+            .position(
+                |item| matches!(&item.kind, Kind::App { app, .. } if app == "org.example.Player"),
+            )
+            .unwrap()
+    };
+    assert_eq!(player(&cards.config.edge_items()), 2);
+    assert_eq!(player(&Config::load().edge_items()), 2);
+    assert_eq!(
+        cards.drawer_items()[cards.sidebar.focus.unwrap()],
+        drawer::DrawerItem::Entry(2)
+    );
+    assert_eq!(
+        Config::load().edge_items().last().map(|item| &item.kind),
+        items.last().map(|item| &item.kind),
+        "the unknown entry is kept"
+    );
+    press(&mut cards, Key::Named(Named::ArrowUp), Modifiers::ALT);
+    assert_eq!(player(&Config::load().edge_items()), 1);
+    // Enter on a widget switches it, and the menu stays.
+    let weather = cards
+        .drawer_items()
+        .iter()
+        .position(|item| *item == drawer::DrawerItem::Entry(5))
+        .unwrap();
+    while cards.sidebar.focus != Some(weather) {
+        press(&mut cards, Key::Named(Named::ArrowDown), Modifiers::empty());
+    }
+    let was = cards.config.widget_visible(Widget::Weather);
+    press(&mut cards, Key::Named(Named::Enter), Modifiers::empty());
+    assert_eq!(cards.config.widget_visible(Widget::Weather), !was);
+    assert!(cards.sidebar.visible);
+    // Up from the top wraps to Customize; Enter closes the menu.
+    while cards.sidebar.focus != Some(0) {
+        press(&mut cards, Key::Named(Named::ArrowUp), Modifiers::empty());
+    }
+    press(&mut cards, Key::Named(Named::ArrowUp), Modifiers::empty());
+    assert_eq!(
+        cards.drawer_items()[cards.sidebar.focus.unwrap()],
+        drawer::DrawerItem::Customize
+    );
+    press(&mut cards, Key::Named(Named::Enter), Modifiers::empty());
+    assert!(!cards.sidebar.visible);
+}
+
+/// The built-in menu, unchanged for anyone who never customized it, on the
+/// left edge: the same rows with the rounded side facing the screen.
+#[test]
+fn default_edge_menu_matches_the_built_in_one_on_either_side() {
+    if isolated("default_edge_menu_matches_the_built_in_one_on_either_side") {
+        return;
+    }
+    use crate::config::edge_menu::{Side, default_items};
+    let mut cards = cards();
+    assert!(cards.config.edge_menu.items.is_none());
+    // The list that customizing starts from is this menu, in order.
+    let listed: Vec<drawer::DrawerItem> = default_items(&cards.config.ordered_right_cards())
+        .iter()
+        .filter_map(|item| {
+            item.as_widget()
+                .map(drawer::DrawerItem::Widget)
+                .or_else(|| match item.as_action()? {
+                    crate::config::edge_menu::Action::Arrange => Some(drawer::DrawerItem::Arrange),
+                    crate::config::edge_menu::Action::Settings => {
+                        Some(drawer::DrawerItem::Settings)
+                    }
+                    _ => None,
+                })
+        })
+        .chain([drawer::DrawerItem::Customize])
+        .collect();
+    assert_eq!(cards.drawer_items(), listed);
+    let mut config = cards.config.clone();
+    config.edge_menu.side = Side::Left;
+    let _ = cards.apply_config(config);
+    let _ = cards.update(Message::DrawerToggle);
+    assert_eq!(cards.drawer_items(), listed);
+    capture_rail(&cards, "edge-menu-left");
 }

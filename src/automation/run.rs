@@ -109,6 +109,26 @@ pub fn run(
 ) -> Ran {
     run_for_cause(store, installed, target, name, held, false, None)
 }
+/// Applies a Look chosen in the edge menu: the same engine and checks as an
+/// automatic switch, recorded in Undo under its own name.
+pub fn run_chosen(
+    store: &DesktopStore,
+    installed: &Installed,
+    target: &ProfileRef,
+    name: &str,
+    held: &BTreeSet<Domain>,
+) -> Ran {
+    run_labelled(
+        store,
+        installed,
+        target,
+        name,
+        held,
+        false,
+        None,
+        chosen_label,
+    )
+}
 pub(super) fn run_for_cause(
     store: &DesktopStore,
     installed: &Installed,
@@ -117,6 +137,19 @@ pub(super) fn run_for_cause(
     held: &BTreeSet<Domain>,
     display: bool,
     solar: Option<(&super::solar::Context, super::solar::Source)>,
+) -> Ran {
+    run_labelled(store, installed, target, name, held, display, solar, label)
+}
+#[allow(clippy::too_many_arguments)]
+fn run_labelled(
+    store: &DesktopStore,
+    installed: &Installed,
+    target: &ProfileRef,
+    name: &str,
+    held: &BTreeSet<Domain>,
+    display: bool,
+    solar: Option<(&super::solar::Context, super::solar::Source)>,
+    label: fn(&str) -> String,
 ) -> Ran {
     if !store.writable() {
         return Ran::Failed("Automatic switching is off in preview mode.".into());
@@ -192,6 +225,13 @@ pub(super) fn run_for_cause(
     Ran::Failed("Settings kept changing while switching. Nothing was changed.".into())
 }
 
+/// The Undo label of a Look chosen in the edge menu.
+pub fn chosen_label(name: &str) -> String {
+    format!("Look “{name}” (edge menu)")
+        .chars()
+        .take(120)
+        .collect()
+}
 /// The Undo label of an automatic switch.
 pub fn label(name: &str) -> String {
     format!("Profile “{name}” (automatic)")

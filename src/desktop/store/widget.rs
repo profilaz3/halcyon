@@ -282,6 +282,13 @@ pub static FIELDS: [WidgetField; 112] = fields![
 // Local preferences participate in transactions and Undo but are never
 // captured or exported by the profile library.
 pub static LOCAL_FIELDS: &[WidgetField] = &fields![
+    "/edge_menu/enabled", "Edge menu", Style, boolean;
+    "/edge_menu/side", "Edge menu side", Style, |v| matches!(v.as_str(), Some("left" | "right"));
+    "/edge_menu/position", "Edge menu position", Style, |v| int_in(v,0,100);
+    "/edge_menu/length", "Edge menu length", Style, |v| int_in(v,crate::config::edge_menu::MIN_LENGTH.into(),100);
+    "/edge_menu/open", "Edge menu opening", Style, |v| matches!(v.as_str(), Some("hover" | "click"));
+    "/edge_menu/delay_ms", "Edge menu delay", Style, |v| int_in(v,0,crate::config::edge_menu::MAX_DELAY_MS.into());
+    "/edge_menu/items", "Edge menu items", Style, |v| v.is_null() || v.as_array().is_some_and(|items| items.len() <= crate::config::edge_menu::MAX_ITEMS);
     "/activity_island/system", "Activity system sources", Style, boolean;
     "/activity_island/media", "Activity media", Style, boolean;
     "/activity_island/calendar", "Activity meetings", Style, boolean;

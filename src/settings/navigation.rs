@@ -929,6 +929,13 @@ const SEARCH: &[SearchHit] = &[
     TIME_OF_DAY,
     STARTUP,
     hit(
+        Page::EdgeMenu,
+        "Edge menu",
+        "edge menu flyout sidebar drawer panel strip screen edge shortcuts apps folders actions customize hover click off disable left right position",
+        false,
+    )
+    .names_page(),
+    hit(
         Page::Widgets,
         "Widget controls",
         "widget controls sidebar screen edge menu side panel slide delay animation",
@@ -1197,6 +1204,13 @@ const ROWS: &[SearchHit] = &[
     hit(Page::Weather, "Dew point and how often it updates", "", false),
     hit(Page::Widgets, "How widgets behave", "", false).at("widgets-behave"),
     hit(Page::Widgets, "Slide in", "", false).at("widgets-behave"),
+    hit(Page::EdgeMenu, "Edge strip", "", false).at("edge-menu-strip"),
+    hit(Page::EdgeMenu, "Side", "", false).at("edge-menu-strip"),
+    hit(Page::EdgeMenu, "Position", "", false).at("edge-menu-strip"),
+    hit(Page::EdgeMenu, "Length", "", false).at("edge-menu-strip"),
+    hit(Page::EdgeMenu, "Opens", "", false).at("edge-menu-strip"),
+    hit(Page::EdgeMenu, "Hover delay", "", false).at("edge-menu-strip"),
+    hit(Page::EdgeMenu, "Menu items", "", false).at("edge-menu-items"),
 ];
 
 /// Every search result, for tests that open each one.

@@ -5,14 +5,7 @@ use cosmic::iced::widget::keyed_column;
 use drawer::{DrawerItem, DrawerKey};
 
 /// The edge menu's second group, in order.
-const ELSEWHERE: [Widget; 6] = [
-    Widget::Calendar,
-    Widget::Clock,
-    Widget::Glance,
-    Widget::Music,
-    Widget::Notes,
-    Widget::Focus,
-];
+use crate::config::edge_menu::ELSEWHERE;
 
 impl Cards {
     pub(super) fn set_widget_visible(&mut self, widget: Widget, visible: bool) -> Task<Message> {
@@ -64,15 +57,28 @@ impl Cards {
     }
     /// Every place the keyboard can be in the edge menu, top down.
     pub(super) fn drawer_items(&self) -> Vec<DrawerItem> {
+        if let Some(items) = &self.config.edge_menu.items {
+            return items
+                .iter()
+                .enumerate()
+                .filter(|(_, item)| item.focusable())
+                .map(|(index, _)| DrawerItem::Entry(index))
+                .chain([DrawerItem::Customize])
+                .collect();
+        }
         self.config
             .ordered_right_cards()
             .into_iter()
             .chain(ELSEWHERE)
             .map(DrawerItem::Widget)
-            .chain([DrawerItem::Arrange, DrawerItem::Settings])
+            .chain([
+                DrawerItem::Arrange,
+                DrawerItem::Settings,
+                DrawerItem::Customize,
+            ])
             .collect()
     }
-    fn drawer_focus(&self) -> Option<DrawerItem> {
+    pub(super) fn drawer_focus(&self) -> Option<DrawerItem> {
         let items = self.drawer_items();
         self.sidebar
             .focus
@@ -126,9 +132,14 @@ impl Cards {
                         self.sidebar.hide();
                         self.update(Message::Settings)
                     }
+                    DrawerItem::Customize => self.update(Message::EdgeCustomize),
+                    DrawerItem::Entry(entry) => self.update(Message::EdgeItem(entry)),
                 };
             }
             DrawerKey::MoveUp | DrawerKey::MoveDown => {
+                if let DrawerItem::Entry(entry) = items[index] {
+                    return self.move_edge_item(entry, key == DrawerKey::MoveUp);
+                }
                 let DrawerItem::Widget(widget) = items[index] else {
                     return Task::none();
                 };
@@ -331,13 +342,14 @@ impl Cards {
         let notes_changed = notes_shown != self.config.widget_visible(Widget::Notes);
         let display_changed = self.config.widget_display != cfg.widget_display
             || self.config.widget_monitors != cfg.widget_monitors;
-        self.config = cfg;
+        let old_edge = std::mem::replace(&mut self.config, cfg).edge_menu;
         self.refresh_display_layouts();
         self.reconcile_weather(now);
         if display_changed {
             tasks.push(self.reconcile_output());
         }
         tasks.push(self.wallpaper_colors_changed());
+        tasks.push(self.edge_menu_changed(&old_edge));
         if !self.provider_visible(Widget::Music) {
             // Followed again from scratch when shown.
             self.tools.feed = None;
@@ -637,6 +649,9 @@ impl Cards {
         if let Some(notice) = self.notice_view() {
             return notice;
         }
+        if let Some(items) = &self.config.edge_menu.items {
+            return self.custom_rail(items);
+        }
         let p = self.config.surface_palette();
         // Rounded ends for the first and last row of a group.
         let corners = |index: usize, count: usize| -> [f32; 4] {
@@ -740,58 +755,36 @@ impl Cards {
             .into(),
         ])
         .spacing(8);
-        mouse_area(
-            container(
-                column::with_children(vec![
-                    header.into(),
-                    gap(drawer::HEADER_GAP),
-                    heading("Right column"),
-                    gap(drawer::LABEL_GAP),
-                    rows.into(),
-                    gap(6.),
-                    container(label(
-                        if self.custom_layout() {
-                            "Your own layout. Move widgets in Settings."
-                        } else {
-                            "Drag to reorder"
-                        },
-                        12.,
-                        p.muted,
-                    ))
-                    .padding([0, 4])
-                    .into(),
-                    gap(14.),
-                    heading("Other widgets"),
-                    gap(drawer::LABEL_GAP),
-                    others.into(),
-                    gap(12.),
-                    settings.into(),
-                ]),
-            )
-            .padding(drawer::RAIL_PADDING)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .class(cosmic::theme::Container::custom(move |_| {
-                cosmic::iced::widget::container::Style {
-                    // A shade apart from the cards, so the open rail reads
-                    // as its own layer where it covers them.
-                    background: Some(Background::Color(Color {
-                        a: 0.99,
-                        ..mix(p.foreground, p.background, 0.05)
-                    })),
-                    icon_color: Some(p.muted),
-                    border: Border {
-                        color: mix(p.foreground, p.background, 0.22),
-                        width: 1.,
-                        radius: [20., 0., 0., 20.].into(),
+        self.rail_frame(
+            column::with_children(vec![
+                header.into(),
+                gap(drawer::HEADER_GAP),
+                heading("Right column"),
+                gap(drawer::LABEL_GAP),
+                rows.into(),
+                gap(6.),
+                container(label(
+                    if self.custom_layout() {
+                        "Your own layout. Move widgets in Settings."
+                    } else {
+                        "Drag to reorder"
                     },
-                    ..Default::default()
-                }
-            })),
+                    12.,
+                    p.muted,
+                ))
+                .padding([0, 4])
+                .into(),
+                gap(14.),
+                heading("Other widgets"),
+                gap(drawer::LABEL_GAP),
+                others.into(),
+                gap(12.),
+                settings.into(),
+                gap(8.),
+                self.customize_link(),
+            ])
+            .into(),
         )
-        .on_enter(Message::Hover(false, true))
-        .on_exit(Message::Hover(false, false))
-        .into()
     }
     /// A failed desktop change, in the place Arrange explains its own.
     pub(super) fn notice_view(&self) -> Option<Element<'_, Message>> {
@@ -850,6 +843,8 @@ impl Cards {
         )
         .on_enter(Message::Hover(true, true))
         .on_exit(Message::Hover(true, false))
+        .on_press(Message::EdgeClick)
+        .interaction(mouse::Interaction::Pointer)
         .into()
     }
     pub(super) fn visible_cards(&self) -> Vec<Widget> {
@@ -904,7 +899,7 @@ impl Cards {
     }
     pub(super) fn sidebar_pointer(&mut self, id: window::Id, event: mouse::Event) -> Task<Message> {
         let now = Instant::now();
-        if id == self.ids[3] {
+        if self.is_edge_strip(id) {
             match event {
                 mouse::Event::CursorEntered | mouse::Event::CursorMoved { .. }
                     if !self.sidebar.edge_hovered =>
@@ -931,7 +926,7 @@ impl Cards {
             mouse::Event::CursorMoved { position } => {
                 self.sidebar.pointer = position;
                 let inside = (0. ..=drawer::SIDEBAR_WIDTH as f32).contains(&position.x)
-                    && (0. ..=drawer::SIDEBAR_HEIGHT as f32).contains(&position.y);
+                    && (0. ..=self.controls_height() as f32).contains(&position.y);
                 if inside != self.sidebar.hovered {
                     self.sidebar.hover(false, inside, now);
                 }
@@ -978,7 +973,11 @@ impl Cards {
 }
 
 /// A small on or off switch, drawn to match the system switches.
-fn switch<'a>(on: bool, color: Color, p: crate::config::Palette) -> Element<'a, Message> {
+pub(super) fn switch<'a>(
+    on: bool,
+    color: Color,
+    p: crate::config::Palette,
+) -> Element<'a, Message> {
     let knob = container(cosmic::iced::widget::space().width(10.).height(10.)).class(
         cosmic::theme::Container::custom(move |_| cosmic::iced::widget::container::Style {
             background: Some(Background::Color(if on {

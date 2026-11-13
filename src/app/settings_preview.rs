@@ -145,13 +145,18 @@ pub(crate) struct SettingsSamples {
     /// The whole Daily overview card (clock, weather and agenda), shown on
     /// its page even before it is turned on.
     overview: Box<Cards>,
+    /// The edge menu, open, as the desktop draws it.
+    edge: Box<Cards>,
 }
 impl SettingsSamples {
     pub fn new(config: &Config) -> Self {
         let mut samples = Self {
             cards: Self::build(config),
             overview: Box::new(Self::build(config)),
+            edge: Box::new(Self::build(config)),
         };
+        samples.edge.sidebar.show(Instant::now());
+        samples.edge.sidebar.progress = 1.;
         samples.update(config);
         samples
     }
@@ -250,6 +255,7 @@ impl SettingsSamples {
             depth: Default::default(),
             rain: Default::default(),
             wallpaper_color_generation: Default::default(),
+            edge: Default::default(),
         };
         let _ = source;
         cards
@@ -330,6 +336,22 @@ impl SettingsSamples {
             .config
             .widget_sizes
             .insert("glance".into(), [320., height]);
+    }
+    /// The edge menu with `config`'s items; `available` says which of
+    /// them can run.
+    pub fn update_edge(&mut self, config: &Config, available: Vec<bool>) {
+        self.edge.config = config.clone();
+        self.edge.edge.available = available;
+    }
+    /// The open edge menu, as on the desktop, and its size.
+    pub fn edge_menu_view(&self) -> (Element<'_, Message>, [f32; 2]) {
+        (
+            self.edge.control_rail(),
+            [
+                drawer::SIDEBAR_WIDTH as f32,
+                self.edge.controls_height() as f32,
+            ],
+        )
     }
     /// The full Daily overview card with its current sections.
     pub fn overview_view(&self) -> Element<'_, Message> {
