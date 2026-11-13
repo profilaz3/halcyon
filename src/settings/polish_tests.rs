@@ -390,7 +390,8 @@ fn polish050_setup_scope_exports_and_empty_library_fit_native_windows() {
             &mut app,
             Message::Profiles(Edit::Select(Selection::Preset("tidal"))),
         );
-        assert_eq!(app.profiles.profile().unwrap().domains().len(), 6);
+        // A look is a whole desktop: eight parts, each with its own chip.
+        assert_eq!(app.profiles.profile().unwrap().domains().len(), 8);
         app.open_sections.remove("setup-library-actions");
         app.config.settings_animations = false;
         let mut native = crate::native_test::Native::new(size);
@@ -402,6 +403,8 @@ fn polish050_setup_scope_exports_and_empty_library_fit_native_windows() {
             Domain::Wallpaper,
             Domain::WidgetStyle,
             Domain::WidgetLayout,
+            Domain::Windows,
+            Domain::DesktopIcons,
         ] {
             let id = format!("setup-include-{}", format!("{domain:?}").to_lowercase());
             let bounds = native.bounds(app.settings_view(), &id);
@@ -412,7 +415,7 @@ fn polish050_setup_scope_exports_and_empty_library_fit_native_windows() {
                     && bounds.y >= 0.
                     && bounds.x + bounds.width <= size.width
                     && bounds.y + bounds.height <= viewport.y + viewport.height,
-                "all six scopes visible initially: {id}: {bounds:?}"
+                "every part visible initially: {id}: {bounds:?}"
             );
         }
         let apply = native.bounds(app.settings_view(), "profiles-confirm");

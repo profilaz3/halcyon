@@ -933,19 +933,30 @@ fn windows_workspaces_profile_roundtrip_and_legacy_import() {
             format::VERSION_7
         };
         assert_eq!(preset.profile.version, expected, "{}", preset.id);
-        assert!(preset.profile.windows.is_none() && preset.profile.workspaces.is_none());
+        // A look frames windows (outline, title buttons) but never changes
+        // tiling, focus or workspaces.
+        assert!(preset.profile.workspaces.is_none(), "{}", preset.id);
+        if let Some(windows) = &preset.profile.windows {
+            assert!(windows.autotile.is_none() && windows.autotile_behavior.is_none());
+            assert!(
+                windows.focus_follows_cursor.is_none() && windows.cursor_follows_focus.is_none()
+            );
+            assert!(windows.edge_snap_threshold.is_none(), "{}", preset.id);
+        }
         let planned = plan(&fresh.store(), &fresh.installed(), &preset.profile, &all());
         let keys: Vec<_> = planned.patch().keys().collect();
         assert!(
             keys.iter()
-                .all(|key| key.namespace() != COMP || key.key() == "appearance_settings"),
+                // Only the active window's outline among compositor keys.
+                .all(|key| key.namespace() != COMP
+                    || matches!(key.key(), "appearance_settings" | "active_hint")),
             "{}: {keys:?}",
             preset.id,
         );
+        // Gaps are part of a look's window frame; tiling stays untouched.
         assert!(
-            keys.iter().all(|key| key.key() != "gaps")
-                || keys.iter().any(|key| key.key() == "active_hint"),
-            "{}: gaps only follow an outline change",
+            keys.iter().all(|key| key.key() != "autotile"),
+            "{}: a look never tiles",
             preset.id
         );
     }

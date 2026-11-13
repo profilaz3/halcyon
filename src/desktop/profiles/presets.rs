@@ -193,6 +193,102 @@ fn with_activity(id: &str) -> bool {
     matches!(id, "halcyon" | "rain" | "snow" | "fog")
 }
 
+/// The rest of a look beyond colors and widgets: type, icons, corners,
+/// window spacing and frames, and desktop icons. Only fonts and icon themes
+/// that ship with a default COSMIC install (Open Sans, Fira Sans, Noto Sans
+/// Mono; the Cosmic and Pop icons), so a look never needs a download. When
+/// one is missing anyway, the plan keeps the current one and says so.
+struct Finish {
+    font: &'static str,
+    icons: &'static str,
+    corners: cosmic::cosmic_theme::Roundness,
+    /// Window gaps `(outer, inner)` in pixels.
+    gaps: (u32, u32),
+    /// The active window's outline in pixels; 0 hides it.
+    outline: u32,
+    /// Minimize and maximize buttons on window title bars.
+    buttons: bool,
+    /// Desktop icon size and spacing in percent.
+    icon_size: u16,
+    icon_spacing: u16,
+    drives: bool,
+    trash: bool,
+}
+
+fn finish(id: &str) -> Finish {
+    use cosmic::cosmic_theme::Roundness::{Round, SlightlyRound, Square};
+    let (font, icons, corners, gaps, outline, buttons) = match id {
+        "halcyon" => ("Open Sans", "Cosmic", Round, (0, 8), 3, true),
+        "calm" => ("Fira Sans", "Pop", Round, (4, 12), 2, true),
+        "evening" => ("Open Sans", "Cosmic", Round, (8, 14), 0, true),
+        "focus" => ("Fira Sans", "Cosmic", SlightlyRound, (0, 4), 2, false),
+        "paper" => ("Open Sans", "Pop", SlightlyRound, (8, 12), 1, true),
+        "rose" => ("Fira Sans", "Pop", Round, (4, 10), 3, true),
+        "tidal" => ("Open Sans", "Cosmic", Round, (12, 16), 2, true),
+        "paper-studio" => ("Fira Sans", "Pop", SlightlyRound, (6, 10), 1, true),
+        "carbon" => ("Fira Sans", "Cosmic", Square, (0, 2), 1, true),
+        "rain" => ("Open Sans", "Cosmic", Round, (8, 12), 2, false),
+        "snow" => ("Open Sans", "Pop", Round, (6, 12), 2, true),
+        _ => ("Fira Sans", "Pop", SlightlyRound, (8, 14), 1, true),
+    };
+    // Desktop icons: the Desktop folder stays as people set it (those are
+    // their files); a look only sizes the grid and shows or hides the
+    // drives and the trash.
+    let (icon_size, icon_spacing, drives, trash) = match id {
+        "carbon" => (75, 75, true, true),
+        "rose" => (100, 100, true, true),
+        "paper" | "paper-studio" => (125, 125, false, true),
+        "focus" | "evening" | "rain" | "fog" => (100, 125, false, false),
+        "tidal" => (100, 150, false, true),
+        _ => (100, 100, false, true),
+    };
+    Finish {
+        font,
+        icons,
+        corners,
+        gaps,
+        outline,
+        buttons,
+        icon_size,
+        icon_spacing,
+        drives,
+        trash,
+    }
+}
+
+/// Applies `finish` to an imported curated look.
+fn finish_profile(id: &str, profile: &mut Profile) {
+    use super::format::{Corners, DesktopIconsLook, WindowsBehaviorLook};
+    let finish = finish(id);
+    if let Some(appearance) = profile.appearance.as_mut() {
+        let mut font = cosmic::config::CosmicTk::default().interface_font;
+        font.family = finish.font.into();
+        appearance.interface_font = Some(font);
+        appearance.icon_theme = Some(finish.icons.into());
+        for variant in [appearance.light.as_mut(), appearance.dark.as_mut()]
+            .into_iter()
+            .flatten()
+        {
+            variant.corners = Some(Corners::Preset(finish.corners));
+            variant.gaps = Some(finish.gaps);
+            variant.outline_width = Some(finish.outline);
+        }
+    }
+    profile.windows = Some(WindowsBehaviorLook {
+        active_hint: Some(finish.outline > 0),
+        show_minimize: Some(finish.buttons),
+        show_maximize: Some(finish.buttons),
+        ..Default::default()
+    });
+    profile.desktop_icons = Some(DesktopIconsLook {
+        icon_size: Some(finish.icon_size),
+        spacing: Some(finish.icon_spacing),
+        show_drives: Some(finish.drives),
+        show_trash: Some(finish.trash),
+        ..Default::default()
+    });
+}
+
 /// Deep-merges `patch` into `base`; objects merge, everything else replaces.
 fn merge(base: &mut Value, patch: Value) {
     match (base, patch) {
@@ -594,6 +690,7 @@ pub fn presets() -> Vec<Preset> {
             {
                 panel.include_applets = vec![crate::activity_island::APPLET_ID];
             }
+            finish_profile(look.id, &mut profile);
             Preset {
                 id: look.id,
                 description: look.description,
@@ -1134,6 +1231,21 @@ mod tests {
     #[test]
     fn presets_are_distinct_valid_complete_looks_and_loading_writes_nothing() {
         let (fixture, store) = desk("presets-valid");
+        // What a default COSMIC install ships: its fonts and icon themes.
+        std::fs::write(
+            fixture.0.join("fonts"),
+            "interface\tOpen Sans\t400,700\ninterface\tFira Sans\t400\nmonospace\tNoto Sans Mono\t400\n",
+        )
+        .unwrap();
+        for theme in ["Cosmic", "Pop"] {
+            let dir = fixture.0.join("icons").join(theme);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("index.theme"),
+                format!("[Icon Theme]\nName={theme}\nDirectories=scalable\n"),
+            )
+            .unwrap();
+        }
         let before = fixture.tree();
         let all = presets();
         let ids: Vec<_> = all.iter().map(|preset| preset.id).collect();
@@ -1162,10 +1274,27 @@ mod tests {
         for preset in &all {
             let profile = &preset.profile;
             profile.validate().unwrap();
-            // Fonts, icons, monitors and applets stay the user's.
+            // Fonts and icons come only from a default COSMIC install, so a
+            // look never needs a download; monitors and applets stay the user's.
             if let Some(look) = &profile.appearance {
-                assert!(look.interface_font.is_none() && look.monospace_font.is_none());
-                assert!(look.icon_theme.is_none());
+                if preset.id == CLEAN {
+                    assert!(look.interface_font.is_none() && look.icon_theme.is_none());
+                } else {
+                    let font = look.interface_font.as_ref().unwrap();
+                    assert!(
+                        ["Open Sans", "Fira Sans"].contains(&font.family.as_str()),
+                        "{}",
+                        preset.id
+                    );
+                    assert!(look.monospace_font.is_none());
+                    let icons = look.icon_theme.as_deref().unwrap();
+                    assert!(["Cosmic", "Pop"].contains(&icons), "{}", preset.id);
+                    for variant in [&look.light, &look.dark] {
+                        let variant = variant.as_ref().unwrap();
+                        assert!(variant.corners.is_some() && variant.gaps.is_some());
+                        assert!(variant.outline_width.is_some());
+                    }
+                }
             }
             for look in [&profile.dock, &profile.panel].into_iter().flatten() {
                 assert!(look.applets.is_none(), "{}", preset.id);
@@ -1179,6 +1308,9 @@ mod tests {
                     Domain::Appearance,
                     Domain::WidgetLayout,
                     Domain::Dock,
+                    Domain::Panel,
+                    Domain::Windows,
+                    Domain::DesktopIcons,
                 ] {
                     assert!(domains.contains(&domain), "{} lacks {domain:?}", preset.id);
                 }
@@ -1235,6 +1367,12 @@ mod tests {
                         "visibility only"
                     );
                 }
+                // The Desktop folder holds people's files; a look leaves it shown.
+                let icons = profile.desktop_icons.as_ref().unwrap();
+                assert!(icons.show_folder.is_none(), "{}", preset.id);
+                // No look turns on automatic tiling or changes focus behavior.
+                let windows = profile.windows.as_ref().unwrap();
+                assert!(windows.autotile.is_none() && windows.focus_follows_cursor.is_none());
                 // The installed COSMIC panel crashes with a frosted background.
                 let raw = serde_json::to_string(profile).unwrap();
                 assert!(!raw.contains("\"panel\":true"), "{}", preset.id);
@@ -1256,6 +1394,18 @@ mod tests {
                 preset.id,
                 plan.blocking_reasons()
             );
+            // Nothing to download: every font and icon theme is already here.
+            for domain in &plan.domains {
+                assert!(domain.blocked.is_empty(), "{}: {:?}", preset.id, domain);
+                assert!(
+                    !domain.warnings.iter().any(
+                        |w| w.contains("isn’t installed") || w.contains("could not be checked")
+                    ),
+                    "{}: {:?}",
+                    preset.id,
+                    domain.warnings
+                );
+            }
             let changes: Vec<_> = plan
                 .domains
                 .iter()
@@ -1357,7 +1507,7 @@ mod tests {
     }
 
     #[test]
-    fn setup_islands_plan_preview_and_undo_preserve_applets_enablement_and_local_layouts() {
+    fn setup_islands_plan_preview_and_undo_preserve_applets_and_local_layouts() {
         use crate::desktop::panels::{PanelDraft, PanelKind};
         let (fixture, store) = desk("setup-islands-plan");
         crate::desktop::islands::fixture_installed(&fixture.0);
@@ -1407,7 +1557,10 @@ mod tests {
                     .unwrap()
                     .decode::<Settings>()
                     .unwrap();
-                assert_eq!(desired.enabled, enabled);
+                // Including the panel part brings the look's Islands with it,
+                // whether they were on or off before; Undo turns them back.
+                assert!(look.islands.as_ref().unwrap().enabled, "{id}");
+                assert!(desired.enabled, "{id}");
                 assert_eq!(
                     desired.default_layout,
                     look.islands.as_ref().unwrap().default_layout
@@ -1648,7 +1801,7 @@ mod tests {
         }
     }
     #[test]
-    fn task2_imported_islands_fields_adapt_without_sidecars_or_activation() {
+    fn task2_imported_islands_fields_adapt_without_sidecars_and_follow_the_panel() {
         let (fixture, store) = desk("imported-islands-adaptation");
         let mut profile = preset("halcyon").unwrap().profile;
         profile.panel.as_mut().unwrap().island_gap = Some(42);
@@ -1670,21 +1823,32 @@ mod tests {
                 ))
                 .exists()
         );
+        // Once installed, the Panel part brings the look's islands with it,
+        // as the preview draws them.
         crate::desktop::islands::fixture_installed(&fixture.0);
         let proposal = plan(&store, &installed, &profile, &selected);
+        let wanted = profile
+            .panel
+            .as_ref()
+            .unwrap()
+            .islands
+            .as_ref()
+            .unwrap()
+            .enabled;
         for (_, entry) in proposal
             .patch()
             .iter()
             .filter(|(k, _)| k.namespace() == dock_islands_core::NAMESPACE)
         {
-            assert!(
-                !entry
+            assert_eq!(
+                entry
                     .desired
                     .as_ref()
                     .unwrap()
                     .decode::<dock_islands_core::Settings>()
                     .unwrap()
-                    .enabled
+                    .enabled,
+                wanted
             );
         }
     }

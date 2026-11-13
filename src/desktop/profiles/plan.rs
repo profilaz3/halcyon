@@ -574,7 +574,8 @@ impl ProfilePlan {
         self.patch.activity_display = display;
     }
     /// The setup wizard's explicit choice may enable or disable Islands.
-    /// Profiles and automatic switches preserve the existing enabled state.
+    /// A profile's Panel part turns them on or off as its look draws them;
+    /// with Panel excluded, the existing enabled state stays.
     pub(crate) fn choose_islands(
         &mut self,
         store: &DesktopStore,
@@ -1114,9 +1115,21 @@ fn plan_panel(
     if installed_islands {
         if let Some(islands) = &look.islands {
             if let Some(current) = draft.islands().known().cloned() {
-                // Applying a look does not activate an installed but disabled add-on.
+                // Including a look's Panel brings its islands with it: the
+                // installed add-on turns on (or off) as the look draws it,
+                // so Apply matches the preview. Excluding Panel keeps both.
                 let mut desired = keep_arrangement(islands.clone(), current.clone());
-                desired.enabled = current.enabled;
+                if vertical {
+                    // Islands are horizontal only; a side panel stays standard.
+                    desired.enabled = current.enabled;
+                }
+                if desired.enabled != current.enabled {
+                    part.changes.push(if desired.enabled {
+                        "Panel Islands on".into()
+                    } else {
+                        "Panel Islands off".into()
+                    });
+                }
                 draft.set_islands(desired);
             } else {
                 part.blocked
@@ -1232,13 +1245,15 @@ pub(crate) fn preview_panel_style(
     installed_islands: bool,
 ) -> PanelDraft {
     if installed_islands && let Some(current) = draft.islands().known().cloned() {
+        // A look's islands come on with its Panel, exactly as Apply does.
         let mut desired = look
             .islands
             .clone()
             .map(|requested| keep_arrangement(requested, current.clone()))
             .unwrap_or_else(|| current.clone());
-        // A recipe describes an arrangement; enablement is an explicit user choice.
-        desired.enabled = current.enabled;
+        if look.anchor.is_some_and(|anchor| !anchor.horizontal()) {
+            desired.enabled = current.enabled;
+        }
         if look.islands.is_none()
             && let Some(gap) = look.island_gap
         {

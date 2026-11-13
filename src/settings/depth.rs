@@ -38,7 +38,7 @@ impl Settings {
         if self.page != Page::DesktopProfiles || !self.scene_open() {
             return None;
         }
-        let current = self.profiles.compare_current;
+        let current = self.profiles.showing_now();
         let candidate = self.profiles.preview()?;
         let preview = if current {
             view::profiles::comparison_current(candidate, self.profiles.plan())

@@ -35,6 +35,65 @@ fn bar_metrics(draft: &PanelDraft, scale: f32) -> (Anchor, f32, f32) {
     (anchor, thickness, margin)
 }
 
+/// Space the listed bars of `drafts` take from each screen edge on the
+/// miniature, `[top, right, bottom, left]`: what a maximized or tiled
+/// window leaves free.
+pub(in crate::settings::view) fn edge_insets(drafts: &[&PanelDraft], scale: f32) -> [f32; 4] {
+    let mut insets = [0.; 4];
+    // A bar that always hides reserves no space.
+    for draft in drafts
+        .iter()
+        .filter(|draft| draft.listed() && draft.autohide().known() != Some(&AutoHide::Always))
+    {
+        let (anchor, thickness, margin) = bar_metrics(draft, scale);
+        let edge = match anchor {
+            Anchor::Top => 0,
+            Anchor::Right => 1,
+            Anchor::Bottom => 2,
+            Anchor::Left => 3,
+        };
+        insets[edge] += thickness + 2. * margin;
+    }
+    insets
+}
+
+/// The band each listed bar of `drafts` occupies along its edge on the
+/// miniature, as `(kind, position, size)`, stacked like [`bars_on_output`]
+/// draws them. Used to ring a bar the parts list points at.
+pub(in crate::settings::view) fn bar_bands(
+    drafts: &[&PanelDraft],
+    screen: [f32; 2],
+    scale: f32,
+) -> Vec<(PanelKind, Point, [f32; 2])> {
+    let mut bars: Vec<&PanelDraft> = drafts.iter().copied().filter(|d| d.listed()).collect();
+    bars.sort_by_key(|draft| std::cmp::Reverse(bar_priority(draft)));
+    let mut bands = Vec::new();
+    for (index, draft) in bars.iter().enumerate() {
+        let (anchor, thickness, margin) = bar_metrics(draft, scale);
+        let offset: f32 = bars[..index]
+            .iter()
+            .map(|other| bar_metrics(other, scale))
+            .filter(|(edge, _, _)| *edge == anchor)
+            .map(|(_, thickness, margin)| thickness + margin)
+            .sum();
+        let depth = thickness + 2. * margin;
+        let (position, size) = match anchor {
+            Anchor::Top => (Point::new(0., offset), [screen[0], depth]),
+            Anchor::Bottom => (
+                Point::new(0., screen[1] - offset - depth),
+                [screen[0], depth],
+            ),
+            Anchor::Left => (Point::new(offset, 0.), [depth, screen[1]]),
+            Anchor::Right => (
+                Point::new(screen[0] - offset - depth, 0.),
+                [depth, screen[1]],
+            ),
+        };
+        bands.push((draft.kind(), position, size));
+    }
+    bands
+}
+
 /// cosmic-panel's `get_priority`: on a shared edge, higher priority sits
 /// closer to the screen edge.
 pub(super) fn bar_priority(draft: &PanelDraft) -> u32 {

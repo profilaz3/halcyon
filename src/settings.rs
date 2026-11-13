@@ -4760,7 +4760,12 @@ fn checkpoint_message(message: &Message) -> bool {
             | Message::ToggleSection(..)
             | Message::ToggleSceneObjects
             | Message::HomePart(..)
-            | Message::Profiles(profiles::Message::Collection(..) | profiles::Message::Compare(..))
+            | Message::Profiles(
+                profiles::Message::Collection(..)
+                    | profiles::Message::Compare(..)
+                    | profiles::Message::Highlight(..)
+                    | profiles::Message::Hold(..)
+            )
             | Message::ContentScrolled(..)
             | Message::Preview
             | Message::ClockStage(
@@ -6858,6 +6863,7 @@ mod tests {
     include!("settings/clock_stage_tests.rs");
     include!("settings/devices_tests.rs");
     include!("settings/glance_off_tests.rs");
+    include!("settings/looks_tests.rs");
 
     /// What Wallpaper & colors recommends for a solid color background.
     fn recommended_color(rgb: [f32; 3]) -> [u8; 3] {
