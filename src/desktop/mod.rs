@@ -12,6 +12,8 @@ pub mod apps;
 // profiles (Task 3).
 #[allow(dead_code)]
 pub mod desktop_icons;
+#[allow(dead_code)]
+pub mod icon_packs;
 pub mod islands;
 pub mod materials;
 pub mod motion;
