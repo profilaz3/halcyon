@@ -235,6 +235,12 @@ impl Page {
             _ => Self::Overview,
         }
     }
+    /// Whether a preview on this page may act on a part that `part`'s page
+    /// edits: only when both sit under the same sidebar root. A preview is
+    /// for the page's own thing; parts of other menus are drawn but inert.
+    fn owns(self, part: Self) -> bool {
+        self.sidebar() == part.sidebar()
+    }
     /// Who undoes whose changes: the root as it was before Looks left
     /// the sidebar and the bars split, since one record covers each.
     fn undo_group(self) -> Self {

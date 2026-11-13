@@ -1,7 +1,8 @@
 //! Home: the whole desktop in one picture. Each part is a sidebar page.
 //! Picking a part lights it, names it and says how it is set; picking it
 //! again, or Open, goes to its page. The picture draws cached images only
-//! and has nothing that moves.
+//! and has nothing that moves. Only Home's picture leads anywhere: the
+//! small copy on a part's own page lights that part and takes no input.
 use super::activate::{activate, quiet};
 use super::profiles::{card, scene_geometry, schematic_window};
 use super::*;
@@ -24,21 +25,12 @@ pub(in crate::settings) const PARTS: [Page; 10] = [
     Page::General,
 ];
 
-/// What a click on a part does: select it (Home) or open its page (the
-/// small picture on a part's own page).
+/// What a click on a part does: select it (Home), or nothing (the small
+/// picture on a part's own page, which is not a way to other menus).
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum Picks {
     Select,
-    Open,
-}
-
-impl Picks {
-    fn message(self, page: Page) -> Message {
-        match self {
-            Self::Select => Message::HomePart(page),
-            Self::Open => Message::Page(page),
-        }
-    }
+    Glance,
 }
 
 pub(in crate::settings) fn part_id(page: Page) -> String {
@@ -402,10 +394,10 @@ impl Settings {
     }
 
     /// The same picture, small, at the top of a part's own page with that
-    /// part lit. Each part opens its page.
+    /// part lit. It is drawn only: no part opens another page from here.
     pub(super) fn home_glance(&self, part: Page) -> Element<'_, Message> {
         let height = (self.content_width() * 9. / 16.).clamp(150., 220.);
-        container(activate(self.home_scene(height, Some(part), Picks::Open)))
+        container(self.home_scene(height, Some(part), Picks::Glance))
             .id(cosmic::widget::Id::new(format!("home-glance-{}", part.key())))
             .width(Length::Fill)
             .into()
@@ -460,6 +452,9 @@ impl Settings {
                            radius: f32,
                            size: [f32; 2]|
              -> Element<'static, Message> {
+                if picks == Picks::Glance {
+                    return quiet(container(content).width(size[0]).height(size[1]));
+                }
                 button::custom(content)
                     .class(super::home::hotspot(accent, radius))
                     .padding(0)
@@ -468,7 +463,7 @@ impl Settings {
                     .id(cosmic::widget::Id::new(id))
                     .name(name)
                     .selected(lit == Some(page))
-                    .on_press(picks.message(page))
+                    .on_press(Message::HomePart(page))
                     .into()
             };
             let mut layers: Vec<Element<'_, Message>> = vec![
@@ -477,10 +472,12 @@ impl Settings {
                     .height(screen[1])
                     .into(),
             ];
-            // Wallpaper: the whole picture; empty space picks it.
+            // Wallpaper: the whole picture; on Home, empty space picks it.
             let backdrop = self.home_backdrop(screen).into_iter().next();
             if let Some(backdrop) = backdrop {
-                layers.push(
+                layers.push(if picks == Picks::Glance {
+                    quiet(backdrop)
+                } else {
                     button::custom(backdrop)
                         .class(super::home::hotspot(accent, 10.))
                         .padding(0)
@@ -489,9 +486,9 @@ impl Settings {
                         .id(cosmic::widget::Id::new(part_id(Page::DesktopWallpaper)))
                         .name("Wallpaper")
                         .selected(lit == Some(Page::DesktopWallpaper))
-                        .on_press(picks.message(Page::DesktopWallpaper))
-                        .into(),
-                );
+                        .on_press(Message::HomePart(Page::DesktopWallpaper))
+                        .into()
+                });
             }
             // Widgets where they sit on the desktop.
             let mut cards = Vec::new();
@@ -570,7 +567,7 @@ impl Settings {
                 screen,
                 scale,
                 accent,
-                None,
+                &|_| None,
                 output,
             ));
             // Each bar picks its own page, under a named, focusable spot.
@@ -711,7 +708,7 @@ impl Settings {
                             screen,
                             scale,
                             accent,
-                            None,
+                            &|_| None,
                             output,
                         )
                         .into_iter()

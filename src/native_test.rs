@@ -55,9 +55,23 @@ impl Native {
         view: cosmic::Element<'_, M>,
         id: Option<cosmic::widget::Id>,
     ) -> Option<Rectangle> {
+        self.walk(view, id).0
+    }
+    /// Every place keyboard focus can stop, on screen.
+    pub fn focus_stops<M>(&mut self, view: cosmic::Element<'_, M>) -> Vec<Rectangle> {
+        self.walk(view, None).1
+    }
+    /// Walks the widgets: the one named `id` (or the focused one), and the
+    /// bounds of every focusable widget.
+    fn walk<M>(
+        &mut self,
+        view: cosmic::Element<'_, M>,
+        id: Option<cosmic::widget::Id>,
+    ) -> (Option<Rectangle>, Vec<Rectangle>) {
         struct Find {
             id: Option<cosmic::widget::Id>,
             found: Option<Rectangle>,
+            stops: Vec<Rectangle>,
             offset: cosmic::iced::Vector,
             pending: cosmic::iced::Vector,
         }
@@ -89,6 +103,7 @@ impl Native {
                 bounds: Rectangle,
                 state: &mut dyn Focusable,
             ) {
+                self.stops.push(bounds - self.offset);
                 let hit = match &self.id {
                     Some(target) => id == Some(target),
                     None => state.is_focused(),
@@ -107,12 +122,13 @@ impl Native {
         let mut find = Find {
             id,
             found: None,
+            stops: Vec::new(),
             offset: Default::default(),
             pending: Default::default(),
         };
         ui.operate(&self.renderer, &mut find);
         self.cache = ui.into_cache();
-        find.found
+        (find.found, find.stops)
     }
     /// What a screen reader is told about every node: its role, name and
     /// bounds, in window coordinates.
@@ -187,6 +203,30 @@ impl Native {
         );
         self.cache = ui.into_cache();
         (messages, statuses[0])
+    }
+    /// The pointer's shape with the cursor resting at `point`.
+    pub fn pointer<M>(&mut self, view: cosmic::Element<'_, M>, point: Point) -> mouse::Interaction {
+        let mut ui = UserInterface::build(
+            view,
+            self.size,
+            std::mem::take(&mut self.cache),
+            &mut self.renderer,
+        );
+        let mut messages = Vec::new();
+        let (state, _) = ui.update(
+            &[Event::Mouse(mouse::Event::CursorMoved { position: point })],
+            mouse::Cursor::Available(point),
+            &mut self.renderer,
+            &mut clipboard::Null,
+            &mut messages,
+        );
+        self.cache = ui.into_cache();
+        match state {
+            cosmic::iced::runtime::user_interface::State::Updated {
+                mouse_interaction, ..
+            } => mouse_interaction,
+            cosmic::iced::runtime::user_interface::State::Outdated => mouse::Interaction::None,
+        }
     }
     pub fn render<M>(&mut self, view: cosmic::Element<'_, M>, theme: &cosmic::Theme) -> Vec<u8> {
         self.render_with_cursor(view, theme, mouse::Cursor::Unavailable)
