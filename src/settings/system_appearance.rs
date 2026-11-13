@@ -216,6 +216,18 @@ impl AppearanceEditor {
             self.variant = draft.active_variant();
         }
     }
+    /// Lists the icon themes again, after an install or removal.
+    pub fn rescan_icons(&mut self) {
+        let Some(store) = self.store() else {
+            return;
+        };
+        self.icons = match store.fixture_root() {
+            Some(root) => {
+                IconCatalog::discover(&[root.join("icons")], &appearance::catalog::languages())
+            }
+            None => IconCatalog::installed(),
+        };
+    }
     pub fn unfinished_variant(&self, variant: ThemeVariant) -> bool {
         self.hex
             .iter()

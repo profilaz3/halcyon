@@ -996,7 +996,34 @@ const ROWS: &[SearchHit] = &[
     hit(Page::Clock, "Text", "", false),
     hit(Page::Clock, "Text size", "", false),
     hit(Page::DesktopAppearance, "Fixed-width font", "", false),
-    hit(Page::DesktopAppearance, "Icon theme", "", false),
+    hit(
+        Page::DesktopAppearance,
+        "Icon theme",
+        "icons icon pack themes",
+        false,
+    )
+    .at("appearance-icons"),
+    hit(
+        Page::DesktopAppearance,
+        "Get more icons",
+        "download install icon packs themes papirus tela pling",
+        false,
+    )
+    .at("appearance-icons"),
+    hit(
+        Page::DesktopAppearance,
+        "App icon shape",
+        "icons circle squircle rounded square shape",
+        false,
+    )
+    .at("icon-shape"),
+    hit(
+        Page::DesktopAppearance,
+        "Folders use the accent color",
+        "folder icons accent colour tint",
+        false,
+    )
+    .at("icon-folders"),
     hit(Page::DesktopAppearance, "Interface font", "", false),
     hit(Page::DesktopAppearance, "Match style", "", false),
     hit(Page::DesktopAppearance, "Widget font", "", false),

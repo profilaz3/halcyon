@@ -15,6 +15,7 @@ pub(super) mod explain;
 pub(super) mod focus;
 pub(super) mod home;
 pub(super) mod home_picture;
+mod icon_packs;
 mod island;
 mod layered;
 mod materials;

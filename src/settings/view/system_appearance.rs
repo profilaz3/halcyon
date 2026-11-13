@@ -193,6 +193,7 @@ impl Settings {
                 .into(),
         );
         items.push(self.search_target("appearance-fonts", self.appearance_type(draft)));
+        items.push(self.search_target("appearance-icons", self.icon_section()));
         // Mode and colors live in Appearance; window details stay here,
         // folded away.
         if self.color_well.is_some() {
@@ -600,93 +601,6 @@ impl Settings {
     }
 
     fn appearance_type(&self, draft: &AppearanceDraft) -> Element<'_, Message> {
-        let accent = self.appearance_accent();
-        let editor = &self.system_appearance;
-        let icon_setting = draft.icon_theme();
-        let icons: Element<'_, Message> = match icon_setting {
-            Setting::Known(id) => {
-                let theme = editor.icons.get(&id);
-                let open = editor.picker == Some(Picker::Icons);
-                let name = theme.map_or_else(|| id.clone(), |theme| theme.name.clone());
-                let first: Vec<Element<'_, Message>> = vec![
-                    container(
-                        button::custom(
-                            row::with_children(vec![
-                                container(line(name, 13., FG)).width(Length::Fill).into(),
-                                icon::from_name(if open {
-                                    "go-up-symbolic"
-                                } else {
-                                    "go-down-symbolic"
-                                })
-                                .size(14)
-                                .icon()
-                                .into(),
-                            ])
-                            .spacing(8)
-                            .align_y(Alignment::Center),
-                        )
-                        .class(chip_style(open, accent))
-                        .padding([6, 12])
-                        .width(Length::Fill)
-                        .on_press(edit(Edit::Picker((!open).then_some(Picker::Icons)))),
-                    )
-                    .width(Length::Fill)
-                    .into(),
-                ];
-                // Same shape as the font rows: label left, chooser right.
-                let mut rows = vec![split(
-                    if theme.is_none() {
-                        detail_state("Icon theme", "Not installed, using the default")
-                    } else {
-                        label("Icon theme", 14., FG)
-                    },
-                    container(
-                        row::with_children(first)
-                            .spacing(8)
-                            .align_y(Alignment::Center),
-                    )
-                    .width(Length::Fixed(260.))
-                    .into(),
-                )];
-                if !editor.icons.errors.is_empty() {
-                    rows.push(label(
-                        format!(
-                            "Some icon folders could not be read: {}",
-                            editor.icons.errors.join("; ")
-                        ),
-                        11.,
-                        WARN,
-                    ));
-                }
-                if open {
-                    let options = editor
-                        .icons
-                        .themes
-                        .iter()
-                        .filter(|theme| catalog::matches(&editor.search, &[&theme.name, &theme.id]))
-                        .map(|theme| {
-                            let title = if theme.name == theme.id {
-                                theme.name.clone()
-                            } else {
-                                format!("{} · {}", theme.name, theme.id)
-                            };
-                            (theme.id.clone(), title, theme.id == id)
-                        })
-                        .collect();
-                    rows.push(self.picker_list(
-                        options,
-                        if editor.icons.themes.is_empty() {
-                            "No icon themes were found."
-                        } else {
-                            "No icon themes match."
-                        },
-                        |id| edit(Edit::IconTheme(id)),
-                    ));
-                }
-                column::with_children(rows).spacing(8).into()
-            }
-            Setting::Unsupported(raw) => field("Icon theme", kept(&raw)),
-        };
         group(None, vec![
             self.font_row(draft, FontRole::Interface),
             self.font_row(draft, FontRole::Monospace),
@@ -701,7 +615,6 @@ impl Settings {
                     "Match style",
                 ),
             ),
-            icons,
         ])
     }
 
