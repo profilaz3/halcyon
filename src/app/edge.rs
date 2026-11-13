@@ -3,7 +3,7 @@
 //! only from `halcyon --toggle drawer` and Settings. A customized menu is a
 //! list of items, each running an action the desktop already has.
 use super::*;
-use crate::config::edge_menu::{Action, EdgeMenu, Item, Kind, Side};
+use crate::config::edge_menu::{Action, Close, EdgeMenu, Item, Kind, Side, Style};
 use crate::desktop::apps::AppCatalog;
 use cosmic::iced::mouse;
 use drawer::DrawerItem;
@@ -11,9 +11,9 @@ use drawer::DrawerItem;
 /// What the surface `ids[3]` is now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum EdgeKind {
-    /// The hover strip along the whole edge. It measures the usable height
-    /// of the display as well.
-    Strip(Side),
+    /// The hover strip along the whole edge, this thick. It measures the
+    /// usable height of the display as well.
+    Strip(Side, u32),
     /// Only measures the usable height: no input, nothing drawn. Used while
     /// the strip is off, or covers only part of the edge on its own surface.
     Probe,
@@ -24,7 +24,18 @@ pub(super) enum EdgeKind {
 pub(super) struct PartStrip {
     pub id: window::Id,
     pub side: Side,
+    pub thickness: u32,
     /// From the top and bottom of the usable height.
+    pub margins: [i32; 2],
+}
+
+/// A strip on another display than the widgets'.
+#[derive(Clone, Debug)]
+pub(super) struct OtherStrip {
+    pub id: window::Id,
+    pub output: crate::displays::Output,
+    pub side: Side,
+    pub thickness: u32,
     pub margins: [i32; 2],
 }
 
@@ -33,6 +44,18 @@ pub(super) struct EdgeState {
     /// What `ids[3]` was created as; `None` before it exists.
     pub kind: Option<EdgeKind>,
     pub part: Option<PartStrip>,
+    /// Strips on the other displays the menu is shown on.
+    pub others: Vec<OtherStrip>,
+    /// The display the menu opens on when it isn't the widgets': the one
+    /// whose strip opened it.
+    pub menu_output: Option<crate::displays::Output>,
+    /// The item under the pointer in the Icons and Grid styles, whose name
+    /// shows beside it.
+    pub tip: Option<DrawerItem>,
+    /// Drawn for Settings' preview: the menu alone, no room for names.
+    pub preview: bool,
+    /// The size the menu's surface was opened at.
+    pub surface: Option<[u32; 2]>,
     /// Whether each item of the customized list can run now: its app is
     /// installed, its folder exists, its type is known.
     pub available: Vec<bool>,
@@ -69,7 +92,7 @@ pub(super) fn blocks(items: &[Item]) -> Vec<Block> {
 }
 
 /// The height the menu needs for `items`, chrome included.
-pub(super) fn natural_height(items: &[Item]) -> f32 {
+pub(super) fn natural_height(items: &[Item], titles: bool) -> f32 {
     let body = if items.is_empty() {
         EMPTY
     } else {
@@ -77,6 +100,13 @@ pub(super) fn natural_height(items: &[Item]) -> f32 {
             .iter()
             .enumerate()
             .map(|(index, block)| match block {
+                Block::Title(_) if !titles => {
+                    if index == 0 {
+                        0.
+                    } else {
+                        TITLE_GAP
+                    }
+                }
                 Block::Title(_) => {
                     (if index == 0 { 0. } else { TITLE_GAP })
                         + drawer::SECTION_LABEL
@@ -92,14 +122,14 @@ pub(super) fn natural_height(items: &[Item]) -> f32 {
     drawer::RAIL_PADDING * 2. + drawer::HEADER + drawer::HEADER_GAP + body + FOOTER_GAP + FOOTER
 }
 
-fn side_anchor(side: Side) -> Anchor {
+pub(super) fn side_anchor(side: Side) -> Anchor {
     match side {
         Side::Left => Anchor::LEFT,
         Side::Right => Anchor::RIGHT,
     }
 }
 
-fn destroy(id: window::Id) -> Task<Message> {
+pub(super) fn destroy(id: window::Id) -> Task<Message> {
     cosmic::iced::platform_specific::shell::commands::layer_surface::destroy_layer_surface(id)
 }
 
@@ -175,14 +205,105 @@ pub(crate) fn availability(items: &[Item], apps: impl FnOnce() -> AppCatalog) ->
         .collect()
 }
 
+/// Whether an item is an on or off switch: a widget's, or a switch action.
+pub(super) fn is_switch(item: &Item) -> bool {
+    item.as_widget().is_some() || item.as_action().is_some_and(Action::switch)
+}
+
+/// Whether running an item that sends `message` closes the menu. Arrange,
+/// Settings and Customize take over the screen and always close it.
+pub(super) fn closes_after(close: Close, switch: bool, message: &Message) -> bool {
+    if matches!(message, Message::Arrange | Message::Settings) {
+        return true;
+    }
+    match close {
+        Close::Never => false,
+        Close::Actions => !switch,
+        Close::Always => true,
+    }
+}
+
+/// Room beside the Icons and Grid menus where an item's name shows. The
+/// surface is this much wider; the room is clear and takes no input.
+pub(super) const TIP_ROOM: u32 = 176;
+
 impl Cards {
-    fn edge_strip_measures(&self) -> bool {
+    /// The items the menu draws one by one, or `None` for the built-in
+    /// menu drawn as it always was.
+    pub(super) fn menu_items(&self) -> Option<Vec<Item>> {
+        (!self.config.edge_menu.classic()).then(|| self.config.edge_items())
+    }
+    /// Whether the menu shows a notice or Arrange's recovery in place of
+    /// its items.
+    pub(super) fn rail_message(&self) -> bool {
+        self.notice.is_some()
+            || self
+                .paused_layout
+                .as_ref()
+                .is_some_and(|editor| editor.exit_failed)
+    }
+    /// Whether the menu draws the Icons or Grid style now.
+    pub(super) fn compact(&self) -> bool {
+        self.config.edge_menu.style != Style::List && !self.rail_message()
+    }
+    /// The menu panel's own width.
+    pub(super) fn rail_width(&self) -> u32 {
+        if self.compact() {
+            super::edge_compact::width(&self.config.edge_menu).ceil() as u32
+        } else {
+            drawer::SIDEBAR_WIDTH
+        }
+    }
+    /// The menu surface's width: the panel, and room for names beside the
+    /// Icons and Grid menus.
+    pub(super) fn controls_width(&self) -> u32 {
+        if self.compact() {
+            self.rail_width() + TIP_ROOM
+        } else {
+            drawer::SIDEBAR_WIDTH
+        }
+    }
+    /// Where the panel sits across the surface, from its left.
+    pub(super) fn rail_x(&self) -> f32 {
+        match self.config.edge_menu.side {
+            Side::Right => (self.controls_width() - self.rail_width()) as f32,
+            Side::Left => 0.,
+        }
+    }
+    /// The height of the display the menu opens on.
+    pub(super) fn edge_screen_height(&self) -> f32 {
+        match &self.edge.menu_output {
+            Some(output) => output
+                .info
+                .logical_size
+                .map_or(self.screen_size[1], |(_, height)| height as f32),
+            None => self.screen_size[1],
+        }
+    }
+    /// The output the menu's surface opens on.
+    pub(super) fn menu_layer_output(&self) -> IcedOutput {
+        match &self.edge.menu_output {
+            Some(output) => IcedOutput::Output(output.handle.clone()),
+            None => self.layer_output(),
+        }
+    }
+    /// Whether the widgets' display has a strip: the menu is on and shown
+    /// there.
+    fn edge_on_main(&self) -> bool {
         let menu = &self.config.edge_menu;
-        menu.enabled && menu.length >= 100
+        let key = self
+            .selected_output
+            .as_ref()
+            .and_then(|output| self.displays.key(output));
+        menu.enabled && menu.on_display(true, key.as_deref())
+    }
+    fn edge_strip_measures(&self) -> bool {
+        self.edge_on_main() && self.config.edge_menu.length >= 100
     }
     pub(super) fn wanted_edge_kind(&self) -> EdgeKind {
         if self.edge_strip_measures() {
-            EdgeKind::Strip(self.config.edge_menu.side)
+            let menu = &self.config.edge_menu;
+            EdgeKind::Strip(menu.side, menu.strip_thickness())
         } else {
             EdgeKind::Probe
         }
@@ -194,13 +315,13 @@ impl Cards {
         let kind = self.wanted_edge_kind();
         self.edge.kind = Some(kind);
         get_layer_surface(match kind {
-            EdgeKind::Strip(side) => SctkLayerSurfaceSettings {
+            EdgeKind::Strip(side, thickness) => SctkLayerSurfaceSettings {
                 id,
                 output: self.layer_output(),
                 layer: Layer::Overlay,
                 keyboard_interactivity: KeyboardInteractivity::None,
                 anchor: side_anchor(side) | Anchor::TOP | Anchor::BOTTOM,
-                size: Some((Some(2), Some(0))),
+                size: Some((Some(thickness), Some(0))),
                 exclusive_zone: 0,
                 namespace: "halcyon-edge".into(),
                 ..Default::default()
@@ -221,27 +342,30 @@ impl Cards {
     }
     /// Whether `id` is a strip that opens the menu.
     pub(super) fn is_edge_strip(&self, id: window::Id) -> bool {
-        (id == self.ids[3] && matches!(self.edge.kind, Some(EdgeKind::Strip(_))))
+        (id == self.ids[3] && matches!(self.edge.kind, Some(EdgeKind::Strip(..))))
             || self.edge.part.is_some_and(|part| part.id == id)
+            || self.edge.others.iter().any(|strip| strip.id == id)
     }
     /// Opens, moves or closes the strip that covers part of the edge. It
     /// waits for the display's height, which places it.
     pub(super) fn sync_edge_strip(&mut self) -> Task<Message> {
+        let others = self.sync_other_strips();
         let menu = &self.config.edge_menu;
         let wanted = self.output_known
             && self.selected_output.is_some()
-            && menu.enabled
+            && self.edge_on_main()
             && menu.length < 100;
         let side = menu.side;
+        let thickness = menu.strip_thickness();
         let margins = menu.strip_margins(self.screen_size[1]);
-        match (self.edge.part, wanted) {
+        let part = match (self.edge.part, wanted) {
             (None, false) => Task::none(),
             (Some(part), false) => {
                 self.edge.part = None;
                 self.sidebar.hover(true, false, Instant::now());
                 destroy(part.id)
             }
-            (Some(part), true) if part.side == side => {
+            (Some(part), true) if part.side == side && part.thickness == thickness => {
                 if part.margins == margins {
                     return Task::none();
                 }
@@ -250,7 +374,12 @@ impl Cards {
             }
             (old, true) => {
                 let id = window::Id::unique();
-                self.edge.part = Some(PartStrip { id, side, margins });
+                self.edge.part = Some(PartStrip {
+                    id,
+                    side,
+                    thickness,
+                    margins,
+                });
                 let create = get_layer_surface(SctkLayerSurfaceSettings {
                     id,
                     output: self.layer_output(),
@@ -262,7 +391,7 @@ impl Cards {
                         bottom: margins[1],
                         ..Default::default()
                     },
-                    size: Some((Some(2), Some(0))),
+                    size: Some((Some(thickness), Some(0))),
                     exclusive_zone: 0,
                     namespace: "halcyon-edge".into(),
                     ..Default::default()
@@ -272,7 +401,104 @@ impl Cards {
                     None => create,
                 }
             }
+        };
+        Task::batch([part, others])
+    }
+    /// Opens, moves or closes the strips on the other displays the menu is
+    /// shown on. Their length is placed on the display's whole height.
+    fn sync_other_strips(&mut self) -> Task<Message> {
+        let menu = &self.config.edge_menu;
+        let main = self.selected_output.as_ref().map(|o| o.handle.clone());
+        let wanted: Vec<OtherStrip> = if self.output_known && menu.enabled {
+            self.displays
+                .outputs()
+                .iter()
+                .filter(|output| Some(&output.handle) != main.as_ref())
+                .filter(|output| menu.on_display(false, self.displays.key(output).as_deref()))
+                .map(|output| OtherStrip {
+                    id: window::Id::NONE,
+                    output: output.clone(),
+                    side: menu.side,
+                    thickness: menu.strip_thickness(),
+                    margins: menu.strip_margins(
+                        output
+                            .info
+                            .logical_size
+                            .map_or(0., |(_, height)| height as f32),
+                    ),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let same = |a: &OtherStrip, b: &OtherStrip| {
+            a.output.handle == b.output.handle
+                && a.side == b.side
+                && a.thickness == b.thickness
+                && a.margins == b.margins
+        };
+        let mut tasks = Vec::new();
+        let old = std::mem::take(&mut self.edge.others);
+        for strip in &old {
+            if !wanted.iter().any(|w| same(w, strip)) {
+                tasks.push(destroy(strip.id));
+            }
         }
+        for mut strip in wanted {
+            if let Some(kept) = old.iter().find(|o| same(o, &strip)) {
+                self.edge.others.push(kept.clone());
+                continue;
+            }
+            strip.id = window::Id::unique();
+            tasks.push(get_layer_surface(SctkLayerSurfaceSettings {
+                id: strip.id,
+                output: IcedOutput::Output(strip.output.handle.clone()),
+                layer: Layer::Overlay,
+                keyboard_interactivity: KeyboardInteractivity::None,
+                anchor: side_anchor(strip.side) | Anchor::TOP | Anchor::BOTTOM,
+                margin: IcedMargin {
+                    top: strip.margins[0],
+                    bottom: strip.margins[1],
+                    ..Default::default()
+                },
+                size: Some((Some(strip.thickness), Some(0))),
+                exclusive_zone: 0,
+                namespace: "halcyon-edge".into(),
+                ..Default::default()
+            }));
+            self.edge.others.push(strip);
+        }
+        if self.edge.menu_output.as_ref().is_some_and(|output| {
+            !self
+                .edge
+                .others
+                .iter()
+                .any(|s| s.output.handle == output.handle)
+        }) {
+            self.edge.menu_output = None;
+        }
+        Task::batch(tasks)
+    }
+    /// Every strip on the other displays, closed: their displays are
+    /// measured again first.
+    pub(super) fn forget_other_strips(&mut self) -> Vec<window::Id> {
+        self.edge.menu_output = None;
+        std::mem::take(&mut self.edge.others)
+            .into_iter()
+            .map(|strip| strip.id)
+            .collect()
+    }
+    /// The pointer on strip `id`: the menu opens on that strip's display.
+    pub(super) fn edge_strip_hover(&mut self, id: window::Id, entered: bool) -> Task<Message> {
+        if entered && !self.controls_open {
+            self.edge.menu_output = self
+                .edge
+                .others
+                .iter()
+                .find(|strip| strip.id == id)
+                .map(|strip| strip.output.clone());
+        }
+        self.update(Message::Hover(true, entered))
     }
     /// The edge menu settings changed: every change shows at once.
     pub(super) fn edge_menu_changed(&mut self, old: &EdgeMenu) -> Task<Message> {
@@ -281,6 +507,9 @@ impl Cards {
             return Task::none();
         }
         self.sidebar.dwell = menu.dwell();
+        self.sidebar.rate = menu.speed.rate();
+        self.sidebar.width = self.controls_width();
+        self.edge.tip = None;
         let mut tasks = Vec::new();
         if self
             .edge
@@ -293,16 +522,23 @@ impl Cards {
             tasks.push(destroy(id).chain(self.edge_surface(id)));
         }
         tasks.push(self.sync_edge_strip());
-        if old.items != menu.items {
+        if old.items != menu.items || old.classic() != menu.classic() {
             self.refresh_edge_available();
             if let Some(focus) = self.sidebar.focus {
                 self.sidebar.focus = Some(focus.min(self.drawer_items().len() - 1));
             }
         }
-        let placed = |m: &EdgeMenu| (m.side, m.position, m.length, m.enabled, m.items.clone());
+        // What sizes or places the menu's surface; the rest only redraws.
+        let placed = |m: &EdgeMenu| {
+            (
+                (m.side, m.position, m.length, m.enabled, m.items.clone()),
+                (m.style, m.icon_size, m.columns, m.labels, m.section_titles),
+            )
+        };
         if self.controls_open && placed(old) != placed(&menu) {
             let id = self.ids[2];
-            tasks.push(destroy(id).chain(self.controls_surface(id, self.sidebar.margin())));
+            let margin = self.sidebar.margin();
+            tasks.push(destroy(id).chain(self.controls_surface(id, margin)));
         }
         Task::batch(tasks)
     }
@@ -327,11 +563,22 @@ impl Cards {
     /// The menu's height: the built-in menu's, or what the customized list
     /// needs, kept on screen.
     pub(super) fn controls_height(&self) -> u32 {
-        let natural = match &self.config.edge_menu.items {
-            Some(items) => natural_height(items).ceil() as u32,
+        let menu = &self.config.edge_menu;
+        let natural = match self.menu_items() {
+            Some(items) if self.compact() => super::edge_compact::Compact::new(menu, &items)
+                .height()
+                .ceil() as u32,
+            Some(items) => {
+                let natural = natural_height(&items, menu.section_titles).ceil() as u32;
+                if self.rail_message() && menu.style != Style::List {
+                    natural.max(drawer::SIDEBAR_HEIGHT)
+                } else {
+                    natural
+                }
+            }
             None => drawer::SIDEBAR_HEIGHT,
         };
-        let screen = self.screen_size[1];
+        let screen = self.edge_screen_height();
         if self.output_known && screen.is_finite() && screen > 0. {
             natural.min((screen as u32).saturating_sub(16).max(240))
         } else {
@@ -343,7 +590,7 @@ impl Cards {
     pub(super) fn controls_anchor(&self) -> (Anchor, i32) {
         let menu = &self.config.edge_menu;
         let side = side_anchor(menu.side);
-        let height = self.screen_size[1];
+        let height = self.edge_screen_height();
         if menu.position == 50 || !height.is_finite() || height <= 0. {
             return (side, 0);
         }
@@ -373,7 +620,8 @@ impl Cards {
     /// The message an item of the customized list sends; `None` for
     /// headings, separators and items that can't run here.
     pub(super) fn edge_item_message(&self, index: usize) -> Option<Message> {
-        let item = self.config.edge_menu.items.as_ref()?.get(index)?;
+        let items = self.menu_items()?;
+        let item = items.get(index)?;
         if !self.edge_available(index) {
             return None;
         }
@@ -401,22 +649,23 @@ impl Cards {
             Kind::Separator | Kind::Title { .. } | Kind::Unknown(_) => return None,
         })
     }
-    /// Runs item `index`. Opening something elsewhere closes the menu.
+    /// Runs item `index`, and closes the menu as the Close setting says.
     pub(super) fn edge_item(&mut self, index: usize) -> Task<Message> {
         let Some(message) = self.edge_item_message(index) else {
             return Task::none();
         };
-        if matches!(
-            message,
-            Message::Arrange | Message::Settings | Message::LaunchApp(_) | Message::Open(_)
-        ) {
+        let switch = self
+            .menu_items()
+            .and_then(|items| items.get(index).map(is_switch))
+            .unwrap_or(false);
+        if closes_after(self.config.edge_menu.close, switch, &message) {
             self.sidebar.hide();
         }
         self.update(message)
     }
     /// Keyboard Move up or Move down of item `index` in the customized list.
     pub(super) fn move_edge_item(&mut self, index: usize, up: bool) -> Task<Message> {
-        let Some(mut items) = self.config.edge_menu.items.clone() else {
+        let Some(mut items) = self.menu_items() else {
             return Task::none();
         };
         let to = if up {
@@ -588,8 +837,10 @@ impl Cards {
                     if position > 0 {
                         body.push(gap(TITLE_GAP));
                     }
-                    body.push(heading(item_title(&items[index]), p));
-                    body.push(gap(drawer::LABEL_GAP));
+                    if self.config.edge_menu.section_titles {
+                        body.push(heading(item_title(&items[index]), p));
+                        body.push(gap(drawer::LABEL_GAP));
+                    }
                 }
                 Block::Separator => body.push(
                     container(
@@ -668,7 +919,8 @@ impl Cards {
         };
         let ink = if available { p.foreground } else { p.muted };
         let (icon_name, symbolic) = item_icon(item);
-        let mut icon = cosmic::widget::icon::from_name(icon_name.as_str()).size(16);
+        let size = self.config.edge_menu.list_icon();
+        let mut icon = cosmic::widget::icon::from_name(icon_name.as_str()).size(size);
         if symbolic {
             icon = icon.symbolic(true);
         }
@@ -682,7 +934,10 @@ impl Cards {
             icon.icon().into()
         };
         let mut parts = vec![
-            container(icon).width(16.).center_x(16.).into(),
+            container(icon)
+                .width(f32::from(size))
+                .center_x(f32::from(size))
+                .into(),
             // One line, so every row keeps the same height.
             container(
                 text::body(title.clone())
@@ -733,7 +988,7 @@ impl Cards {
             .into()
     }
     /// On or off, for an item whose state is known.
-    fn item_state(&self, item: &Item) -> Option<bool> {
+    pub(super) fn item_state(&self, item: &Item) -> Option<bool> {
         if let Some(widget) = item.as_widget() {
             return Some(if widget.is_tool() {
                 self.config.widget_visible(widget)
@@ -749,7 +1004,7 @@ impl Cards {
         }
     }
     /// A short note after the name: the timer's state or length, Focus's.
-    fn item_caption(&self, item: &Item) -> Option<String> {
+    pub(super) fn item_caption(&self, item: &Item) -> Option<String> {
         match item.as_action()? {
             Action::Timer => Some(match &self.activity.timer {
                 Some(timer) if timer.running() => "Running".into(),
@@ -762,28 +1017,64 @@ impl Cards {
     }
     /// The menu's panel: rounded on the side facing the screen.
     pub(super) fn rail_frame<'a>(&self, content: Element<'a, Message>) -> Element<'a, Message> {
+        self.rail_panel(content, drawer::RAIL_PADDING)
+    }
+    /// The panel with `padding` inside: a plain panel a shade apart from
+    /// the widgets, or the widgets' own style, at the menu's opacity and
+    /// roundness.
+    pub(super) fn rail_panel<'a>(
+        &self,
+        content: Element<'a, Message>,
+        padding: f32,
+    ) -> Element<'a, Message> {
+        let menu = &self.config.edge_menu;
         let p = self.config.surface_palette();
-        let radius = match self.config.edge_menu.side {
-            Side::Right => [20., 0., 0., 20.],
-            Side::Left => [0., 20., 20., 0.],
+        let r = menu.radius();
+        let radius = match menu.side {
+            Side::Right => [r, 0., 0., r],
+            Side::Left => [0., r, r, 0.],
+        };
+        let alpha = menu.alpha();
+        let (background, border, width) = match menu.frame {
+            // A shade apart from the cards, so the open rail reads as its
+            // own layer where it covers them.
+            crate::config::edge_menu::Frame::Plain => (
+                Background::Color(Color {
+                    a: 0.99 * alpha,
+                    ..mix(p.foreground, p.background, 0.05)
+                }),
+                mix(p.foreground, p.background, 0.22),
+                1.,
+            ),
+            crate::config::edge_menu::Frame::Widget => {
+                let _style = crate::widget_style::scope(&self.config);
+                let card = self.config.palette();
+                let appearance = &self.config.appearance;
+                (
+                    crate::widget_style::background(Color {
+                        a: card.background.a * alpha,
+                        ..card.background
+                    }),
+                    crate::widget_style::border(Color {
+                        a: f32::from(appearance.border_opacity.min(50)) / 100.,
+                        ..card.accent
+                    }),
+                    crate::widget_style::edge(card).0,
+                )
+            }
         };
         mouse_area(
             container(content)
-                .padding(drawer::RAIL_PADDING)
+                .padding(padding)
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .class(cosmic::theme::Container::custom(move |_| {
                     cosmic::iced::widget::container::Style {
-                        // A shade apart from the cards, so the open rail reads
-                        // as its own layer where it covers them.
-                        background: Some(Background::Color(Color {
-                            a: 0.99,
-                            ..mix(p.foreground, p.background, 0.05)
-                        })),
+                        background: Some(background),
                         icon_color: Some(p.muted),
                         border: Border {
-                            color: mix(p.foreground, p.background, 0.22),
-                            width: 1.,
+                            color: border,
+                            width,
                             radius: radius.into(),
                         },
                         ..Default::default()

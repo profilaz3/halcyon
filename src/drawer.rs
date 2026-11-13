@@ -114,7 +114,10 @@ pub const ROW_STEP: f32 = 42.;
 pub const ROW_HEIGHT: f32 = 40.;
 pub const CARD_GAP: f32 = 14.;
 pub const EDGE_DWELL: Duration = Duration::from_secs(1);
-const HIDDEN_MARGIN: i32 = -(SIDEBAR_WIDTH as i32) - 8;
+/// How far past the edge a hidden menu waits, beyond its own width.
+const HIDDEN_PAST: i32 = 8;
+/// The slide's easing rate, as it always was.
+pub const SLIDE_RATE: f32 = 22.;
 
 pub struct Sidebar {
     pub visible: bool,
@@ -129,6 +132,10 @@ pub struct Sidebar {
     /// How long the pointer rests on the edge strip before the menu opens;
     /// `None` when only a click on the strip opens it.
     pub dwell: Option<Duration>,
+    /// The menu surface's width, which it slides out of sight by.
+    pub width: u32,
+    /// The slide's easing rate (`SLIDE_RATE` as it always was).
+    pub rate: f32,
     dismiss_at: Option<Instant>,
     reveal_at: Option<Instant>,
     last_frame: Instant,
@@ -144,6 +151,8 @@ impl Sidebar {
             drag: None,
             focus: None,
             dwell: Some(EDGE_DWELL),
+            width: SIDEBAR_WIDTH,
+            rate: SLIDE_RATE,
             dismiss_at: None,
             reveal_at: None,
             last_frame: Instant::now(),
@@ -231,13 +240,14 @@ impl Sidebar {
             self.progress = target;
             return;
         }
-        self.progress += (target - self.progress) * (1. - (-22. * dt).exp());
+        self.progress += (target - self.progress) * (1. - (-self.rate * dt).exp());
         if (target - self.progress).abs() < 0.005 {
             self.progress = target;
         }
     }
     pub fn margin(&self) -> i32 {
-        (HIDDEN_MARGIN as f32 * (1. - self.progress)).round() as i32
+        let hidden = -(self.width as i32) - HIDDEN_PAST;
+        (hidden as f32 * (1. - self.progress)).round() as i32
     }
 }
 
@@ -274,7 +284,8 @@ impl DrawerKey {
             Key::Named(Named::ArrowDown) if modifiers.alt() => Self::MoveDown,
             Key::Named(Named::Tab) if modifiers.shift() => Self::Previous,
             Key::Named(Named::Tab | Named::ArrowDown) => Self::Next,
-            Key::Named(Named::ArrowUp) => Self::Previous,
+            Key::Named(Named::ArrowUp | Named::ArrowLeft) => Self::Previous,
+            Key::Named(Named::ArrowRight) => Self::Next,
             Key::Named(Named::Enter) => Self::Activate,
             Key::Character(c) if c.as_str() == " " => Self::Activate,
             _ => return None,

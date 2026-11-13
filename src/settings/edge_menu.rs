@@ -4,7 +4,10 @@
 use super::reorder::Reorder;
 use super::*;
 use crate::automation::ProfileRef;
-use crate::config::edge_menu::{EdgeMenu, Item, Kind, MAX_ITEMS, OpenOn, Side};
+use crate::config::edge_menu::{
+    Close, Displays, EdgeMenu, Frame, HandleColor, IconSize, Item, Kind, MAX_ITEMS, OpenOn, Side,
+    Speed, Style,
+};
 use crate::desktop::apps::{AppCatalog, AppInfo};
 
 #[derive(Debug, Clone)]
@@ -14,6 +17,19 @@ pub enum Edit {
     /// Top, middle or bottom; a slider sets any place between.
     Position(u8),
     Open(OpenOn),
+    Style(Style),
+    IconSize(IconSize),
+    Columns(u8),
+    Labels(bool),
+    SectionTitles(bool),
+    Frame(Frame),
+    Handle(bool),
+    HandleColor(HandleColor),
+    Close(Close),
+    Speed(Speed),
+    Displays(Displays),
+    /// A display, by its saved name, chosen or not for `Displays::Chosen`.
+    Output(String, bool),
     /// A slider moving; saved when it is let go (`Commit`).
     Draft(Field, u32),
     Commit,
@@ -41,6 +57,10 @@ pub enum Field {
     Position,
     Length,
     Delay,
+    Opacity,
+    Roundness,
+    HandleSize,
+    HandleOpacity,
 }
 impl Field {
     pub fn key(self) -> &'static str {
@@ -48,6 +68,10 @@ impl Field {
             Self::Position => "position",
             Self::Length => "length",
             Self::Delay => "delay_ms",
+            Self::Opacity => "opacity",
+            Self::Roundness => "roundness",
+            Self::HandleSize => "handle_size",
+            Self::HandleOpacity => "handle_opacity",
         }
     }
 }
@@ -169,6 +193,10 @@ impl EdgeMenuPage {
                 Field::Position => menu.position.into(),
                 Field::Length => menu.length.into(),
                 Field::Delay => menu.delay_ms,
+                Field::Opacity => menu.opacity.into(),
+                Field::Roundness => menu.roundness.into(),
+                Field::HandleSize => menu.handle_size.into(),
+                Field::HandleOpacity => menu.handle_opacity.into(),
             },
         }
     }
@@ -202,6 +230,28 @@ impl Settings {
                 self.save_edge(json!({ "position": position.min(100) }));
             }
             Edit::Open(open) => self.save_edge(json!({ "open": open })),
+            Edit::Style(style) => self.save_edge(json!({ "style": style })),
+            Edit::IconSize(size) => self.save_edge(json!({ "icon_size": size })),
+            Edit::Columns(columns) => self.save_edge(json!({ "columns": columns.clamp(
+                crate::config::edge_menu::MIN_COLUMNS,
+                crate::config::edge_menu::MAX_COLUMNS,
+            ) })),
+            Edit::Labels(on) => self.save_edge(json!({ "labels": on })),
+            Edit::SectionTitles(on) => self.save_edge(json!({ "section_titles": on })),
+            Edit::Frame(frame) => self.save_edge(json!({ "frame": frame })),
+            Edit::Handle(on) => self.save_edge(json!({ "handle": on })),
+            Edit::HandleColor(color) => self.save_edge(json!({ "handle_color": color })),
+            Edit::Close(close) => self.save_edge(json!({ "close": close })),
+            Edit::Speed(speed) => self.save_edge(json!({ "speed": speed })),
+            Edit::Displays(displays) => self.save_edge(json!({ "displays": displays })),
+            Edit::Output(key, on) => {
+                let mut outputs = self.config.edge_menu.outputs.clone();
+                outputs.retain(|output| *output != key);
+                if on {
+                    outputs.push(key);
+                }
+                self.save_edge(json!({ "outputs": outputs }));
+            }
             Edit::Draft(field, value) => self.edge_menu.draft = Some((field, value)),
             Edit::Commit => {
                 if let Some((field, value)) = self.edge_menu.draft.take() {
@@ -350,6 +400,18 @@ pub(super) fn scope(page: &EdgeMenuPage, edit: &Edit) -> Option<&'static str> {
         Edit::Side(_) => "side",
         Edit::Position(_) => "position",
         Edit::Open(_) => "open",
+        Edit::Style(_) => "style",
+        Edit::IconSize(_) => "icon_size",
+        Edit::Columns(_) => "columns",
+        Edit::Labels(_) => "labels",
+        Edit::SectionTitles(_) => "section_titles",
+        Edit::Frame(_) => "frame",
+        Edit::Handle(_) => "handle",
+        Edit::HandleColor(_) => "handle_color",
+        Edit::Close(_) => "close",
+        Edit::Speed(_) => "speed",
+        Edit::Displays(_) => "displays",
+        Edit::Output(..) => "outputs",
         Edit::Commit => page.draft?.0.key(),
         Edit::Add(_)
         | Edit::Remove(_)

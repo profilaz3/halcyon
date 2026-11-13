@@ -1,7 +1,11 @@
 //! The Edge menu page: the strip's settings, the item list with a live
 //! preview of the menu, and the Add picker.
 use super::*;
-use crate::config::edge_menu::{Action, Item, Kind, OpenOn, Side};
+use crate::config::edge_menu::{
+    Action, Close, Displays, Frame, HandleColor, IconSize, Item, Kind, MAX_COLUMNS, MAX_HANDLE,
+    MAX_ROUNDNESS, MIN_COLUMNS, MIN_HANDLE, MIN_HANDLE_OPACITY, MIN_OPACITY, OpenOn, Side, Speed,
+    Style,
+};
 use crate::settings::edge_menu::{Edit, Field, common_folders, folder_item, listed};
 
 fn edit(message: Edit) -> Message {
@@ -49,9 +53,111 @@ fn icon_button<'a>(
         .into()
 }
 
+/// A tiny drawing of the menu in `style`, for the style picker: rows of
+/// icon and name, a column of icons, or a grid.
+fn style_sketch<'a>(style: Style) -> Element<'a, Message> {
+    fn ink(theme: &cosmic::Theme, a: f32) -> Color {
+        Color {
+            a,
+            ..surface_color(theme, FG)
+        }
+    }
+    fn block<'a>(width: f32, height: f32, lit: bool, round: f32) -> Element<'a, Message> {
+        container(cosmic::iced::widget::space())
+            .width(width)
+            .height(height)
+            .class(cosmic::theme::Container::custom(move |theme| {
+                cosmic::iced::widget::container::Style {
+                    background: Some(Background::Color(if lit {
+                        theme.cosmic().accent.base.into()
+                    } else {
+                        ink(theme, 0.38)
+                    })),
+                    border: Border {
+                        radius: round.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            }))
+            .into()
+    }
+    let dot = |lit: bool| block(9., 9., lit, 4.5);
+    let lines: Vec<Element<'a, Message>> = match style {
+        Style::List => (0..5)
+            .map(|at| {
+                row::with_children(vec![
+                    dot(at == 1),
+                    block(if at % 2 == 0 { 30. } else { 22. }, 4., false, 2.),
+                ])
+                .spacing(6)
+                .align_y(Alignment::Center)
+                .into()
+            })
+            .collect(),
+        Style::Icons => (0..5).map(|at| dot(at == 1)).collect(),
+        Style::Grid => (0..3)
+            .map(|at| {
+                row::with_children(
+                    (0..2)
+                        .map(|column| {
+                            column::with_children(vec![
+                                dot(at == 0 && column == 1),
+                                block(12., 3., false, 1.5),
+                            ])
+                            .spacing(3)
+                            .align_x(Alignment::Center)
+                            .into()
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .spacing(7)
+                .into()
+            })
+            .collect(),
+    };
+    let spacing = match style {
+        Style::Grid => 6,
+        _ => 7,
+    };
+    // The panel against the screen's right edge.
+    let panel = container(
+        column::with_children(lines)
+            .spacing(spacing)
+            .align_x(Alignment::Center),
+    )
+    .padding([8, 8])
+    .class(cosmic::theme::Container::custom(|theme| {
+        cosmic::iced::widget::container::Style {
+            background: Some(Background::Color(surface_color(theme, SURFACE))),
+            border: Border {
+                color: surface_color(theme, LINE),
+                width: 1.,
+                radius: [8., 0., 0., 8.].into(),
+            },
+            ..Default::default()
+        }
+    }));
+    container(panel)
+        .width(Length::Fill)
+        .height(84.)
+        .align_x(Alignment::End)
+        .align_y(Alignment::Center)
+        .class(cosmic::theme::Container::custom(|theme| {
+            cosmic::iced::widget::container::Style {
+                background: Some(Background::Color(surface_color(theme, BASE))),
+                border: Border {
+                    radius: 8.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        }))
+        .into()
+}
+
 impl Settings {
     pub(super) fn edge_menu_page(&self) -> Element<'_, Message> {
-        let accent = self.settings_accent();
         let menu = &self.config.edge_menu;
         let page = &self.edge_menu;
         let can_show = self.service_known && self.service.running && !self.busy && !preview();
@@ -64,10 +170,280 @@ impl Settings {
                 .on_press_maybe(can_show.then_some(Message::ShowControls))
                 .into(),
         );
+        let groups = column::with_children(vec![
+            self.edge_appearance(),
+            self.edge_handle_group(),
+            self.edge_behavior(),
+            self.edge_items_section(),
+        ])
+        .spacing(20)
+        .width(Length::Fill);
+        let body: Element<'_, Message> = if self.content_width() >= 640. {
+            let mut columns = vec![groups.into(), self.edge_preview()];
+            if menu.side == Side::Left {
+                columns.reverse();
+            }
+            row::with_children(columns)
+                .spacing(24)
+                .align_y(Alignment::Start)
+                .into()
+        } else {
+            column::with_children(vec![self.edge_preview(), groups.into()])
+                .spacing(16)
+                .into()
+        };
+        let mut parts = vec![top, body];
+        if page.picker {
+            parts.push(self.edge_picker());
+        }
+        column::with_children(parts).spacing(20).into()
+    }
+
+    /// The menu as the desktop draws it, beside its handle on a sketch of
+    /// the screen's edge.
+    fn edge_preview(&self) -> Element<'_, Message> {
+        let menu = &self.config.edge_menu;
+        let (rail, [width, height]) = self.samples.edge_menu_view();
+        let height = height.min(640.);
+        let rail: Element<'_, Message> = container(rail.map(|_| Message::Preview))
+            .width(Length::Fixed(width))
+            .height(Length::Fixed(height))
+            .into();
+        let thickness = menu.strip_thickness() as f32;
+        let [above, below] = menu.strip_margins(height);
+        let handle: Element<'_, Message> = if menu.enabled && menu.handle {
+            column::with_children(vec![
+                cosmic::iced::widget::space().height(above as f32).into(),
+                container(self.samples.edge_handle_view().map(|_| Message::Preview))
+                    .width(Length::Fixed(thickness))
+                    .height(Length::Fixed((height - (above + below) as f32).max(1.)))
+                    .into(),
+                cosmic::iced::widget::space().height(below as f32).into(),
+            ])
+            .into()
+        } else {
+            cosmic::iced::widget::space()
+                .width(thickness)
+                .height(height)
+                .into()
+        };
+        let mut screen = vec![rail, cosmic::iced::widget::space().width(6.).into(), handle];
+        if menu.side == Side::Left {
+            screen.reverse();
+        }
+        let room = width + 6. + thickness;
+        column::with_children(vec![
+            label("Preview", CAPTION, MUTED),
+            container(row::with_children(screen).align_y(Alignment::Start))
+                .width(Length::Fixed(room.max(212.) + 24.))
+                .padding([12, 0])
+                .align_x(match menu.side {
+                    Side::Left => Alignment::Start,
+                    Side::Right => Alignment::End,
+                })
+                .class(cosmic::theme::Container::custom(|theme| {
+                    cosmic::iced::widget::container::Style {
+                        background: Some(Background::Color(surface_color(theme, BASE))),
+                        border: Border {
+                            radius: theme.cosmic().corner_radii.radius_m.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
+                }))
+                .into(),
+        ])
+        .spacing(8)
+        .align_x(match menu.side {
+            Side::Left => Alignment::Start,
+            Side::Right => Alignment::End,
+        })
+        .into()
+    }
+
+    /// The style picker: a drawing of each style to choose from.
+    fn edge_style_picker(&self) -> Element<'_, Message> {
+        let accent = self.settings_accent();
+        let current = self.config.edge_menu.style;
+        let tiles: Vec<Element<'_, Message>> = Style::ALL
+            .into_iter()
+            .map(|style| {
+                let selected = style == current;
+                let description = match style {
+                    Style::List => "Icon and name",
+                    Style::Icons => "Icons only",
+                    Style::Grid => "Icons in columns",
+                };
+                button::custom(
+                    column::with_children(vec![
+                        style_sketch(style),
+                        column::with_children(vec![
+                            label(style.title(), BODY, FG),
+                            label(description, CAPTION, MUTED),
+                        ])
+                        .spacing(1)
+                        .into(),
+                    ])
+                    .spacing(8),
+                )
+                .name(format!("{} style, {description}", style.title()))
+                .id(cosmic::widget::Id::new(format!(
+                    "edge-style-{}",
+                    style.title().to_lowercase()
+                )))
+                .class(nav_style(selected, accent))
+                .selected(selected)
+                .padding(8)
+                .width(Length::Fixed(148.))
+                .on_press(edit(Edit::Style(style)))
+                .into()
+            })
+            .collect();
+        row::with_children(tiles).spacing(8).wrap().into()
+    }
+
+    fn edge_slider(
+        &self,
+        title: &'static str,
+        state: String,
+        field: Field,
+        range: std::ops::RangeInclusive<u32>,
+        step: u32,
+    ) -> Element<'_, Message> {
+        let value = self.edge_menu.value(&self.config.edge_menu, field);
+        group_row_state(
+            title,
+            state,
+            completed_slider(
+                slider(range, value, move |v| edit(Edit::Draft(field, v)))
+                    .step(step)
+                    .on_release(edit(Edit::Commit))
+                    .name(title)
+                    .width(Length::Fixed(220.))
+                    .into(),
+                edit(Edit::Commit),
+            ),
+        )
+    }
+
+    fn edge_appearance(&self) -> Element<'_, Message> {
+        let accent = self.settings_accent();
+        let menu = &self.config.edge_menu;
+        let page = &self.edge_menu;
+        let choice = |options: Vec<(String, bool, Edit)>| {
+            segmented(
+                options
+                    .into_iter()
+                    .map(|(title, on, message)| (title, on, Some(edit(message))))
+                    .collect(),
+                accent,
+            )
+        };
+        let mut rows = vec![
+            container(
+                column::with_children(vec![
+                    detail("Style", "How the menu draws its items"),
+                    self.edge_style_picker(),
+                ])
+                .spacing(10),
+            )
+            .padding([12, 16])
+            .width(Length::Fill)
+            .into(),
+            group_row(
+                "Icon size",
+                "Bigger icons are easier to hit; the menu grows to fit",
+                choice(
+                    IconSize::ALL
+                        .into_iter()
+                        .map(|size| {
+                            (
+                                size.title().to_string(),
+                                menu.icon_size == size,
+                                Edit::IconSize(size),
+                            )
+                        })
+                        .collect(),
+                ),
+            ),
+        ];
+        if menu.style == Style::Grid {
+            rows.push(group_row(
+                "Columns",
+                "Icons side by side in the grid",
+                choice(
+                    (MIN_COLUMNS..=MAX_COLUMNS)
+                        .map(|columns| {
+                            (
+                                columns.to_string(),
+                                menu.grid_columns() == usize::from(columns),
+                                Edit::Columns(columns),
+                            )
+                        })
+                        .collect(),
+                ),
+            ));
+            rows.push(switch(
+                "Labels under icons",
+                "A short name under each icon in the grid",
+                menu.labels,
+                |on| edit(Edit::Labels(on)),
+            ));
+        }
+        rows.push(switch(
+            "Section titles",
+            "Headings over groups of items. Off, groups are set apart by a little space.",
+            menu.section_titles,
+            |on| edit(Edit::SectionTitles(on)),
+        ));
+        let opacity = page.value(menu, Field::Opacity);
+        rows.push(self.edge_slider(
+            "Background opacity",
+            format!("{opacity}%"),
+            Field::Opacity,
+            u32::from(MIN_OPACITY)..=100,
+            5,
+        ));
+        let roundness = page.value(menu, Field::Roundness);
+        rows.push(self.edge_slider(
+            "Corner roundness",
+            if roundness == 0 {
+                "Square corners".to_string()
+            } else {
+                format!("{roundness} px")
+            },
+            Field::Roundness,
+            0..=u32::from(MAX_ROUNDNESS),
+            2,
+        ));
+        rows.push(group_row(
+            "Panel",
+            "Match your widgets' colors, material and border, or keep a plain panel",
+            choice(vec![
+                (
+                    "Plain".into(),
+                    menu.frame == Frame::Plain,
+                    Edit::Frame(Frame::Plain),
+                ),
+                (
+                    "Widget style".into(),
+                    menu.frame == Frame::Widget,
+                    Edit::Frame(Frame::Widget),
+                ),
+            ]),
+        ));
+        container(group(Some("Appearance"), rows))
+            .id(cosmic::widget::Id::new("edge-menu-appearance"))
+            .into()
+    }
+
+    fn edge_handle_group(&self) -> Element<'_, Message> {
+        let accent = self.settings_accent();
+        let menu = &self.config.edge_menu;
+        let page = &self.edge_menu;
         let position = page.value(menu, Field::Position);
         let length = page.value(menu, Field::Length);
-        let delay = page.value(menu, Field::Delay);
-        let mut strip_rows = vec![
+        let mut rows = vec![
             switch(
                 "Edge menu",
                 "Off, nothing waits at the screen edge. The menu still opens with halcyon --toggle drawer, and from Widgets in Settings.",
@@ -137,28 +513,80 @@ impl Settings {
                     edit(Edit::Commit),
                 ),
             ),
-            group_row(
-                "Opens",
-                "Hovering keeps the menu a gesture away; clicking keeps it out of the way",
+            switch(
+                "Visible handle",
+                "A slim bar on the edge shows where the menu is. Off, the strip is invisible.",
+                menu.handle,
+                |on| edit(Edit::Handle(on)),
+            ),
+        ];
+        if menu.handle {
+            let size = page.value(menu, Field::HandleSize);
+            rows.push(self.edge_slider(
+                "Handle thickness",
+                format!("{size} px"),
+                Field::HandleSize,
+                u32::from(MIN_HANDLE)..=u32::from(MAX_HANDLE),
+                1,
+            ));
+            let opacity = page.value(menu, Field::HandleOpacity);
+            rows.push(self.edge_slider(
+                "Handle opacity",
+                format!("{opacity}%"),
+                Field::HandleOpacity,
+                u32::from(MIN_HANDLE_OPACITY)..=100,
+                5,
+            ));
+            rows.push(group_row(
+                "Handle color",
+                "Your accent color, or a quiet gray",
                 segmented(
                     vec![
                         (
-                            "On hover".into(),
-                            menu.open == OpenOn::Hover,
-                            Some(edit(Edit::Open(OpenOn::Hover))),
+                            "Accent".into(),
+                            menu.handle_color == HandleColor::Accent,
+                            Some(edit(Edit::HandleColor(HandleColor::Accent))),
                         ),
                         (
-                            "On click".into(),
-                            menu.open == OpenOn::Click,
-                            Some(edit(Edit::Open(OpenOn::Click))),
+                            "Neutral".into(),
+                            menu.handle_color == HandleColor::Neutral,
+                            Some(edit(Edit::HandleColor(HandleColor::Neutral))),
                         ),
                     ],
                     accent,
                 ),
+            ));
+        }
+        container(group(Some("Handle"), rows))
+            .id(cosmic::widget::Id::new("edge-menu-strip"))
+            .into()
+    }
+
+    fn edge_behavior(&self) -> Element<'_, Message> {
+        let accent = self.settings_accent();
+        let menu = &self.config.edge_menu;
+        let delay = self.edge_menu.value(menu, Field::Delay);
+        let mut rows = vec![group_row(
+            "Opens",
+            "Hovering keeps the menu a gesture away; clicking keeps it out of the way",
+            segmented(
+                vec![
+                    (
+                        "On hover".into(),
+                        menu.open == OpenOn::Hover,
+                        Some(edit(Edit::Open(OpenOn::Hover))),
+                    ),
+                    (
+                        "On click".into(),
+                        menu.open == OpenOn::Click,
+                        Some(edit(Edit::Open(OpenOn::Click))),
+                    ),
+                ],
+                accent,
             ),
-        ];
+        )];
         if menu.open == OpenOn::Hover {
-            strip_rows.push(group_row_state(
+            rows.push(group_row_state(
                 "Hover delay",
                 format!(
                     "Opens after the pointer rests {:.1} s on the strip",
@@ -175,19 +603,137 @@ impl Settings {
                 ),
             ));
         }
-        let strip = container(group(Some("Edge strip"), strip_rows))
-            .id(cosmic::widget::Id::new("edge-menu-strip"))
-            .into();
-        let mut parts = vec![top, strip, self.edge_items_section()];
-        if page.picker {
-            parts.push(self.edge_picker());
+        rows.push(group_row(
+            "Close after use",
+            match menu.close {
+                Close::Never => "The menu stays open until the pointer leaves it",
+                Close::Actions => {
+                    "Apps, folders, Looks and actions close it; switches keep it open"
+                }
+                Close::Always => "Any item closes it, switches too",
+            },
+            segmented(
+                [
+                    ("Never", Close::Never),
+                    ("After actions", Close::Actions),
+                    ("Always", Close::Always),
+                ]
+                .into_iter()
+                .map(|(title, close)| {
+                    (
+                        title.to_string(),
+                        menu.close == close,
+                        Some(edit(Edit::Close(close))),
+                    )
+                })
+                .collect(),
+                accent,
+            ),
+        ));
+        rows.push(switch(
+            "Animation",
+            "Slide the menu in and out",
+            self.config.sidebar_slide,
+            Message::SidebarSlide,
+        ));
+        if self.config.sidebar_slide {
+            rows.push(group_row(
+                "Animation speed",
+                "How quickly the menu slides",
+                segmented(
+                    Speed::ALL
+                        .into_iter()
+                        .map(|speed| {
+                            (
+                                speed.title().to_string(),
+                                menu.speed == speed,
+                                Some(edit(Edit::Speed(speed))),
+                            )
+                        })
+                        .collect(),
+                    accent,
+                ),
+            ));
         }
-        column::with_children(parts).spacing(20).into()
+        rows.push(group_row(
+            "Displays",
+            match menu.displays {
+                Displays::Main => "Only the display your widgets are on",
+                Displays::All => "Every connected display has its own strip",
+                Displays::Chosen => "The displays you pick below",
+            },
+            segmented(
+                [
+                    ("Main display", Displays::Main),
+                    ("All", Displays::All),
+                    ("Chosen", Displays::Chosen),
+                ]
+                .into_iter()
+                .map(|(title, displays)| {
+                    (
+                        title.to_string(),
+                        menu.displays == displays,
+                        Some(edit(Edit::Displays(displays))),
+                    )
+                })
+                .collect(),
+                accent,
+            ),
+        ));
+        if menu.displays == Displays::Chosen {
+            rows.push(self.edge_display_choices());
+        }
+        container(group(Some("Behavior"), rows))
+            .id(cosmic::widget::Id::new("edge-menu-behavior"))
+            .into()
     }
 
-    /// The list on the left, the menu as the desktop draws it on the right.
-    fn edge_items_section(&self) -> Element<'_, Message> {
+    /// Each connected display, and any chosen one that isn't connected now,
+    /// as a chip to pick.
+    fn edge_display_choices(&self) -> Element<'_, Message> {
         let accent = self.settings_accent();
+        let menu = &self.config.edge_menu;
+        let mut chips: Vec<(String, String)> = self
+            .displays
+            .outputs()
+            .iter()
+            .filter_map(|output| Some((output.title(), self.displays.key(output)?)))
+            .collect();
+        chips.sort_by(|a, b| a.1.cmp(&b.1));
+        for saved in &menu.outputs {
+            if !chips.iter().any(|(_, key)| key == saved) {
+                chips.push((format!("{saved} (not connected)"), saved.clone()));
+            }
+        }
+        let controls: Vec<Element<'_, Message>> = if chips.is_empty() {
+            vec![label("No displays found yet", CAPTION, MUTED)]
+        } else {
+            chips
+                .into_iter()
+                .map(|(title, key)| {
+                    let on = menu.outputs.contains(&key);
+                    button::custom(label(title.clone(), 12., if on { FG } else { MUTED }))
+                        .name(format!(
+                            "{title}, {}",
+                            if on { "chosen" } else { "not chosen" }
+                        ))
+                        .id(cosmic::widget::Id::new(format!("edge-display-{key}")))
+                        .class(nav_style(on, accent))
+                        .selected(on)
+                        .padding([6, 12])
+                        .on_press(edit(Edit::Output(key, !on)))
+                        .into()
+                })
+                .collect()
+        };
+        container(row::with_children(controls).spacing(6).wrap())
+            .padding([8, 16, 12, 16])
+            .width(Length::Fill)
+            .into()
+    }
+
+    /// The list of items, with its Add and Reset buttons.
+    fn edge_items_section(&self) -> Element<'_, Message> {
         let items = self.config.edge_items();
         let customized = self.config.edge_menu.customized();
         let mut rows: Vec<Element<'_, Message>> = Vec::new();
@@ -237,41 +783,13 @@ impl Settings {
             CAPTION,
             MUTED,
         );
-        let list =
+        container(
             column::with_children(vec![group(Some("Menu items"), rows), note, actions.into()])
                 .spacing(12)
-                .width(Length::Fill);
-        let (menu, [width, height]) = self.samples.edge_menu_view();
-        let preview = column::with_children(vec![
-            label("Preview", CAPTION, MUTED),
-            container(menu.map(|_| Message::Preview))
-                .width(Length::Fixed(width))
-                .height(Length::Fixed(height.min(640.)))
-                .into(),
-        ])
-        .spacing(8)
-        .align_x(match self.config.edge_menu.side {
-            Side::Left => Alignment::Start,
-            Side::Right => Alignment::End,
-        });
-        let body: Element<'_, Message> = if self.content_width() >= 640. {
-            let mut columns = vec![list.into(), preview.into()];
-            if self.config.edge_menu.side == Side::Left {
-                columns.reverse();
-            }
-            row::with_children(columns)
-                .spacing(24)
-                .align_y(Alignment::Start)
-                .into()
-        } else {
-            column::with_children(vec![preview.into(), list.into()])
-                .spacing(16)
-                .into()
-        };
-        let _ = accent;
-        container(body)
-            .id(cosmic::widget::Id::new("edge-menu-items"))
-            .into()
+                .width(Length::Fill),
+        )
+        .id(cosmic::widget::Id::new("edge-menu-items"))
+        .into()
     }
 
     fn edge_list_row(&self, index: usize, item: &Item, count: usize) -> Element<'_, Message> {

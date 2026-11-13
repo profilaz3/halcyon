@@ -779,3 +779,406 @@ fn default_edge_menu_matches_the_built_in_one_on_either_side() {
     assert_eq!(cards.drawer_items(), listed);
     capture_rail(&cards, "edge-menu-left");
 }
+
+/// The open menu at its surface's own size, room for names included.
+fn surface_for(cards: &Cards) -> Native {
+    Native::new(Size::new(
+        cards.controls_width() as f32,
+        cards.controls_height() as f32,
+    ))
+}
+
+/// The menu in both themes at its surface's size, when a capture folder is
+/// set.
+fn capture_menu(cards: &mut Cards, name: &str) {
+    let desktop = cards.config.desktop_palette;
+    let source = cards.config.appearance.color_source;
+    // The menu draws in the desktop's colors, so the light picture uses a
+    // light desktop palette.
+    let light = crate::config::Palette {
+        accent: cosmic::iced::Color::from_rgb8(0x7c, 0x4d, 0xd8),
+        background: cosmic::iced::Color::from_rgb8(0xf6, 0xf4, 0xf9),
+        foreground: cosmic::iced::Color::from_rgb8(0x1f, 0x1c, 0x26),
+        muted: cosmic::iced::Color::from_rgb8(0x6a, 0x66, 0x74),
+    };
+    for (theme, shade, palette) in [
+        (cosmic::Theme::light(), "light", Some(light)),
+        (cosmic::Theme::dark(), "dark", desktop),
+    ] {
+        cards.config.desktop_palette = palette;
+        if shade == "light" {
+            cards.config.appearance.color_source = crate::config::ColorSource::Desktop;
+        } else {
+            cards.config.appearance.color_source = source;
+        }
+        surface_for(cards).capture(cards.control_rail(), &theme, &format!("{name}-{shade}"));
+    }
+    cards.config.desktop_palette = desktop;
+    cards.config.appearance.color_source = source;
+}
+
+/// Saves `changes` to the menu's settings and hands them to `cards`.
+fn set_edge(cards: &mut Cards, changes: serde_json::Value) {
+    let config = Config::save_edge_menu(changes).unwrap();
+    let _ = cards.apply_config(config);
+}
+
+/// In the Icons menu every item still has its name and state for a screen
+/// reader, a switch that is on and the running timer show it on the icon,
+/// the name shows beside the item under the pointer or the keyboard, and
+/// the keyboard moves through and reorders the items as in the list.
+#[test]
+fn icons_menu_names_items_with_their_state_and_keeps_the_keyboard() {
+    if isolated("icons_menu_names_items_with_their_state_and_keeps_the_keyboard") {
+        return;
+    }
+    use crate::config::edge_menu::{Action, Kind};
+    let root = std::path::PathBuf::from(std::env::var_os("DESKTOP_CARDS_DESKTOP_ROOT").unwrap());
+    let (config, _) = custom_menu_config(&root);
+    let items = config.edge_items();
+    let mut cards = cards();
+    let list_width = cards.controls_width();
+    set_edge(&mut cards, serde_json::json!({ "style": "icons" }));
+    assert!(cards.compact());
+    assert!(
+        cards.rail_width() < 80,
+        "a slim column: {}",
+        cards.rail_width()
+    );
+    assert!(cards.rail_width() < list_width);
+    assert_eq!(cards.config.edge_items(), items, "the same list");
+    cards.activity.dnd = true;
+    let now = chrono::Utc::now().timestamp_millis();
+    cards.activity.timer = Some(crate::activity_island::timer::Timer::start(272_500, now));
+    let _ = cards.update(Message::DrawerToggle);
+    let names: Vec<String> = surface_for(&cards)
+        .a11y(cards.control_rail())
+        .into_iter()
+        .filter_map(|(_, name, _)| name)
+        .collect();
+    for wanted in [
+        "Player",
+        "Gone, unavailable",
+        "Projects",
+        "Weather, on",
+        "Do not disturb, on",
+        "Customize this menu",
+    ] {
+        assert!(names.iter().any(|n| n == wanted), "{wanted}: {names:?}");
+    }
+    let effect = format!(
+        "Weather effect, {}",
+        if cards.config.rain.enabled {
+            "on"
+        } else {
+            "off"
+        }
+    );
+    assert!(names.contains(&effect), "{effect}: {names:?}");
+    assert!(
+        names
+            .iter()
+            .any(|n| n.starts_with("Timer, 4:3") && n.ends_with(" left")),
+        "the time left: {names:?}"
+    );
+    // The keyboard starts on Player, and its name shows beside it.
+    assert_eq!(
+        cards.drawer_focus(),
+        Some(drawer::DrawerItem::Entry(1)),
+        "the title is skipped"
+    );
+    let text = surface_for(&cards).all_text(cards.control_rail());
+    assert!(text.iter().any(|t| t == "Player"), "{text:?}");
+    // Down to Do not disturb: its name and state follow the keyboard.
+    let dnd = items
+        .iter()
+        .position(|item| item.as_action() == Some(Action::DoNotDisturb))
+        .unwrap();
+    while cards.drawer_focus() != Some(drawer::DrawerItem::Entry(dnd)) {
+        press(&mut cards, Key::Named(Named::ArrowDown), Modifiers::empty());
+    }
+    let text = surface_for(&cards).all_text(cards.control_rail());
+    assert!(
+        text.iter().any(|t| t == "Do not disturb") && text.iter().any(|t| t == "On"),
+        "{text:?}"
+    );
+    capture_menu(&mut cards, "edge-menu-icons-focus");
+    // The pointer on the timer shows its name and time left instead.
+    let timer = items
+        .iter()
+        .position(|item| item.as_action() == Some(Action::Timer))
+        .unwrap();
+    let _ = cards.update(Message::EdgeTip(Some(drawer::DrawerItem::Entry(timer))));
+    let text = surface_for(&cards).all_text(cards.control_rail());
+    assert!(text.iter().any(|t| t == "Timer"), "{text:?}");
+    assert!(text.iter().any(|t| t.ends_with(" left")), "{text:?}");
+    assert!(
+        !text.iter().any(|t| t == "Do not disturb"),
+        "one name at a time"
+    );
+    capture_menu(&mut cards, "edge-menu-icons-switch-and-timer");
+    let _ = cards.update(Message::EdgeTip(None));
+    // Back to the top; Alt+Down moves Player below Gone and saves.
+    while cards.sidebar.focus != Some(0) {
+        press(&mut cards, Key::Named(Named::ArrowUp), Modifiers::empty());
+    }
+    press(&mut cards, Key::Named(Named::ArrowDown), Modifiers::ALT);
+    let player = |items: &[crate::config::edge_menu::Item]| {
+        items
+            .iter()
+            .position(
+                |item| matches!(&item.kind, Kind::App { app, .. } if app == "org.example.Player"),
+            )
+            .unwrap()
+    };
+    assert_eq!(player(&Config::load().edge_items()), 2);
+    assert_eq!(
+        cards.drawer_items()[cards.sidebar.focus.unwrap()],
+        drawer::DrawerItem::Entry(2),
+        "the keyboard stays on it"
+    );
+    assert_eq!(
+        Config::load().edge_menu.style,
+        crate::config::edge_menu::Style::Icons
+    );
+    press(&mut cards, Key::Named(Named::ArrowUp), Modifiers::ALT);
+    assert_eq!(player(&Config::load().edge_items()), 1);
+    // Enter on a switch flips it and the menu stays.
+    let weather = cards
+        .drawer_items()
+        .iter()
+        .position(|item| *item == drawer::DrawerItem::Entry(5))
+        .unwrap();
+    while cards.sidebar.focus != Some(weather) {
+        press(
+            &mut cards,
+            Key::Named(Named::ArrowRight),
+            Modifiers::empty(),
+        );
+    }
+    let was = cards.config.widget_visible(Widget::Weather);
+    press(&mut cards, Key::Named(Named::Enter), Modifiers::empty());
+    assert_eq!(cards.config.widget_visible(Widget::Weather), !was);
+    assert!(cards.sidebar.visible);
+}
+
+/// The grid in two and three columns: the same items, wider and shorter
+/// than the icon column, every item still reached by the keyboard, and the
+/// built-in menu drawn the same way without saving a list of its own.
+#[test]
+fn grid_menu_sets_icons_in_columns_and_the_keyboard_reaches_each() {
+    if isolated("grid_menu_sets_icons_in_columns_and_the_keyboard_reaches_each") {
+        return;
+    }
+    let mut cards = cards();
+    // The built-in menu, as icons: no list saved, every row an item.
+    set_edge(&mut cards, serde_json::json!({ "style": "icons" }));
+    let icons = (cards.rail_width(), cards.controls_height());
+    assert!(cards.config.edge_menu.items.is_none());
+    let builtin = cards.drawer_items();
+    assert!(builtin.iter().all(|item| matches!(
+        item,
+        drawer::DrawerItem::Entry(_) | drawer::DrawerItem::Customize
+    )));
+    let _ = cards.update(Message::DrawerToggle);
+    capture_menu(&mut cards, "edge-menu-icons");
+    set_edge(
+        &mut cards,
+        serde_json::json!({ "style": "grid", "columns": 2 }),
+    );
+    let two = (cards.rail_width(), cards.controls_height());
+    capture_menu(&mut cards, "edge-menu-grid-2");
+    set_edge(&mut cards, serde_json::json!({ "columns": 3 }));
+    let three = (cards.rail_width(), cards.controls_height());
+    capture_menu(&mut cards, "edge-menu-grid-3");
+    assert!(
+        icons.0 < two.0 && two.0 < three.0,
+        "{icons:?} {two:?} {three:?}"
+    );
+    assert!(
+        three.1 < two.1 && two.1 < icons.1,
+        "{icons:?} {two:?} {three:?}"
+    );
+    assert_eq!(
+        cards.drawer_items(),
+        builtin,
+        "the same items in every style"
+    );
+    // Names under the icons in the grid; every item is spoken in full.
+    let text = surface_for(&cards).all_text(cards.control_rail());
+    assert!(text.iter().any(|t| t == "Weather"), "{text:?}");
+    let names: Vec<String> = surface_for(&cards)
+        .a11y(cards.control_rail())
+        .into_iter()
+        .filter_map(|(_, name, _)| name)
+        .collect();
+    assert!(
+        names.iter().any(|n| n.starts_with("Weather, ")),
+        "{names:?}"
+    );
+    // The keyboard goes round all of them.
+    let count = builtin.len();
+    for step in 1..=count {
+        press(
+            &mut cards,
+            Key::Named(Named::ArrowRight),
+            Modifiers::empty(),
+        );
+        assert_eq!(cards.sidebar.focus, Some(step % count));
+    }
+    // Moving an item from the grid starts a list of its own.
+    let first = cards.drawer_items()[0];
+    press(&mut cards, Key::Named(Named::ArrowDown), Modifiers::ALT);
+    assert!(Config::load().edge_menu.customized());
+    assert_eq!(cards.drawer_items()[cards.sidebar.focus.unwrap()], {
+        let drawer::DrawerItem::Entry(at) = first else {
+            unreachable!()
+        };
+        drawer::DrawerItem::Entry(at + 1)
+    });
+    // List again, no labels or titles left over: the rows are back.
+    set_edge(
+        &mut cards,
+        serde_json::json!({ "style": "list", "items": null }),
+    );
+    assert!(!cards.compact());
+    assert_eq!(cards.controls_width(), drawer::SIDEBAR_WIDTH);
+}
+
+/// After an item is used, the menu closes or stays as the setting says:
+/// by default switches keep it open and everything else closes it; Never
+/// keeps it open after a Look; Always closes it after a switch too.
+#[test]
+fn close_after_use_follows_the_setting_for_each_kind_of_item() {
+    if isolated("close_after_use_follows_the_setting_for_each_kind_of_item") {
+        return;
+    }
+    use super::edge::closes_after;
+    use crate::config::edge_menu::{Action, Close, Item, Kind};
+    for (close, switch, message, closes) in [
+        (
+            Close::Actions,
+            true,
+            Message::ToggleWidget(Widget::Weather),
+            false,
+        ),
+        (Close::Actions, false, Message::LaunchApp("x".into()), true),
+        (
+            Close::Actions,
+            false,
+            Message::FocusCommand("toggle".into()),
+            true,
+        ),
+        (Close::Never, false, Message::LaunchApp("x".into()), false),
+        (Close::Never, false, Message::Arrange, true),
+        (Close::Never, false, Message::Settings, true),
+        (Close::Always, true, Message::SetDnd(true), true),
+    ] {
+        assert_eq!(
+            closes_after(close, switch, &message),
+            closes,
+            "{close:?} {message:?}"
+        );
+    }
+    let items = vec![
+        Item::widget(Widget::Weather),
+        Item::action(Action::Focus),
+        Item::new(Kind::Look {
+            look: crate::automation::ProfileRef::Preset("night".into()),
+            name: "Night".into(),
+        }),
+    ];
+    let mut cards = cards();
+    set_edge(
+        &mut cards,
+        serde_json::json!({ "items": items, "style": "icons" }),
+    );
+    let mut run = |cards: &mut Cards, index: usize| {
+        cards.sidebar.show(Instant::now());
+        let _ = cards.update(Message::EdgeItem(index));
+        cards.sidebar.visible
+    };
+    assert!(run(&mut cards, 0), "a switch keeps it open");
+    assert!(!run(&mut cards, 1), "an action closes it");
+    assert!(!run(&mut cards, 2), "a Look closes it");
+    set_edge(&mut cards, serde_json::json!({ "close": "never" }));
+    assert!(run(&mut cards, 2), "kept open");
+    assert!(run(&mut cards, 0));
+    set_edge(&mut cards, serde_json::json!({ "close": "always" }));
+    assert!(!run(&mut cards, 0), "a switch closes it too");
+}
+
+/// The visible handle draws on the strip in the accent or a neutral shade;
+/// hidden, the strip draws nothing at all.
+#[test]
+fn the_visible_handle_draws_on_the_strip_and_the_hidden_one_is_clear() {
+    if isolated("the_visible_handle_draws_on_the_strip_and_the_hidden_one_is_clear") {
+        return;
+    }
+    let mut cards = cards();
+    let strip = cards.ids[3];
+    let alpha = |cards: &Cards| {
+        let thickness = cards.config.edge_menu.strip_thickness();
+        let pixels = Native::new(Size::new(thickness as f32, 200.))
+            .render(cards.edge_handle(strip), &cosmic::Theme::dark());
+        pixels.chunks(4).map(|p| p[3]).max().unwrap_or(0)
+    };
+    assert_eq!(alpha(&cards), 0, "hidden: nothing drawn");
+    set_edge(
+        &mut cards,
+        serde_json::json!({ "handle": true, "handle_size": 6, "handle_opacity": 100 }),
+    );
+    assert_eq!(cards.config.edge_menu.strip_thickness(), 6);
+    assert!(alpha(&cards) > 200, "visible: an opaque bar");
+    set_edge(
+        &mut cards,
+        serde_json::json!({ "handle": true, "handle_size": 6, "handle_opacity": 30 }),
+    );
+    let faint = alpha(&cards);
+    assert!(faint > 40 && faint < 120, "its opacity follows: {faint}");
+    // A picture of the handle at the edge of a desktop.
+    if std::env::var_os("DESKTOP_CARDS_LAYOUT_EVIDENCE").is_some() {
+        let mut light = cards.config.clone();
+        light.edge_menu.handle_opacity = 70;
+        let _ = cards.apply_config(light);
+        let p = cards.config.surface_palette();
+        for (theme, shade, backdrop) in [
+            (
+                cosmic::Theme::dark(),
+                "dark",
+                cosmic::iced::Color::from_rgb8(0x2a, 0x2d, 0x3a),
+            ),
+            (
+                cosmic::Theme::light(),
+                "light",
+                cosmic::iced::Color::from_rgb8(0xd8, 0xdc, 0xe6),
+            ),
+        ] {
+            let _ = p;
+            let view = cosmic::widget::container(
+                cosmic::widget::row::with_children(vec![
+                    cosmic::iced::widget::space().width(Length::Fill).into(),
+                    cosmic::widget::container(cards.edge_handle(strip))
+                        .width(Length::Fixed(6.))
+                        .height(Length::Fixed(220.))
+                        .into(),
+                ])
+                .align_y(cosmic::iced::Alignment::Center)
+                .height(Length::Fill),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .class(cosmic::theme::Container::custom(move |_| {
+                cosmic::iced::widget::container::Style {
+                    background: Some(cosmic::iced::Background::Color(backdrop)),
+                    ..Default::default()
+                }
+            }));
+            Native::new(Size::new(240., 320.)).capture(
+                view.into(),
+                &theme,
+                &format!("edge-handle-visible-{shade}"),
+            );
+        }
+    }
+}

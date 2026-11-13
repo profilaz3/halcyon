@@ -36,6 +36,133 @@ pub enum OpenOn {
     Click,
 }
 
+/// How the menu draws its items.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Style {
+    /// Icon and name on each row, as it always was.
+    #[default]
+    List,
+    /// A slim column of icons; names show as tooltips.
+    Icons,
+    /// Icons in two to four columns, with short names under them.
+    Grid,
+}
+impl Style {
+    pub const ALL: [Self; 3] = [Self::List, Self::Icons, Self::Grid];
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::List => "List",
+            Self::Icons => "Icons",
+            Self::Grid => "Grid",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IconSize {
+    Small,
+    #[default]
+    Medium,
+    Large,
+}
+impl IconSize {
+    pub const ALL: [Self; 3] = [Self::Small, Self::Medium, Self::Large];
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Small => "Small",
+            Self::Medium => "Medium",
+            Self::Large => "Large",
+        }
+    }
+}
+
+/// What the menu's panel looks like.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Frame {
+    /// A plain panel a shade apart from the widgets, as it always was.
+    #[default]
+    Plain,
+    /// The widgets' own colors, material, border and shadow.
+    Widget,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HandleColor {
+    #[default]
+    Accent,
+    Neutral,
+}
+
+/// When using an item closes the menu.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Close {
+    /// Nothing closes it but the pointer leaving, Escape, or something
+    /// that takes over the screen (Arrange, Settings).
+    Never,
+    /// Actions, Looks, apps and folders close it; switches keep it open.
+    #[default]
+    Actions,
+    /// Every item closes it, switches too.
+    Always,
+}
+
+/// How fast the menu slides in and out.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Speed {
+    Slow,
+    #[default]
+    Normal,
+    Fast,
+}
+impl Speed {
+    pub const ALL: [Self; 3] = [Self::Slow, Self::Normal, Self::Fast];
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Slow => "Slow",
+            Self::Normal => "Normal",
+            Self::Fast => "Fast",
+        }
+    }
+    /// The slide's easing rate: how much of the way is covered per second.
+    pub fn rate(self) -> f32 {
+        match self {
+            Self::Slow => 11.,
+            Self::Normal => 22.,
+            Self::Fast => 40.,
+        }
+    }
+}
+
+/// Which displays have a strip that opens the menu.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Displays {
+    /// The display the widgets are on, as it always was.
+    #[default]
+    Main,
+    All,
+    /// The displays in `outputs`.
+    Chosen,
+}
+
+pub const MIN_OPACITY: u8 = 40;
+pub const MAX_ROUNDNESS: u8 = 32;
+pub const DEFAULT_ROUNDNESS: u8 = 20;
+pub const MIN_COLUMNS: u8 = 2;
+pub const MAX_COLUMNS: u8 = 4;
+pub const MIN_HANDLE: u8 = 2;
+pub const MAX_HANDLE: u8 = 12;
+pub const DEFAULT_HANDLE: u8 = 4;
+pub const MIN_HANDLE_OPACITY: u8 = 10;
+/// The strip's thickness while no handle is drawn: hard to hit by accident.
+pub const HIDDEN_STRIP: u32 = 2;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EdgeMenu {
@@ -50,6 +177,31 @@ pub struct EdgeMenu {
     pub length: u8,
     pub open: OpenOn,
     pub delay_ms: u32,
+    pub style: Style,
+    pub icon_size: IconSize,
+    /// Columns of the grid.
+    pub columns: u8,
+    /// Short names under the grid's icons.
+    pub labels: bool,
+    pub section_titles: bool,
+    /// The panel's opacity, in percent.
+    pub opacity: u8,
+    /// The panel's corner radius on the side facing the screen, in pixels.
+    pub roundness: u8,
+    pub frame: Frame,
+    /// A visible handle on the strip, One UI style; off, the strip is an
+    /// invisible hover area.
+    pub handle: bool,
+    /// The handle's thickness in pixels; the strip is as thick.
+    pub handle_size: u8,
+    pub handle_opacity: u8,
+    pub handle_color: HandleColor,
+    pub close: Close,
+    pub speed: Speed,
+    pub displays: Displays,
+    /// The displays chosen with `Displays::Chosen`, by their saved names.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<String>,
     /// What the menu lists, top down. `None` is the built-in menu.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub items: Option<Vec<Item>>,
@@ -66,6 +218,22 @@ impl Default for EdgeMenu {
             length: 100,
             open: OpenOn::Hover,
             delay_ms: DEFAULT_DELAY_MS,
+            style: Style::List,
+            icon_size: IconSize::Medium,
+            columns: MIN_COLUMNS,
+            labels: true,
+            section_titles: true,
+            opacity: 100,
+            roundness: DEFAULT_ROUNDNESS,
+            frame: Frame::Plain,
+            handle: false,
+            handle_size: DEFAULT_HANDLE,
+            handle_opacity: 60,
+            handle_color: HandleColor::Accent,
+            close: Close::Actions,
+            speed: Speed::Normal,
+            displays: Displays::Main,
+            outputs: Vec::new(),
             items: None,
             other: Map::new(),
         }
@@ -87,6 +255,31 @@ impl EdgeMenu {
         if self.delay_ms > MAX_DELAY_MS {
             return Err("The edge menu delay must be at most three seconds".into());
         }
+        if !(MIN_COLUMNS..=MAX_COLUMNS).contains(&self.columns) {
+            return Err(format!(
+                "The edge menu grid has {MIN_COLUMNS} to {MAX_COLUMNS} columns"
+            ));
+        }
+        if !(MIN_OPACITY..=100).contains(&self.opacity) {
+            return Err(format!(
+                "The edge menu opacity must be between {MIN_OPACITY} and 100 percent"
+            ));
+        }
+        if self.roundness > MAX_ROUNDNESS {
+            return Err(format!(
+                "The edge menu corners are at most {MAX_ROUNDNESS} pixels round"
+            ));
+        }
+        if !(MIN_HANDLE..=MAX_HANDLE).contains(&self.handle_size) {
+            return Err(format!(
+                "The edge handle must be {MIN_HANDLE} to {MAX_HANDLE} pixels thick"
+            ));
+        }
+        if !(MIN_HANDLE_OPACITY..=100).contains(&self.handle_opacity) {
+            return Err(format!(
+                "The edge handle opacity must be between {MIN_HANDLE_OPACITY} and 100 percent"
+            ));
+        }
         if self
             .items
             .as_ref()
@@ -104,6 +297,58 @@ impl EdgeMenu {
     }
     pub fn customized(&self) -> bool {
         self.items.is_some()
+    }
+    /// Whether the menu is the built-in one, drawn as it always was: no
+    /// list of its own and nothing about its rows changed.
+    pub fn classic(&self) -> bool {
+        self.items.is_none()
+            && self.style == Style::List
+            && self.icon_size == IconSize::Medium
+            && self.section_titles
+    }
+    /// The strip's thickness: the handle's, or a hard to hit 2 pixels.
+    pub fn strip_thickness(&self) -> u32 {
+        if self.handle {
+            u32::from(self.handle_size.clamp(MIN_HANDLE, MAX_HANDLE))
+        } else {
+            HIDDEN_STRIP
+        }
+    }
+    /// The grid's columns, kept in range.
+    pub fn grid_columns(&self) -> usize {
+        self.columns.clamp(MIN_COLUMNS, MAX_COLUMNS).into()
+    }
+    /// The icon size of a row in the List style.
+    pub fn list_icon(&self) -> u16 {
+        match self.icon_size {
+            IconSize::Small => 14,
+            IconSize::Medium => 16,
+            IconSize::Large => 20,
+        }
+    }
+    /// The icon size in the Icons and Grid styles.
+    pub fn compact_icon(&self) -> u16 {
+        match self.icon_size {
+            IconSize::Small => 16,
+            IconSize::Medium => 20,
+            IconSize::Large => 24,
+        }
+    }
+    /// The panel's opacity, 0 to 1.
+    pub fn alpha(&self) -> f32 {
+        f32::from(self.opacity.clamp(MIN_OPACITY, 100)) / 100.
+    }
+    pub fn radius(&self) -> f32 {
+        f32::from(self.roundness.min(MAX_ROUNDNESS))
+    }
+    /// Whether the strip belongs on a display: `main` is the display the
+    /// widgets are on, `key` the display's saved name.
+    pub fn on_display(&self, main: bool, key: Option<&str>) -> bool {
+        match self.displays {
+            Displays::Main => main,
+            Displays::All => true,
+            Displays::Chosen => key.is_some_and(|key| self.outputs.iter().any(|o| o == key)),
+        }
     }
     /// The strip's margins from the top and bottom of an edge `height`
     /// pixels long, so that it covers `length` percent with its middle at
@@ -458,11 +703,88 @@ mod tests {
     }
 
     #[test]
+    fn style_sizes_handle_and_behavior_round_trip_and_old_files_read_as_today() {
+        // A file from before these settings: today's menu in every respect.
+        let old: EdgeMenu =
+            serde_json::from_value(json!({"enabled": true, "side": "left", "length": 60})).unwrap();
+        assert_eq!(old.style, Style::List);
+        assert_eq!(old.icon_size, IconSize::Medium);
+        assert_eq!(old.columns, 2);
+        assert!(old.labels && old.section_titles);
+        assert_eq!((old.opacity, old.roundness), (100, DEFAULT_ROUNDNESS));
+        assert_eq!(old.frame, Frame::Plain);
+        assert!(!old.handle);
+        assert_eq!(old.strip_thickness(), HIDDEN_STRIP);
+        assert_eq!(old.close, Close::Actions);
+        assert_eq!(old.speed.rate(), crate::drawer::SLIDE_RATE);
+        assert_eq!(old.displays, Displays::Main);
+        assert!(old.classic(), "drawn as the built-in menu");
+        assert!(old.validate().is_ok());
+        let saved = json!({
+            "style": "grid",
+            "icon_size": "large",
+            "columns": 3,
+            "labels": false,
+            "section_titles": false,
+            "opacity": 80,
+            "roundness": 8,
+            "frame": "widget",
+            "handle": true,
+            "handle_size": 6,
+            "handle_opacity": 70,
+            "handle_color": "neutral",
+            "close": "always",
+            "speed": "fast",
+            "displays": "chosen",
+            "outputs": ["DP-2"],
+        });
+        let menu: EdgeMenu = serde_json::from_value(saved.clone()).unwrap();
+        assert_eq!(menu.style, Style::Grid);
+        assert_eq!(menu.icon_size, IconSize::Large);
+        assert_eq!(menu.grid_columns(), 3);
+        assert!(!menu.labels && !menu.section_titles);
+        assert_eq!(menu.alpha(), 0.8);
+        assert_eq!(menu.frame, Frame::Widget);
+        assert_eq!(menu.strip_thickness(), 6);
+        assert_eq!(menu.handle_color, HandleColor::Neutral);
+        assert_eq!(menu.close, Close::Always);
+        assert_eq!(menu.speed, Speed::Fast);
+        assert!(menu.on_display(false, Some("DP-2")));
+        assert!(!menu.on_display(true, Some("DP-1")));
+        assert!(!menu.classic());
+        assert!(menu.validate().is_ok());
+        let written = serde_json::to_value(&menu).unwrap();
+        for (key, value) in saved.as_object().unwrap() {
+            assert_eq!(&written[key], value, "{key}");
+        }
+        assert_eq!(serde_json::from_value::<EdgeMenu>(written).unwrap(), menu);
+        // Nothing but a style changed still leaves the list unsaved.
+        let icons = EdgeMenu {
+            style: Style::Icons,
+            ..Default::default()
+        };
+        assert!(!icons.classic() && !icons.customized());
+        assert!(icons.on_display(true, None) && !icons.on_display(false, None));
+        let all = EdgeMenu {
+            displays: Displays::All,
+            ..Default::default()
+        };
+        assert!(all.on_display(false, None));
+    }
+
+    #[test]
     fn out_of_range_settings_are_refused() {
         for bad in [
             json!({"position": 101}),
             json!({"length": 5}),
             json!({"delay_ms": 9000}),
+            json!({"columns": 5}),
+            json!({"columns": 1}),
+            json!({"opacity": 10}),
+            json!({"roundness": 40}),
+            json!({"handle_size": 1}),
+            json!({"handle_size": 20}),
+            json!({"handle_opacity": 0}),
         ] {
             let menu: EdgeMenu = serde_json::from_value(bad.clone()).unwrap();
             assert!(menu.validate().is_err(), "{bad}");

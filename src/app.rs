@@ -19,6 +19,7 @@ mod devbox;
 #[cfg(test)]
 mod display_tests;
 mod edge;
+mod edge_compact;
 mod glance;
 mod monitors;
 mod recipe;
@@ -275,8 +276,13 @@ pub enum Message {
     Switched(Vec<(crate::automation::Due, crate::automation::run::Ran)>),
     /// `halcyon --toggle drawer`: open the edge menu for the keyboard, or close it.
     DrawerToggle,
-    /// A click on the edge strip: the menu opens at once.
-    EdgeClick,
+    /// A click on an edge strip: the menu opens at once, on its display.
+    EdgeClick(window::Id),
+    /// The pointer onto or off an edge strip.
+    EdgeHover(window::Id, bool),
+    /// The pointer over an item of the Icons or Grid menu, or off them:
+    /// its name shows beside it.
+    EdgeTip(Option<drawer::DrawerItem>),
     /// An item of the customized edge menu, by its place in the list.
     EdgeItem(usize),
     /// "Customize this menu": the edge menu's page in Settings.
@@ -457,6 +463,7 @@ impl cosmic::Application for Cards {
         let ids = std::array::from_fn(|_| window::Id::unique());
         let mut sidebar = Sidebar::new();
         sidebar.dwell = config.edge_menu.dwell();
+        sidebar.rate = config.edge_menu.speed.rate();
         let mut tasks = Vec::new();
         let today = Local::now().date_naive();
         let month = today.with_day(1).unwrap();
@@ -866,9 +873,12 @@ impl Cards {
         if id == self.ids[2] {
             return self.control_rail();
         }
-        if id == self.ids[3] || self.edge.part.is_some_and(|part| part.id == id) {
+        if id == self.ids[3]
+            || self.edge.part.is_some_and(|part| part.id == id)
+            || self.edge.others.iter().any(|strip| strip.id == id)
+        {
             return if self.is_edge_strip(id) {
-                self.edge_handle()
+                self.edge_handle(id)
             } else {
                 empty_surface()
             };
@@ -913,10 +923,24 @@ impl Cards {
     }
 
     /// The edge menu's surface.
-    fn controls_surface(&self, id: window::Id, margin: i32) -> Task<Message> {
+    fn controls_surface(&mut self, id: window::Id, margin: i32) -> Task<Message> {
+        let width = self.controls_width();
+        let height = self.controls_height();
+        self.edge.surface = Some([width, height]);
+        self.sidebar.width = width;
+        // Beside the Icons and Grid menus, the room for names is clear:
+        // the pointer passes through it to whatever is below.
+        let input_zone = (width != self.rail_width()).then(|| {
+            vec![cosmic::iced::Rectangle {
+                x: self.rail_x(),
+                y: 0.,
+                width: self.rail_width() as f32,
+                height: height as f32,
+            }]
+        });
         get_layer_surface(SctkLayerSurfaceSettings {
             id,
-            output: self.layer_output(),
+            output: self.menu_layer_output(),
             layer: Layer::Overlay,
             // Opened from the keyboard, the menu takes the keys until it closes.
             keyboard_interactivity: if self.sidebar.focus.is_some() {
@@ -926,7 +950,8 @@ impl Cards {
             },
             anchor: self.controls_anchor().0,
             margin: self.controls_margin(margin),
-            size: Some((Some(drawer::SIDEBAR_WIDTH), Some(self.controls_height()))),
+            size: Some((Some(width), Some(height))),
+            input_zone,
             exclusive_zone: 0,
             namespace: "halcyon-controls".into(),
             ..Default::default()
@@ -942,6 +967,13 @@ impl Cards {
         }
         let needed = self.sidebar.needs_surface();
         if needed == self.controls_open {
+            // A notice in the Icons or Grid menu needs the List's room.
+            if needed && self.edge.surface != Some([self.controls_width(), self.controls_height()])
+            {
+                let id = self.ids[2];
+                return cosmic::iced::platform_specific::shell::commands::layer_surface::destroy_layer_surface(id)
+                    .chain(self.controls_surface(id, self.sidebar.margin()));
+            }
             return Task::none();
         }
         self.controls_open = needed;
@@ -1031,9 +1063,10 @@ impl Cards {
         }
         if same_geometry {
             self.selected_output = selected;
-            // A newly connected, unassigned screen still belongs in Settings.
+            // A newly connected, unassigned screen still belongs in Settings,
+            // and gets the edge menu's strip when the menu is on every display.
             return if self.output_known {
-                self.sync_widget_surfaces()
+                Task::batch([self.sync_widget_surfaces(), self.sync_edge_strip()])
             } else {
                 Task::none()
             };
@@ -1080,7 +1113,13 @@ impl Cards {
         self.work_area = [None; 2];
         self.forget_tool_surfaces();
         self.edge.kind = None;
-        let old_strip = self.edge.part.take().map(|part| part.id);
+        let old_strip = self
+            .edge
+            .part
+            .take()
+            .map(|part| part.id)
+            .into_iter()
+            .chain(self.forget_other_strips());
         let old_ids =
             std::mem::replace(&mut self.ids, std::array::from_fn(|_| window::Id::unique()));
         let old_probes = old_probes.into_iter().flat_map(|p| p.ids);
@@ -1293,7 +1332,9 @@ impl Cards {
                 // A previously queued Create can finish after migration's
                 // Destroy. Its fresh ID cannot impersonate the new epoch;
                 // close that late surface as well as ignoring its geometry.
-                if self.edge.part.is_some_and(|part| part.id == id) {
+                if self.edge.part.is_some_and(|part| part.id == id)
+                    || self.edge.others.iter().any(|strip| strip.id == id)
+                {
                     return Task::none();
                 }
                 if !self.ids.contains(&id) && id != window::Id::NONE {
@@ -1454,10 +1495,23 @@ impl Cards {
             Message::SetWidgetVisible(widget, visible) => self.set_widget_visible(widget, visible),
             Message::SaveOrder(order) => self.save_widget_order(order),
             Message::DrawerToggle => self.drawer_toggle(),
-            Message::EdgeClick => {
+            Message::EdgeClick(id) => {
                 if !self.sidebar.visible {
+                    if !self.controls_open {
+                        self.edge.menu_output = self
+                            .edge
+                            .others
+                            .iter()
+                            .find(|strip| strip.id == id)
+                            .map(|strip| strip.output.clone());
+                    }
                     self.sidebar.show(Instant::now());
                 }
+                Task::none()
+            }
+            Message::EdgeHover(id, entered) => self.edge_strip_hover(id, entered),
+            Message::EdgeTip(tip) => {
+                self.edge.tip = tip;
                 Task::none()
             }
             Message::EdgeItem(index) => self.edge_item(index),

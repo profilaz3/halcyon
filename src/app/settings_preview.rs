@@ -155,6 +155,7 @@ impl SettingsSamples {
             overview: Box::new(Self::build(config)),
             edge: Box::new(Self::build(config)),
         };
+        samples.edge.edge.preview = true;
         samples.edge.sidebar.show(Instant::now());
         samples.edge.sidebar.progress = 1.;
         samples.update(config);
@@ -348,10 +349,19 @@ impl SettingsSamples {
         (
             self.edge.control_rail(),
             [
-                drawer::SIDEBAR_WIDTH as f32,
+                self.edge.rail_width() as f32,
                 self.edge.controls_height() as f32,
             ],
         )
+    }
+    /// The strip on the screen edge as the desktop draws it.
+    /// The menu settings the preview draws with.
+    #[cfg(test)]
+    pub fn edge_menu_settings(&self) -> &crate::config::edge_menu::EdgeMenu {
+        &self.edge.config.edge_menu
+    }
+    pub fn edge_handle_view(&self) -> Element<'_, Message> {
+        super::edge_compact::handle(&self.edge.config)
     }
     /// The full Daily overview card with its current sections.
     pub fn overview_view(&self) -> Element<'_, Message> {

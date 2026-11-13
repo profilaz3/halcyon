@@ -338,3 +338,197 @@ fn edge_menu_page_captures() {
     }
     assert!(native.duplicate_ids(app.settings_view()).is_empty());
 }
+
+/// Style, look, handle and behavior: each saves at once (sliders when let
+/// go), Undo takes the last one back and names it, the page shows the three
+/// groups and the style tiles, and the preview follows every change.
+#[test]
+fn edge_menu_style_handle_and_behavior_save_undo_and_preview() {
+    use crate::config::edge_menu::{Close, Displays, Frame, HandleColor, IconSize, Speed, Style};
+    let name = "edge_menu_style_handle_and_behavior_save_undo_and_preview";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let _root = isolated_root();
+    let mut app = edge_page();
+    let size = Size::new(1280., 800.);
+    send_settings(&mut app, Message::Resized(size));
+    let mut native = crate::native_test::Native::new(size);
+    let text = native.all_text(app.settings_view());
+    for title in [
+        "Appearance",
+        "Style",
+        "Icon size",
+        "Section titles",
+        "Background opacity",
+        "Corner roundness",
+        "Handle",
+        "Visible handle",
+        "Behavior",
+        "Close after use",
+        "Animation",
+        "Displays",
+    ] {
+        assert!(text.iter().any(|t| t == title), "{title}: {text:?}");
+    }
+    for id in ["edge-style-list", "edge-style-icons", "edge-style-grid"] {
+        assert!(native.try_bounds(app.settings_view(), id).is_some(), "{id}");
+    }
+    let list_width = app.samples.edge_menu_view().1[0];
+
+    edge_send(&mut app, EdgeEdit::Style(Style::Icons));
+    assert_eq!(Config::load().edge_menu.style, Style::Icons);
+    let icons_width = app.samples.edge_menu_view().1[0];
+    assert!(
+        icons_width < list_width / 2.,
+        "{icons_width} vs {list_width}"
+    );
+    // The grid's own rows only show for the grid.
+    assert!(
+        !native
+            .all_text(app.settings_view())
+            .iter()
+            .any(|t| t == "Columns")
+    );
+    edge_send(&mut app, EdgeEdit::Style(Style::Grid));
+    let text = native.all_text(app.settings_view());
+    assert!(text.iter().any(|t| t == "Columns"), "{text:?}");
+    assert!(text.iter().any(|t| t == "Labels under icons"), "{text:?}");
+    edge_send(&mut app, EdgeEdit::Columns(3));
+    let three = app.samples.edge_menu_view().1[0];
+    edge_send(&mut app, EdgeEdit::Columns(2));
+    let two = app.samples.edge_menu_view().1[0];
+    assert!(three > two, "a column more is wider: {three} vs {two}");
+    edge_send(&mut app, EdgeEdit::Columns(3));
+    edge_send(&mut app, EdgeEdit::Labels(false));
+    edge_send(&mut app, EdgeEdit::IconSize(IconSize::Large));
+    edge_send(&mut app, EdgeEdit::SectionTitles(false));
+    edge_send(&mut app, EdgeEdit::Frame(Frame::Widget));
+    edge_send(&mut app, EdgeEdit::Draft(edge_menu::Field::Opacity, 70));
+    assert_eq!(Config::load().edge_menu.opacity, 100, "saved when let go");
+    edge_send(&mut app, EdgeEdit::Commit);
+    edge_send(&mut app, EdgeEdit::Draft(edge_menu::Field::Roundness, 8));
+    edge_send(&mut app, EdgeEdit::Commit);
+    // The handle's own rows show once it is visible.
+    assert!(
+        !native
+            .all_text(app.settings_view())
+            .iter()
+            .any(|t| t == "Handle thickness")
+    );
+    edge_send(&mut app, EdgeEdit::Handle(true));
+    let text = native.all_text(app.settings_view());
+    for title in ["Handle thickness", "Handle opacity", "Handle color"] {
+        assert!(text.iter().any(|t| t == title), "{title}: {text:?}");
+    }
+    edge_send(&mut app, EdgeEdit::Draft(edge_menu::Field::HandleSize, 8));
+    edge_send(&mut app, EdgeEdit::Commit);
+    edge_send(
+        &mut app,
+        EdgeEdit::Draft(edge_menu::Field::HandleOpacity, 90),
+    );
+    edge_send(&mut app, EdgeEdit::Commit);
+    edge_send(&mut app, EdgeEdit::HandleColor(HandleColor::Neutral));
+    edge_send(&mut app, EdgeEdit::Close(Close::Always));
+    edge_send(&mut app, EdgeEdit::Speed(Speed::Fast));
+    edge_send(&mut app, EdgeEdit::Displays(Displays::Chosen));
+    edge_send(&mut app, EdgeEdit::Output("DP-1".into(), true));
+    edge_send(&mut app, EdgeEdit::Output("HDMI-A-1".into(), true));
+    edge_send(&mut app, EdgeEdit::Output("DP-1".into(), false));
+
+    let saved = Config::load().edge_menu;
+    assert_eq!(saved.style, Style::Grid);
+    assert_eq!(saved.columns, 3);
+    assert!(!saved.labels);
+    assert_eq!(saved.icon_size, IconSize::Large);
+    assert!(!saved.section_titles);
+    assert_eq!(saved.frame, Frame::Widget);
+    assert_eq!((saved.opacity, saved.roundness), (70, 8));
+    assert!(saved.handle);
+    assert_eq!((saved.handle_size, saved.handle_opacity), (8, 90));
+    assert_eq!(saved.handle_color, HandleColor::Neutral);
+    assert_eq!(saved.close, Close::Always);
+    assert_eq!(saved.speed, Speed::Fast);
+    assert_eq!(saved.displays, Displays::Chosen);
+    assert_eq!(saved.outputs, ["HDMI-A-1"]);
+    // The preview draws the handle as it is set.
+    assert!(app.samples.edge_menu_settings().handle);
+    assert_eq!(app.samples.edge_menu_settings().handle_size, 8);
+
+    // Undo names and takes back the last change, then the one before.
+    assert_eq!(
+        crate::desktop::store::widget::label("/edge_menu/style"),
+        "Edge menu style"
+    );
+    assert_eq!(
+        crate::desktop::store::widget::label("/edge_menu/handle_size"),
+        "Edge handle thickness"
+    );
+    send_settings(&mut app, Message::UndoPreferences);
+    assert_eq!(Config::load().edge_menu.outputs, ["DP-1", "HDMI-A-1"]);
+    edge_send(&mut app, EdgeEdit::Style(Style::List));
+    send_settings(&mut app, Message::UndoPreferences);
+    assert_eq!(Config::load().edge_menu.style, Style::Grid);
+    assert_eq!(app.samples.edge_menu_settings().style, Style::Grid);
+    assert!(native.duplicate_ids(app.settings_view()).is_empty());
+}
+
+/// The page's Appearance, Handle and Behavior groups with the style tiles,
+/// wide and narrow, in both themes, with the Icons style and a visible
+/// handle in the preview.
+#[test]
+fn edge_menu_groups_and_style_picker_captures() {
+    use crate::config::edge_menu::Style;
+    let name = "edge_menu_groups_and_style_picker_captures";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let _root = isolated_root();
+    let mut app = edge_page();
+    edge_send(&mut app, EdgeEdit::Style(Style::Icons));
+    edge_send(&mut app, EdgeEdit::Handle(true));
+    edge_send(&mut app, EdgeEdit::Draft(edge_menu::Field::HandleSize, 6));
+    edge_send(&mut app, EdgeEdit::Commit);
+    for (size, wide) in [
+        (Size::new(1280., 800.), "1280"),
+        (Size::new(820., 800.), "820"),
+    ] {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        assert!(native.duplicate_ids(app.settings_view()).is_empty());
+        for (target, part) in [
+            ("edge-menu-appearance", "appearance"),
+            ("edge-menu-strip", "handle"),
+            ("edge-menu-behavior", "behavior"),
+        ] {
+            native.operate(
+                app.settings_view(),
+                Box::new(navigation::Reveal::target(target)),
+            );
+            for (theme, shade) in [
+                (cosmic::Theme::dark(), "dark"),
+                (cosmic::Theme::light(), "light"),
+            ] {
+                native.capture(
+                    app.settings_view(),
+                    &theme,
+                    &format!("edge-menu-settings-{part}-{wide}-{shade}"),
+                );
+            }
+        }
+    }
+}

@@ -808,3 +808,138 @@ fn edge_menu_side_position_and_length_place_the_strip_and_the_menu() {
     assert!(!desk.open.contains_key(&part.id));
     assert_eq!(desk.names(), ["arrange", "clock", "edge", "focus"]);
 }
+
+/// A visible handle makes the strip as thick as the setting, a change of
+/// thickness replaces it live (the partial strip too), and with the menu
+/// off there is still no strip at all.
+#[test]
+fn edge_handle_sets_the_strip_thickness_and_off_still_leaves_no_strip() {
+    if isolated(
+        "app::surface_lifecycle_tests::edge_handle_sets_the_strip_thickness_and_off_still_leaves_no_strip",
+    ) {
+        return;
+    }
+    let mut config = clock_and_focus();
+    config.sidebar_slide = false;
+    let (mut cards, mut desk, _wire) = start(config);
+    let set = |cards: &mut Cards, desk: &mut Desk, change: &dyn Fn(&mut Config)| {
+        let mut config = cards.config.clone();
+        change(&mut config);
+        let task = cards.apply_config(config);
+        desk.run(cards, task);
+    };
+    // Hidden, as before: two pixels at the edge.
+    assert_eq!(desk.open[&cards.ids[3]].size, Some((Some(2), Some(0))));
+    set(&mut cards, &mut desk, &|c| {
+        c.edge_menu.handle = true;
+        c.edge_menu.handle_size = 8;
+    });
+    let strip = &desk.open[&cards.ids[3]];
+    assert_eq!(strip.namespace, "halcyon-edge");
+    assert_eq!(
+        strip.size,
+        Some((Some(8), Some(0))),
+        "as thick as the handle"
+    );
+    assert_eq!(strip.input_zone, None, "and takes the pointer");
+    assert!(cards.is_edge_strip(cards.ids[3]));
+    set(&mut cards, &mut desk, &|c| c.edge_menu.handle_size = 4);
+    assert_eq!(desk.open[&cards.ids[3]].size, Some((Some(4), Some(0))));
+    assert_eq!(desk.names(), ["arrange", "clock", "edge", "focus"]);
+    // Part of the edge: the strip of its own is as thick.
+    set(&mut cards, &mut desk, &|c| c.edge_menu.length = 40);
+    let part = cards.edge.part.expect("a strip over part of the edge");
+    assert_eq!(desk.open[&part.id].size, Some((Some(4), Some(0))));
+    set(&mut cards, &mut desk, &|c| c.edge_menu.handle_size = 10);
+    let part = cards.edge.part.expect("still a strip");
+    assert_eq!(desk.open[&part.id].size, Some((Some(10), Some(0))));
+    // Hidden again: back to two pixels.
+    set(&mut cards, &mut desk, &|c| {
+        c.edge_menu.handle = false;
+        c.edge_menu.length = 100;
+    });
+    assert_eq!(desk.open[&cards.ids[3]].size, Some((Some(2), Some(0))));
+    // Off: nothing at the edge, handle or not.
+    set(&mut cards, &mut desk, &|c| {
+        c.edge_menu.handle = true;
+        c.edge_menu.enabled = false;
+    });
+    assert_eq!(desk.names(), ["arrange", "clock", "focus", "height-probe"]);
+    assert!(cards.edge.part.is_none());
+    assert!(!cards.is_edge_strip(cards.ids[3]));
+}
+
+/// Which displays show the menu: the main one by default, every display,
+/// or the chosen ones. A strip on another display opens the menu there.
+#[test]
+fn edge_menu_displays_choose_which_outputs_get_a_strip() {
+    use crate::config::edge_menu::Displays;
+    if isolated("app::surface_lifecycle_tests::edge_menu_displays_choose_which_outputs_get_a_strip")
+    {
+        return;
+    }
+    let (mut cards, mut desk, _wire, external) = start_two();
+    measure_dp2(&mut cards, &mut desk, DP2_USABLE);
+    let set = |cards: &mut Cards, desk: &mut Desk, change: &dyn Fn(&mut Config)| {
+        let mut config = cards.config.clone();
+        change(&mut config);
+        let task = cards.apply_config(config);
+        desk.run(cards, task);
+    };
+    let edges_on = |desk: &Desk, output: &WlOutput| {
+        desk.names_on(output)
+            .iter()
+            .filter(|name| *name == "edge")
+            .count()
+    };
+    // The main display only, as before.
+    assert_eq!(cards.config.edge_menu.displays, Displays::Main);
+    assert_eq!(edges_on(&desk, &external), 0);
+    assert!(cards.is_edge_strip(cards.ids[3]));
+    // Every display: DP-2 gets a strip of its own.
+    set(&mut cards, &mut desk, &|c| {
+        c.edge_menu.displays = Displays::All;
+        c.edge_menu.handle = true;
+        c.edge_menu.handle_size = 6;
+    });
+    assert_eq!(edges_on(&desk, &external), 1);
+    let other = cards.edge.others[0].clone();
+    assert_eq!(desk.open[&other.id].size, Some((Some(6), Some(0))));
+    assert!(
+        cards.is_edge_strip(cards.ids[3]),
+        "and the main one keeps its"
+    );
+    // The pointer on DP-2's strip opens the menu there.
+    desk.send(&mut cards, Message::EdgeHover(other.id, true));
+    desk.send(&mut cards, Message::ShowControls);
+    desk.send(&mut cards, Message::Animate);
+    let menu = &desk.open[&cards.ids[2]];
+    assert!(
+        matches!(&menu.output, IcedOutput::Output(o) if *o == external),
+        "the menu opens on DP-2"
+    );
+    desk.send(&mut cards, Message::HideControls);
+    desk.send(&mut cards, Message::Animate);
+    // Chosen: only DP-2. The main display keeps only its probe.
+    let key = cards
+        .displays
+        .outputs()
+        .iter()
+        .find(|o| o.handle == external)
+        .and_then(|o| cards.displays.key(o))
+        .expect("DP-2 has a key");
+    set(&mut cards, &mut desk, &|c| {
+        c.edge_menu.displays = Displays::Chosen;
+        c.edge_menu.outputs = vec![key.clone()];
+    });
+    assert_eq!(edges_on(&desk, &external), 1);
+    assert!(!cards.is_edge_strip(cards.ids[3]));
+    assert_eq!(desk.open[&cards.ids[3]].namespace, "halcyon-height-probe");
+    // Main again: DP-2's strip goes.
+    set(&mut cards, &mut desk, &|c| {
+        c.edge_menu.displays = Displays::Main
+    });
+    assert_eq!(edges_on(&desk, &external), 0);
+    assert!(cards.edge.others.is_empty());
+    assert!(cards.is_edge_strip(cards.ids[3]));
+}

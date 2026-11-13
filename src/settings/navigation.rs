@@ -1204,12 +1204,27 @@ const ROWS: &[SearchHit] = &[
     hit(Page::Weather, "Dew point and how often it updates", "", false),
     hit(Page::Widgets, "How widgets behave", "", false).at("widgets-behave"),
     hit(Page::Widgets, "Slide in", "", false).at("widgets-behave"),
-    hit(Page::EdgeMenu, "Edge strip", "", false).at("edge-menu-strip"),
+    hit(Page::EdgeMenu, "Appearance", "", false).at("edge-menu-appearance"),
+    hit(Page::EdgeMenu, "Style", "icons only grid list", false).at("edge-menu-appearance"),
+    hit(Page::EdgeMenu, "List", "menu style", false).at("edge-menu-appearance"),
+    hit(Page::EdgeMenu, "Icons", "menu style icons only", false).at("edge-menu-appearance"),
+    hit(Page::EdgeMenu, "Grid", "menu style columns", false).at("edge-menu-appearance"),
+    hit(Page::EdgeMenu, "Icon size", "", false).at("edge-menu-appearance"),
+    hit(Page::EdgeMenu, "Section titles", "headings", false).at("edge-menu-appearance"),
+    hit(Page::EdgeMenu, "Background opacity", "transparent", false).at("edge-menu-appearance"),
+    hit(Page::EdgeMenu, "Corner roundness", "radius", false).at("edge-menu-appearance"),
+    hit(Page::EdgeMenu, "Handle", "strip", false).at("edge-menu-strip"),
     hit(Page::EdgeMenu, "Side", "", false).at("edge-menu-strip"),
     hit(Page::EdgeMenu, "Position", "", false).at("edge-menu-strip"),
     hit(Page::EdgeMenu, "Length", "", false).at("edge-menu-strip"),
-    hit(Page::EdgeMenu, "Opens", "", false).at("edge-menu-strip"),
-    hit(Page::EdgeMenu, "Hover delay", "", false).at("edge-menu-strip"),
+    hit(Page::EdgeMenu, "Visible handle", "strip show", false).at("edge-menu-strip"),
+    hit(Page::EdgeMenu, "Behavior", "", false).at("edge-menu-behavior"),
+    hit(Page::EdgeMenu, "Opens", "", false).at("edge-menu-behavior"),
+    hit(Page::EdgeMenu, "Hover delay", "", false).at("edge-menu-behavior"),
+    hit(Page::EdgeMenu, "Close after use", "", false).at("edge-menu-behavior"),
+    hit(Page::EdgeMenu, "Animation", "slide", false).at("edge-menu-behavior"),
+    hit(Page::EdgeMenu, "Animation speed", "", false).at("edge-menu-behavior"),
+    hit(Page::EdgeMenu, "Displays", "monitors outputs", false).at("edge-menu-behavior"),
     hit(Page::EdgeMenu, "Menu items", "", false).at("edge-menu-items"),
 ];
 
@@ -1353,6 +1368,9 @@ fn index() -> &'static [SearchHit] {
 /// Search stays entirely local. Whole words and prefixes come before aliases
 /// and spelling corrections; a typo never displaces a literal result. A
 /// result named after its page comes before the rows on pages.
+/// How many row titles one page lists when only its name matches.
+const PAGE_ROWS: usize = 6;
+
 pub fn search(query: &str) -> Vec<SearchHit> {
     find(query).hits
 }
@@ -1384,6 +1402,8 @@ pub fn find(query: &str) -> Matches {
         let mut found = 0;
         // Each word found is in this result's own name.
         let mut in_label = true;
+        // Some word found is in this result's own name.
+        let mut named = false;
         for word in &query {
             let best = fields
                 .iter()
@@ -1403,6 +1423,7 @@ pub fn find(query: &str) -> Matches {
                 relevance += weight;
                 found += 1;
                 in_label &= field == 0 && !typo;
+                named |= field == 0;
             }
         }
         if found == 0 {
@@ -1439,19 +1460,43 @@ pub fn find(query: &str) -> Matches {
             entry.advanced,
             index,
         );
+        // A row title found only through its page's name.
+        let by_page = !named && index >= SEARCH.len();
         if found == query.len() {
-            complete.push((rank, entry));
+            complete.push((rank, entry, by_page));
         } else {
-            some.push((rank, entry));
+            some.push((rank, entry, by_page));
         }
     }
     // Nothing matches every word: show what matches the most of them.
     let partial = complete.is_empty();
     let mut matches = if partial { some } else { complete };
-    matches.sort_unstable_by_key(|(rank, _)| *rank);
+    matches.sort_unstable_by_key(|(rank, _, _)| *rank);
+    // A page with many rows lists only its first few for its name, so
+    // results from other pages still show.
+    let mut by_page: Vec<(Page, usize)> = Vec::new();
+    matches.retain(|(_, hit, only_page)| {
+        if !only_page {
+            return true;
+        }
+        match by_page.iter_mut().find(|(page, _)| *page == hit.page) {
+            Some((_, count)) => {
+                *count += 1;
+                *count <= PAGE_ROWS
+            }
+            None => {
+                by_page.push((hit.page, 1));
+                true
+            }
+        }
+    });
     Matches {
         partial: partial && !matches.is_empty(),
-        hits: matches.into_iter().take(10).map(|(_, hit)| hit).collect(),
+        hits: matches
+            .into_iter()
+            .take(10)
+            .map(|(_, hit, _)| hit)
+            .collect(),
     }
 }
 

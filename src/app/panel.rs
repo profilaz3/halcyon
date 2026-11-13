@@ -57,7 +57,7 @@ impl Cards {
     }
     /// Every place the keyboard can be in the edge menu, top down.
     pub(super) fn drawer_items(&self) -> Vec<DrawerItem> {
-        if let Some(items) = &self.config.edge_menu.items {
+        if let Some(items) = self.menu_items() {
             return items
                 .iter()
                 .enumerate()
@@ -88,6 +88,10 @@ impl Cards {
     pub(super) fn drawer_toggle(&mut self) -> Task<Message> {
         if self.sidebar.visible {
             return self.update(Message::HideControls);
+        }
+        if !self.controls_open {
+            // From the keyboard, on the widgets' display.
+            self.edge.menu_output = None;
         }
         self.sidebar.show(Instant::now());
         self.sidebar.focus = Some(0);
@@ -649,8 +653,12 @@ impl Cards {
         if let Some(notice) = self.notice_view() {
             return notice;
         }
-        if let Some(items) = &self.config.edge_menu.items {
-            return self.custom_rail(items);
+        if let Some(items) = self.menu_items() {
+            return if self.compact() {
+                self.compact_rail(&items)
+            } else {
+                self.custom_rail(&items)
+            };
         }
         let p = self.config.surface_palette();
         // Rounded ends for the first and last row of a group.
@@ -835,17 +843,14 @@ impl Cards {
                 .into(),
         )
     }
-    pub(super) fn edge_handle(&self) -> Element<'_, Message> {
-        mouse_area(
-            container(text::body(""))
-                .width(Length::Fill)
-                .height(Length::Fill),
-        )
-        .on_enter(Message::Hover(true, true))
-        .on_exit(Message::Hover(true, false))
-        .on_press(Message::EdgeClick)
-        .interaction(mouse::Interaction::Pointer)
-        .into()
+    /// Strip `id` on the screen edge: clear, or the visible handle.
+    pub(super) fn edge_handle(&self, id: window::Id) -> Element<'_, Message> {
+        mouse_area(super::edge_compact::handle(&self.config))
+            .on_enter(Message::EdgeHover(id, true))
+            .on_exit(Message::EdgeHover(id, false))
+            .on_press(Message::EdgeClick(id))
+            .interaction(mouse::Interaction::Pointer)
+            .into()
     }
     pub(super) fn visible_cards(&self) -> Vec<Widget> {
         self.config
@@ -925,7 +930,8 @@ impl Cards {
             mouse::Event::CursorLeft => self.sidebar.hover(false, false, now),
             mouse::Event::CursorMoved { position } => {
                 self.sidebar.pointer = position;
-                let inside = (0. ..=drawer::SIDEBAR_WIDTH as f32).contains(&position.x)
+                let x = self.rail_x();
+                let inside = (x..=x + self.rail_width() as f32).contains(&position.x)
                     && (0. ..=self.controls_height() as f32).contains(&position.y);
                 if inside != self.sidebar.hovered {
                     self.sidebar.hover(false, inside, now);
