@@ -253,6 +253,7 @@ pub fn widget_group(pointer: &str) -> Option<&'static str> {
         "enabled_widgets" | "widgets_visible" | "widget_order" | "widget_display"
         | "widget_positions" | "widget_sizes" | "widget_monitors" | "monitor_layouts"
         | "placement" => "Widget arrangement",
+        "edge_menu" => "Widget arrangement",
         "sidebar_slide" | "show_explanations" | "settings_animations" | "onboarded"
         | "setup_dismissed" => "Settings app",
         key if key.starts_with("setup_followup_") => "Settings app",

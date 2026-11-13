@@ -101,7 +101,7 @@ impl Widget {
 }
 
 pub const SIDEBAR_WIDTH: u32 = 212;
-pub const SIDEBAR_HEIGHT: u32 = 580;
+pub const SIDEBAR_HEIGHT: u32 = 618;
 /// The rail's layout, top down; `FIRST_ROW` is where the draggable rows
 /// start, so a pointer position maps to a row.
 pub const RAIL_PADDING: f32 = 12.;
@@ -114,7 +114,10 @@ pub const ROW_STEP: f32 = 42.;
 pub const ROW_HEIGHT: f32 = 40.;
 pub const CARD_GAP: f32 = 14.;
 pub const EDGE_DWELL: Duration = Duration::from_secs(1);
-const HIDDEN_MARGIN: i32 = -(SIDEBAR_WIDTH as i32) - 8;
+/// How far past the edge a hidden menu waits, beyond its own width.
+const HIDDEN_PAST: i32 = 8;
+/// The slide's easing rate, as it always was.
+pub const SLIDE_RATE: f32 = 22.;
 
 pub struct Sidebar {
     pub visible: bool,
@@ -126,6 +129,13 @@ pub struct Sidebar {
     /// Opened from the keyboard (`halcyon --toggle drawer`): the row the
     /// keyboard is on. The menu holds the keyboard only then.
     pub focus: Option<usize>,
+    /// How long the pointer rests on the edge strip before the menu opens;
+    /// `None` when only a click on the strip opens it.
+    pub dwell: Option<Duration>,
+    /// The menu surface's width, which it slides out of sight by.
+    pub width: u32,
+    /// The slide's easing rate (`SLIDE_RATE` as it always was).
+    pub rate: f32,
     dismiss_at: Option<Instant>,
     reveal_at: Option<Instant>,
     last_frame: Instant,
@@ -140,6 +150,9 @@ impl Sidebar {
             pointer: Point::ORIGIN,
             drag: None,
             focus: None,
+            dwell: Some(EDGE_DWELL),
+            width: SIDEBAR_WIDTH,
+            rate: SLIDE_RATE,
             dismiss_at: None,
             reveal_at: None,
             last_frame: Instant::now(),
@@ -165,8 +178,8 @@ impl Sidebar {
             if !entered {
                 self.reveal_at = None;
             } else if !self.visible {
-                if !was_hovered {
-                    self.reveal_at = Some(now + EDGE_DWELL);
+                if !was_hovered && let Some(dwell) = self.dwell {
+                    self.reveal_at = Some(now + dwell);
                     self.last_frame = now;
                 }
                 self.dismiss_at = None;
@@ -227,13 +240,14 @@ impl Sidebar {
             self.progress = target;
             return;
         }
-        self.progress += (target - self.progress) * (1. - (-22. * dt).exp());
+        self.progress += (target - self.progress) * (1. - (-self.rate * dt).exp());
         if (target - self.progress).abs() < 0.005 {
             self.progress = target;
         }
     }
     pub fn margin(&self) -> i32 {
-        (HIDDEN_MARGIN as f32 * (1. - self.progress)).round() as i32
+        let hidden = -(self.width as i32) - HIDDEN_PAST;
+        (hidden as f32 * (1. - self.progress)).round() as i32
     }
 }
 
@@ -243,6 +257,10 @@ pub enum DrawerItem {
     Widget(Widget),
     Arrange,
     Settings,
+    /// Opens the menu's page in Settings.
+    Customize,
+    /// The customized menu's item at this index of its list.
+    Entry(usize),
 }
 /// What a key does in the open edge menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -266,7 +284,8 @@ impl DrawerKey {
             Key::Named(Named::ArrowDown) if modifiers.alt() => Self::MoveDown,
             Key::Named(Named::Tab) if modifiers.shift() => Self::Previous,
             Key::Named(Named::Tab | Named::ArrowDown) => Self::Next,
-            Key::Named(Named::ArrowUp) => Self::Previous,
+            Key::Named(Named::ArrowUp | Named::ArrowLeft) => Self::Previous,
+            Key::Named(Named::ArrowRight) => Self::Next,
             Key::Named(Named::Enter) => Self::Activate,
             Key::Character(c) if c.as_str() == " " => Self::Activate,
             _ => return None,
@@ -428,6 +447,22 @@ mod tests {
         assert!(!sidebar.visible);
         assert!(sidebar.margin() < -(SIDEBAR_WIDTH as i32));
         assert!(!sidebar.animating());
+    }
+    #[test]
+    fn click_only_never_opens_on_hover_and_the_delay_is_the_setting() {
+        let now = Instant::now();
+        let mut sidebar = Sidebar::new();
+        sidebar.dwell = None;
+        sidebar.hover(true, true, now);
+        sidebar.tick(now + Duration::from_secs(10), true);
+        assert!(!sidebar.visible, "click only");
+        sidebar.dwell = Some(Duration::from_millis(250));
+        sidebar.hover(true, false, now);
+        sidebar.hover(true, true, now);
+        sidebar.tick(now + Duration::from_millis(249), true);
+        assert!(!sidebar.visible);
+        sidebar.tick(now + Duration::from_millis(250), true);
+        assert!(sidebar.visible);
     }
     #[test]
     fn brief_edge_visits_cancel_and_reentry_starts_a_new_second() {

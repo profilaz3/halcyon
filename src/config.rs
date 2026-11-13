@@ -2,6 +2,7 @@ use crate::drawer::Widget;
 use cosmic::iced::Color;
 use serde::{Deserialize, Serialize};
 
+pub mod edge_menu;
 pub mod monitors;
 mod widget_colors;
 
@@ -76,6 +77,9 @@ pub struct Config {
     /// The edge sidebar slides in and out; off, it appears and hides at
     /// once (Pop!_OS › Motion).
     pub sidebar_slide: bool,
+    /// The menu on the screen edge: its strip, how it opens, what it lists.
+    #[serde(default, skip_serializing_if = "edge_menu::EdgeMenu::is_default")]
+    pub edge_menu: edge_menu::EdgeMenu,
     pub settings_animations: bool,
     /// Explanations are shown under every setting instead of behind a "?".
     pub show_explanations: bool,
@@ -131,6 +135,7 @@ impl Default for Config {
             focus: FocusPreferences::default(),
             devices: DevicesPreferences::default(),
             sidebar_slide: true,
+            edge_menu: edge_menu::EdgeMenu::default(),
             settings_animations: true,
             show_explanations: false,
             activity_island: Default::default(),
@@ -283,6 +288,7 @@ impl Config {
         self.materials.validate()?;
         self.music.validate()?;
         self.focus.validate()?;
+        self.edge_menu.validate()?;
         for widget in Widget::ALL.into_iter().filter(|widget| !widget.is_tool()) {
             let (min, max) = RefreshIntervals::bounds(widget);
             if !(min..=max).contains(&self.refresh_intervals.seconds(widget)) {

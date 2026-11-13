@@ -11,6 +11,7 @@ mod design;
 mod desktop;
 pub(super) use desktop::host::Host;
 mod desktop_icons;
+mod edge_menu;
 pub(super) mod explain;
 pub(super) mod focus;
 pub(super) mod home;
@@ -702,6 +703,7 @@ impl Settings {
             Page::Moments => self.automation_page(),
             Page::AdaptiveLooks => self.automation_page(),
             Page::Builder => self.recipe_page(),
+            Page::EdgeMenu => self.edge_menu_page(),
         };
         let pinned = !searching && self.page == Page::DesktopAppearance && self.appearance_pinned();
         // Unpinned, System appearance keeps a fixed strip above its scroll

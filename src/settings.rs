@@ -26,6 +26,7 @@ mod direct;
 #[cfg(test)]
 mod display_tests;
 mod drafts;
+mod edge_menu;
 mod escape;
 mod legacy;
 mod icon_packs;
@@ -129,6 +130,8 @@ pub enum Page {
     Builder,
     /// Every recorded change, pinned at the bottom of the sidebar.
     Changes,
+    /// The edge menu's strip and items, a subpage of Widgets.
+    EdgeMenu,
 }
 impl Page {
     /// Home, then one root per part of the desktop, each named for what it
@@ -154,7 +157,7 @@ impl Page {
     ];
     /// Pinned below the roots, at the bottom of the sidebar.
     const PINNED: Self = Self::Changes;
-    const ALL: [Self; 37] = [
+    const ALL: [Self; 38] = [
         Self::Home,
         Self::Overview,
         Self::WidgetLayout,
@@ -192,6 +195,7 @@ impl Page {
         Self::AdaptiveLooks,
         Self::Builder,
         Self::Changes,
+        Self::EdgeMenu,
     ];
     /// The flat destination a page is reached through; used for search context.
     fn nav(self) -> Self {
@@ -372,6 +376,7 @@ impl Page {
             Self::AdaptiveLooks => "adaptive",
             Self::Builder => "builder",
             Self::Changes => "changes",
+            Self::EdgeMenu => "edge-menu",
         }
     }
     fn title(self) -> &'static str {
@@ -413,6 +418,7 @@ impl Page {
             Self::AdaptiveLooks => "Adaptive looks",
             Self::Builder => "Widget builder",
             Self::Changes => "Changes",
+            Self::EdgeMenu => "Edge menu",
         }
     }
     fn parse(value: &str) -> Self {
@@ -438,6 +444,7 @@ impl Page {
             "focus-timer" => "focus",
             "app-settings" => "general",
             "schedules" => "desktop-automation",
+            "edge" | "drawer" | "sidebar" | "edge-panel" => "edge-menu",
             "history" | "recent" | "recent-changes" | "restore" => "changes",
             _ => value,
         };
@@ -471,6 +478,8 @@ impl Page {
             Self::WeatherEffects => Self::DesktopWallpaper.key(),
             Self::Home => Self::Desktop.key(),
             Self::DesktopPanel | Self::ActivityIsland => Self::DesktopDock.key(),
+            // Counted with the Widgets page it opens from.
+            Self::EdgeMenu => Self::Widgets.key(),
             page => page.key(),
         }
     }
@@ -523,6 +532,7 @@ impl Page {
             Self::General => "preferences-system-symbolic",
             Self::DesktopWallpaper => "preferences-desktop-wallpaper-symbolic",
             Self::WeatherEffects => "weather-showers-symbolic",
+            Self::EdgeMenu => "view-list-symbolic",
             Self::Desktop
             | Self::DesktopDock
             | Self::DesktopPanel
@@ -726,6 +736,8 @@ pub enum Message {
     /// The system's “enable animations”; `None` when it can't be read.
     SystemMotion(u64, Option<bool>),
     WindowRules(window_rules::Message),
+    /// The Edge menu page.
+    EdgeMenu(edge_menu::Edit),
     Shortcuts(shortcuts::Message),
     Wallpaper(wallpaper::Message),
     Rain(rain::Edit),
@@ -1038,6 +1050,7 @@ pub struct Settings {
     system_reduce_motion: bool,
     motion_generation: u64,
     window_rules: window_rules::WindowRulesEditor,
+    edge_menu: edge_menu::EdgeMenuPage,
     shortcuts: shortcuts::ShortcutsEditor,
     wallpaper: wallpaper::WallpaperEditor,
     desktop_icons: desktop_icons::DesktopIconsEditor,
@@ -1314,6 +1327,7 @@ impl cosmic::Application for Settings {
             system_reduce_motion: false,
             motion_generation: 0,
             window_rules: window_rules::WindowRulesEditor::default(),
+            edge_menu: edge_menu::EdgeMenuPage::default(),
             shortcuts: shortcuts::ShortcutsEditor::default(),
             wallpaper: wallpaper::WallpaperEditor::default(),
             desktop_icons: desktop_icons::DesktopIconsEditor::default(),
@@ -1618,6 +1632,25 @@ impl cosmic::Application for Settings {
                     .with(("schedule-city", self.schedule_city_search.generation))
                     .map(|((_, generation), _)| Message::SearchScheduleCityAfter(generation)),
             );
+        }
+        if self.edge_menu.reorder.source.is_some() {
+            subscriptions.push(cosmic::iced::event::listen_with(
+                |event, _, _| match event {
+                    cosmic::iced::Event::Mouse(cosmic::iced::mouse::Event::ButtonReleased(
+                        cosmic::iced::mouse::Button::Left,
+                    )) => Some(Message::EdgeMenu(edge_menu::Edit::DragDrop)),
+                    cosmic::iced::Event::Mouse(cosmic::iced::mouse::Event::CursorLeft)
+                    | cosmic::iced::Event::Window(window::Event::Unfocused)
+                    | cosmic::iced::Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
+                        key:
+                            cosmic::iced::keyboard::Key::Named(
+                                cosmic::iced::keyboard::key::Named::Escape,
+                            ),
+                        ..
+                    }) => Some(Message::EdgeMenu(edge_menu::Edit::DragCancel)),
+                    _ => None,
+                },
+            ));
         }
         if self.reorder.source.is_some() || self.devbox_reorder.source.is_some() {
             subscriptions.push(cosmic::iced::event::listen_with(
@@ -2217,6 +2250,10 @@ impl cosmic::Application for Settings {
 
         if matches!(self.page, Page::Calendar | Page::Projects) {
             self.samples.update(&self.config);
+        }
+        if self.page == Page::EdgeMenu {
+            self.samples
+                .update_edge(&self.config, self.edge_menu.available.clone());
         }
         #[cfg(test)]
         if let Some(before) = before
@@ -3012,6 +3049,7 @@ impl Settings {
                 ));
             }
             Message::Tools(message) => return self.update_tools(message),
+            Message::EdgeMenu(edit) => return self.edge_menu_update(edit),
             Message::AdaptivePreview(look, phase) => {
                 if self.page != Page::AdaptiveLooks {
                     return Task::none();
@@ -5234,6 +5272,11 @@ impl Settings {
             Page::DesktopWorkspaces => self.workspaces.open(),
             Page::DesktopMotion => self.motion.open(),
             Page::DesktopWindowRules => self.window_rules.open(),
+            Page::EdgeMenu => {
+                self.edge_menu.open(&self.config);
+                self.samples
+                    .update_edge(&self.config, self.edge_menu.available.clone());
+            }
             Page::DesktopShortcuts => self.shortcuts.open(),
             // Clock reads it too: the hills and its stage need the picture.
             Page::DesktopWallpaper | Page::WeatherEffects | Page::Appearance => {
@@ -6924,6 +6967,7 @@ mod tests {
     include!("settings/icon_packs_tests.rs");
     include!("settings/glance_off_tests.rs");
     include!("settings/looks_tests.rs");
+    include!("settings/edge_menu_tests.rs");
 
     /// What Wallpaper & colors recommends for a solid color background.
     fn recommended_color(rgb: [f32; 3]) -> [u8; 3] {
