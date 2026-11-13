@@ -347,30 +347,6 @@ impl Applet {
             ),
         )
     }
-    /// Beside the devices button under a Standard bar, the settings fit
-    /// only as an icon.
-    pub(super) fn devices_settings_button<'a>(
-        &self,
-        palette: Palette,
-        tint: Color,
-        reveal: f32,
-    ) -> Element<'a, Message> {
-        self.tip(
-            palette,
-            widget::button::icon(
-                widget::icon::from_name("preferences-system-symbolic").symbolic(true),
-            )
-            .icon_size(16)
-            .padding([8, 14])
-            .width(44)
-            .height(32)
-            .id("activity-preferences".into())
-            .class(capsule_button(palette, tint, reveal, Role::Quiet))
-            .on_press(Message::Settings("panel")),
-            "Activity settings",
-            widget::tooltip::Position::Top,
-        )
-    }
     /// The banner's and the Bluetooth card's buttons.
     pub(super) fn devices_actions<'a>(
         &self,

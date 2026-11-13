@@ -356,7 +356,7 @@ pub(super) const STARTUP: SearchHit = hit(
 pub(super) const ACTIVITY_ISLAND: SearchHit = hit(
     Page::ActivityIsland,
     "Activity island",
-    "activity pill island capsule notifications do not disturb dnd camera microphone privacy bluetooth devices battery low battery device connected headphones meetings music media style dark theme",
+    "activity pill island capsule notifications do not disturb dnd camera microphone privacy bluetooth devices battery low battery device connected headphones meetings music media style dark theme shelf files drop tray",
     false,
 )
 .names_page()
