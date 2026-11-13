@@ -29,16 +29,16 @@ mod plan;
 mod presets;
 pub mod themes;
 
-pub use capture::{Capture, capture};
+pub use capture::{Capture, capture, icon_style, resolve_icon_theme, resolve_icon_theme_in};
 pub use desktop_look::{DISPLAY_ARRANGEMENT, DISPLAY_BACKGROUNDS, OWN_WALLPAPER};
 pub use format::{
     AppearanceLook, Applets, BackgroundLook, ColorChoice, Corners, DesktopIconsLook, DisplaysName,
-    Domain, Exported, FitName, FrostedLook, Glass, GradientLook, LEGACY_VERSION, LOCAL_ONLY,
-    MAX_DESCRIPTION, MAX_PROFILE_BYTES, ModeName, OrderName, PanelLook, Profile, ProfileError, Rgb,
-    SlideshowLook, SourceLook, SpacingChoice, TilingScope, TypingActionName, VERSION, VERSION_2,
-    VERSION_20, VariantLook, WallpaperLook, WindowLook, WindowsBehaviorLook, WorkspaceLayoutName,
-    WorkspaceModeName, WorkspacesLook, export, export_local, import, import_local,
-    valid_description,
+    Domain, Exported, FitName, FrostedLook, Glass, GradientLook, IconShape, LEGACY_VERSION,
+    LOCAL_ONLY, MAX_DESCRIPTION, MAX_PROFILE_BYTES, ModeName, OrderName, PanelLook, Profile,
+    ProfileError, Rgb, SlideshowLook, SourceLook, SpacingChoice, TilingScope, TypingActionName,
+    VERSION, VERSION_2, VERSION_20, VERSION_21, VariantLook, WallpaperLook, WindowLook,
+    WindowsBehaviorLook, WorkspaceLayoutName, WorkspaceModeName, WorkspacesLook, export,
+    export_local, import, import_local, valid_description,
 };
 pub use library::{ProfileEntry, ProfileId, ProfileLibrary};
 pub use plan::{

@@ -21,6 +21,7 @@ use crate::desktop::appearance::{
     VariantValues, WindowEffect,
 };
 use crate::desktop::desktop_icons::DesktopIconsDraft;
+use crate::desktop::icon_packs::{self, overlay};
 use crate::desktop::panels::{PanelDraft, PanelKind, Setting};
 use crate::desktop::store::widget::{self, WidgetGroup};
 use crate::desktop::store::{DesktopStore, rule_for};
@@ -226,7 +227,18 @@ fn capture_appearance(
         }
     }
     match draft.icon_theme() {
-        Setting::Known(name) => look.icon_theme = Some(name),
+        // Halcyon's overlay is recorded as what it is made of: the base
+        // theme, the app icon shape and the folder tint.
+        Setting::Known(name) => {
+            // A plain theme records only its name, so captures stay in
+            // the oldest format that holds them.
+            let style = icon_style(store, &name);
+            if style.active() {
+                look.icon_shape = Some(style.shape);
+                look.folder_tint = Some(style.tint);
+            }
+            look.icon_theme = style.base.or(Some(name));
+        }
         Setting::Unsupported(_) => unsupported("Icon theme"),
     }
     let mut window = WindowLook::default();
@@ -270,6 +282,49 @@ fn capture_appearance(
         }
     }
     Ok(look)
+}
+
+/// The icon style the desktop shows with `icon_theme`. Halcyon's own
+/// records are read only when the theme is its overlay.
+pub fn icon_style(store: &DesktopStore, icon_theme: &str) -> overlay::Style {
+    let paths = overlay::is_overlay(icon_theme)
+        .then(|| icon_packs::Paths::from_env(store.fixture_root()))
+        .flatten();
+    let saved = paths.as_ref().map(overlay::Style::load).unwrap_or_default();
+    overlay::desktop_style(paths.as_ref(), icon_theme, &saved)
+}
+
+/// Names the base theme instead of one of Halcyon's overlays, which exist
+/// only on the computer that built them (older looks saved the overlay's
+/// name). An overlay whose base isn't known here is left out. Returns
+/// whether anything changed.
+pub fn resolve_icon_theme(profile: &mut Profile, paths: Option<&icon_packs::Paths>) -> bool {
+    let Some(look) = profile.appearance.as_mut() else {
+        return false;
+    };
+    let Some(name) = look
+        .icon_theme
+        .clone()
+        .filter(|name| overlay::is_overlay(name))
+    else {
+        return false;
+    };
+    look.icon_theme = overlay::base_theme(paths, &name);
+    true
+}
+
+/// `resolve_icon_theme` with the store's icon directories.
+pub fn resolve_icon_theme_in(profile: &mut Profile, store: &DesktopStore) -> bool {
+    let named = profile
+        .appearance
+        .as_ref()
+        .and_then(|look| look.icon_theme.as_deref())
+        .is_some_and(overlay::is_overlay);
+    named
+        && resolve_icon_theme(
+            profile,
+            icon_packs::Paths::from_env(store.fixture_root()).as_ref(),
+        )
 }
 
 /// Every window behavior value this version can represent and profiles

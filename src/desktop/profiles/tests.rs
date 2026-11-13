@@ -695,7 +695,7 @@ fn library_save_replaces_exactly_one_look_and_keeps_before_themes() {
     let first = library.create(&Profile::new("Desk").unwrap()).unwrap();
     let other = library.create(&Profile::new("Other").unwrap()).unwrap();
     let mut edited = Profile::new("Desk, edited").unwrap();
-    edited.version = VERSION;
+    edited.version = VERSION_21;
     edited.description = Some("A quiet desk for long afternoons.".into());
     library.save(&first, &edited).unwrap();
     assert_eq!(library.load(&first).unwrap(), edited);
@@ -714,7 +714,7 @@ fn library_save_replaces_exactly_one_look_and_keeps_before_themes() {
 fn descriptions_need_version_21_and_one_short_line() {
     let mut profile = Profile::new("Described").unwrap();
     profile.description = Some("Soft light and room to think.".into());
-    assert_eq!(profile.written_version(), VERSION);
+    assert_eq!(profile.written_version(), VERSION_21);
     let exported = export(&profile).unwrap();
     let loaded = import(&exported.bytes).unwrap();
     assert_eq!(loaded.description, profile.description);
@@ -726,7 +726,7 @@ fn descriptions_need_version_21_and_one_short_line() {
     }
     assert!(valid_description(&"x".repeat(160)));
     profile.description = None;
-    assert!(profile.written_version() < VERSION);
+    assert!(profile.written_version() < VERSION_21);
 }
 
 #[test]
@@ -969,7 +969,10 @@ fn windows_workspaces_profile_roundtrip_and_legacy_import() {
             format::VERSION_4
         } else if matches!(preset.id, "rain" | "snow" | "fog") {
             format::VERSION_19
-        } else if matches!(preset.id, "tidal" | "paper-studio" | "carbon") {
+        } else if matches!(preset.id, "halcyon" | "calm" | "rose" | "tidal" | "carbon") {
+            // An app icon shape or accent folders need the newest record.
+            format::VERSION
+        } else if preset.id == "paper-studio" {
             format::VERSION_9
         } else {
             format::VERSION_7
@@ -1753,4 +1756,255 @@ fn an_older_look_with_nothing_underneath_still_leaves_the_clock() {
     assert_eq!(applied["enabled_widgets"], json!([]));
     assert!(after.widget_visible(Widget::Clock));
     assert!(after.widget_visible(Widget::Weather));
+}
+
+/// The desk's catalogs with Halcyon's overlay read and built under its own
+/// root (`<root>/icons`, where the fixture's icon themes live).
+fn shaped_installed(desk: &Desk) -> Installed {
+    let mut installed = desk.installed();
+    let root = &desk.fixture.0;
+    let icons = root.join("icons");
+    installed.icon_paths = Some(crate::desktop::icon_packs::Paths {
+        icons: icons.clone(),
+        search: vec![icons],
+        data: root.join("data/halcyon"),
+        cache: root.join("cache/halcyon/icon-packs"),
+        config: root.join("app"),
+    });
+    installed
+}
+
+/// The COSMIC icon theme key as written.
+fn icon_theme_key(store: &DesktopStore) -> String {
+    let snapshot = store
+        .load(&crate::desktop::appearance::AppearanceDraft::keys())
+        .unwrap();
+    crate::desktop::appearance::AppearanceDraft::from_snapshot(snapshot)
+        .icon_theme()
+        .known()
+        .cloned()
+        .unwrap()
+}
+
+fn shaped_look(shape: Option<IconShape>, tint: Option<bool>) -> Profile {
+    let mut look = Profile::new("Shaped").unwrap();
+    look.version = VERSION;
+    look.appearance = Some(AppearanceLook {
+        icon_theme: Some("Cosmic".into()),
+        icon_shape: shape,
+        folder_tint: tint,
+        ..Default::default()
+    });
+    look
+}
+
+fn appearance_only() -> BTreeSet<Domain> {
+    [Domain::Appearance].into_iter().collect()
+}
+
+#[test]
+fn icon_shape_and_tint_apply_build_the_overlay_and_undo_restores_them() {
+    use crate::desktop::icon_packs::overlay;
+    let desk = desk(
+        "profile-icon-shape",
+        Srgb::new(0.3, 0.4, 0.7),
+        Srgb::new(0.2, 0.4, 0.7),
+        "teal",
+    );
+    let store = desk.store();
+    let installed = shaped_installed(&desk);
+    let paths = installed.icon_paths.clone().unwrap();
+    // A plain desktop captures only its theme, in its old format.
+    let plain = capture(&store, "Plain").unwrap().profile;
+    let look = plain.appearance.as_ref().unwrap();
+    assert_eq!(look.icon_theme.as_deref(), Some("Cosmic"));
+    assert_eq!((look.icon_shape, look.folder_tint), (None, None));
+
+    let circle = shaped_look(Some(IconShape::Circle), Some(true));
+    let plan = plan(&store, &installed, &circle, &appearance_only());
+    assert!(plan.can_apply(), "{:?}", plan.domains);
+    let build = plan.icon_build().expect("an overlay to build").clone();
+    assert_eq!(build.slot, overlay::SLOTS[0]);
+    assert_eq!(build.request.base, "Cosmic");
+    assert_eq!(build.request.shape, IconShape::Circle);
+    assert!(build.request.tint.is_some());
+    assert!(!build.ready());
+    let style = plan.icon_style().unwrap();
+    assert_eq!(style.base.as_deref(), Some("Cosmic"));
+    assert!(style.shape == IconShape::Circle && style.tint);
+    let changes = &plan
+        .domains
+        .iter()
+        .find(|part| part.domain == Domain::Appearance)
+        .unwrap()
+        .changes;
+    assert!(changes.iter().any(|change| change == "App icon shape"));
+    assert!(changes.iter().any(|change| change == "Folder colors"));
+    // Planning wrote nothing.
+    assert!(!paths.icons.join(overlay::SLOTS[0]).exists());
+
+    let first = apply(&store, &plan).unwrap();
+    assert_eq!(icon_theme_key(&store), overlay::SLOTS[0]);
+    let record = overlay::recorded(&paths, overlay::SLOTS[0]).unwrap();
+    assert_eq!(record.base, "Cosmic");
+    assert_eq!(record.shape, IconShape::Circle);
+    assert!(record.tint.is_some());
+    // Capture names the base and the style, never the overlay.
+    let shaped = capture(&store, "Shaped now").unwrap().profile;
+    let look = shaped.appearance.as_ref().unwrap();
+    assert_eq!(look.icon_theme.as_deref(), Some("Cosmic"));
+    assert_eq!(look.icon_shape, Some(IconShape::Circle));
+    assert_eq!(look.folder_tint, Some(true));
+    let exported = export(&shaped).unwrap();
+    let text = String::from_utf8(exported.bytes.clone()).unwrap();
+    assert!(!text.contains("Halcyon-Shaped"), "{text}");
+    assert_eq!(import(&exported.bytes).unwrap().version, VERSION);
+    // Applying the same look again changes nothing and builds nothing.
+    let again = super::plan(&store, &installed, &circle, &appearance_only());
+    assert!(again.icon_build().is_none());
+
+    // A second shape goes to the other slot; Undo returns to the first,
+    // whose own record still says circle.
+    let squircle = shaped_look(Some(IconShape::Squircle), None);
+    let plan = super::plan(&store, &installed, &squircle, &appearance_only());
+    assert_eq!(plan.icon_build().unwrap().slot, overlay::SLOTS[1]);
+    assert!(plan.icon_style().unwrap().tint, "the tint is left as is");
+    let second = apply(&store, &plan).unwrap();
+    assert_eq!(icon_theme_key(&store), overlay::SLOTS[1]);
+    let look = capture(&store, "x").unwrap().profile.appearance.unwrap();
+    assert_eq!(look.icon_shape, Some(IconShape::Squircle));
+    assert_eq!(look.folder_tint, Some(true));
+    store.undo_latest(&second.id).unwrap();
+    assert_eq!(icon_theme_key(&store), overlay::SLOTS[0]);
+    let look = capture(&store, "x").unwrap().profile.appearance.unwrap();
+    assert_eq!(look.icon_shape, Some(IconShape::Circle));
+    store.undo_latest(&first.id).unwrap();
+    assert_eq!(icon_theme_key(&store), "Cosmic");
+    let look = capture(&store, "x").unwrap().profile.appearance.unwrap();
+    assert_eq!(look.icon_theme.as_deref(), Some("Cosmic"));
+    assert_eq!((look.icon_shape, look.folder_tint), (None, None));
+    // Everything Halcyon built stayed in the fixture.
+    assert!(paths.icons.starts_with(&desk.fixture.0));
+}
+
+#[test]
+fn old_records_leave_the_icon_shape_and_overlay_names_resolve_to_their_base() {
+    use crate::desktop::icon_packs::overlay;
+    let desk = desk(
+        "profile-icon-old",
+        Srgb::new(0.3, 0.4, 0.7),
+        Srgb::new(0.2, 0.4, 0.7),
+        "teal",
+    );
+    let store = desk.store();
+    let installed = shaped_installed(&desk);
+    let circle = shaped_look(Some(IconShape::Circle), Some(false));
+    let plan = plan(&store, &installed, &circle, &appearance_only());
+    apply(&store, &plan).unwrap();
+    assert_eq!(icon_theme_key(&store), overlay::SLOTS[0]);
+
+    // A version 21 record has no shape or tint: it reads as leave as is.
+    let old = br#"{"format": "desktop-cards-profile", "version": 21, "name": "Old",
+        "appearance": {"icon_theme": "Cosmic"}}"#;
+    let old = import(old).unwrap();
+    let look = old.appearance.as_ref().unwrap();
+    assert_eq!((look.icon_shape, look.folder_tint), (None, None));
+    assert!(!look.has_icon_style());
+    let plan = super::plan(&store, &installed, &old, &appearance_only());
+    assert!(plan.icon_build().is_none(), "the shaped icons stay");
+    let style = plan.icon_style().unwrap();
+    assert_eq!(style.shape, IconShape::Circle);
+    assert!(!plan.domains.iter().any(|part| {
+        part.changes
+            .iter()
+            .any(|change| change == "App icon shape" || change == "Folder colors")
+    }));
+
+    // A record from an older save naming the overlay applies its base.
+    let named = br#"{"format": "desktop-cards-profile", "version": 21, "name": "Named",
+        "appearance": {"icon_theme": "Halcyon-Shaped"}}"#;
+    let mut named = import(named).unwrap();
+    let plan = super::plan(&store, &installed, &named, &appearance_only());
+    assert_eq!(
+        plan.icon_style().unwrap().base.as_deref(),
+        Some("Cosmic"),
+        "planned as its base"
+    );
+    assert!(resolve_icon_theme(
+        &mut named,
+        installed.icon_paths.as_ref()
+    ));
+    assert_eq!(
+        named.appearance.as_ref().unwrap().icon_theme.as_deref(),
+        Some("Cosmic")
+    );
+    // An overlay whose base isn't known here is dropped, not saved.
+    let mut unknown = import(
+        br#"{"format": "desktop-cards-profile", "version": 21, "name": "Away",
+        "appearance": {"icon_theme": "Halcyon-Shaped-Alt"}}"#,
+    )
+    .unwrap();
+    let empty = crate::desktop::icon_packs::Paths {
+        config: desk.fixture.0.join("nowhere"),
+        ..installed.icon_paths.clone().unwrap()
+    };
+    assert!(resolve_icon_theme(&mut unknown, Some(&empty)));
+    assert_eq!(unknown.appearance.as_ref().unwrap().icon_theme, None);
+
+    // Shapes need format 22.
+    let mut early = shaped_look(Some(IconShape::Circle), None);
+    early.version = VERSION_21;
+    assert!(early.validate().is_err());
+}
+
+#[test]
+fn saved_looks_never_keep_the_overlay_name() {
+    use crate::desktop::icon_packs::overlay;
+    let desk = desk(
+        "profile-icon-saved",
+        Srgb::new(0.3, 0.4, 0.7),
+        Srgb::new(0.2, 0.4, 0.7),
+        "teal",
+    );
+    let store = desk.store();
+    let installed = shaped_installed(&desk);
+    let look = shaped_look(Some(IconShape::Rounded), Some(true));
+    let plan = plan(&store, &installed, &look, &appearance_only());
+    apply(&store, &plan).unwrap();
+    assert_eq!(icon_theme_key(&store), overlay::SLOTS[0]);
+    // A look that names the overlay (as an older capture did) is saved
+    // with its base.
+    let mut named = shaped_look(None, None);
+    named.appearance.as_mut().unwrap().icon_theme = Some(overlay::SLOTS[0].into());
+    let library = ProfileLibrary::new(&store);
+    let id = library.create(&named).unwrap();
+    let stored = library.load(&id).unwrap();
+    assert_eq!(
+        stored.appearance.as_ref().unwrap().icon_theme.as_deref(),
+        Some("Cosmic")
+    );
+    library.save(&id, &named).unwrap();
+    let file = stored_file(&desk, &id);
+    assert!(!file.contains("Halcyon-Shaped"), "{file}");
+    // A fresh capture saved as is says the same.
+    let captured = capture(&store, "Captured").unwrap().profile;
+    let id = library.create(&captured).unwrap();
+    let file = stored_file(&desk, &id);
+    assert!(!file.contains("Halcyon-Shaped"), "{file}");
+    assert!(file.contains("\"icon_shape\": \"rounded\""), "{file}");
+}
+
+/// A library file's text, found by its name below the fixture.
+fn stored_file(desk: &Desk, id: &ProfileId) -> String {
+    desk.fixture
+        .tree()
+        .into_iter()
+        .find(|(path, _)| {
+            path.extension().is_some_and(|ext| ext == "json")
+                && path
+                    .file_name()
+                    .is_some_and(|file| file.to_string_lossy().starts_with(id.as_str()))
+        })
+        .and_then(|(_, bytes)| String::from_utf8(bytes?).ok())
+        .expect("the stored look")
 }

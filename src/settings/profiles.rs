@@ -26,6 +26,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 pub mod colors;
 pub mod discovery;
+pub mod icon_art;
 pub mod mix;
 pub mod packages;
 pub mod previews;
@@ -159,6 +160,11 @@ pub enum Message {
     ShareImage,
     CancelShare,
     ShareReady(u64, Result<Vec<u8>, String>),
+    /// The shaped icon overlay a look's Apply asked for was built (its
+    /// slot) or couldn't be.
+    IconsReady(u64, Result<String, String>),
+    /// Sample icons drawn in a look's shape and tint.
+    IconArt(Vec<(icon_art::Key, Option<Handle>)>),
     /// A file chooser finished: request ID and the file's bytes, `None`
     /// when cancelled.
     Imported(u64, Result<Option<Vec<u8>>, String>),
@@ -255,6 +261,45 @@ enum Pending {
     /// Make built-in to a chosen file: what it left out, and the fonts and
     /// icons it may fall back from.
     BuiltIn(Vec<&'static str>, Vec<String>),
+}
+
+/// The shaped icon overlay a look's Apply needs, built off the UI thread
+/// before the change is written.
+#[derive(Clone, Debug)]
+pub struct IconJob {
+    id: u64,
+    build: crate::desktop::icon_packs::overlay::LookBuild,
+    store: DesktopStore,
+}
+impl IconJob {
+    /// Builds the overlay. Blocking.
+    pub fn run(self) -> Message {
+        let result = self.build.run(self.store.fixture_root(), Some(&self.store));
+        Message::IconsReady(self.id, result)
+    }
+}
+pub fn icon_task<X: Into<Y> + 'static, Y: 'static>(
+    job: IconJob,
+    wrap: fn(Message) -> X,
+) -> cosmic::Task<Y> {
+    cosmic::task::future(async move {
+        let id = job.id;
+        let message = tokio::task::spawn_blocking(move || job.run())
+            .await
+            .unwrap_or_else(|error| Message::IconsReady(id, Err(error.to_string())));
+        wrap(message)
+    })
+}
+pub fn icon_art_task<X: Into<Y> + 'static, Y: 'static>(
+    job: icon_art::Job,
+    wrap: fn(Message) -> X,
+) -> cosmic::Task<Y> {
+    cosmic::task::future(async move {
+        let drawn = tokio::task::spawn_blocking(move || job.run())
+            .await
+            .unwrap_or_default();
+        wrap(Message::IconArt(drawn))
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -416,6 +461,11 @@ pub struct Preview {
     /// Window behavior after the plan: the active window hint and title
     /// buttons the preview draws.
     pub windows: Option<crate::desktop::windows::WindowsDraft>,
+    /// The icons after the plan: base theme, app icon shape and folder tint
+    /// (the desktop's own when Appearance is left out).
+    pub icons: Option<crate::desktop::icon_packs::overlay::Style>,
+    /// The desktop's icons now, for Now and hold to compare.
+    pub icons_now: Option<crate::desktop::icon_packs::overlay::Style>,
 }
 
 /// A preset choice is an intention, not an applied transaction. On reopen
@@ -495,7 +545,15 @@ pub struct ProfilesEditor {
     /// The open studio picker's choices, drawn from the draft.
     studio_choices: Vec<studio::Choice>,
     /// Icons from the draft's icon theme, for its tile.
-    studio_icons: Vec<PathBuf>,
+    studio_icons: Vec<icon_art::Sample>,
+    /// Sample icons from the preview's base theme, for the Looks picture.
+    preview_icons: Vec<icon_art::Sample>,
+    /// Sample icons drawn in a shape or tint; `None`: couldn't be drawn.
+    icon_art: std::collections::HashMap<icon_art::Key, Option<Handle>>,
+    icon_art_jobs: Vec<icon_art::Job>,
+    /// Shaped icon overlays Apply waits for.
+    icon_jobs: Vec<IconJob>,
+    icon_pending: Option<u64>,
     share_pending: Option<(u64, String, bool)>,
     share_source: Option<super::sharing::Scene>,
     share_cancel: Option<tokio::sync::watch::Sender<bool>>,
@@ -1005,6 +1063,7 @@ impl ProfilesEditor {
             && self.recovery.is_none()
             && !self.stale
             && self.pending.is_none()
+            && self.icon_pending.is_none()
             && self.theme_pending.is_none()
             && self.theme_error.is_none()
             && self.conflicts.is_empty()
@@ -1205,6 +1264,23 @@ impl ProfilesEditor {
         };
         let preview = preview(store, plan.as_ref());
         self.plan = plan;
+        let base = preview.icons.as_ref().and_then(|style| style.base.clone());
+        if self
+            .preview
+            .as_ref()
+            .and_then(|p| p.icons.as_ref()?.base.clone())
+            != base
+            || self.preview_icons.is_empty()
+        {
+            self.preview_icons = base.as_deref().map(icon_art::samples).unwrap_or_default();
+        }
+        let samples = self.preview_icons.clone();
+        self.want_preview_art(&samples, &preview);
+        if let Some(now) = preview.icons_now.clone() {
+            let mut current = preview.clone();
+            current.icons = Some(now);
+            self.want_preview_art(&samples, &current);
+        }
         self.preview = Some(preview);
         self.want_backdrop();
     }
@@ -1819,6 +1895,8 @@ impl ProfilesEditor {
             message,
             Message::ShareImage
                 | Message::ShareReady(..)
+                | Message::IconsReady(..)
+                | Message::IconArt(..)
                 | Message::Backdrop(..)
                 | Message::ThemeReady(..)
                 | Message::Exported(..)
@@ -1845,6 +1923,13 @@ impl ProfilesEditor {
             Message::ShareImage => self.share_image(),
             Message::CancelShare => self.cancel_share(),
             Message::ShareReady(id, result) => return self.share_ready(id, result),
+            Message::IconsReady(id, result) => return self.icons_ready(id, result),
+            Message::IconArt(drawn) => {
+                if self.icon_art.len() > 512 {
+                    self.icon_art.clear();
+                }
+                self.icon_art.extend(drawn);
+            }
             Message::Select(selection) => {
                 if self.owner == previews::PreviewKind::Theme {
                     if self.selection != selection || !self.review_open() {
@@ -2222,9 +2307,11 @@ impl ProfilesEditor {
             return Outcome::None;
         }
         let confine = store.fixture_root().map(Path::to_path_buf);
-        let Some(profile) = self.profile().cloned() else {
+        let Some(mut profile) = self.profile().cloned() else {
             return Outcome::None;
         };
+        // Older looks may name Halcyon's overlay, which exists only here.
+        profiles::resolve_icon_theme_in(&mut profile, store);
         // The bytes are fixed now: a later selection change can't alter
         // what the chosen file receives. Shared files never carry this
         // computer's own pictures or displays.
@@ -2361,6 +2448,19 @@ impl ProfilesEditor {
             self.notice = Some(Notice::Error(format!("{reason} Nothing was changed.")));
             return Outcome::None;
         }
+        // A shaped icon overlay is built off the UI thread first; Apply
+        // goes on when it is ready.
+        if let Some(build) = plan.icon_build().filter(|build| !build.ready()) {
+            let job = IconJob {
+                id: self.next_request.wrapping_add(1),
+                build: build.clone(),
+                store: store.clone(),
+            };
+            self.next_request = job.id;
+            self.icon_pending = Some(job.id);
+            self.icon_jobs.push(job);
+            return Outcome::None;
+        }
         match profiles::apply(store, plan) {
             Ok(latest) => {
                 let name = plan.name.clone();
@@ -2412,6 +2512,100 @@ impl ProfilesEditor {
                 Outcome::None
             }
         }
+    }
+
+    /// The overlay Apply waited for: apply now, or say why not.
+    fn icons_ready(&mut self, id: u64, result: Result<String, String>) -> Outcome {
+        if self.icon_pending != Some(id) {
+            return Outcome::None;
+        }
+        self.icon_pending = None;
+        match result {
+            Ok(_) => self.apply(),
+            Err(error) => {
+                self.notice = Some(Notice::Error(format!(
+                    "Can’t adjust the icons: {error}. Nothing was changed."
+                )));
+                Outcome::None
+            }
+        }
+    }
+    /// Whether Apply is waiting for shaped icons to be drawn.
+    pub fn adjusting_icons(&self) -> bool {
+        self.icon_pending.is_some()
+    }
+    pub fn take_icon_jobs(&mut self) -> Vec<IconJob> {
+        std::mem::take(&mut self.icon_jobs)
+    }
+    pub fn take_icon_art_jobs(&mut self) -> Vec<icon_art::Job> {
+        std::mem::take(&mut self.icon_art_jobs)
+    }
+    /// A sample drawn the way `style` shows it, once drawn.
+    pub fn icon_art(&self, key: &icon_art::Key) -> Option<&Handle> {
+        self.icon_art.get(key).and_then(Option::as_ref)
+    }
+    /// Asks for the pictures not drawn or asked for yet.
+    pub(super) fn want_icon_art(&mut self, keys: impl IntoIterator<Item = icon_art::Key>) {
+        let mut wanted: Vec<icon_art::Key> = Vec::new();
+        for key in keys {
+            if !self.icon_art.contains_key(&key) && !wanted.contains(&key) {
+                wanted.push(key);
+            }
+        }
+        if wanted.is_empty() {
+            return;
+        }
+        // Asked once: a failed drawing stays the plain icon.
+        for key in &wanted {
+            self.icon_art.insert(key.clone(), None);
+        }
+        self.icon_art_jobs.push(icon_art::Job { keys: wanted });
+    }
+    /// Sample icons from the preview's base theme, for the Looks picture.
+    pub fn preview_icons(&self) -> &[icon_art::Sample] {
+        &self.preview_icons
+    }
+    /// The preview's sample icons as `preview` shows them: in its shape and
+    /// tint, the plain files until drawn. Empty for another base theme.
+    pub fn preview_pictures(&self, preview: &Preview) -> Vec<icon_art::Picture> {
+        let Some(style) = &preview.icons else {
+            return Vec::new();
+        };
+        let ours = self
+            .preview
+            .as_ref()
+            .and_then(|p| p.icons.as_ref()?.base.as_ref());
+        if style.base.as_ref() != ours {
+            return Vec::new();
+        }
+        let accent = icon_art::accent_of(preview.appearance.as_ref());
+        let dark = preview.appearance.as_ref().is_none_or(|draft| {
+            draft.active_variant() == crate::desktop::appearance::ThemeVariant::Dark
+        });
+        self.preview_icons
+            .iter()
+            .map(|sample| {
+                icon_art::Key::new(sample, style, accent, dark)
+                    .and_then(|key| self.icon_art(&key).cloned())
+                    .map(icon_art::Picture::Drawn)
+                    .unwrap_or_else(|| icon_art::Picture::File(sample.path.clone()))
+            })
+            .collect()
+    }
+    /// The pictures `samples` take in `preview`'s icon style.
+    pub(super) fn want_preview_art(&mut self, samples: &[icon_art::Sample], preview: &Preview) {
+        let Some(style) = &preview.icons else {
+            return;
+        };
+        let accent = icon_art::accent_of(preview.appearance.as_ref());
+        let dark = preview.appearance.as_ref().is_none_or(|draft| {
+            draft.active_variant() == crate::desktop::appearance::ThemeVariant::Dark
+        });
+        let keys: Vec<_> = samples
+            .iter()
+            .filter_map(|sample| icon_art::Key::new(sample, style, accent, dark))
+            .collect();
+        self.want_icon_art(keys);
     }
 
     fn undo(&mut self) -> Outcome {
@@ -2616,12 +2810,27 @@ fn preview(store: &DesktopStore, plan: Option<&ProfilePlan>) -> Preview {
         .map(|snapshot| {
             crate::desktop::windows::WindowsDraft::from_snapshot(overlay(snapshot, patch))
         });
+    let icons_now = store
+        .load(&crate::desktop::appearance::AppearanceDraft::keys())
+        .ok()
+        .and_then(|snapshot| {
+            let draft = crate::desktop::appearance::AppearanceDraft::from_snapshot(snapshot);
+            let theme = draft.icon_theme().known().cloned()?;
+            Some(profiles::icon_style(store, &theme))
+        });
+    // The plan's icon style, or what the desktop shows for its theme.
+    let icons = plan.and_then(ProfilePlan::icon_style).cloned().or_else(|| {
+        let theme = appearance.as_ref()?.icon_theme().known().cloned()?;
+        Some(profiles::icon_style(store, &theme))
+    });
     Preview {
         bars,
         appearance,
         config,
         desktop_icons,
         windows,
+        icons: icons.or_else(|| icons_now.clone()),
+        icons_now,
     }
 }
 

@@ -145,6 +145,7 @@ fn comparison_from_patches(
             native,
         ))
     });
+    current.icons = current.icons_now.clone();
     current.desktop_icons = current.desktop_icons.map(|icons| {
         crate::desktop::desktop_icons::DesktopIconsDraft::from_snapshot(original_snapshot(
             icons.into_snapshot(),
@@ -844,8 +845,25 @@ impl Settings {
                     .as_ref()
                     .and_then(|draft| draft.config().known().copied())
                 {
+                    // The Projects folder in the look's folder tint.
+                    let folder = preview
+                        .icons
+                        .as_ref()
+                        .filter(|style| style.tint)
+                        .and_then(|_| {
+                            let pictures = editor.preview_pictures(&preview);
+                            let index = editor.preview_icons().iter().position(|s| {
+                                s.kind == crate::settings::profiles::icon_art::Kind::Folder
+                            })?;
+                            match pictures.into_iter().nth(index)? {
+                                crate::settings::profiles::icon_art::Picture::Drawn(handle) => {
+                                    Some(handle)
+                                }
+                                _ => None,
+                            }
+                        });
                     let (icons, area) =
-                        looks::icon_layers(&icons, insets, &widget_areas, screen, scale);
+                        looks::icon_layers(&icons, insets, &widget_areas, screen, scale, folder);
                     layers.extend(icons);
                     icon_area = area;
                 }
@@ -1540,11 +1558,25 @@ impl Settings {
                     .clone()
                     .unwrap_or_else(|| self.config.clone());
                 let from_look = |domain| !now && editor.included(domain) && profile.has(domain);
+                let pictures = editor.preview_pictures(preview);
                 let pills = looks::facts(preview, &config, from_look)
                     .into_iter()
-                    .map(|(text, look)| {
+                    .map(|(text, look, icons)| {
+                        // The icon fact carries a row of sample icons in
+                        // the shape and tint it names.
+                        let body: Element<'_, Message> = if icons && !pictures.is_empty() {
+                            let mut items: Vec<Element<'_, Message>> =
+                                pictures.iter().map(|picture| picture.icon(16)).collect();
+                            items.push(label(text, 12., if look { FG } else { MUTED }));
+                            row::with_children(items)
+                                .spacing(4)
+                                .align_y(Alignment::Center)
+                                .into()
+                        } else {
+                            label(text, 12., if look { FG } else { MUTED })
+                        };
                         fill(
-                            label(text, 12., if look { FG } else { MUTED }),
+                            body,
                             Color::TRANSPARENT,
                             if look {
                                 accent
@@ -2432,6 +2464,8 @@ impl Settings {
         let problem = self.page_error().unwrap_or_else(|| {
             editor.theme_problem().unwrap_or(if self.native_busy {
                 "Saving…"
+            } else if editor.adjusting_icons() {
+                "Adjusting icons…"
             } else if editor.theme_loading() {
                 "Finding wallpaper colors…"
             } else if !editor.conflicts().is_empty() {
@@ -2728,6 +2762,8 @@ mod image_tests {
             config: Some(config.clone()),
             desktop_icons: None,
             windows: None,
+            icons: None,
+            icons_now: None,
         };
         let current = comparison_from_patches(&candidate, &native, &widgets);
         let restored = current.bars[0].clone().into_snapshot();

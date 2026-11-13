@@ -70,6 +70,33 @@ impl Paths {
     }
 }
 
+/// App icon names for the overlay: the dock's pins first, then installed
+/// apps, at most 600; and how many of them are pins. Reads only.
+pub fn app_names(
+    fixture: Option<&Path>,
+    store: Option<&crate::desktop::store::DesktopStore>,
+) -> (Vec<String>, usize) {
+    let apps_dirs = match fixture {
+        Some(root) => vec![root.join("applications")],
+        None => crate::desktop::applets::application_dirs(
+            dirs::data_dir(),
+            std::env::var("XDG_DATA_DIRS").ok(),
+        ),
+    };
+    let mut names: Vec<String> = store
+        .map(|store| crate::desktop::apps::pinned_icons(store, &apps_dirs, 24))
+        .unwrap_or_default();
+    let pinned = names.len();
+    for app in crate::desktop::apps::AppCatalog::discover(&apps_dirs).sorted() {
+        if !app.icon.is_empty() && !app.icon.contains('/') && !names.contains(&app.icon) {
+            names.push(app.icon.clone());
+        }
+    }
+    names.truncate(600);
+    let pinned = pinned.min(names.len());
+    (names, pinned)
+}
+
 /// A theme directory name safe to store and to create: one plain path
 /// component, printable, not hidden.
 pub fn valid_id(id: &str) -> bool {

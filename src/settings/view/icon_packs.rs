@@ -7,7 +7,7 @@ use crate::desktop::icon_packs::install::Progress;
 use crate::desktop::icon_packs::ocs::{Pack, Sort};
 use crate::desktop::icon_packs::overlay::Shape;
 use crate::settings::icon_packs::{
-    Context, IconPacks, Install, Load, Message as Edit, Notice, Thumb, shown_theme,
+    Context, IconPacks, Install, Load, Message as Edit, Notice, Thumb,
 };
 use cosmic::iced::advanced::text as advanced_text;
 use cosmic::widget::image::Handle;
@@ -253,7 +253,7 @@ impl Settings {
     ) -> Element<'a, Message> {
         let editor = &self.system_appearance;
         let writable = editor.writable();
-        let shown = shown_theme(&packs.style, context.icon_theme.as_deref());
+        let shown = packs.shown(context);
         let (_, width) = grid(self.content_width(), CARD_MIN);
         let mut cards: Vec<Element<'_, Message>> = Vec::new();
         let mut sparse: Vec<(String, String)> = Vec::new();
@@ -716,7 +716,7 @@ impl Settings {
         let writable = self.system_appearance.writable();
         let name = pack.name.clone();
         let themes = packs.pack_themes(pack.id);
-        let shown = shown_theme(&packs.style, context.icon_theme.as_deref());
+        let shown = packs.shown(context);
         // A pack can be in the Popular row and the grid at once; ids must differ.
         let id = cosmic::widget::Id::new(if compact {
             format!("icon-pack-popular-{}", pack.id)

@@ -26,6 +26,7 @@ use crate::desktop::appearance::{
 };
 use crate::desktop::applets::AppletCatalog;
 use crate::desktop::desktop_icons::{self, DesktopIconsDraft};
+use crate::desktop::icon_packs::{self, overlay};
 use crate::desktop::panels::{self, PanelDraft, PanelKind, Regions, Setting};
 use crate::desktop::store::widget::{self, WidgetPatch};
 use crate::desktop::store::{
@@ -52,6 +53,9 @@ pub struct Installed {
     /// Whether COSMIC Files, which draws desktop icons, is installed;
     /// `None` when not checked.
     pub files: Option<bool>,
+    /// Where Halcyon's shaped icon overlay is read and built; `None` leaves
+    /// the app icon shape and folder tint unknown (they are then kept).
+    pub icon_paths: Option<icon_packs::Paths>,
 }
 
 impl Installed {
@@ -96,6 +100,7 @@ impl Installed {
             bundled_dir: wallpaper::bundled_dir(store),
             background_dirs: wallpaper::background_dirs(store),
             files,
+            icon_paths: icon_packs::Paths::from_env(root.as_deref()),
             ..Self::new(fonts, icons, applets)
         }
     }
@@ -235,6 +240,10 @@ pub struct ProfilePlan {
     /// The planned shared background, or the effective display background
     /// for an appearance-only theme.
     background: Option<BgEntry>,
+    /// The icon style after the plan, when the Appearance part sets one.
+    icon_style: Option<overlay::Style>,
+    /// The shaped overlay Apply builds before the desktop names it.
+    icon_build: Option<overlay::LookBuild>,
 }
 
 /// The values a review originally saw and chose. Kept separately from the
@@ -513,6 +522,29 @@ impl ProfilePlan {
         if !filtered {
             return conflicts;
         }
+        // An icon theme kept as it is keeps the overlay as it is too.
+        let icon_key =
+            ConfigKey::new(appearance::TOOLKIT, 1, "icon_theme").expect("toolkit keys are valid");
+        let names_slot = |slot: &str| {
+            self.patch.iter().any(|(key, entry)| {
+                *key == icon_key
+                    && entry.desired != entry.original
+                    && entry
+                        .desired
+                        .as_ref()
+                        .and_then(|value| value.decode::<String>().ok())
+                        .as_deref()
+                        == Some(slot)
+            })
+        };
+        if self
+            .icon_build
+            .as_ref()
+            .is_some_and(|build| !names_slot(&build.slot))
+        {
+            self.icon_build = None;
+            self.icon_style = None;
+        }
         // The review must describe the filtered writes, not a discarded part
         // of the fresh profile plan.
         for part in &mut self.domains {
@@ -661,6 +693,15 @@ impl ProfilePlan {
             .map(|reason| format!("{}: {reason}", Domain::Wallpaper.title()))
             .collect()
     }
+    /// The app icon shape and folder tint after the plan (with the base
+    /// theme), when the Appearance part sets icons.
+    pub fn icon_style(&self) -> Option<&overlay::Style> {
+        self.icon_style.as_ref()
+    }
+    /// The shaped overlay Apply builds first, if the plan needs a new one.
+    pub fn icon_build(&self) -> Option<&overlay::LookBuild> {
+        self.icon_build.as_ref()
+    }
     /// The shared background as the plan leaves it, when the Wallpaper part
     /// is included and can be applied (the preview's backdrop).
     pub fn background(&self) -> Option<&BgEntry> {
@@ -713,6 +754,8 @@ pub fn plan(
         explicit_native: BTreeMap::new(),
         assets: Vec::new(),
         background: None,
+        icon_style: None,
+        icon_build: None,
     };
     if let Err(error) = profile.validate() {
         result.blocking.push(error.to_string());
@@ -776,6 +819,7 @@ pub fn plan(
             }
             Domain::Appearance => {
                 let relink = super::themes::resets_windows(profile);
+                let mut icons = None;
                 if let Some(patch) = profile
                     .appearance
                     .as_ref()
@@ -789,9 +833,15 @@ pub fn plan(
                         }
                     })
                     .as_ref()
-                    .and_then(|look| plan_appearance(store, installed, look, relink, &mut part))
+                    .and_then(|look| {
+                        plan_appearance(store, installed, look, relink, &mut part, &mut icons)
+                    })
                 {
                     merge(&mut result, &mut part, patch);
+                    if let Some((style, build)) = icons {
+                        result.icon_style = Some(style);
+                        result.icon_build = build;
+                    }
                 }
             }
             Domain::Windows => {
@@ -1329,6 +1379,7 @@ fn plan_appearance(
     look: &super::format::AppearanceLook,
     relink: bool,
     part: &mut DomainPlan,
+    icons: &mut Option<(overlay::Style, Option<overlay::LookBuild>)>,
 ) -> Option<DesktopPatch> {
     let mut draft = match AppearanceDraft::load(store) {
         Ok(draft) => draft,
@@ -1380,18 +1431,27 @@ fn plan_appearance(
             draft.set(Control::Font(role), Edit::Font(font.clone()));
         }
     }
-    if let Some(name) = &look.icon_theme {
-        if installed.icons.themes.is_empty() {
-            part.warnings.push(format!(
-                "Installed icon themes could not be checked ({name})."
-            ));
-            draft.set(Control::IconTheme, Edit::Name(name.clone()));
-        } else if installed.icons.get(name).is_none() {
-            part.warnings.push(format!(
-                "Icon theme “{name}” isn’t installed; your current icons are kept."
-            ));
-        } else {
-            draft.set(Control::IconTheme, Edit::Name(name.clone()));
+    // The base theme the look names, once checked; set with the shape and
+    // tint below, after the colors the folder tint follows.
+    let mut base = None;
+    if let Some(named) = &look.icon_theme {
+        match overlay::base_theme(installed.icon_paths.as_ref(), named) {
+            None => part.warnings.push(
+                "This look names shaped icons made on another computer; your current icons are kept."
+                    .into(),
+            ),
+            Some(name) if installed.icons.themes.is_empty() => {
+                part.warnings.push(format!(
+                    "Installed icon themes could not be checked ({name})."
+                ));
+                base = Some(name);
+            }
+            Some(name) if installed.icons.get(&name).is_none() => {
+                part.warnings.push(format!(
+                    "Icon theme “{name}” isn’t installed; your current icons are kept."
+                ));
+            }
+            Some(name) => base = Some(name),
         }
     }
     if let Some(window) = &look.window {
@@ -1419,6 +1479,7 @@ fn plan_appearance(
             }
         }
     }
+    let icon_changes = plan_icons(installed, look, base, &mut draft, part, icons);
     let mut plan = draft.plan();
     // A reviewed generation can accept already-equal roles. They still need
     // guards before its provenance is committed; a no-op draft has no edits.
@@ -1449,7 +1510,128 @@ fn plan_appearance(
             part.changes.push(label);
         }
     }
+    for label in icon_changes {
+        if !part.changes.iter().any(|known| *known == label) {
+            part.changes.push(label.into());
+        }
+    }
     Some(plan.patch)
+}
+
+/// The draft's accent for `variant` as 8-bit color, the way the overlay's
+/// folders take it: the chosen accent, or the theme's own.
+fn accent_bytes(draft: &AppearanceDraft, variant: ThemeVariant) -> [u8; 3] {
+    let color = match draft.color(variant, appearance::ColorRole::Accent) {
+        Setting::Known(Some(color)) => color,
+        _ => draft.preview(variant).accent,
+    };
+    [color.red, color.green, color.blue].map(|c| (c.clamp(0., 1.) * 255.).round() as u8)
+}
+
+/// Sets the icon theme a look asks for, after its colors. With an app icon
+/// shape or folder tint (the look's, or for a look that leaves them, the
+/// desktop's) that is Halcyon's overlay over the base theme, which Apply
+/// builds into the slot not in use, so Undo finds the previous overlay
+/// where it was. Without, it is the base theme itself. Returns the names
+/// of the icon changes beyond the theme key.
+fn plan_icons(
+    installed: &Installed,
+    look: &super::format::AppearanceLook,
+    base: Option<String>,
+    draft: &mut AppearanceDraft,
+    part: &mut DomainPlan,
+    icons: &mut Option<(overlay::Style, Option<overlay::LookBuild>)>,
+) -> Vec<&'static str> {
+    let set_base = |draft: &mut AppearanceDraft, base: Option<String>| {
+        if let Some(base) = base {
+            draft.set(Control::IconTheme, Edit::Name(base));
+        }
+    };
+    let (Setting::Known(current_theme), Some(paths)) =
+        (draft.icon_theme(), installed.icon_paths.as_ref())
+    else {
+        if look.has_icon_style() {
+            part.warnings.push(
+                "The app icon shape and folder colors could not be checked; they are kept.".into(),
+            );
+        }
+        set_base(draft, base);
+        return Vec::new();
+    };
+    let saved = if overlay::is_overlay(&current_theme) {
+        overlay::Style::load(paths)
+    } else {
+        overlay::Style::default()
+    };
+    let current = overlay::desktop_style(Some(paths), &current_theme, &saved);
+    if !look.has_icon_style() && !current.active() {
+        // Nothing shaped before or after: the base theme alone.
+        if let Some(name) = &base {
+            *icons = Some((
+                overlay::Style {
+                    base: Some(name.clone()),
+                    ..current
+                },
+                None,
+            ));
+        }
+        set_base(draft, base);
+        return Vec::new();
+    }
+    let desired = overlay::Style {
+        base: base.or_else(|| current.base.clone()),
+        shape: look.icon_shape.unwrap_or(current.shape),
+        tint: look.folder_tint.unwrap_or(current.tint),
+    };
+    let mut changes = Vec::new();
+    if desired.shape != current.shape {
+        changes.push("App icon shape");
+    }
+    if desired.tint != current.tint {
+        changes.push("Folder colors");
+    }
+    let base_name = desired.base.clone().unwrap_or_else(|| "Cosmic".to_string());
+    if !desired.active() {
+        draft.set(Control::IconTheme, Edit::Name(base_name));
+        *icons = Some((desired, None));
+        return changes;
+    }
+    let variant = match look.mode {
+        Some(ModeName::Dark) => ThemeVariant::Dark,
+        Some(ModeName::Light) => ThemeVariant::Light,
+        _ => draft.active_variant(),
+    };
+    let request = overlay::Request {
+        base: base_name,
+        shape: desired.shape,
+        tint: desired.tint.then(|| accent_bytes(draft, variant)),
+        dark: variant == ThemeVariant::Dark,
+        apps: Vec::new(),
+    };
+    // The overlay in use is this one already (the accent and shade it was
+    // drawn for included): nothing to build or change.
+    let in_use = overlay::recorded(paths, &current_theme).is_some_and(|record| {
+        record.base == request.base
+            && record.shape == request.shape
+            && record.tint == request.tint
+            && (request.shape == overlay::Shape::Original || record.dark == request.dark)
+    });
+    if in_use {
+        *icons = Some((desired, None));
+        return changes;
+    }
+    let slot = overlay::next_slot(Some(&current_theme)).to_string();
+    draft.set(Control::IconTheme, Edit::Name(slot.clone()));
+    *icons = Some((
+        desired,
+        Some(overlay::LookBuild {
+            paths: paths.clone(),
+            request,
+            current: Some(current_theme),
+            slot,
+        }),
+    ));
+    changes
 }
 
 /// Window behavior through a fresh `WindowsDraft`: the same typed setters,
@@ -2221,6 +2403,17 @@ fn apply_with_source(
             key: None,
             message: reason,
         });
+    }
+    // The shaped overlay goes into the slot not in use before the desktop
+    // names it; the one in use stays for Undo. Settings builds it off the
+    // UI thread first, so this finds it ready.
+    if let Some(build) = &plan.icon_build {
+        build
+            .run(store.fixture_root(), Some(store))
+            .map_err(|message| DesktopError::InvalidValue {
+                key: None,
+                message: format!("Can’t adjust the icons: {message}"),
+            })?;
     }
     let islands: Vec<_> = plan
         .patch

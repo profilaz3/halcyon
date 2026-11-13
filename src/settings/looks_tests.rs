@@ -60,8 +60,16 @@ fn looks_drive(app: &mut Settings) {
     for _ in 0..32 {
         let backdrops = app.profiles.take_jobs();
         let themes = app.profiles.take_theme_jobs();
-        if backdrops.is_empty() && themes.is_empty() {
+        let icons = app.profiles.take_icon_jobs();
+        let art = app.profiles.take_icon_art_jobs();
+        if backdrops.is_empty() && themes.is_empty() && icons.is_empty() && art.is_empty() {
             return;
+        }
+        for job in art {
+            app.profiles.update(profiles::Message::IconArt(job.run()));
+        }
+        for job in icons {
+            app.profiles.update(job.run());
         }
         for job in themes {
             app.profiles.update(job.run());
@@ -431,4 +439,72 @@ fn looks_screenshots_studio() {
         before,
         "the studio never wrote the desktop"
     );
+}
+
+#[test]
+fn looks_screenshots_icon_shape_and_tint() {
+    use crate::desktop::icon_packs::overlay::Shape;
+    use profiles::studio::{Edit as Studio, Element as Part, Pick, Start};
+    let name = "looks_screenshots_icon_shape_and_tint";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let root = isolated_root();
+    let mut app = looks_desktop(&root);
+    let size = Size::new(1280., 800.);
+    send_settings(&mut app, Message::Resized(size));
+    let mut native = crate::native_test::Native::new(size);
+    // Calm: circle app icons and accent folders, in the picture and its
+    // icons label.
+    looks_select(&mut app, "calm");
+    let style = app.profiles.preview().unwrap().icons.clone().unwrap();
+    assert_eq!(style.shape, Shape::Circle);
+    assert!(style.tint);
+    looks_capture(&app, &mut native, "icons-calm");
+    // Left out, Appearance shows the desktop's own icons.
+    looks_send(
+        &mut app,
+        profiles::Message::Include(Domain::Appearance, false),
+    );
+    let kept = app.profiles.preview().unwrap().icons.clone().unwrap();
+    assert_eq!(kept.shape, Shape::Original);
+    looks_capture(&app, &mut native, "icons-calm-appearance-kept");
+    looks_send(
+        &mut app,
+        profiles::Message::Include(Domain::Appearance, true),
+    );
+
+    // The studio's Icons tile and picker with a squircle and accent folders.
+    looks_send(
+        &mut app,
+        profiles::Message::Select(profiles::Selection::Current),
+    );
+    studio_send(&mut app, Studio::Start(Start::Desktop));
+    studio_send(&mut app, Studio::Name("Shaped harbor".into()));
+    studio_send(
+        &mut app,
+        Studio::Pick(Part::Icons, Pick::IconShape(Shape::Squircle)),
+    );
+    studio_send(&mut app, Studio::Pick(Part::Icons, Pick::FolderTint(true)));
+    let draft = &app.profiles.studio.as_ref().unwrap().profile;
+    let look = draft.appearance.as_ref().unwrap();
+    assert_eq!(look.icon_shape, Some(Shape::Squircle));
+    assert_eq!(look.folder_tint, Some(true));
+    looks_send(
+        &mut app,
+        profiles::Message::Highlight(Some(Domain::Appearance)),
+    );
+    studio_capture(&app, &mut native, "icons-tile", 470.);
+    looks_send(&mut app, profiles::Message::Highlight(None));
+    studio_send(&mut app, Studio::Open(Some(Part::Icons)));
+    studio_capture(&app, &mut native, "icons-picker", 470.);
+    studio_capture(&app, &mut native, "icons-picker-shapes", 900.);
+    studio_send(&mut app, Studio::Close);
 }

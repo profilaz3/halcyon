@@ -201,6 +201,10 @@ fn with_activity(id: &str) -> bool {
 struct Finish {
     font: &'static str,
     icons: &'static str,
+    /// The app icon shape and accent folders, for looks drawn around them;
+    /// `None` leaves the desktop's as they are.
+    icon_shape: Option<super::IconShape>,
+    folder_tint: Option<bool>,
     corners: cosmic::cosmic_theme::Roundness,
     /// Window gaps `(outer, inner)` in pixels.
     gaps: (u32, u32),
@@ -231,6 +235,19 @@ fn finish(id: &str) -> Finish {
         "snow" => ("Open Sans", "Pop", Round, (6, 12), 2, true),
         _ => ("Fira Sans", "Pop", SlightlyRound, (8, 14), 1, true),
     };
+    // App icon shapes and accent folders suit the soft, colorful looks; the
+    // rest leave the desktop's icons as they are. Built on Cosmic or Pop,
+    // they need nothing downloaded.
+    let (icon_shape, folder_tint) = {
+        use super::IconShape::{Circle, Rounded, Squircle};
+        match id {
+            "halcyon" => (Some(Squircle), Some(true)),
+            "calm" | "tidal" => (Some(Circle), Some(true)),
+            "rose" => (Some(Squircle), Some(true)),
+            "carbon" => (Some(Rounded), Some(false)),
+            _ => (None, None),
+        }
+    };
     // Desktop icons: the Desktop folder stays as people set it (those are
     // their files); a look only sizes the grid and shows or hides the
     // drives and the trash.
@@ -245,6 +262,8 @@ fn finish(id: &str) -> Finish {
     Finish {
         font,
         icons,
+        icon_shape,
+        folder_tint,
         corners,
         gaps,
         outline,
@@ -265,6 +284,11 @@ fn finish_profile(id: &str, profile: &mut Profile) {
         font.family = finish.font.into();
         appearance.interface_font = Some(font);
         appearance.icon_theme = Some(finish.icons.into());
+        appearance.icon_shape = finish.icon_shape;
+        appearance.folder_tint = finish.folder_tint;
+        if appearance.has_icon_style() {
+            profile.version = profile.version.max(super::format::VERSION);
+        }
         for variant in [appearance.light.as_mut(), appearance.dark.as_mut()]
             .into_iter()
             .flatten()
@@ -801,6 +825,11 @@ fn ridge() -> Preset {
         .profile;
     profile.version = super::format::VERSION_11;
     profile.name = "Ridge".into();
+    // Ridge leaves the desktop's icon shape and folders as they are.
+    if let Some(appearance) = profile.appearance.as_mut() {
+        appearance.icon_shape = None;
+        appearance.folder_tint = None;
+    }
     profile
         .wallpaper
         .as_mut()
@@ -1211,7 +1240,16 @@ mod tests {
             ("carbon", "digital", "none"),
         ] {
             let p = preset(id).unwrap();
-            assert_eq!(p.profile.version, super::super::format::VERSION_9);
+            // An app icon shape needs the newest record; the rest stay at 9.
+            let shaped = p.profile.appearance.as_ref().unwrap().has_icon_style();
+            assert_eq!(
+                p.profile.version,
+                if shaped {
+                    super::super::format::VERSION
+                } else {
+                    super::super::format::VERSION_9
+                }
+            );
             let style = p.profile.widget_style.as_ref().unwrap();
             assert_eq!(style["clock"]["face"], face);
             assert_eq!(style["clock"]["surface"], surface);
@@ -1379,6 +1417,10 @@ mod tests {
                     assert!(look.monospace_font.is_none());
                     let icons = look.icon_theme.as_deref().unwrap();
                     assert!(["Cosmic", "Pop"].contains(&icons), "{}", preset.id);
+                    // Shapes and tints come with the look and need no download.
+                    if look.has_icon_style() {
+                        assert!(profile.version >= super::super::VERSION, "{}", preset.id);
+                    }
                     for variant in [&look.light, &look.dark] {
                         let variant = variant.as_ref().unwrap();
                         assert!(variant.corners.is_some() && variant.gaps.is_some());

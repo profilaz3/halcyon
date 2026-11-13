@@ -304,19 +304,6 @@ fn handle(picture: image::RgbaImage) -> Handle {
     Handle::from_rgba(width, height, picture.into_raw())
 }
 
-/// The theme an `icon_theme` names for the chooser: an overlay shows its
-/// base.
-pub fn shown_theme(style: &Style, icon_theme: Option<&str>) -> Option<String> {
-    let icon_theme = icon_theme?;
-    Some(
-        style
-            .clone()
-            .effective(icon_theme)
-            .base
-            .unwrap_or_else(|| icon_theme.to_string()),
-    )
-}
-
 impl IconPacks {
     fn source(&self) -> Source {
         self.source.clone().unwrap_or_else(Source::from_env)
@@ -337,25 +324,26 @@ impl IconPacks {
         self.scan(context)
     }
 
-    /// The style the desktop has now.
+    /// The style the desktop has now. An overlay's own record wins over the
+    /// saved style: a look's Apply or Undo may have changed the overlay
+    /// since the style was saved.
     pub fn effective(&self, context: &Context) -> Style {
         match &context.icon_theme {
             Some(icon_theme) => {
-                let mut style = self.style.clone().effective(icon_theme);
-                // Halcyon's record lost: the overlay names its base.
-                if overlay::is_overlay(icon_theme)
-                    && self.style.base.is_none()
-                    && let Some(paths) = &self.paths
-                    && let Some(recorded) = overlay::recorded(paths, icon_theme)
-                {
-                    style.base = Some(recorded.base);
-                    style.shape = recorded.shape;
-                    style.tint = recorded.tint.is_some();
-                }
-                style
+                overlay::desktop_style(self.paths.as_ref(), icon_theme, &self.style)
             }
             None => self.style.clone(),
         }
+    }
+
+    /// The theme the chooser shows as the one in use: an overlay shows its
+    /// base.
+    pub fn shown(&self, context: &Context) -> Option<String> {
+        context
+            .icon_theme
+            .as_ref()
+            .map(|_| self.effective(context).base.unwrap_or_default())
+            .filter(|base| !base.is_empty())
     }
 
     pub fn base(&self, context: &Context) -> String {
@@ -576,9 +564,7 @@ impl IconPacks {
                 let Some(paths) = &self.paths else {
                     return Outcome2::default();
                 };
-                if shown_theme(&self.style, context.icon_theme.as_deref()).as_deref()
-                    == Some(id.as_str())
-                {
+                if self.shown(context).as_deref() == Some(id.as_str()) {
                     self.notice = Some(Notice::Error(
                         "Choose another theme before removing the one in use.".into(),
                     ));
@@ -916,23 +902,7 @@ fn scan(
             .collect();
         out.samples.insert(theme.clone(), samples);
     }
-    let apps_dirs = match fixture {
-        Some(root) => vec![root.join("applications")],
-        None => crate::desktop::applets::application_dirs(
-            dirs::data_dir(),
-            std::env::var("XDG_DATA_DIRS").ok(),
-        ),
-    };
-    let mut names: Vec<String> = store
-        .map(|store| crate::desktop::apps::pinned_icons(store, &apps_dirs, 24))
-        .unwrap_or_default();
-    let pinned = names.len();
-    for app in crate::desktop::apps::AppCatalog::discover(&apps_dirs).sorted() {
-        if !app.icon.is_empty() && !app.icon.contains('/') && !names.contains(&app.icon) {
-            names.push(app.icon.clone());
-        }
-    }
-    names.truncate(600);
+    let (names, pinned) = crate::desktop::icon_packs::app_names(fixture, store);
     let chain = overlay::chain(&mut resolver, base);
     // The preview: pinned apps first, then well-known apps, then generic
     // names, each drawn once.

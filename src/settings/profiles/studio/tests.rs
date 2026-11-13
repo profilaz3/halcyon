@@ -448,3 +448,139 @@ fn the_draft_survives_a_parked_preview() {
     assert_eq!(back, draft_before);
     assert!(back.validate().is_ok());
 }
+
+#[test]
+fn icon_shape_and_folder_choices_set_exactly_the_shape_and_tint() {
+    use crate::desktop::icon_packs::overlay::{self, Shape};
+    let desk = Desk::new("icon-shape");
+    let mut editor = desk.editor();
+    studio(&mut editor, Edit::Start(Start::Desktop));
+    studio(&mut editor, Edit::Open(Some(Element::Icons)));
+    let choices = editor.studio_choices().to_vec();
+    // The picker offers every shape and both folder choices, each a tile,
+    // and never Halcyon's overlay.
+    for shape in Shape::ALL {
+        let tile = choices
+            .iter()
+            .find(|choice| choice.pick == Pick::IconShape(shape))
+            .unwrap_or_else(|| panic!("{shape:?} offered"));
+        assert_eq!(tile.title, shape.title());
+        assert_eq!(tile.source, "App icon shape");
+    }
+    for tint in [true, false] {
+        assert!(
+            choices
+                .iter()
+                .any(|choice| choice.pick == Pick::FolderTint(tint))
+        );
+    }
+    assert!(!choices.iter().any(|choice| matches!(
+        &choice.pick,
+        Pick::IconTheme(id) if overlay::is_overlay(id)
+    )));
+    let appearance =
+        |editor: &ProfilesEditor| draft(editor).profile.appearance.clone().unwrap_or_default();
+    let before = appearance(&editor);
+    studio(
+        &mut editor,
+        Edit::Pick(Element::Icons, Pick::IconShape(Shape::Squircle)),
+    );
+    let shaped = appearance(&editor);
+    assert_eq!(shaped.icon_shape, Some(Shape::Squircle));
+    assert_eq!(
+        AppearanceLook {
+            icon_shape: before.icon_shape,
+            ..shaped.clone()
+        },
+        before,
+        "only the shape changed"
+    );
+    studio(
+        &mut editor,
+        Edit::Pick(Element::Icons, Pick::FolderTint(true)),
+    );
+    let tinted = appearance(&editor);
+    assert_eq!(tinted.folder_tint, Some(true));
+    assert_eq!(
+        AppearanceLook {
+            folder_tint: shaped.folder_tint,
+            ..tinted.clone()
+        },
+        shaped,
+        "only the tint changed"
+    );
+    // The tile and its words show both.
+    let style = editor.icon_style_of(&draft(&editor).profile);
+    assert_eq!(style.shape, Shape::Squircle);
+    assert!(style.tint);
+    let choices = editor.studio_choices().to_vec();
+    let selected = |pick: Pick| {
+        choices
+            .iter()
+            .find(|choice| choice.pick == pick)
+            .unwrap()
+            .selected
+    };
+    assert!(selected(Pick::IconShape(Shape::Squircle)));
+    assert!(!selected(Pick::IconShape(Shape::Circle)));
+    assert!(selected(Pick::FolderTint(true)));
+    assert_eq!(
+        crate::settings::profiles::icon_art::words(&style),
+        ["squircle", "accent folders"]
+    );
+    // A theme choice keeps the shape and tint.
+    studio(
+        &mut editor,
+        Edit::Pick(Element::Icons, Pick::IconTheme("Pop".into())),
+    );
+    let themed = appearance(&editor);
+    assert_eq!(themed.icon_theme.as_deref(), Some("Pop"));
+    assert_eq!(
+        (themed.icon_shape, themed.folder_tint),
+        (Some(Shape::Squircle), Some(true))
+    );
+    // Leave as is clears all three.
+    studio(&mut editor, Edit::Pick(Element::Icons, Pick::Leave));
+    let left = appearance(&editor);
+    assert_eq!(
+        (left.icon_theme, left.icon_shape, left.folder_tint),
+        (None, None, None)
+    );
+}
+
+#[test]
+fn make_built_in_keeps_the_icon_shape_and_tint() {
+    use crate::desktop::icon_packs::overlay::Shape;
+    let desk = Desk::new("built-in-icons");
+    let mut editor = desk.editor();
+    studio(&mut editor, Edit::Start(Start::Desktop));
+    studio(&mut editor, Edit::Name("Shaped harbor".into()));
+    studio(
+        &mut editor,
+        Edit::Pick(Element::Wallpaper, Pick::Wallpaper("halcyon-ridge")),
+    );
+    for pick in [
+        Pick::IconTheme("Cosmic".into()),
+        Pick::IconShape(Shape::Circle),
+        Pick::FolderTint(true),
+    ] {
+        studio(&mut editor, Edit::Pick(Element::Icons, pick));
+    }
+    studio(&mut editor, Edit::MakeBuiltIn);
+    let Some(Built::Written { path, .. }) = draft(&editor).built.clone() else {
+        panic!("expected a written file, got {:?}", draft(&editor).built);
+    };
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.contains("\"icon_shape\": \"circle\""), "{text}");
+    assert!(!text.contains("Halcyon-Shaped"));
+    let shipped = profiles::parse_built_in("shaped-harbor", &text).unwrap();
+    assert_eq!(shipped.version, profiles::VERSION);
+    let look = shipped.appearance.as_ref().unwrap();
+    assert_eq!(look.icon_theme.as_deref(), Some("Cosmic"));
+    assert_eq!(look.icon_shape, Some(Shape::Circle));
+    assert_eq!(look.folder_tint, Some(true));
+    assert!(
+        crate::desktop::profiles::built_in::fallbacks(&shipped).is_empty(),
+        "nothing to install on Cosmic"
+    );
+}

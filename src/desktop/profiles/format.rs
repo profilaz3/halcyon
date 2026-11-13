@@ -1,4 +1,4 @@
-//! The profile record (`desktop-cards-profile`, up to version 21).
+//! The profile record (`desktop-cards-profile`, up to version 22).
 //!
 //! Version 2 adds the `windows` and `workspaces` sections and per-variant
 //! window `gaps` under Appearance; version 3 adds `wallpaper` and
@@ -46,13 +46,16 @@ pub use super::desktop_look::{
     BackgroundLook, DesktopIconsLook, DisplaysName, FitName, GradientLook, OrderName, Rgb,
     SlideshowLook, SourceLook, WallpaperLook,
 };
+pub use crate::desktop::icon_packs::overlay::Shape as IconShape;
 
 pub const FORMAT: &str = "desktop-cards-profile";
 /// Frozen composition provenance requires version 10.
 /// Clock face, weight, italic and surface choices retain version 9.
 /// Clock scene lighting requires version 20; wallpaper rain keeps 19.
 /// A one-line description requires version 21.
-pub const VERSION: u32 = 21;
+/// The app icon shape and folder tint require version 22.
+pub const VERSION: u32 = 22;
+pub const VERSION_21: u32 = 21;
 pub const VERSION_20: u32 = 20;
 pub const VERSION_19: u32 = 19;
 pub const VERSION_18: u32 = 18;
@@ -830,9 +833,18 @@ pub struct AppearanceLook {
     pub interface_font: Option<FontConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub monospace_font: Option<FontConfig>,
-    /// An installed icon theme's directory name.
+    /// An installed icon theme's directory name: the base theme, never
+    /// Halcyon's shaped overlay.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon_theme: Option<String>,
+    /// The shape Halcyon gives app icons (version 22). Absent leaves the
+    /// shape as it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_shape: Option<IconShape>,
+    /// Folders in the accent color (version 22). Absent leaves them as they
+    /// are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder_tint: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window: Option<WindowLook>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -847,6 +859,10 @@ impl AppearanceLook {
             ThemeVariant::Light => self.light.as_ref(),
             ThemeVariant::Dark => self.dark.as_ref(),
         }
+    }
+    /// Whether this look sets the app icon shape or the folder tint.
+    pub fn has_icon_style(&self) -> bool {
+        self.icon_shape.is_some() || self.folder_tint.is_some()
     }
     fn validate(&self) -> Result<(), String> {
         let toolkit = |name: &str| {
@@ -864,6 +880,11 @@ impl AppearanceLook {
         if let Some(name) = &self.icon_theme {
             check_key(&toolkit("icon_theme"), &encode(name)?)
                 .map_err(|message| format!("Appearance icon theme: {message}"))?;
+            if !crate::desktop::icon_packs::valid_id(name) {
+                return Err(format!(
+                    "Appearance icon theme: “{name}” isn’t a theme name"
+                ));
+            }
         }
         for variant in [ThemeVariant::Light, ThemeVariant::Dark] {
             if let Some(look) = self.variant(variant) {
@@ -1027,10 +1048,18 @@ impl Profile {
             .find(|(pointer, _)| widget::tool_of(pointer).is_some())
             .map(|(pointer, _)| widget::field(pointer).map_or(pointer, |field| field.label))
     }
+    fn has_icon_style(&self) -> bool {
+        self.appearance
+            .as_ref()
+            .is_some_and(AppearanceLook::has_icon_style)
+    }
     /// The version this record is written as.
     pub fn written_version(&self) -> u32 {
-        if self.description.is_some() {
+        if self.has_icon_style() {
             return VERSION;
+        }
+        if self.description.is_some() {
+            return VERSION_21;
         }
         if self.has_lighting() {
             return VERSION_20;
@@ -1303,8 +1332,13 @@ impl Profile {
                 ));
             }
         }
+        if self.has_icon_style() && self.version < VERSION {
+            return Err(ProfileError::Invalid(
+                "An app icon shape or folder tint needs look format version 22".into(),
+            ));
+        }
         if let Some(text) = &self.description {
-            if self.version < VERSION {
+            if self.version < VERSION_21 {
                 return Err(ProfileError::Invalid(
                     "A look description needs look format version 21".into(),
                 ));
@@ -1509,7 +1543,7 @@ pub fn import_local(bytes: &[u8]) -> Result<Profile, ProfileError> {
     // The version a section first appears in.
     let since = |key: &str| {
         if key == "description" {
-            Some(VERSION)
+            Some(VERSION_21)
         } else if key == "package" {
             Some(VERSION_14)
         } else if key == "composition" {
