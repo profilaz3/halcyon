@@ -425,11 +425,13 @@ pub(in crate::settings::view) fn bars<'a>(
         screen,
         scale,
         accent,
-        on_press,
+        &|kind| on_press.map(|message| message(kind)),
         "",
     )
 }
 
+/// [`bars`] on one output. `on_press` says what a press on each bar sends;
+/// a bar it gives nothing for is drawn only.
 pub(in crate::settings::view) fn bars_on_output<'a>(
     installed_islands: bool,
     drafts: Vec<&PanelDraft>,
@@ -438,7 +440,7 @@ pub(in crate::settings::view) fn bars_on_output<'a>(
     screen: [f32; 2],
     scale: f32,
     accent: Color,
-    on_press: Option<fn(PanelKind) -> Message>,
+    on_press: &dyn Fn(PanelKind) -> Option<Message>,
     output: &str,
 ) -> Vec<Element<'a, Message>> {
     let mut bars: Vec<&PanelDraft> = drafts.into_iter().filter(|draft| draft.listed()).collect();
@@ -467,7 +469,7 @@ pub(in crate::settings::view) fn bars_on_output<'a>(
                 scale,
                 offset,
                 accent,
-                on_press.map(|message| message(draft.kind())),
+                on_press(draft.kind()),
                 output,
             )
         })

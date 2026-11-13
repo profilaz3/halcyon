@@ -96,7 +96,8 @@ pub enum Page {
     DesktopPanel,
     /// The Activity island's options, from the panel's applet.
     ActivityIsland,
-    /// System appearance editor, a subpage of Pop!_OS.
+    /// Fonts and icons: interface and fixed-width fonts and the icon
+    /// theme, a root of its own right after Appearance.
     DesktopAppearance,
     /// Backgrounds, slideshows and colors, a subpage of Pop!_OS.
     DesktopWallpaper,
@@ -143,6 +144,7 @@ impl Page {
                 Self::DesktopDock,
                 Self::ActivityIsland,
                 Self::Themes,
+                Self::DesktopAppearance,
                 Self::DesktopWindows,
                 Self::DesktopMotion,
                 Self::General,
@@ -217,12 +219,12 @@ impl Page {
             // which links to Time of day.
             Self::Themes
             | Self::Appearance
-            | Self::DesktopAppearance
             | Self::DesktopProfiles
             | Self::DesktopAutomation
             | Self::AdaptiveLooks => Self::Themes,
             Self::DesktopWallpaper | Self::DesktopIcons => Self::DesktopWallpaper,
             Self::WeatherEffects => Self::WeatherEffects,
+            Self::DesktopAppearance => Self::DesktopAppearance,
             Self::DesktopDock => Self::DesktopDock,
             Self::DesktopPanel => Self::DesktopPanel,
             Self::ActivityIsland => Self::ActivityIsland,
@@ -235,14 +237,24 @@ impl Page {
             _ => Self::Overview,
         }
     }
+    /// Whether a preview on this page may act on a part that `part`'s page
+    /// edits: only when both sit under the same sidebar root. A preview is
+    /// for the page's own thing; parts of other menus are drawn but inert.
+    fn owns(self, part: Self) -> bool {
+        self.sidebar() == part.sidebar()
+    }
     /// Who undoes whose changes: the root as it was before Looks left
-    /// the sidebar and the bars split, since one record covers each.
+    /// the sidebar, the bars split and Fonts and icons got its own root,
+    /// since one record covers each.
     fn undo_group(self) -> Self {
         match self.canonical() {
             Self::DesktopProfiles | Self::DesktopAutomation | Self::AdaptiveLooks => {
                 Self::DesktopProfiles
             }
             Self::DesktopDock | Self::DesktopPanel | Self::ActivityIsland => Self::DesktopDock,
+            // Fonts, icons, density and colors are one system appearance
+            // draft, recorded under Appearance.
+            Self::DesktopAppearance => Self::Themes,
             _ => self.sidebar(),
         }
     }
@@ -281,6 +293,7 @@ impl Page {
     fn rail_title(self) -> &'static str {
         match self.sidebar() {
             Self::ActivityIsland => "Island",
+            Self::DesktopAppearance => "Fonts",
             page => page.nav_title(),
         }
     }
@@ -290,7 +303,7 @@ impl Page {
             Self::Overview => "view-grid-symbolic",
             Self::Widgets => "view-grid-symbolic",
             Self::Appearance => "applications-graphics-symbolic",
-            Self::DesktopAppearance => "preferences-desktop-appearance-symbolic",
+            Self::DesktopAppearance => "font-symbolic",
             Self::DesktopWallpaper => "preferences-desktop-wallpaper-symbolic",
             Self::WeatherEffects => "weather-showers-symbolic",
             Self::Themes => "preferences-color-symbolic",

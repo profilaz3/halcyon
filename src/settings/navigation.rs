@@ -14,6 +14,7 @@ mod ux_regressions;
 pub enum Area {
     Home,
     Appearance,
+    Fonts,
     Wallpaper,
     Effects,
     Widgets,
@@ -30,6 +31,7 @@ impl Area {
         match self {
             Self::Home => "Home",
             Self::Appearance => "Appearance",
+            Self::Fonts => "Fonts and icons",
             Self::Wallpaper => "Wallpaper",
             Self::Effects => "Effects",
             Self::Widgets => "Widgets",
@@ -724,7 +726,9 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::DesktopAppearance,
         "Fonts and icons",
-        "desktop font fonts typeface typography interface fixed width icons icon theme",
+        // No singular "font": typed, it matches this page's own name, so it
+        // opens the page before rows that say Font.
+        "desktop fonts typeface typography interface fixed width icons icon theme",
         false,
     )
     .names_page()
@@ -1162,7 +1166,7 @@ const ROWS: &[SearchHit] = &[
     hit(Page::Projects, "How often it updates", "", false),
     hit(Page::Themes, "Color", "", false),
     hit(Page::Themes, "Surfaces", "", false),
-    hit(Page::Themes, "Text and icons", "", false),
+    hit(Page::Themes, "Apps", "", false),
     hit(Page::Weather, "Dew point and how often it updates", "", false),
     hit(Page::Widgets, "How widgets behave", "", false).at("widgets-behave"),
     hit(Page::Widgets, "Slide in", "", false).at("widgets-behave"),
@@ -1549,16 +1553,16 @@ impl Page {
             | Self::DesktopPanel
             | Self::DesktopDock
             | Self::ActivityIsland
+            | Self::DesktopAppearance
             | Self::DesktopWindows
             | Self::DesktopMotion
             | Self::General
             | Self::Changes => None,
             // Detail editors that open from rows on Appearance.
             // Looks and Time of day left the sidebar; Appearance leads to them.
-            Self::Appearance
-            | Self::DesktopAppearance
-            | Self::DesktopProfiles
-            | Self::DesktopAutomation => Some(Self::Themes),
+            Self::Appearance | Self::DesktopProfiles | Self::DesktopAutomation => {
+                Some(Self::Themes)
+            }
             Self::AdaptiveLooks => Some(Self::DesktopAutomation),
             Self::PendingChanges => Some(Self::Changes),
             Self::DesktopWindowRules | Self::DesktopShortcuts => Some(Self::DesktopWindows),
@@ -1572,6 +1576,7 @@ impl Page {
         match self.sidebar() {
             Self::Home => Area::Home,
             Self::Themes => Area::Appearance,
+            Self::DesktopAppearance => Area::Fonts,
             Self::DesktopWallpaper => Area::Wallpaper,
             Self::WeatherEffects => Area::Effects,
             Self::DesktopPanel => Area::Panel,
@@ -1910,6 +1915,7 @@ mod tests {
                 Page::DesktopDock,
                 Page::ActivityIsland,
                 Page::Themes,
+                Page::DesktopAppearance,
                 Page::DesktopWindows,
                 Page::DesktopMotion,
                 Page::General
@@ -1921,7 +1927,7 @@ mod tests {
             assert_eq!(page.parent(), None, "{page:?}");
         }
         // Roots have no parent; detailed editors go Back to their root.
-        assert_eq!(Page::DesktopAppearance.parent(), Some(Page::Themes));
+        assert_eq!(Page::DesktopAppearance.parent(), None);
         assert_eq!(Page::Moments.parent(), Some(Page::Themes));
         assert_eq!(Page::DesktopMotion.parent(), None);
         assert_eq!(
