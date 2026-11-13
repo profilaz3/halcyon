@@ -490,3 +490,33 @@ fn evidence_monitor_and_music_cards() {
         }
     }
 }
+
+/// The Arrange overlay at a common laptop size, nothing selected and one
+/// card selected, when a capture folder is set.
+#[test]
+fn arrange_overlay_capture() {
+    if isolated("arrange_overlay_capture") {
+        return;
+    }
+    let mut cards = cards();
+    let _output = cards.test_output_ready();
+    cards.screen_size = [1280., 800.];
+    let _ = cards.arrange();
+    assert!(cards.layout_editor.active);
+    let mut native = Native::new(Size::new(1280., 800.));
+    let theme = cosmic::Theme::dark();
+    native.capture(cards.layout_view(), &theme, "arrange-overlay");
+    cards.layout_editor.selected = Some(Widget::Weather);
+    native.capture(cards.layout_view(), &theme, "arrange-overlay-selected");
+    let _ = cards.update(Message::LayoutAddMenu);
+    assert!(cards.layout_editor.adding);
+    native.capture(cards.layout_view(), &theme, "arrange-overlay-add");
+    // The narrowest display the tests arrange on keeps the toolbar's text
+    // on screen, its buttons wrapping under the title.
+    cards.screen_size = [820., 600.];
+    let mut narrow = Native::new(Size::new(820., 600.));
+    assert_eq!(narrow.overflowing_text(cards.layout_view()), Vec::new());
+    let done = narrow.bounds(cards.layout_view(), "arrange-done");
+    assert!(done.x + done.width <= 820. - 8., "{done:?}");
+    narrow.capture(cards.layout_view(), &theme, "arrange-overlay-narrow");
+}

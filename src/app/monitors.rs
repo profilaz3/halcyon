@@ -166,8 +166,12 @@ impl Cards {
         }
     }
     pub(super) fn arranging_widget(&self, widget: Widget) -> bool {
-        self.config.widget_visible(widget)
-            && self.widget_available(widget)
+        self.config.widget_visible(widget) && self.on_arranged_display(widget)
+    }
+    /// Whether `widget`, shown or not, belongs to the display being
+    /// arranged and that display is measured.
+    pub(super) fn on_arranged_display(&self, widget: Widget) -> bool {
+        self.widget_available(widget)
             && self.widget_output(widget).map(|o| &o.handle)
                 == self.selected_output.as_ref().map(|o| &o.handle)
     }
