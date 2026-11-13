@@ -116,7 +116,7 @@ impl Settings {
         let look = self.look();
         let mut rows = vec![heading(
             "Appearance",
-            "Style, colors and fonts for your desktop and apps.",
+            "Style and colors for your desktop and apps.",
         )];
         if let Some(error) = editor.unavailable() {
             rows.push(banner(error.to_string(), ERROR, vec![]));
@@ -332,7 +332,7 @@ impl Settings {
         group(Some("Surfaces"), rows)
     }
 
-    /// Window outline and density; fonts and icons open on a subpage.
+    /// Density in apps. Fonts and icons have their own sidebar entry.
     fn appearance_windows(&self) -> Element<'_, Message> {
         let accent = self.settings_accent();
         let mut rows = Vec::new();
@@ -355,13 +355,7 @@ impl Settings {
                 ),
             ));
         }
-        rows.push(self.subpage_row(
-            "Fonts and icons",
-            "Text fonts and icon theme",
-            Page::DesktopAppearance,
-            "themes-fonts-icons",
-        ));
-        group(Some("Text and icons"), rows)
+        group(Some("Apps"), rows)
     }
 
     /// A row that opens a detail page.
