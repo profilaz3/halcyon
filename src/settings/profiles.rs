@@ -1432,8 +1432,9 @@ impl ProfilesEditor {
         }
         // Choosing a built-in family moves linked styling only. Restoring a
         // saved variation deliberately uses its complete recorded appearance,
-        // and a starter look (not appearance-only) applies its own colors.
-        if matches!(self.selection, Selection::Preset(_))
+        // as does a ready-made theme, and a starter look (not
+        // appearance-only) applies its own colors.
+        if matches!(self.selection, Selection::Preset(id) if !profiles::themes::is_named(id))
             && let Some(mut p) = self
                 .profile()
                 .filter(|p| p.appearance_only && profiles::themes::family(p).is_some())

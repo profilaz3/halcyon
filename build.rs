@@ -8,17 +8,20 @@ fn main() {
         profile.join("halcyon").display()
     );
     println!("cargo:rerun-if-changed=build.rs");
-    built_in_looks(&out);
+    embed(&out, "resources/looks", "built_in_looks.rs", "");
+    embed(&out, "resources/themes", "built_in_themes.rs", "theme-");
 }
 
-/// Embeds every `resources/looks/<id>.json` as a built-in look. The file
-/// name is the look's stable ID: lowercase letters, digits and single
-/// hyphens. The records themselves are checked when the app parses them
-/// (and by the tests), so a bad file never ships quietly.
-fn built_in_looks(out: &std::path::Path) {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/looks");
+/// Embeds every `<dir>/<id>.json`: the built-in looks in
+/// `resources/looks` and the built-in themes in `resources/themes`. The file
+/// name is the record's stable ID (lowercase letters, digits and single
+/// hyphens); `prefix` goes in front of it (a theme's ID starts with
+/// `theme-`, like the styles' own). The records themselves are checked when
+/// the app parses them (and by the tests), so a bad file never ships quietly.
+fn embed(out: &std::path::Path, folder: &str, file: &str, prefix: &str) {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(folder);
     println!("cargo:rerun-if-changed={}", dir.display());
-    let mut looks = Vec::new();
+    let mut records = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -39,20 +42,20 @@ fn built_in_looks(out: &std::path::Path) {
                     .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
             assert!(
                 valid,
-                "resources/looks/{id}.json: a built-in look's file name is its ID: lowercase letters, digits and hyphens"
+                "{folder}/{id}.json: a built-in record's file name is its ID: lowercase letters, digits and hyphens"
             );
             println!("cargo:rerun-if-changed={}", path.display());
-            looks.push((id.to_string(), path));
+            records.push((format!("{prefix}{id}"), path));
         }
     }
-    looks.sort();
+    records.sort();
     let mut code = String::from("pub const FILES: &[(&str, &str)] = &[\n");
-    for (id, path) in looks {
+    for (id, path) in records {
         code.push_str(&format!(
             "    ({id:?}, include_str!({:?})),\n",
             path.display().to_string()
         ));
     }
     code.push_str("];\n");
-    std::fs::write(out.join("built_in_looks.rs"), code).unwrap();
+    std::fs::write(out.join(file), code).unwrap();
 }
