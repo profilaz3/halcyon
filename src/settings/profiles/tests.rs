@@ -158,6 +158,8 @@ fn apply_writes_only_included_parts_and_its_undo_survives_a_restart() {
         Domain::Panel,
         Domain::Appearance,
         Domain::Wallpaper,
+        Domain::Windows,
+        Domain::DesktopIcons,
     ] {
         editor.update(Message::Include(domain, false));
     }
@@ -2919,4 +2921,352 @@ fn fb13_share_detects_external_library_change_with_the_same_selection() {
     );
     assert!(!editor.busy());
     assert!(matches!(&editor.notice,Some(Notice::Error(text)) if text.contains("look changed")));
+}
+
+// Curated Looks: the preview draws exactly what Apply would write. Each part
+// the person keeps on comes from the look; every part they leave out is
+// read from their desktop as it is now.
+
+/// A desk with what a default COSMIC install ships: its fonts and the
+/// Cosmic and Pop icon themes, so a look's fonts and icons resolve.
+fn looks_desk(name: &str) -> Desk {
+    let desk = Desk::new(name);
+    let root = &desk.fixture.0;
+    fs::write(
+        root.join("fonts"),
+        "interface\tOpen Sans\t400,700\ninterface\tFira Sans\t400\nmonospace\tNoto Sans Mono\t400\n",
+    )
+    .unwrap();
+    for theme in ["Cosmic", "Pop"] {
+        let dir = root.join("icons").join(theme);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("index.theme"),
+            format!("[Icon Theme]\nName={theme}\nDirectories=scalable\n"),
+        )
+        .unwrap();
+    }
+    // The wallpapers Halcyon ships, so each look keeps its Wallpaper part.
+    let bundled = crate::desktop::wallpaper::bundled_dir(&desk.store());
+    fs::create_dir_all(&bundled).unwrap();
+    let shipped = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/wallpapers");
+    for (name, _) in crate::desktop::wallpaper::BUNDLED {
+        fs::copy(
+            crate::desktop::wallpaper::bundled_path(&shipped, name),
+            crate::desktop::wallpaper::bundled_path(&bundled, name),
+        )
+        .unwrap();
+    }
+    desk
+}
+
+/// The desktop's settings and the widget config, leaving out the journal
+/// and Undo records Apply keeps beside them.
+fn looks_settings(desk: &Desk) -> BTreeMap<PathBuf, Vec<u8>> {
+    let config = desk.fixture.0.join("config");
+    desk.desktop()
+        .into_iter()
+        .filter(|(path, _)| path.starts_with(&config) || *path == desk.config)
+        .collect()
+}
+
+fn select_look(editor: &mut ProfilesEditor, id: &'static str) {
+    editor.update(Message::Select(Selection::Preset(id)));
+    finish_theme(editor);
+}
+
+/// What the preview shows for one part, as comparable text.
+fn shown(editor: &ProfilesEditor, domain: Domain) -> String {
+    use crate::desktop::appearance::FontRole;
+    use crate::desktop::appearance::ThemeVariant;
+    use crate::desktop::windows::Behavior;
+    let preview = editor.preview().expect("a preview");
+    let bar = |kind: PanelKind| {
+        preview
+            .bars
+            .iter()
+            .find(|bar| bar.kind() == kind)
+            .map(|bar| {
+                // What the picture draws of a bar, not the keys it was read from.
+                format!(
+                    "{:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?}",
+                    bar.listed(),
+                    bar.anchor(),
+                    bar.size(),
+                    bar.autohide(),
+                    bar.floating(),
+                    bar.margin(),
+                    bar.extend(),
+                    bar.opacity(),
+                    bar.radius(),
+                    bar.spacing(),
+                    bar.padding(),
+                    bar.background(),
+                    bar.applets(),
+                    bar.islands(),
+                )
+            })
+    };
+    match domain {
+        Domain::Dock => format!("{:?}", bar(PanelKind::Dock)),
+        Domain::Panel => format!("{:?}", bar(PanelKind::Panel)),
+        Domain::Appearance => {
+            let look = preview.appearance.as_ref().unwrap();
+            format!(
+                "{:?} {:?} {:?} {:?} {:?} {:?}",
+                look.active_variant(),
+                look.font(FontRole::Interface).known().map(|f| &f.family),
+                look.icon_theme().known(),
+                ThemeVariant::ALL.map(|v| look.preview(v)),
+                ThemeVariant::ALL.map(|v| look.gaps(v).known().copied()),
+                ThemeVariant::ALL.map(|v| look.outline_width(v).known().copied()),
+            )
+        }
+        Domain::Windows => {
+            let windows = preview.windows.as_ref().unwrap();
+            format!(
+                "{:?}",
+                [
+                    Behavior::ActiveHint,
+                    Behavior::ShowMinimize,
+                    Behavior::ShowMaximize
+                ]
+                .map(|b| windows.flag(b).known().copied())
+            )
+        }
+        Domain::DesktopIcons => format!(
+            "{:?}",
+            preview.desktop_icons.as_ref().unwrap().config().known()
+        ),
+        Domain::WidgetStyle => {
+            let config = preview.config.as_ref().unwrap();
+            // Which At a glance sections show belongs to the layout.
+            let glance = &config.glance;
+            format!(
+                "{} {:?} {:?} {:?} {:?} {}",
+                config.theme,
+                config.rain,
+                glance.style,
+                glance.density,
+                glance.opacity,
+                glance.own_background
+            )
+        }
+        Domain::WidgetLayout => {
+            let config = preview.config.as_ref().unwrap();
+            let glance = &config.glance;
+            format!(
+                "{:?} {:?} {:?}",
+                config.enabled_widgets,
+                config.widget_positions,
+                [
+                    glance.enabled,
+                    glance.initialized,
+                    glance.show_clock,
+                    glance.show_weather,
+                    glance.show_calendar
+                ]
+            )
+        }
+        Domain::Wallpaper => format!("{:?}", editor.backdrop()),
+        Domain::Workspaces => String::new(),
+    }
+}
+
+#[test]
+fn looks_preview_draws_each_included_part_from_the_look_and_the_rest_as_now() {
+    let desk = looks_desk("looks-fidelity");
+    let mut editor = desk.editor();
+    for id in ["carbon", "paper", "rain"] {
+        editor.update(Message::Select(Selection::Current));
+        finish_theme(&mut editor);
+        select_look(&mut editor, id);
+        let domains = editor.profile().unwrap().domains();
+        // The live desktop, from the same preview with every part left out.
+        for domain in &domains {
+            editor.update(Message::Include(*domain, false));
+        }
+        finish_theme(&mut editor);
+        let now: BTreeMap<_, _> = domains.iter().map(|d| (*d, shown(&editor, *d))).collect();
+        for domain in &domains {
+            editor.update(Message::Include(*domain, true));
+        }
+        finish_theme(&mut editor);
+        let look: BTreeMap<_, _> = domains.iter().map(|d| (*d, shown(&editor, *d))).collect();
+        // A look can match the desktop in a part (window buttons, say); the
+        // parts that make it a different look always differ.
+        for domain in &domains {
+            if !matches!(domain, Domain::Windows) {
+                assert_ne!(
+                    now[domain], look[domain],
+                    "{id}: {domain:?} changes nothing"
+                );
+            }
+        }
+        // One part at a time: that part from the look, every other part as now.
+        for only in &domains {
+            for domain in &domains {
+                editor.update(Message::Include(*domain, domain == only));
+            }
+            finish_theme(&mut editor);
+            assert_eq!(editor.selected_domains(), BTreeSet::from([*only]));
+            for domain in &domains {
+                let expected = if domain == only { &look } else { &now };
+                assert_eq!(
+                    shown(&editor, *domain),
+                    expected[domain],
+                    "{id} with only {only:?}: {domain:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn looks_islands_come_on_with_the_panel_part_and_stay_as_now_without_it() {
+    for enabled in [false, true] {
+        let desk = looks_desk(&format!("looks-islands-{enabled}"));
+        crate::desktop::islands::fixture_installed(&desk.fixture.0);
+        let key = crate::desktop::islands::key(PanelKind::Panel);
+        let current = dock_islands_core::Settings {
+            enabled,
+            ..Default::default()
+        };
+        desk.fixture.user(
+            key.namespace(),
+            key.key(),
+            &ron::to_string(&current).unwrap(),
+        );
+        let mut editor = desk.editor();
+        assert!(editor.islands());
+        select_look(&mut editor, "halcyon");
+        let islands = |editor: &ProfilesEditor| {
+            let preview = editor.preview().unwrap();
+            let panel = preview
+                .bars
+                .iter()
+                .find(|bar| bar.kind() == PanelKind::Panel)
+                .unwrap();
+            panel.islands().known().unwrap().enabled
+        };
+        // The look has islands: with its Panel part they show and apply.
+        assert!(islands(&editor), "was {enabled}");
+        let plan = editor.plan().unwrap();
+        let panel = plan
+            .domains
+            .iter()
+            .find(|part| part.domain == Domain::Panel)
+            .unwrap();
+        assert_eq!(
+            panel.changes.iter().any(|c| c == "Panel Islands on"),
+            !enabled
+        );
+        // Without it, the panel stays exactly as it is now.
+        editor.update(Message::Include(Domain::Panel, false));
+        assert_eq!(islands(&editor), enabled);
+        assert!(editor.plan().unwrap().patch().get(&key).is_none());
+        // And Apply writes what was shown; Undo restores the panel.
+        editor.update(Message::Include(Domain::Panel, true));
+        let before = looks_settings(&desk);
+        assert_eq!(editor.update(Message::Apply), Outcome::Changed);
+        let applied =
+            crate::desktop::panels::PanelDraft::load(&desk.store(), PanelKind::Panel).unwrap();
+        assert!(applied.islands().known().unwrap().enabled);
+        assert_eq!(editor.update(Message::Undo), Outcome::Changed);
+        assert_eq!(looks_settings(&desk), before, "Undo restores the desktop");
+    }
+}
+
+#[test]
+fn looks_quick_choices_pick_parts_and_the_choice_survives_a_reopen() {
+    let desk = looks_desk("looks-parts");
+    let untouched = desk.desktop();
+    let mut editor = desk.editor();
+    select_look(&mut editor, "rose");
+    let all: BTreeSet<_> = editor.profile().unwrap().domains().into_iter().collect();
+    assert_eq!(editor.selected_domains(), all);
+    editor.update(Message::Parts(Parts::OnlyColors));
+    assert_eq!(
+        editor.selected_domains(),
+        BTreeSet::from([Domain::Appearance, Domain::WidgetStyle])
+    );
+    editor.update(Message::Parts(Parts::KeepLayout));
+    let kept = editor.selected_domains();
+    for domain in [Domain::WidgetLayout, Domain::Panel, Domain::Dock] {
+        assert!(!kept.contains(&domain), "{domain:?}");
+    }
+    assert!(
+        kept.contains(&Domain::Wallpaper) && kept.contains(&Domain::Appearance),
+        "{kept:?} of {all:?}"
+    );
+    assert_eq!(kept.len(), all.len() - 3);
+    // A toggled chip takes over from the quick choice.
+    editor.update(Message::Include(Domain::Wallpaper, false));
+    assert!(!editor.selected_domains().contains(&Domain::Wallpaper));
+    // The selection persists with the parts left out.
+    let saved = editor.session_draft().expect("a pending look");
+    let mut excluded = saved.excluded.clone();
+    excluded.sort();
+    let mut expected: Vec<String> = [
+        Domain::WidgetLayout,
+        Domain::Panel,
+        Domain::Dock,
+        Domain::Wallpaper,
+    ]
+    .iter()
+    .map(|d| d.key().to_string())
+    .collect();
+    expected.sort();
+    assert_eq!(excluded, expected);
+    let text = ron::to_string(&saved).unwrap();
+    let mut reopened = desk.editor();
+    reopened
+        .restore_session(ron::from_str(&text).unwrap())
+        .unwrap();
+    finish_theme(&mut reopened);
+    assert_eq!(reopened.selected_domains(), editor.selected_domains());
+    editor.update(Message::Parts(Parts::Everything));
+    assert_eq!(editor.selected_domains(), all);
+    // Highlighting a part or holding the picture never changes the plan.
+    let plan = editor.plan().cloned();
+    editor.update(Message::Highlight(Some(Domain::Panel)));
+    editor.update(Message::Hold(true));
+    assert!(editor.showing_now());
+    assert_eq!(editor.plan().cloned(), plan);
+    editor.update(Message::Hold(false));
+    assert!(!editor.showing_now());
+    assert_eq!(desk.desktop(), untouched, "choosing parts writes nothing");
+}
+
+#[test]
+fn looks_apply_writes_only_the_chosen_parts_and_undo_restores_them() {
+    let desk = looks_desk("looks-apply-colors");
+    let before = looks_settings(&desk);
+    let mut editor = desk.editor();
+    select_look(&mut editor, "carbon");
+    editor.update(Message::Parts(Parts::OnlyColors));
+    assert_eq!(
+        editor.apply_domains(),
+        BTreeSet::from([Domain::Appearance, Domain::WidgetStyle])
+    );
+    assert_eq!(editor.update(Message::Apply), Outcome::Changed);
+    let latest = editor.latest().cloned().unwrap();
+    assert_eq!(
+        change_domains(&latest),
+        BTreeSet::from([Domain::Appearance, Domain::WidgetStyle])
+    );
+    assert_eq!(desk.fixture.read(DOCK, "autohide"), None, "Dock kept");
+    assert!(
+        !desk
+            .fixture
+            .0
+            .join("config/cosmic/com.system76.CosmicFiles")
+            .exists(),
+        "Desktop icons kept"
+    );
+    let config = desk.widget_config();
+    assert_eq!(config["theme"], "graphite");
+    assert!(config.get("enabled_widgets").is_none(), "Layout kept");
+    assert_eq!(editor.update(Message::Undo), Outcome::Changed);
+    assert_eq!(looks_settings(&desk), before);
 }

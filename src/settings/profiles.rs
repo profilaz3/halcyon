@@ -64,6 +64,45 @@ pub struct NameEdit {
     pub text: String,
 }
 
+/// Quick choices beside a look's parts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Parts {
+    Everything,
+    /// The theme's colors, corners and fonts, and the widgets' style.
+    OnlyColors,
+    /// Everything except where things sit: the widget layout, the panel
+    /// and the dock.
+    KeepLayout,
+}
+
+impl Parts {
+    pub const ALL: [Self; 3] = [Self::Everything, Self::OnlyColors, Self::KeepLayout];
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::Everything => "Everything",
+            Self::OnlyColors => "Only the colors",
+            Self::KeepLayout => "Keep my layout",
+        }
+    }
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Everything => "looks-parts-everything",
+            Self::OnlyColors => "looks-parts-colors",
+            Self::KeepLayout => "looks-parts-layout",
+        }
+    }
+    /// Whether this choice includes `domain`.
+    pub fn includes(self, domain: Domain) -> bool {
+        match self {
+            Self::Everything => true,
+            Self::OnlyColors => matches!(domain, Domain::Appearance | Domain::WidgetStyle),
+            Self::KeepLayout => {
+                !matches!(domain, Domain::WidgetLayout | Domain::Panel | Domain::Dock)
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Message {
     Color(colors::Edit),
@@ -95,6 +134,15 @@ pub enum Message {
         Result<crate::desktop::wallpaper::palette::Suggestion, String>,
     ),
     Include(Domain, bool),
+    /// A quick choice of parts: every part, only the colors, or everything
+    /// but the layout.
+    Parts(Parts),
+    /// The part a pointer or keyboard focus is on, highlighted in the
+    /// preview; view state only.
+    Highlight(Option<Domain>),
+    /// The preview is pressed (`true`) or released: while held it shows
+    /// the desktop as it is now. View state only.
+    Hold(bool),
     Details(bool),
     /// Opens (`Some`) or closes the name field.
     Name(Option<NameAction>),
@@ -353,6 +401,12 @@ pub struct Preview {
     pub bars: Vec<PanelDraft>,
     pub appearance: Option<AppearanceDraft>,
     pub config: Option<Config>,
+    /// Desktop icon preferences after the plan (the desktop's own when the
+    /// part is left out).
+    pub desktop_icons: Option<crate::desktop::desktop_icons::DesktopIconsDraft>,
+    /// Window behavior after the plan: the active window hint and title
+    /// buttons the preview draws.
+    pub windows: Option<crate::desktop::windows::WindowsDraft>,
 }
 
 /// A preset choice is an intention, not an applied transaction. On reopen
@@ -473,6 +527,10 @@ pub struct ProfilesEditor {
     pub saved_collection: bool,
     pub discovery_query: String,
     pub compare_current: bool,
+    /// The part under the pointer or focus in the parts list.
+    pub highlight: Option<Domain>,
+    /// The preview is held down to compare with the desktop now.
+    pub hold: bool,
     pub name: Option<NameEdit>,
     pub confirm_delete: bool,
     /// Automation rules that apply the profile being deleted.
@@ -810,6 +868,11 @@ impl ProfilesEditor {
     pub fn included(&self, domain: Domain) -> bool {
         !self.excluded.contains(&domain)
     }
+    /// Whether the preview shows the desktop as it is now: chosen with
+    /// "Now", or while the picture is held down.
+    pub fn showing_now(&self) -> bool {
+        self.compare_current || self.hold
+    }
     /// The parts the plan covers: the profile's sections the user kept on.
     pub fn selected_domains(&self) -> BTreeSet<Domain> {
         self.profile()
@@ -943,7 +1006,7 @@ impl ProfilesEditor {
     /// Changes whenever anything visible changes; used by capture mode.
     pub fn state_key(&self) -> String {
         format!(
-            "{:?}:{:?}:{:?}:{:?}:{:?}:{}:{:?}:{}:{}:{:?}:{:?}:{}:{:?}:{}:{}:{}:{:?}:{}",
+            "{:?}:{:?}:{:?}:{:?}:{:?}:{}:{:?}:{}:{}:{:?}:{:?}:{}:{:?}:{}:{}:{}:{:?}:{}:{:?}",
             self.selection,
             self.excluded,
             self.plan,
@@ -968,6 +1031,7 @@ impl ProfilesEditor {
                 m.sources.each_ref().map(|s| s.as_ref().map(|s| &s.origin))
             )),
             self.discovery_query,
+            (self.highlight, self.hold),
         )
     }
 
@@ -1250,6 +1314,8 @@ impl ProfilesEditor {
         self.excluded.clear();
         self.details = false;
         self.compare_current = false;
+        self.highlight = None;
+        self.hold = false;
         self.confirm_delete = false;
         self.name = None;
         self.notes.clear();
@@ -1738,6 +1804,7 @@ impl ProfilesEditor {
             Message::Select(_) if self.owner == previews::PreviewKind::Theme => Some("theme"),
             Message::Color(_) => Some("colors"),
             Message::Include(..) => Some("included part"),
+            Message::Parts(_) => Some("included parts"),
             Message::ThemeColors(_) => Some("color source"),
             Message::ThemeAccent(_) => Some("accent"),
             Message::ThemeWallpaper(_) => Some("matching wallpaper"),
@@ -1832,6 +1899,29 @@ impl ProfilesEditor {
                 }
                 self.replan();
             }
+            Message::Parts(choice) => {
+                let before = self.excluded.clone();
+                if let Some(profile) = self.profile() {
+                    self.excluded = profile
+                        .domains()
+                        .into_iter()
+                        .filter(|domain| !choice.includes(*domain))
+                        .collect();
+                }
+                if self.excluded != before {
+                    self.conflicts
+                        .retain(|domain| !self.excluded.contains(domain));
+                    self.notice = None;
+                    if before.contains(&Domain::Wallpaper)
+                        != self.excluded.contains(&Domain::Wallpaper)
+                    {
+                        self.queue_theme_colors();
+                    }
+                    self.replan();
+                }
+            }
+            Message::Highlight(domain) => self.highlight = domain,
+            Message::Hold(held) => self.hold = held,
             Message::Details(open) => self.details = open,
             Message::MixStart => self.start_mix(),
             Message::MixClosePicker => {
@@ -2482,10 +2572,26 @@ fn preview(store: &DesktopStore, plan: Option<&ProfilePlan>) -> Preview {
         }
         config::check_config_value(&value).ok()
     });
+    let desktop_icons = store
+        .load(&crate::desktop::desktop_icons::DesktopIconsDraft::keys())
+        .ok()
+        .map(|snapshot| {
+            crate::desktop::desktop_icons::DesktopIconsDraft::from_snapshot(overlay(
+                snapshot, patch,
+            ))
+        });
+    let windows = store
+        .load(&crate::desktop::windows::WindowsDraft::keys())
+        .ok()
+        .map(|snapshot| {
+            crate::desktop::windows::WindowsDraft::from_snapshot(overlay(snapshot, patch))
+        });
     Preview {
         bars,
         appearance,
         config,
+        desktop_icons,
+        windows,
     }
 }
 

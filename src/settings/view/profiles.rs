@@ -15,6 +15,7 @@ use cosmic::iced::widget::{pin, stack};
 use cosmic::widget::responsive;
 
 mod discovery;
+mod looks;
 /// Reasons shown before the rest is counted.
 mod mix;
 mod packages;
@@ -140,6 +141,18 @@ fn comparison_from_patches(
     current.appearance = current.appearance.map(|appearance| {
         crate::desktop::appearance::AppearanceDraft::from_snapshot(original_snapshot(
             appearance.into_snapshot(),
+            native,
+        ))
+    });
+    current.desktop_icons = current.desktop_icons.map(|icons| {
+        crate::desktop::desktop_icons::DesktopIconsDraft::from_snapshot(original_snapshot(
+            icons.into_snapshot(),
+            native,
+        ))
+    });
+    current.windows = current.windows.map(|windows| {
+        crate::desktop::windows::WindowsDraft::from_snapshot(original_snapshot(
+            windows.into_snapshot(),
             native,
         ))
     });
@@ -446,6 +459,16 @@ pub(in crate::settings) fn card_at<'a>(
 /// accent, corners, outline and title dots, with an accent pill and quiet
 /// lines where the text would be. Sized for the miniature.
 pub(super) fn schematic_window<'a>(preview: Preview, size: [f32; 2]) -> Element<'a, Message> {
+    schematic_window_with(preview, size, 3)
+}
+
+/// [`schematic_window`] with `buttons` title buttons (close always last,
+/// in the accent).
+pub(super) fn schematic_window_with<'a>(
+    preview: Preview,
+    size: [f32; 2],
+    buttons: usize,
+) -> Element<'a, Message> {
     let [width, height] = size;
     let pad = (height / 10.).clamp(4., 8.);
     let gap = (height / 14.).clamp(3., 6.);
@@ -474,7 +497,7 @@ pub(super) fn schematic_window<'a>(preview: Preview, size: [f32; 2]) -> Element<
         )
         .into()
     };
-    let title_bar = row::with_children(vec![
+    let mut title: Vec<Element<'a, Message>> = vec![
         if width >= 170. {
             label("Files", 11., color(preview.on_background))
         } else {
@@ -486,10 +509,12 @@ pub(super) fn schematic_window<'a>(preview: Preview, size: [f32; 2]) -> Element<
             )
         },
         cosmic::iced::widget::space().width(Length::Fill).into(),
-        block(dot, dot, faint(preview.on_background, 0.5), dot / 2.),
-        block(dot, dot, faint(preview.on_background, 0.5), dot / 2.),
-        block(dot, dot, color(preview.accent), dot / 2.),
-    ])
+    ];
+    for _ in 1..buttons.max(1) {
+        title.push(block(dot, dot, faint(preview.on_background, 0.5), dot / 2.));
+    }
+    title.push(block(dot, dot, color(preview.accent), dot / 2.));
+    let title_bar = row::with_children(title)
     .spacing(dot * 0.6)
     .align_y(Alignment::Center);
     let inner = (width - 2. * pad - gap).max(2.);
@@ -658,7 +683,8 @@ impl Settings {
         }
         let accent = config.palette().accent;
         let mut bars = preview.bars.clone();
-        if matches!(self.page, Page::DesktopProfiles | Page::Overview) {
+        // Looks draws a bar that always hides faintly, where it waits.
+        if self.page == Page::Overview {
             bars.retain(|bar| {
                 bar.autohide().known() != Some(&crate::desktop::panels::AutoHide::Always)
             });
@@ -681,6 +707,11 @@ impl Settings {
         // An active COSMIC window shows the planned window colors and its
         // outline, which a theme now coordinates too.
         let show_window = !matches!(self.page, Page::DesktopProfiles | Page::Overview);
+        // Looks draws every part a look can change: tiled windows with the
+        // gaps, desktop icons, the weather effect, and a ring on the part
+        // the parts list points at.
+        let looks = self.page == Page::DesktopProfiles;
+        let highlight = editor.highlight.filter(|_| looks);
         // A part of the picture answers a click only on its own menu: the
         // widgets on Widgets, the window on Appearance. Parts that another
         // sidebar page edits are drawn but inert; the labelled shortcuts
@@ -788,6 +819,36 @@ impl Settings {
                     .into(),
                 background,
             ];
+            let bar_refs: Vec<&crate::desktop::panels::PanelDraft> = bars.iter().collect();
+            let insets = super::desktop::preview::edge_insets(&bar_refs, scale);
+            let widget_areas: Vec<looks::Rect> = layout
+                .widgets
+                .iter()
+                .filter(|geometry| {
+                    Widget::parse(&geometry.key).is_some_and(|w| config.widget_visible(w))
+                })
+                .map(|geometry| {
+                    (
+                        Point::new(geometry.position[0] * scale, geometry.position[1] * scale),
+                        [geometry.size[0] * scale, geometry.size[1] * scale],
+                    )
+                })
+                .collect();
+            let mut icon_area = None;
+            let mut window_area = None;
+            if looks {
+                layers.extend(looks::weather_layers(&config.rain, screen));
+                if let Some(icons) = preview
+                    .desktop_icons
+                    .as_ref()
+                    .and_then(|draft| draft.config().known().copied())
+                {
+                    let (icons, area) =
+                        looks::icon_layers(&icons, insets, &widget_areas, screen, scale);
+                    layers.extend(icons);
+                    icon_area = area;
+                }
+            }
             for geometry in &layout.widgets {
                 let Some(widget) = Widget::parse(&geometry.key) else {
                     continue;
@@ -858,6 +919,11 @@ impl Settings {
                         .into(),
                 );
             }
+            if looks && let Some((pair, area)) = looks::window_pair(&preview, insets, screen, scale)
+            {
+                layers.push(pair);
+                window_area = Some(area);
+            }
             layers.extend(super::desktop::preview::bars_on_output(
                 self.desktop.islands.installation.installed(),
                 bars.iter().collect(),
@@ -869,6 +935,20 @@ impl Settings {
                 &|kind| own(Page::of_bar(kind)).then_some(Message::OpenBar(kind)),
                 self.placement.display.as_deref().unwrap_or(""),
             ));
+            if let Some(domain) = highlight {
+                let ring = self.settings_accent();
+                for area in looks::part_areas(
+                    domain,
+                    &bar_refs,
+                    &widget_areas,
+                    window_area,
+                    icon_area,
+                    screen,
+                    scale,
+                ) {
+                    layers.push(looks::ring(area, ring, 8.));
+                }
+            }
             container(stack(layers).width(screen[0]).height(screen[1]).clip(true))
                 .id(cosmic::widget::Id::new(if current {
                     "profile-scene-current"
@@ -1391,23 +1471,29 @@ impl Settings {
     fn selection_scene(&self) -> Element<'_, Message> {
         let editor = &self.profiles;
         let accent = self.settings_accent();
+        let looks = self.page == Page::DesktopProfiles;
         // Leave room for navigation, the setup title, comparison controls,
         // caption and fixed actions in the minimum-height native window.
         let height = self
             .stage_height()
-            .min((self.window.height - 390.).max(160.));
+            .min((self.window.height - if looks { 430. } else { 390. }).max(160.));
+        let now = editor.showing_now();
         let mut content = Vec::new();
         let choices = row::with_children(vec![
-            button::custom(label("Preview", 13., FG))
-                .class(nav_style(!editor.compare_current, accent))
-                .selected(!editor.compare_current)
-                .padding([8, 14])
-                .id(cosmic::widget::Id::new("setup-show-candidate"))
-                .on_press(edit(Edit::Compare(false)))
-                .into(),
-            button::custom(label("Current", 13., FG))
-                .class(nav_style(editor.compare_current, accent))
-                .selected(editor.compare_current)
+            button::custom(label(
+                if looks { "With this look" } else { "Preview" },
+                13.,
+                FG,
+            ))
+            .class(nav_style(!now, accent))
+            .selected(!now)
+            .padding([8, 14])
+            .id(cosmic::widget::Id::new("setup-show-candidate"))
+            .on_press(edit(Edit::Compare(false)))
+            .into(),
+            button::custom(label(if looks { "Now" } else { "Current" }, 13., FG))
+                .class(nav_style(now, accent))
+                .selected(now)
                 .padding([8, 14])
                 .id(cosmic::widget::Id::new("setup-show-current"))
                 .on_press(edit(Edit::Compare(true)))
@@ -1416,32 +1502,92 @@ impl Settings {
         .spacing(6)
         .into();
         content.push(choices);
-        let scene = if editor.compare_current {
-            editor
-                .preview()
-                .map(|preview| {
-                    self.profile_scene(
-                        comparison_current(preview, editor.plan()),
-                        height,
-                        true,
-                        false,
-                    )
-                })
+        let shown = editor.preview().map(|preview| {
+            if now {
+                comparison_current(preview, editor.plan())
+            } else {
+                preview.clone()
+            }
+        });
+        let scene = if now {
+            shown
+                .clone()
+                .map(|preview| self.profile_scene(preview, height, true, false))
                 .unwrap_or_else(|| label("Reading your desktop…", 12., MUTED))
         } else {
             self.profile_preview(height)
         };
         if self.scene_open() {
+            // Press and hold the picture to see the desktop as it is now.
+            let scene: Element<'_, Message> = if looks && editor.profile().is_some() {
+                cosmic::widget::mouse_area(scene)
+                    .on_press(edit(Edit::Hold(true)))
+                    .on_release(edit(Edit::Hold(false)))
+                    .on_exit(edit(Edit::Hold(false)))
+                    .into()
+            } else {
+                scene
+            };
             content.push(
                 container(scene)
                     .id(cosmic::widget::Id::new("desktop-scene"))
                     .into(),
             );
-            content.push(label(
-                format!("Sample desktop · {}", self.setup_islands_status()),
-                12.,
-                MUTED,
-            ));
+            if looks && let (Some(preview), Some(profile)) = (&shown, editor.profile()) {
+                let config = preview
+                    .config
+                    .clone()
+                    .unwrap_or_else(|| self.config.clone());
+                let from_look = |domain| !now && editor.included(domain) && profile.has(domain);
+                let pills = looks::facts(preview, &config, from_look)
+                    .into_iter()
+                    .map(|(text, look)| {
+                        fill(
+                            label(text, 12., if look { FG } else { MUTED }),
+                            Color::TRANSPARENT,
+                            if look {
+                                accent
+                            } else {
+                                Color { a: 0.3, ..MUTED }
+                            },
+                            1.,
+                            12.,
+                        )
+                        .padding([3, 10])
+                        .into()
+                    })
+                    .collect::<Vec<_>>();
+                content.push(row::with_children(pills).spacing(6).wrap().into());
+                let kept: Vec<&str> = profile
+                    .domains()
+                    .into_iter()
+                    .filter(|domain| !editor.included(*domain))
+                    .map(Domain::title)
+                    .collect();
+                content.push(label(
+                    if now {
+                        "Your desktop now. Release or choose With this look to compare.".to_string()
+                    } else if kept.is_empty() {
+                        format!(
+                            "Everything here comes from {}. Outlined: set by the look. Press and hold the picture to see your desktop now.",
+                            profile.name
+                        )
+                    } else {
+                        format!(
+                            "Kept as on your desktop now: {}. Press and hold the picture to compare.",
+                            kept.join(", ")
+                        )
+                    },
+                    12.,
+                    MUTED,
+                ));
+            } else {
+                content.push(label(
+                    format!("Sample desktop · {}", self.setup_islands_status()),
+                    12.,
+                    MUTED,
+                ));
+            }
         }
         column::with_children(content).spacing(12).into()
     }
@@ -1670,9 +1816,9 @@ impl Settings {
             } else if !self.desktop.islands.installation.installed() {
                 "The standard panel is used until Islands is installed and enabled."
             } else if preview_panel.and_then(|p| p.islands().known().cloned()).is_some_and(|s| !s.enabled) {
-                "This saves the arrangement for when you turn Islands on in Panel."
+                "This panel stays standard; the arrangement is saved for when you turn Islands on."
             } else {
-                "Applies with Panel below. Your applets and display-specific arrangements are kept."
+                "Islands come on with Panel. Your applets and display-specific arrangements are kept."
             }, 12., MUTED));
         }
         let mut review = Vec::new();
@@ -1713,50 +1859,137 @@ impl Settings {
 
     /// Only actual capture domains are offered. Counts and restrictions come
     /// from the same plan that gates Apply; an omitted domain stays untouched.
+    /// Each part is a chip with what the look sets in it; pointing at one
+    /// rings that part in the preview.
     fn parts<'a>(
         &'a self,
         profile: &'a crate::desktop::profiles::Profile,
-        _accent: Color,
+        accent: Color,
     ) -> Element<'a, Message> {
-        let plan = self.profiles.plan();
-        let mut rows = vec![self.help(
-            "setup-include",
-            "Include",
-            "Turn off a part to keep its current settings. Apply changes only the included parts.",
-        )];
-        for domain in profile.domains() {
-            let on = self.profiles.included(domain);
-            let part = plan.and_then(|plan| plan.domains.iter().find(|p| p.domain == domain));
-            let status = if !on {
-                Some(("Keep current", MUTED))
-            } else if part.is_some_and(|part| !part.blocked.is_empty()) {
-                Some(("Needs attention", WARN))
-            } else {
-                None
-            };
-            let mut line = vec![
-                container(
-                    cosmic::widget::checkbox(on)
-                        .label(domain.title())
-                        .on_toggle(move |on| edit(Edit::Include(domain, on))),
-                )
-                .id(cosmic::widget::Id::new(format!(
-                    "setup-include-{}",
-                    format!("{domain:?}").to_lowercase()
-                )))
+        let editor = &self.profiles;
+        let plan = editor.plan();
+        let domains = profile.domains();
+        let on_count = domains.iter().filter(|d| editor.included(**d)).count();
+        let mut rows = vec![
+            row::with_children(vec![
+                container(self.help(
+                    "setup-include",
+                    "Parts to apply",
+                    "Turn off a part to keep it as it is on your desktop now. The preview and Apply change only the parts that are on.",
+                ))
                 .width(Length::Fill)
                 .into(),
-            ];
-            if let Some((text, tone)) = status {
-                line.push(label(text, 12., tone));
-            }
-            rows.push(
-                row::with_children(line)
-                    .spacing(8)
-                    .align_y(Alignment::Center)
+                label(format!("{on_count} of {}", domains.len()), 12., MUTED),
+            ])
+            .align_y(Alignment::Center)
+            .into(),
+        ];
+        let current = looks::matching_parts(profile, |domain| editor.included(domain));
+        rows.push(
+            row::with_children(
+                crate::settings::profiles::Parts::ALL
+                    .into_iter()
+                    .map(|choice| {
+                        let selected = current == Some(choice);
+                        button::custom(label(choice.title(), 12., FG))
+                            .class(nav_style(selected, accent))
+                            .selected(selected)
+                            .padding([5, 10])
+                            .id(cosmic::widget::Id::new(choice.id()))
+                            .on_press(edit(Edit::Parts(choice)))
+                            .into()
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .spacing(6)
+            .wrap()
+            .into(),
+        );
+        // On a short window each chip is one line, so every part shows
+        // without scrolling.
+        let short = self.window.height > 0. && self.window.height < 760.;
+        let mut chips = Vec::new();
+        for domain in domains {
+            let on = editor.included(domain);
+            let part = plan.and_then(|plan| plan.domains.iter().find(|p| p.domain == domain));
+            let blocked = on && part.is_some_and(|part| !part.blocked.is_empty());
+            let note = if on {
+                looks::part_note(profile, domain)
+            } else {
+                "Keeps yours".to_string()
+            };
+            let chip = button::custom(
+                row::with_children(vec![
+                    icon::from_name(looks::part_icon(domain))
+                        .size(18)
+                        .icon()
+                        .into(),
+                    if short {
+                        row::with_children(vec![
+                            label(domain.title(), 13., if on { FG } else { MUTED }),
+                            container(super::desktop::line(
+                                note,
+                                11.,
+                                if blocked { WARN } else { MUTED },
+                            ))
+                            .width(Length::Fill)
+                            .into(),
+                        ])
+                        .spacing(8)
+                        .align_y(Alignment::Center)
+                        .width(Length::Fill)
+                        .into()
+                    } else {
+                        column::with_children(vec![
+                            label(domain.title(), 13., if on { FG } else { MUTED }),
+                            super::desktop::line(note, 11., if blocked { WARN } else { MUTED }),
+                        ])
+                        .spacing(1)
+                        .width(Length::Fill)
+                        .into()
+                    },
+                    if blocked {
+                        label("Needs attention", 11., WARN)
+                    } else {
+                        icon::from_name(if on {
+                            "checkbox-checked-symbolic"
+                        } else {
+                            "checkbox-symbolic"
+                        })
+                        .size(16)
+                        .icon()
+                        .into()
+                    },
+                ])
+                .spacing(10)
+                .align_y(Alignment::Center),
+            )
+            .class(tile_style(on, accent))
+            .selected(on)
+            .padding(if short { [5, 10] } else { [6, 10] })
+            .width(Length::Fill)
+            .id(cosmic::widget::Id::new(format!(
+                "setup-include-{}",
+                format!("{domain:?}").to_lowercase()
+            )))
+            .name(format!(
+                "{}: {}",
+                domain.title(),
+                if on { "applies" } else { "keeps yours" }
+            ))
+            .on_press(edit(Edit::Include(domain, !on)));
+            chips.push(
+                cosmic::widget::mouse_area(chip)
+                    .on_enter(edit(Edit::Highlight(Some(domain))))
+                    .on_exit(edit(Edit::Highlight(None)))
                     .into(),
             );
         }
+        rows.push(
+            column::with_children(chips)
+                .spacing(if short { 4 } else { 6 })
+                .into(),
+        );
         if profile.local_member().is_some() {
             rows.push(label(
                 "Personal pictures and display arrangements stay on this computer and are omitted on export.",
@@ -1873,10 +2106,20 @@ impl Settings {
     }
 
     fn setup_islands_status(&self) -> &'static str {
+        let shown = if self.profiles.showing_now() {
+            self.setup_panel_baseline()
+        } else {
+            self.profiles.preview().and_then(|preview| {
+                preview
+                    .bars
+                    .iter()
+                    .find(|p| p.kind() == crate::desktop::panels::PanelKind::Panel)
+                    .cloned()
+            })
+        };
         if !self.desktop.islands.installation.installed() {
             "Standard panel · Islands unavailable"
-        } else if self
-            .setup_panel_baseline()
+        } else if shown
             .and_then(|p| p.islands().known().cloned())
             .is_some_and(|s| s.enabled)
         {
@@ -2104,6 +2347,34 @@ impl Settings {
         )
     }
 
+    /// "Apply 4 of 6 parts" on Looks, so the count of parts that change is
+    /// always in view.
+    pub(in crate::settings) fn apply_label(&self) -> String {
+        let editor = &self.profiles;
+        if self.page == Page::Themes {
+            return "Apply appearance".into();
+        }
+        match editor
+            .profile()
+            .filter(|_| self.page == Page::DesktopProfiles && editor.mix.is_none())
+        {
+            Some(profile) if !profile.appearance_only => {
+                let total = profile.domains().len();
+                let on = profile
+                    .domains()
+                    .into_iter()
+                    .filter(|domain| editor.included(*domain))
+                    .count();
+                match (on, total) {
+                    (_, 1) => "Apply look".into(),
+                    (on, total) if on == total => format!("Apply all {total} parts"),
+                    (on, total) => format!("Apply {on} of {total} parts"),
+                }
+            }
+            _ => "Apply look".into(),
+        }
+    }
+
     pub(super) fn profiles_actions(&self) -> Element<'_, Message> {
         let editor = &self.profiles;
         if editor.package.is_some() {
@@ -2175,11 +2446,7 @@ impl Settings {
                 .into(),
             );
         }
-        let apply = button::suggested(if self.page == Page::Themes {
-            "Apply appearance"
-        } else {
-            "Apply look"
-        })
+        let apply = button::suggested(self.apply_label())
         .id("profiles-confirm".into())
         .on_press_maybe((editor.can_apply() && !self.native_busy).then_some(edit(Edit::Apply)))
         .into();
@@ -2428,6 +2695,8 @@ mod image_tests {
             bars: vec![PanelDraft::from_snapshot(PanelKind::Dock, snapshot.clone())],
             appearance: None,
             config: Some(config.clone()),
+            desktop_icons: None,
+            windows: None,
         };
         let current = comparison_from_patches(&candidate, &native, &widgets);
         let restored = current.bars[0].clone().into_snapshot();
