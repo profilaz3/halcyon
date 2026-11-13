@@ -45,13 +45,18 @@ impl Settings {
         // Arranging happens on the desktop itself; the list in Settings
         // stays one click away for arranging with the keyboard.
         let header = split(
-            heading("Widgets", "Click a widget in the picture to change it."),
+            heading(
+                "Widgets",
+                "Click a widget in the picture to change it. \
+                 Arrange widgets adds, removes and moves them on your desktop.",
+            ),
             row::with_children(vec![
                 button::text("Arrange with keyboard")
                     .id(cosmic::widget::Id::new("canvas-start"))
                     .on_press(Message::Canvas(crate::settings::canvas::Message::Start))
                     .into(),
-                button::standard("Arrange widgets")
+                button::suggested("Arrange widgets")
+                    .leading_icon(icon::from_name("view-grid-symbolic").size(16))
                     .id(cosmic::widget::Id::new("arrange-widgets"))
                     .on_press_maybe((!self.busy).then_some(Message::ArrangeWidgets))
                     .into(),

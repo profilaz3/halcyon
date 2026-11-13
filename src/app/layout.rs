@@ -6,7 +6,9 @@ use cosmic::cctk::sctk::reexports::protocols::xdg::shell::client::xdg_positioner
     Anchor as PopupAnchor, Gravity,
 };
 use cosmic::iced::platform_specific::runtime::wayland::popup::{SctkPopupSettings, SctkPositioner};
-use cosmic::iced::platform_specific::shell::commands::layer_surface::destroy_layer_surface;
+use cosmic::iced::platform_specific::shell::commands::layer_surface::{
+    destroy_layer_surface, set_layer,
+};
 use cosmic::iced::platform_specific::shell::commands::popup::{destroy_popup, get_popup};
 use cosmic::iced::widget::{opaque, pin, stack};
 use cosmic::iced::{Point, keyboard, mouse};
@@ -23,6 +25,54 @@ pub enum MenuPick {
 pub(super) const MENU_WIDTH: u32 = 220;
 const MENU_ROW: u32 = 36;
 const MENU_PADDING: u32 = 6;
+
+/// The Arrange toolbar's width, and the narrowest that keeps it on one line.
+const TOOLBAR_WIDTH: f32 = 960.;
+const TOOLBAR_ONE_LINE: f32 = 900.;
+/// The round buttons in a card's corner while arranging.
+const CARD_CONTROL: f32 = 28.;
+const CARD_CONTROL_GAP: f32 = 6.;
+
+/// A round button in an arranged card's corner, in the overlay's colors.
+fn card_control<'a>(
+    p: crate::config::Palette,
+    icon: &'static str,
+    id: String,
+    message: Message,
+) -> Element<'a, Message> {
+    let style = move |level: usize| cosmic::widget::button::Style {
+        icon_color: Some(p.accent),
+        text_color: Some(p.accent),
+        background: Some(
+            Background::Color(Color {
+                a: 1.,
+                ..[p.background, p.accent, p.accent][level]
+            })
+            .scale_alpha([1., 0.25, 0.4][level]),
+        ),
+        border_radius: (CARD_CONTROL / 2.).into(),
+        border_width: 1.,
+        border_color: Color { a: 0.6, ..p.accent },
+        ..Default::default()
+    };
+    cosmic::widget::button::custom(
+        container(cosmic::widget::icon::from_name(icon).size(14).icon())
+            .center_x(CARD_CONTROL)
+            .center_y(CARD_CONTROL),
+    )
+    .id(cosmic::widget::Id::new(id))
+    .padding(0)
+    .width(CARD_CONTROL)
+    .height(CARD_CONTROL)
+    .class(cosmic::theme::Button::Custom {
+        active: Box::new(move |_, _| style(0)),
+        hovered: Box::new(move |_, _| style(1)),
+        pressed: Box::new(move |_, _| style(2)),
+        disabled: Box::new(move |_| style(0)),
+    })
+    .on_press(message)
+    .into()
+}
 
 /// Where a widget waits when the desktop has no room for it.
 const OFF_DESKTOP: [f32; 2] = [-10000., 0.];
@@ -69,6 +119,7 @@ struct LayoutState {
     positions: BTreeMap<String, [f32; 2]>,
     sizes: BTreeMap<String, [f32; 2]>,
     reset: bool,
+    shown: BTreeMap<String, bool>,
 }
 struct LayoutDrag {
     widget: Widget,
@@ -89,6 +140,15 @@ pub(super) struct LayoutEditor {
     sizes: BTreeMap<String, [f32; 2]>,
     baseline_sizes: BTreeMap<String, [f32; 2]>,
     reset: bool,
+    // Which widgets are on the desktop. Added and removed widgets are part
+    // of the draft, so Undo brings them back and Cancel rolls them back.
+    shown: BTreeMap<String, bool>,
+    baseline_shown: BTreeMap<String, bool>,
+    // The Add widget list is open in the toolbar.
+    pub(super) adding: bool,
+    // A widget's Settings is open: the overlay waits below windows, without
+    // the keyboard, until it is clicked.
+    pub(super) aside: bool,
     pointer: Point,
     drag: Option<LayoutDrag>,
     history: Vec<LayoutState>,
@@ -115,6 +175,7 @@ impl LayoutEditor {
             || self.draft != self.baseline
             || self.sizes != self.baseline_sizes
             || self.grid != self.saved_grid
+            || self.shown != self.baseline_shown
     }
 
     pub(super) fn pause_for_output_change(&mut self) {
@@ -129,12 +190,25 @@ impl LayoutEditor {
             positions: self.draft.clone(),
             sizes: self.sizes.clone(),
             reset: self.reset,
+            shown: self.shown.clone(),
         }
     }
     fn restore(&mut self, state: LayoutState) {
         self.draft = state.positions;
         self.sizes = state.sizes;
         self.reset = state.reset;
+        self.shown = state.shown;
+    }
+    /// The widgets this draft shows or hides that the saved settings do
+    /// not yet, Daily overview first, as it decides about the others.
+    fn shown_changes(&self) -> Vec<(Widget, bool)> {
+        std::iter::once(Widget::Glance)
+            .chain(Widget::ALL.into_iter().filter(|w| *w != Widget::Glance))
+            .filter_map(|widget| {
+                let shown = *self.shown.get(widget.key())?;
+                (self.baseline_shown.get(widget.key()) != Some(&shown)).then_some((widget, shown))
+            })
+            .collect()
     }
     fn remember(&mut self, before: LayoutState) {
         if self.state() != before {
@@ -160,15 +234,12 @@ impl Cards {
     /// measure the display's usable width (the edge strip measures the
     /// height), so it is a strip a pixel tall.
     pub(super) fn layout_probe(&self, id: window::Id, editing: bool) -> Task<Message> {
+        let front = editing && !self.layout_editor.aside;
         get_layer_surface(SctkLayerSurfaceSettings {
             id,
             output: self.layer_output(),
-            layer: if editing {
-                Layer::Overlay
-            } else {
-                Layer::Bottom
-            },
-            keyboard_interactivity: if editing {
+            layer: if front { Layer::Overlay } else { Layer::Bottom },
+            keyboard_interactivity: if front {
                 KeyboardInteractivity::Exclusive
             } else {
                 KeyboardInteractivity::None
@@ -866,6 +937,8 @@ impl Cards {
                 .collect(),
             baseline: draft.clone(),
             draft,
+            shown: self.shown_now(),
+            baseline_shown: self.shown_now(),
             grid: crate::config::PlacementPreferences {
                 snap: self.config.placement.snap,
                 columns: crate::config::PlacementPreferences::FINE_COLUMNS,
@@ -886,6 +959,8 @@ impl Cards {
         draft.active = true;
         draft.exit_failed = false;
         draft.pending_resume = None;
+        draft.aside = false;
+        draft.adding = false;
         draft.output_handles = self.layout_output_handles();
         draft.editing_output = self.selected_output.clone();
         draft.editing_display = self
@@ -978,7 +1053,7 @@ impl Cards {
         let (result, receipts) = crate::desktop::actions::with_receipts(|| {
             crate::desktop::actions::in_action("Widget arrangement", || {
                 crate::desktop::actions::guarded(self.layout_editor.guard.as_ref(), || {
-                    Config::save_layout_on_displays(
+                    Config::save_arrangement_on_displays(
                         &self.layout_editor.contexts,
                         &self.layout_editor.draft,
                         &baseline,
@@ -987,6 +1062,7 @@ impl Cards {
                         &self.layout_editor.implicit_positions,
                         self.layout_editor.grid,
                         self.layout_editor.saved_grid,
+                        &self.layout_editor.shown_changes(),
                     )
                 })
             })
@@ -1004,6 +1080,9 @@ impl Cards {
                 self.layout_editor.baseline_sizes = self.layout_editor.sizes.clone();
                 self.layout_editor.saved_grid = self.layout_editor.grid;
                 self.layout_editor.reset = false;
+                // Showing or hiding Daily overview can change other widgets.
+                self.layout_editor.shown = self.shown_now();
+                self.layout_editor.baseline_shown = self.layout_editor.shown.clone();
                 self.layout_editor.guard = Config::path()
                     .and_then(|p| crate::config::read_config_text(&p).ok())
                     .and_then(|t| crate::config::parse_config_text(t.as_deref()).ok());
@@ -1369,6 +1448,135 @@ impl Cards {
             self.layout_editor.restore(state);
         }
     }
+    /// Which widgets the saved settings show now.
+    fn shown_now(&self) -> BTreeMap<String, bool> {
+        Widget::ALL
+            .into_iter()
+            .map(|widget| (widget.key().into(), self.config.widget_visible(widget)))
+            .collect()
+    }
+    /// The hidden widgets Add widget can put on the display being arranged.
+    pub(super) fn addable_widgets(&self) -> Vec<Widget> {
+        if !self.config.widgets_visible {
+            return Vec::new();
+        }
+        Widget::ALL
+            .into_iter()
+            .filter(|widget| {
+                !self.config.widget_visible(*widget)
+                    && self.on_arranged_display(*widget)
+                    // Daily overview shows these itself while it is on.
+                    && !(self.config.glance.enabled
+                        && matches!(widget, Widget::Clock | Widget::Weather | Widget::Calendar))
+            })
+            .collect()
+    }
+    /// Saves the draft. A widget it added or removed also gets or loses its
+    /// surface and data, as with the widget switches.
+    pub(super) fn commit_arrange_shown(&mut self) -> Task<Message> {
+        let old = self.config.clone();
+        self.commit_arrange();
+        if Widget::ALL
+            .into_iter()
+            .all(|widget| old.widget_visible(widget) == self.config.widget_visible(widget))
+        {
+            return Task::none();
+        }
+        let new = std::mem::replace(&mut self.config, old);
+        self.apply_config(new)
+    }
+    /// Puts `widget` on the desktop being arranged, or takes it off. Like a
+    /// move, Undo brings back the widgets as they were and Cancel restores
+    /// the ones shown when Arrange opened.
+    pub(super) fn layout_show(&mut self, widget: Widget, visible: bool) -> Task<Message> {
+        if !self.layout_editor.active
+            || (visible && !self.addable_widgets().contains(&widget))
+            || (!visible && !self.arranging_widget(widget))
+        {
+            return Task::none();
+        }
+        self.cancel_layout_drag();
+        self.layout_editor.adding = false;
+        let before = self.layout_editor.state();
+        let was: Vec<Widget> = Widget::ALL
+            .into_iter()
+            .filter(|w| self.arranging_widget(*w))
+            .collect();
+        self.layout_editor
+            .shown
+            .insert(widget.key().into(), visible);
+        if self.layout_editor.selected == Some(widget) {
+            self.layout_editor.selected = None;
+        }
+        let task = self.commit_arrange_shown();
+        // The new widget, and any that came back with it (the clock, when
+        // Daily overview goes), take a free spot rather than cover others.
+        let mut draft = self.layout_editor.draft.clone();
+        for new in PLACEMENT_ORDER {
+            if was.contains(&new) || !self.arranging_widget(new) {
+                continue;
+            }
+            let others: Vec<[f32; 4]> = PLACEMENT_ORDER
+                .into_iter()
+                .filter(|other| *other != new && self.arranging_widget(*other))
+                .map(|other| {
+                    let at = self.position_from(other, &draft);
+                    let size = self.widget_size(other);
+                    [at[0], at[1], size[0], size[1]]
+                })
+                .collect();
+            let size = self.widget_size(new);
+            let at = self.position_from(new, &draft);
+            let free = crate::layout::free_spot(at, size, &others, self.screen_size).unwrap_or(at);
+            if free != at || draft.contains_key(new.key()) {
+                draft.insert(
+                    new.key().into(),
+                    crate::layout_state::encode_position(new, free, size, self.screen_size),
+                );
+            }
+        }
+        if draft != self.layout_editor.draft {
+            self.layout_editor.draft = draft;
+            self.commit_arrange();
+        }
+        if visible && self.arranging_widget(widget) {
+            self.layout_editor.selected = Some(widget);
+        }
+        self.layout_editor.remember(before);
+        task
+    }
+    /// Opens `widget`'s settings. Arrange and its draft stay as they are;
+    /// the overlay steps behind windows so Settings can be seen, and comes
+    /// back to the front when clicked.
+    pub(super) fn layout_settings(&mut self, widget: Widget) -> Task<Message> {
+        self.cancel_layout_drag();
+        self.layout_editor.adding = false;
+        self.layout_editor.selected = Some(widget);
+        let open = self.launch(
+            crate::paths::CONTROLLER,
+            vec!["settings".into(), "--page".into(), widget.key().into()],
+        );
+        if self.layout_editor.aside {
+            return open;
+        }
+        self.layout_editor.aside = true;
+        Task::batch([
+            set_layer(self.ids[5], Layer::Bottom),
+            set_keyboard_interactivity(self.ids[5], KeyboardInteractivity::None),
+            open,
+        ])
+    }
+    /// Brings the overlay back in front, with the keyboard, after Settings.
+    pub(super) fn layout_front(&mut self) -> Task<Message> {
+        if !self.layout_editor.active || !self.layout_editor.aside {
+            return Task::none();
+        }
+        self.layout_editor.aside = false;
+        Task::batch([
+            set_layer(self.ids[5], Layer::Overlay),
+            set_keyboard_interactivity(self.ids[5], KeyboardInteractivity::Exclusive),
+        ])
+    }
     pub(super) fn layout_resize_mode(&mut self) {
         self.layout_editor.resize_mode = !self.layout_editor.resize_mode;
     }
@@ -1644,11 +1852,17 @@ impl Cards {
             keyboard::Key::Named(Named::Escape) if self.layout_editor.drag.is_some() => {
                 self.cancel_layout_drag()
             }
+            keyboard::Key::Named(Named::Escape) if self.layout_editor.adding => {
+                self.layout_editor.adding = false
+            }
             keyboard::Key::Named(Named::Escape) => return self.finish_arrange(false),
             keyboard::Key::Character(ref value) if value.as_str() == "r" => {
                 self.layout_resize_mode()
             }
-            keyboard::Key::Character(ref value) if value.as_str() == "z" => self.layout_undo(),
+            keyboard::Key::Character(ref value) if value.as_str() == "z" => {
+                self.layout_undo();
+                return self.commit_arrange_shown();
+            }
             keyboard::Key::Named(Named::Tab) => {
                 let widgets: Vec<_> = Widget::ALL
                     .into_iter()
@@ -1932,6 +2146,30 @@ impl Cards {
                     .position(Point::new((size[0] - 32.).max(0.), (size[1] - 32.).max(0.)))
                     .into(),
             );
+            // Last, so a click on them never starts a drag.
+            let controls = row::with_children(vec![
+                card_control(
+                    p,
+                    "emblem-system-symbolic",
+                    format!("arrange-settings-{}", widget.key()),
+                    Message::WidgetSettings(widget),
+                ),
+                card_control(
+                    p,
+                    "window-close-symbolic",
+                    format!("arrange-remove-{}", widget.key()),
+                    Message::LayoutShow(widget, false),
+                ),
+            ])
+            .spacing(CARD_CONTROL_GAP);
+            card_layers.push(
+                pin(opaque(controls))
+                    .position(Point::new(
+                        (size[0] - 8. - 2. * CARD_CONTROL - CARD_CONTROL_GAP).max(0.),
+                        8.,
+                    ))
+                    .into(),
+            );
             let content = stack(card_layers).width(size[0]).height(size[1]);
             layers.push(
                 pin(content)
@@ -1951,60 +2189,117 @@ impl Cards {
             ),
         ])
         .spacing(3);
-        let toolbar = container(
-            row::with_children(vec![
-                container(title).width(Length::Fill).into(),
+        let addable = self.addable_widgets();
+        let snap = row::with_children(vec![
+            label("Snap to grid", 12., p.muted),
+            cosmic::widget::toggler(self.layout_editor.grid.snap)
+                .on_toggle(Message::LayoutSnap)
+                .into(),
+        ])
+        .spacing(8)
+        .align_y(Alignment::Center);
+        let actions = vec![
+            cosmic::widget::button::text(if addable.is_empty() {
+                "All widgets added"
+            } else {
+                "Add widget"
+            })
+            .id(cosmic::widget::Id::new("arrange-add"))
+            .leading_icon(cosmic::widget::icon::from_name("list-add-symbolic").size(14))
+            .on_press_maybe((!addable.is_empty()).then_some(Message::LayoutAddMenu))
+            .into(),
+            cosmic::widget::button::text("Undo")
+                .id(cosmic::widget::Id::new("arrange-undo"))
+                .on_press_maybe(
+                    (!self.layout_editor.history.is_empty()).then_some(Message::LayoutUndo),
+                )
+                .into(),
+            cosmic::widget::button::text("Reset layout")
+                .on_press(Message::LayoutDefaults)
+                .into(),
+            cosmic::widget::button::text("Cancel")
+                .id(cosmic::widget::Id::new("arrange-cancel"))
+                .on_press(Message::LayoutFinish(false))
+                .into(),
+            cosmic::widget::button::suggested("Done")
+                .id(cosmic::widget::Id::new("arrange-done"))
+                .on_press(Message::LayoutFinish(true))
+                .into(),
+        ];
+        let toolbar_width = TOOLBAR_WIDTH.min(self.screen_size[0] - 16.).max(0.);
+        // Narrow displays put the buttons under the title.
+        let mut rows: Vec<Element<'_, Message>> = if toolbar_width >= TOOLBAR_ONE_LINE {
+            let mut line = vec![container(title).width(Length::Fill).into(), snap.into()];
+            line.extend(actions);
+            vec![
+                row::with_children(line)
+                    .spacing(10)
+                    .align_y(Alignment::Center)
+                    .into(),
+            ]
+        } else {
+            vec![
                 row::with_children(vec![
-                    label("Snap to grid", 12., p.muted),
-                    cosmic::widget::toggler(self.layout_editor.grid.snap)
-                        .on_toggle(Message::LayoutSnap)
-                        .into(),
+                    container(title).width(Length::Fill).into(),
+                    snap.into(),
                 ])
-                .spacing(8)
+                .spacing(10)
                 .align_y(Alignment::Center)
                 .into(),
-                cosmic::widget::button::text("Undo")
-                    .on_press_maybe(
-                        (!self.layout_editor.history.is_empty()).then_some(Message::LayoutUndo),
-                    )
+                cosmic::widget::flex_row(actions)
+                    .row_spacing(6)
+                    .column_spacing(10)
                     .into(),
-                cosmic::widget::button::text("Reset layout")
-                    .on_press(Message::LayoutDefaults)
+            ]
+        };
+        if self.layout_editor.adding && !addable.is_empty() {
+            let mut chips = vec![label("Add to this desktop:", 12., p.muted)];
+            chips.extend(addable.iter().map(|widget| {
+                cosmic::widget::button::text(widget.title())
+                    .id(cosmic::widget::Id::new(format!(
+                        "arrange-add-{}",
+                        widget.key()
+                    )))
+                    .leading_icon(cosmic::widget::icon::from_name(widget.icon()).size(14))
+                    .on_press(Message::LayoutShow(*widget, true))
+                    .into()
+            }));
+            rows.push(
+                cosmic::widget::flex_row(chips)
+                    .row_spacing(6)
+                    .column_spacing(6)
+                    .align_items(Alignment::Center)
                     .into(),
-                cosmic::widget::button::text("Cancel")
-                    .on_press(Message::LayoutFinish(false))
-                    .into(),
-                cosmic::widget::button::suggested("Done")
-                    .on_press(Message::LayoutFinish(true))
-                    .into(),
-            ])
-            .spacing(10)
-            .align_y(Alignment::Center),
-        )
-        .padding([12, 18])
-        .width(820_f32.min(self.screen_size[0]))
-        .class(cosmic::theme::Container::custom(move |_| {
-            cosmic::iced::widget::container::Style {
-                background: Some(Background::Color(Color {
-                    a: 1.,
-                    ..p.background
-                })),
-                border: Border {
-                    radius: 16.into(),
-                    color: Color { a: 0.3, ..p.accent },
-                    width: 1.,
-                },
-                ..Default::default()
-            }
-        }));
+            );
+        }
+        let toolbar = container(column::with_children(rows).spacing(10))
+            .padding([12, 18])
+            .width(toolbar_width)
+            .class(cosmic::theme::Container::custom(move |_| {
+                cosmic::iced::widget::container::Style {
+                    background: Some(Background::Color(Color {
+                        a: 1.,
+                        ..p.background
+                    })),
+                    border: Border {
+                        radius: 16.into(),
+                        color: Color { a: 0.3, ..p.accent },
+                        width: 1.,
+                    },
+                    ..Default::default()
+                }
+            }));
         layers.push(
             pin(opaque(toolbar))
-                .position(Point::new(((self.screen_size[0] - 820.) / 2.).max(0.), 8.))
+                .position(Point::new(
+                    ((self.screen_size[0] - toolbar_width) / 2.).max(0.),
+                    8.,
+                ))
                 .into(),
         );
         let inspector: Element<'_, Message> = if let Some(widget) = self.layout_editor.selected {
             let size = self.widget_size(widget);
-            row::with_children(vec![
+            cosmic::widget::flex_row(vec![
                 label(
                     format!(
                         "{} · {} × {}",
@@ -2037,12 +2332,24 @@ impl Cards {
                 cosmic::widget::button::text("Automatic")
                     .on_press(Message::LayoutAutomatic)
                     .into(),
+                cosmic::widget::button::text("Settings")
+                    .id(cosmic::widget::Id::new("arrange-inspector-settings"))
+                    .leading_icon(
+                        cosmic::widget::icon::from_name("emblem-system-symbolic").size(14),
+                    )
+                    .on_press(Message::WidgetSettings(widget))
+                    .into(),
+                cosmic::widget::button::destructive("Remove")
+                    .id(cosmic::widget::Id::new("arrange-inspector-remove"))
+                    .on_press(Message::LayoutShow(widget, false))
+                    .into(),
             ])
-            .spacing(6)
-            .align_y(Alignment::Center)
+            .row_spacing(6)
+            .column_spacing(6)
+            .align_items(Alignment::Center)
             .into()
         } else {
-            row::with_children(
+            cosmic::widget::flex_row(
                 Widget::ALL
                     .into_iter()
                     .filter(|w| self.arranging_widget(*w))
@@ -2053,26 +2360,73 @@ impl Cards {
                     })
                     .collect::<Vec<_>>(),
             )
-            .spacing(4)
+            .row_spacing(4)
+            .column_spacing(4)
             .into()
         };
+        // Along the bottom edge; on a narrow display it wraps upwards.
         layers.push(
-            pin(opaque(container(inspector).padding(8).class(
-                cosmic::theme::Container::custom(move |_| cosmic::iced::widget::container::Style {
+            container(opaque(
+                container(inspector)
+                    .padding(8)
+                    .max_width((self.screen_size[0] - 48.).max(0.))
+                    .class(cosmic::theme::Container::custom(move |_| {
+                        cosmic::iced::widget::container::Style {
+                            background: Some(Background::Color(Color {
+                                a: 1.,
+                                ..p.background
+                            })),
+                            border: Border {
+                                radius: 12.into(),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        }
+                    })),
+            ))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_y(Alignment::End)
+            .padding([0., 24., 2., 24.])
+            .into(),
+        );
+        if self.layout_editor.aside {
+            // Settings is open in front. The first click anywhere here brings
+            // Arrange back, without also moving a widget.
+            let note = container(label(
+                "Widget settings are open. Click anywhere here to keep arranging.",
+                13.,
+                p.foreground,
+            ))
+            .padding([10, 16])
+            .class(cosmic::theme::Container::custom(move |_| {
+                cosmic::iced::widget::container::Style {
                     background: Some(Background::Color(Color {
                         a: 1.,
                         ..p.background
                     })),
                     border: Border {
                         radius: 12.into(),
-                        ..Default::default()
+                        color: Color { a: 0.6, ..p.accent },
+                        width: 1.,
                     },
                     ..Default::default()
-                }),
-            )))
-            .position(Point::new(24., (self.screen_size[1] - 48.).max(0.)))
-            .into(),
-        );
+                }
+            }));
+            layers.push(
+                opaque(
+                    mouse_area(
+                        container(note)
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .center_x(Length::Fill)
+                            .center_y(Length::Fill),
+                    )
+                    .on_press(Message::LayoutFront),
+                )
+                .into(),
+            );
+        }
         stack(layers)
             .width(Length::Fill)
             .height(Length::Fill)

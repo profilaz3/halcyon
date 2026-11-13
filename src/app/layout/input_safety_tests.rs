@@ -1389,3 +1389,390 @@ fn auditfix_state01_pending_resume_recovery_choices_cancel_probe_and_preserve_co
         }
     }
 }
+
+// Adding and removing widgets in Arrange, with the real overlay.
+
+/// Arrange on a 1920 × 1080 display showing `widgets`, with music off.
+fn arranging(widgets: &[&str]) -> (Cards, crate::displays::test_support::Wire) {
+    std::fs::write(
+        Config::path().unwrap(),
+        serde_json::json!({
+            "enabled_widgets": widgets,
+            "music": {"enabled": false},
+            "placement": {"snap": false},
+            "widget_positions": {"weather": [0.2, 0.2]},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let (mut cards, _) = Cards::init(Core::default(), Config::load());
+    let wire = cards.test_output_ready();
+    cards.screen_size = [1920., 1080.];
+    let task = cards.update(Message::Arrange);
+    emitted(&mut cards, task);
+    assert!(cards.layout_editor.active);
+    (cards, wire)
+}
+fn overlay(cards: &Cards) -> crate::native_test::Native {
+    crate::native_test::Native::new(cosmic::iced::Size::new(
+        cards.screen_size[0],
+        cards.screen_size[1],
+    ))
+}
+/// Clicks the overlay at `point` with real input and applies what it sends.
+/// Settings is never launched: its task is dropped unrun.
+fn press_overlay(
+    cards: &mut Cards,
+    native: &mut crate::native_test::Native,
+    point: Point,
+) -> Vec<Message> {
+    let mut sent = Vec::new();
+    for event in [
+        mouse::Event::CursorMoved { position: point },
+        mouse::Event::ButtonPressed(mouse::Button::Left),
+        mouse::Event::ButtonReleased(mouse::Button::Left),
+    ] {
+        let (messages, _) = native.event(
+            cards.layout_view(),
+            cosmic::iced::Event::Mouse(event),
+            point,
+        );
+        for message in messages {
+            sent.push(message.clone());
+            if let Message::WidgetSettings(_) = message {
+                drop(cards.update(message));
+            } else {
+                let task = cards.update(message);
+                emitted(cards, task);
+            }
+        }
+    }
+    sent
+}
+fn click_overlay(
+    cards: &mut Cards,
+    native: &mut crate::native_test::Native,
+    id: &str,
+) -> Vec<Message> {
+    let point = native.bounds(cards.layout_view(), id).center();
+    press_overlay(cards, native, point)
+}
+fn shown(config: &Config) -> Vec<Widget> {
+    Widget::ALL
+        .into_iter()
+        .filter(|widget| config.widget_visible(*widget))
+        .collect()
+}
+fn assert_apart(cards: &Cards) {
+    let rects: Vec<(Widget, [f32; 4])> = Widget::ALL
+        .into_iter()
+        .filter(|widget| cards.arranging_widget(*widget))
+        .map(|widget| {
+            let at = cards.position_from(widget, &cards.layout_editor.draft);
+            let size = cards.widget_size(widget);
+            (widget, [at[0], at[1], size[0], size[1]])
+        })
+        .collect();
+    for (i, (wa, a)) in rects.iter().enumerate() {
+        for (wb, b) in &rects[i + 1..] {
+            let apart = a[0] + a[2] <= b[0]
+                || b[0] + b[2] <= a[0]
+                || a[1] + a[3] <= b[1]
+                || b[1] + b[3] <= a[1];
+            assert!(apart, "{wa:?} {a:?} overlaps {wb:?} {b:?}");
+        }
+    }
+}
+
+#[test]
+fn arrange_remove_then_undo_brings_the_widget_back() {
+    if isolated("arrange_remove_then_undo_brings_the_widget_back") {
+        return;
+    }
+    let (mut cards, _wire) = arranging(&["weather", "devbox"]);
+    let at = cards.layout_editor.draft["weather"];
+    let mut native = overlay(&cards);
+    let sent = click_overlay(&mut cards, &mut native, "arrange-remove-weather");
+    assert!(
+        sent.iter()
+            .any(|m| matches!(m, Message::LayoutShow(Widget::Weather, false)))
+    );
+    assert!(!cards.arranging_widget(Widget::Weather));
+    assert!(!Config::load().widget_visible(Widget::Weather));
+    assert!(cards.layout_editor.active);
+    let task = cards.update(Message::LayoutUndo);
+    emitted(&mut cards, task);
+    assert!(cards.arranging_widget(Widget::Weather));
+    assert!(Config::load().widget_visible(Widget::Weather));
+    assert_eq!(cards.layout_editor.draft["weather"], at);
+    assert_eq!(
+        Config::load().widget_positions.get("weather"),
+        Some(&[0.2, 0.2])
+    );
+
+    // The inspector's Remove, then the Z key.
+    let task = cards.update(Message::LayoutSelect(Widget::Weather));
+    emitted(&mut cards, task);
+    click_overlay(&mut cards, &mut native, "arrange-inspector-remove");
+    assert!(!Config::load().widget_visible(Widget::Weather));
+    assert_eq!(cards.layout_editor.selected, None);
+    let task = cards.update(Message::SurfaceInput(
+        cards.ids[5],
+        Box::new(Message::LayoutKey(
+            keyboard::Key::Character("z".into()),
+            false,
+        )),
+    ));
+    emitted(&mut cards, task);
+    assert!(Config::load().widget_visible(Widget::Weather));
+    assert!(cards.arranging_widget(Widget::Weather));
+}
+
+#[test]
+fn arrange_cancel_restores_removed_and_added_widgets() {
+    if isolated("arrange_cancel_restores_removed_and_added_widgets") {
+        return;
+    }
+    let (mut cards, _wire) = arranging(&["weather", "devbox"]);
+    let before = std::fs::read_to_string(Config::path().unwrap()).unwrap();
+    let was = shown(&Config::load());
+    let mut native = overlay(&cards);
+    click_overlay(&mut cards, &mut native, "arrange-remove-weather");
+    click_overlay(&mut cards, &mut native, "arrange-remove-devbox");
+    click_overlay(&mut cards, &mut native, "arrange-add");
+    click_overlay(&mut cards, &mut native, "arrange-add-notes");
+    assert_eq!(shown(&Config::load()), vec![Widget::Notes]);
+    let task = cards.update(Message::LayoutFinish(false));
+    emitted(&mut cards, task);
+    assert!(!cards.layout_editor.active && cards.paused_layout.is_none());
+    assert_eq!(shown(&Config::load()), was);
+    assert_eq!(shown(&cards.config), was);
+    let after: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(Config::path().unwrap()).unwrap()).unwrap();
+    let before: serde_json::Value = serde_json::from_str(&before).unwrap();
+    for key in ["enabled_widgets", "widget_positions"] {
+        assert_eq!(after.get(key), before.get(key), "{key}");
+    }
+    assert_ne!(
+        after.pointer("/notes/enabled"),
+        Some(&serde_json::Value::Bool(true))
+    );
+}
+
+#[test]
+fn arrange_done_keeps_a_removed_widget_off() {
+    if isolated("arrange_done_keeps_a_removed_widget_off") {
+        return;
+    }
+    let (mut cards, _wire) = arranging(&["weather", "devbox"]);
+    let mut native = overlay(&cards);
+    click_overlay(&mut cards, &mut native, "arrange-remove-weather");
+    let task = cards.update(Message::LayoutFinish(true));
+    emitted(&mut cards, task);
+    assert!(!cards.layout_editor.active && cards.paused_layout.is_none());
+    assert_eq!(shown(&Config::load()), vec![Widget::Devbox]);
+    assert_eq!(shown(&cards.config), vec![Widget::Devbox]);
+}
+
+#[test]
+fn arrange_add_lists_hidden_widgets_and_places_them_apart() {
+    if isolated("arrange_add_lists_hidden_widgets_and_places_them_apart") {
+        return;
+    }
+    let (mut cards, _wire) = arranging(&["weather", "devbox"]);
+    let mut native = overlay(&cards);
+    // The list opens from the toolbar and holds only the hidden widgets.
+    assert!(
+        native
+            .try_bounds(cards.layout_view(), "arrange-add-clock")
+            .is_none()
+    );
+    click_overlay(&mut cards, &mut native, "arrange-add");
+    assert!(cards.layout_editor.adding);
+    for widget in Widget::ALL {
+        let listed = native
+            .try_bounds(
+                cards.layout_view(),
+                &format!("arrange-add-{}", widget.key()),
+            )
+            .is_some();
+        assert_eq!(listed, !cards.config.widget_visible(widget), "{widget:?}");
+    }
+    // Put Weather on the clock's spot: the clock must find another.
+    let clock = cards.position_from(Widget::Clock, &cards.layout_editor.draft);
+    cards.put_layout_point(Widget::Weather, clock);
+    assert!(cards.commit_arrange());
+    click_overlay(&mut cards, &mut native, "arrange-add-clock");
+    assert!(cards.arranging_widget(Widget::Clock));
+    assert!(Config::load().widget_visible(Widget::Clock));
+    assert_eq!(cards.layout_editor.selected, Some(Widget::Clock));
+    assert!(!cards.layout_editor.adding);
+    assert_apart(&cards);
+    for widget in [Widget::Notes, Widget::Focus, Widget::Glance] {
+        click_overlay(&mut cards, &mut native, "arrange-add");
+        click_overlay(
+            &mut cards,
+            &mut native,
+            &format!("arrange-add-{}", widget.key()),
+        );
+        assert!(cards.arranging_widget(widget), "{widget:?}");
+        assert_apart(&cards);
+    }
+    // Daily overview shows the clock, weather and calendar itself, so they
+    // are not offered while it is on.
+    let addable = cards.addable_widgets();
+    for widget in [Widget::Clock, Widget::Weather, Widget::Calendar] {
+        assert!(!addable.contains(&widget), "{widget:?}");
+    }
+    // With every widget shown the button says so and opens nothing.
+    for widget in addable {
+        let task = cards.update(Message::LayoutShow(widget, true));
+        emitted(&mut cards, task);
+    }
+    assert!(cards.addable_widgets().is_empty());
+    assert!(
+        native
+            .text_all(cards.layout_view(), "All widgets added")
+            .len()
+            == 1
+    );
+    let task = cards.update(Message::LayoutAddMenu);
+    emitted(&mut cards, task);
+    assert!(!cards.layout_editor.adding);
+    let task = cards.update(Message::LayoutFinish(true));
+    emitted(&mut cards, task);
+    let config = Config::load();
+    assert!(config.widget_visible(Widget::Devices));
+    assert!(config.widget_visible(Widget::Focus));
+}
+
+#[test]
+fn arrange_widget_settings_keeps_arranging() {
+    if isolated("arrange_widget_settings_keeps_arranging") {
+        return;
+    }
+    let (mut cards, _wire) = arranging(&["weather", "devbox"]);
+    let mut native = overlay(&cards);
+    cards.put_layout_point(Widget::Weather, [700., 300.]);
+    assert!(cards.commit_arrange());
+    let draft = cards.layout_editor.draft.clone();
+    let history = cards.layout_editor.history.len();
+    let receipts = cards.layout_editor.session_actions.len();
+    let sent = click_overlay(&mut cards, &mut native, "arrange-settings-weather");
+    assert!(
+        sent.iter()
+            .any(|m| matches!(m, Message::WidgetSettings(Widget::Weather)))
+    );
+    assert!(cards.layout_editor.active && cards.layout_editor.aside);
+    assert_eq!(cards.layout_editor.draft, draft);
+    assert_eq!(cards.layout_editor.history.len(), history);
+    assert_eq!(cards.layout_editor.session_actions.len(), receipts);
+    // The overlay waits behind the Settings window, without the keyboard,
+    // also if its surface is made again.
+    let probe = |cards: &Cards| {
+        let task = cards.layout_probe(cards.ids[5], true);
+        let mut copy = Cards::init(Core::default(), Config::load()).0;
+        emitted(&mut copy, task).1.pop().unwrap()
+    };
+    let aside = probe(&cards);
+    assert_eq!(aside.layer, Layer::Bottom);
+    assert_eq!(aside.keyboard_interactivity, KeyboardInteractivity::None);
+    // The inspector's Settings works the same way.
+    let task = cards.update(Message::LayoutSelect(Widget::Devbox));
+    emitted(&mut cards, task);
+    let point = native
+        .bounds(cards.layout_view(), "arrange-inspector-settings")
+        .center();
+    // While aside, a first click anywhere only brings Arrange back.
+    let sent = press_overlay(&mut cards, &mut native, point);
+    assert!(
+        sent.iter().all(|m| matches!(m, Message::LayoutFront)),
+        "{sent:?}"
+    );
+    assert!(!cards.layout_editor.aside && cards.layout_editor.drag.is_none());
+    let front = probe(&cards);
+    assert_eq!(front.layer, Layer::Overlay);
+    assert_eq!(
+        front.keyboard_interactivity,
+        KeyboardInteractivity::Exclusive
+    );
+    let sent = press_overlay(&mut cards, &mut native, point);
+    assert!(
+        sent.iter()
+            .any(|m| matches!(m, Message::WidgetSettings(Widget::Devbox)))
+    );
+    assert!(cards.layout_editor.aside && cards.layout_editor.active);
+    assert_eq!(cards.layout_editor.draft, draft);
+    // Done still saves the draft afterwards.
+    let task = cards.update(Message::LayoutFront);
+    emitted(&mut cards, task);
+    let task = cards.update(Message::LayoutFinish(true));
+    emitted(&mut cards, task);
+    assert_eq!(Config::load().widget_positions["weather"], draft["weather"]);
+}
+
+#[test]
+fn arrange_card_buttons_take_the_click_before_the_drag() {
+    if isolated("arrange_card_buttons_take_the_click_before_the_drag") {
+        return;
+    }
+    // Clock is the smallest card.
+    let (mut cards, _wire) = arranging(&["weather", "clock"]);
+    let mut native = overlay(&cards);
+    for widget in [Widget::Weather, Widget::Clock] {
+        for id in ["settings", "remove"] {
+            let point = native
+                .bounds(
+                    cards.layout_view(),
+                    &format!("arrange-{id}-{}", widget.key()),
+                )
+                .center();
+            let at = cards.position_from(widget, &cards.layout_editor.draft);
+            let size = cards.widget_size(widget);
+            assert!(
+                point.x > at[0] && point.x < at[0] + size[0] && point.y > at[1],
+                "{widget:?} {id} inside its card"
+            );
+            native.event(
+                cards.layout_view(),
+                cosmic::iced::Event::Mouse(mouse::Event::CursorMoved { position: point }),
+                point,
+            );
+            let (messages, _) = native.event(
+                cards.layout_view(),
+                cosmic::iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                point,
+            );
+            assert!(
+                !messages
+                    .iter()
+                    .any(|m| matches!(m, Message::LayoutPress(_) | Message::LayoutResizePress(_))),
+                "{widget:?} {id}: {messages:?}"
+            );
+            native.event(
+                cards.layout_view(),
+                cosmic::iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                point,
+            );
+        }
+        // The rest of the card still drags.
+        let at = cards.position_from(widget, &cards.layout_editor.draft);
+        let point = Point::new(at[0] + 20., at[1] + 60.);
+        let sent = press_overlay(&mut cards, &mut native, point);
+        assert!(
+            sent.iter()
+                .any(|m| matches!(m, Message::LayoutPress(w) if *w == widget)),
+            "{widget:?}: {sent:?}"
+        );
+        cards.cancel_layout_drag();
+    }
+    // A real click on the Clock's × removes it and starts no drag.
+    let sent = click_overlay(&mut cards, &mut native, "arrange-remove-clock");
+    assert!(
+        !sent
+            .iter()
+            .any(|m| matches!(m, Message::LayoutPress(_) | Message::LayoutResizePress(_)))
+    );
+    assert!(cards.layout_editor.drag.is_none());
+    assert!(!cards.arranging_widget(Widget::Clock));
+}

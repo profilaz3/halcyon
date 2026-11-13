@@ -195,6 +195,12 @@ pub enum Message {
     LayoutResizeMode,
     LayoutAutomatic,
     LayoutUndo,
+    /// Arrange: put a widget on the desktop, or take it off.
+    LayoutShow(Widget, bool),
+    /// Arrange: open or close the Add widget list.
+    LayoutAddMenu,
+    /// Arrange: back in front after a widget's Settings.
+    LayoutFront,
     LayoutFinish(bool),
     LayoutRetryCancel,
     LayoutResume,
@@ -1351,6 +1357,7 @@ impl Cards {
             Message::ArrangeDisplay(display) => self.arrange_on_display(display),
             Message::ResetLayout => self.reset_layout(),
             Message::LayoutPress(widget) => {
+                self.layout_editor.adding = false;
                 self.layout_press(widget);
                 Task::none()
             }
@@ -1359,6 +1366,7 @@ impl Cards {
                 Task::none()
             }
             Message::LayoutSelect(widget) => {
+                self.layout_editor.adding = false;
                 self.layout_editor.selected = Some(widget);
                 Task::none()
             }
@@ -1378,9 +1386,15 @@ impl Cards {
             }
             Message::LayoutUndo => {
                 self.layout_undo();
-                self.commit_arrange();
+                self.commit_arrange_shown()
+            }
+            Message::LayoutShow(widget, visible) => self.layout_show(widget, visible),
+            Message::LayoutAddMenu => {
+                self.layout_editor.adding =
+                    !self.layout_editor.adding && !self.addable_widgets().is_empty();
                 Task::none()
             }
+            Message::LayoutFront => self.layout_front(),
             Message::LayoutFinish(save) => self.finish_arrange(save),
             Message::LayoutRetryCancel => self.retry_arrange_cancel(),
             Message::LayoutResume => self.resume_arrange(),
@@ -1451,6 +1465,9 @@ impl Cards {
             }
             Message::WidgetMenu(widget) => self.open_widget_menu(widget),
             Message::WidgetMenuPick(pick) => self.widget_menu_pick(pick),
+            Message::WidgetSettings(widget) if self.layout_editor.active => {
+                self.layout_settings(widget)
+            }
             Message::WidgetSettings(widget) => self.launch(
                 crate::paths::CONTROLLER,
                 vec!["settings".into(), "--page".into(), widget.key().into()],

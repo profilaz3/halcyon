@@ -660,6 +660,45 @@ impl Config {
             baseline_placement,
         )
     }
+    /// Saves an Arrange gesture: the layout and the widgets shown or hidden
+    /// in it, in one change. `shown` lists only the widgets this gesture
+    /// showed or hid; one already as asked is left alone, so a side effect
+    /// of an earlier one (Daily overview bringing back the clock) is kept.
+    pub fn save_arrangement_on_displays(
+        contexts: &monitors::Contexts,
+        positions: &std::collections::BTreeMap<String, [f32; 2]>,
+        baseline_positions: &std::collections::BTreeMap<String, [f32; 2]>,
+        sizes: &std::collections::BTreeMap<String, [f32; 2]>,
+        baseline_sizes: &std::collections::BTreeMap<String, [f32; 2]>,
+        implicit_positions: &std::collections::BTreeMap<String, [f32; 2]>,
+        placement: PlacementPreferences,
+        baseline_placement: PlacementPreferences,
+        shown: &[(Widget, bool)],
+    ) -> Result<Self, String> {
+        let path = Self::path().ok_or("Configuration directory unavailable")?;
+        Self::edit_layout_context_at(
+            &path,
+            contexts,
+            positions,
+            baseline_positions,
+            sizes,
+            baseline_sizes,
+            implicit_positions,
+            placement,
+            baseline_placement,
+            |value| Self::patch_shown(value, shown),
+        )
+    }
+    fn patch_shown(value: &mut serde_json::Value, shown: &[(Widget, bool)]) -> Result<(), String> {
+        for &(widget, visible) in shown {
+            let latest: Self =
+                serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
+            if latest.widget_visible(widget) != visible {
+                Self::patch_widget_visibility(value, widget, visible)?;
+            }
+        }
+        Ok(())
+    }
     fn save_layout_context_at(
         path: &std::path::Path,
         contexts: &monitors::Contexts,
@@ -892,70 +931,79 @@ impl Config {
         visible: bool,
     ) -> Result<(), String> {
         let value = patch_config(path, |value| {
-            if widget.is_tool() {
-                // Tools keep their visibility in their own section, so older
-                // profiles (which list `enabled_widgets`) leave them alone.
-                let key = widget.key();
-                if value.get(key).is_none() {
-                    value[key] = serde_json::json!({});
-                }
-                value[key]
-                    .as_object_mut()
-                    .ok_or_else(|| format!("{} settings must be an object", widget.title()))?
-                    .insert("enabled".into(), visible.into());
-                return Ok(());
-            }
-            let latest: Self =
-                serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
-            let section = match widget {
-                Widget::Clock => Some("show_clock"),
-                Widget::Weather => Some("show_weather"),
-                Widget::Calendar => Some("show_calendar"),
-                _ => None,
-            };
-            if widget == Widget::Glance || (latest.glance.enabled && section.is_some()) {
-                if value.get("glance").is_none() {
-                    value["glance"] = serde_json::json!({});
-                }
-                let glance = value["glance"]
-                    .as_object_mut()
-                    .ok_or("Glance settings must be an object")?;
-                if widget == Widget::Glance {
-                    if visible && !latest.glance.initialized {
-                        for (widget, key) in [
-                            (Widget::Clock, "show_clock"),
-                            (Widget::Weather, "show_weather"),
-                            (Widget::Calendar, "show_calendar"),
-                        ] {
-                            glance.insert(key.into(), latest.widget_enabled(widget).into());
-                        }
-                        glance.insert("initialized".into(), true.into());
-                    }
-                    glance.insert("enabled".into(), visible.into());
-                    // Never leave the desktop without the time: the separate
-                    // clock and weather come back where they were saved.
-                    if !visible && latest.glance_off_restores_time() {
-                        let mut widgets = latest.enabled_widgets.clone();
-                        widgets.extend(["clock".to_string(), "weather".to_string()]);
-                        value["enabled_widgets"] = serde_json::json!(widgets);
-                    }
-                } else if let Some(key) = section {
-                    glance.insert(key.into(), visible.into());
-                }
-                return Ok(());
-            }
-            let mut widgets: Vec<String> = match value.get("enabled_widgets") {
-                Some(list) => serde_json::from_value(list.clone()).map_err(|e| e.to_string())?,
-                None => Self::default().enabled_widgets,
-            };
-            widgets.retain(|key| key != widget.key());
-            if visible {
-                widgets.push(widget.key().into());
-            }
-            value["enabled_widgets"] = serde_json::json!(widgets);
-            Ok(())
+            Self::patch_widget_visibility(value, widget, visible)
         })?;
         *self = Self::from_saved_value(value)?;
+        Ok(())
+    }
+    /// Shows or hides `widget` in a raw configuration, with the same Daily
+    /// overview rules as the widget switches.
+    fn patch_widget_visibility(
+        value: &mut serde_json::Value,
+        widget: Widget,
+        visible: bool,
+    ) -> Result<(), String> {
+        if widget.is_tool() {
+            // Tools keep their visibility in their own section, so older
+            // profiles (which list `enabled_widgets`) leave them alone.
+            let key = widget.key();
+            if value.get(key).is_none() {
+                value[key] = serde_json::json!({});
+            }
+            value[key]
+                .as_object_mut()
+                .ok_or_else(|| format!("{} settings must be an object", widget.title()))?
+                .insert("enabled".into(), visible.into());
+            return Ok(());
+        }
+        let latest: Self =
+            serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
+        let section = match widget {
+            Widget::Clock => Some("show_clock"),
+            Widget::Weather => Some("show_weather"),
+            Widget::Calendar => Some("show_calendar"),
+            _ => None,
+        };
+        if widget == Widget::Glance || (latest.glance.enabled && section.is_some()) {
+            if value.get("glance").is_none() {
+                value["glance"] = serde_json::json!({});
+            }
+            let glance = value["glance"]
+                .as_object_mut()
+                .ok_or("Glance settings must be an object")?;
+            if widget == Widget::Glance {
+                if visible && !latest.glance.initialized {
+                    for (widget, key) in [
+                        (Widget::Clock, "show_clock"),
+                        (Widget::Weather, "show_weather"),
+                        (Widget::Calendar, "show_calendar"),
+                    ] {
+                        glance.insert(key.into(), latest.widget_enabled(widget).into());
+                    }
+                    glance.insert("initialized".into(), true.into());
+                }
+                glance.insert("enabled".into(), visible.into());
+                // Never leave the desktop without the time: the separate
+                // clock and weather come back where they were saved.
+                if !visible && latest.glance_off_restores_time() {
+                    let mut widgets = latest.enabled_widgets.clone();
+                    widgets.extend(["clock".to_string(), "weather".to_string()]);
+                    value["enabled_widgets"] = serde_json::json!(widgets);
+                }
+            } else if let Some(key) = section {
+                glance.insert(key.into(), visible.into());
+            }
+            return Ok(());
+        }
+        let mut widgets: Vec<String> = match value.get("enabled_widgets") {
+            Some(list) => serde_json::from_value(list.clone()).map_err(|e| e.to_string())?,
+            None => Self::default().enabled_widgets,
+        };
+        widgets.retain(|key| key != widget.key());
+        if visible {
+            widgets.push(widget.key().into());
+        }
+        value["enabled_widgets"] = serde_json::json!(widgets);
         Ok(())
     }
     pub fn ordered_cards(&self) -> Vec<Widget> {

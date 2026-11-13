@@ -2727,3 +2727,32 @@ fn ux_three_screens_keep_primary_actions_reachable_and_state_local() {
         serde_json::from_slice(&std::fs::read(Config::path().unwrap()).unwrap()).unwrap();
     assert_eq!(saved["future_preference"], 37);
 }
+
+/// The widget layout page leads with Arrange on desktop, the place to add,
+/// remove and arrange widgets, and its hint fits on its line.
+#[test]
+fn ux_native_overview_leads_with_arrange_widgets() {
+    if child("ux_native_overview_leads_with_arrange_widgets") {
+        return;
+    }
+    for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
+        let (mut app, _) = Settings::init(Core::default(), Page::Overview);
+        let _ = app.update(Message::Resized(size));
+        let mut native = Native::new(size);
+        let arrange = native.bounds(app.settings_view(), "arrange-widgets");
+        assert!(arrange.width > 0. && arrange.x + arrange.width <= size.width);
+        let _ = app.update(Message::Explain(view::explain::key("Widgets")));
+        let hint = native.text_all(
+            app.settings_view(),
+            "Click a widget in the picture to change it. \
+             Arrange widgets adds, removes and moves them on your desktop.",
+        );
+        assert_eq!(hint.len(), 1, "{:?}", native.all_text(app.settings_view()));
+        assert_eq!(native.overflowing_text(app.settings_view()), Vec::new());
+        native.capture(
+            app.settings_view(),
+            &cosmic::Theme::dark(),
+            &format!("settings-overview-{}", size.width),
+        );
+    }
+}
