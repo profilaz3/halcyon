@@ -5,7 +5,7 @@
 use super::*;
 use crate::desktop::desktop_icons::DesktopIcons;
 use crate::desktop::panels::{Anchor, AutoHide, PanelDraft, PanelKind};
-use crate::desktop::profiles::{PanelLook, Profile};
+use crate::desktop::profiles::{IconShape, PanelLook, Profile};
 use crate::settings::profiles::{Parts, Preview as ScenePreview};
 
 /// A rectangle on the miniature: position and size.
@@ -104,6 +104,12 @@ pub(super) fn part_note(profile: &Profile, domain: Domain) -> String {
                     items.push(font.family.clone());
                 } else if let Some(theme) = &look.icon_theme {
                     items.push(format!("{theme} icons"));
+                }
+                if let Some(shape) = look.icon_shape.filter(|s| *s != IconShape::Original) {
+                    items.push(format!("{} app icons", shape.title().to_lowercase()));
+                }
+                if look.folder_tint == Some(true) {
+                    items.push("accent folders".into());
                 }
             }
             items
@@ -342,6 +348,7 @@ pub(super) fn icon_layers<'a>(
     avoid: &[Rect],
     screen: [f32; 2],
     scale: f32,
+    folder: Option<cosmic::widget::image::Handle>,
 ) -> (Vec<Element<'a, Message>>, Option<Rect>) {
     let mut items: Vec<(&'static str, &'static str)> = Vec::new();
     if icons.show_content {
@@ -378,8 +385,14 @@ pub(super) fn icon_layers<'a>(
                 break position;
             }
         };
-        let mut parts: Vec<Element<'a, Message>> =
-            vec![icon::from_name(name).size(size as u16).icon().into()];
+        let mut parts: Vec<Element<'a, Message>> = vec![match (&folder, name) {
+            // The look's folder tint, drawn from its theme's folder.
+            (Some(handle), "folder") => cosmic::widget::image(handle.clone())
+                .width(Length::Fixed(size))
+                .height(Length::Fixed(size))
+                .into(),
+            _ => icon::from_name(name).size(size as u16).icon().into(),
+        }];
         if size >= 16. {
             parts.push(
                 text::body(title)
@@ -523,21 +536,33 @@ pub(super) fn part_areas(
 }
 
 /// What the picture can't show on its own: type, icons, light or dark,
-/// the weather effect and a dock that hides. `(text, from the look)`.
+/// the weather effect and a dock that hides. `(text, from the look, the
+/// icons fact)`.
 pub(super) fn facts(
     preview: &ScenePreview,
     config: &Config,
     from_look: impl Fn(Domain) -> bool,
-) -> Vec<(String, bool)> {
+) -> Vec<(String, bool, bool)> {
     use crate::desktop::appearance::{FontRole, ThemeVariant};
     let mut facts = Vec::new();
     if let Some(appearance) = &preview.appearance {
         let look = from_look(Domain::Appearance);
         if let Some(font) = appearance.font(FontRole::Interface).known() {
-            facts.push((format!("Aa {}", font.family), look));
+            facts.push((format!("Aa {}", font.family), look, false));
         }
-        if let Some(theme) = appearance.icon_theme().known() {
-            facts.push((format!("{theme} icons"), look));
+        // The base theme with its shape and tint, never Halcyon's overlay.
+        let theme = preview
+            .icons
+            .as_ref()
+            .and_then(|style| style.base.clone())
+            .or_else(|| appearance.icon_theme().known().cloned())
+            .filter(|theme| !crate::desktop::icon_packs::overlay::is_overlay(theme));
+        if let Some(theme) = theme {
+            let mut items = vec![format!("{theme} icons")];
+            if let Some(style) = &preview.icons {
+                items.extend(crate::settings::profiles::icon_art::words(style));
+            }
+            facts.push((items.join(", "), look, true));
         }
         facts.push((
             match appearance.active_variant() {
@@ -545,6 +570,7 @@ pub(super) fn facts(
                 ThemeVariant::Light => "Light".to_string(),
             },
             look,
+            false,
         ));
     }
     let weather = config.rain.enabled.then(|| config.rain.effect.title());
@@ -554,6 +580,7 @@ pub(super) fn facts(
             None => "No weather effect".into(),
         },
         from_look(Domain::WidgetStyle),
+        false,
     ));
     for bar in &preview.bars {
         if bar.listed() && bar.autohide().known() == Some(&AutoHide::Always) {
@@ -564,6 +591,7 @@ pub(super) fn facts(
             facts.push((
                 format!("{} hides until you need it", bar.kind().title()),
                 from_look(domain),
+                false,
             ));
         }
     }

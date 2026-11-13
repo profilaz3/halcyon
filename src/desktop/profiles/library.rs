@@ -126,7 +126,7 @@ impl<'a> ProfileLibrary<'a> {
 
     /// Stores `profile` under a new ID. Never overwrites a file.
     pub fn create(&self, profile: &Profile) -> Result<ProfileId, ProfileError> {
-        let bytes = export_local(profile)?;
+        let bytes = export_local(&self.resolved(profile))?;
         let dir = self.prepare()?;
         for _ in 0..16 {
             let id = ProfileId::generate();
@@ -229,8 +229,15 @@ impl<'a> ProfileLibrary<'a> {
         Ok(())
     }
 
+    /// `profile` naming base icon themes, never Halcyon's overlay.
+    fn resolved(&self, profile: &Profile) -> Profile {
+        let mut profile = profile.clone();
+        super::capture::resolve_icon_theme_in(&mut profile, self.store);
+        profile
+    }
+
     fn replace(&self, id: &ProfileId, profile: &Profile) -> Result<(), ProfileError> {
-        let bytes = export_local(profile)?;
+        let bytes = export_local(&self.resolved(profile))?;
         let path = self
             .store
             .state_subpath(PROFILES_DIR, Some(&id.file_name()))?;

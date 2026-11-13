@@ -298,6 +298,9 @@ fn fb14_worker_renders_and_cancellation_retires_owned_work() {
 fn fb14_profile_depth_has_its_own_version_boundary() {
     use crate::desktop::profiles;
     let mut profile = profiles::preset("tidal").unwrap().profile;
+    // Only the clock's version boundary: Tidal's icon shape needs a later one.
+    let icons = profile.appearance.as_mut().unwrap();
+    (icons.icon_shape, icons.folder_tint) = (None, None);
     assert_eq!(profile.written_version(), 9);
     profile.widget_style.as_mut().unwrap()["clock"]["depth"] = true.into();
     profile.version = 10;
@@ -319,6 +322,9 @@ fn fb14_profile_depth_has_its_own_version_boundary() {
 fn scene_lighting_profile_has_its_own_version_boundary() {
     use crate::desktop::profiles;
     let mut profile = profiles::preset("tidal").unwrap().profile;
+    // Only the clock's version boundary: Tidal's icon shape needs a later one.
+    let icons = profile.appearance.as_mut().unwrap();
+    (icons.icon_shape, icons.folder_tint) = (None, None);
     profile.widget_style.as_mut().unwrap()["clock"]["depth"] = true.into();
     assert_eq!(profile.written_version(), 11);
     profile.widget_style.as_mut().unwrap()["clock"]["lighting"] = "rich".into();

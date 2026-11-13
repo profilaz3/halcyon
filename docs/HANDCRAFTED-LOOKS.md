@@ -19,6 +19,32 @@ You make it in the Look studio, export it, drop the file in, and build.
 4. Name the look and give it a one-line description at the top. The
    description is what people read under the look's picture in the gallery.
 
+### Icons: theme, shape and folders
+
+The Icons picker offers three kinds of choice, each drawn as a row of
+sample icons:
+
+- **Icon theme**: the base theme, for example Cosmic or Pop.
+- **App icon shape**: Original, Circle, Squircle or Rounded square. App
+  icons are redrawn in that shape.
+- **Folders**: Accent folders (folders take the look's accent color) or
+  Theme folders (the theme's own).
+
+Each choice changes only that setting and keeps the other two. A look that
+sets no shape or folder choice leaves the desktop's as they are, and so do
+looks saved before format version 22.
+
+Halcyon draws shaped icons into a theme of its own (`Halcyon-Shaped`). That
+name is never saved: capture, saved looks, exports and Make built-in record
+the base theme plus the shape and folder choice, so the look works on any
+computer. Applying the look builds the shaped theme there, and Undo puts the
+previous theme, shape and folders back. A look saved by an older version
+that names `Halcyon-Shaped` applies its base theme.
+
+In the parts review, the shape and folders belong to **Appearance**, with
+the icon theme. Leaving Appearance out keeps the desktop's theme, shape and
+folders, and the preview shows them.
+
 ## 2. Make it built-in
 
 Open the studio's ⋯ menu and choose one of:
@@ -45,6 +71,9 @@ the one it was made on, so Make built-in:
   doesn't have, and says that they fall back to the current ones where they
   are missing. Prefer Open Sans, Fira Sans, Fira Mono or Noto Sans Mono, and
   the Cosmic or Pop icon themes.
+- keeps the app icon shape and folder choice. On Cosmic or Pop they need
+  nothing installed; Halcyon draws them on the computer that applies the
+  look. A look with either is written as format version 22.
 
 Nothing else is written, and your desktop is not touched.
 

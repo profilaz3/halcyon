@@ -130,6 +130,78 @@ impl Style {
     }
 }
 
+/// The style the desktop shows with `icon_theme`. An overlay's own record
+/// comes first, so a slot that Undo brought back reads as what it was
+/// built from; then `saved`, Halcyon's record; then Cosmic as the base.
+pub fn desktop_style(paths: Option<&Paths>, icon_theme: &str, saved: &Style) -> Style {
+    if is_overlay(icon_theme)
+        && let Some(record) = paths.and_then(|paths| recorded(paths, icon_theme))
+    {
+        return Style {
+            base: Some(record.base),
+            shape: record.shape,
+            tint: record.tint.is_some(),
+        };
+    }
+    saved.clone().effective(icon_theme)
+}
+
+/// The theme a look names for `id`: the theme itself, or for one of
+/// Halcyon's overlays (older looks saved its name) the base it was built
+/// on, when that is still known here.
+pub fn base_theme(paths: Option<&Paths>, id: &str) -> Option<String> {
+    if !is_overlay(id) {
+        return Some(id.to_string());
+    }
+    let paths = paths?;
+    recorded(paths, id)
+        .map(|record| record.base)
+        .or_else(|| Style::load(paths).base)
+}
+
+/// An overlay a look's Apply builds before the desktop names it. The
+/// request's app list is filled in when it runs, off the UI thread.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LookBuild {
+    pub paths: Paths,
+    pub request: Request,
+    /// The desktop's `icon_theme` when it was planned.
+    pub current: Option<String>,
+    /// The slot the plan names: the one not in use.
+    pub slot: String,
+}
+
+impl LookBuild {
+    /// Whether the slot already holds exactly this overlay.
+    pub fn ready(&self) -> bool {
+        let request = &self.request;
+        recorded(&self.paths, &self.slot).is_some_and(|record| {
+            record.base == request.base
+                && record.shape == request.shape
+                && record.tint == request.tint
+                && record.dark == request.dark
+        })
+    }
+    /// Builds the overlay unless it is there already. Blocking: icons are
+    /// looked up and drawn here.
+    pub fn run(
+        &self,
+        fixture: Option<&Path>,
+        store: Option<&crate::desktop::store::DesktopStore>,
+    ) -> Result<String, String> {
+        if self.ready() {
+            return Ok(self.slot.clone());
+        }
+        let mut request = self.request.clone();
+        request.apps = super::app_names(fixture, store).0;
+        let slot = generate(&self.paths, &request, self.current.as_deref(), &|_, _| {})?;
+        if slot != self.slot {
+            return Err("The icons changed while they were being adjusted".into());
+        }
+        Ok(slot)
+    }
+}
+
 /// Folder icons recolored when the tint is on, in the `places` context.
 pub const FOLDERS: [&str; 24] = [
     "folder",

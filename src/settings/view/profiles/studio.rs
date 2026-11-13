@@ -8,7 +8,6 @@ use crate::settings::desktop::Notice;
 use crate::settings::profiles::Preview as Planned;
 use crate::settings::profiles::studio::{Built, Edit as Studio, Element as Part, Pick, Start};
 use cosmic::widget::image::Handle;
-use std::path::PathBuf;
 
 fn studio(edit: Studio) -> Message {
     super::edit(Edit::Studio(edit))
@@ -140,7 +139,7 @@ impl Settings {
         part: Part,
         profile: &Profile,
         planned: Option<&Planned>,
-        icons: &[PathBuf],
+        icons: &[crate::settings::profiles::icon_art::Sample],
         wallpaper: Option<Handle>,
         size: [f32; 2],
     ) -> Element<'_, Message> {
@@ -289,14 +288,13 @@ impl Settings {
             Part::Icons => {
                 layers.push(neutral(size));
                 let edge = ((size[0] - 40.) / 5.).clamp(16., 40.);
-                let row_items: Vec<Element<'_, Message>> = icons
+                // Drawn in the look's shape and tint, the desktop's where
+                // the look leaves them.
+                let style = editor.icon_style_of(profile);
+                let row_items: Vec<Element<'_, Message>> = editor
+                    .icon_pictures(icons, &style)
                     .iter()
-                    .map(|path| {
-                        icon::from_path(path.clone())
-                            .icon()
-                            .size(edge as u16)
-                            .into()
-                    })
+                    .map(|picture| picture.icon(edge as u16))
                     .collect();
                 layers.push(centered(
                     if row_items.is_empty() {
@@ -359,7 +357,9 @@ impl Settings {
                     .and_then(|preview| preview.desktop_icons.as_ref())
                     .and_then(|draft| draft.config().known().copied());
                 let shown = icons
-                    .map(|icons| looks::icon_layers(&icons, [0.; 4], &[], size, scale * 1.4).0)
+                    .map(|icons| {
+                        looks::icon_layers(&icons, [0.; 4], &[], size, scale * 1.4, None).0
+                    })
                     .unwrap_or_default();
                 if shown.is_empty() {
                     layers.push(shade(size, 0.3));
@@ -429,19 +429,25 @@ impl Settings {
             }
             Part::Font => font_of(profile).unwrap_or("Your font").into(),
             Part::Icons => {
+                let style = self.profiles.icon_style_of(profile);
                 let id = profile
                     .appearance
                     .as_ref()
                     .and_then(|a| a.icon_theme.clone())
+                    .or(style.base.clone())
                     .unwrap_or_default();
-                self.profiles
+                let name = self
+                    .profiles
                     .installed
                     .icons
                     .themes
                     .iter()
                     .find(|theme| theme.id == id)
                     .map(|theme| theme.name.clone())
-                    .unwrap_or(id)
+                    .unwrap_or(id);
+                let mut items = vec![name];
+                items.extend(crate::settings::profiles::icon_art::words(&style));
+                items.join(", ")
             }
             Part::Windows => {
                 let mut items = Vec::new();
@@ -929,6 +935,8 @@ impl Settings {
         let problem = self.page_error().unwrap_or_else(|| {
             editor.theme_problem().unwrap_or(if self.native_busy {
                 "Saving…"
+            } else if editor.adjusting_icons() {
+                "Adjusting icons…"
             } else if editor.theme_loading() {
                 "Finding wallpaper colors…"
             } else if !editor.can_apply() {

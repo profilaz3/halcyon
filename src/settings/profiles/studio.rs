@@ -2,7 +2,9 @@
 //! changes only the draft and its preview. The desktop changes only through
 //! Apply's parts review, and the library only through Save, Save as new,
 //! Duplicate, Rename and Delete.
+use super::icon_art::{self, Sample};
 use super::*;
+use crate::desktop::icon_packs::overlay::{self, Shape, Style};
 use crate::desktop::profiles::built_in;
 use crate::desktop::profiles::{AppearanceLook, Corners, ModeName, VariantLook};
 use cosmic::cosmic_theme::Roundness;
@@ -207,7 +209,11 @@ fn copy_appearance(element: Element, from: Option<&AppearanceLook>, into: &mut P
             target.interface_font = from.interface_font.clone();
             target.monospace_font = from.monospace_font.clone();
         }
-        Element::Icons => target.icon_theme = from.icon_theme.clone(),
+        Element::Icons => {
+            target.icon_theme = from.icon_theme.clone();
+            target.icon_shape = from.icon_shape;
+            target.folder_tint = from.folder_tint;
+        }
         Element::Colors => {
             target.mode = from.mode;
             variants(target, &|into, from| {
@@ -325,6 +331,10 @@ pub enum Pick {
     Mode(ModeName),
     Font(String),
     IconTheme(String),
+    /// The app icon shape, keeping the icon theme and folders.
+    IconShape(Shape),
+    /// Folders in the accent color (or the theme's own), keeping the rest.
+    FolderTint(bool),
     Corners(u8),
     Gaps(u32, u32),
 }
@@ -342,7 +352,7 @@ pub struct Choice {
     /// The planned result, for parts drawn from the plan.
     pub preview: Option<Preview>,
     /// Icons from the choice's icon theme.
-    pub icons: Vec<PathBuf>,
+    pub icons: Vec<Sample>,
 }
 
 /// What Make built-in did.
@@ -491,7 +501,7 @@ impl ProfilesEditor {
         &self.studio_choices
     }
     /// Icons from the draft's icon theme, for its tile.
-    pub fn studio_icons(&self) -> &[PathBuf] {
+    pub fn studio_icons(&self) -> &[Sample] {
         &self.studio_icons
     }
 
@@ -806,6 +816,18 @@ impl ProfilesEditor {
                     .get_or_insert_with(Default::default)
                     .icon_theme = Some(id.clone());
             }
+            Pick::IconShape(shape) => {
+                profile
+                    .appearance
+                    .get_or_insert_with(Default::default)
+                    .icon_shape = Some(*shape);
+            }
+            Pick::FolderTint(tint) => {
+                profile
+                    .appearance
+                    .get_or_insert_with(Default::default)
+                    .folder_tint = Some(*tint);
+            }
             Pick::Corners(index) => {
                 let appearance = profile.appearance.get_or_insert_with(Default::default);
                 for variant in [&mut appearance.light, &mut appearance.dark] {
@@ -874,11 +896,14 @@ impl ProfilesEditor {
         self.studio_icons = self
             .studio
             .as_ref()
-            .and_then(|_| self.preview.as_ref())
-            .and_then(|preview| preview.appearance.as_ref())
-            .and_then(|draft| draft.icon_theme().known().cloned())
-            .map(|theme| theme_icons(&theme))
+            .and_then(|draft| self.icon_style_of(&draft.profile).base)
+            .map(|theme| icon_art::samples(&theme))
             .unwrap_or_default();
+        if let Some(draft) = &self.studio {
+            let style = self.icon_style_of(&draft.profile);
+            let keys = self.icon_keys(&self.studio_icons.clone(), &style);
+            self.want_icon_art(keys);
+        }
         let Some(draft) = &self.studio else {
             return;
         };
@@ -953,16 +978,28 @@ impl ProfilesEditor {
                     .filter(|id| themes.is_empty() || themes.iter().any(|t| t.id == **id))
                     .map(|id| (id.to_string(), id.to_string()))
                     .collect();
+                // Halcyon's shaped overlay is never a choice: a look names
+                // its base theme and the shape and tint below.
                 list.extend(
                     themes
                         .iter()
                         .filter(|t| !built_in::DEFAULT_ICON_THEMES.contains(&t.id.as_str()))
+                        .filter(|t| !overlay::is_overlay(&t.id))
                         .map(|t| (t.id.clone(), t.name.clone())),
                 );
                 picks.extend(
                     list.into_iter()
                         .map(|(id, name)| (Pick::IconTheme(id), name, "Icon theme")),
                 );
+                picks.extend(Shape::ALL.into_iter().map(|shape| {
+                    (
+                        Pick::IconShape(shape),
+                        shape.title().into(),
+                        "App icon shape",
+                    )
+                }));
+                picks.push((Pick::FolderTint(true), "Accent folders".into(), "Folders"));
+                picks.push((Pick::FolderTint(false), "Theme folders".into(), "Folders"));
             }
             _ => {}
         }
@@ -985,16 +1022,25 @@ impl ProfilesEditor {
             let Some(profile) = self.picked(element, &pick) else {
                 continue;
             };
-            // One tile per distinct result; the first name wins.
-            if !matches!(pick, Pick::Desktop | Pick::Leave)
-                && choices
-                    .iter()
-                    .any(|choice| element.same(&choice.profile, &profile))
+            // One tile per distinct result; the first name wins. Shapes
+            // and folder tints always show, so each row stays whole.
+            if !matches!(
+                pick,
+                Pick::Desktop | Pick::Leave | Pick::IconShape(_) | Pick::FolderTint(_)
+            ) && choices
+                .iter()
+                .any(|choice| element.same(&choice.profile, &profile))
             {
                 continue;
             }
+            let selected = match &pick {
+                // The draft's own shape or tint, as the tile shows it.
+                Pick::IconShape(shape) => self.icon_style_of(&draft.profile).shape == *shape,
+                Pick::FolderTint(tint) => self.icon_style_of(&draft.profile).tint == *tint,
+                _ => element.same(&profile, &draft.profile),
+            };
             choices.push(Choice {
-                selected: element.same(&profile, &draft.profile),
+                selected,
                 pick,
                 title,
                 source,
@@ -1009,18 +1055,10 @@ impl ProfilesEditor {
                 match element {
                     Element::Wallpaper | Element::Weather | Element::Font => {}
                     Element::Icons => {
-                        choice.icons = choice
-                            .profile
-                            .appearance
-                            .as_ref()
-                            .and_then(|a| a.icon_theme.clone())
-                            .or_else(|| {
-                                self.preview
-                                    .as_ref()
-                                    .and_then(|p| p.appearance.as_ref())
-                                    .and_then(|a| a.icon_theme().known().cloned())
-                            })
-                            .map(|theme| theme_icons(&theme))
+                        choice.icons = self
+                            .icon_style_of(&choice.profile)
+                            .base
+                            .map(|theme| icon_art::samples(&theme))
                             .unwrap_or_default();
                     }
                     _ => {
@@ -1037,7 +1075,78 @@ impl ProfilesEditor {
                 }
             }
         }
+        let keys: Vec<_> = choices
+            .iter()
+            .flat_map(|choice| self.icon_keys(&choice.icons, &self.icon_style_of(&choice.profile)))
+            .collect();
+        self.want_icon_art(keys);
         self.studio_choices = choices;
+    }
+
+    /// The icons `profile` shows: its base theme, shape and tint, with what
+    /// it leaves as is taken from the desktop.
+    pub fn icon_style_of(&self, profile: &Profile) -> Style {
+        let desktop = self
+            .studio
+            .as_ref()
+            .and_then(|draft| draft.desktop.appearance.as_ref());
+        let look = profile.appearance.as_ref();
+        let base = look
+            .and_then(|a| a.icon_theme.clone())
+            .or_else(|| desktop.and_then(|a| a.icon_theme.clone()))
+            .or_else(|| {
+                self.preview
+                    .as_ref()
+                    .and_then(|p| p.icons_now.as_ref())
+                    .and_then(|style| style.base.clone())
+            });
+        // What the desktop shows now, for what neither sets.
+        let shown = self.preview.as_ref().and_then(|p| p.icons_now.clone());
+        Style {
+            base,
+            shape: look
+                .and_then(|a| a.icon_shape)
+                .or_else(|| desktop.and_then(|a| a.icon_shape))
+                .or(shown.as_ref().map(|style| style.shape))
+                .unwrap_or_default(),
+            tint: look
+                .and_then(|a| a.folder_tint)
+                .or_else(|| desktop.and_then(|a| a.folder_tint))
+                .or(shown.as_ref().map(|style| style.tint))
+                .unwrap_or_default(),
+        }
+    }
+
+    /// The accent and shade sample icons are drawn with: the preview's.
+    fn icon_shade(&self) -> ([u8; 3], bool) {
+        let appearance = self.preview.as_ref().and_then(|p| p.appearance.as_ref());
+        let dark = appearance.is_none_or(|draft| {
+            draft.active_variant() == crate::desktop::appearance::ThemeVariant::Dark
+        });
+        (icon_art::accent_of(appearance), dark)
+    }
+
+    fn icon_keys(&self, samples: &[Sample], style: &Style) -> Vec<icon_art::Key> {
+        let (accent, dark) = self.icon_shade();
+        samples
+            .iter()
+            .filter_map(|sample| icon_art::Key::new(sample, style, accent, dark))
+            .collect()
+    }
+
+    /// The pictures for `samples` under `style`: drawn ones once ready, the
+    /// plain file until then.
+    pub fn icon_pictures(&self, samples: &[Sample], style: &Style) -> Vec<icon_art::Picture> {
+        let (accent, dark) = self.icon_shade();
+        samples
+            .iter()
+            .map(|sample| {
+                icon_art::Key::new(sample, style, accent, dark)
+                    .and_then(|key| self.icon_art(&key).cloned())
+                    .map(icon_art::Picture::Drawn)
+                    .unwrap_or_else(|| icon_art::Picture::File(sample.path.clone()))
+            })
+            .collect()
     }
 
     fn studio_save(&mut self) {
@@ -1193,10 +1302,15 @@ impl ProfilesEditor {
 
     /// The draft as a built-in look, or why it can't be one.
     fn built_in_bytes(&mut self) -> Option<built_in::BuiltIn> {
+        let mut profile = self.studio.as_ref()?.profile.clone();
+        // A base icon theme, never the overlay only this computer has.
+        if let Some(store) = self.store() {
+            profiles::resolve_icon_theme_in(&mut profile, store);
+        }
         let draft = self.studio.as_mut()?;
         draft.menu = false;
         let id = built_in::id_for(&draft.profile.name);
-        match built_in::prepare(&draft.profile, &id) {
+        match built_in::prepare(&profile, &id) {
             Ok(built) => Some(built),
             Err(refusal) => {
                 draft.built = Some(Built::Refused {
@@ -1291,24 +1405,4 @@ fn studio_ready(profile: &Profile) -> Result<(), String> {
         return Err("Choose at least one part for this look.".into());
     }
     profile.validate().map_err(|error| error.to_string())
-}
-
-/// A few everyday icons from an icon theme, for its sample.
-fn theme_icons(theme: &str) -> Vec<PathBuf> {
-    [
-        "folder",
-        "text-x-generic",
-        "utilities-terminal",
-        "web-browser",
-        "preferences-system",
-    ]
-    .into_iter()
-    .filter_map(|name| {
-        freedesktop_icons::lookup(name)
-            .with_theme(theme)
-            .with_size(32)
-            .with_cache()
-            .find()
-    })
-    .collect()
 }

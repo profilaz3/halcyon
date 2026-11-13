@@ -193,6 +193,9 @@ fn own_wallpaper_masks_and_paths_never_travel() {
     let (path, key, files) = hill(&root, 300);
     cache::store(&scenes, &key, &files).unwrap();
     let mut profile = profiles::preset("tidal").unwrap().profile;
+    // Only the clock's version boundary: Tidal's icon shape needs a later one.
+    let icons = profile.appearance.as_mut().unwrap();
+    (icons.icon_shape, icons.folder_tint) = (None, None);
     profile.widget_style.as_mut().unwrap()["clock"]["depth"] = true.into();
     profile.widget_style.as_mut().unwrap()["clock"]["lighting"] = "rich".into();
     profile.version = profile.written_version();

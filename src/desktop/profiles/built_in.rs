@@ -13,7 +13,12 @@
 //!   was mixed from and who shared it;
 //! - fonts and the icon theme are checked against what a default Pop!_OS /
 //!   COSMIC install ships. Others are kept, and the result says they fall
-//!   back to the current ones where they are missing.
+//!   back to the current ones where they are missing. The app icon shape
+//!   and folder tint ship as they are: Halcyon draws them from the base
+//!   theme on each computer, so they need nothing installed;
+//! - the icon theme is always a base theme: the name of Halcyon's shaped
+//!   overlay only means something on the computer that built it, so it
+//!   is left out when its base isn't known.
 //!
 //! Settings writes the file where the person chose, or by default to
 //! `$XDG_DATA_HOME/halcyon/built-in-looks/<id>.json`. Nothing else is
@@ -26,6 +31,8 @@ use std::path::PathBuf;
 pub const DEFAULT_FONTS: [&str; 4] = ["Open Sans", "Fira Sans", "Fira Mono", "Noto Sans Mono"];
 /// Icon themes every default COSMIC install has.
 pub const DEFAULT_ICON_THEMES: [&str; 2] = ["Cosmic", "Pop"];
+/// What `strip_personal` calls an overlay icon theme it leaves out.
+pub const SHAPED_THEME: &str = "the shaped icon theme built on this computer";
 /// The folder under `$XDG_DATA_HOME/halcyon` built-in looks go to by default.
 pub const FOLDER: &str = "built-in-looks";
 
@@ -142,6 +149,10 @@ pub fn strip_personal(profile: &Profile) -> (Profile, Vec<&'static str>) {
         && !removed.contains(&super::DISPLAY_ARRANGEMENT)
     {
         removed.push(super::DISPLAY_ARRANGEMENT);
+    }
+    // Callers resolve an overlay to its base first; one left is unknown.
+    if super::resolve_icon_theme(&mut profile, None) {
+        removed.push(SHAPED_THEME);
     }
     (profile, removed)
 }
@@ -364,6 +375,41 @@ mod tests {
             ]
         );
         assert!(fallbacks(&harbor()).is_empty());
+    }
+
+    #[test]
+    fn icon_shape_and_tint_round_trip_and_overlay_names_never_ship() {
+        use crate::desktop::profiles::IconShape;
+        let mut look = harbor();
+        let appearance = look.appearance.as_mut().unwrap();
+        appearance.icon_theme = Some("Pop".into());
+        appearance.icon_shape = Some(IconShape::Rounded);
+        appearance.folder_tint = Some(true);
+        look.version = crate::desktop::profiles::VERSION;
+        let built = prepare(&look, "harbor-shaped").unwrap();
+        assert!(built.fallbacks.is_empty(), "Pop needs nothing installed");
+        assert!(!built.removed.contains(&SHAPED_THEME));
+        let text = std::str::from_utf8(&built.bytes).unwrap();
+        let loaded = parse_built_in("harbor-shaped", text).unwrap();
+        assert_eq!(loaded.version, crate::desktop::profiles::VERSION);
+        assert_eq!(loaded.appearance, look.appearance);
+        // Exported again, it is byte for byte the same file.
+        assert_eq!(
+            prepare(&loaded, "harbor-shaped").unwrap().bytes,
+            built.bytes
+        );
+
+        // A draft naming Halcyon's overlay ships without it.
+        let mut named = look.clone();
+        named.appearance.as_mut().unwrap().icon_theme = Some("Halcyon-Shaped".into());
+        let built = prepare(&named, "harbor-named").unwrap();
+        assert!(built.removed.contains(&SHAPED_THEME));
+        let text = std::str::from_utf8(&built.bytes).unwrap();
+        assert!(!text.contains("Halcyon-Shaped"), "{text}");
+        let loaded = parse_built_in("harbor-named", text).unwrap();
+        let appearance = loaded.appearance.unwrap();
+        assert_eq!(appearance.icon_theme, None);
+        assert_eq!(appearance.icon_shape, Some(IconShape::Rounded));
     }
 
     #[test]

@@ -5725,11 +5725,23 @@ impl Settings {
                 Message::Profiles(profiles::Message::ShareReady(id, job.run().await))
             })
         });
+        let icons = self
+            .profiles
+            .take_icon_jobs()
+            .into_iter()
+            .map(|job| profiles::icon_task(job, Message::Profiles));
+        let icon_art = self
+            .profiles
+            .take_icon_art_jobs()
+            .into_iter()
+            .map(|job| profiles::icon_art_task(job, Message::Profiles));
         Task::batch(
             wallpaper
                 .chain(profiles)
                 .chain(themes)
                 .chain(shares)
+                .chain(icons)
+                .chain(icon_art)
                 .chain([depth, stage])
                 .collect::<Vec<_>>(),
         )

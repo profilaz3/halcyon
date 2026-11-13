@@ -19,8 +19,15 @@ fn fb19_catalog_identity_is_stable_unfitted_and_revision_tracks_content() {
         let origin = p.package.as_ref().unwrap();
         assert_eq!(origin, source(id).package.as_ref().unwrap());
         assert_eq!(origin.credits.author, "Halcyon");
-        // Weather setups carry a wallpaper effect, which needs version 19.
-        let expected = if matches!(id, "rain" | "snow" | "fog") { 19 } else { 14 };
+        // Weather setups carry a wallpaper effect, which needs version 19;
+        // an app icon shape or accent folders need version 22.
+        let expected = if matches!(id, "rain" | "snow" | "fog") {
+            19
+        } else if matches!(id, "tidal" | "carbon" | "spine") {
+            22
+        } else {
+            14
+        };
         assert_eq!(p.written_version(), expected, "{id}");
         let mut changed = p.clone();
         changed.package = None;

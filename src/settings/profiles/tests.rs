@@ -804,6 +804,27 @@ fn finish_theme(editor: &mut ProfilesEditor) {
         editor.update(job.run());
     }
 }
+
+/// Apply as the app runs it: a look with shaped icons builds them off the
+/// UI thread first and applies when they are ready.
+fn apply_look(editor: &mut ProfilesEditor) -> Outcome {
+    let outcome = editor.update(Message::Apply);
+    let jobs = editor.take_icon_jobs();
+    if jobs.is_empty() {
+        return outcome;
+    }
+    assert_eq!(
+        outcome,
+        Outcome::None,
+        "nothing is written before the icons"
+    );
+    assert!(editor.adjusting_icons() && !editor.can_apply());
+    let mut last = Outcome::None;
+    for job in jobs {
+        last = editor.update(job.run());
+    }
+    last
+}
 #[test]
 fn shared_theme_preview_variations_reset_and_undo_use_one_transaction() {
     let desk = Desk::new("shared-theme-journey");
@@ -3168,7 +3189,7 @@ fn looks_islands_come_on_with_the_panel_part_and_stay_as_now_without_it() {
         // And Apply writes what was shown; Undo restores the panel.
         editor.update(Message::Include(Domain::Panel, true));
         let before = looks_settings(&desk);
-        assert_eq!(editor.update(Message::Apply), Outcome::Changed);
+        assert_eq!(apply_look(&mut editor), Outcome::Changed);
         let applied =
             crate::desktop::panels::PanelDraft::load(&desk.store(), PanelKind::Panel).unwrap();
         assert!(applied.islands().known().unwrap().enabled);
@@ -3249,7 +3270,7 @@ fn looks_apply_writes_only_the_chosen_parts_and_undo_restores_them() {
         editor.apply_domains(),
         BTreeSet::from([Domain::Appearance, Domain::WidgetStyle])
     );
-    assert_eq!(editor.update(Message::Apply), Outcome::Changed);
+    assert_eq!(apply_look(&mut editor), Outcome::Changed);
     let latest = editor.latest().cloned().unwrap();
     assert_eq!(
         change_domains(&latest),
@@ -3269,4 +3290,42 @@ fn looks_apply_writes_only_the_chosen_parts_and_undo_restores_them() {
     assert!(config.get("enabled_widgets").is_none(), "Layout kept");
     assert_eq!(editor.update(Message::Undo), Outcome::Changed);
     assert_eq!(looks_settings(&desk), before);
+}
+
+#[test]
+fn leaving_appearance_out_keeps_the_current_icon_shape_in_the_preview() {
+    use crate::desktop::icon_packs::overlay::{SLOTS, Shape};
+    let desk = looks_desk("looks-icon-shape");
+    let mut editor = desk.editor();
+    // Calm brings circle icons and accent folders.
+    select_look(&mut editor, "calm");
+    let planned = editor.preview().unwrap().icons.clone().unwrap();
+    assert_eq!(planned.shape, Shape::Circle);
+    assert!(planned.tint);
+    assert_eq!(apply_look(&mut editor), Outcome::Changed);
+    assert!(
+        SLOTS.contains(
+            &desk
+                .fixture
+                .read("com.system76.CosmicTk", "icon_theme")
+                .unwrap()
+                .trim_matches('"')
+        )
+    );
+    // Carbon's rounded squares show only while Appearance is included.
+    select_look(&mut editor, "carbon");
+    let shown = |editor: &ProfilesEditor| editor.preview().unwrap().icons.clone().unwrap();
+    assert_eq!(shown(&editor).shape, Shape::Rounded);
+    assert!(!shown(&editor).tint);
+    assert!(editor.plan().unwrap().icon_build().is_some());
+    editor.update(Message::Include(Domain::Appearance, false));
+    let kept = shown(&editor);
+    assert_eq!(kept.shape, Shape::Circle, "the desktop's shape");
+    assert!(kept.tint, "the desktop's folders");
+    assert_eq!(kept.base.as_deref(), Some("Pop"));
+    assert!(editor.plan().is_none_or(|plan| plan.icon_build().is_none()));
+    let now = editor.preview().unwrap().icons_now.clone().unwrap();
+    assert_eq!(now, kept);
+    editor.update(Message::Include(Domain::Appearance, true));
+    assert_eq!(shown(&editor).shape, Shape::Rounded);
 }
