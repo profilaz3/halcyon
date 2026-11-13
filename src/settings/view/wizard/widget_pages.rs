@@ -1,6 +1,6 @@
 use super::*;
 use crate::drawer::Widget;
-use cosmic::iced::widget::pin;
+use cosmic::iced::widget::{pin, stack};
 use cosmic::widget::{dropdown, responsive};
 
 /// The Weather city row, its title in line with the widget titles above.
@@ -320,14 +320,11 @@ impl Settings {
         height: f32,
     ) -> Element<'a, Message> {
         let plan = wizard.widget_plan(&self.config);
-        let wallpaper = wizard
-            .look
-            .and_then(|id| super::super::profiles::look_image(id, true))
-            .or_else(|| self.profiles.home_image().cloned())
-            .or_else(|| backdrop(false));
+        let wallpaper = self.wizard_wallpaper(wizard);
         let selected = wizard.widgets.focused.clone();
         let numbered = wizard.step == Screen::Arrange;
-        let bars = wizard.bars;
+        let drafts = self.wizard_bar_drafts(wizard);
+        let accent = self.settings_accent();
         let installed = self.desktop.islands.installation.installed();
         let scene = responsive(move |bounds| {
             let scale =
@@ -396,26 +393,17 @@ impl Settings {
                     );
                 }
             }
-            layers.push(
-                pin(panel_drawing(
-                    bars.islands && installed,
-                    bars.panel_shape,
-                    screen[0] - 16.,
-                    10.,
-                ))
-                .position(cosmic::iced::Point::new(8., 4.))
-                .into(),
-            );
-            if !bars.hides {
-                layers.push(
-                    pin(dock_drawing(bars.dock_shape, 5.))
-                        .position(cosmic::iced::Point::new(
-                            screen[0] / 2. - 25.,
-                            screen[1] - 19.,
-                        ))
-                        .into(),
-                );
-            }
+            // The dock and panel as setup leaves them, to scale.
+            layers.extend(super::super::desktop::preview::bars(
+                installed,
+                drafts.iter().collect(),
+                &self.desktop.catalog,
+                None,
+                screen,
+                scale,
+                accent,
+                None,
+            ));
             container(stack(layers).width(screen[0]).height(screen[1]).clip(true))
                 .width(Length::Fill)
                 .height(height)

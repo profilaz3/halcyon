@@ -1338,6 +1338,10 @@ impl cosmic::Application for Settings {
         } else {
             Task::none()
         };
+        // Setup draws the dock and panel as they are, with their applets.
+        if app.wizard.is_some() {
+            app.desktop.read_for_preview();
+        }
         if page == Page::Appearance && !app.native_worker_needed() {
             app.material_native = crate::desktop::actions::history_store()
                 .is_ok_and(|s| crate::desktop::materials::native_support(&s));
@@ -2434,6 +2438,7 @@ impl Settings {
             Message::OpenWizard => {
                 self.setup_kept = false;
                 self.wizard = Some(open_wizard());
+                self.desktop.read_for_preview();
             }
             Message::SetupDismissed(on) => {
                 self.save(json!({"setup_dismissed": on}));

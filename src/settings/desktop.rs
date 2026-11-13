@@ -198,6 +198,9 @@ pub struct DesktopEditor {
     follow_style: bool,
     /// The item edit waiting for Apply, named for its Undo and Changes.
     item: Option<ItemChange>,
+    /// Read for a picture elsewhere (setup), so the page's first visit
+    /// still checks for Islands.
+    unchecked: bool,
 }
 
 /// What one item edit did, from the bar's items before and after it: one
@@ -281,6 +284,7 @@ impl DesktopEditor {
             recovery: self.recovery.clone(),
             follow_style: self.follow_style,
             item: self.item.clone(),
+            unchecked: self.unchecked,
         }
     }
     /// First visit: choose the store and read current values. Later visits
@@ -290,8 +294,24 @@ impl DesktopEditor {
             // Applets installed since the last visit show up; reads only.
             self.discover_applets();
             self.refresh();
+            if std::mem::take(&mut self.unchecked) {
+                self.check_islands();
+            }
             return;
         }
+        self.read();
+        self.check_islands();
+    }
+    /// The bars and their applets for a picture outside this page, such as
+    /// setup's. Reads only, once; Islands is checked on the page's own visit.
+    pub fn read_for_preview(&mut self) {
+        if self.store.is_some() {
+            return;
+        }
+        self.read();
+        self.unchecked = true;
+    }
+    fn read(&mut self) {
         let store = DesktopStore::from_env().map_err(|error| error.to_string());
         if let Ok(store) = &store {
             self.catalog = Self::catalog_for(store);
@@ -326,7 +346,6 @@ impl DesktopEditor {
         }
         self.store = Some(store);
         self.reload(true);
-        self.check_islands();
     }
     #[cfg(test)]
     pub(super) fn session_draft(&self) -> Option<Vec<PanelDraft>> {

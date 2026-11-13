@@ -2064,66 +2064,7 @@ fn previews_dock_and_panel_closeups_show_the_bar_at_a_readable_size() {
     use crate::desktop::panels::{Anchor, AutoHide, PanelKind};
     let root = isolated_root();
     let cosmic = root.join("cosmic-root");
-    // The real applets and pinned apps, read from the installed entries.
-    let apps = cosmic.join("applications");
-    std::fs::create_dir_all(&apps).unwrap();
-    let pinned = [
-        "firefox",
-        "com.system76.CosmicFiles",
-        "com.system76.CosmicTerm",
-        "com.system76.CosmicEdit",
-        "com.system76.CosmicStore",
-        "com.system76.CosmicSettings",
-    ];
-    let applets = [
-        "com.system76.CosmicAppList",
-        "com.system76.CosmicAppletWorkspaces",
-        "com.system76.CosmicAppletTime",
-        "com.system76.CosmicAppletNetwork",
-        "com.system76.CosmicAppletAudio",
-        "com.system76.CosmicAppletBattery",
-        "com.system76.CosmicAppletNotifications",
-        "com.system76.CosmicAppletPower",
-        "com.system76.CosmicPanelAppButton",
-        "com.system76.CosmicPanelLauncherButton",
-        "com.system76.CosmicPanelWorkspacesButton",
-    ];
-    for id in pinned.iter().chain(&applets) {
-        let entry = std::path::Path::new("/usr/share/applications").join(format!("{id}.desktop"));
-        let text = std::fs::read_to_string(&entry).unwrap_or_else(|_| {
-            format!("[Desktop Entry]\nName={id}\nIcon={id}\nX-CosmicApplet=true\n")
-        });
-        std::fs::write(apps.join(format!("{id}.desktop")), text).unwrap();
-    }
-    let favorites = format!("{:?}", pinned);
-    seed(
-        &cosmic.join("config/cosmic"),
-        &[
-            ("com.system76.CosmicAppList", "favorites", &favorites),
-            ("com.system76.CosmicPanel.Panel", "size", "XS"),
-            (
-                "com.system76.CosmicPanel.Panel",
-                "plugins_wings",
-                "Some(([\"com.system76.CosmicAppletWorkspaces\"],[\"com.system76.CosmicAppletNetwork\",\"com.system76.CosmicAppletAudio\",\"com.system76.CosmicAppletBattery\",\"com.system76.CosmicAppletNotifications\",\"com.system76.CosmicAppletPower\"]))",
-            ),
-            (
-                "com.system76.CosmicPanel.Panel",
-                "plugins_center",
-                "Some([\"com.system76.CosmicAppletTime\"])",
-            ),
-            ("com.system76.CosmicPanel.Dock", "anchor", "Bottom"),
-            ("com.system76.CosmicPanel.Dock", "expand_to_edges", "false"),
-            ("com.system76.CosmicPanel.Dock", "anchor_gap", "true"),
-            ("com.system76.CosmicPanel.Dock", "margin", "8"),
-            ("com.system76.CosmicPanel.Dock", "border_radius", "16"),
-            ("com.system76.CosmicPanel.Dock", "plugins_wings", "None"),
-            (
-                "com.system76.CosmicPanel.Dock",
-                "plugins_center",
-                "Some([\"com.system76.CosmicPanelLauncherButton\",\"com.system76.CosmicPanelWorkspacesButton\",\"com.system76.CosmicPanelAppButton\",\"com.system76.CosmicAppList\"])",
-            ),
-        ],
-    );
+    seed_real_bars(&cosmic);
     let shots = [
         (Size::new(820., 600.), "820x600"),
         (Size::new(1280., 800.), "1280x800"),
@@ -2214,4 +2155,195 @@ fn previews_dock_and_panel_closeups_show_the_bar_at_a_readable_size() {
     assert!(app.desktop.islands.installation.installed());
     send_settings(&mut app, Message::Page(Page::DesktopDock));
     capture(&mut app, "segmented-panel");
+}
+
+/// A top panel and a bottom dock holding the real applets and pinned apps,
+/// read from the installed entries, so close-ups draw their real icons.
+fn seed_real_bars(cosmic: &std::path::Path) {
+    // The real applets and pinned apps, read from the installed entries.
+    let apps = cosmic.join("applications");
+    std::fs::create_dir_all(&apps).unwrap();
+    let pinned = [
+        "firefox",
+        "com.system76.CosmicFiles",
+        "com.system76.CosmicTerm",
+        "com.system76.CosmicEdit",
+        "com.system76.CosmicStore",
+        "com.system76.CosmicSettings",
+    ];
+    let applets = [
+        "com.system76.CosmicAppList",
+        "com.system76.CosmicAppletWorkspaces",
+        "com.system76.CosmicAppletTime",
+        "com.system76.CosmicAppletNetwork",
+        "com.system76.CosmicAppletAudio",
+        "com.system76.CosmicAppletBattery",
+        "com.system76.CosmicAppletNotifications",
+        "com.system76.CosmicAppletPower",
+        "com.system76.CosmicPanelAppButton",
+        "com.system76.CosmicPanelLauncherButton",
+        "com.system76.CosmicPanelWorkspacesButton",
+    ];
+    for id in pinned.iter().chain(&applets) {
+        let entry =
+            std::path::Path::new("/usr/share/applications").join(format!("{id}.desktop"));
+        let text = std::fs::read_to_string(&entry).unwrap_or_else(|_| {
+            format!("[Desktop Entry]\nName={id}\nIcon={id}\nX-CosmicApplet=true\n")
+        });
+        std::fs::write(apps.join(format!("{id}.desktop")), text).unwrap();
+    }
+    let favorites = format!("{:?}", pinned);
+    seed(
+        &cosmic.join("config/cosmic"),
+        &[
+            ("com.system76.CosmicAppList", "favorites", &favorites),
+            ("com.system76.CosmicPanel.Panel", "size", "XS"),
+            (
+                "com.system76.CosmicPanel.Panel",
+                "plugins_wings",
+                "Some(([\"com.system76.CosmicAppletWorkspaces\"],[\"com.system76.CosmicAppletNetwork\",\"com.system76.CosmicAppletAudio\",\"com.system76.CosmicAppletBattery\",\"com.system76.CosmicAppletNotifications\",\"com.system76.CosmicAppletPower\"]))",
+            ),
+            (
+                "com.system76.CosmicPanel.Panel",
+                "plugins_center",
+                "Some([\"com.system76.CosmicAppletTime\"])",
+            ),
+            ("com.system76.CosmicPanel.Dock", "anchor", "Bottom"),
+            ("com.system76.CosmicPanel.Dock", "expand_to_edges", "false"),
+            ("com.system76.CosmicPanel.Dock", "anchor_gap", "true"),
+            ("com.system76.CosmicPanel.Dock", "margin", "8"),
+            ("com.system76.CosmicPanel.Dock", "border_radius", "16"),
+            ("com.system76.CosmicPanel.Dock", "plugins_wings", "None"),
+            (
+                "com.system76.CosmicPanel.Dock",
+                "plugins_center",
+                "Some([\"com.system76.CosmicPanelLauncherButton\",\"com.system76.CosmicPanelWorkspacesButton\",\"com.system76.CosmicPanelAppButton\",\"com.system76.CosmicAppList\"])",
+            ),
+        ],
+    );
+}
+
+/// Setup's Dock and panel step shows both bars close up, with their real
+/// icons and names, as each choice on the step would leave them; the later
+/// steps draw the same bars on their whole-desktop miniature.
+#[test]
+fn previews_wizard_bars_step_shows_each_choice_close_up() {
+    let name = "previews_wizard_bars_step_shows_each_choice_close_up";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use wizard::{Message as Step, Shape, Step as Screen};
+    let root = isolated_root();
+    let cosmic = root.join("cosmic-root");
+    seed_real_bars(&cosmic);
+    crate::desktop::islands::fixture_installed(&cosmic);
+    OPEN_WIZARD.store(true, std::sync::atomic::Ordering::Relaxed);
+    let (mut app, initial) = Settings::init(Core::default(), Page::Overview);
+    settle_settings(&mut app, initial);
+    // Setup reads the bars for its pictures without opening their page.
+    assert!(app.desktop.opened());
+    let store = app.desktop.store().unwrap().clone();
+    app.desktop.islands.installation = crate::desktop::islands::Installation::discover(&store);
+    assert!(app.desktop.islands.installation.installed());
+    app.wizard.as_mut().unwrap().islands_available = true;
+    for step in [Step::Start, Step::Look("calm"), Step::Next] {
+        send_settings(&mut app, Message::Wizard(step));
+    }
+    assert_eq!(app.wizard.as_ref().unwrap().step, Screen::Bars);
+    let shots = [
+        (Size::new(820., 600.), "820x600"),
+        (Size::new(1280., 800.), "1280x800"),
+    ];
+    let capture = |app: &mut Settings, case: &str| {
+        for (size, label) in shots {
+            send_settings(app, Message::Resized(size));
+            let mut native = crate::native_test::Native::new(size);
+            assert!(native.duplicate_ids(app.settings_view()).is_empty());
+            native.scroll(app.settings_view(), "wizard-body", 0.);
+            let picture = native.bounds(app.settings_view(), "wizard-bars-preview");
+            let footer = native.bounds(app.settings_view(), "wizard-next");
+            assert!(
+                picture.x >= 0. && picture.x + picture.width <= size.width,
+                "{case} {label}: {picture:?}"
+            );
+            assert!(picture.y >= 0. && picture.y < footer.y, "{case} {label}");
+            assert!(picture.height >= 150., "{case} {label}: {picture:?}");
+            // Both bars say what they are.
+            let words = native.all_text(app.settings_view());
+            for bar in ["Dock", "Panel"] {
+                assert!(
+                    words.iter().any(|t| t.starts_with(bar)),
+                    "{case} {label}: {words:?}"
+                );
+            }
+            for (theme, mode) in [
+                (cosmic::Theme::light(), "light"),
+                (cosmic::Theme::dark(), "dark"),
+            ] {
+                native.capture(
+                    app.settings_view(),
+                    &theme,
+                    &format!("wizard-bars-{case}-{label}-{mode}"),
+                );
+            }
+        }
+    };
+    capture(&mut app, "keep");
+    send_settings(&mut app, Message::Wizard(Step::KeepBars(false)));
+    capture(&mut app, "change");
+    let choices: Vec<(String, Step)> = vec![
+        ("panel-islands".into(), Step::Islands(true)),
+        ("panel-bar".into(), Step::Islands(false)),
+    ]
+    .into_iter()
+    .chain(Shape::ALL.into_iter().map(|shape| {
+        (
+            format!("panel-{}", shape.title().to_lowercase()),
+            Step::PanelShape(shape),
+        )
+    }))
+    .chain(Shape::ALL.into_iter().map(|shape| {
+        (
+            format!("dock-{}", shape.title().to_lowercase()),
+            Step::DockShape(shape),
+        )
+    }))
+    .chain([
+        ("dock-attached".into(), Step::Floating(false)),
+        ("dock-floating".into(), Step::Floating(true)),
+        ("dock-hides".into(), Step::Hides(true)),
+        ("dock-shown".into(), Step::Hides(false)),
+    ])
+    .collect();
+    for (case, step) in choices {
+        send_settings(&mut app, Message::Wizard(step));
+        capture(&mut app, &case);
+    }
+    // The widget and review pictures draw the same bars, to scale.
+    send_settings(&mut app, Message::Wizard(Step::Islands(true)));
+    for (screen, case) in [(Screen::Widgets, "widgets"), (Screen::Ready, "review")] {
+        send_settings(&mut app, Message::Wizard(Step::Show(screen)));
+        for (size, label) in shots {
+            send_settings(&mut app, Message::Resized(size));
+            let mut native = crate::native_test::Native::new(size);
+            for (theme, mode) in [
+                (cosmic::Theme::light(), "light"),
+                (cosmic::Theme::dark(), "dark"),
+            ] {
+                native.capture(
+                    app.settings_view(),
+                    &theme,
+                    &format!("wizard-{case}-{label}-{mode}"),
+                );
+            }
+        }
+    }
 }

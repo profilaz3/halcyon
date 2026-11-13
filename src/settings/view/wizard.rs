@@ -2,9 +2,9 @@
 //! Illustrations are local samples; the existing wizard owns apply and rollback.
 use super::*;
 mod widget_pages;
+use crate::desktop::panels::{PanelDraft, PanelKind};
 use crate::desktop::profiles::Preset;
 use crate::settings::wizard::{Message as Step, Shape, Step as Screen, Wizard};
-use cosmic::iced::widget::stack;
 use cosmic::widget::image::Handle;
 
 const INK: Color = Color::from_rgb(0.95, 0.95, 1.);
@@ -51,54 +51,6 @@ fn backdrop(welcome: bool) -> Option<Handle> {
             ))
         })
         .clone()
-}
-
-/// The pinned renderer can draw Cover outside a clipped stack. Crop the
-/// already decoded pixels instead, retaining only the most recent crop. Never
-/// decode again or accumulate a texture for every window size while resizing.
-fn band(look: Option<&str>, aspect: f32) -> Option<Handle> {
-    static LAST: std::sync::Mutex<Option<((Option<String>, u32), Handle)>> =
-        std::sync::Mutex::new(None);
-    if !aspect.is_finite() || aspect <= 0. {
-        return None;
-    }
-    let key = (look.map(str::to_owned), (aspect * 50.).round() as u32);
-    let mut last = LAST.lock().ok()?;
-    if let Some((known, handle)) = last.as_ref()
-        && known == &key
-    {
-        return Some(handle.clone());
-    }
-    let source = look
-        .and_then(|id| super::profiles::look_image(id, true))
-        .or_else(|| backdrop(false))?;
-    let Handle::Rgba {
-        width,
-        height,
-        pixels,
-        ..
-    } = &source
-    else {
-        return None;
-    };
-    let (cw, ch) = if *width as f32 / *height as f32 > aspect {
-        (((*height as f32 * aspect) as u32).clamp(1, *width), *height)
-    } else {
-        (*width, ((*width as f32 / aspect) as u32).clamp(1, *height))
-    };
-    // Copy contiguous rows instead of invoking a per-pixel image conversion.
-    let stride = *width as usize * 4;
-    let row_len = cw as usize * 4;
-    let x = ((width - cw) / 2) as usize * 4;
-    let y = ((height - ch) / 2) as usize;
-    let mut cropped = Vec::with_capacity(row_len * ch as usize);
-    for row in y..y + ch as usize {
-        let start = row * stride + x;
-        cropped.extend_from_slice(&pixels[start..start + row_len]);
-    }
-    let handle = Handle::from_rgba(cw, ch, cropped);
-    *last = Some((key, handle.clone()));
-    Some(handle)
 }
 
 /// The Bars step's Why? beside an unavailable Islands choice.
@@ -281,66 +233,6 @@ fn picker<'a>(
             }
         }))
         .into()
-}
-
-fn corner(shape: Shape, size: f32) -> f32 {
-    match shape {
-        Shape::Pill => size / 2.,
-        Shape::Rounded => (size / 3.).min(5.),
-        Shape::Square => 0.,
-    }
-}
-
-/// The panel drawn `width` wide: one bar, or three islands together.
-fn panel_drawing<'a>(islands: bool, shape: Shape, width: f32, height: f32) -> Element<'a, Message> {
-    let tone = Color::from_rgba(0.08, 0.08, 0.2, 0.88);
-    let piece = |w: Length| -> Element<'a, Message> {
-        fill_box(
-            row::with_children(vec![shape_dot(height * 0.32), shape_dot(height * 0.32)])
-                .spacing(height * 0.2)
-                .into(),
-            tone,
-            EDGE,
-            corner(shape, height),
-        )
-        .width(w)
-        .height(height)
-        .padding([height * 0.34, height * 0.5])
-        .into()
-    };
-    if islands {
-        container(
-            row::with_children(vec![
-                piece(Length::Fixed(width * 0.16)),
-                piece(Length::Fixed(width * 0.2)),
-                piece(Length::Fixed(width * 0.14)),
-            ])
-            .spacing(height * 0.35),
-        )
-        .width(width)
-        .align_x(Alignment::Center)
-        .into()
-    } else {
-        container(piece(Length::Fill)).width(width).into()
-    }
-}
-
-fn shape_dot<'a>(size: f32) -> Element<'a, Message> {
-    shape(size, size, size / 2., Color::from_rgba(1., 1., 1., 0.75))
-}
-
-/// The dock: a short row of icons in its shape.
-fn dock_drawing<'a>(shape: Shape, icon: f32) -> Element<'a, Message> {
-    let icons =
-        row::with_children((0..5).map(|_| shape_dot(icon)).collect::<Vec<_>>()).spacing(icon * 0.5);
-    fill_box(
-        icons.into(),
-        Color::from_rgba(0.08, 0.08, 0.2, 0.88),
-        EDGE,
-        corner(shape, icon * 2.),
-    )
-    .padding([icon * 0.5, icon])
-    .into()
 }
 
 impl Settings {
@@ -974,83 +866,88 @@ impl Settings {
         )
     }
 
-    /// The chosen look's wallpaper with the panel on top and the dock below
-    /// as they will look, each named so the picture reads at a glance.
+    /// The dock and panel as the wizard's choices would leave them: the
+    /// desktop's own bars, the chosen look's bar style on top, then this
+    /// step's choices. Kept bars stay exactly as they are.
+    pub(super) fn wizard_bar_drafts(&self, wizard: &Wizard) -> Vec<PanelDraft> {
+        use crate::desktop::panels::AutoHide;
+        let installed = self.desktop.islands.installation.installed();
+        // The same order Apply uses: the look's dock and panel unless they
+        // are kept, then every value chosen here written over it.
+        let preset = wizard
+            .look
+            .filter(|_| !wizard.keep_bars)
+            .and_then(|id| self.profiles.presets().iter().find(|p| p.id == id));
+        let bars = wizard.bars;
+        let touched = wizard.bar_choices();
+        PanelKind::ALL
+            .into_iter()
+            .filter_map(|kind| {
+                let mut draft = self.desktop.draft(kind)?.clone();
+                let style = preset.and_then(|preset| match kind {
+                    PanelKind::Dock => preset.profile.dock.as_ref(),
+                    PanelKind::Panel => preset.profile.panel.as_ref(),
+                });
+                if let Some(style) = style {
+                    draft = crate::desktop::profiles::preview_panel_style(draft, style, installed);
+                }
+                match kind {
+                    PanelKind::Panel => {
+                        if touched.panel_shape {
+                            draft.set_radius(bars.panel_shape.radius());
+                        }
+                        if touched.islands && wizard.islands_available {
+                            let mut islands = draft.islands().known().cloned().unwrap_or_default();
+                            islands.enabled = bars.islands;
+                            islands.placement = dock_islands_core::Placement::Together;
+                            draft.set_islands(islands);
+                            draft.set_floating(bars.islands);
+                            draft.set_margin(if bars.islands { 6 } else { 0 });
+                        }
+                    }
+                    PanelKind::Dock => {
+                        if touched.dock_shape {
+                            draft.set_radius(bars.dock_shape.radius());
+                        }
+                        if touched.floating {
+                            draft.set_floating(bars.floating);
+                            draft.set_margin(if bars.floating { 6 } else { 0 });
+                        }
+                        if touched.hides {
+                            draft.set_autohide(if bars.hides {
+                                AutoHide::OnOverlap
+                            } else {
+                                AutoHide::Never
+                            });
+                        }
+                    }
+                }
+                Some(draft)
+            })
+            .collect()
+    }
+
+    /// The wallpaper setup shows: the chosen look's, else the desktop's.
+    pub(super) fn wizard_wallpaper(&self, wizard: &Wizard) -> Option<Handle> {
+        wizard
+            .look
+            .and_then(|id| super::profiles::look_image(id, true))
+            .or_else(|| self.profiles.home_image().cloned())
+            .or_else(|| backdrop(false))
+    }
+
+    /// The dock and panel close up on the chosen look's wallpaper, as they
+    /// will look, each named so the picture reads at a glance.
     fn wizard_bars_preview<'a>(&'a self, wizard: &'a Wizard) -> Element<'a, Message> {
-        let mut bars = wizard.bars;
-        bars.islands &= self.desktop.islands.installation.installed();
-        let look = wizard.look;
-        let most = self.wizard_preview_height();
-        let scene = cosmic::widget::responsive(move |bounds| {
-            let w = bounds.width.floor().max(120.);
-            let h = most;
-            let background: Element<'a, Message> = match band(look, w / h) {
-                Some(handle) => cosmic::widget::image(handle)
-                    .width(w)
-                    .height(h)
-                    .content_fit(cosmic::iced::ContentFit::Fill)
-                    .into(),
-                None => shape(w, h, 0., Color::from_rgb(0.08, 0.08, 0.2)),
-            };
-            let panel_gap = if bars.islands { 6. } else { 0. };
-            let tag = |name: &'static str| -> Element<'a, Message> {
-                fill_box(
-                    words(name, 11., INK),
-                    Color::from_rgba(0., 0., 0., 0.45),
-                    Color::TRANSPARENT,
-                    6.,
-                )
-                .padding([2, 8])
-                .into()
-            };
-            let overlay = column::with_children(vec![
-                container(panel_drawing(
-                    bars.islands,
-                    bars.panel_shape,
-                    w - 2. * panel_gap - 16.,
-                    16.,
-                ))
-                .width(Length::Fill)
-                .padding([panel_gap, 8. + panel_gap])
-                .align_x(Alignment::Center)
-                .into(),
-                container(tag("Panel")).padding([6, 16]).into(),
-                cosmic::iced::widget::space().height(Length::Fill).into(),
-                container(tag("Dock"))
-                    .width(Length::Fill)
-                    .padding([0, 0, 6, 0])
-                    .align_x(Alignment::Center)
-                    .into(),
-                container(if bars.hides {
-                    shape(60., 4., 2., Color::from_rgba(1., 1., 1., 0.5))
-                } else {
-                    dock_drawing(bars.dock_shape, 8.)
-                })
-                .width(Length::Fill)
-                .align_x(Alignment::Center)
-                .padding([0., 0., if bars.floating { 8. } else { 0. }, 0.])
-                .into(),
-            ])
-            .width(w)
-            .height(h);
-            container(
-                fill_box(
-                    stack(vec![background, overlay.into()])
-                        .width(w)
-                        .height(h)
-                        .clip(true)
-                        .into(),
-                    Color::TRANSPARENT,
-                    EDGE,
-                    12.,
-                )
-                .clip(true),
-            )
+        let picture = self.wizard_bars_closeup(
+            self.wizard_bar_drafts(wizard),
+            self.wizard_wallpaper(wizard),
+            self.wizard_preview_height(),
+        );
+        container(fill_box(picture, Color::TRANSPARENT, EDGE, 12.).clip(true))
+            .id(cosmic::widget::Id::new("wizard-bars-preview"))
             .width(Length::Fill)
-            .height(h)
             .into()
-        });
-        container(scene).width(Length::Fill).height(most).into()
     }
 
     /// What the city search found, under the Weather city row.
@@ -1322,46 +1219,5 @@ impl Settings {
             [300., 340.],
             true,
         )
-    }
-}
-
-#[cfg(test)]
-mod image_tests {
-    use super::*;
-    #[test]
-    fn resize_crop_is_bounded_and_reuses_decoded_pixels() {
-        let first = band(None, 4.).unwrap();
-        assert_eq!(first.id(), band(None, 4.).unwrap().id());
-        let Handle::Rgba { pixels: source, .. } = backdrop(false).unwrap() else {
-            panic!("source pixels");
-        };
-        let Handle::Rgba { pixels: crop, .. } = &first else {
-            panic!("crop pixels");
-        };
-        assert_eq!(
-            &crop[..],
-            &source[300 * 1600 * 4..700 * 1600 * 4],
-            "centered 1600x400 strip"
-        );
-
-        for aspect in 5..85 {
-            let cropped = band(None, aspect as f32).unwrap();
-            let Handle::Rgba {
-                width,
-                height,
-                ref pixels,
-                ..
-            } = cropped
-            else {
-                panic!("decoded crop");
-            };
-            assert_eq!(width, 1600);
-            assert!(height <= 320);
-            assert_eq!(pixels.len(), width as usize * height as usize * 4);
-        }
-        // One entry, not one per historical size: revisiting recreates a crop.
-        assert_ne!(first.id(), band(None, 4.).unwrap().id());
-        assert!(band(None, f32::NAN).is_none());
-        assert!(band(None, 0.).is_none());
     }
 }
