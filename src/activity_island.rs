@@ -16,6 +16,7 @@ mod quiet;
 #[cfg(test)]
 pub(crate) mod test_bus;
 mod reactive;
+mod renderer;
 mod shelf;
 mod surface;
 pub(crate) mod system;
@@ -33,6 +34,7 @@ use cosmic::app::{Core, Task};
 use cosmic::iced::{Color, Length, Subscription, keyboard, window};
 use cosmic::{Application, Element, widget};
 use std::time::{Duration, Instant};
+pub use renderer::choose as choose_renderer;
 const WIDTH: f32 = 296.;
 const HEIGHT: f32 = 128.;
 const COMPACT_WIDTH: f32 = 220.;
@@ -1315,7 +1317,7 @@ impl Applet {
                 let close = self.update(Message::Close);
                 let launch = cosmic::task::future(async move {
                     Message::SettingsOpened(
-                        tokio::process::Command::new("xdg-open")
+                        renderer::command("xdg-open")
                             .arg(url)
                             .spawn()
                             .map(|_| ())
@@ -1335,7 +1337,7 @@ impl Applet {
                 // Like a native menu item: the popup has done its job.
                 let launch = cosmic::task::future(async move {
                     let opened = match std::env::current_exe() {
-                        Ok(exe) => tokio::process::Command::new(exe)
+                        Ok(exe) => renderer::command(exe)
                             .args(["--settings", page])
                             .status()
                             .await

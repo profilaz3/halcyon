@@ -43,6 +43,7 @@ fn main() -> cosmic::iced::Result {
         std::process::exit(code);
     }
     if std::env::args().nth(1).as_deref() == Some("--activity-island") {
+        activity_island::choose_renderer();
         return cosmic::applet::run::<activity_island::Applet>(());
     }
     if std::env::args().nth(1).as_deref() == Some("--package-image-worker") {

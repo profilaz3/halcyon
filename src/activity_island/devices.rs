@@ -957,4 +957,146 @@ mod tests {
             }
         }
     }
+
+    /// For the record: threads, memory and pixels when the island draws
+    /// with tiny-skia or wgpu (as found, and forced onto llvmpipe as the
+    /// panel's island runs). Each renderer runs in a process of its own.
+    /// Run with `--ignored --nocapture`.
+    #[test]
+    #[ignore = "measurement"]
+    fn measure_island_renderers() {
+        use cosmic::iced::Size;
+        const CHILD: &str = "HALCYON_ISLAND_RENDERER_MEASURE";
+        const TEST: &str = "activity_island::devices::tests::measure_island_renderers";
+        let status = |key: &str| -> u64 {
+            std::fs::read_to_string("/proc/self/status")
+                .unwrap()
+                .lines()
+                .find_map(|line| line.strip_prefix(key))
+                .and_then(|rest| rest.split_whitespace().next()?.parse().ok())
+                .unwrap()
+        };
+        if let Ok(backend) = std::env::var(CHILD) {
+            let (threads, rss) = (status("Threads:"), status("VmRSS:"));
+            let theme = cosmic::Theme::dark();
+            let mut pixels = Vec::new();
+            let mut ui = None;
+            let started = Instant::now();
+            for scene in 0..3 {
+                let mut app = live();
+                app.now_ms = chrono::Utc::now().timestamp_millis();
+                let list = vec![arrived(
+                    "bt:AA:01",
+                    "Sony WH-1000XM5",
+                    DeviceKind::Headphones,
+                    80,
+                )];
+                match scene {
+                    0 => app.kind = Kind::Idle,
+                    1 => {
+                        app.snapshot.devices = list;
+                        app.devices.card = true;
+                        app.kind = Kind::Devices;
+                    }
+                    _ => {
+                        app.snapshot.system =
+                            vec![bluetooth("Sony WH-1000XM5", "80%", false, None)];
+                        app.kind = Kind::System(system::Source::Bluetooth);
+                    }
+                }
+                app.popup = Some(window::Id::unique());
+                app.held = true;
+                app.popup_extra = app.live_extra();
+                app.motion.retarget(1., false, Instant::now());
+                let size = Size::new(app.frame().popup_width(), app.popup_height());
+                let ui = ui.get_or_insert_with(|| {
+                    crate::native_test::Native::with_backend(size, &backend)
+                });
+                ui.size = size;
+                for _ in 0..20 {
+                    pixels = ui.render(app.capsule(true), &theme);
+                }
+            }
+            let elapsed = started.elapsed();
+            let name = ui.unwrap().renderer_name();
+            let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
+            let mut drivers: Vec<&str> = maps
+                .lines()
+                .filter_map(|line| line.rsplit('/').next())
+                .filter(|lib| lib.starts_with("libvulkan_") || lib.starts_with("libgallium"))
+                .collect();
+            drivers.sort_unstable();
+            drivers.dedup();
+            let llvmpipe = std::fs::read_dir("/proc/self/task")
+                .unwrap()
+                .filter_map(|task| std::fs::read_to_string(task.ok()?.path().join("comm")).ok())
+                .filter(|comm| comm.starts_with("llvmpipe"))
+                .count();
+            let name = format!("{name}, {drivers:?}, {llvmpipe} llvmpipe threads");
+            std::fs::write(std::env::var("HALCYON_ISLAND_PIXELS").unwrap(), &pixels).unwrap();
+            println!(
+                "RESULT {backend} ({name}): threads {threads} -> {}, VmRSS {rss} -> {} kB, 60 frames {:.1} ms",
+                status("Threads:"),
+                status("VmRSS:"),
+                elapsed.as_secs_f64() * 1000.
+            );
+            return;
+        }
+        let dir =
+            std::env::temp_dir().join(format!("halcyon-island-renderers-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut frames = Vec::new();
+        for (label, backend, adapter) in [
+            ("tiny-skia", "tiny-skia", None),
+            ("wgpu", "wgpu", None),
+            (
+                "wgpu-llvmpipe",
+                "wgpu",
+                Some("/usr/share/vulkan/icd.d/lvp_icd.json"),
+            ),
+        ] {
+            let path = dir.join(label);
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args(["--exact", TEST, "--ignored", "--nocapture"])
+                .env(CHILD, backend)
+                .env("HALCYON_ISLAND_PIXELS", &path);
+            if let Some(driver) = adapter {
+                // Only Mesa's software Vulkan driver, as the panel's island
+                // ended up using.
+                command
+                    .env("VK_DRIVER_FILES", driver)
+                    .env("VK_ICD_FILENAMES", driver);
+            }
+            let output = command.output().unwrap();
+            let text = String::from_utf8_lossy(&output.stdout);
+            match text.lines().find(|line| line.starts_with("RESULT")) {
+                Some(line) => println!("{label}: {line}"),
+                None => println!(
+                    "{label}: no result\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                ),
+            }
+            frames.push((label, std::fs::read(&path).unwrap_or_default()));
+        }
+        let skia = &frames[0].1;
+        for (label, other) in &frames[1..] {
+            if other.len() != skia.len() || skia.is_empty() {
+                println!("{label}: no frame to compare");
+                continue;
+            }
+            let diffs: Vec<u8> = skia
+                .iter()
+                .zip(other)
+                .map(|(a, b)| a.abs_diff(*b))
+                .collect();
+            let mean = diffs.iter().map(|d| *d as f64).sum::<f64>() / diffs.len() as f64;
+            let over = diffs.iter().filter(|d| **d > 16).count() as f64 / diffs.len() as f64;
+            println!(
+                "tiny-skia vs {label}: mean channel difference {mean:.3}, channels off by more than 16: {:.3}%",
+                over * 100.
+            );
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }
