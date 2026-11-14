@@ -381,7 +381,118 @@ fn write_confined(path: &Path, bytes: Option<&[u8]>, preserve_mode: bool) -> io:
         if rc != 0 && io::Error::last_os_error().kind() != io::ErrorKind::NotFound {
             return Err(io::Error::last_os_error());
         }
-        dir.0.sync_all()
+        sync(&dir.0)
+    }
+}
+
+/// The native writes of one transaction, made durable together.
+///
+/// `stage` writes and syncs each new value under a name COSMIC's config
+/// watchers skip. `commit` then puts the staged values in place, one rename
+/// (or removal) each with no sync between them, so a panel that re-reads
+/// its whole entry on every change sees all of one bar's keys at once and
+/// recreates its applets once, not once per key. `sync` finally syncs each
+/// touched folder once. Staged files that were never committed are removed
+/// on drop.
+#[derive(Default)]
+pub(crate) struct NativeBatch {
+    folders: Vec<(std::path::PathBuf, Directory, bool)>,
+    staged: Vec<Staged>,
+}
+struct Staged {
+    folder: Option<usize>,
+    name: String,
+    pending: Option<String>,
+}
+impl NativeBatch {
+    /// Stages `bytes` (or removal, for `None`) for `path`. Returns its index.
+    pub(crate) fn stage(&mut self, path: &Path, bytes: Option<&[u8]>) -> io::Result<usize> {
+        let parent = path
+            .parent()
+            .ok_or_else(|| io::Error::other("missing parent"))?;
+        let name = path
+            .file_name()
+            .and_then(OsStr::to_str)
+            .ok_or_else(|| io::Error::other("invalid filename"))?
+            .to_owned();
+        let folder = match self.folders.iter().position(|(p, _, _)| p == parent) {
+            Some(index) => Some(index),
+            // A removal from a folder that doesn't exist has nothing to do.
+            None => Directory::open(parent, bytes.is_some())?.map(|dir| {
+                self.folders.push((parent.to_path_buf(), dir, false));
+                self.folders.len() - 1
+            }),
+        };
+        let pending = match (bytes, folder) {
+            (Some(bytes), Some(index)) => {
+                let dir = &self.folders[index].1;
+                let pending = format!(
+                    ".atomicwrite.halcyon-{}",
+                    getrandom::u64().map_err(io::Error::other)?
+                );
+                let mode = dir
+                    .read(OsStr::new(&name), MAX_FILE_BYTES)?
+                    .map(|(_, mode)| mode)
+                    .unwrap_or(0o600);
+                dir.write_new_mode(&pending, bytes, mode)?;
+                Some(pending)
+            }
+            _ => None,
+        };
+        self.staged.push(Staged {
+            folder,
+            name,
+            pending,
+        });
+        Ok(self.staged.len() - 1)
+    }
+    /// Puts staged value `index` in place without syncing its folder.
+    pub(crate) fn commit(&mut self, index: usize) -> io::Result<()> {
+        let staged = &mut self.staged[index];
+        let Some(folder) = staged.folder else {
+            return Ok(());
+        };
+        let (_, dir, touched) = &mut self.folders[folder];
+        match staged.pending.take() {
+            Some(pending) => {
+                if let Err(error) = dir.rename_unsynced(&pending, &staged.name) {
+                    staged.pending = Some(pending);
+                    return Err(error);
+                }
+            }
+            None => {
+                let name = component(staged.name.as_bytes())?;
+                // SAFETY: directory and NUL-terminated name live across the call.
+                let rc = unsafe { libc::unlinkat(dir.0.as_raw_fd(), name.as_ptr(), 0) };
+                if rc != 0 && io::Error::last_os_error().kind() != io::ErrorKind::NotFound {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+        }
+        *touched = true;
+        Ok(())
+    }
+    /// Syncs every folder a commit changed, once each.
+    pub(crate) fn sync(&mut self) -> io::Result<()> {
+        for (_, dir, touched) in &mut self.folders {
+            if *touched {
+                sync(&dir.0)?;
+                *touched = false;
+            }
+        }
+        Ok(())
+    }
+}
+impl Drop for NativeBatch {
+    fn drop(&mut self) {
+        for staged in &self.staged {
+            if let (Some(folder), Some(pending)) = (staged.folder, &staged.pending)
+                && let Ok(name) = component(pending.as_bytes())
+            {
+                // SAFETY: directory and NUL-terminated name live across the call.
+                unsafe { libc::unlinkat(self.folders[folder].1.0.as_raw_fd(), name.as_ptr(), 0) };
+            }
+        }
     }
 }
 
@@ -395,9 +506,17 @@ fn owned_keys(store: &DesktopStore) -> Result<BTreeSet<ConfigKey>, DesktopError>
     .transpose()
     .map(Option::unwrap_or_default)
 }
-pub(crate) fn record_created(store: &DesktopStore, key: &ConfigKey) -> Result<(), DesktopError> {
+/// Records every key in `keys` as created by Halcyon, in one write.
+pub(crate) fn record_created_all(
+    store: &DesktopStore,
+    keys: &[&ConfigKey],
+) -> Result<(), DesktopError> {
     let mut owned = owned_keys(store)?;
-    owned.insert(key.clone());
+    let before = owned.len();
+    owned.extend(keys.iter().map(|key| (*key).clone()));
+    if owned.len() == before {
+        return Ok(());
+    }
     if owned.len() > MAX_FILES {
         return Err(failed("created-key inventory is full"));
     }
