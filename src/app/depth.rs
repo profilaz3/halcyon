@@ -20,6 +20,43 @@ pub(super) struct State {
     analysing: Option<(String, watch::Sender<bool>)>,
     /// Pictures whose analysis failed; not tried again until restart.
     failed: std::collections::HashSet<String>,
+    /// The request in flight: its picture's stamp and verdict basis.
+    asked: Option<(u64, Asked)>,
+    /// What the last answer found for its picture file, so the next
+    /// minute's worker neither reads and hashes the picture again nor
+    /// judges the same day twice.
+    seen: Option<(Asked, crate::depth::Found)>,
+}
+
+/// The picture file a request named, by stamp, and its verdict basis.
+#[derive(Clone, PartialEq)]
+struct Asked {
+    stamp: crate::depth::Stamp,
+    basis: Vec<u8>,
+}
+
+/// What the app tells the worker about `request`'s picture, and whether
+/// the worker is needed at all: an answer judged today, for this same
+/// file, frame and style, without a cut clock stays without one until
+/// something changes.
+fn seen_for(
+    seen: Option<&(Asked, crate::depth::Found)>,
+    asked: &Asked,
+) -> (Option<crate::depth::Found>, bool) {
+    use crate::depth::Found;
+    let Some((before, found)) = seen.filter(|(before, _)| before.stamp == asked.stamp) else {
+        return (None, true);
+    };
+    match found {
+        Found::Judged { judgement, .. } if before.basis == asked.basis => (
+            Some(found.clone()),
+            judgement.verdict == crate::depth::scene::Verdict::Works,
+        ),
+        // Another frame, style or day: the picture is the same, the
+        // verdict is judged again.
+        Found::Judged { key, .. } => (Some(Found::Unknown { key: key.clone() }), true),
+        found => (Some(found.clone()), true),
+    }
 }
 fn trace(message: impl std::fmt::Display) {
     if std::env::var_os("HALCYON_DEPTH_TRACE").is_some()
@@ -84,6 +121,11 @@ impl State {
             return None;
         }
         self.cancel = None;
+        if let (Some((asked_id, asked)), Some(rendered)) = (self.asked.take(), rendered.as_ref())
+            && asked_id == id
+        {
+            self.seen = Some((asked, rendered.found.clone()));
+        }
         let rendered = rendered.unwrap_or(crate::depth::Rendered {
             found: crate::depth::Found::Ridge,
             pixels: None,
@@ -197,13 +239,28 @@ impl Cards {
             size: self.widget_size(Widget::Clock),
             scale,
         };
-        let Some(request) =
+        let Some(mut request) =
             crate::depth::Request::new(&self.config, frame, entry, self.clock_at.naive_local())
                 .map(|r| r.with_scenes(crate::depth::cache::root()))
         else {
             self.depth.cancel();
             return Task::none();
         };
+        let asked = match &request.background.source {
+            BgSource::Path(path) => crate::depth::Stamp::at(path)
+                .zip(request.basis())
+                .map(|(stamp, basis)| Asked { stamp, basis }),
+            _ => None,
+        };
+        let mut needed = true;
+        if let Some(asked) = &asked {
+            let (found, worker) = seen_for(self.depth.seen.as_ref(), asked);
+            needed = worker;
+            request.seen = Some(crate::depth::Seen {
+                stamp: asked.stamp,
+                found,
+            });
+        }
         trace(format!("frame {:?}", request.frame));
         let Ok(bytes) = serde_json::to_vec(&request) else {
             return Task::none();
@@ -211,9 +268,17 @@ impl Cards {
         if self.depth.key.as_ref() == Some(&bytes) {
             return Task::none();
         }
+        if !needed {
+            // Today's verdict for this picture, frame and style shows the
+            // plain clock; nothing to draw until one of them changes.
+            self.depth.cancel();
+            self.depth.key = Some(bytes);
+            return Task::none();
+        }
         self.depth.cancel();
         self.depth.key = Some(bytes.clone());
         let id = self.depth.id;
+        self.depth.asked = asked.map(|asked| (id, asked));
         let (send, cancel) = watch::channel(false);
         self.depth.cancel = Some(send);
         cosmic::task::future(async move {
@@ -378,5 +443,75 @@ mod tests {
         assert!(state.image.is_some());
         state.invalidate();
         assert!(state.image.is_none());
+    }
+
+    #[test]
+    fn the_next_minute_reuses_what_was_found_for_the_same_file_and_day() {
+        use crate::depth::{Found, Stamp, scene};
+        let stamp = Stamp {
+            device: 1,
+            inode: 2,
+            size: 3,
+            modified: 4,
+            changed: 5,
+        };
+        let asked = Asked {
+            stamp,
+            basis: b"day one".to_vec(),
+        };
+        let judged = |verdict| Found::Judged {
+            key: "k".into(),
+            judgement: scene::Judgement {
+                verdict,
+                confidence: 1.,
+                suggested: None,
+                reason: None,
+                measures: Default::default(),
+            },
+        };
+        // Nothing known yet.
+        assert_eq!(seen_for(None, &asked), (None, true));
+        // The answer is recorded for the request that asked.
+        let mut state = State::default();
+        state.asked = Some((state.id, asked.clone()));
+        state.complete(
+            state.id,
+            Some(crate::depth::Rendered {
+                found: judged(scene::Verdict::Works),
+                pixels: None,
+            }),
+        );
+        let seen = state.seen.clone().unwrap();
+        assert!(seen.0 == asked);
+        // Same file, frame, style and day: the worker draws without
+        // judging again.
+        assert_eq!(
+            seen_for(Some(&seen), &asked),
+            (Some(judged(scene::Verdict::Works)), true)
+        );
+        // Today's verdict shows the plain clock: no worker at all.
+        let plain = (asked.clone(), judged(scene::Verdict::NeedsNudge));
+        assert_eq!(
+            seen_for(Some(&plain), &asked),
+            (Some(judged(scene::Verdict::NeedsNudge)), false)
+        );
+        // Another day (or frame, or style): same picture, judged again.
+        let tomorrow = Asked {
+            basis: b"day two".to_vec(),
+            ..asked.clone()
+        };
+        assert_eq!(
+            seen_for(Some(&plain), &tomorrow),
+            (Some(Found::Unknown { key: "k".into() }), true)
+        );
+        // Another file: nothing reused.
+        let replaced = Asked {
+            stamp: Stamp {
+                changed: 6,
+                ..stamp
+            },
+            ..asked
+        };
+        assert_eq!(seen_for(Some(&plain), &replaced), (None, true));
     }
 }
