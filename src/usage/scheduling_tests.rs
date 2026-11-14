@@ -17,13 +17,8 @@ fn pending(at: i64) -> State {
         ..state()
     }
 }
-fn fixture() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "halcyon-scheduling-{}",
-        super::super::token().unwrap()
-    ));
-    std::fs::create_dir(&dir).unwrap();
-    dir.join("usage.json")
+fn fixture() -> crate::test_env::TempPath {
+    crate::test_env::TempPath::new("scheduling").at("usage.json")
 }
 
 #[test]
@@ -152,12 +147,12 @@ async fn kernel_realtime_timer_fires_once_and_future_deadlines_do_not_poll() {
 async fn cross_process_atomic_replacement_wakes_a_disabled_worker() {
     let path = fixture();
     let ready = Arc::new(Notify::new());
-    let mut watch = StateWatch::new(path.clone(), ready.clone());
+    let mut watch = StateWatch::new(path.to_path_buf(), ready.clone());
     assert!(watch.refresh());
     // Use the real state writer in a subprocess, without touching user state.
     let result=std::process::Command::new("/usr/bin/python3").args(["-c",
         "import pathlib,sys; p=pathlib.Path(sys.argv[1]); t=p.with_suffix('.tmp'); t.write_text('{}'); t.replace(p)"])
-        .arg(&path).status().unwrap();
+        .arg(path.as_os_str()).status().unwrap();
     assert!(result.success());
     tokio::time::timeout(Duration::from_secs(2), wait(&ready, None))
         .await
@@ -177,7 +172,8 @@ async fn cross_process_atomic_replacement_wakes_a_disabled_worker() {
 
 #[tokio::test]
 async fn watch_follows_missing_and_recreated_state_directories() {
-    let root = fixture().parent().unwrap().to_path_buf();
+    let folder = fixture();
+    let root = folder.root().to_path_buf();
     let path = root.join("new-state/usage.json");
     let ready = Arc::new(Notify::new());
     let mut watch = StateWatch::new(path.clone(), ready.clone());
@@ -199,7 +195,8 @@ async fn watch_follows_missing_and_recreated_state_directories() {
 
 #[tokio::test]
 async fn watch_rebinds_after_directory_replacement_at_the_same_path() {
-    let root = fixture().parent().unwrap().to_path_buf();
+    let folder = fixture();
+    let root = folder.root().to_path_buf();
     let path = root.join("state/usage.json");
     std::fs::create_dir(path.parent().unwrap()).unwrap();
     let ready = Arc::new(Notify::new());

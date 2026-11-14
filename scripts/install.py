@@ -28,6 +28,8 @@ SERVICE = 'halcyon.service'
 ICON_SIZES = (48, 64, 128, 256, 512)
 LEGACY_SERVICE = 'cosmic-desktop-cards.service'
 LEGACY_LAUNCHER = 'io.github.workstation.DesktopCards.desktop'
+# Each backup holds the whole program (about 100 MB); older ones go.
+KEEP_BACKUPS = 2
 
 
 def default_binary():
@@ -103,6 +105,17 @@ def files(binary, prefix, google_client):
     return out
 
 
+def prune_backups(folder, keep, count=KEEP_BACKUPS):
+    """Removes all but the newest `count` install backups in `folder`,
+    never `keep` (the one just made). Their names start with the UTC time,
+    so they sort oldest first. Other folders there are left alone."""
+    backups = sorted(path for path in folder.iterdir()
+                     if path.name.endswith('-install') and path.is_dir() and not path.is_symlink())
+    for old in backups[:-count] if count else backups:
+        if old != keep:
+            shutil.rmtree(old)
+
+
 def system_run(args, check=False):
     return subprocess.run(args, check=check, capture_output=True, text=True)
 
@@ -121,6 +134,7 @@ def install(binary, home, *, systemd=True, google_client=None, run=system_run):
         backup.mkdir(parents=True, exist_ok=True)
         for path in replaced:
             shutil.copy2(path, backup / path.name)
+        prune_backups(backup.parent, keep=backup)
     first = not (prefix / 'bin/halcyon').exists()
     for path, data, mode in planned:
         place(path, data, mode)

@@ -11,7 +11,8 @@ fn isolated(name: &str) -> bool {
     if std::env::var("HALCYON_ARRANGE_TEST").as_deref() == Ok(name) {
         return false;
     }
-    let root = std::env::temp_dir().join(format!("halcyon-arrange-{}-{name}", std::process::id()));
+    let folder = crate::test_env::TempPath::new("arrange");
+    let root = folder.root();
     for part in ["config", "data", "cache", "state", "system/cosmic"] {
         std::fs::create_dir_all(root.join(part)).unwrap();
     }

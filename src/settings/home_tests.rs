@@ -657,3 +657,48 @@ fn fonts_and_icons_is_a_sidebar_root_after_appearance() {
         );
     }
 }
+
+// A saved file with a value this version can't use: Settings opens with
+// the rest of it, says what was set aside, and saving still works.
+#[test]
+fn home_notes_settings_that_were_set_aside_and_saves_still_work() {
+    let name = "home_notes_settings_that_were_set_aside_and_saves_still_work";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let root = isolated_root();
+    let path = crate::config::Config::path().unwrap();
+    std::fs::write(
+        &path,
+        serde_json::json!({
+            "theme": "amber",
+            "onboarded": true,
+            "edge_menu": {"style": "carousel", "delay_ms": 5000}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let mut app = open_isolated_editor(&root);
+    assert_eq!(app.config.theme, "amber");
+    assert_eq!(app.config.repaired.len(), 2);
+    send_settings(&mut app, Message::Page(Page::Home));
+    let mut native = crate::native_test::Native::new(Size::new(1280., 800.));
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "settings-ignored")
+            .is_some()
+    );
+    send_settings(&mut app, Message::ClockFormat(false));
+    assert!(!app.error, "{}", app.status);
+    assert!(!app.config.clock.format_24h);
+    let raw: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(raw["clock"]["format_24h"], false);
+    assert_eq!(raw["theme"], "amber");
+}

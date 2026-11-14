@@ -1,11 +1,7 @@
 use super::*;
 use std::os::unix::fs::PermissionsExt;
-fn fixture() -> PathBuf {
-    let mut bytes = [0u8; 8];
-    getrandom::fill(&mut bytes).unwrap();
-    let p = std::env::temp_dir().join(format!("halcyon-usage-{:x}", u64::from_le_bytes(bytes)));
-    std::fs::create_dir_all(&p).unwrap();
-    p.join("usage.json")
+fn fixture() -> crate::test_env::TempPath {
+    crate::test_env::TempPath::new("usage").at("usage.json")
 }
 #[test]
 fn first_report_persists_a_random_private_identity_and_reserves_retry() {
@@ -37,7 +33,7 @@ fn concurrent_claims_only_schedule_one_request() {
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
     let threads: Vec<_> = (0..8)
         .map(|_| {
-            let path = path.clone();
+            let path = path.to_path_buf();
             let b = barrier.clone();
             std::thread::spawn(move || {
                 b.wait();
@@ -526,7 +522,7 @@ async fn optout_during_country_cancels_socket_and_never_posts_activity() {
     let (id, revision) = claim(&path, "2026-10-23", 1000).unwrap().unwrap();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let country_url = format!("http://{}/", listener.local_addr().unwrap());
-    let server_path = path.clone();
+    let server_path = path.to_path_buf();
     let server = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
         stream
@@ -616,7 +612,7 @@ fn separate_process_optout_invalidates_an_already_claimed_report() {
     assert!(
         std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "usage::tests::multiprocess_preference_child"])
-            .env("HALCYON_USAGE_CHILD", &path)
+            .env("HALCYON_USAGE_CHILD", path.as_os_str())
             .status()
             .unwrap()
             .success()
@@ -633,7 +629,7 @@ async fn optout_during_activity_cancels_without_marking_success_then_enable_resu
     remember_country(&path, &id, rev, "HR").unwrap();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let url = reqwest::Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
-    let server_path = path.clone();
+    let server_path = path.to_path_buf();
     let server = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
         stream
@@ -713,7 +709,7 @@ async fn status_response_after_a_new_choice_cannot_clear_its_queue() {
     let state = claim_status(&path, 1000).unwrap().unwrap();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let url = reqwest::Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
-    let server_path = path.clone();
+    let server_path = path.to_path_buf();
     let server = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
         stream

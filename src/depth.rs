@@ -57,9 +57,55 @@ pub struct Request {
     /// is used, which is all a public preview may consult.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scenes: Option<std::path::PathBuf>,
+    /// The picture file as the app saw it, and what an earlier answer found
+    /// for that same file: the clock is drawn every minute, the picture and
+    /// the day's verdict are not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seen: Option<Seen>,
     /// Draw the clock alone, uncut, to stand behind the rain glass.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub plain: bool,
+}
+
+/// A picture file's identity: replacing or editing the file changes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Stamp {
+    pub device: u64,
+    pub inode: u64,
+    pub size: u64,
+    pub modified: i64,
+    pub changed: i64,
+}
+impl Stamp {
+    pub fn of(meta: &std::fs::Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt;
+        Self {
+            device: meta.dev(),
+            inode: meta.ino(),
+            size: meta.size(),
+            modified: meta.mtime().saturating_mul(1_000_000_000) + meta.mtime_nsec(),
+            changed: meta.ctime().saturating_mul(1_000_000_000) + meta.ctime_nsec(),
+        }
+    }
+    /// The stamp of the regular file at `path`, if it is one.
+    pub fn at(path: &std::path::Path) -> Option<Self> {
+        std::fs::metadata(path)
+            .ok()
+            .filter(|meta| meta.is_file())
+            .map(|meta| Self::of(&meta))
+    }
+}
+
+/// What the app already knows about the request's picture file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Seen {
+    pub stamp: Stamp,
+    /// The earlier answer for this file: `Ridge`, or the content key
+    /// (`Unknown`), or the key and this day's verdict for this frame and
+    /// style (`Judged`). `None` when nothing is known yet.
+    pub found: Option<Found>,
 }
 impl Request {
     pub fn new(
@@ -85,6 +131,7 @@ impl Request {
             style,
             time: time.format("%Y-%m-%dT%H:%M:00").to_string(),
             scenes: None,
+            seen: None,
             plain: false,
         })
     }
@@ -107,6 +154,7 @@ impl Request {
             style,
             time: time.format("%Y-%m-%dT%H:%M:00").to_string(),
             scenes: None,
+            seen: None,
             plain: true,
         })
     }
@@ -114,6 +162,14 @@ impl Request {
     pub fn with_scenes(mut self, root: Option<std::path::PathBuf>) -> Self {
         self.scenes = root;
         self
+    }
+    /// What decides the day's verdict: everything but the minute and
+    /// what was seen. Two requests with the same basis judge alike.
+    pub fn basis(&self) -> Option<Vec<u8>> {
+        let mut basis = self.clone();
+        basis.time.truncate("YYYY-MM-DD".len());
+        basis.seen = None;
+        serde_json::to_vec(&basis).ok()
     }
     fn config(&self) -> Option<Config> {
         self.style_config().filter(eligible)
@@ -548,16 +604,32 @@ pub fn render_scene(request: &Request) -> Option<Rendered> {
     let BgSource::Path(path) = &request.background.source else {
         return None;
     };
-    let bytes = read_picture(path)?;
-    if bytes.len() == PICTURE.len() && Sha256::digest(&bytes) == Sha256::digest(PICTURE) {
+    // The app's earlier answer counts only for the very file it named.
+    let seen = request
+        .seen
+        .as_ref()
+        .filter(|seen| Stamp::at(path) == Some(seen.stamp))
+        .and_then(|seen| seen.found.as_ref());
+    let key = match seen {
+        Some(Found::Ridge) => None,
+        Some(Found::Unknown { key } | Found::Judged { key, .. }) => Some(key.clone()),
+        // A clock drawn alone says nothing about the picture.
+        Some(Found::Plain) | None => {
+            let bytes = read_picture(path)?;
+            if bytes.len() == PICTURE.len() && Sha256::digest(&bytes) == Sha256::digest(PICTURE) {
+                None
+            } else {
+                Some(cache::key(&bytes))
+            }
+        }
+    };
+    let Some(key) = key else {
         return Some(Rendered {
             found: Found::Ridge,
             pixels: render_clock(request),
         });
-    }
+    };
     let root = request.scenes.as_ref()?;
-    let key = cache::key(&bytes);
-    drop(bytes);
     let Some(entry) = cache::load(root, &key) else {
         return Some(Rendered {
             found: Found::Unknown { key },
@@ -567,26 +639,36 @@ pub fn render_scene(request: &Request) -> Option<Rendered> {
     let config = request.config()?;
     let mode = &request.background.scaling_mode;
     let time = chrono::NaiveDateTime::parse_from_str(&request.time, "%Y-%m-%dT%H:%M:%S").ok()?;
-    let judged = draw(&config, &request.frame, judging_time(time))?;
-    let glyph: Vec<u8> = judged.0.rgba.chunks_exact(4).map(|p| p[3]).collect();
-    let judgement = scene::judge(
-        &entry.stats,
-        &entry.mask,
-        &entry.edges,
-        &scene::Glyph {
-            alpha: &glyph,
-            width: judged.0.width,
-            height: judged.0.height,
-            frame: &request.frame,
-            face: judged.1,
-        },
-        mode,
-    )?;
+    // The verdict is judged once a day at a fixed time; a request whose
+    // basis is unchanged brings it along.
+    let (judgement, judged) = match seen {
+        Some(Found::Judged {
+            key: known,
+            judgement,
+        }) if *known == key => (judgement.clone(), None),
+        _ => {
+            let judged = draw(&config, &request.frame, judging_time(time))?;
+            let glyph: Vec<u8> = judged.0.rgba.chunks_exact(4).map(|p| p[3]).collect();
+            let judgement = scene::judge(
+                &entry.stats,
+                &entry.mask,
+                &entry.edges,
+                &scene::Glyph {
+                    alpha: &glyph,
+                    width: judged.0.width,
+                    height: judged.0.height,
+                    frame: &request.frame,
+                    face: judged.1,
+                },
+                mode,
+            )?;
+            (judgement, Some(judged))
+        }
+    };
     let pixels = if judgement.verdict == scene::Verdict::Works {
-        let drawn = if judging_time(time) == time {
-            judged
-        } else {
-            draw(&config, &request.frame, time)?
+        let drawn = match judged {
+            Some(judged) if judging_time(time) == time => judged,
+            _ => draw(&config, &request.frame, time)?,
         };
         let picture = entry.picture.clone();
         cut(

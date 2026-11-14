@@ -317,13 +317,8 @@ fn save(path: &Path, counts: &Counts) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    fn dir() -> PathBuf {
-        let mut bytes = [0u8; 8];
-        getrandom::fill(&mut bytes).unwrap();
-        let p =
-            std::env::temp_dir().join(format!("halcyon-counts-{:x}", u64::from_le_bytes(bytes)));
-        std::fs::create_dir_all(&p).unwrap();
-        p
+    fn dir() -> crate::test_env::TempPath {
+        crate::test_env::TempPath::new("counts")
     }
 
     #[test]

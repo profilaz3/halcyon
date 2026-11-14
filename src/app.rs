@@ -1963,21 +1963,27 @@ fn label<'a>(value: impl Into<String>, size: f32, color: Color) -> Element<'a, M
         )))
         .into()
 }
-fn timestamp_text(value: Option<&str>, failed: bool, now: chrono::DateTime<Local>) -> String {
+fn timestamp_text(
+    value: Option<&str>,
+    failed: bool,
+    now: chrono::DateTime<Local>,
+    format_24h: bool,
+) -> String {
     let date = value
         .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
         .map(|date| date.with_timezone(&Local));
     let time = date
         .as_ref()
         .map(|date| {
+            let time = crate::config::time_of_day(date, format_24h);
             if date.date_naive() == now.date_naive() {
-                date.format("%H:%M").to_string()
+                time
             } else if date.date_naive() == now.date_naive() - Days::days(1) {
-                format!("Yesterday · {}", date.format("%H:%M"))
+                format!("Yesterday · {time}")
             } else if date.year() == now.year() {
-                date.format("%b %-d · %H:%M").to_string()
+                format!("{} · {time}", date.format("%b %-d"))
             } else {
-                date.format("%b %-d, %Y · %H:%M").to_string()
+                format!("{} · {time}", date.format("%b %-d, %Y"))
             }
         })
         .unwrap_or_else(|| "—".into());
@@ -1990,11 +1996,11 @@ fn timestamp_text(value: Option<&str>, failed: bool, now: chrono::DateTime<Local
 fn timestamp<'a>(
     value: Option<&str>,
     failed: bool,
-    _source: &str,
+    format_24h: bool,
     p: Palette,
 ) -> Element<'a, Message> {
     label(
-        timestamp_text(value, failed, Local::now()),
+        timestamp_text(value, failed, Local::now(), format_24h),
         9.,
         if failed {
             Color::from_rgb8(233, 192, 124)
@@ -2705,16 +2711,11 @@ impl Cards {
                         MeetingState::Live => "Live now".into(),
                         _ => String::new(),
                     };
-                    let end = if event.all_day {
-                        String::new()
-                    } else {
-                        chrono::DateTime::parse_from_rfc3339(&event.end)
-                            .map(|d| d.with_timezone(&Local).format("%H:%M").to_string())
-                            .unwrap_or_default()
-                    };
+                    let h24 = self.config.clock.format_24h;
+                    let end = event.end_label(h24);
                     let timing = container(
                         column::with_children(vec![
-                            label(event.time_label(), 12., color),
+                            label(event.time_label(h24), 12., color),
                             label(end, 10., p.muted),
                         ])
                         .spacing(2),
@@ -2845,7 +2846,7 @@ impl Cards {
                         .as_ref()
                         .map(|calendar| calendar.updated_at.as_str()),
                     self.calendar_error,
-                    "Calendar",
+                    self.config.clock.format_24h,
                     p,
                 ),
                 action(

@@ -867,6 +867,110 @@ fn overlay_generates_shaped_apps_and_tinted_folders_in_alternating_slots() {
 }
 
 #[test]
+fn overlay_draws_at_low_priority_and_keeps_an_icon_cache_in_step() {
+    let temp = Temp::new("overlay-cache");
+    let paths = temp.paths();
+    themes(&paths);
+    let mut request = overlay::Request {
+        base: "Base".into(),
+        shape: overlay::Shape::Circle,
+        tint: Some([0x26, 0xa2, 0x69]),
+        dark: false,
+        apps: vec!["glyph".into(), "square".into()],
+    };
+    let caller = unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) };
+    let niceness = std::sync::Mutex::new(Vec::new());
+    let slot = overlay::generate(&paths, &request, None, &|done, _| {
+        if done > 0 {
+            niceness
+                .lock()
+                .unwrap()
+                .push(unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) });
+        }
+    })
+    .unwrap();
+    let niceness = niceness.into_inner().unwrap();
+    assert!(!niceness.is_empty());
+    assert!(
+        niceness
+            .iter()
+            .all(|nice| *nice == (caller + 10).clamp(10, 19)),
+        "icons drew at nice {niceness:?}, the caller runs at {caller}"
+    );
+    assert_eq!(
+        unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) },
+        caller,
+        "the caller keeps its priority"
+    );
+    let root = paths.icons.join(&slot);
+    let tool = std::process::Command::new("gtk-update-icon-cache")
+        .arg("--help")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+    let valid = |root: &Path| {
+        !tool
+            || std::process::Command::new("gtk-update-icon-cache")
+                .arg("--validate")
+                .arg(root)
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap()
+                .success()
+    };
+    // Folder order is the writer's choice, so compare sorted.
+    let listed = |root: &Path| {
+        let mut icons =
+            cache::read(&fs::read(root.join(cache::FILE)).expect("an icon cache")).unwrap();
+        icons.values_mut().for_each(|images| images.sort());
+        icons
+    };
+    let fresh = |root: &Path| {
+        let cache = fs::metadata(root.join(cache::FILE))
+            .unwrap()
+            .modified()
+            .unwrap();
+        fs::metadata(root).unwrap().modified().unwrap() <= cache
+    };
+    let png = 1 << 2;
+    let mut in_apps: Vec<(String, u16)> = overlay::SIZES
+        .iter()
+        .map(|size| (format!("{size}x{size}/apps"), png))
+        .collect();
+    in_apps.sort();
+    let made = listed(&root);
+    assert_eq!(made.get("glyph"), Some(&in_apps));
+    assert_eq!(made.get("square"), Some(&in_apps));
+    assert!(made.contains_key("folder") && made.contains_key("user-home"));
+    assert!(valid(&root) && fresh(&root));
+    // Halcyon's own writer, used when the GTK tool is missing, lists the
+    // same icons and passes GTK's own validator.
+    fs::remove_file(root.join(cache::FILE)).unwrap();
+    let folders: Vec<String> = overlay::SIZES
+        .iter()
+        .flat_map(|size| {
+            [
+                format!("{size}x{size}/apps"),
+                format!("{size}x{size}/places"),
+            ]
+        })
+        .collect();
+    cache::write_own(&root, &folders).unwrap();
+    cache::settle(&root).unwrap();
+    assert_eq!(listed(&root), made);
+    assert!(valid(&root) && fresh(&root));
+    // Building that slot again for fewer apps leaves no stale names.
+    let next = overlay::generate(&paths, &request, Some(&slot), &|_, _| {}).unwrap();
+    request.apps = vec!["glyph".into()];
+    let again = overlay::generate(&paths, &request, Some(&next), &|_, _| {}).unwrap();
+    assert_eq!(again, slot);
+    let rebuilt = listed(&root);
+    assert!(rebuilt.contains_key("glyph") && !rebuilt.contains_key("square"));
+    assert!(valid(&root) && fresh(&root));
+}
+
+#[test]
 fn style_is_saved_in_halcyons_config_and_follows_the_desktop() {
     let temp = Temp::new("style");
     let paths = temp.paths();

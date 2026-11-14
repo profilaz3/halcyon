@@ -178,7 +178,7 @@ pub fn read_config(store: &DesktopStore) -> Result<(serde_json::Value, Config), 
         .ok_or("Widget settings are unavailable")?;
     let text = config::read_config_text(path)?;
     let raw = config::parse_config_text(text.as_deref())?;
-    let typed = config::check_config_value(&raw)?;
+    let typed = config::config_from_value(&raw)?;
     Ok((raw, typed))
 }
 
@@ -369,6 +369,17 @@ pub fn keep_manual_colors(store: &DesktopStore) -> Result<(), String> {
         acknowledge(store, &source(store, &draft))?;
     }
     Ok(())
+}
+
+/// Every Undo and put back from Settings ends here, whichever page or
+/// header started it: the colors it restored are the person's for the
+/// wallpaper now shown, so automatic wallpaper colors don't repaint them.
+/// (The store keeps the newer of two acknowledgements, which names the
+/// wallpaper the undone change set, not the one it put back.)
+pub fn after_undo(store: &DesktopStore) {
+    if let Err(error) = keep_manual_colors(store) {
+        eprintln!("Couldn't keep the restored colors: {error}");
+    }
 }
 
 #[cfg(test)]

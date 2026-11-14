@@ -338,7 +338,12 @@ pub(in crate::settings) fn card_at<'a>(
         .min((size[1] / 3.).max(0.));
     // The same example events as the Calendar page, at the same times.
     let soon = now.unwrap_or_else(chrono::Local::now);
-    let at = |minutes: i64| (soon + chrono::Duration::minutes(minutes)).format("%H:%M").to_string();
+    let at = |minutes: i64| {
+        crate::config::time_of_day(
+            &(soon + chrono::Duration::minutes(minutes)),
+            config.clock.format_24h,
+        )
+    };
     let first_event = format!("{}  Design review", at(9));
     let second_event = format!("{}  Project planning", at(80));
     let temperature = format!("{:.0}°", config.weather.degrees(21.).round());

@@ -96,16 +96,19 @@ fn todays_agenda_stays_finished_and_history_remains_accessible() {
 #[test]
 fn cached_data_labels_include_the_day_and_missing_forecasts_are_not_zero() {
     let now = Local.with_ymd_and_hms(2026, 10, 19, 12, 0, 0).unwrap();
-    assert_eq!(timestamp_text(Some(&now.to_rfc3339()), false, now), "12:00");
     assert_eq!(
-        timestamp_text(Some(&(now - Days::days(1)).to_rfc3339()), true, now),
+        timestamp_text(Some(&now.to_rfc3339()), false, now, true),
+        "12:00"
+    );
+    assert_eq!(
+        timestamp_text(Some(&(now - Days::days(1)).to_rfc3339()), true, now, true),
         "Saved · Yesterday · 12:00"
     );
     assert_eq!(
-        timestamp_text(Some(&(now - Days::days(3)).to_rfc3339()), false, now),
+        timestamp_text(Some(&(now - Days::days(3)).to_rfc3339()), false, now, true),
         "Oct 16 · 12:00"
     );
-    assert_eq!(timestamp_text(Some("invalid"), false, now), "—");
+    assert_eq!(timestamp_text(Some("invalid"), false, now, true), "—");
     assert_eq!(forecast_temperature(None), "—");
     assert_eq!(forecast_temperature(Some(&f64::NAN)), "—");
     assert_eq!(forecast_temperature(Some(&0.)), "0°");
@@ -626,4 +629,52 @@ fn calendar_details_and_private_mode_work_in_both_agendas() {
         &cosmic::Theme::dark(),
         "calendar-busy",
     );
+}
+
+#[test]
+fn times_follow_the_clocks_24_hour_switch() {
+    let afternoon = Local.with_ymd_and_hms(2026, 10, 19, 14, 5, 0).unwrap();
+    let event = crate::data::CalendarEvent {
+        start: afternoon.to_rfc3339(),
+        end: (afternoon + chrono::Duration::minutes(55)).to_rfc3339(),
+        ..Default::default()
+    };
+    assert_eq!(event.time_label(true), "14:05");
+    assert_eq!(event.time_label(false), "2:05 PM");
+    assert_eq!(event.end_label(true), "15:00");
+    assert_eq!(event.end_label(false), "3:00 PM");
+    let all_day = crate::data::CalendarEvent {
+        all_day: true,
+        ..event.clone()
+    };
+    assert_eq!(all_day.time_label(false), "All day");
+    assert_eq!(all_day.end_label(false), "");
+    let now = afternoon + chrono::Duration::hours(1);
+    let at = afternoon.to_rfc3339();
+    assert_eq!(timestamp_text(Some(&at), false, now, false), "2:05 PM");
+    assert_eq!(
+        timestamp_text(
+            Some(&(afternoon - Days::days(3)).to_rfc3339()),
+            false,
+            now,
+            false
+        ),
+        "Oct 16 · 2:05 PM"
+    );
+    // The island reads the same switch from the saved file.
+    let dir = crate::test_env::TempPath::new("clock-format");
+    let path = dir.join("config.json");
+    let mut read = Vec::new();
+    for text in [
+        None,
+        Some(r#"{"clock":{"format_24h":false}}"#),
+        Some(r#"{"clock":{"format_24h":true}}"#),
+        Some("{ broken"),
+    ] {
+        if let Some(text) = text {
+            std::fs::write(&path, text).unwrap();
+        }
+        read.push(crate::config::format_24h_at(Some(&path)));
+    }
+    assert_eq!(read, [true, false, true, true]);
 }

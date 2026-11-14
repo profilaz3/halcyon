@@ -381,6 +381,7 @@ impl Settings {
             parts.push(self.setup_card());
         }
         parts.extend(self.updated_card());
+        parts.extend(self.ignored_settings_banner());
         parts.extend([
             picture.into(),
             self.home_detail(selected),

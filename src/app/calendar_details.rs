@@ -35,12 +35,16 @@ impl Cards {
                 _ => "All day".into(),
             }
         } else {
+            let h24 = self.config.clock.format_24h;
             let local = |s: &str| {
                 chrono::DateTime::parse_from_rfc3339(s)
                     .map(|t| {
-                        t.with_timezone(&Local)
-                            .format("%a, %b %-d, %H:%M")
-                            .to_string()
+                        let t = t.with_timezone(&Local);
+                        format!(
+                            "{}, {}",
+                            t.format("%a, %b %-d"),
+                            crate::config::time_of_day(&t, h24)
+                        )
                     })
                     .unwrap_or_default()
             };

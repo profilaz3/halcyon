@@ -1881,8 +1881,9 @@ impl DesktopStore {
             // Undo of a file still exactly as the change left it: its
             // original bytes come back.
             Some((expected, restore)) if *expected == before => {
+                // The bytes it had may hold values this version sets aside.
                 if let Some(text) = restore {
-                    config::check_config_value(
+                    config::config_from_value(
                         &config::parse_config_text(Some(text)).map_err(invalid)?,
                     )
                     .map_err(invalid)?;
@@ -1891,6 +1892,7 @@ impl DesktopStore {
             }
             _ => {
                 let mut value = config::parse_config_text(before.as_deref()).map_err(invalid)?;
+                let current = value.clone();
                 for (pointer, entry) in patch.iter() {
                     if widget::get(&value, pointer) != entry.original {
                         conflicts.push(widget::label(pointer));
@@ -1902,7 +1904,9 @@ impl DesktopStore {
                 for (pointer, entry) in patch.changes() {
                     widget::put(&mut value, pointer, entry.desired.clone()).map_err(invalid)?;
                 }
-                config::check_config_value(&value).map_err(invalid)?;
+                // Values the file already held that this version can't use
+                // stay as they are; what the patch writes must be valid.
+                config::check_config_change(&current, &value).map_err(invalid)?;
                 (
                     Some(config::config_text(&value).map_err(invalid)?),
                     changes(),

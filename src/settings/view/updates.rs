@@ -126,7 +126,15 @@ impl Settings {
             content.push(group_row(
                 "Last checked",
                 "",
-                label(at.format("%b %-d, %H:%M").to_string(), 14., MUTED),
+                label(
+                    format!(
+                        "{}, {}",
+                        at.format("%b %-d"),
+                        crate::config::time_of_day(&at, self.config.clock.format_24h)
+                    ),
+                    14.,
+                    MUTED,
+                ),
             ));
         }
         // This version's notes ship with it; an available update's are online.

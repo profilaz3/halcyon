@@ -701,3 +701,101 @@ fn own_wallpaper_evaluation() {
     }
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// CPU time this thread has used.
+fn thread_cpu() -> Duration {
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut now) };
+    Duration::new(now.tv_sec as u64, now.tv_nsec as u32)
+}
+
+/// The per-minute clock: once a picture is known, the next minute's worker
+/// neither reads and hashes the wallpaper again nor judges the day again,
+/// and draws the same clock. A changed file is read again.
+#[test]
+fn own_wallpaper_next_minute_reuses_what_the_last_answer_found() {
+    let (root, _, request) = fixture();
+    let scenes = root.join("scenes");
+    // A wallpaper-sized photo: a hill under a grainy sky, about 10 MB.
+    let (width, height, horizon) = (2560u32, 1440u32, 800u32);
+    let mut seed = 0x2545_f491_u32;
+    let picture = image::RgbImage::from_fn(width, height, |_, y| {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let grain = (seed >> 24) as u8 / 8;
+        let [r, g, b] = if y < horizon {
+            [150, 190, 235]
+        } else {
+            [40, 70, 45]
+        };
+        image::Rgb([r - grain, g - grain, b - grain])
+    });
+    let depth = scene::Depth {
+        width: 96,
+        height: 54,
+        values: (0..54u32)
+            .flat_map(|y| (0..96).map(move |_| if y * 10 < 300 { 1. } else { 6. }))
+            .collect(),
+    };
+    let (path, key, files) = analysed(&root, "photo.png", picture, &depth);
+    cache::store(&scenes, &key, &files).unwrap();
+    let mut request = Request {
+        background: BgEntry::new("all", BgSource::Path(path.clone())),
+        ..request
+    }
+    .with_scenes(Some(scenes));
+    request.frame.origin = [560., 0.];
+    let spot = judged(&render_scene(&request).unwrap()).suggested.unwrap();
+    request.frame.origin = spot;
+    let first = render_scene(&request).unwrap();
+    assert_eq!(judged(&first).verdict, scene::Verdict::Works);
+
+    let next = Request {
+        time: "2026-10-19T09:42:00".into(),
+        ..request.clone()
+    };
+    let stamp = Stamp::at(&path).unwrap();
+    let known = Request {
+        seen: Some(Seen {
+            stamp,
+            found: Some(first.found.clone()),
+        }),
+        ..next.clone()
+    };
+    let (mut before, mut after) = (Duration::ZERO, Duration::ZERO);
+    let runs = 3;
+    for _ in 0..runs {
+        let started = thread_cpu();
+        let full = render_scene(&next).unwrap();
+        before += thread_cpu() - started;
+        let started = thread_cpu();
+        let reused = render_scene(&known).unwrap();
+        after += thread_cpu() - started;
+        assert_eq!(reused, full, "the same clock either way");
+        assert!(reused.pixels.is_some());
+    }
+    let (before, after) = (before / runs, after / runs);
+    eprintln!(
+        "per-minute depth render CPU ({} MB picture): {before:?} before, {after:?} after",
+        std::fs::metadata(&path).unwrap().len() >> 20
+    );
+    assert!(after < before, "{after:?} < {before:?}");
+
+    // A file changed since: its own content is read, whatever was seen.
+    let stale = Request {
+        seen: Some(Seen {
+            stamp: Stamp {
+                inode: stamp.inode.wrapping_add(1),
+                ..stamp
+            },
+            found: Some(Found::Unknown {
+                key: "0".repeat(64),
+            }),
+        }),
+        ..next.clone()
+    };
+    assert_eq!(render_scene(&stale).unwrap(), render_scene(&next).unwrap());
+    std::fs::remove_dir_all(root).unwrap();
+}

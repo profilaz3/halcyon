@@ -12,17 +12,9 @@ fn scene_worker_entry() {
     super::scene_main();
 }
 
-fn fixture() -> (std::path::PathBuf, Config, Request) {
+fn fixture() -> (crate::test_env::TempPath, Config, Request) {
     use crate::widget_style::resolver::{ClockFace, ClockSurface, ClockWeight};
-    let root = std::env::temp_dir().join(format!(
-        "halcyon-depth-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = crate::test_env::TempPath::new("depth");
     let path = root.join("ridge.png");
     std::fs::write(&path, PICTURE).unwrap();
     let mut config = Config::default();
@@ -68,7 +60,7 @@ fn fb14_prepared_identity_rejects_replacement_devices_and_folders() {
     assert!(!matches_picture(&request.background));
     for path in [
         std::path::PathBuf::from("/dev/zero"),
-        root.clone(),
+        root.to_path_buf(),
         root.join("missing"),
     ] {
         request.background.source = BgSource::Path(path);

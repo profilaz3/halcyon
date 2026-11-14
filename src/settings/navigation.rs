@@ -1766,6 +1766,9 @@ impl Settings {
                 crate::desktop::DesktopError::UndoUnavailable("No settings action to undo".into())
             })?;
             let result = store.undo_latest(&id);
+            if result.is_ok() {
+                crate::desktop::wallpaper::automatic::after_undo(&store);
+            }
             self.undo_review = if matches!(
                 result,
                 Err(crate::desktop::DesktopError::Conflict(_)
@@ -1802,6 +1805,9 @@ impl Settings {
         }
         let result = crate::desktop::actions::history_store().and_then(|store| {
             let result = store.put_back(&id);
+            if result.is_ok() {
+                crate::desktop::wallpaper::automatic::after_undo(&store);
+            }
             self.undo_review = if matches!(
                 result,
                 Err(crate::desktop::DesktopError::Conflict(_)
@@ -1839,6 +1845,7 @@ impl Settings {
             } else {
                 store.keep_undo_current(&review)
             }
+            .inspect(|_| crate::desktop::wallpaper::automatic::after_undo(&store))
         });
         match result {
             Ok(_) => {

@@ -5,37 +5,8 @@ use std::sync::{
     atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering},
 };
 
-pub(crate) struct Bus {
-    daemon: std::process::Child,
-    pub address: String,
-}
-
-impl Bus {
-    pub fn new() -> Self {
-        use std::io::BufRead;
-        let mut daemon = std::process::Command::new("dbus-daemon")
-            .args(["--session", "--nofork", "--print-address"])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("private DBus fixture needs dbus-daemon");
-        let mut address = String::new();
-        std::io::BufReader::new(daemon.stdout.take().unwrap())
-            .read_line(&mut address)
-            .unwrap();
-        Self {
-            daemon,
-            address: address.trim().into(),
-        }
-    }
-}
-
-impl Drop for Bus {
-    fn drop(&mut self) {
-        let _ = self.daemon.kill();
-        let _ = self.daemon.wait();
-    }
-}
+/// The shared private bus: nothing on it can start a desktop service.
+pub(crate) use crate::test_env::PrivateBus as Bus;
 
 pub(crate) fn isolated(test: &str, body: impl FnOnce()) {
     if std::env::var("DESKTOP_CARDS_MPRIS_TEST").as_deref() == Ok(test) {

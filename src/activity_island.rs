@@ -187,11 +187,7 @@ struct Content {
 }
 fn clock_time(ms: i64, format_24h: bool) -> String {
     chrono::DateTime::from_timestamp_millis(ms)
-        .map(|d| {
-            d.with_timezone(&chrono::Local)
-                .format(if format_24h { "%H:%M" } else { "%-I:%M %p" })
-                .to_string()
-        })
+        .map(|d| crate::config::time_of_day(&d.with_timezone(&chrono::Local), format_24h))
         .unwrap_or_default()
 }
 fn clock_range(start: i64, end: i64, format_24h: bool) -> String {
@@ -213,12 +209,17 @@ fn calendar_cue(starts_at_ms: i64, now: i64) -> String {
         format!("In {} h", (minutes + 30) / 60)
     }
 }
+/// The clock's 24-hour switch in Settings › Clock, the one every Halcyon
+/// time follows (`config::time_of_day`); the island showed COSMIC's panel
+/// clock format before, so an event read 14:00 on the desktop and 2:00 PM
+/// here.
 fn read_24h() -> bool {
-    use cosmic::cosmic_config::{Config, ConfigGet};
-    Config::new("com.system76.CosmicAppletTime", 1)
-        .ok()
-        .and_then(|config| config.get::<bool>("military_time").ok())
-        .unwrap_or(false)
+    // Tests choose the format themselves and never read this account's
+    // settings.
+    if cfg!(test) {
+        return false;
+    }
+    crate::config::saved_format_24h()
 }
 pub(crate) const APPLET_ID: &str = "io.github.profilaz3.Halcyon.Activity";
 /// The session ledger of restarts into updates (see `crate::upgrade`).

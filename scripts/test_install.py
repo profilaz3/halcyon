@@ -99,6 +99,24 @@ class InstallTests(unittest.TestCase):
         self.assertEqual((result['backup'] / 'halcyon').read_bytes(), b'release one')
         self.assertEqual((self.home / '.local/bin/halcyon').read_bytes(), b'release two')
 
+    def test_only_the_newest_two_backups_are_kept(self):
+        backups = self.home / '.local/share/halcyon/backups'
+        backups.mkdir(parents=True)
+        # Earlier upgrades, and a folder that isn't an install backup.
+        for stamp in ('20240101T000000Z', '20250101T000000Z', '20260101T000000Z'):
+            (backups / f'{stamp}-install').mkdir()
+            (backups / f'{stamp}-install' / 'halcyon').write_bytes(b'old')
+        (backups / 'notes').mkdir()
+        self.install()
+        self.build(b'release two')
+        result = self.install()
+        self.assertEqual(sorted(path.name for path in backups.iterdir()),
+                         ['20260101T000000Z-install', result['backup'].name, 'notes'])
+        self.assertEqual((result['backup'] / 'halcyon').read_bytes(), b'release one')
+        # An install that replaces nothing keeps them as they are.
+        self.install()
+        self.assertEqual(len(list(backups.iterdir())), 3)
+
     def test_preferences_and_notes_are_never_touched(self):
         config = self.home / '.config/halcyon/config.json'
         config.parent.mkdir(parents=True)

@@ -721,6 +721,7 @@ impl AppearanceEditor {
         }
         match store.undo_latest(&change.id) {
             Ok(_) => {
+                crate::desktop::wallpaper::automatic::after_undo(store);
                 self.undo = None;
                 self.reload(true);
                 // Typed colors the restored values replaced give way;

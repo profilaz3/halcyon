@@ -7,6 +7,7 @@
 //! directory only, and a manifest in Halcyon's data directory records what
 //! Halcyon put there, so Remove can never touch anything else.
 pub mod archive;
+pub mod cache;
 pub mod install;
 pub mod lookup;
 pub mod ocs;

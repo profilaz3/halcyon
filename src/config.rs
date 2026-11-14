@@ -4,7 +4,12 @@ use serde::{Deserialize, Serialize};
 
 pub mod edge_menu;
 pub mod monitors;
+mod repair;
 mod widget_colors;
+
+pub use repair::{
+    Repair, check_config_change, config_from_value, repair_config_value, repair_note,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Location {
@@ -33,6 +38,11 @@ pub struct Config {
     /// they equal the defaults. Not saved; filled when a file is read.
     #[serde(skip)]
     pub saved: SavedChoices,
+    /// Saved values this version couldn't use as written (unknown choices,
+    /// numbers out of range): defaults or the nearest accepted numbers are
+    /// used instead, and the file keeps them. Filled when a file is read.
+    #[serde(skip)]
+    pub repaired: Vec<Repair>,
     pub location: Option<Location>,
     pub enabled_widgets: Vec<String>,
     pub widgets_visible: bool,
@@ -95,6 +105,7 @@ impl Default for Config {
             theme: "lavender".into(),
             desktop_palette: None,
             saved: SavedChoices::default(),
+            repaired: Vec::new(),
             theme_cache: Default::default(),
             location: None,
             widgets_visible: true,
@@ -210,17 +221,22 @@ impl Config {
         Ok(config)
     }
     /// A saved file's contents, remembering which widget choices it holds.
+    /// Values this version can't use are set aside one by one
+    /// (`repair_config_value`); the rest of the file is kept.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
         let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+        Self::from_value_repaired(value)
+    }
+    fn from_value_repaired(value: serde_json::Value) -> Result<Self, String> {
+        let (value, repaired) = repair_config_value(&value)?;
         let saved = SavedChoices::of(&value);
         let mut config: Self = serde_json::from_value(value).map_err(|e| e.to_string())?;
         config.saved = saved;
+        config.repaired = repaired;
         Ok(config)
     }
     pub(crate) fn from_saved_value(value: serde_json::Value) -> Result<Self, String> {
-        let saved = SavedChoices::of(&value);
-        let mut config: Self = serde_json::from_value(value).map_err(|e| e.to_string())?;
-        config.saved = saved;
+        let mut config = Self::from_value_repaired(value)?;
         config.normalize_policy();
         let _ = config.refresh_desktop_palette();
         Ok(config)
@@ -1248,6 +1264,31 @@ impl Default for ClockPreferences {
     }
 }
 
+/// A time of day as the clock's 24-hour switch (Settings › Clock) shows
+/// it: "14:05", or "2:05 PM". Every time Halcyon shows (Calendar, At a
+/// glance, the Activity island, saved and refreshed times) uses it, so one
+/// event never reads 14:00 on the desktop and 2:00 PM in the panel.
+pub fn time_of_day<Tz: chrono::TimeZone>(at: &chrono::DateTime<Tz>, format_24h: bool) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    at.format(if format_24h { "%H:%M" } else { "%-I:%M %p" })
+        .to_string()
+}
+
+/// The clock's 24-hour switch as saved, for a process that doesn't keep
+/// the whole configuration (the Activity island in the panel). Reads only
+/// that switch; anything unreadable is the clock's default.
+pub fn saved_format_24h() -> bool {
+    format_24h_at(Config::path().as_deref())
+}
+pub(crate) fn format_24h_at(path: Option<&std::path::Path>) -> bool {
+    path.and_then(|path| read_config_text(path).ok().flatten())
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|value| value.pointer("/clock/format_24h")?.as_bool())
+        .unwrap_or(ClockPreferences::default().format_24h)
+}
+
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ClockAlignment {
@@ -1951,7 +1992,9 @@ pub(crate) fn patch_config(
     let mut value = parse_config_text(read_config_text(path)?.as_deref())?;
     let before = value.clone();
     change(&mut value)?;
-    check_config_value(&value)?;
+    // Values this version can't use stay as saved (a newer version may);
+    // the change itself must be valid.
+    check_config_change(&before, &value)?;
     if Config::path().as_deref() == Some(path)
         && crate::desktop::recovery::app_pointers()
             .any(|pointer| before.pointer(pointer) != value.pointer(pointer))
@@ -2860,6 +2903,58 @@ mod tests {
             assert!(Config::save_section_at(&file.0, section, invalid).is_err());
             assert_eq!(std::fs::read(&file.0).unwrap(), saved);
         }
+    }
+
+    #[test]
+    fn an_unknown_or_out_of_range_value_keeps_the_rest_and_saves_still_work() {
+        let file = TestFile::new();
+        let original = serde_json::json!({
+            "theme": "amber",
+            "widgets_visible": false,
+            "edge_menu": {"style": "carousel", "delay_ms": 5000, "side": "left"},
+            "clock": {"format_24h": false, "scale": 900},
+            "future_setting": 42
+        });
+        std::fs::write(&file.0, original.to_string()).unwrap();
+        // Login reads everything but those two values.
+        let config = Config::read_at(&file.0).unwrap();
+        assert_eq!(config.theme, "amber");
+        assert!(!config.widgets_visible);
+        assert!(!config.clock.format_24h);
+        assert_eq!(config.clock.scale, 200);
+        assert_eq!(config.edge_menu.side, edge_menu::Side::Left);
+        assert_eq!(config.edge_menu.style, edge_menu::Style::List);
+        assert_eq!(config.edge_menu.delay_ms, edge_menu::MAX_DELAY_MS);
+        let pointers: Vec<_> = config.repaired.iter().map(|r| r.pointer.as_str()).collect();
+        assert_eq!(
+            pointers,
+            ["/edge_menu/style", "/edge_menu/delay_ms", "/clock/scale"]
+        );
+        assert!(repair_note(&config.repaired).is_some());
+        // Saving something else works and keeps the file's other values,
+        // including the ones a newer version may understand.
+        let saved =
+            Config::save_section_at(&file.0, "clock", serde_json::json!({"show_date": false}))
+                .unwrap();
+        assert!(!saved.clock.show_date);
+        assert_eq!(saved.theme, "amber");
+        let raw: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&file.0).unwrap()).unwrap();
+        assert_eq!(raw["edge_menu"]["style"], "carousel");
+        assert_eq!(raw["future_setting"], 42);
+        // A save can't add a new bad value.
+        assert!(
+            Config::save_section_at(&file.0, "appearance", serde_json::json!({"opacity": 101}))
+                .is_err()
+        );
+        // Choosing the value again clears it.
+        let fixed =
+            Config::save_section_at(&file.0, "clock", serde_json::json!({"scale": 120})).unwrap();
+        assert_eq!(fixed.clock.scale, 120);
+        assert_eq!(fixed.repaired.len(), 2);
+        // Not JSON at all is still an error; the caller then uses defaults.
+        std::fs::write(&file.0, "{ incomplete").unwrap();
+        assert!(Config::read_at(&file.0).is_err());
     }
 
     #[test]

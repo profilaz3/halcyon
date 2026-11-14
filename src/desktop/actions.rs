@@ -355,7 +355,7 @@ pub(crate) fn preferences_guarded(
     let before = config::parse_config_text(config::read_config_text(path)?.as_deref())?;
     let mut after = before.clone();
     change(&mut after)?;
-    config::check_config_value(&after)?;
+    config::check_config_change(&before, &after)?;
     let mut patch = preference_patch(&before, &after)?;
     if patch.is_empty() {
         complete_property(PROPERTY.with(|v| v.get()), label)?;
