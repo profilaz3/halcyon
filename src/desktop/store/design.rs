@@ -485,7 +485,7 @@ impl DesktopStore {
                 }
                 file.version = 2;
                 file.transaction_id = Some(id.clone());
-                serde_json::to_vec_pretty(&file).map_err(|e| DesktopError::Io(e.to_string()))
+                serde_json::to_vec(&file).map_err(|e| DesktopError::Io(e.to_string()))
             })
             .transpose()?;
         let journal = Journal {
@@ -500,7 +500,7 @@ impl DesktopStore {
             undo: Some(UndoBefore { record: found }),
         };
         let journal_bytes =
-            serde_json::to_vec_pretty(&journal).map_err(|e| DesktopError::Io(e.to_string()))?;
+            serde_json::to_vec(&journal).map_err(|e| DesktopError::Io(e.to_string()))?;
         if journal_bytes.len() as u64 > MAX_RECORD_BYTES
             || record
                 .as_ref()

@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import select
 from pathlib import Path
 import signal
 import socket
@@ -332,6 +333,70 @@ GROUP_TERM_SECONDS = .3
 GROUP_CLEANUP_SECONDS = 1.5
 
 
+class Wakeup:
+    """Blocks until the host's leader exits, a signal arrives or wake() runs.
+
+    The supervisor slept in 20 ms steps to notice these, about 50 wakes a
+    second for the whole session. A pidfd turns readable when the leader
+    exits (it stays unreaped, as poll() needs); signal.set_wakeup_fd writes
+    a byte for each signal; wake() writes one from any thread. Without
+    pidfds (Python before 3.9, Linux before 5.3) wait() keeps the old poll.
+    """
+    waits = 0  # Every wait() call, for tests.
+
+    def __init__(self, pid):
+        self.lock = threading.Lock()
+        self.closed = False
+        self.pidfd = self.read = self.write = None
+        self.previous = None
+        try:
+            self.pidfd = os.pidfd_open(pid)
+            self.read, self.write = os.pipe2(os.O_NONBLOCK | os.O_CLOEXEC)
+        except (AttributeError, OSError):
+            self.close()
+
+    def arm(self):
+        """Route signals to the pipe; main thread only, as signal handlers."""
+        if self.write is not None and self.previous is None:
+            self.previous = signal.set_wakeup_fd(self.write, warn_on_full_buffer=False)
+
+    def wake(self):
+        with self.lock:
+            if self.closed or self.write is None: return
+            try: os.write(self.write, b'\0')
+            except BlockingIOError: pass  # Already pending.
+
+    def wait(self, poll):
+        Wakeup.waits += 1
+        if self.pidfd is None:
+            poll()
+            return
+        select.select([self.pidfd, self.read], [], [])
+        try:
+            while os.read(self.read, 512): pass
+        except BlockingIOError: pass
+
+    def close(self):
+        with self.lock:
+            if self.closed: return
+            self.closed = True
+            if self.previous is not None:
+                signal.set_wakeup_fd(self.previous)
+            for fd in (self.pidfd, self.read, self.write):
+                if fd is not None: os.close(fd)
+
+
+class WakingEvent(threading.Event):
+    """An Event whose set() also wakes a Wakeup."""
+    def __init__(self, wakeup):
+        super().__init__()
+        self.wakeup = wakeup
+
+    def set(self):
+        super().set()
+        self.wakeup.wake()
+
+
 class GroupCleanupError(RuntimeError):
     """Do not launch stock or report a completed handoff with live owned actors."""
 
@@ -584,7 +649,8 @@ def run_host(binary, pass_fds=(), env=None, readiness=False, admission=None):
     child = OwnedHost(binary, pass_fds, env)
     stopping = False
     wedged = threading.Event()
-    done = threading.Event()
+    wakeup = Wakeup(child.pid)
+    done = WakingEvent(wakeup)
     observer_errors = []
 
     def observe(function, *args):
@@ -614,13 +680,15 @@ def run_host(binary, pass_fds=(), env=None, readiness=False, admission=None):
 
     previous = {s: signal.signal(s, terminate) for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
     try:
+        wakeup.arm()
         while not done.is_set() and child.poll() is None and not stopping:
-            done.wait(.02)
+            wakeup.wait(lambda: done.wait(.02))
     finally:
         done.set()
         try:
             code = child.finish()
         finally:
+            wakeup.close()
             for sig, handler in previous.items():
                 signal.signal(sig, handler)
             if readiness_thread is not None:

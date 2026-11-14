@@ -1071,3 +1071,97 @@ fn legacy_frosted_baseline_load_and_theme_apply_preserve_bytes_and_system_effect
         }
     }
 }
+
+/// Keys whose change makes cosmic-panel rebuild a bar and restart every
+/// item on it (its `must_recreate`).
+const RESTARTING: [&str; 10] = [
+    "size",
+    "size_center",
+    "size_wings",
+    "spacing",
+    "border_width",
+    "background",
+    "plugins_center",
+    "plugins_wings",
+    "anchor",
+    "output",
+];
+
+/// Each restarting bar file's inode: a rewrite renames a new file in.
+fn bar_files(fixture: &Fixture) -> Vec<(String, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let mut found = Vec::new();
+    for bar in ["Dock", "Panel"] {
+        let dir = fixture
+            .0
+            .join("config/cosmic")
+            .join(format!("com.system76.CosmicPanel.{bar}"))
+            .join("v1");
+        for key in RESTARTING {
+            if let Ok(meta) = fs::metadata(dir.join(key)) {
+                found.push((format!("{bar}/{key}"), meta.ino()));
+            }
+        }
+    }
+    found
+}
+
+/// Plans `family` and applies it unless there is nothing to change; answers
+/// the restarting panel keys the plan writes.
+fn restyle(store: &DesktopStore, installed: &Installed, family: Family) -> Vec<String> {
+    let mut p = record(family);
+    preserve_custom(store, installed, &mut p).unwrap();
+    let plan = plan(store, installed, &p, &p.domains().into_iter().collect());
+    assert!(
+        plan.blocking_reasons().is_empty(),
+        "{:?}",
+        plan.blocking_reasons()
+    );
+    let keys = plan
+        .patch()
+        .iter()
+        .map(|(key, _)| key)
+        .filter(|key| key.namespace().starts_with("com.system76.CosmicPanel."))
+        .filter(|key| RESTARTING.contains(&key.key()))
+        .map(|key| format!("{}/{}", key.namespace(), key.key()))
+        .collect();
+    if !plan.is_empty() {
+        apply(store, &plan).unwrap();
+    }
+    keys
+}
+
+/// Applying a style again, or switching to one with the same bar spacing,
+/// writes no key that restarts the panel, so the island and other panel
+/// items keep running.
+#[test]
+fn reapplying_a_style_or_one_with_the_same_spacing_does_not_restart_the_panel() {
+    let (fixture, store, installed) = reported("theme-no-panel-restart", true);
+    fixture.system(
+        "com.system76.CosmicPanel",
+        "entries",
+        "[\"Panel\", \"Dock\"]",
+    );
+    for (bar, anchor, spacing) in [("Panel", "Top", "2"), ("Dock", "Bottom", "4")] {
+        let namespace = format!("com.system76.CosmicPanel.{bar}");
+        fixture.system(&namespace, "anchor", anchor);
+        fixture.system(&namespace, "spacing", spacing);
+        fixture.system(&namespace, "size", "M");
+        fixture.system(&namespace, "background", "Dark");
+    }
+    let spacing = |family: Family| family.bar().3;
+    let (first, second) = Family::ALL
+        .iter()
+        .flat_map(|a| Family::ALL.iter().map(move |b| (*a, *b)))
+        .find(|(a, b)| a != b && spacing(*a) == spacing(*b))
+        .unwrap();
+    assert!(!restyle(&store, &installed, first).is_empty());
+    let before = bar_files(&fixture);
+    assert!(!before.is_empty(), "the first style writes the bars");
+
+    assert_eq!(restyle(&store, &installed, first), Vec::<String>::new());
+    assert_eq!(bar_files(&fixture), before, "applying {first:?} twice");
+
+    assert_eq!(restyle(&store, &installed, second), Vec::<String>::new());
+    assert_eq!(bar_files(&fixture), before, "{first:?} then {second:?}");
+}

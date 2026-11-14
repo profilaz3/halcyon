@@ -815,6 +815,8 @@ impl DesktopStore {
     /// live (or alternate preview) `config.json`, but for a fixture only an
     /// explicitly configured alternate file, never the real one.
     pub fn from_env() -> Result<Self, DesktopError> {
+        #[cfg(test)]
+        FROM_ENV.with(|count| count.set(count.get() + 1));
         let fixture = std::env::var_os(FIXTURE_ENV).map(PathBuf::from);
         let alternate = std::env::var_os("DESKTOP_CARDS_CONFIG").map(PathBuf::from);
         match choose_root(alternate.is_some(), fixture) {
@@ -1496,8 +1498,8 @@ impl DesktopStore {
             design: write.as_ref().and_then(|write| write.design.clone()),
             undo,
         };
-        let bytes = serde_json::to_vec_pretty(&journal)
-            .map_err(|error| DesktopError::Io(error.to_string()))?;
+        let bytes =
+            serde_json::to_vec(&journal).map_err(|error| DesktopError::Io(error.to_string()))?;
         let change = AppliedChange { id, entries };
         let widget_change = write.as_ref().map(|write| write.change.clone());
         let mut new_record = match record {
@@ -1543,7 +1545,7 @@ impl DesktopStore {
                 }
                 next.transaction_id = Some(change.id.clone());
                 Some(
-                    serde_json::to_vec_pretty(&next)
+                    serde_json::to_vec(&next)
                         .map_err(|error| DesktopError::Io(error.to_string()))?,
                 )
             }
@@ -1659,7 +1661,7 @@ impl DesktopStore {
                 previous.transaction_id = Some(change.id.clone());
                 previous.manual_at = Some(created.clone());
                 Some(
-                    serde_json::to_vec_pretty(&previous)
+                    serde_json::to_vec(&previous)
                         .map_err(|error| DesktopError::Io(error.to_string()))?,
                 )
             }
@@ -1680,8 +1682,7 @@ impl DesktopStore {
                 let mut file: undo::UndoFile =
                     serde_json::from_slice(bytes).map_err(|e| DesktopError::Io(e.to_string()))?;
                 file.version = 2;
-                *bytes = serde_json::to_vec_pretty(&file)
-                    .map_err(|e| DesktopError::Io(e.to_string()))?;
+                *bytes = serde_json::to_vec(&file).map_err(|e| DesktopError::Io(e.to_string()))?;
             }
         }
         if bytes.len() as u64 > MAX_RECORD_BYTES
@@ -1717,6 +1718,31 @@ impl DesktopStore {
             resume.wait();
         }
         let mut written: Vec<&ConfigKey> = Vec::new();
+        // Every new value is written and synced first, under names COSMIC's
+        // watchers skip, so the renames below follow each other with no
+        // disk wait between them: cosmic-panel re-reads a bar's whole entry
+        // on each change and recreates all its applets when spacing, size or
+        // background differ, so values landing one by one would restart them
+        // once per key. Each touched folder is synced once afterwards.
+        let mut batch = super::recovery::NativeBatch::default();
+        for (key, entry) in &order {
+            let staged = self.native_path(key).and_then(|path| {
+                batch.stage(&path, entry.desired.as_ref().map(|v| v.as_str().as_bytes()))
+            });
+            if let Err(error) = staged {
+                return Err(self.fail(patch, &written, None, error.to_string()));
+            }
+        }
+        // Keys this change creates are recorded before they exist, so an
+        // interruption can never leave one unrecorded.
+        let created_keys: Vec<&ConfigKey> = order
+            .iter()
+            .filter(|(_, entry)| entry.original.is_none() && entry.desired.is_some())
+            .map(|(key, _)| *key)
+            .collect();
+        if let Err(error) = super::recovery::record_created_all(self, &created_keys) {
+            return Err(self.fail(patch, &written, None, error.to_string()));
+        }
         for (index, (key, entry)) in order.into_iter().enumerate() {
             #[cfg(test)]
             if matches!(*self.fault.borrow(), Some(Fault::InterruptAfter(limit)) if limit == index)
@@ -1743,17 +1769,16 @@ impl DesktopStore {
                 }
                 Err(error) => return Err(self.fail(patch, &written, None, error.to_string())),
             }
-            if let Err(error) = self.write_key(key, entry.desired.as_ref()) {
+            if let Err(error) = self.commit_staged(&mut batch, index, key) {
                 written.push(key);
                 return Err(self.fail(patch, &written, None, error.to_string()));
             }
             written.push(key);
-            if entry.original.is_none() && entry.desired.is_some() {
-                if let Err(error) = super::recovery::record_created(self, key) {
-                    return Err(self.fail(patch, &written, None, error.to_string()));
-                }
-            }
         }
+        if let Err(error) = batch.sync() {
+            return Err(self.fail(patch, &written, None, error.to_string()));
+        }
+        drop(batch);
         #[cfg(test)]
         if matches!(*self.fault.borrow(), Some(Fault::InterruptBeforeWidget)) {
             return Err(DesktopError::Io("Simulated interruption".into()));
@@ -1783,7 +1808,7 @@ impl DesktopStore {
                 let mut next: undo::UndoFile = serde_json::from_slice(bytes)
                     .map_err(|e| self.fail(patch, &written, write.as_ref(), e.to_string()))?;
                 next.palette_ack = ack;
-                *bytes = serde_json::to_vec_pretty(&next)
+                *bytes = serde_json::to_vec(&next)
                     .map_err(|e| self.fail(patch, &written, write.as_ref(), e.to_string()))?;
             }
         }
@@ -2340,6 +2365,28 @@ impl DesktopStore {
     }
 
     fn write_key(&self, key: &ConfigKey, value: Option<&RawValue>) -> io::Result<()> {
+        self.injected_write_failure(key)?;
+        let path = self.native_path(key)?;
+        super::recovery::write_native(&path, value.map(|v| v.as_str().as_bytes()))
+            .map_err(|error| io::Error::new(error.kind(), format!("{}: {error}", path.display())))
+    }
+    /// Puts the value `batch` staged for `key` (at `index`) in place.
+    fn commit_staged(
+        &self,
+        batch: &mut super::recovery::NativeBatch,
+        index: usize,
+        key: &ConfigKey,
+    ) -> io::Result<()> {
+        self.injected_write_failure(key)?;
+        batch.commit(index).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("{}: {error}", self.user_path(key).display()),
+            )
+        })
+    }
+    #[cfg_attr(not(test), allow(unused_variables))]
+    fn injected_write_failure(&self, key: &ConfigKey) -> io::Result<()> {
         #[cfg(test)]
         if matches!(&*self.fault.borrow(), Some(Fault::FailWrite(failing) | Fault::FailWriteAndRollback { write: failing, .. }) if failing == key)
         {
@@ -2348,6 +2395,10 @@ impl DesktopStore {
                 "injected failure",
             ));
         }
+        Ok(())
+    }
+    /// The user-layer file of `key`, checked to stay inside the config root.
+    fn native_path(&self, key: &ConfigKey) -> io::Result<PathBuf> {
         let path = self.user_path(key);
         // Defense in depth on top of ConfigKey validation.
         if !path.starts_with(&self.user_root) {
@@ -2358,8 +2409,7 @@ impl DesktopStore {
         }
         self.confine(&path)
             .map_err(|error| io::Error::new(io::ErrorKind::PermissionDenied, error.to_string()))?;
-        super::recovery::write_native(&path, value.map(|v| v.as_str().as_bytes()))
-            .map_err(|error| io::Error::new(error.kind(), format!("{}: {error}", path.display())))
+        Ok(path)
     }
 
     #[cfg(test)]
@@ -2487,7 +2537,7 @@ fn recover_widget(
 }
 
 fn sync_dir(path: &Path) -> io::Result<()> {
-    fs::File::open(path)?.sync_all()
+    super::recovery::sync(&fs::File::open(path)?)
 }
 
 /// Same-directory temp file + fsync + rename. The `.atomicwrite` prefix is
@@ -2515,7 +2565,7 @@ fn atomic_write(path: &Path, bytes: &[u8], mode: Option<u32>) -> io::Result<()> 
             .open(&temporary)?;
         file.set_permissions(fs::Permissions::from_mode(mode))?;
         file.write_all(bytes)?;
-        file.sync_all()?;
+        super::recovery::sync(&file)?;
         fs::rename(&temporary, path)?;
         sync_dir(parent)
     })();
@@ -2527,6 +2577,15 @@ fn atomic_write(path: &Path, bytes: &[u8], mode: Option<u32>) -> io::Result<()> 
 
 #[cfg(test)]
 mod transaction_tests;
+
+#[cfg(test)]
+mod apply_cost_tests;
+
+#[cfg(test)]
+thread_local! {
+    /// How often this thread opened the desktop store from the environment.
+    pub(crate) static FROM_ENV: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
 
 #[cfg(test)]
 pub(crate) mod tests {

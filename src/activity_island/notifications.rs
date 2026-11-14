@@ -349,7 +349,7 @@ pub async fn open_app(path: std::path::PathBuf) -> Result<(), String> {
     let failed = || "Could not open the app".to_owned();
     let status = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        tokio::process::Command::new("gio")
+        super::renderer::command("gio")
             .arg("launch")
             .arg(&path)
             .kill_on_drop(true)
@@ -363,7 +363,7 @@ pub async fn open_app(path: std::path::PathBuf) -> Result<(), String> {
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .ok_or_else(failed)?;
-            tokio::process::Command::new("gtk-launch")
+            super::renderer::command("gtk-launch")
                 .arg(entry)
                 .spawn()
                 .map(|_| ())

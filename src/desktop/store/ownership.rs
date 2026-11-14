@@ -84,8 +84,7 @@ impl DesktopStore {
             file
         });
         file.palette_ack = Some((epoch, stamp));
-        let bytes =
-            serde_json::to_vec_pretty(&file).map_err(|e| DesktopError::Io(e.to_string()))?;
+        let bytes = serde_json::to_vec(&file).map_err(|e| DesktopError::Io(e.to_string()))?;
         if bytes.len() as u64 > MAX_RECORD_BYTES {
             return Err(DesktopError::Io("Recovered history is too large".into()));
         }

@@ -452,7 +452,7 @@ pub async fn show_in_folder(path: PathBuf) -> Result<(), String> {
 }
 /// Opens a file or folder with its default app.
 pub async fn open_path(path: PathBuf) -> Result<(), String> {
-    tokio::process::Command::new("xdg-open")
+    super::renderer::command("xdg-open")
         .arg(&path)
         .spawn()
         .map(|_| ())

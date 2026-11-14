@@ -137,6 +137,9 @@ pub enum Event {
     /// Some time after startup: an island that has not connected by now is
     /// not coming, so nothing should still hold COSMIC's popups.
     Settled,
+    /// The grace after the last island left ran out. Carries the departure
+    /// it belongs to, so an island that came back in time cancels it.
+    Released(u64),
 }
 #[derive(Clone, Debug)]
 pub enum ClientEvent {
@@ -162,6 +165,8 @@ pub struct Owner {
     pub dnd: bool,
     pub system: Vec<super::system::Activity>,
     pub clients: usize,
+    /// Counts departures of the last island; see `Event::Released`.
+    pub departures: u64,
     pub timer: Option<super::timer::Timer>,
     /// Artwork address, its dominant colour and its island thumbnail, as
     /// many as the art cache.
@@ -179,6 +184,7 @@ impl Default for Owner {
                 dnd: false,
                 system: Vec::new(),
                 clients: 0,
+                departures: 0,
                 timer: None,
                 tints: Vec::new(),
                 sender: watch::channel(Snapshot::default()).0,
@@ -257,19 +263,37 @@ impl Owner {
             }));
         }
         if self.clients > 0 {
-            if prefs.calendar && self.sender.borrow().calendar.is_some() {
-                all.push(Subscription::run_with((), |_| {
-                    cosmic::iced::stream::channel(1, async |mut out| {
+            // The shown event changes only when it is two minutes late or
+            // ends; the island counts down to it on its own clock. Waking
+            // every minute to republish cost a snapshot and a redraw.
+            let shown = self
+                .sender
+                .borrow()
+                .calendar
+                .as_ref()
+                .map(|c| (c.starts_at_ms, c.ends_at_ms));
+            if prefs.calendar
+                && let Some(shown) = shown
+            {
+                all.push(Subscription::run_with(shown, |&(starts, ends)| {
+                    cosmic::iced::stream::channel(1, async move |mut out| {
                         loop {
                             let now = chrono::Utc::now().timestamp_millis();
+                            let Some(next) = calendar_change(starts, ends, now) else {
+                                break;
+                            };
+                            // Naps bound how late a suspend can make it.
                             tokio::time::sleep(std::time::Duration::from_millis(
-                                (60_000 - now.rem_euclid(60_000)) as u64,
+                                (next - now).min(CALENDAR_NAP_MS) as u64,
                             ))
                             .await;
-                            if out.send(Event::RefreshCalendar).await.is_err() {
+                            if chrono::Utc::now().timestamp_millis() >= next
+                                && out.send(Event::RefreshCalendar).await.is_err()
+                            {
                                 break;
                             }
                         }
+                        std::future::pending::<()>().await;
                     })
                 }));
             }
@@ -285,6 +309,17 @@ impl Owner {
         }
         Subscription::batch(all)
     }
+}
+/// The longest wait between checks of the wall clock for a calendar change.
+const CALENDAR_NAP_MS: i64 = 300_000;
+/// When the desktop next picks a different event to show, given the shown
+/// one: two minutes after it starts the next event may take over, and when
+/// it ends it goes. Nothing else in the choice depends on the time.
+pub(crate) fn calendar_change(starts_at_ms: i64, ends_at_ms: i64, now: i64) -> Option<i64> {
+    [starts_at_ms.saturating_add(120_000), ends_at_ms]
+        .into_iter()
+        .filter(|at| *at > now)
+        .min()
 }
 pub fn socket_path() -> Option<PathBuf> {
     let directory = crate::paths::runtime_dir()?.join("activity-island");
@@ -469,6 +504,28 @@ pub fn client() -> Subscription<ClientEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// An event from 10:00 to 11:00, watched from 09:00: the desktop tells
+    /// the island twice (10:02, 11:00), where the minute ticker told it 120
+    /// times, and checks the clock every five minutes in between.
+    #[test]
+    fn the_calendar_wakes_only_when_the_shown_event_can_change() {
+        const MINUTE: i64 = 60_000;
+        let (starts, ends) = (600 * MINUTE, 660 * MINUTE);
+        let mut now = 540 * MINUTE;
+        let (mut naps, mut sends) = (0, vec![]);
+        while let Some(next) = calendar_change(starts, ends, now) {
+            now += (next - now).min(CALENDAR_NAP_MS);
+            naps += 1;
+            if now >= next {
+                sends.push(now / MINUTE);
+            }
+        }
+        assert_eq!(sends, [602, 660]);
+        assert_eq!(naps, 25, "62 then 58 minutes in five-minute naps");
+        assert_eq!(calendar_change(starts, ends, ends), None);
+        // An event already late waits only for its end.
+        assert_eq!(calendar_change(starts, ends, 630 * MINUTE), Some(ends));
+    }
     #[tokio::test]
     async fn partial_frame_survives_subscription_cancellation() {
         let (mut tx, rx) = tokio::io::duplex(512);
