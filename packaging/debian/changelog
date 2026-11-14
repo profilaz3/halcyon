@@ -1,3 +1,17 @@
+cosmic-ext-halcyon (0.7.0) unstable; urgency=medium
+
+  * Apply looks part by part and make your own in the Look studio.
+  * Add Rainy Lake and Deep Purple, icon packs, app icon shapes and folder tint.
+  * Let the edge menu move, change style, turn off and list your own items.
+  * Open Settings on a picture of the desktop; make Arrange match the desktop.
+  * Put the clock behind rain on fogged glass; rest effects while hidden.
+  * Group island notifications; add live progress, a timer and a file shelf.
+  * Show device batteries in the island and a Devices widget.
+  * Restart the panel less, wake less while idle, and repair a bad config value.
+  * Send usage reports with schema 8, which names the Devices widget and page.
+
+ -- profilaz3 <261673162+profilaz3@users.noreply.github.com>  Sat, 14 Nov 2026 12:00:00 +0000
+
 cosmic-ext-halcyon (0.6.5) unstable; urgency=medium
 
   * Let rain, snow, fog and cloud shadows on the wallpaper match the weather.
