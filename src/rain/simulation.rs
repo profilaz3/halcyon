@@ -157,7 +157,8 @@ impl Simulation {
                 d.y += d.speed * dt;
                 d.x += (d.lean * 0.45 + wind * 0.6) * d.speed * dt;
             }
-            d.stretch = 1. + (d.speed * 2.2).min(0.5);
+            // A sliding drop draws out behind its leading edge.
+            d.stretch = 1. + (d.speed * 3.).min(0.7);
             d.trail_distance -= (d.x - old_x).hypot(d.y - old_y);
             if d.trail_distance <= 0. && d.speed > 0.02 && p.trails > 0 {
                 // Sparse, irregular deposits follow the actual path. No shared
@@ -166,12 +167,12 @@ impl Simulation {
                 self.trails.push(Drop {
                     x: old_x + (d.x - old_x) * at + (random(&mut self.seed) - 0.5) * d.radius,
                     y: old_y + (d.y - old_y) * at,
-                    radius: d.radius * (0.12 + random(&mut self.seed) * 0.2),
+                    radius: d.radius * (0.1 + random(&mut self.seed).powi(2) * 0.24),
                     speed: 0.,
                     age: 0.,
                     trail: true,
                     trail_distance: 0.,
-                    lifetime: (2. + random(&mut self.seed) * 4.)
+                    lifetime: (1.5 + random(&mut self.seed) * 3.)
                         * (0.5 + f32::from(p.trails) / 50.),
                     opacity: 0.45 + random(&mut self.seed) * 0.45,
                     stretch: 0.8 + random(&mut self.seed) * 0.5,
@@ -180,7 +181,8 @@ impl Simulation {
                     shape: random(&mut self.seed),
                 });
                 d.trail_distance = spacing(&mut self.seed, p.trails);
-                d.radius *= 0.993;
+                // The water it leaves behind is water it no longer has.
+                d.radius *= 0.988;
             }
             self.drops[i] = d;
         }
@@ -253,8 +255,13 @@ impl Simulation {
                     d.age < d.lifetime + DRY
                 }
         });
-        self.drops
-            .extend(self.trails.drain(..).take(LIMIT - self.drops.len()));
+        // Residue never takes more than half the pool, so new drops always
+        // find room to land.
+        let residue = self.drops.iter().filter(|d| d.trail).count();
+        let room = (LIMIT / 2)
+            .saturating_sub(residue)
+            .min(LIMIT - self.drops.len());
+        self.drops.extend(self.trails.drain(..).take(room));
     }
     /// One instance per drop: x, y, radius, stretch, opacity, kind and shape.
     /// Kind is the teardrop taper of water that wipes the glass as it moves,
@@ -273,7 +280,7 @@ impl Simulation {
                 let (radius, opacity) = if d.trail {
                     (
                         d.radius * (0.65 + fade * 0.35),
-                        d.opacity * fade * fade * f32::from(trails) / 100.,
+                        d.opacity * fade * fade * (0.5 + f32::from(trails) / 200.),
                     )
                 } else {
                     (d.radius * (0.8 + fade * 0.2), d.opacity * fade)
@@ -296,7 +303,7 @@ fn random(seed: &mut u32) -> f32 {
 }
 fn spacing(seed: &mut u32, amount: u8) -> f32 {
     let r = random(seed);
-    (0.012 + r * r * 0.075) / (0.3 + f32::from(amount) * 0.007)
+    (0.01 + r * r * 0.06) / (0.3 + f32::from(amount) * 0.007)
 }
 #[cfg(test)]
 mod tests {

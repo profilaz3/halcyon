@@ -562,6 +562,46 @@ pub fn state_path(store: &DesktopStore) -> Option<PathBuf> {
     }
 }
 
+/// cosmic-bg's state file as it is now, read only and bounded.
+pub fn read_state(path: &Path) -> Option<Vec<u8>> {
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(256 * 1024)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    Some(bytes)
+}
+
+/// This user's running cosmic-bg: its process ID and start time (clock
+/// ticks since boot), read only from `/proc`. A restarted cosmic-bg has a
+/// new pair even when it reuses an ID.
+pub fn cosmic_bg_process() -> Option<(u32, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let uid = unsafe { libc::getuid() };
+    std::fs::read_dir("/proc")
+        .ok()?
+        .take(65_536)
+        .flatten()
+        .filter_map(|entry| {
+            let pid: u32 = entry.file_name().to_str()?.parse().ok()?;
+            if entry.metadata().ok()?.uid() != uid {
+                return None;
+            }
+            let comm = std::fs::read_to_string(entry.path().join("comm")).ok()?;
+            if comm.trim_end() != "cosmic-bg" {
+                return None;
+            }
+            // The start time is the 22nd field; the name before it may
+            // hold spaces, so count from its closing parenthesis.
+            let stat = std::fs::read_to_string(entry.path().join("stat")).ok()?;
+            let rest = &stat[stat.rfind(')')? + 1..];
+            let start = rest.split_whitespace().nth(19)?.parse().ok()?;
+            Some((pid, start))
+        })
+        .min()
+}
+
 /// The picture cosmic-bg reports showing on `output` now (state file
 /// `Vec<(String, Source)>`), read only and bounded.
 pub fn current_slideshow_image(store: &DesktopStore, output: &str) -> Option<PathBuf> {

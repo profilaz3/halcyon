@@ -255,6 +255,7 @@ impl SettingsSamples {
             wake_generation: 0,
             depth: Default::default(),
             rain: Default::default(),
+            glass: Default::default(),
             wallpaper_color_generation: Default::default(),
             edge: Default::default(),
         };

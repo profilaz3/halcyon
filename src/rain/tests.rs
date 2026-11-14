@@ -912,3 +912,423 @@ fn rain_and_snow_visual_evidence() {
     .unwrap();
     println!("{report}");
 }
+
+/// Rain on glass at a few moments, with 1:1 and 2x crops of the drops and
+/// the desktop clock over the wallpaper. Writes only `HALCYON_RAIN_EVIDENCE`.
+#[test]
+#[ignore = "explicit native GPU captures; writes only the evidence directory"]
+fn rain_glass_visual_evidence() {
+    let root = std::path::PathBuf::from(
+        std::env::var_os("HALCYON_RAIN_EVIDENCE").expect("private evidence directory"),
+    );
+    std::fs::create_dir_all(&root).unwrap();
+    let (width, height) = (1920u32, 1080u32);
+    let wallpaper = |name: &str| {
+        image::open(format!(
+            "{}/assets/wallpapers/{name}",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap()
+        .resize_to_fill(width, height, image::imageops::FilterType::Triangle)
+        .to_rgba8()
+    };
+    let scene = gpu::Scene::new(crate::desktop::wallpaper::media::Pixels {
+        width,
+        height,
+        rgba: wallpaper("halcyon-ridge.png").into_raw(),
+    });
+    let mut native =
+        crate::native_test::Native::with_backend(Size::new(width as f32, height as f32), "wgpu");
+    let theme = cosmic::Theme::dark();
+    let save = |name: &str, image: &image::RgbaImage| {
+        image.save(root.join(format!("{name}.png"))).unwrap();
+    };
+    let frame = |bytes: Vec<u8>| image::RgbaImage::from_raw(width, height, bytes).unwrap();
+    // The clock as the desktop draws it today: its own surface on top.
+    let mut config = crate::config::Config::default();
+    config.clock.scale = 260;
+    let clock_frame = crate::depth::Frame {
+        screen: [width as f32, height as f32],
+        origin: [96., 300.],
+        size: [760., 300.],
+        scale: 1.,
+    };
+    let time = chrono::NaiveDate::from_ymd_opt(2026, 11, 13)
+        .unwrap()
+        .and_hms_opt(18, 59, 0)
+        .unwrap();
+    let clock = crate::depth::draw_plain(&config, &clock_frame, time).expect("clock raster");
+    let behind = std::sync::Arc::new(gpu::Behind {
+        pixels: clock.clone(),
+        rect: [
+            clock_frame.origin[0] / width as f32,
+            clock_frame.origin[1] / height as f32,
+            clock_frame.size[0] / width as f32,
+            clock_frame.size[1] / height as f32,
+        ],
+    });
+    let clock = image::RgbaImage::from_raw(clock.width, clock.height, clock.rgba).unwrap();
+    let view = |p: Preferences, time: f32| -> cosmic::Element<'_, ()> {
+        cosmic::iced::widget::Shader::new(gpu::Program {
+            scene: scene.clone(),
+            preferences: p,
+            running: false,
+            fixed_time: Some(time),
+            fade: Default::default(),
+        })
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    };
+    for mode in [Mode::Procedural, Mode::Hybrid] {
+        for (time, intensity) in [(4., 45u8), (11., 45), (23., 80)] {
+            let p = Preferences {
+                enabled: true,
+                mode,
+                intensity,
+                ..Default::default()
+            };
+            let image = frame(native.render(view(p.clone(), time), &theme));
+            let name = format!("rain-{mode:?}-{intensity}-{time}s");
+            save(&name, &image);
+            let crop = image::imageops::crop_imm(&image, 1100, 520, 640, 360).to_image();
+            save(&format!("{name}-crop"), &crop);
+            let zoom = image::imageops::crop_imm(&image, 1240, 560, 320, 180).to_image();
+            let zoom =
+                image::imageops::resize(&zoom, 640, 360, image::imageops::FilterType::Nearest);
+            save(&format!("{name}-zoom2x"), &zoom);
+            if time == 11. {
+                let mut desktop = image.clone();
+                image::imageops::overlay(&mut desktop, &clock, 96, 300);
+                save(&format!("clock-front-{mode:?}"), &desktop);
+                let crop = image::imageops::crop_imm(&desktop, 60, 260, 840, 380).to_image();
+                save(&format!("clock-front-{mode:?}-crop"), &crop);
+                // The clock behind the glass: drops over it refract it.
+                scene.set_behind(Some(behind.clone()));
+                let mut p = p.clone();
+                p.intensity = 70;
+                let image = frame(native.render(view(p, time), &theme));
+                scene.set_behind(None);
+                save(&format!("clock-behind-{mode:?}"), &image);
+                let crop = image::imageops::crop_imm(&image, 60, 260, 840, 380).to_image();
+                save(&format!("clock-behind-{mode:?}-crop"), &crop);
+                let zoom = image::imageops::crop_imm(&image, 120, 340, 420, 236).to_image();
+                let zoom =
+                    image::imageops::resize(&zoom, 840, 472, image::imageops::FilterType::Nearest);
+                save(&format!("clock-behind-{mode:?}-zoom2x"), &zoom);
+            }
+        }
+    }
+}
+
+/// Live time wraps every hour. Every procedural rain cycle divides the hour,
+/// and snow, fog and clouds fade into their next hour before it ends, so the
+/// frame after the wrap follows the one before it like any other frame does
+/// instead of jumping to a new pattern.
+#[test]
+fn rain_procedural_field_continues_across_the_hourly_wrap() {
+    if std::env::var_os("HALCYON_RAIN_GPU_TEST").is_none() {
+        return;
+    }
+    let (width, height) = (640u32, 360u32);
+    let pixels = image::open(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/looks/evening-wallpaper.jpg"
+    ))
+    .unwrap()
+    .resize_exact(width, height, image::imageops::FilterType::Triangle)
+    .to_rgba8()
+    .into_raw();
+    let mut native =
+        crate::native_test::Native::with_backend(Size::new(width as f32, height as f32), "wgpu");
+    let theme = cosmic::Theme::dark();
+    let differ = |a: &[u8], b: &[u8]| {
+        a.iter()
+            .zip(b)
+            .map(|(a, b)| f64::from(a.abs_diff(*b)))
+            .sum::<f64>()
+            / a.len() as f64
+    };
+    let effects = [Effect::Rain, Effect::Snow, Effect::Fog, Effect::Clouds];
+    for effect in effects {
+        let scene = gpu::Scene::new(crate::desktop::wallpaper::media::Pixels {
+            width,
+            height,
+            rgba: pixels.clone(),
+        });
+        let mut render = |time: f32| -> Vec<u8> {
+            let view: cosmic::Element<'_, ()> = cosmic::iced::widget::Shader::new(gpu::Program {
+                scene: scene.clone(),
+                preferences: Preferences {
+                    enabled: true,
+                    effect,
+                    mode: Mode::Procedural,
+                    intensity: 80,
+                    // No wiped paths, so frames depend on their time alone.
+                    trails: 0,
+                    ..Default::default()
+                },
+                running: false,
+                fixed_time: Some(time),
+                fade: Default::default(),
+            })
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+            native.render(view, &theme)
+        };
+        let frame = 1. / 30.;
+        let mut ordinary = 0f64;
+        for at in [100., 1234.5, 2900.] {
+            ordinary = ordinary.max(differ(&render(at - frame), &render(at)));
+        }
+        let across = differ(&render(gpu::PERIOD - frame), &render(0.));
+        // A new pattern changes the whole sky at once; a frame changes little.
+        let unrelated = differ(&render(1000.), &render(1777.7));
+        println!(
+            "{effect:?}: frame {ordinary:.4}, across the wrap {across:.4}, unrelated {unrelated:.4}"
+        );
+        let limit = ordinary * 1.5 + 0.01;
+        // A jump to a new pattern would land well past the limit.
+        assert!(
+            unrelated > limit * 1.5,
+            "{effect:?}: frames must be told apart"
+        );
+        assert!(
+            across <= limit,
+            "{effect:?}: the wrap jumps: {across} against {ordinary} for a frame, \
+             {unrelated} for a new pattern"
+        );
+    }
+}
+
+/// With wallpaper depth, the clock stands between the Ridge's sky and its
+/// ridge under every effect: the rain surface draws the cut clock, so the
+/// ridge stays in front of it and the effect covers both. Writes captures
+/// to `HALCYON_RAIN_EVIDENCE` when it is set.
+#[test]
+fn rain_effects_keep_the_ridge_in_front_of_the_depth_clock() {
+    if std::env::var_os("HALCYON_RAIN_GPU_TEST").is_none() {
+        return;
+    }
+    use crate::widget_style::resolver::{ClockFace, ClockSurface, ClockWeight};
+    let (width, height) = (1920u32, 1080u32);
+    // cosmic-bg's Zoom: cover the output, centred.
+    let wallpaper = image::load_from_memory(crate::depth::PICTURE)
+        .unwrap()
+        .resize_to_fill(width, height, image::imageops::FilterType::Triangle)
+        .to_rgba8();
+    let mut config = crate::config::Config::default();
+    config.appearance.family = Some(crate::desktop_theme::Family::Soft);
+    config.appearance.wallpaper_light = false;
+    config.clock.depth = true;
+    config.clock.lighting = crate::depth::Lighting::Off;
+    config.clock.face = Some(ClockFace::Digital);
+    config.clock.surface = Some(ClockSurface::None);
+    config.clock.weight = Some(ClockWeight::Bold);
+    config.clock.italic = Some(false);
+    config.clock.show_date = false;
+    config.clock.scale = 200;
+    let frame = crate::depth::Frame {
+        screen: [width as f32, height as f32],
+        origin: [560., 188.],
+        size: [800., 330.],
+        scale: 1.,
+    };
+    let time = chrono::NaiveDate::from_ymd_opt(2026, 11, 13)
+        .unwrap()
+        .and_hms_opt(18, 59, 0)
+        .unwrap();
+    let cut = crate::depth::public_clock(
+        &config,
+        frame.clone(),
+        crate::desktop::wallpaper::ScalingMode::Zoom,
+        time,
+    )
+    .expect("the Ridge cuts the clock");
+    let plain = crate::depth::draw_plain(&config, &frame, time).unwrap();
+    assert_eq!((plain.width, plain.height), (cut.width, cut.height));
+    // Ink the ridge hides, and ink left standing in the sky, in output
+    // pixels.
+    let (x0, y0) = (frame.origin[0] as u32, frame.origin[1] as u32);
+    let mut hidden = Vec::new();
+    let mut kept = Vec::new();
+    for (i, (p, c)) in plain
+        .rgba
+        .chunks_exact(4)
+        .zip(cut.rgba.chunks_exact(4))
+        .enumerate()
+    {
+        let at = (x0 + i as u32 % cut.width, y0 + i as u32 / cut.width);
+        if p[3] > 200 && c[3] < 8 {
+            hidden.push(at);
+        } else if p[3] > 200 && c[3] > 200 {
+            kept.push(at);
+        }
+    }
+    assert!(
+        hidden.len() > 2_000 && kept.len() > 2_000,
+        "{} {}",
+        hidden.len(),
+        kept.len()
+    );
+    let behind = std::sync::Arc::new(gpu::Behind {
+        pixels: cut.clone(),
+        rect: [
+            frame.origin[0] / width as f32,
+            frame.origin[1] / height as f32,
+            frame.size[0] / width as f32,
+            frame.size[1] / height as f32,
+        ],
+    });
+    let scene = gpu::Scene::new(crate::desktop::wallpaper::media::Pixels {
+        width,
+        height,
+        rgba: wallpaper.clone().into_raw(),
+    });
+    let mut native =
+        crate::native_test::Native::with_backend(Size::new(width as f32, height as f32), "wgpu");
+    let theme = cosmic::Theme::dark();
+    let evidence = std::env::var_os("HALCYON_RAIN_EVIDENCE").map(std::path::PathBuf::from);
+    let save = |name: &str, image: &image::RgbaImage| {
+        if let Some(root) = &evidence {
+            std::fs::create_dir_all(root).unwrap();
+            image.save(root.join(format!("{name}.png"))).unwrap();
+            let crop = image::imageops::crop_imm(image, 500, 140, 920, 440).to_image();
+            crop.save(root.join(format!("{name}-crop.png"))).unwrap();
+        }
+    };
+    // Effects off: the cut clock on its own surface over the wallpaper.
+    let mut off = wallpaper.clone();
+    let clock = image::RgbaImage::from_raw(cut.width, cut.height, cut.rgba.clone()).unwrap();
+    image::imageops::overlay(&mut off, &clock, x0 as i64, y0 as i64);
+    save("ridge-depth-off", &off);
+    let near = |a: &image::Rgba<u8>, b: &image::Rgba<u8>| {
+        a.0.iter()
+            .zip(b.0)
+            .take(3)
+            .map(|(a, b)| u32::from(a.abs_diff(b)))
+            .sum::<u32>()
+            < 30
+    };
+    for effect in [Effect::Rain, Effect::Snow, Effect::Fog, Effect::Clouds] {
+        let mut render = |with: bool| {
+            scene.set_behind(with.then(|| behind.clone()));
+            let view: cosmic::Element<'_, ()> = cosmic::iced::widget::Shader::new(gpu::Program {
+                scene: scene.clone(),
+                preferences: Preferences {
+                    enabled: true,
+                    effect,
+                    mode: Mode::Procedural,
+                    intensity: 60,
+                    ..Default::default()
+                },
+                running: false,
+                fixed_time: Some(11.),
+                fade: Default::default(),
+            })
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+            image::RgbaImage::from_raw(width, height, native.render(view, &theme)).unwrap()
+        };
+        let bare = render(false);
+        let shown = render(true);
+        scene.set_behind(None);
+        save(&format!("ridge-depth-{effect:?}").to_lowercase(), &shown);
+        let share = |points: &[(u32, u32)], same: bool| {
+            points
+                .iter()
+                .filter(|(x, y)| near(bare.get_pixel(*x, *y), shown.get_pixel(*x, *y)) == same)
+                .count() as f64
+                / points.len() as f64
+        };
+        // Where the ridge stands in front, the glass shows the ridge as it
+        // would without a clock; drops may still bend a little clock in.
+        let ridge = share(&hidden, true);
+        // In the sky the clock shows through the effect.
+        let sky = share(&kept, false);
+        println!("{effect:?}: ridge unchanged {ridge:.3}, clock seen in the sky {sky:.3}");
+        assert!(
+            ridge > 0.95,
+            "{effect:?}: the clock shows over the ridge ({ridge})"
+        );
+        assert!(sky > 0.6, "{effect:?}: the clock is lost ({sky})");
+    }
+}
+
+/// A desktop the effect is hidden on holds it still: no frames asked for
+/// and no time passing. Shown again, it carries on from the same moment
+/// rather than jumping ahead, and at the same pace as before.
+#[test]
+fn rain_held_still_while_hidden_resumes_where_it_stopped() {
+    use cosmic::iced::widget::shader::{Action, Program as _};
+    for mode in [Mode::Procedural, Mode::Hybrid] {
+        let mut program = gpu::Program {
+            scene: gpu::Scene::new(crate::desktop::wallpaper::media::Pixels {
+                width: 1,
+                height: 1,
+                rgba: vec![0, 0, 0, 255],
+            }),
+            preferences: Preferences {
+                mode,
+                ..Default::default()
+            },
+            running: true,
+            fixed_time: None,
+            fade: gpu::Fade {
+                enabled: true,
+                ..Default::default()
+            },
+        };
+        let mut state = gpu::State::default();
+        let bounds = cosmic::iced::Rectangle {
+            width: 1920.,
+            height: 1080.,
+            ..Default::default()
+        };
+        let start = std::time::Instant::now();
+        let frame = |program: &gpu::Program, state: &mut gpu::State, ms: u64| {
+            let event = cosmic::iced::Event::Window(cosmic::iced::window::Event::RedrawRequested(
+                start + std::time::Duration::from_millis(ms),
+            ));
+            let action: Option<Action<()>> = program.update(
+                state,
+                &event,
+                bounds,
+                cosmic::iced::mouse::Cursor::Unavailable,
+            );
+            let shown = <gpu::Program as cosmic::iced::widget::shader::Program<()>>::draw(
+                program,
+                state,
+                cosmic::iced::mouse::Cursor::Unavailable,
+                bounds,
+            );
+            (action.is_some(), shown.time, shown.fade)
+        };
+        let mut ms = 0;
+        let mut last = (false, 0., 0.);
+        while ms <= 3000 {
+            last = frame(&program, &mut state, ms);
+            ms += 34;
+        }
+        assert!(last.0 && last.1 > 2.5 && last.2 == 1., "{mode:?}: {last:?}");
+        let paused_at = last.1;
+        // Hidden for ten minutes; app messages still redraw it now and then.
+        program.running = false;
+        for minute in 1..=10 {
+            let held = frame(&program, &mut state, ms + minute * 60_000);
+            assert_eq!(held, (false, paused_at, 1.), "{mode:?}: held still");
+        }
+        // Shown again: the same moment first, then the usual pace.
+        program.running = true;
+        let back = ms + 10 * 60_000 + 500;
+        let first = frame(&program, &mut state, back);
+        assert_eq!(first, (true, paused_at, 1.), "{mode:?}: no jump, no fade");
+        let next = frame(&program, &mut state, back + 34);
+        assert!(
+            next.0 && (next.1 - paused_at - 0.034).abs() < 1e-3,
+            "{mode:?}: {next:?}"
+        );
+    }
+}

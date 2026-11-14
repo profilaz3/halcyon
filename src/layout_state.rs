@@ -44,6 +44,85 @@ pub struct Snapshot {
     pub display: Option<DisplayState>,
     pub screen: [f32; 2],
     pub widgets: Vec<WidgetGeometry>,
+    /// Where `screen` lies on its whole output, when that is known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<OutputFrame>,
+}
+/// The whole output an area widgets use lies on: its logical size, and
+/// where the area starts on it. Panels that keep space move the area off
+/// the output's corner.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct OutputFrame {
+    pub size: [f32; 2],
+    pub origin: [f32; 2],
+}
+
+/// Where the area that layer surfaces may use starts on a `full` output,
+/// when panels keep `screen` of it: the panels that keep space say which
+/// edges they keep it on. With panels on both opposite edges, the space is
+/// shared by their thickness. None when the panels do not explain it.
+pub fn usable_origin(
+    full: [f32; 2],
+    screen: [f32; 2],
+    reserved: &[(crate::desktop::panels::Anchor, u32)],
+) -> Option<[f32; 2]> {
+    use crate::desktop::panels::Anchor;
+    let axis = |kept: f32, before: Anchor, after: Anchor| -> Option<f32> {
+        if kept < 1. {
+            return Some(0.);
+        }
+        let thickness = |edge| -> f32 {
+            reserved
+                .iter()
+                .filter(|(anchor, _)| *anchor == edge)
+                .map(|(_, t)| *t as f32)
+                .sum()
+        };
+        match (thickness(before), thickness(after)) {
+            (0., 0.) => None,
+            (_, 0.) => Some(kept),
+            (0., _) => Some(0.),
+            (a, b) => Some((kept * a / (a + b)).round()),
+        }
+    };
+    if screen.iter().zip(full).any(|(s, f)| *s > f + 1.) {
+        return None;
+    }
+    Some([
+        axis(full[0] - screen[0], Anchor::Left, Anchor::Right)?,
+        axis(full[1] - screen[1], Anchor::Top, Anchor::Bottom)?,
+    ])
+}
+/// The edges the panels keep on the output named `output`, read now.
+pub fn reserved_edges(output: &str) -> Vec<(crate::desktop::panels::Anchor, u32)> {
+    use crate::desktop::panels::{PanelDraft, PanelKind};
+    let Ok(store) = crate::desktop::DesktopStore::from_env() else {
+        return Vec::new();
+    };
+    [PanelKind::Panel, PanelKind::Dock]
+        .into_iter()
+        .filter_map(|kind| PanelDraft::load(&store, kind).ok()?.reserves(output))
+        .collect()
+}
+/// `screen`, measured on an output of `logical` size, placed on that whole
+/// output. The measured area keeps a fractional scale's precision, which
+/// the integer logical size rounds away, so it is used on every axis
+/// nothing keeps space on. `reserved` is asked only when panels keep space.
+pub fn output_frame(
+    logical: [f32; 2],
+    screen: [f32; 2],
+    reserved: impl FnOnce() -> Option<Vec<(crate::desktop::panels::Anchor, u32)>>,
+) -> Option<OutputFrame> {
+    let same = |i: usize| (logical[i] - screen[i]).abs() < 1.;
+    let origin = if same(0) && same(1) {
+        [0., 0.]
+    } else {
+        usable_origin(logical, screen, &reserved()?)?
+    };
+    Some(OutputFrame {
+        size: [0, 1].map(|i| if same(i) { screen[i] } else { logical[i] }),
+        origin,
+    })
 }
 
 pub fn path() -> Option<PathBuf> {
@@ -113,6 +192,7 @@ fn fallback(config: &Config) -> Snapshot {
         widget_displays: Default::default(),
         display: None,
         screen: [1920., 1080.],
+        output: None,
         widgets: Widget::ALL
             .into_iter()
             .map(|widget| WidgetGeometry {
@@ -283,19 +363,31 @@ pub fn for_display(
 ) -> Snapshot {
     let mut state = cached().unwrap_or_else(|| fallback(config));
     let live = !displays.outputs().is_empty();
+    let mut wholes = std::collections::BTreeMap::new();
     let selected = if live {
         state.monitors = displays
             .outputs()
             .iter()
             .filter_map(|output| {
                 let key = displays.key(output)?;
-                let size = output
+                let logical = output
                     .info
                     .logical_size
                     .filter(|(w, h)| *w > 0 && *h > 0)
-                    .map(|(w, h)| [w as f32, h as f32])
-                    .or_else(|| state.monitors.get(&key).copied())
-                    .unwrap_or([1920., 1080.]);
+                    .map(|(w, h)| [w as f32, h as f32]);
+                // The desktop publishes the area widgets may use there,
+                // which panels make smaller than the output; widgets are
+                // placed in that area, so the preview uses it too. A size
+                // that no longer fits the output is from an older mode.
+                let published = state.monitors.get(&key).copied().filter(|area| {
+                    logical.is_none_or(|whole| {
+                        (0..2).all(|i| area[i] <= whole[i] + 1. && area[i] >= whole[i] * 0.5)
+                    })
+                });
+                let size = published.or(logical).unwrap_or([1920., 1080.]);
+                if let (Some(whole), Some(name)) = (logical, output.name()) {
+                    wholes.insert(key.clone(), (whole, name.to_owned()));
+                }
                 Some((key, size))
             })
             .collect();
@@ -306,10 +398,14 @@ pub fn for_display(
     } else {
         display.map(str::to_owned)
     };
+    state.output = None;
     if let Some(name) = selected.as_deref()
         && let Some(screen) = state.monitors.get(name)
     {
         state.screen = *screen;
+        state.output = wholes.get(name).and_then(|(whole, output)| {
+            output_frame(*whole, *screen, || Some(reserved_edges(output)))
+        });
         state.display = Some(DisplayState {
             output: Some(name.into()),
             ready: true,
