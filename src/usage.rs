@@ -1,6 +1,7 @@
 //! Pseudonymous daily activity and explicit reporting choices. No content or hardware identity.
 //! Since schema 7 the daily report also carries counts since the last report
-//! (see counts.rs) and a few fixed system facts (see system.rs).
+//! (see counts.rs) and a few fixed system facts (see system.rs). Schema 8 has
+//! the same fields and adds the Devices widget and Settings page to their lists.
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
@@ -543,7 +544,7 @@ async fn send(
         client,
         url,
         &Report {
-            schema: 7,
+            schema: 8,
             kind: "activity",
             installation,
             revision,

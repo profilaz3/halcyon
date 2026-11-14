@@ -5,8 +5,8 @@ The activity collector and the public statistics page, live at
 
 | Path | What it does |
 | --- | --- |
-| `POST /v1/report` | Accepts schema 1 to 7 reports (schema 6 adds the feature snapshot, schema 7 the use, problem, setup and system details). Same validation, ordering rules and acknowledgements as the former Apps Script collector. Always HTTP 200; `{"ok":false}` on rejection. |
-| `GET /v1/report` | Health: `{"service":"halcyon-activity","schema":7}`. |
+| `POST /v1/report` | Accepts schema 1 to 8 reports (schema 6 adds the feature snapshot, schema 7 the use, problem, setup and system details, schema 8 the Devices widget and page). Same validation, ordering rules and acknowledgements as the former Apps Script collector. Always HTTP 200; `{"ok":false}` on rejection. |
+| `GET /v1/report` | Health: `{"service":"halcyon-activity","schema":8}`. |
 | `GET /api/summary.json` | Public aggregates, rebuilt hourly, cached for 5 minutes. |
 | `GET /` | The dashboard (`public/`), plain HTML, CSS and JS with a strict CSP. |
 

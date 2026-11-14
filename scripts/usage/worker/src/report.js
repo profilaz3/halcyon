@@ -23,7 +23,9 @@ export function validInstallation(format, channel, installed) {
 }
 
 // Schema 6 feature snapshot: fixed keys, fixed values, null when unknown.
-export const WIDGETS = ['calendar', 'projects', 'devbox', 'weather', 'clock', 'glance', 'music', 'notes', 'focus'];
+// Schema 6 and 7 clients name these widgets; schema 8 (0.7.0) adds Devices.
+export const WIDGETS_7 = ['calendar', 'projects', 'devbox', 'weather', 'clock', 'glance', 'music', 'notes', 'focus'];
+export const WIDGETS = [...WIDGETS_7, 'devices'];
 export const FEATURE_VALUES = {
   wallpaper_effect: ['off', 'rain', 'snow', 'fog', 'clouds'],
   activity_island: 'bool', penumbra: 'bool', islands: 'bool',
@@ -36,7 +38,8 @@ export const FEATURE_VALUES = {
 const FEATURE_KEYS = Object.keys(FEATURE_VALUES);
 
 // The canonical stored form, or null when the snapshot is malformed.
-export function canonicalFeatures(f) {
+// `widgets` is the list the report's schema may name.
+export function canonicalFeatures(f, widgets = WIDGETS) {
   if (!f || typeof f !== 'object' || Array.isArray(f)) return null;
   if (Object.keys(f).sort().join(',') !== [...FEATURE_KEYS].sort().join(',')) return null;
   const out = {};
@@ -45,7 +48,7 @@ export function canonicalFeatures(f) {
     if (v === null) { out[key] = null; continue; }
     if (kind === 'bool') { if (typeof v !== 'boolean') return null; out[key] = v; continue; }
     if (kind === 'widgets') {
-      if (!Array.isArray(v) || new Set(v).size !== v.length || !v.every(w => WIDGETS.includes(w))) return null;
+      if (!Array.isArray(v) || new Set(v).size !== v.length || !v.every(w => widgets.includes(w))) return null;
       out[key] = WIDGETS.filter(w => v.includes(w));
       continue;
     }
@@ -55,7 +58,8 @@ export function canonicalFeatures(f) {
   return JSON.stringify(out);
 }
 
-// Schema 7 adds the details fields to schema 6 (see src/details.js).
+// Schema 7 adds the details fields to schema 6 (see src/details.js). Schema 8
+// has the same fields and adds the Devices widget and page to their lists.
 const DETAIL_FIELDS = ['pages', 'problems', 'runtime_hours', 'setup', 'system'];
 const SCHEMA_7_KEYS = ['country', 'features', 'first_started_at', 'installation', 'installed_app_version', 'kind',
   'package_format', 'revision', 'schema', 'update_channel', 'version', ...DETAIL_FIELDS].sort().join(',');
@@ -87,13 +91,14 @@ export function validateReport(body) {
     && revision && validVersion(v.version) && country
     && (v.first_started_at === null || validTime(v.first_started_at))
     && validInstallation(v.package_format, v.update_channel, v.installed_app_version)
-    && canonicalFeatures(v.features) !== null;
-  const extended = v.schema === 7 && v.kind === 'activity'
+    && canonicalFeatures(v.features, WIDGETS_7) !== null;
+  const extended = (v.schema === 7 || v.schema === 8) && v.kind === 'activity'
     && keys === SCHEMA_7_KEYS
     && revision && validVersion(v.version) && country
     && (v.first_started_at === null || validTime(v.first_started_at))
     && validInstallation(v.package_format, v.update_channel, v.installed_app_version)
-    && canonicalFeatures(v.features) !== null && canonicalDetails(pickDetails(v)) !== null;
+    && canonicalFeatures(v.features, v.schema === 8 ? WIDGETS : WIDGETS_7) !== null
+    && canonicalDetails(pickDetails(v), v.schema) !== null;
   // Client action time is informational, never a receipt or retention clock.
   const status = v.schema === 3 && v.kind === 'status'
     && keys === 'changed_at,enabled,installation,kind,revision,schema'
@@ -205,7 +210,7 @@ function planActivity(db, row, id, report, now) {
     .bind(id, today, report.version, detailed ? report.package_format : 'unknown',
       detailed ? report.update_channel : 'unknown', detailed ? report.installed_app_version : null,
       received, revision, report.schema >= 6 ? canonicalFeatures(report.features) : null,
-      report.schema === 7 ? canonicalDetails(pickDetails(report)) : null));
+      report.schema >= 7 ? canonicalDetails(pickDetails(report), report.schema) : null));
   return {statements, ack};
 }
 

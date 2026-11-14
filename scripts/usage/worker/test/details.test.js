@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createD1} from './d1.js';
 import {handleReport} from '../src/index.js';
-import {MAX_BODY, validateReport} from '../src/report.js';
+import {MAX_BODY, WIDGETS, validateReport} from '../src/report.js';
 import {PAGES, PROBLEMS, SETUP, canonicalDetails, detailsSummary} from '../src/details.js';
 import {maintain} from '../src/stats.js';
 
@@ -14,6 +14,9 @@ const system = (extra = {}) => ({distro: 'pop', distro_version: '24.04', cosmic:
 const v7 = (i, extra = {}) => ({schema: 7, kind: 'activity', installation: tokenOf(i), revision: 0, version: '0.6.1',
   country: 'HR', first_started_at: null, package_format: 'deb', update_channel: 'apt', installed_app_version: '0.6.1',
   features, pages: {appearance: 2, weather: 1}, runtime_hours: 5, problems: {}, setup: {}, system: system(), ...extra});
+// 0.7.0 sends schema 8: the same fields, with the Devices widget and page added to their lists.
+const v8 = (i, extra = {}) => v7(i, {schema: 8, version: '0.7.0', installed_app_version: '0.7.0', ...extra});
+const withDevices = {...features, widgets: ['clock', 'devices']};
 const post = (env, body, now) => handleReport(new Request('https://reports.test/v1/report', {method: 'POST', body: JSON.stringify(body)}), env, now)
   .then(r => r.json());
 const details = r => (({pages, problems, runtime_hours, setup, system}) => ({pages, problems, runtime_hours, setup, system}))(r);
@@ -23,11 +26,13 @@ test('schema 7 accepts only fixed keys, fixed values and whole counts', () => {
   const nothing = v7(1, {pages: {}, runtime_hours: null, system: Object.fromEntries(Object.keys(system()).map(k => [k, null]))});
   assert.equal(validateReport(JSON.stringify(nothing)).schema, 7);
   const every = vocabulary => Object.fromEntries(Object.keys(vocabulary).map(k => [k, 100000]));
-  const largest = JSON.stringify(v7(1, {pages: every(PAGES), problems: every(PROBLEMS), setup: every(SETUP), runtime_hours: 10000,
+  // Schema 8 has the longest lists: every widget and page, Devices included.
+  const largest = JSON.stringify(v8(1, {features: {...features, widgets: [...WIDGETS]}, pages: every(PAGES), problems: every(PROBLEMS),
+    setup: every(SETUP), runtime_hours: 10000,
     system: system({distro: 'a'.repeat(32), distro_version: 'b'.repeat(16), cosmic: '9999.999999.999999', gpu: ['amd', 'intel', 'nvidia', 'other'],
       resolution: '16384x16384'})}));
   assert.ok(largest.length <= MAX_BODY, `the largest valid report (${largest.length} bytes) fits the body limit`);
-  assert.equal(validateReport(largest).schema, 7);
+  assert.equal(validateReport(largest).schema, 8);
   for (const bad of [
     {pages: {'/home/me': 1}}, {pages: {appearance: 0}}, {pages: {appearance: 1.5}}, {pages: {appearance: -1}},
     {pages: {appearance: 100001}}, {pages: []}, {problems: {panic: '1'}}, {problems: {'Error: disk full': 1}},
@@ -100,4 +105,42 @@ test('a single installation is published with exact counts, unknowns last', () =
   assert.deepEqual(d.system.cosmic.map(x => [x.name, x.count]), [['1.0.3', 1], ['Not reported', 1]]);
   const empty = detailsSummary([{n: 1, day: 10, details: null}], 0, 20);
   assert.deepEqual([empty.reported, empty.pages, empty.system], [0, null, null], 'nothing reported, nothing shown');
+});
+
+test('schema 8 accepts the Devices widget and page, and schema 7 from 0.6.5 is still accepted', async () => {
+  const devices = v8(1, {features: withDevices, pages: {devices: 2, appearance: 1}});
+  const v065 = i => v7(i, {version: '0.6.5', installed_app_version: '0.6.5'});
+  assert.equal(validateReport(JSON.stringify(devices)).schema, 8);
+  assert.equal(validateReport(JSON.stringify(v065(1))).schema, 7);
+  assert.equal(validateReport(JSON.stringify(v8(1))).schema, 8, 'Devices is optional in schema 8');
+  // 0.6.5 and older never name Devices, so schemas 6 and 7 keep their own lists.
+  assert.throws(() => validateReport(JSON.stringify({...devices, schema: 7})), 'schema 7 has no Devices widget or page');
+  assert.throws(() => validateReport(JSON.stringify(v7(1, {pages: {devices: 1}}))), 'schema 7 has no Devices page');
+  assert.throws(() => validateReport(JSON.stringify(v7(1, {features: withDevices}))), 'schema 7 has no Devices widget');
+  const v6 = {...v7(1, {schema: 6, features: withDevices}), pages: undefined, problems: undefined, runtime_hours: undefined,
+    setup: undefined, system: undefined};
+  assert.throws(() => validateReport(JSON.stringify(v6)), 'schema 6 has no Devices widget');
+  assert.equal(validateReport(JSON.stringify({...v6, features})).schema, 6, 'schema 6 is still accepted');
+  for (const bad of [
+    {features: {...features, widgets: ['devices', 'devices']}}, {features: {...features, widgets: ['phone']}},
+    {pages: {devices: 0}}, {pages: {'devices.headphones': 1}}, {locale: 'hr_HR'},
+  ]) assert.throws(() => validateReport(JSON.stringify(v8(1, bad))), JSON.stringify(bad));
+  assert.throws(() => validateReport(JSON.stringify({...devices, schema: 9})), 'schema 9 does not exist yet');
+  assert.throws(() => validateReport(JSON.stringify((({system: _, ...rest}) => rest)(devices))), 'schema 8 needs every field');
+
+  const env = {DB: createD1()}, now = new Date('2026-11-14T09:00:00Z');
+  assert.deepEqual(await post(env, devices, now), {ok: true, day: '2026-11-14'});
+  assert.deepEqual(await post(env, v065(2), now), {ok: true, day: '2026-11-14'});
+  const stored = env.DB.raw.prepare('SELECT features, details FROM activity').all();
+  assert.equal(stored.length, 2);
+  const mine = stored.find(r => JSON.parse(r.details).pages.devices);
+  assert.deepEqual(JSON.parse(mine.features).widgets, ['clock', 'devices']);
+  assert.deepEqual(JSON.parse(mine.details).pages, {appearance: 1, devices: 2});
+  const summary = await maintain(env.DB, now, {fetchImpl: async () => new Response('[]')});
+  const page = Object.fromEntries(summary.details.pages.map(p => [p.key, p]));
+  assert.deepEqual([page.devices.name, page.devices.installations, page.devices.count], ['Devices', 1, 2]);
+  assert.deepEqual([page.appearance.installations, page.appearance.count], [2, 3]);
+  const widget = Object.fromEntries(summary.features.widgets.items.map(w => [w.key, w]));
+  assert.deepEqual([widget.devices.name, widget.devices.on, widget.clock.on], ['Devices', 1, 2]);
+  assert.equal(summary.features.widgets.known, 2);
 });
