@@ -42,7 +42,8 @@ pub use format::{
 };
 pub use library::{ProfileEntry, ProfileId, ProfileLibrary};
 pub use plan::{
-    Asset, DomainPlan, Installed, ProfilePlan, apply, apply_as, plan, planned_wallpaper_source,
+    Applied, Asset, DomainPlan, ISLANDS_LATER, Installed, ProfilePlan, apply, apply_as,
+    apply_noted, plan, planned_wallpaper_source,
 };
 #[cfg(test)]
 pub(crate) use presets::islands_composition;
@@ -60,3 +61,5 @@ mod tests;
 pub(crate) use plan::PreviewBaseline;
 pub use plan::PreviewConflict;
 pub(crate) use plan::preview_panel_style;
+#[cfg(test)]
+pub(crate) use plan::{IslandsPanel, fake_islands};

@@ -2461,8 +2461,11 @@ impl ProfilesEditor {
             self.icon_jobs.push(job);
             return Outcome::None;
         }
-        match profiles::apply(store, plan) {
-            Ok(latest) => {
+        match profiles::apply_noted(store, plan) {
+            Ok(profiles::Applied {
+                change: latest,
+                note,
+            }) => {
                 let name = plan.name.clone();
                 // COSMIC Files shows new icon settings only after a refresh.
                 let icons = plan.domains.iter().any(|part| {
@@ -2503,7 +2506,9 @@ impl ProfilesEditor {
                     self.notes
                         .push(crate::desktop::desktop_icons::REFRESH_NOTE.to_string());
                 }
-                self.notice = None;
+                // Applied and recorded for Undo; a panel that didn't take
+                // the layout yet is worth knowing, not a failure.
+                self.notice = note.map(Notice::Warning);
                 let _ = name;
                 Outcome::Changed
             }
@@ -2618,7 +2623,7 @@ impl ProfilesEditor {
         let id = change.id.clone();
         match store.undo_latest(&id) {
             Ok(_) => {
-                let _ = wallpaper::automatic::keep_manual_colors(store);
+                wallpaper::automatic::after_undo(store);
                 self.undo = None;
                 self.forget_applied(&id);
                 self.refresh();

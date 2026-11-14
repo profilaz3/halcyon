@@ -618,6 +618,7 @@ impl<D: PageDraft> DraftEditor<D> {
         }
         match store.undo_latest(&change.id) {
             Ok(_) => {
+                crate::desktop::wallpaper::automatic::after_undo(store);
                 self.undo = None;
                 self.reload(true);
                 self.notice = Some(Notice::Done("Previous settings restored".into()));

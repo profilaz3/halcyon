@@ -442,7 +442,8 @@ impl Settings {
                             store.accept_undo_review(&review)
                         } else {
                             store.keep_undo_current(&review)
-                        };
+                        }
+                        .inspect(|_| crate::desktop::wallpaper::automatic::after_undo(&store));
                     }
                     let id = shown.ok_or_else(|| {
                         crate::desktop::DesktopError::UndoUnavailable(
@@ -450,6 +451,9 @@ impl Settings {
                         )
                     })?;
                     let result = store.undo_latest(&id);
+                    if result.is_ok() {
+                        crate::desktop::wallpaper::automatic::after_undo(&store);
+                    }
                     if matches!(
                         result,
                         Err(crate::desktop::DesktopError::Conflict(_)
@@ -471,6 +475,9 @@ impl Settings {
             let result = crate::desktop::actions::history_store()
                 .and_then(|store| {
                     let result = store.put_back(&id);
+                    if result.is_ok() {
+                        crate::desktop::wallpaper::automatic::after_undo(&store);
+                    }
                     if matches!(
                         result,
                         Err(crate::desktop::DesktopError::Conflict(_)

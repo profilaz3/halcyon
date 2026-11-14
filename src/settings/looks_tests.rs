@@ -508,3 +508,160 @@ fn looks_screenshots_icon_shape_and_tint() {
     studio_capture(&app, &mut native, "icons-picker-shapes", 900.);
     studio_send(&mut app, Studio::Close);
 }
+
+/// A panel that is there but refuses the look's layout (it is restarting).
+struct RefusingPanel;
+impl crate::desktop::profiles::IslandsPanel for RefusingPanel {
+    fn activate(&mut self, _: String, _: dock_islands_core::Settings) -> Result<(), String> {
+        Err("The Islands panel component disconnected".into())
+    }
+}
+
+/// Applies the Halcyon look's panel through `connect` and checks the
+/// look counts as applied: Undo is offered, it is remembered, the plan is
+/// current again, and the panel problem is only a note.
+fn looks_apply_with_panel(
+    name: &str,
+    connect: fn(
+        &crate::desktop::DesktopStore,
+    ) -> Result<Box<dyn crate::desktop::profiles::IslandsPanel>, String>,
+) {
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let _panel = crate::desktop::profiles::fake_islands(connect);
+    let root = isolated_root();
+    let mut app = looks_desktop(&root);
+    looks_select(&mut app, "halcyon");
+    looks_only(&mut app, &[Domain::Panel, Domain::Appearance]);
+    assert!(
+        app.profiles
+            .plan()
+            .unwrap()
+            .patch()
+            .keys()
+            .any(|k| k.namespace() == dock_islands_core::NAMESPACE),
+        "the look brings an Islands layout"
+    );
+    looks_send(&mut app, profiles::Message::Apply);
+    assert!(
+        matches!(
+            &app.profiles.notice,
+            Some(crate::settings::desktop::Notice::Warning(note))
+                if note == crate::desktop::profiles::ISLANDS_LATER
+        ),
+        "{:?}",
+        app.profiles.notice
+    );
+    assert!(app.profiles.can_undo(), "Undo is offered after the write");
+    assert_eq!(
+        app.profiles.last_applied(),
+        Some(profiles::Selection::Preset("halcyon")),
+        "the look is remembered as applied"
+    );
+    // Nothing left to apply: the plan was made again from the new desktop.
+    looks_select(&mut app, "halcyon");
+    looks_only(&mut app, &[Domain::Panel, Domain::Appearance]);
+    assert!(!app.profiles.can_apply(), "{:?}", app.profiles.plan());
+}
+
+#[test]
+fn looks_apply_succeeds_with_a_note_when_the_panel_refuses_the_layout() {
+    looks_apply_with_panel(
+        "looks_apply_succeeds_with_a_note_when_the_panel_refuses_the_layout",
+        |_| Ok(Box::new(RefusingPanel)),
+    );
+}
+
+#[test]
+fn looks_apply_notes_a_layout_the_panel_could_not_be_reached_for() {
+    looks_apply_with_panel(
+        "looks_apply_notes_a_layout_the_panel_could_not_be_reached_for",
+        |_| Err("The Islands panel component is not running".into()),
+    );
+}
+
+/// Applies a look's wallpaper with automatic wallpaper colors on, then
+/// takes it back with `undo` (the header's Undo or Changes' put back). The
+/// colors Undo restored are kept: the desktop has no "Automatic wallpaper
+/// colors" change of its own to make afterwards.
+fn looks_undo_keeps_restored_colors(name: &str, undo: fn(&mut Settings, String)) {
+    use crate::desktop::wallpaper::automatic;
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let root = isolated_root();
+    let mut app = looks_desktop(&root);
+    let store = crate::desktop::actions::history_store().unwrap();
+    crate::config::patch_config(store.app_config().unwrap(), |value| {
+        value["appearance"]["wallpaper_colors"] = true.into();
+        Ok(())
+    })
+    .unwrap();
+    if let Some(prepared) = automatic::prepare(&store).unwrap() {
+        automatic::commit(&store, prepared).unwrap();
+    }
+    assert!(automatic::prepare(&store).unwrap().is_none());
+    let wallpaper_before = crate::desktop::wallpaper::WallpaperDraft::load(&store)
+        .map(|draft| format!("{:?}", draft))
+        .unwrap();
+    // A whole look: its own colors with its wallpaper.
+    looks_select(&mut app, "carbon");
+    looks_send(&mut app, profiles::Message::Apply);
+    let applied = store.latest_change().unwrap().unwrap();
+    assert_ne!(
+        crate::desktop::wallpaper::WallpaperDraft::load(&store)
+            .map(|draft| format!("{:?}", draft))
+            .unwrap(),
+        wallpaper_before,
+        "the look changes the wallpaper"
+    );
+    assert!(automatic::prepare(&store).unwrap().is_none());
+    undo(&mut app, applied.id.clone());
+    assert!(!app.error, "{}", app.status);
+    assert_ne!(
+        store.latest_change().unwrap().map(|change| change.id),
+        Some(applied.id),
+        "the look was taken back"
+    );
+    assert_eq!(
+        crate::desktop::wallpaper::WallpaperDraft::load(&store)
+            .map(|draft| format!("{:?}", draft))
+            .unwrap(),
+        wallpaper_before
+    );
+    assert!(
+        automatic::prepare(&store).unwrap().is_none(),
+        "Undo acknowledges the colors it restored"
+    );
+}
+
+#[test]
+fn looks_header_undo_keeps_the_restored_colors() {
+    looks_undo_keeps_restored_colors("looks_header_undo_keeps_the_restored_colors", |app, _| {
+        app.refresh_latest_change();
+        send_settings(app, Message::UndoDesktop);
+    });
+}
+
+#[test]
+fn looks_changes_put_back_keeps_the_restored_colors() {
+    looks_undo_keeps_restored_colors(
+        "looks_changes_put_back_keeps_the_restored_colors",
+        |app, id| send_settings(app, Message::PutBackChange(id)),
+    );
+}

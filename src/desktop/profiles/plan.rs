@@ -1025,7 +1025,7 @@ pub fn plan(
             .try_for_each(|(pointer, entry)| {
                 widget::put(&mut value, pointer, entry.desired.clone())
             })
-            .and_then(|()| config::check_config_value(&value).map(drop));
+            .and_then(|()| config::check_config_change(current, &value).map(drop));
         if outcome.is_ok()
             && crate::desktop::islands::Installation::discover(store).installed()
             && result
@@ -2369,7 +2369,38 @@ fn plan_widgets(
 /// `Owner::Profile`. Refuses a blocked or empty plan, and one whose
 /// wallpaper pictures or folders are no longer available (`recheck`),
 /// without writing anything.
+///
+/// Once the change is written it stays applied: a panel that doesn't take
+/// the look's layout is only logged here. Settings uses `apply_noted` to
+/// show it.
 pub fn apply(store: &DesktopStore, plan: &ProfilePlan) -> Result<LatestChange, DesktopError> {
+    apply_noted(store, plan).map(Applied::logged)
+}
+
+/// What `apply` wrote, for Undo, and anything worth knowing about it.
+#[derive(Debug)]
+pub struct Applied {
+    pub change: LatestChange,
+    /// The look was applied, but part of it shows only later (the panel
+    /// didn't pick up the look's Islands layout).
+    pub note: Option<String>,
+}
+impl Applied {
+    fn logged(self) -> LatestChange {
+        if let Some(note) = &self.note {
+            eprintln!("{note}");
+        }
+        self.change
+    }
+}
+
+/// The note when the look's Islands layout was written but the running
+/// panel didn't take it.
+pub const ISLANDS_LATER: &str =
+    "The look was applied. Its panel layout shows after you log out and back in.";
+
+/// `apply`, keeping the note for the person.
+pub fn apply_noted(store: &DesktopStore, plan: &ProfilePlan) -> Result<Applied, DesktopError> {
     apply_with_source(
         store,
         plan,
@@ -2386,13 +2417,14 @@ pub fn apply_as(
     label: &str,
 ) -> Result<LatestChange, DesktopError> {
     apply_with_source(store, plan, label, crate::desktop::store::Source::Scheduled)
+        .map(Applied::logged)
 }
 fn apply_with_source(
     store: &DesktopStore,
     plan: &ProfilePlan,
     label: &str,
     source: crate::desktop::store::Source,
-) -> Result<LatestChange, DesktopError> {
+) -> Result<Applied, DesktopError> {
     if let Some(reason) = plan
         .blocking_reasons()
         .into_iter()
@@ -2430,11 +2462,9 @@ fn apply_with_source(
             )
         })
         .collect();
-    let mut component = if !islands.is_empty() {
-        crate::desktop::islands::Client::connect(store).ok()
-    } else {
-        None
-    };
+    // Connected before writing, so a panel that is there takes the layout
+    // right away; one that isn't gets it at the next login.
+    let mut component = (!islands.is_empty()).then(|| islands_connect(store));
     if plan.appearance_only && !plan.is_empty() {
         super::ProfileLibrary::new(store)
             .retain_before_themes()
@@ -2448,20 +2478,72 @@ fn apply_with_source(
         label,
         source,
     )?;
-    if let Some(c) = &mut component {
-        for (panel, expected) in islands {
-            if let Err(error) = c.request(&dock_islands_core::Request::Activate { panel, expected })
-            {
+    // From here the look is applied and recorded for Undo: a panel problem
+    // is a note, never a failure.
+    let note = match &mut component {
+        None => None,
+        Some(Err(error)) => {
+            eprintln!("Islands panel not reachable for the look's layout: {error}");
+            Some(ISLANDS_LATER.to_string())
+        }
+        Some(Ok(panel)) => islands.into_iter().find_map(|(name, expected)| {
+            panel.activate(name, expected).err().map(|error| {
                 eprintln!("Islands did not take the look's layout: {error}");
-                return Err(DesktopError::Io(
-                    "The look was applied, but the panel didn’t pick up its layout. It shows \
-                     after you log out and back in. Undo is available."
-                        .into(),
-                ));
-            }
+                ISLANDS_LATER.to_string()
+            })
+        }),
+    };
+    Ok(Applied { change, note })
+}
+
+/// The running Islands panel, as Apply uses it.
+pub(crate) trait IslandsPanel {
+    fn activate(
+        &mut self,
+        panel: String,
+        expected: dock_islands_core::Settings,
+    ) -> Result<(), String>;
+}
+impl IslandsPanel for crate::desktop::islands::Client {
+    fn activate(
+        &mut self,
+        panel: String,
+        expected: dock_islands_core::Settings,
+    ) -> Result<(), String> {
+        self.request(&dock_islands_core::Request::Activate { panel, expected })
+            .map(|_| ())
+    }
+}
+
+type IslandsConnector = fn(&DesktopStore) -> Result<Box<dyn IslandsPanel>, String>;
+
+#[cfg(test)]
+thread_local! {
+    /// Tests stand in for the panel on this thread.
+    static TEST_ISLANDS: std::cell::Cell<Option<IslandsConnector>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// While the guard lives, Apply on this thread reaches `connect` instead
+/// of the real panel.
+#[cfg(test)]
+pub(crate) fn fake_islands(connect: IslandsConnector) -> impl Drop {
+    struct Restore(Option<IslandsConnector>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            TEST_ISLANDS.with(|cell| cell.set(self.0));
         }
     }
-    Ok(change)
+    Restore(TEST_ISLANDS.with(|cell| cell.replace(Some(connect))))
+}
+
+fn islands_connect(store: &DesktopStore) -> Result<Box<dyn IslandsPanel>, String> {
+    #[cfg(test)]
+    if let Some(connect) = TEST_ISLANDS.with(|cell| cell.get()) {
+        return connect(store);
+    }
+    crate::desktop::islands::Client::connect(store)
+        .map(|client| Box::new(client) as Box<dyn IslandsPanel>)
 }
 
 #[cfg(test)]
