@@ -38,7 +38,7 @@ class IslandsPackage(unittest.TestCase):
         self.assertEqual(catalog['cohorts'],[])
         self.assertEqual(manifest['package_version'],'0.2.1~test.1')
         desktop=self.extract/'etc/xdg/autostart/halcyon-islands-bootstrap.desktop'
-        self.assertIn('/refresh.py',desktop.read_text());self.assertIn('TryExec=/usr/bin/cosmic-session',desktop.read_text())
+        self.assertIn('/refresh.py',desktop.read_text());self.assertIn('TryExec=/usr/bin/halcyon-islands',desktop.read_text())
         self.assertEqual(subprocess.run(['desktop-file-validate',str(desktop)],capture_output=True).returncode,0)
         control=self.root/'control';subprocess.run(['dpkg-deb','-e',str(self.deb),str(control)],check=True)
         self.assertEqual(sorted(p.name for p in control.iterdir()),['conffiles','control'])
@@ -115,6 +115,33 @@ class IslandsPackage(unittest.TestCase):
         deps=subprocess.check_output(['dpkg-deb','-f',str(package),'Depends'],text=True)
         self.assertIn('libc6 (>=',deps)
         self.assertNotIn('cosmic-comp (',deps)
+    def test_bootstrap_stays_quiet_once_its_package_is_removed(self):
+        # dpkg keeps a conffile after remove (until purge), so the autostart
+        # entry must only fire while the files it runs are still installed.
+        # systemd's autostart generator honours TryExec; cosmic-session's own
+        # launcher ignores it, so the command checks for its script too.
+        import shlex
+        entry=dict(line.split('=',1) for line in (self.extract/'etc/xdg/autostart/halcyon-islands-bootstrap.desktop').read_text().splitlines() if '=' in line)
+        target=entry['TryExec'];words=shlex.split(entry['Exec'])
+        self.assertEqual(words[:2],['/bin/sh','-c'])
+        script=shlex.split(words[2])[-1]
+        self.assertTrue(words[2].startswith(f'test -f {script} || exit 0;'),words[2])
+        private=self.root/'removal';private.mkdir()
+        base=['dpkg',f'--root={private}',f'--log={private}/dpkg.log','--force-not-root','--force-depends','--force-script-chrootless']
+        def run(*args):
+            result=subprocess.run(base+list(args),capture_output=True,text=True,timeout=60)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        (private/'var/lib/dpkg/updates').mkdir(parents=True);(private/'var/lib/dpkg/info').mkdir()
+        for name in ('status','available'):(private/'var/lib/dpkg'/name).touch()
+        run('--install',str(self.deb))
+        shipped=(private/'var/lib/dpkg/info'/f'{builder.PACKAGE}.list').read_text().splitlines()
+        self.assertIn(target,shipped,'TryExec must name a file this package ships')
+        self.assertIn(script,shipped)
+        self.assertTrue(os.access(private/target.lstrip('/'),os.X_OK))
+        run('--remove',builder.PACKAGE)
+        self.assertTrue((private/'etc/xdg/autostart/halcyon-islands-bootstrap.desktop').exists())
+        self.assertFalse((private/script.lstrip('/')).exists())
+        self.assertFalse((private/target.lstrip('/')).exists(),'a removed package must not run at login')
     def test_lintian(self):
         result=subprocess.run(['lintian','--allow-root','--fail-on','error',str(self.deb)],capture_output=True,text=True)
         if ARTIFACTS:(ARTIFACTS/'lintian.txt').write_text(result.stdout+result.stderr)
