@@ -1,0 +1,354 @@
+{
+  "schema_version": 1,
+  "generated_on": "2026-11-14",
+  "review_status": "Maintainer approved the set with the header-removal correction; selected for the 0.7.0 README.",
+  "repository_head": "658010ca3130e581f428842927f88028937d4dcd",
+  "source_brief": "readme-images-brief.md, supplied by maintainer",
+  "method": "Built-in image_gen generation, plus one built-in edit call for desktop-configurations. Repository reference images only. No API or CLI generation.",
+  "images": [
+    {
+      "name": "hero-graphic",
+      "description": "Halcyon identity with abstract wing, grouped Islands and useful widgets.",
+      "prompt": "Create a polished wide 16:9 PNG illustration for the Halcyon README, approximately 1536x864. This is a generated documentation illustration of an existing Rust/libcosmic COSMIC desktop app, not a redesign or an actual screenshot. Restrained native Linux UI, rounded rectangles, simple symbolic icons, quiet charcoal and lavender, crisp readable sans serif. Use only fictional sample data. No real people, personal information, real events, external album art, claims, watermarks, devices or perspective mockups. No em or en dashes. Preserve the recognizable native component geometry from the reference images. Reference is the previous hero, supplied for identity and component style. Make a refreshed graphic hero. Left third: the reference Halcyon bird app icon above a large white wordmark 'Halcyon', subtitle 'Complete Desktop Customization'. Right two thirds: sculptural indigo and lavender abstract wing behind compact native UI. Top: small grouped Islands launcher, clock, sound/network/power capsules. Below: regular rectangular Music player with original abstract lavender art, title 'Blue Hour', artist 'Mira', controls; a native System monitor showing CPU 18%, RAM 7.9 / 31 GiB, Disk 112 / 256 GiB; a small Notes card with 'Today', 'Sketch a new idea', 'Take a break'. Balanced negative space, rich deep ink ground, no feature-list poster. The wing is promotional artwork, not a bundled desktop.",
+      "reference_images": [
+        {
+          "path": "docs/presentation/055-readme/hero-graphic.png",
+          "role": "reference image, not an edit target",
+          "sha256": "6dbf7bfdce2227947f7369913ab5482fc750c8c26dcf09777fbf4cc6f86c23cf"
+        }
+      ],
+      "destination": "docs/presentation/070-readme/hero-graphic.png",
+      "tool": "built-in image_gen",
+      "transparent_background": false,
+      "generated_source": "/home/workstation/.codex/generated_images/01a1d879-3036-70a2-b964-c58026b29cc7/exec-a3ff5313-c710-4858-898e-f6d032b88c9e.png",
+      "sha256": "58ed76dacc88864f5cf615928f496c99fce4c6d0e7e5e53676c4b8b25e5fbe6a",
+      "bytes": 1843271,
+      "dimensions": [
+        1672,
+        941
+      ],
+      "postprocessing": "None. Original PNG copied unchanged."
+    },
+    {
+      "name": "desktop-configurations",
+      "description": "Three desktop appearances with coordinated wallpaper, widgets and bars.",
+      "prompt": "Edit the supplied Halcyon desktop-configurations illustration. Make exactly one change: remove the entire editorial header at the top, including the lavender wave logo, the word 'Halcyon', and the tagline 'A calm wallpaper experience for COSMIC'. Replace those marks with the same uninterrupted dark charcoal background already around them. Preserve everything else: all three desktop appearance cards, their positions, spacing, colors, native-style UI, wallpapers, rain, clocks, music cards, and the three labels 'Rainy Lake', 'Paper', 'Deep Purple' at the bottom. Keep the same wide canvas and do not crop, resize, reflow or enlarge the three appearances. No replacement title, logo, subtitle, tagline, watermark or extra text. The three appearance labels must stay spelled exactly as given. This is a narrow correction to a maintainer-approved generated README illustration. Output PNG, opaque background.",
+      "reference_images": [
+        {
+          "path": "docs/presentation/070-readme/references/desktop-configurations-with-header.png",
+          "role": "edit target, approved original composition with header",
+          "sha256": "2fbc90a00d432dd1a7f7f7fdac3f92e8ead7a8d1b8021f8c9ffdee6e8cdfbd54"
+        }
+      ],
+      "destination": "docs/presentation/070-readme/desktop-configurations.png",
+      "tool": "built-in image_gen",
+      "transparent_background": false,
+      "generated_source": "/home/workstation/.codex/generated_images/01a1d879-3036-70a2-b964-c58026b29cc7/exec-62c2c5ba-bec9-4dca-9d4d-698b038cd0ff.png",
+      "sha256": "e5a618853f15afdeb00b117d9b3ab0e1b574cd5e32e23feb704b6d050387c5d5",
+      "bytes": 1771163,
+      "dimensions": [
+        1672,
+        941
+      ],
+      "postprocessing": "None. Original PNG copied unchanged.",
+      "generation_history": [
+        {
+          "name": "desktop-configurations",
+          "description": "Three desktop appearances with coordinated wallpaper, widgets and bars.",
+          "prompt": "Create a polished wide 16:9 PNG illustration for the Halcyon README, approximately 1536x864. This is a generated documentation illustration of an existing Rust/libcosmic COSMIC desktop app, not a redesign or an actual screenshot. Restrained native Linux UI, rounded rectangles, simple symbolic icons, quiet charcoal and lavender, crisp readable sans serif. Use only fictional sample data. No real people, personal information, real events, external album art, claims, watermarks, devices or perspective mockups. No em or en dashes. Preserve the recognizable native component geometry from the reference images. Three equal landscape desktop vignettes side by side across a dark charcoal gallery, no monitor frames. Labels beneath: 'Rainy Lake', 'Paper', 'Deep Purple'. First uses the reference fog wallpaper with green hills, warm gray sky and mist, warm sand-colored bare clock behind the ridge with bottom of digits partially hidden, subtle rain on glass, bars hidden except a small handle at right. Middle is a light cream desktop with quiet pale paper landscape, analog clock and small rectangular Music card in the reference Paper widget style, slim native dock. Third uses reference blue-purple lake and mountains at dusk, lavender accents on deep purple widgets, compact At a glance with time and weather and a small rectangular Music card; unobtrusive grouped top Islands. These are illustrative arrangements, with no invented Settings controls. Keep wallpaper open and tiny UI carefully placed.",
+          "reference_images": [
+            {
+              "path": "docs/presentation/055-readme/widgets-elements-dark.png",
+              "role": "reference image, not an edit target",
+              "sha256": "0cd2ffdf1a81f8a2179cedab2bda4437f51135ccc1ac98f5cecd63fddeff584a"
+            },
+            {
+              "path": "assets/wallpapers/halcyon-fog.jpg",
+              "role": "reference image, not an edit target",
+              "sha256": "a70dd3ae5aec3e676c09ec09c6d3ae42c0ae9df6bc20ff808936be82a63506e5"
+            },
+            {
+              "path": "assets/wallpapers/halcyon-night.jpg",
+              "role": "reference image, not an edit target",
+              "sha256": "1e68970031b3d58dbe0c617515d15df9baa1dfd5a13ad4c472d36cecf2a1cf2d"
+            }
+          ],
+          "destination": "docs/presentation/070-readme/references/desktop-configurations-with-header.png",
+          "tool": "built-in image_gen",
+          "transparent_background": false,
+          "generated_source": "/home/workstation/.codex/generated_images/01a1d879-3036-70a2-b964-c58026b29cc7/exec-a1490ac7-0322-46d0-9712-ce0e56578650.png",
+          "sha256": "2fbc90a00d432dd1a7f7f7fdac3f92e8ead7a8d1b8021f8c9ffdee6e8cdfbd54",
+          "bytes": 1779636,
+          "dimensions": [
+            1672,
+            941
+          ],
+          "postprocessing": "None. Original PNG copied unchanged."
+        }
+      ],
+      "revision_note": "Maintainer requested removal of the header and tagline, preserving the three appearances and labels."
+    },
+    {
+      "name": "widgets-elements-dark",
+      "description": "Clock, Weather, Notes, System, Focus and Music components on charcoal.",
+      "prompt": "Create a polished wide 16:9 PNG illustration for the Halcyon README, approximately 1536x864. This is a generated documentation illustration of an existing Rust/libcosmic COSMIC desktop app, not a redesign or an actual screenshot. Restrained native Linux UI, rounded rectangles, simple symbolic icons, quiet charcoal and lavender, crisp readable sans serif. Use only fictional sample data. No real people, personal information, real events, external album art, claims, watermarks, devices or perspective mockups. No em or en dashes. Preserve the recognizable native component geometry from the reference images. A clean 3 by 2 gallery of six individual native widgets on uniform dark charcoal #151a21, no wallpaper. Follow reference widget gallery but cleaner spacing and legible simpler data. Top row: cream analog clock, dark lavender Weather card with 'Sample city', '21\u00b0', 'Partly cloudy', two forecast entries; Notes with 'Today', checkbox 'Sketch a new idea', checkbox 'Take a break'. Bottom: native System monitor with CPU 18%, RAM 7.9 / 31 GiB, Disk 112 / 256 GiB and slim lavender bars; mint Focus card with circular progress '18:42', 'Deep work', Pause button; cream regular rectangular Music card matching native widget-builder reference, original abstract purple square artwork, 'Blue Hour', 'Mira', previous pause next controls, thin progress bar. Generous outer margins, no invented external labels, no neon, no scenery.",
+      "reference_images": [
+        {
+          "path": "docs/presentation/055-readme/widgets-elements-dark.png",
+          "role": "reference image, not an edit target",
+          "sha256": "0cd2ffdf1a81f8a2179cedab2bda4437f51135ccc1ac98f5cecd63fddeff584a"
+        },
+        {
+          "path": "docs/screenshots/055/widget-builder.png",
+          "role": "reference image, not an edit target",
+          "sha256": "b4edd9a25e4704816b307a57dc7c41a261caa14b24b058b241c577a1e7ee2fb5"
+        }
+      ],
+      "destination": "docs/presentation/070-readme/widgets-elements-dark.png",
+      "tool": "built-in image_gen",
+      "transparent_background": false,
+      "generated_source": "/home/workstation/.codex/generated_images/01a1d879-3036-70a2-b964-c58026b29cc7/exec-6dabd6e5-cfba-4c60-8032-74105f20e9ab.png",
+      "sha256": "5035027437e8030f743482aaee4faa5b28f49c50e5871f704e635e5cdb913f65",
+      "bytes": 1384276,
+      "dimensions": [
+        1672,
+        941
+      ],
+      "postprocessing": "None. Original PNG copied unchanged."
+    },
+    {
+      "name": "panel-elements-dark",
+      "description": "Islands, Penumbra, Activity island states and the edge launcher.",
+      "prompt": "Create a polished wide 16:9 PNG illustration for the Halcyon README, approximately 1536x864. This is a generated documentation illustration of an existing Rust/libcosmic COSMIC desktop app, not a redesign or an actual screenshot. Restrained native Linux UI, rounded rectangles, simple symbolic icons, quiet charcoal and lavender, crisp readable sans serif. Use only fictional sample data. No real people, personal information, real events, external album art, claims, watermarks, devices or perspective mockups. No em or en dashes. Preserve the recognizable native component geometry from the reference images. A spacious component study on solid charcoal background, no wallpaper or desktop. Four quadrants with small clear headings. Top left 'Islands': grouped floating launcher, time, status capsules and a short rounded icon dock, as reference. Top right 'Penumbra': top bar and bottom dock whose backgrounds fade softly into charcoal, as reference. Bottom left 'Activity island': show two alternative states separated by generous space, a compact pill with tiny waveform and 'Blue Hour', then an expanded rounded popup with two grouped fictional notifications 'Notes' and 'Export complete', and a simple file shelf row with file icons 'Sketch.txt', 'Palette.png'. These are separate illustration states of one component, not simultaneously open app windows. Bottom right 'Edge menu': a right-screen-edge icon-only vertical slide-out launcher with six generic app/utility icons in a narrow dark rounded tray, plus a separate visibly protruding slim grab handle on its outer edge. No text labels inside that launcher, no text-based application list. No extra status indicators or OS logos.",
+      "reference_images": [
+        {
+          "path": "docs/presentation/055-readme/panel-elements-dark.png",
+          "role": "reference image, not an edit target",
+          "sha256": "00047948e8585cd8a81344c6d0a7251702e28a0a4b630e0800dd41ab4bffc300"
+        }
+      ],
+      "destination": "docs/presentation/070-readme/panel-elements-dark.png",
+      "tool": "built-in image_gen",
+      "transparent_background": false,
+      "generated_source": "/home/workstation/.codex/generated_images/01a1d879-3036-70a2-b964-c58026b29cc7/exec-f4f64069-ffbf-49d4-b681-e234896c2975.png",
+      "sha256": "bfff405f2bb44ced8afbb82e15c61b93c79bf65d8a481866741043b9c5a066f0",
+      "bytes": 1299174,
+      "dimensions": [
+        1672,
+        941
+      ],
+      "postprocessing": "None. Original PNG copied unchanged."
+    },
+    {
+      "name": "wallpaper-effects",
+      "description": "Rain on glass, snow, fog and cloud shadows over bundled landscape moods.",
+      "prompt": "Create a polished wide 16:9 PNG illustration for the Halcyon README, approximately 1536x864. This is a generated documentation illustration of an existing Rust/libcosmic COSMIC desktop app, not a redesign or an actual screenshot. Restrained native Linux UI, rounded rectangles, simple symbolic icons, quiet charcoal and lavender, crisp readable sans serif. Use only fictional sample data. No real people, personal information, real events, external album art, claims, watermarks, devices or perspective mockups. No em or en dashes. Preserve the recognizable native component geometry from the reference images. Wide wallpaper effects illustration split into four equal edge-to-edge vertical landscape panels. No UI or text. Panel 1: misty green wooded hills and still lake inspired by bundled fog wallpaper, rain on foreground glass with varied small droplets, a few short irregular trails, subtle refraction, not uniform streaks. Panel 2: snowy conifers and pale distant mountain, varied small falling snowflakes. Panel 3: layered green hills and water inspired by reference fog wallpaper, low soft horizontal fog, clear foreground. Panel 4: blue-purple lake and mountain scene inspired by bundled night wallpaper, broad soft moving-cloud shadows over ridges and water, clear air. Natural, calm, realistic landscape textures. Visually distinct effect treatments; still-frame conceptual representations, not a purported renderer capture.",
+      "reference_images": [
+        {
+          "path": "assets/wallpapers/halcyon-fog.jpg",
+          "role": "reference image, not an edit target",
+          "sha256": "a70dd3ae5aec3e676c09ec09c6d3ae42c0ae9df6bc20ff808936be82a63506e5"
+        },
+        {
+          "path": "assets/wallpapers/halcyon-night.jpg",
+          "role": "reference image, not an edit target",
+          "sha256": "1e68970031b3d58dbe0c617515d15df9baa1dfd5a13ad4c472d36cecf2a1cf2d"
+        }
+      ],
+      "destination": "docs/presentation/070-readme/wallpaper-effects.png",
+      "tool": "built-in image_gen",
+      "transparent_background": false,
+      "generated_source": "/home/workstation/.codex/generated_images/01a1d879-3036-70a2-b964-c58026b29cc7/exec-26450f49-3e06-45d6-8890-add47cb0a5e8.png",
+      "sha256": "bd777726cdbcf599562aebbff96bcb2164bbcda1683c89d56622b5ef67e19243",
+      "bytes": 2227852,
+      "dimensions": [
+        1672,
+        941
+      ],
+      "postprocessing": "None. Original PNG copied unchanged."
+    },
+    {
+      "name": "audio-elements-dark",
+      "description": "Native radial bars, orbit dots, pulse rings and a discrete bar spectrum.",
+      "prompt": "Create a polished wide 16:9 PNG illustration for the Halcyon README, approximately 1536x864. This is a generated documentation illustration of an existing Rust/libcosmic COSMIC desktop app, not a redesign or an actual screenshot. Restrained native Linux UI, rounded rectangles, simple symbolic icons, quiet charcoal and lavender, crisp readable sans serif. Use only fictional sample data. No real people, personal information, real events, external album art, claims, watermarks, devices or perspective mockups. No em or en dashes. Preserve the recognizable native component geometry from the reference images. Isolated audio components on a single uniform charcoal #151a21 background. Three circular native music widgets in a horizontal row, equal size, wide spacing, based on the three exact native references. Left fine radial lavender bars, middle orbit dots in concentric tracks, right thin lavender pulse rings. Flat charcoal centers, inside each 'NOW PLAYING', 'Blue Hour', 'Mira', previous pause next icons; no album art. Beneath them, separate from players: a broad low audio spectrum made ONLY of discrete thin vertical lavender bars of variable height. A small generic COSMIC dock centered in front of a short section of the spectrum illustrates layering behind the dock. No waveform ribbon, scenery, neon, glow or invented control panels. Native reference geometry is essential.",
+      "reference_images": [
+        {
+          "path": "docs/screenshots/055/music-bars.png",
+          "role": "reference image, not an edit target",
+          "sha256": "3839c49e3e9fd587d454c4fd49eae2d56479865236a080f6c3d956091509ace9"
+        },
+        {
+          "path": "docs/screenshots/055/music-dots.png",
+          "role": "reference image, not an edit target",
+          "sha256": "69ee8ca9b42bda49e6d264bca81a8c2283eea1ac235bef437f2ffed0132fc87a"
+        },
+        {
+          "path": "docs/screenshots/055/music-rings.png",
+          "role": "reference image, not an edit target",
+          "sha256": "8d5afeb3043007b80a8fa734c0aca3c40c13039d3ad1580a6096bfc284e8ea92"
+        }
+      ],
+      "destination": "docs/presentation/070-readme/audio-elements-dark.png",
+      "tool": "built-in image_gen",
+      "transparent_background": false,
+      "generated_source": "/home/workstation/.codex/generated_images/01a1d879-3036-70a2-b964-c58026b29cc7/exec-e466c2b5-fb2d-40e4-857f-ad84ad4e3ef2.png",
+      "sha256": "b5e2212556a6344da9a1f9f1ffbdc9625f375e7476435b9b18c0dc2ddf7d1b2e",
+      "bytes": 1505098,
+      "dimensions": [
+        1672,
+        941
+      ],
+      "postprocessing": "None. Original PNG copied unchanged."
+    },
+    {
+      "name": "scheduled-appearances",
+      "description": "Dawn, midday and evening appearances as a calm time-of-day triptych.",
+      "prompt": "Create a polished wide 16:9 PNG illustration for the Halcyon README, approximately 1536x864. This is a generated documentation illustration of an existing Rust/libcosmic COSMIC desktop app, not a redesign or an actual screenshot. Restrained native Linux UI, rounded rectangles, simple symbolic icons, quiet charcoal and lavender, crisp readable sans serif. Use only fictional sample data. No real people, personal information, real events, external album art, claims, watermarks, devices or perspective mockups. No em or en dashes. Preserve the recognizable native component geometry from the reference images. Three equal desktop vignettes side by side on charcoal, presenting existing time-of-day saved appearances. Small labels below 'Dawn', 'Midday', 'Evening'. Dawn: warm foggy green hills inspired by fog reference, cream bare time '07:00', subtle sand accents. Midday: bright muted blue-green landscape and cream Paper analog clock, compact matching dock. Evening: bundled reference indigo and purple lake mountains with bare time '20:00', small dark lavender Music card 'Blue Hour', 'Mira'. Match positions and sizes of widgets across scenes so appearance switching is clear. A thin understated line with three dots joins labels below, as editorial illustration only. No fake scheduling app or controls, no false feature claims, no calendar data.",
+      "reference_images": [
+        {
+          "path": "assets/wallpapers/halcyon-fog.jpg",
+          "role": "reference image, not an edit target",
+          "sha256": "a70dd3ae5aec3e676c09ec09c6d3ae42c0ae9df6bc20ff808936be82a63506e5"
+        },
+        {
+          "path": "assets/wallpapers/halcyon-night.jpg",
+          "role": "reference image, not an edit target",
+          "sha256": "1e68970031b3d58dbe0c617515d15df9baa1dfd5a13ad4c472d36cecf2a1cf2d"
+        }
+      ],
+      "destination": "docs/presentation/070-readme/scheduled-appearances.png",
+      "tool": "built-in image_gen",
+      "transparent_background": false,
+      "generated_source": "/home/workstation/.codex/generated_images/01a1d879-3036-70a2-b964-c58026b29cc7/exec-0aeeabbb-5e19-45d3-9d1d-7bc287c499dd.png",
+      "sha256": "7dddd7d16d8b8a3973111e35784e77fec12ede670452a29f079a510b2fada8f0",
+      "bytes": 1741355,
+      "dimensions": [
+        1672,
+        941
+      ],
+      "postprocessing": "None. Original PNG copied unchanged."
+    },
+    {
+      "name": "depth-clock-rain",
+      "description": "Clock occluded by the wallpaper ridge with foreground rain on glass.",
+      "prompt": "Create a polished wide 16:9 PNG illustration for the Halcyon README, approximately 1536x864. This is a generated documentation illustration of an existing Rust/libcosmic COSMIC desktop app, not a redesign or an actual screenshot. Restrained native Linux UI, rounded rectangles, simple symbolic icons, quiet charcoal and lavender, crisp readable sans serif. Use only fictional sample data. No real people, personal information, real events, external album art, claims, watermarks, devices or perspective mockups. No em or en dashes. Preserve the recognizable native component geometry from the reference images. A single beautiful wide desktop scene based closely on bundled fog wallpaper reference: muted green forested hills, misty water, warm overcast sky. The main subject is a large elegant bare digital clock '08:42' placed low in the sky so the FOREGROUND MOUNTAIN RIDGE OCCLUDES the lower 20 to 30 percent of its digits. Essential physical layer order: sky at back, clock in middle, continuous opaque wooded ridge in front of clock, then rain on glass in front of the entire scene including visible clock and ridge. No clock fragments painted over the mountain. Sparse natural drops of changing size, several irregular short trails, mild refraction, never uniformly spaced streaks. Warm off-white clock, no clock card. Small right edge handle, bars autohidden. Leave ample quiet sky. No headings, widgets or captions. Illustrate actual depth effect with rain, not transparent typography or fog over the digits.",
+      "reference_images": [
+        {
+          "path": "assets/wallpapers/halcyon-fog.jpg",
+          "role": "reference image, not an edit target",
+          "sha256": "a70dd3ae5aec3e676c09ec09c6d3ae42c0ae9df6bc20ff808936be82a63506e5"
+        }
+      ],
+      "destination": "docs/presentation/070-readme/depth-clock-rain.png",
+      "tool": "built-in image_gen",
+      "transparent_background": false,
+      "generated_source": "/home/workstation/.codex/generated_images/01a1d879-3036-70a2-b964-c58026b29cc7/exec-dedd6a54-ac5f-4725-a143-5393181e8e60.png",
+      "sha256": "d438149508ab47a6356cbba71c0e21f30ea4f5423f3e9413ae96a2a58526b07b",
+      "bytes": 1903581,
+      "dimensions": [
+        1672,
+        941
+      ],
+      "postprocessing": "None. Original PNG copied unchanged."
+    },
+    {
+      "name": "looks",
+      "description": "Rainy Lake and Deep Purple as complete coordinated desktop looks.",
+      "prompt": "Create a polished wide 16:9 PNG illustration for the Halcyon README, approximately 1536x864. This is a generated documentation illustration of an existing Rust/libcosmic COSMIC desktop app, not a redesign or an actual screenshot. Restrained native Linux UI, rounded rectangles, simple symbolic icons, quiet charcoal and lavender, crisp readable sans serif. Use only fictional sample data. No real people, personal information, real events, external album art, claims, watermarks, devices or perspective mockups. No em or en dashes. Preserve the recognizable native component geometry from the reference images. An editorial comparison of two complete coordinated desktop looks, two equal wide landscape desktop cards stacked vertically filling most of a wide canvas, with slim charcoal side margin containing labels. Upper labeled 'Rainy Lake': bundled reference fog wallpaper, green wooded rolling hills and warm misty sky, sand/off-white bare clock '08:42' partially hidden behind foreground ridge, foreground rain on glass, autohiding bars concealed, visible slim edge handle. Lower labeled 'Deep Purple': bundled reference purple-blue night lake and mountain wallpaper, dark purple and lavender compact At a glance widget with time '20:00', 'Sample city', '18\u00b0', small regular Music card 'Blue Hour', 'Mira', original abstract purple artwork, coordinated grouped Islands and dock. Keep UI compact and wallpaper dominant. At bottom a small editorial strip 'Look Studio' with four generic matching app icons shown as rounded-square and circular variants in two lavender tints, illustrating existing icon shape and tint, no invented Settings controls or feature buttons. No other text. These are illustrative arrangements, not exact preset screenshots.",
+      "reference_images": [
+        {
+          "path": "assets/wallpapers/halcyon-fog.jpg",
+          "role": "reference image, not an edit target",
+          "sha256": "a70dd3ae5aec3e676c09ec09c6d3ae42c0ae9df6bc20ff808936be82a63506e5"
+        },
+        {
+          "path": "assets/wallpapers/halcyon-night.jpg",
+          "role": "reference image, not an edit target",
+          "sha256": "1e68970031b3d58dbe0c617515d15df9baa1dfd5a13ad4c472d36cecf2a1cf2d"
+        },
+        {
+          "path": "docs/presentation/055-readme/widgets-elements-dark.png",
+          "role": "reference image, not an edit target",
+          "sha256": "0cd2ffdf1a81f8a2179cedab2bda4437f51135ccc1ac98f5cecd63fddeff584a"
+        }
+      ],
+      "destination": "docs/presentation/070-readme/looks.png",
+      "tool": "built-in image_gen",
+      "transparent_background": false,
+      "generated_source": "/home/workstation/.codex/generated_images/01a1d879-3036-70a2-b964-c58026b29cc7/exec-449fde42-147e-4023-8184-e7ab042a999e.png",
+      "sha256": "6e75fc4f0db6385755a367322452bd142db25a279e4aea0f8b0482eb7117353b",
+      "bytes": 1872918,
+      "dimensions": [
+        1672,
+        941
+      ],
+      "postprocessing": "None. Original PNG copied unchanged."
+    }
+  ],
+  "contact_sheet": {
+    "destination": "docs/presentation/070-readme/contact-sheet.png",
+    "inputs": [
+      "docs/presentation/070-readme/hero-graphic.png",
+      "docs/presentation/070-readme/desktop-configurations.png",
+      "docs/presentation/070-readme/widgets-elements-dark.png",
+      "docs/presentation/070-readme/panel-elements-dark.png",
+      "docs/presentation/070-readme/wallpaper-effects.png",
+      "docs/presentation/070-readme/audio-elements-dark.png",
+      "docs/presentation/070-readme/scheduled-appearances.png",
+      "docs/presentation/070-readme/depth-clock-rain.png",
+      "docs/presentation/070-readme/looks.png"
+    ],
+    "method": "ImageMagick montage, thumbnails and labels only. Individual outputs unchanged.",
+    "command_argv": [
+      "montage",
+      "-label",
+      "hero-graphic",
+      "docs/presentation/070-readme/hero-graphic.png",
+      "-label",
+      "desktop-configurations",
+      "docs/presentation/070-readme/desktop-configurations.png",
+      "-label",
+      "widgets-elements-dark",
+      "docs/presentation/070-readme/widgets-elements-dark.png",
+      "-label",
+      "panel-elements-dark",
+      "docs/presentation/070-readme/panel-elements-dark.png",
+      "-label",
+      "wallpaper-effects",
+      "docs/presentation/070-readme/wallpaper-effects.png",
+      "-label",
+      "audio-elements-dark",
+      "docs/presentation/070-readme/audio-elements-dark.png",
+      "-label",
+      "scheduled-appearances",
+      "docs/presentation/070-readme/scheduled-appearances.png",
+      "-label",
+      "depth-clock-rain",
+      "docs/presentation/070-readme/depth-clock-rain.png",
+      "-label",
+      "looks",
+      "docs/presentation/070-readme/looks.png",
+      "-font",
+      "DejaVu-Sans",
+      "-pointsize",
+      "20",
+      "-fill",
+      "#eeeaf8",
+      "-background",
+      "#151a21",
+      "-gravity",
+      "center",
+      "-geometry",
+      "560x315+16+16",
+      "-tile",
+      "3x3",
+      "docs/presentation/070-readme/contact-sheet.png"
+    ],
+    "sha256": "154dde2e7ab8e3c372cb9d3a1cdde12bb9db0ad5f339b3683d62717d299767c9",
+    "bytes": 8287710,
+    "dimensions": [
+      1776,
+      1125
+    ]
+  }
+}
