@@ -137,6 +137,9 @@ pub enum Event {
     /// Some time after startup: an island that has not connected by now is
     /// not coming, so nothing should still hold COSMIC's popups.
     Settled,
+    /// The grace after the last island left ran out. Carries the departure
+    /// it belongs to, so an island that came back in time cancels it.
+    Released(u64),
 }
 #[derive(Clone, Debug)]
 pub enum ClientEvent {
@@ -162,6 +165,8 @@ pub struct Owner {
     pub dnd: bool,
     pub system: Vec<super::system::Activity>,
     pub clients: usize,
+    /// Counts departures of the last island; see `Event::Released`.
+    pub departures: u64,
     pub timer: Option<super::timer::Timer>,
     /// Artwork address, its dominant colour and its island thumbnail, as
     /// many as the art cache.
@@ -179,6 +184,7 @@ impl Default for Owner {
                 dnd: false,
                 system: Vec::new(),
                 clients: 0,
+                departures: 0,
                 timer: None,
                 tints: Vec::new(),
                 sender: watch::channel(Snapshot::default()).0,
