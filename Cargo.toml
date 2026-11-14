@@ -56,6 +56,9 @@ image = { version = "=0.25.10", default-features = false, features = ["png", "jp
 # `p2p` speaks to the notification daemon over the panel's applet socket; it
 # only enables uuid's v4 generator, already locked.
 zbus = { version = "=5.17.0", default-features = false, features = ["tokio", "p2p"] }
+# Rain holds still on an output the compositor turned off. The version
+# cosmic-protocols already builds, so no new crates are compiled.
+wayland-protocols-wlr = { version = "=0.3.12", features = ["client"] }
 # Calendar authorization uses the system keyring and Google's native-app PKCE flow.
 secret-service = { version = "=5.2.0", features = ["rt-tokio-crypto-rust"] }
 base64 = "=0.22.1"

@@ -170,8 +170,10 @@ pub enum Message {
     RainLifecycle(crate::rain::lifecycle::State),
     /// A quiet scene finished fading out; its surfaces can go.
     RainRetired(u64),
-    /// Look for rain surfaces whose frames stopped coming.
-    RainWatch(Instant),
+    /// Rain surfaces whose frames stopped coming: re-arm them.
+    RainNudge(Vec<window::Id>),
+    /// What hides the desktop changed.
+    RainDesk(crate::rain::desk::Desk),
     /// cosmic-bg rewrote its state file.
     RainReceipt,
     RainReady(
@@ -586,8 +588,9 @@ impl cosmic::Application for Cards {
         ];
         if self.config.rain.wanted() {
             subscriptions.push(crate::rain::lifecycle::watch().map(Message::RainLifecycle));
-            if self.rain.animating() {
-                subscriptions.push(cosmic::iced::time::every(rain::WATCH).map(Message::RainWatch));
+            subscriptions.push(crate::rain::desk::watch().map(Message::RainDesk));
+            if let Some(watch) = self.rain.watch() {
+                subscriptions.push(watch.map(Message::RainNudge));
             }
             let paths = self.rain.paths();
             if !paths.is_empty() {
@@ -861,6 +864,8 @@ impl cosmic::Application for Cards {
         let depth = self.depth_sync();
         let spectrum = self.sync_spectrum();
         let rain = self.rain_sync();
+        self.rain
+            .watch_sync(self.display_generation, Instant::now());
         let glass = self.glass_sync();
         if activity_dirty {
             self.publish_activity();
@@ -1173,7 +1178,11 @@ impl Cards {
                 Task::none()
             }
             Message::RainRetired(generation) => self.rain.retired(generation),
-            Message::RainWatch(now) => self.rain.watch(now),
+            Message::RainNudge(ids) => self.rain.nudge(ids),
+            Message::RainDesk(desk) => {
+                self.rain.desk = desk;
+                Task::none()
+            }
             Message::RainReceipt => self.rain_receipt(),
             Message::RainReady(id, generation, entry, pixels, stamp) => {
                 self.rain.ready(id, generation, entry, pixels, stamp);

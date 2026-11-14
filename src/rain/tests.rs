@@ -1256,3 +1256,79 @@ fn rain_effects_keep_the_ridge_in_front_of_the_depth_clock() {
         assert!(sky > 0.6, "{effect:?}: the clock is lost ({sky})");
     }
 }
+
+/// A desktop the effect is hidden on holds it still: no frames asked for
+/// and no time passing. Shown again, it carries on from the same moment
+/// rather than jumping ahead, and at the same pace as before.
+#[test]
+fn rain_held_still_while_hidden_resumes_where_it_stopped() {
+    use cosmic::iced::widget::shader::{Action, Program as _};
+    for mode in [Mode::Procedural, Mode::Hybrid] {
+        let mut program = gpu::Program {
+            scene: gpu::Scene::new(crate::desktop::wallpaper::media::Pixels {
+                width: 1,
+                height: 1,
+                rgba: vec![0, 0, 0, 255],
+            }),
+            preferences: Preferences {
+                mode,
+                ..Default::default()
+            },
+            running: true,
+            fixed_time: None,
+            fade: gpu::Fade {
+                enabled: true,
+                ..Default::default()
+            },
+        };
+        let mut state = gpu::State::default();
+        let bounds = cosmic::iced::Rectangle {
+            width: 1920.,
+            height: 1080.,
+            ..Default::default()
+        };
+        let start = std::time::Instant::now();
+        let frame = |program: &gpu::Program, state: &mut gpu::State, ms: u64| {
+            let event = cosmic::iced::Event::Window(cosmic::iced::window::Event::RedrawRequested(
+                start + std::time::Duration::from_millis(ms),
+            ));
+            let action: Option<Action<()>> = program.update(
+                state,
+                &event,
+                bounds,
+                cosmic::iced::mouse::Cursor::Unavailable,
+            );
+            let shown = <gpu::Program as cosmic::iced::widget::shader::Program<()>>::draw(
+                program,
+                state,
+                cosmic::iced::mouse::Cursor::Unavailable,
+                bounds,
+            );
+            (action.is_some(), shown.time, shown.fade)
+        };
+        let mut ms = 0;
+        let mut last = (false, 0., 0.);
+        while ms <= 3000 {
+            last = frame(&program, &mut state, ms);
+            ms += 34;
+        }
+        assert!(last.0 && last.1 > 2.5 && last.2 == 1., "{mode:?}: {last:?}");
+        let paused_at = last.1;
+        // Hidden for ten minutes; app messages still redraw it now and then.
+        program.running = false;
+        for minute in 1..=10 {
+            let held = frame(&program, &mut state, ms + minute * 60_000);
+            assert_eq!(held, (false, paused_at, 1.), "{mode:?}: held still");
+        }
+        // Shown again: the same moment first, then the usual pace.
+        program.running = true;
+        let back = ms + 10 * 60_000 + 500;
+        let first = frame(&program, &mut state, back);
+        assert_eq!(first, (true, paused_at, 1.), "{mode:?}: no jump, no fade");
+        let next = frame(&program, &mut state, back + 34);
+        assert!(
+            next.0 && (next.1 - paused_at - 0.034).abs() < 1e-3,
+            "{mode:?}: {next:?}"
+        );
+    }
+}

@@ -23,7 +23,7 @@ pub struct Scene {
     frames: std::sync::atomic::AtomicU64,
     /// When a frame of this scene was last drawn, so the desktop can tell
     /// a surface whose frames stopped coming.
-    drawn: Mutex<Option<Instant>>,
+    drawn: Mutex<Flow>,
     /// A picture that stands between the wallpaper and the glass.
     behind: Mutex<Option<Arc<Behind>>>,
 }
@@ -49,7 +49,7 @@ impl Scene {
             resources: Mutex::new(None),
             trace: std::env::var_os("HALCYON_RAIN_TRACE").is_some(),
             frames: std::sync::atomic::AtomicU64::new(0),
-            drawn: Mutex::new(None),
+            drawn: Mutex::new(Flow::default()),
             behind: Mutex::new(None),
         })
     }
@@ -63,12 +63,45 @@ impl Scene {
             .unwrap_or_else(|e| e.into_inner())
             .clone()
     }
-    /// When a frame of this scene was last drawn, if ever.
-    pub fn drawn(&self) -> Option<Instant> {
+    /// How this scene's frames have been coming.
+    pub fn flow(&self) -> Flow {
         *self.drawn.lock().unwrap_or_else(|e| e.into_inner())
     }
+    /// Count a frame drawn at `now`.
+    pub fn mark_drawn_at(&self, now: Instant) {
+        let mut flow = self.drawn.lock().unwrap_or_else(|e| e.into_inner());
+        let paced = flow
+            .last
+            .is_some_and(|last| now.saturating_duration_since(last) <= Flow::GAP);
+        flow.streak = if paced {
+            flow.streak.saturating_add(1)
+        } else {
+            1
+        };
+        flow.last = Some(now);
+    }
     fn mark_drawn(&self) {
-        *self.drawn.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
+        self.mark_drawn_at(Instant::now());
+    }
+}
+/// When a scene last drew, and how many frames in a row came at an
+/// animation's pace before it. A frame the compositor's frame callbacks
+/// paced comes every few tens of milliseconds; a lone frame (one a
+/// configure or an app message forced) starts a new streak of one.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Flow {
+    pub last: Option<Instant>,
+    pub streak: u32,
+}
+impl Flow {
+    /// The longest gap between two frames of one streak. The slowest
+    /// quality draws 15 frames a second, about 67 ms apart.
+    pub const GAP: Duration = Duration::from_millis(250);
+    /// Frames in a row that show the frame callbacks are coming again.
+    pub const FLOWING: u32 = 8;
+    /// Frames are coming at an animation's pace again since `since`.
+    pub fn flowing_since(&self, since: Instant) -> bool {
+        self.last.is_some_and(|last| last > since) && self.streak >= Self::FLOWING
     }
 }
 #[derive(Clone)]
