@@ -29,9 +29,33 @@ const MENU_PADDING: u32 = 6;
 /// The Arrange toolbar's width, and the narrowest that keeps it on one line.
 const TOOLBAR_WIDTH: f32 = 960.;
 const TOOLBAR_ONE_LINE: f32 = 900.;
-/// The round buttons in a card's corner while arranging.
-const CARD_CONTROL: f32 = 28.;
+/// The round buttons on a card's top edge while arranging.
+const CARD_CONTROL: f32 = 22.;
 const CARD_CONTROL_GAP: f32 = 6.;
+/// The name tab on an arranged card's top edge, and the resize handle on its
+/// lower-right corner.
+const CHROME_TAB: f32 = 22.;
+const CHROME_GRIP: f32 = 22.;
+/// How far the editing chrome reaches past a card's edge: half the gap kept
+/// between widgets, so two neighbors' chrome never meets. The rest of it
+/// lies on the card's padding.
+const CHROME_OUTSET: f32 = crate::layout::WIDGET_GAP / 2.;
+
+/// The name tab and the resize handle: solid, so they read on any card.
+fn chrome_style(p: crate::config::Palette) -> cosmic::iced::widget::container::Style {
+    cosmic::iced::widget::container::Style {
+        background: Some(Background::Color(Color {
+            a: 1.,
+            ..p.background
+        })),
+        border: Border {
+            color: Color { a: 0.6, ..p.accent },
+            width: 1.,
+            radius: (CHROME_TAB / 2.).into(),
+        },
+        ..Default::default()
+    }
+}
 
 /// A round button in an arranged card's corner, in the overlay's colors.
 fn card_control<'a>(
@@ -56,7 +80,7 @@ fn card_control<'a>(
         ..Default::default()
     };
     cosmic::widget::button::custom(
-        container(cosmic::widget::icon::from_name(icon).size(14).icon())
+        container(cosmic::widget::icon::from_name(icon).size(12).icon())
             .center_x(CARD_CONTROL)
             .center_y(CARD_CONTROL),
     )
@@ -375,7 +399,7 @@ impl Cards {
             height.min((self.widget_screen(widget)[1] - 96.).max(1.)),
         ]
     }
-    fn default_position(&self, widget: Widget) -> [f32; 2] {
+    pub(super) fn default_position(&self, widget: Widget) -> [f32; 2] {
         let size = self.widget_size(widget);
         if widget.is_tool() {
             return crate::layout::tool_position(
@@ -462,6 +486,16 @@ impl Cards {
             placed.push([at[0], at[1], size[0], size[1]]);
         }
         self.position_from(widget, &self.effective_positions())
+    }
+    /// Where Arrange draws a card placed at `position`: where its desktop
+    /// surface puts it. Placed surfaces land on whole pixels; the default
+    /// columns center their cards without rounding.
+    pub(super) fn arrange_origin(&self, widget: Widget, position: [f32; 2]) -> [f32; 2] {
+        if self.custom_layout() || widget == Widget::Glance || widget.is_tool() {
+            position.map(f32::round)
+        } else {
+            position
+        }
     }
     pub(super) fn position_from(
         &self,
@@ -560,37 +594,26 @@ impl Cards {
                     .collect()
             }
             Widget::Calendar => {
-                // The column centers its cards; a little slack keeps a card
-                // that is a few pixels taller than its estimate clickable.
-                let cards = if self.config.widget_visible(Widget::Calendar) {
-                    vec![Widget::Calendar]
-                } else {
-                    Vec::new()
-                };
-                if cards.is_empty() {
+                if !self.config.widget_visible(Widget::Calendar) {
                     return Vec::new();
                 }
-                // A card is as tall as its content, up to its share of the
-                // column (the agenda shrinks to its events).
-                let height_of = |card: Widget| {
-                    let share = self.card_height(card);
-                    if card == Widget::Calendar {
-                        self.calendar_natural_height().min(share)
-                    } else {
-                        share
-                    }
-                };
-                let total: f32 = cards.iter().map(|card| height_of(*card)).sum::<f32>()
-                    + cards.len().saturating_sub(1) as f32 * drawer::CARD_GAP;
+                // The card is as tall as its agenda, up to the room the
+                // column gives it; a little slack keeps a card that is a few
+                // pixels taller than its estimate clickable.
+                let room = self.card_height(Widget::Calendar);
                 let height = (self.screen_size[1] - 96. + mu as f32).max(1.);
+                let card_top = self
+                    .calendar_column_top()
+                    .map_or(m, |top| (top - 48.).max(0.) + m);
                 let slack = 24.;
-                let top = ((height - total) / 2. - slack).max(0.);
-                let bottom = ((height + total) / 2. + slack).min(height);
+                let top = (card_top - slack).max(0.);
+                let bottom =
+                    (card_top + self.calendar_natural_height().min(room) + slack).min(height);
                 vec![[
                     0,
                     top.floor() as u32,
                     360 + mu,
-                    (bottom - top).ceil() as u32,
+                    (bottom - top).max(0.).ceil() as u32,
                 ]]
             }
             _ => Vec::new(),
@@ -2098,29 +2121,65 @@ impl Cards {
                 }
             }
         }
+        let (mi, mu) = self.shadow_px();
+        // Every card first, then every card's chrome, so a neighbor never
+        // covers a handle that reaches past its card's edge.
+        let mut chrome_layers: Vec<Element<'_, Message>> = Vec::new();
         for widget in Widget::ALL {
             if !self.arranging_widget(widget) {
                 continue;
             }
             let size = self.widget_size(widget);
-            let position = self.position_from(widget, &self.layout_editor.draft);
+            let at = self.arrange_origin(
+                widget,
+                self.position_from(widget, &self.layout_editor.draft),
+            );
             let selected = self.layout_editor.selected == Some(widget);
-            let drag = opaque(
+            // Everything for one card shares a box that reaches past the
+            // card on every side, so the editing chrome can sit on its edges
+            // and the card keeps its desktop surface's shadow margin.
+            let pad = (mi as f32).max(CHROME_OUTSET);
+            let [width, height] = size;
+            // The card exactly as its desktop surface draws it: the same
+            // element in a box the surface's size, at the surface's place.
+            // The default calendar column also leaves the agenda the room
+            // below the card, as on the desktop.
+            let room = match self.calendar_column_top() {
+                Some(top) if widget == Widget::Calendar => {
+                    (48. + self.calendar_height - top).max(height)
+                }
+                _ => height,
+            };
+            let card = container(self.individual_widget(widget))
+                .width(width.ceil() + mu as f32)
+                .height(room.ceil() + mu as f32);
+            let mut card_layers = vec![
+                pin(card)
+                    .position(Point::new(pad - mi as f32, pad - mi as f32))
+                    .into(),
+            ];
+            // An outline just outside the card. Pressing anywhere within it
+            // starts a drag; it never draws over the card's own content.
+            let ring = 3.;
+            let radius = crate::widget_style::corner_radius(&self.config) + ring;
+            let outline = opaque(
                 mouse_area(
-                    container(label(format!("⠿  {}", widget.title()), 12., p.accent))
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .padding(8)
-                        .align_y(Alignment::End)
+                    container(cosmic::iced::widget::space())
+                        .id(cosmic::widget::Id::new(format!(
+                            "arrange-card-{}",
+                            widget.key()
+                        )))
+                        .width(width + 2. * ring)
+                        .height(height + 2. * ring)
                         .class(cosmic::theme::Container::custom(move |_| {
                             cosmic::iced::widget::container::Style {
                                 border: Border {
                                     color: Color {
-                                        a: if selected { 0.95 } else { 0.35 },
+                                        a: if selected { 0.95 } else { 0.45 },
                                         ..p.accent
                                     },
                                     width: if selected { 2. } else { 1. },
-                                    radius: 16.into(),
+                                    radius: radius.into(),
                                 },
                                 ..Default::default()
                             }
@@ -2129,24 +2188,67 @@ impl Cards {
                 .on_press(Message::LayoutPress(widget))
                 .interaction(mouse::Interaction::Grab),
             );
-            let mut card_layers = vec![self.individual_widget(widget), drag.into()];
+            card_layers.push(
+                pin(outline)
+                    .position(Point::new(pad - ring, pad - ring))
+                    .into(),
+            );
+            let size_box = [width.ceil() + 2. * pad, height.ceil() + 2. * pad];
+            let origin = Point::new(at[0] - pad, at[1] - pad);
+            layers.push(
+                pin(stack(card_layers)
+                    .width(size_box[0])
+                    .height(room.ceil() + 2. * pad))
+                .position(origin)
+                .into(),
+            );
+            let mut card_layers: Vec<Element<'_, Message>> = Vec::new();
+            // The name sits on the top edge.
+            let name = opaque(
+                mouse_area(
+                    container(label(format!("⠿  {}", widget.title()), 11., p.accent))
+                        .id(cosmic::widget::Id::new(format!(
+                            "arrange-name-{}",
+                            widget.key()
+                        )))
+                        .height(CHROME_TAB)
+                        .padding([0, 8])
+                        .align_y(Alignment::Center)
+                        .class(cosmic::theme::Container::custom(move |_| chrome_style(p))),
+                )
+                .on_press(Message::LayoutPress(widget))
+                .interaction(mouse::Interaction::Grab),
+            );
+            card_layers.push(
+                pin(name)
+                    .position(Point::new(pad + 14., pad - CHROME_OUTSET))
+                    .into(),
+            );
+            // The resize handle straddles the lower-right corner.
             let grip = opaque(
                 mouse_area(
-                    container(label("◢", 23., p.accent))
-                        .width(32)
-                        .height(32)
-                        .align_x(Alignment::End)
-                        .align_y(Alignment::End),
+                    container(label("◢", 11., p.accent))
+                        .id(cosmic::widget::Id::new(format!(
+                            "arrange-grip-{}",
+                            widget.key()
+                        )))
+                        .center_x(CHROME_GRIP)
+                        .center_y(CHROME_GRIP)
+                        .class(cosmic::theme::Container::custom(move |_| chrome_style(p))),
                 )
                 .on_press(Message::LayoutResizePress(widget))
                 .interaction(mouse::Interaction::ResizingDiagonallyDown),
             );
             card_layers.push(
                 pin(grip)
-                    .position(Point::new((size[0] - 32.).max(0.), (size[1] - 32.).max(0.)))
+                    .position(Point::new(
+                        pad + width + CHROME_OUTSET - CHROME_GRIP,
+                        pad + height + CHROME_OUTSET - CHROME_GRIP,
+                    ))
                     .into(),
             );
-            // Last, so a click on them never starts a drag.
+            // Last, so a click on them never starts a drag. They straddle
+            // the top edge at the right.
             let controls = row::with_children(vec![
                 card_control(
                     p,
@@ -2165,18 +2267,18 @@ impl Cards {
             card_layers.push(
                 pin(opaque(controls))
                     .position(Point::new(
-                        (size[0] - 8. - 2. * CARD_CONTROL - CARD_CONTROL_GAP).max(0.),
-                        8.,
+                        (pad + width - 14. - 2. * CARD_CONTROL - CARD_CONTROL_GAP).max(pad),
+                        pad - CHROME_OUTSET,
                     ))
                     .into(),
             );
-            let content = stack(card_layers).width(size[0]).height(size[1]);
-            layers.push(
-                pin(content)
-                    .position(Point::new(position[0], position[1]))
+            chrome_layers.push(
+                pin(stack(card_layers).width(size_box[0]).height(size_box[1]))
+                    .position(origin)
                     .into(),
             );
         }
+        layers.extend(chrome_layers);
         let title = column::with_children(vec![
             label("Arrange widgets", 17., p.foreground),
             label(
@@ -2995,6 +3097,8 @@ pub(super) fn set_input_zone<M>(id: window::Id, rects: &[[u32; 4]]) -> Task<M> {
     ))
 }
 
+#[cfg(test)]
+mod arrange_match_tests;
 #[cfg(test)]
 mod input_safety_tests;
 

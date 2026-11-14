@@ -487,6 +487,52 @@ impl Native {
             .map(|(text, bounds, _)| (text, bounds))
             .collect()
     }
+    /// Every text drawn in the real widget tree, with its bounds on screen.
+    pub fn placed_text<M>(&mut self, view: cosmic::Element<'_, M>) -> Vec<(String, Rectangle)> {
+        self.texts(view)
+            .into_iter()
+            .map(|(text, bounds, _)| (text, bounds))
+            .collect()
+    }
+    /// Every scrolling area on screen: its bounds and the size of what it
+    /// holds. Content taller than the bounds shows a scrollbar.
+    pub fn scrollables<M>(&mut self, view: cosmic::Element<'_, M>) -> Vec<(Rectangle, Size)> {
+        #[derive(Default)]
+        struct Find {
+            found: Vec<(Rectangle, Size)>,
+            offset: cosmic::iced::Vector,
+            pending: cosmic::iced::Vector,
+        }
+        impl Operation for Find {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn Operation)) {
+                let previous = self.offset;
+                self.offset += std::mem::take(&mut self.pending);
+                f(self);
+                self.offset = previous;
+            }
+            fn scrollable(
+                &mut self,
+                _: Option<&cosmic::widget::Id>,
+                bounds: Rectangle,
+                content: Rectangle,
+                translation: cosmic::iced::Vector,
+                _: &mut dyn cosmic::iced::advanced::widget::operation::Scrollable,
+            ) {
+                self.found.push((bounds - self.offset, content.size()));
+                self.pending = translation;
+            }
+        }
+        let mut ui = UserInterface::build(
+            view,
+            self.size,
+            std::mem::take(&mut self.cache),
+            &mut self.renderer,
+        );
+        let mut find = Find::default();
+        ui.operate(&self.renderer, &mut find);
+        self.cache = ui.into_cache();
+        find.found
+    }
     /// Every text in the real widget tree with its bounds on screen, and
     /// whether it sits in an area that scrolls sideways.
     fn texts<M>(&mut self, view: cosmic::Element<'_, M>) -> Vec<(String, Rectangle, bool)> {

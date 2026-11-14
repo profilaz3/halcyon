@@ -860,23 +860,52 @@ impl Cards {
             .collect()
     }
     pub(super) fn card_height(&self, widget: Widget) -> f32 {
-        if self.custom_layout() || self.layout_editor.active {
-            return self.widget_size(widget)[1];
-        }
-        if widget == Widget::Calendar {
-            return self.calendar_height.max(1.);
+        if widget == Widget::Calendar
+            && self.explicit_size(widget).is_none()
+            && let Some(top) = self.calendar_column_top()
+        {
+            return self.calendar_room(top);
         }
         self.widget_size(widget)[1]
+    }
+    /// Where the default left column puts the top of the calendar card, on
+    /// screen: where Arrange shows it, centered or under the clock. `None`
+    /// once widgets have places of their own.
+    pub(super) fn calendar_column_top(&self) -> Option<f32> {
+        (!self.custom_layout()).then(|| self.default_position(Widget::Calendar)[1])
+    }
+    /// The height the default column offers the calendar, which shrinks to
+    /// its agenda: the whole column while the card is centered, or what is
+    /// left below it once it moves under the clock.
+    fn calendar_room(&self, top: f32) -> f32 {
+        let screen = self.widget_screen(Widget::Calendar);
+        let centered = (screen[1] - self.widget_size(Widget::Calendar)[1]) / 2.;
+        if top > centered + 0.5 {
+            (48. + self.calendar_height - top).max(1.)
+        } else {
+            self.calendar_height.max(1.)
+        }
     }
     pub(super) fn calendar_widget(&self) -> Element<'_, Message> {
         let mut widgets = Vec::new();
         if self.config.widget_visible(Widget::Calendar) {
             widgets.push(self.with_menu(Widget::Calendar, self.calendar_card()));
         }
+        // The surface reaches past the column by the shadow margin, like the
+        // right-hand column, and the card sits where Arrange shows it.
+        let m = crate::widget_style::shadow_margin(&self.config);
+        let top = self
+            .calendar_column_top()
+            .map_or(0., |top| (top - 48.).max(0.));
         container(column::with_children(widgets).width(Length::Fill))
+            .padding(cosmic::iced::Padding {
+                top: m + top,
+                right: m,
+                bottom: m,
+                left: m,
+            })
             .height(Length::Fill)
             .width(Length::Fill)
-            .align_y(Alignment::Center)
             .into()
     }
     pub(super) fn desktop_widgets(&self) -> Element<'_, Message> {
