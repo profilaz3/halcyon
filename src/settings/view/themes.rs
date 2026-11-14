@@ -129,6 +129,9 @@ impl Settings {
             edit(Edit::KeepRecovery),
         ));
         rows.push(self.theme_stage(&look));
+        if !themes::named().is_empty() {
+            rows.push(self.appearance_themes());
+        }
         rows.push(self.appearance_styles(&look));
         rows.push(self.appearance_color(&look));
         rows.push(self.appearance_surfaces());
@@ -179,12 +182,38 @@ impl Settings {
         column::with_children(rows).spacing(20).into()
     }
 
-    /// Every style as a small specimen; choosing one applies it.
-    fn appearance_styles(&self, look: &Look) -> Element<'_, Message> {
-        // The same width as the rows below, so the right edges line up.
+    /// How many tiles fit in a row and how wide each one is. The rows have
+    /// the same width as the rows below, so the right edges line up.
+    fn tile_grid(&self) -> (usize, f32) {
         let content = (self.content_width() - 2.).max(320.);
         let columns = (((content + 10.) / 178.).floor() as usize).clamp(2, 6);
         let tile = ((content - 10. * (columns - 1) as f32) / columns as f32).floor();
+        (columns, tile)
+    }
+
+    /// The ready-made themes: a style in its own colors, with its own dock
+    /// and panel. Choosing one applies it exactly as it was made.
+    fn appearance_themes(&self) -> Element<'_, Message> {
+        let (_, tile) = self.tile_grid();
+        let tiles: Vec<Element<'_, Message>> = themes::named()
+            .iter()
+            .map(|preset| self.theme_tile(preset, tile))
+            .collect();
+        column::with_children(vec![
+            text::heading("Themes").into(),
+            row::with_children(tiles)
+                .spacing(10)
+                .wrap()
+                .vertical_spacing(10)
+                .into(),
+        ])
+        .spacing(10)
+        .into()
+    }
+
+    /// Every style as a small specimen; choosing one applies it.
+    fn appearance_styles(&self, look: &Look) -> Element<'_, Message> {
+        let (columns, tile) = self.tile_grid();
         // One row of styles, the chosen one included; the rest on request.
         let all = self.open_sections.contains("appearance-all-styles");
         let applied = self.config.appearance.family;
@@ -502,13 +531,121 @@ impl Settings {
         config
     }
 
-    /// A style as a small desktop `width` wide, on its own wallpaper: the
+    /// A style as a small desktop: its cards in the look's color, and the
+    /// dock and panel in the style's own color (see `themes::record`).
+    fn style_specimen(&self, family: Family, look: &Look, width: f32) -> Element<'_, Message> {
+        let spec = family.spec();
+        let tone = {
+            let [r, g, b] = family.surface(family.accent());
+            Color::from_rgba8(r, g, b, spec.bar.opacity)
+        };
+        self.specimen(
+            self.style_config(family, look),
+            spec.bar,
+            tone,
+            spec.wallpaper,
+            width,
+        )
+    }
+
+    /// The configuration a ready-made theme draws with: its style, color
+    /// and widget shape.
+    fn named_config(&self, profile: &crate::desktop::profiles::Profile) -> Option<Config> {
+        let family = themes::family(profile)?;
+        let style = profile.widget_style.as_ref()?.get("appearance")?;
+        let number = |key: &str, default: u64| {
+            style
+                .get(key)
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(default)
+        };
+        let (opacity, radius, border) = family.geometry();
+        let mut config = self.config.clone();
+        let a = &mut config.appearance;
+        a.family = Some(family);
+        a.opacity = number("opacity", opacity.into()).min(100) as u8;
+        a.corner_radius = number("corner_radius", radius.into()).min(u16::MAX.into()) as u16;
+        a.border_opacity = number("border_opacity", border.into()).min(100) as u8;
+        a.surface = None;
+        a.contrast_assist = false;
+        a.accent = match themes::LookColor::of(profile) {
+            Some(themes::LookColor::Fixed(rgb)) => Some(rgb),
+            _ => None,
+        };
+        a.wallpaper_light = family.light();
+        if let Some(theme) = profile
+            .widget_style
+            .as_ref()
+            .and_then(|s| s.get("theme"))
+            .and_then(serde_json::Value::as_str)
+        {
+            config.theme = theme.to_string();
+        }
+        config.widget_font = None;
+        config.clock_font = None;
+        Some(config)
+    }
+
+    /// A ready-made theme as a small desktop: its cards, and its dock and
+    /// panel in its own colors (the variant its style is made for), on a
+    /// wallpaper of those colors.
+    fn theme_specimen(
+        &self,
+        profile: &crate::desktop::profiles::Profile,
+        width: f32,
+    ) -> Option<Element<'_, Message>> {
+        let config = self.named_config(profile)?;
+        let family = config.appearance.family?;
+        let bars = profile.panel.as_ref()?;
+        let variant = profile.appearance.as_ref()?.variant(if family.light() {
+            crate::desktop::appearance::ThemeVariant::Light
+        } else {
+            crate::desktop::appearance::ThemeVariant::Dark
+        })?;
+        let rgb = |choice: &Option<crate::desktop::profiles::ColorChoice>| {
+            let color = choice
+                .as_ref()?
+                .color(crate::desktop::appearance::ColorRole::Background)
+                .ok()??;
+            Some(crate::desktop_theme::bytes(Color::from_rgba(
+                color.red,
+                color.green,
+                color.blue,
+                1.,
+            )))
+        };
+        let background = rgb(&variant.background)?;
+        let accent = rgb(&variant.accent).unwrap_or(background);
+        let spec = family.spec().bar;
+        let bar = crate::desktop_theme::BarSpec {
+            opacity: bars.opacity.unwrap_or(spec.opacity),
+            radius: bars.border_radius.unwrap_or(spec.radius),
+            floating: bars.floating.unwrap_or(spec.floating),
+            ..spec
+        };
+        let [r, g, b] = background;
+        let tone = Color::from_rgba8(r, g, b, bar.opacity);
+        // A glow of the accent over the theme's background.
+        let mix = |t: f32| -> [u8; 3] {
+            std::array::from_fn(|i| {
+                (f32::from(background[i]) * (1. - t) + f32::from(accent[i]) * t).round() as u8
+            })
+        };
+        Some(self.specimen(config, bar, tone, (mix(0.32), mix(0.04)), width))
+    }
+
+    /// A style as a small desktop `width` wide, on a gradient wallpaper: the
     /// panel with workspaces, clock and tray; a card with the time, date and
     /// an event and a second card, in the style's fonts, borders and
-    /// shadows; and the dock. The dock and panel use the style's color.
-    fn style_specimen(&self, family: Family, look: &Look, width: f32) -> Element<'_, Message> {
-        let config = self.style_config(family, look);
-        let spec = family.spec();
+    /// shadows; and the dock. `tone` is the dock and panel's color.
+    fn specimen(
+        &self,
+        config: Config,
+        bar: crate::desktop_theme::BarSpec,
+        tone: Color,
+        (top, bottom): ([u8; 3], [u8; 3]),
+        width: f32,
+    ) -> Element<'_, Message> {
         let roles = config.theme_roles().expect("a family is set");
         let card = roles.card;
         let (border_width, shadow) = {
@@ -521,11 +658,11 @@ impl Settings {
             a: if roles.transparent {
                 0.
             } else {
-                f32::from(spec.geometry.2.min(50)) / 100.
+                f32::from(config.appearance.border_opacity.min(50)) / 100.
             },
             ..card.accent
         };
-        let radius = f32::from(spec.geometry.1.min(32)) * s * 0.6;
+        let radius = f32::from(config.appearance.corner_radius.min(32)) * s * 0.6;
         let card_style = move |_: &cosmic::Theme| cosmic::iced::widget::container::Style {
             background: Some(Background::Color(card.background)),
             border: Border {
@@ -560,12 +697,6 @@ impl Settings {
                 r * s,
             )
             .into()
-        };
-        // The bars in the style's own color (see `themes::record`).
-        let bar = spec.bar;
-        let tone = {
-            let [r, g, b] = family.surface(family.accent());
-            Color::from_rgba8(r, g, b, bar.opacity)
         };
         let bar_radius = (bar.radius as f32 * s * 0.5).min(8. * s);
         let ink = card.foreground;
@@ -661,7 +792,6 @@ impl Settings {
         )
         .padding([4. * s, 7. * s])
         .class(cosmic::theme::Container::custom(bar_style));
-        let (top, bottom) = spec.wallpaper;
         let stage = container(cosmic::iced::widget::space())
             .width(width)
             .height(height)
@@ -718,14 +848,64 @@ impl Settings {
         .into()
     }
 
-    /// A style to choose: its small desktop, name and description.
+    /// A ready-made theme to choose: its small desktop, name and description.
+    fn theme_tile(
+        &self,
+        preset: &'static crate::desktop::profiles::Preset,
+        width: f32,
+    ) -> Element<'_, Message> {
+        let selected = *self.profiles.selection() == Selection::Preset(preset.id);
+        let applied = themes::applied_named(&self.config.appearance)
+            .is_some_and(|applied| applied.id == preset.id);
+        let marker: Element<'_, Message> = if applied {
+            label("Current", CAPTION, self.settings_accent())
+        } else {
+            cosmic::iced::widget::space().into()
+        };
+        let specimen = self
+            .theme_specimen(&preset.profile, width - 16.)
+            .unwrap_or_else(|| cosmic::iced::widget::space().into());
+        container(
+            button::custom(
+                column::with_children(vec![
+                    specimen,
+                    row::with_children(vec![
+                        container(line(preset.profile.name.clone(), 14., FG))
+                            .width(Length::Fill)
+                            .into(),
+                        marker,
+                    ])
+                    .spacing(4)
+                    .align_y(Alignment::Center)
+                    .into(),
+                    line(preset.description, 12., MUTED),
+                ])
+                .spacing(6),
+            )
+            .class(tile_style(selected || applied, self.settings_accent()))
+            .selected(selected || applied)
+            .padding(8)
+            .width(Length::Fill)
+            .on_press(edit(Edit::Select(Selection::Preset(preset.id)))),
+        )
+        .id(cosmic::widget::Id::new(format!("preset-{}", preset.id)))
+        .width(width)
+        .into()
+    }
+
+    /// A style to choose: its small desktop, name and description. While a
+    /// ready-made theme is chosen or applied, that theme's tile is marked
+    /// instead of its style's.
     fn style_tile(&self, family: Family, look: &Look, width: f32) -> Element<'_, Message> {
         let editor = &self.profiles;
+        let named = matches!(editor.selection(), Selection::Preset(id) if themes::is_named(id));
         let selected = *editor.selection() == Selection::Preset(family.preset())
             || (look.selected
                 && look.family == Some(family)
+                && !named
                 && matches!(editor.selection(), Selection::Preset(_)));
-        let applied = self.config.appearance.family == Some(family);
+        let applied = self.config.appearance.family == Some(family)
+            && themes::applied_named(&self.config.appearance).is_none();
         let selected = selected || applied;
         let marker: Element<'_, Message> = if applied {
             label("Current", CAPTION, self.settings_accent())

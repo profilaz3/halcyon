@@ -508,3 +508,154 @@ fn looks_screenshots_icon_shape_and_tint() {
     studio_capture(&app, &mut native, "icons-picker-shapes", 900.);
     studio_send(&mut app, Studio::Close);
 }
+
+/// Captures the page at each offset in both Settings themes.
+fn ready_capture(app: &Settings, native: &mut crate::native_test::Native, name: &str, y: f32) {
+    native.scroll(app.settings_view(), "settings-content", y);
+    for (theme, tone) in [
+        (cosmic::Theme::dark(), "dark"),
+        (cosmic::Theme::light(), "light"),
+    ] {
+        native.capture(
+            app.settings_view(),
+            &theme,
+            &format!("ready-{name}-{}-{tone}", native.size.width),
+        );
+    }
+}
+
+/// The ready-made themes on Themes and their looks on Looks: each tile is
+/// there, its preview draws its colors, and applying it, through the page
+/// as people do, leaves the desktop wearing exactly the saved theme, in
+/// dark and light mode.
+#[test]
+fn looks_ready_made_themes_and_looks_preview_and_apply_exactly() {
+    use crate::desktop::profiles::themes::{
+        self,
+        tests::{SAVED, recorded},
+    };
+    let name = "looks_ready_made_themes_and_looks_preview_and_apply_exactly";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let root = isolated_root();
+    let mut app = looks_desktop(&root);
+    let store = crate::desktop::DesktopStore::from_env().unwrap();
+    let size = Size::new(1280., 800.);
+    send_settings(&mut app, Message::Resized(size));
+    let mut native = crate::native_test::Native::new(size);
+    let mode = |dark: bool| {
+        seed(
+            &root.join("cosmic-root/config/cosmic"),
+            &[(
+                "com.system76.CosmicTheme.Mode",
+                "is_dark",
+                if dark { "true" } else { "false" },
+            )],
+        );
+    };
+    send_settings(&mut app, Message::Page(Page::Themes));
+    looks_drive(&mut app);
+    for (id, _) in SAVED {
+        assert!(
+            native
+                .try_bounds(app.settings_view(), &format!("preset-{id}"))
+                .is_some(),
+            "{id} has a tile on Themes"
+        );
+    }
+    ready_capture(&app, &mut native, "themes-page", 0.);
+    ready_capture(&app, &mut native, "themes-page-row", 330.);
+    for (id, saved) in SAVED {
+        let saved = crate::desktop::profiles::import(saved.as_bytes()).unwrap();
+        let short = id.trim_start_matches("theme-");
+        for dark in [true, false] {
+            mode(dark);
+            send_settings(&mut app, Message::Page(Page::Themes));
+            looks_drive(&mut app);
+            looks_select(&mut app, id);
+            let tone = if dark { "dark" } else { "light" };
+            // The preview draws the theme's own colors.
+            let preview = app.profiles.preview().unwrap();
+            let config = preview.config.as_ref().unwrap();
+            assert_eq!(config.appearance.family, themes::family(&saved));
+            assert_eq!(
+                themes::LookColor::applied(&config.appearance),
+                themes::LookColor::of(
+                    &themes::named().iter().find(|p| p.id == id).unwrap().profile
+                )
+                .unwrap()
+            );
+            ready_capture(
+                &app,
+                &mut native,
+                &format!("theme-{short}-{tone}-selected"),
+                0.,
+            );
+            send_settings(&mut app, Message::Profiles(profiles::Message::Apply));
+            looks_drive(&mut app);
+            let captured = themes::capture(&store, "Applied").unwrap().profile;
+            assert_eq!(recorded(&captured), recorded(&saved), "{id} in {tone} mode");
+            assert_eq!(
+                themes::applied_named(&app.config.appearance).map(|p| p.id),
+                Some(id)
+            );
+            send_settings(&mut app, Message::Page(Page::Themes));
+            looks_drive(&mut app);
+            ready_capture(
+                &app,
+                &mut native,
+                &format!("theme-{short}-{tone}-applied"),
+                0.,
+            );
+        }
+    }
+    // Looks: the gallery lists both, and each look wears its saved theme.
+    mode(true);
+    send_settings(&mut app, Message::Page(Page::DesktopProfiles));
+    looks_send(
+        &mut app,
+        profiles::Message::Select(profiles::Selection::Current),
+    );
+    for id in ["deep-purple", "rainy-lake"] {
+        let bounds = native_reveal(&app, &mut native, &format!("preset-{id}"));
+        assert!(bounds.height > 0., "{id} has a tile on Looks");
+    }
+    for (theme, tone) in [
+        (cosmic::Theme::dark(), "dark"),
+        (cosmic::Theme::light(), "light"),
+    ] {
+        native.capture(
+            app.settings_view(),
+            &theme,
+            &format!("ready-looks-gallery-{}-{tone}", size.width),
+        );
+    }
+    for id in ["rainy-lake", "deep-purple"] {
+        let saved = SAVED
+            .iter()
+            .find(|(theme, _)| *theme == format!("theme-{id}"))
+            .map(|(_, text)| crate::desktop::profiles::import(text.as_bytes()).unwrap())
+            .unwrap();
+        // Looks are fitted to the preferences on each visit (a look without
+        // weather turns a running effect off).
+        app.profiles.open();
+        looks_select(&mut app, id);
+        let preview = app.profiles.preview().unwrap();
+        let config = preview.config.as_ref().unwrap();
+        assert_eq!(config.appearance.family, themes::family(&saved));
+        looks_capture(&app, &mut native, &format!("ready-{id}"));
+        send_settings(&mut app, Message::Profiles(profiles::Message::Apply));
+        looks_drive(&mut app);
+        let captured = themes::capture(&store, "Applied").unwrap().profile;
+        assert_eq!(recorded(&captured), recorded(&saved), "the {id} look");
+        assert_eq!(app.config.rain.enabled, id == "rainy-lake", "{id}");
+    }
+}

@@ -1,0 +1,155 @@
+{
+  "format": "desktop-cards-profile",
+  "version": 22,
+  "name": "Deep Purple",
+  "description": "A violet night over dark water, glowing lavender widgets, and music for staying up late.",
+  "dock": {
+    "floating": true,
+    "margin": 6,
+    "opacity": 0.96,
+    "border_radius": 160,
+    "spacing": 6,
+    "padding": 6,
+    "background": "ThemeDefault",
+    "autohide": "Never"
+  },
+  "panel": {
+    "floating": true,
+    "margin": 6,
+    "opacity": 0.96,
+    "border_radius": 160,
+    "spacing": 6,
+    "padding": 2,
+    "background": "ThemeDefault",
+    "autohide": "Never"
+  },
+  "appearance": {
+    "mode": "dark",
+    "interface_font": {
+      "family": "Fira Sans",
+      "weight": "Normal",
+      "stretch": "Normal",
+      "style": "Normal"
+    },
+    "icon_theme": "Pop",
+    "icon_shape": "circle",
+    "folder_tint": true,
+    "light": {
+      "accent": "#6F619C",
+      "background": "#F4F1FF",
+      "primary": "#E9E6F4",
+      "secondary": "auto",
+      "outline": "auto",
+      "outline_width": 2,
+      "corners": "Round",
+      "gaps": [
+        6,
+        10
+      ]
+    },
+    "dark": {
+      "accent": "#B4A6E6",
+      "background": "#110A21",
+      "primary": "#19132A",
+      "secondary": "#2F2731",
+      "outline": "auto",
+      "outline_width": 2,
+      "corners": "Round",
+      "gaps": [
+        6,
+        10
+      ]
+    }
+  },
+  "widget_style": {
+    "theme": "graphite",
+    "appearance": {
+      "family": "neon",
+      "native_mode_palettes": 1,
+      "color_policy": "custom",
+      "overrides": 0,
+      "surface": null,
+      "accent": [
+        180,
+        166,
+        230
+      ],
+      "color_source": "custom",
+      "sync_colors": true,
+      "wallpaper_colors": false,
+      "opacity": 96,
+      "corner_radius": 12,
+      "border_opacity": 50,
+      "contrast_assist": false,
+      "wallpaper_light": false
+    },
+    "glance": {
+      "style": "transparent",
+      "opacity": 85,
+      "own_background": true,
+      "density": "comfortable"
+    },
+    "clock": {
+      "face": "digital",
+      "surface": "none",
+      "scale": 150,
+      "alignment": "left",
+      "center_vertically": true,
+      "weight": "light",
+      "italic": false
+    },
+    "clock_font": null
+  },
+  "widget_layout": {
+    "enabled_widgets": [
+      "clock",
+      "weather",
+      "calendar"
+    ],
+    "widget_positions": {
+      "glance": [
+        0.04,
+        0.09
+      ],
+      "music": [
+        0.96,
+        0.87
+      ]
+    },
+    "glance": {
+      "enabled": true,
+      "initialized": true,
+      "show_clock": true,
+      "show_weather": true,
+      "show_calendar": true
+    },
+    "music": {
+      "enabled": true
+    },
+    "notes": {
+      "enabled": false
+    },
+    "focus": {
+      "enabled": false
+    }
+  },
+  "windows": {
+    "active_hint": true,
+    "show_minimize": true,
+    "show_maximize": true
+  },
+  "wallpaper": {
+    "background": {
+      "source": {
+        "bundled": "halcyon-night"
+      },
+      "fit": "fill"
+    }
+  },
+  "desktop_icons": {
+    "icon_size": 100,
+    "spacing": 100,
+    "show_drives": false,
+    "show_trash": true
+  }
+}

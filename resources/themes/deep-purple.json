@@ -1,0 +1,67 @@
+{
+  "appearance_only": true,
+  "format": "desktop-cards-profile",
+  "version": 21,
+  "name": "Deep Purple",
+  "description": "Lavender glow, deep violet",
+  "dock": {
+    "floating": true,
+    "margin": 6,
+    "opacity": 0.96,
+    "border_radius": 160,
+    "spacing": 6,
+    "padding": 6,
+    "background": "ThemeDefault"
+  },
+  "panel": {
+    "floating": true,
+    "margin": 6,
+    "opacity": 0.96,
+    "border_radius": 160,
+    "spacing": 6,
+    "padding": 2,
+    "background": "ThemeDefault"
+  },
+  "appearance": {
+    "light": {
+      "accent": "#6F619C",
+      "background": "#F4F1FF",
+      "primary": "#E9E6F4",
+      "secondary": "auto",
+      "outline": "auto"
+    },
+    "dark": {
+      "accent": "#B4A6E6",
+      "background": "#110A21",
+      "primary": "#19132A",
+      "secondary": "#2F2731",
+      "outline": "auto"
+    }
+  },
+  "widget_style": {
+    "theme": "graphite",
+    "appearance": {
+      "family": "neon",
+      "native_mode_palettes": 1,
+      "color_policy": "custom",
+      "overrides": 0,
+      "surface": null,
+      "accent": [
+        180,
+        166,
+        230
+      ],
+      "color_source": "custom",
+      "sync_colors": true,
+      "wallpaper_colors": false,
+      "opacity": 96,
+      "corner_radius": 12,
+      "border_opacity": 50,
+      "contrast_assist": false
+    },
+    "glance": {
+      "style": "transparent",
+      "opacity": 85
+    }
+  }
+}
