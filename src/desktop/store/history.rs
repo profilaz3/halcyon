@@ -339,7 +339,7 @@ impl DesktopStore {
                         .map_err(DesktopError::Io)?;
                 }
             }
-            let config = config::check_config_value(&candidate).map_err(DesktopError::Io)?;
+            let config = config::check_config_change(&raw, &candidate).map_err(DesktopError::Io)?;
             let appearance_action = native_appearance
                 || widgets.changes().any(|(pointer, _)| {
                     matches!(
@@ -469,7 +469,7 @@ impl DesktopStore {
             // intent; other external/custom roles stay outside the operation.
             if let Some(change) = &latest.widget {
                 let before = config::parse_config_text(change.before.as_deref())
-                    .and_then(|raw| config::check_config_value(&raw))
+                    .and_then(|raw| config::config_from_value(&raw))
                     .map_err(DesktopError::Io)?
                     .appearance;
                 if before.family == desired.family {

@@ -213,7 +213,7 @@ impl DesktopStore {
                 widget::put(&mut raw, pointer, entry.desired.clone()).map_err(invalid)?;
             }
         }
-        config::check_config_value(&after).map_err(invalid)?;
+        config::check_config_change(&before, &after).map_err(invalid)?;
         let raw_after = if config::parse_config_text(raw_text.as_deref()).map_err(invalid)? == raw {
             raw_text.clone()
         } else {

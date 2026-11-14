@@ -419,7 +419,7 @@ fn capture_workspaces(
 fn read_widgets(path: &std::path::Path) -> Result<(Value, Value), String> {
     let text = config::read_config_text(path)?;
     let mut raw = config::parse_config_text(text.as_deref())?;
-    let typed = config::check_config_value(&raw)?;
+    let typed = config::config_from_value(&raw)?;
     // Export the visible layout, without exporting this machine's display IDs.
     let contexts = if config::Config::path().as_deref() == Some(path) {
         crate::layout_state::read(&typed).widget_displays

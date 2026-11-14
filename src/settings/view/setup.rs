@@ -117,4 +117,17 @@ impl Settings {
             actions,
         ))
     }
+
+    /// Shown on Home while the saved settings hold values this version
+    /// couldn't use; they use their defaults and the rest of the file is
+    /// kept.
+    pub(super) fn ignored_settings_banner(&self) -> Option<Element<'_, Message>> {
+        let note = crate::config::repair_note(&self.config.repaired)?;
+        Some(
+            container(banner(note, WARN, vec![]))
+                .id(cosmic::widget::Id::new("settings-ignored"))
+                .width(Length::Fill)
+                .into(),
+        )
+    }
 }
