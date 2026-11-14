@@ -700,6 +700,26 @@ impl Settings {
         folded_rows(items)
     }
 
+    /// Why COSMIC's frosted panel and dock stay off, and the way to a
+    /// frosted dock and panel that works: the Islands panel's Frosted
+    /// finish when Islands runs, otherwise setting Islands up.
+    pub(super) fn frosted_bars(&self) -> (&'static str, &'static str, Message) {
+        let islands = &self.desktop.islands;
+        if islands.installation.running() && islands.availability_message().is_none() {
+            (
+                "Your dock and panel can be frosted with Islands. Choose Frosted in Glass and transparency.",
+                "Choose",
+                Message::SearchResult(crate::settings::navigation::SEE_THROUGH),
+            )
+        } else {
+            (
+                "Kept off because COSMIC’s panel can stop working with it. The Islands panel that comes with Halcyon can be frosted.",
+                "Set up",
+                Message::OpenIslandsGuide,
+            )
+        }
+    }
+
     /// Effects folds away inside the same section, with the same folding
     /// row as the dock's "Corners, spacing and timing".
     pub(super) fn appearance_effects(&self, draft: &AppearanceDraft) -> Element<'_, Message> {
@@ -735,15 +755,21 @@ impl Settings {
         let mut items: Vec<Element<'_, Message>> = vec![label("Frosted", 13., FG)];
         for surface in Surface::ALL {
             items.push(match draft.frosted(variant, surface) {
-                // COSMIC panel 1.10 aborts when its frosted surface is
-                // unmapped on the current compositor (screen blank, display
-                // change), taking every applet with it. It can be turned off
-                // here, never on, until a fixed panel is installed.
-                Setting::Known(false) if surface == Surface::Panel => group_row_state(
-                    surface.title(),
-                    "Off: the installed COSMIC panel crashes with a frosted background",
-                    toggler(false).into(),
-                ),
+                // COSMIC's panel aborts when its frosted surface is unmapped
+                // (screen blank, display change), taking every applet with
+                // it, so this global key is turned off here, never on. The
+                // Islands panel draws no native blur, but it has its own
+                // Frosted finish, which is what the row offers instead.
+                Setting::Known(false) if surface == Surface::Panel => {
+                    let (note, action, message) = self.frosted_bars();
+                    group_row_state(
+                        surface.title(),
+                        note,
+                        container(button::text(action).on_press(message))
+                            .id(cosmic::widget::Id::new("frosted-bars"))
+                            .into(),
+                    )
+                }
                 Setting::Known(on) => group_row(
                     surface.title(),
                     "",

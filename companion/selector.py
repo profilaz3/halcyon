@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import runpy
+import select
 import sys
 import time
 import threading
@@ -21,6 +22,59 @@ sys.dont_write_bytecode = True
 # Cleanup is separate from the unchanged startup/readiness deadlines.
 GROUP_TERM_SECONDS = .3
 GROUP_CLEANUP_SECONDS = 1.5
+
+
+class Wakeup:
+    """Blocks until the host's leader exits, a signal arrives or wake() runs.
+
+    The supervisor slept in 20 ms steps to notice these, about 50 wakes a
+    second for the whole session. A pidfd turns readable when the leader
+    exits (it stays unreaped, as poll() needs); signal.set_wakeup_fd writes
+    a byte for each signal; wake() writes one from any thread. Without
+    pidfds (Python before 3.9, Linux before 5.3) wait() keeps the old poll.
+    """
+    waits = 0  # Every wait() call, for tests.
+
+    def __init__(self, pid):
+        self.lock = threading.Lock()
+        self.closed = False
+        self.pidfd = self.read = self.write = None
+        self.previous = None
+        try:
+            self.pidfd = os.pidfd_open(pid)
+            self.read, self.write = os.pipe2(os.O_NONBLOCK | os.O_CLOEXEC)
+        except (AttributeError, OSError):
+            self.close()
+
+    def arm(self):
+        """Route signals to the pipe; main thread only, as signal handlers."""
+        if self.write is not None and self.previous is None:
+            self.previous = signal.set_wakeup_fd(self.write, warn_on_full_buffer=False)
+
+    def wake(self):
+        with self.lock:
+            if self.closed or self.write is None: return
+            try: os.write(self.write, b'\0')
+            except BlockingIOError: pass  # Already pending.
+
+    def wait(self, poll):
+        Wakeup.waits += 1
+        if self.pidfd is None:
+            poll()
+            return
+        select.select([self.pidfd, self.read], [], [])
+        try:
+            while os.read(self.read, 512): pass
+        except BlockingIOError: pass
+
+    def close(self):
+        with self.lock:
+            if self.closed: return
+            self.closed = True
+            if self.previous is not None:
+                signal.set_wakeup_fd(self.previous)
+            for fd in (self.pidfd, self.read, self.write):
+                if fd is not None: os.close(fd)
 
 
 class GroupCleanupError(RuntimeError):
@@ -214,6 +268,7 @@ def fallback():
             except (KeyError,ValueError,OSError):
                 pass
         child = OwnedHost('/usr/bin/cosmic-panel', inherited, None)
+        wakeup = Wakeup(child.pid)
         stopping = False
         def stop(signum, _):
             nonlocal stopping
@@ -221,14 +276,16 @@ def fallback():
         previous = {sig: signal.signal(sig, stop)
                     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
         try:
+            wakeup.arm()
             while not stopping and child.poll() is None:
-                time.sleep(.02)
+                wakeup.wait(lambda: time.sleep(.02))
         finally:
             try:
                 # Keep both the leader's identity and the panel lock until all
                 # owned descendants have exited, escalating after a short grace.
                 code = child.finish()
             finally:
+                wakeup.close()
                 for sig, handler in previous.items():
                     signal.signal(sig, handler)
         return code

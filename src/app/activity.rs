@@ -18,6 +18,9 @@ fn key(value: &str) -> String {
         .map(|b| format!("{b:02x}"))
         .collect()
 }
+/// How long COSMIC's popups stay with an island that left, in case the panel
+/// is only restarting it.
+const POPUPS_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
 impl Cards {
     pub(super) fn publish_activity(&mut self) {
         let next = self.config.activity_island.clone();
@@ -209,14 +212,31 @@ impl Cards {
             Event::Clients(n) => {
                 let before = self.activity.clients;
                 self.activity.clients = n;
+                if n != before {
+                    // An island arriving cancels a pending restore.
+                    self.activity.departures += 1;
+                }
                 if n == 0 {
                     self.activity.system.clear();
                     self.activity.quiet = true;
-                    // The island that took COSMIC's popups is gone.
-                    crate::activity_island::popups::restore_soon();
+                    // The island that took COSMIC's popups is gone, or the
+                    // panel is restarting it. Give it back only if no island
+                    // returns in time: restoring and retaking within a
+                    // restart rewrote COSMIC's setting twice and let popups
+                    // flash in between.
+                    let departure = self.activity.departures;
+                    return cosmic::task::future(async move {
+                        tokio::time::sleep(POPUPS_GRACE).await;
+                        Message::Activity(Event::Released(departure))
+                    });
                 }
                 if before == 0 && n > 0 {
                     return Task::batch(self.refresh_visible_data());
+                }
+            }
+            Event::Released(departure) => {
+                if departure == self.activity.departures && self.activity.clients == 0 {
+                    crate::activity_island::popups::restore_soon();
                 }
             }
             Event::Command(Command::NoteRule { app, entry, rule }) => {
@@ -423,6 +443,46 @@ mod tests {
         let _ = cards.activity_message(Event::Clients(0));
         assert!(!cards.music_demand());
         assert!(!cards.calendar_demand());
+    }
+    /// A panel restart takes the island away for a moment. COSMIC's popups
+    /// stay off unless no island is back within the grace; before, they
+    /// were restored at once and taken again when the island returned.
+    #[test]
+    fn popups_return_only_when_no_island_comes_back_in_time() {
+        if crate::displays::test_support::isolated(
+            "app::activity::tests::popups_return_only_when_no_island_comes_back_in_time",
+        ) {
+            return;
+        }
+        let (mut cards, _) = Cards::init(
+            Core::default(),
+            Config {
+                widgets_visible: false,
+                ..Default::default()
+            },
+        );
+        let restores = || crate::activity_island::popups::RESTORES.with(|count| count.get());
+        let start = restores();
+        let _ = cards.activity_message(Event::Clients(1));
+        let _ = cards.activity_message(Event::Clients(0));
+        assert_eq!(restores() - start, 0, "restored while the panel restarts");
+        let restart = cards.activity.departures;
+        let _ = cards.activity_message(Event::Clients(1));
+        let _ = cards.activity_message(Event::Released(restart));
+        assert_eq!(restores() - start, 0, "the island came back in time");
+
+        let _ = cards.activity_message(Event::Clients(0));
+        let gone = cards.activity.departures;
+        let _ = cards.activity_message(Event::Released(restart));
+        assert_eq!(restores() - start, 0, "a stale grace restored");
+        let _ = cards.activity_message(Event::Released(gone));
+        assert_eq!(restores() - start, 1, "no island returned");
+        // Turning the takeover off in Settings still gives them back at once.
+        cards.activity.preferences.notifications = true;
+        cards.activity.preferences.replace_popups = true;
+        cards.config.activity_island.replace_popups = false;
+        cards.publish_activity();
+        assert_eq!(restores() - start, 2);
     }
     #[test]
     fn activity_island_focus_command_is_fenced_and_uses_shared_session() {

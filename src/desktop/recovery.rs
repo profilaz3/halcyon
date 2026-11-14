@@ -162,6 +162,19 @@ fn domain_digest(domain: &DomainSnapshot) -> Result<String, DesktopError> {
 /// A directory descriptor opened one component at a time, without following
 /// links. Descendant opens stay anchored even if a parent is renamed meanwhile.
 struct Directory(File);
+
+#[cfg(test)]
+thread_local! {
+    /// fsync calls made by the desktop store on this thread, for tests that
+    /// keep a transaction's durability cost in check.
+    pub(crate) static SYNCS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+/// `fsync` for the desktop store's own files and folders.
+pub(crate) fn sync(file: &File) -> io::Result<()> {
+    #[cfg(test)]
+    SYNCS.with(|count| count.set(count.get() + 1));
+    file.sync_all()
+}
 fn component(bytes: &[u8]) -> io::Result<CString> {
     if bytes.is_empty() || bytes == b"." || bytes == b".." || bytes.contains(&b'/') {
         return Err(io::Error::other("unsafe path component"));
@@ -198,7 +211,7 @@ impl Directory {
             } else {
                 // A promoted manifest must remain reachable after power loss,
                 // including when this capture created its parent directories.
-                self.0.sync_all()?;
+                sync(&self.0)?;
             }
         }
         // O_NOFOLLOW checks the component at open time, including live roots.
@@ -280,7 +293,7 @@ impl Directory {
         let mut file = unsafe { File::from_raw_fd(fd) };
         file.set_permissions(fs::Permissions::from_mode(mode))?;
         file.write_all(bytes)?;
-        file.sync_all()
+        sync(&file)
     }
     fn rename(&self, from: &str, to: &str, replace: bool) -> io::Result<()> {
         let from = component(from.as_bytes())?;
@@ -297,7 +310,27 @@ impl Directory {
         if result != 0 {
             return Err(io::Error::last_os_error());
         }
-        self.0.sync_all()
+        sync(&self.0)
+    }
+    /// Like `rename`, without syncing the folder: the caller syncs it once
+    /// for a whole batch of renames.
+    fn rename_unsynced(&self, from: &str, to: &str) -> io::Result<()> {
+        let from = component(from.as_bytes())?;
+        let to = component(to.as_bytes())?;
+        // SAFETY: directory and NUL-terminated names live across the call.
+        let result = unsafe {
+            libc::renameat2(
+                self.0.as_raw_fd(),
+                from.as_ptr(),
+                self.0.as_raw_fd(),
+                to.as_ptr(),
+                0,
+            )
+        };
+        if result != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
     }
 }
 /// Open a stable lock inode without traversing untrusted ancestors or leaves.
@@ -984,7 +1017,7 @@ fn promote(store: &DesktopStore, next: BaselineInfo) -> Result<BaselineInfo, Des
         let name = format!("pending-{}", getrandom::u64().map_err(failed)?);
         let staging = dir.child(OsStr::new(&name), true).map_err(failed)?.unwrap();
         staging.write_new("manifest.json", &bytes).map_err(failed)?;
-        staging.0.sync_all().map_err(failed)?;
+        sync(&staging.0).map_err(failed)?;
         dir.rename(&name, "original", false).map_err(failed)?;
     }
     Ok(next)
@@ -994,8 +1027,10 @@ fn promote(store: &DesktopStore, next: BaselineInfo) -> Result<BaselineInfo, Des
 mod tests;
 
 mod restore;
+pub(crate) use restore::{
+    NativeBatch, read_native, record_created_all, write_native, write_scoped,
+};
 pub use restore::{RestorePlan, apply_restore, export_baseline, plan_restore, write_export};
-pub(crate) use restore::{read_native, record_created, write_native, write_scoped};
 pub(super) use restore::{save_pre_restore, verify_plan};
 
 #[cfg(test)]

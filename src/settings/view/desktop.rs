@@ -39,6 +39,23 @@ pub(super) fn line<'a>(value: impl Into<String>, size: f32, color: Color) -> Ele
 }
 
 /// Label left, control right; the control wraps under at compact widths.
+/// Said under controls whose change makes COSMIC rebuild the bar, which
+/// restarts every item on it.
+pub(super) const RESTARTS: &str = "This restarts the panel";
+
+/// A [`field`] whose change restarts the panel, and says so.
+fn restarting<'a>(title: &'static str, control: Element<'a, Message>) -> Element<'a, Message> {
+    super::field(
+        Some(title.to_owned()),
+        None,
+        detail_state(title, RESTARTS),
+        row::with_children(vec![control])
+            .align_y(Alignment::Center)
+            .wrap()
+            .into(),
+    )
+}
+
 fn field<'a>(title: &'static str, control: Element<'a, Message>) -> Element<'a, Message> {
     super::field(
         Some(title.to_owned()),
@@ -295,13 +312,13 @@ impl Settings {
         let mut rows = Vec::new();
         // With one display and the default choice there is nothing to pick.
         if self.desktop.outputs.len() > 1 || draft.output().known() != Some(&Output::All) {
-            rows.push(field(
+            rows.push(restarting(
                 "Show on display",
                 choice(&draft.output(), outputs, Edit::Output, accent),
             ));
         }
         rows.extend([
-            field(
+            restarting(
                 "Screen edge",
                 choice(&draft.anchor(), anchors, Edit::Anchor, accent),
             ),
@@ -348,7 +365,7 @@ impl Settings {
             .into(),
         ];
         let mut style: Vec<Element<'_, Message>> = Vec::new();
-        style.push(field(
+        style.push(restarting(
             "Size",
             choice(&draft.size(), sizes, Edit::Size, accent),
         ));
@@ -405,12 +422,18 @@ impl Settings {
             "dock-background",
             split(
                 if following {
-                    label("Background", 14., FG)
+                    detail_state("Background", RESTARTS)
                 } else {
-                    detail_state(
-                        "Background",
-                        "Choosing a style leaves the dock and panel as they are",
-                    )
+                    column::with_children(vec![
+                        detail_state(
+                            "Background",
+                            "Choosing a style leaves the dock and panel as they are",
+                        ),
+                        label(RESTARTS, CAPTION, MUTED),
+                    ])
+                    .spacing(3)
+                    .width(Length::Fill)
+                    .into()
                 },
                 row::with_children(control)
                     .spacing(8)
@@ -508,6 +531,12 @@ impl Settings {
         }
         items.push(separator());
         items.push(label("Spacing", 13., FG));
+        // Padding is drawn inside the bar; only the gap between items rebuilds it.
+        items.push(label(
+            format!("Between items: {}", RESTARTS.to_lowercase()),
+            CAPTION,
+            MUTED,
+        ));
         let number = |setting: Setting<u32>,
                       title: &'static str,
                       max: u32,

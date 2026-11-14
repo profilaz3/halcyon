@@ -3,7 +3,6 @@
 //! including stock COSMIC, uses the attached-card shape.
 use cosmic::iced::{Subscription, futures::SinkExt, stream};
 use dock_islands_core::{MAX_WIRE_BYTES, Request, Response};
-use notify::{EventKind, RecursiveMode, Watcher};
 use std::{path::PathBuf, time::Duration};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
@@ -207,27 +206,9 @@ fn observe(host: Host) -> impl cosmic::iced::futures::Stream<Item = Observation>
                     .join(key)
             }));
         }
-        let watched = paths.clone();
-        let (send, mut receive) = tokio::sync::mpsc::channel(1);
-        let mut watcher =
-            notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-                let relevant = match event {
-                    Ok(e) => {
-                        matches!(
-                            e.kind,
-                            EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
-                        ) && e
-                            .paths
-                            .iter()
-                            .any(|changed| watched.iter().any(|p| p.starts_with(changed)))
-                    }
-                    Err(_) => true,
-                };
-                if relevant {
-                    let _ = send.try_send(());
-                }
-            })
-            .ok();
+        // Not `notify`: it asks for open events, and the panel reads these
+        // folders constantly, so each read woke the island.
+        let mut watcher = crate::watch::dir::DirWatch::new().ok();
         let mut registered = std::collections::BTreeSet::new();
         let mut last = None;
         let mut startup_retries = 8;
@@ -237,8 +218,7 @@ fn observe(host: Host) -> impl cosmic::iced::futures::Stream<Item = Observation>
             if let Some(w) = &mut watcher {
                 for path in &paths {
                     for parent in path.ancestors().skip(1).take(3) {
-                        if !registered.contains(parent)
-                            && w.watch(parent, RecursiveMode::NonRecursive).is_ok()
+                        if !registered.contains(parent) && w.watch(parent).is_ok()
                         {
                             registered.insert(parent.to_path_buf());
                         }
@@ -263,13 +243,12 @@ fn observe(host: Host) -> impl cosmic::iced::futures::Stream<Item = Observation>
                 }
             }
             tokio::select! {
-                signal = receive.recv(), if watcher.is_some() => {
-                    if signal.is_none() { watcher = None; }
+                woke = changed(&mut watcher, &paths), if watcher.is_some() => {
+                    if woke.is_err() { watcher = None; }
                     // Native reload and config events are independent. Allow a
                     // short settle, then retry once so their ordering cannot
                     // leave the applet in the previous mode until the fallback.
                     tokio::time::sleep(Duration::from_millis(100)).await;
-                    while receive.try_recv().is_ok() {}
                     let islands = host.enabled().await;
                     let enabled = host.observe(islands).await;
                     if last != Some(enabled) {
@@ -283,6 +262,20 @@ fn observe(host: Host) -> impl cosmic::iced::futures::Stream<Item = Observation>
             }
         }
     })
+}
+
+/// Waits for a change to one of `paths` or a folder above it.
+async fn changed(
+    watcher: &mut Option<crate::watch::dir::DirWatch>,
+    paths: &[std::path::PathBuf],
+) -> std::io::Result<()> {
+    match watcher {
+        Some(w) => {
+            w.changed(|changed| paths.iter().any(|p| p.starts_with(changed)))
+                .await
+        }
+        None => std::future::pending().await,
+    }
 }
 
 #[cfg(test)]

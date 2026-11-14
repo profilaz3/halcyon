@@ -137,7 +137,7 @@ pub async fn open_settings(source: Source) -> Result<(), String> {
         Source::Bluetooth => ("cosmic-settings", Some("bluetooth")),
         Source::Camera => ("cosmic-settings", None),
     };
-    tokio::process::Command::new(program)
+    super::renderer::command(program)
         .args(page)
         .spawn()
         .map(|_| ())

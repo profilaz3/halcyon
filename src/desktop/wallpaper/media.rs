@@ -9,7 +9,7 @@
 //! `scaler.rs`.
 use super::{
     BgColor, BgSource, IMAGE_EXTENSIONS, LIMITS, Limits, ScalingMode, folder_has_image, is_image,
-    linear_to_srgb, walk_with,
+    linear_to_srgb, walk_listing,
 };
 use crate::desktop::store::DesktopStore;
 use std::io::Read;
@@ -477,6 +477,24 @@ pub struct FolderScan {
     pub truncated: bool,
     /// The first pictures in the runtime's (path) order, at most four.
     pub first: Vec<PathBuf>,
+    /// The folder's signature when it was scanned (`folder_unchanged`).
+    pub signature: FolderSignature,
+}
+
+/// Every directory a scan listed, with its metadata taken just before the
+/// listing was read. Adding, removing or renaming an entry changes its
+/// directory's modification time, so an equal signature means the scan's
+/// counts and order still hold. Checking it costs one `stat` per listed
+/// directory (one for a flat folder), never a listing.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FolderSignature(Vec<(PathBuf, crate::watch::FileStamp)>);
+
+#[cfg(test)]
+impl FolderSignature {
+    /// Directories it covers.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
 }
 
 /// Counts a folder's files with the same bounded walk the source checks
@@ -484,21 +502,67 @@ pub struct FolderScan {
 pub fn scan_folder(path: &Path) -> Result<FolderScan, String> {
     scan_folder_with(path, LIMITS)
 }
+/// A directory modified this recently gets no signature: file times are
+/// coarse (a few milliseconds), so a change right after the scan could keep
+/// the same time. Its next recheck scans again.
+const SETTLE: std::time::Duration = std::time::Duration::from_secs(2);
 fn scan_folder_with(path: &Path, limits: Limits) -> Result<FolderScan, String> {
     let mut scan = FolderScan::default();
-    let (walk, _) = walk_with(path, limits, |file| {
-        if is_image(file) {
-            scan.images += 1;
-            if scan.first.len() < 4 {
-                scan.first.push(file.to_path_buf());
+    let mut signature = Vec::new();
+    let mut settled = true;
+    let (walk, _) = walk_listing(
+        path,
+        limits,
+        |dir| {
+            let old = std::fs::metadata(dir)
+                .and_then(|metadata| metadata.modified())
+                .ok()
+                .and_then(|modified| std::time::SystemTime::now().duration_since(modified).ok())
+                .is_some_and(|age| age >= SETTLE);
+            match crate::watch::file_stamp(dir) {
+                Some(stamp) if old => signature.push((dir.to_path_buf(), stamp)),
+                _ => settled = false,
             }
-        } else {
-            scan.others += 1;
-        }
-        true
-    })?;
+        },
+        |file| {
+            if is_image(file) {
+                scan.images += 1;
+                if scan.first.len() < 4 {
+                    scan.first.push(file.to_path_buf());
+                }
+            } else {
+                scan.others += 1;
+            }
+            true
+        },
+    )?;
     scan.truncated = walk.truncated;
+    if settled {
+        scan.signature = FolderSignature(signature);
+    }
     Ok(scan)
+}
+
+/// Whether `scan` still describes its folder: every directory it listed
+/// has the same metadata (no entry added, removed or renamed). A scan
+/// without a signature is never current. Reads metadata only.
+pub fn folder_unchanged(scan: &FolderScan) -> bool {
+    !scan.signature.0.is_empty()
+        && scan
+            .signature
+            .0
+            .iter()
+            .all(|(dir, stamp)| crate::watch::file_stamp(dir).as_ref() == Some(stamp))
+}
+
+/// A background recheck of a folder scanned before: `None` when it did not
+/// change (no listing read), otherwise a new scan.
+pub fn recheck_folder(path: &Path, known: &FolderScan) -> Option<Result<FolderScan, String>> {
+    if folder_unchanged(known) {
+        None
+    } else {
+        Some(scan_folder(path))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

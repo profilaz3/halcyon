@@ -190,7 +190,13 @@ impl Settings {
             .anchor()
             .known()
             .is_none_or(|anchor| anchor.horizontal());
-        let header: Element<'_, Message> = text::heading(items::HEADING).into();
+        // Adding, removing or moving an item rebuilds the bar.
+        let header: Element<'_, Message> = column::with_children(vec![
+            text::heading(items::HEADING).into(),
+            label(super::RESTARTS, CAPTION, MUTED),
+        ])
+        .spacing(3)
+        .into();
         let id = if panel { "panel-items" } else { "dock-items" };
         let regions = match draft.applets() {
             Setting::Known(regions) => regions,

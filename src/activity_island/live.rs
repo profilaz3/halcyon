@@ -1542,7 +1542,7 @@ impl Applet {
                         .strip_suffix(".desktop")
                         .unwrap_or(&desktop)
                         .to_owned();
-                    let launched = tokio::process::Command::new("gtk-launch")
+                    let launched = super::renderer::command("gtk-launch")
                         .arg(id)
                         .stdin(std::process::Stdio::null())
                         .stdout(std::process::Stdio::null())

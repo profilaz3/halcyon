@@ -97,8 +97,15 @@ fn live_enabled() -> bool {
     // Tests and previews never touch the session's real configuration.
     !cfg!(test) && !crate::tools::preview()
 }
+#[cfg(test)]
+thread_local! {
+    /// Calls to `restore_soon` on this thread.
+    pub static RESTORES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 /// From a thread of its own, for owners without a task runtime at hand.
 pub fn restore_soon() {
+    #[cfg(test)]
+    RESTORES.with(|count| count.set(count.get() + 1));
     if !live_enabled() {
         return;
     }

@@ -665,3 +665,95 @@ async fn credential_journal_survives_cancellation_races_and_storage_failures() {
             .contains(&current.credential)
     );
 }
+
+/// A refresh that fetched the same month again writes nothing: the cache
+/// already holds those bytes. Before, every refresh rewrote and synced it.
+#[test]
+fn saving_the_same_month_again_writes_nothing() {
+    const CHILD: &str = "DESKTOP_CARDS_SAME_CACHE_TEST";
+    if std::env::var_os(CHILD).is_none() {
+        let dir =
+            std::env::temp_dir().join(format!("cards-same-cache-{}", store::nonce().unwrap()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "calendar::tests::saving_the_same_month_again_writes_nothing",
+            ])
+            .env(CHILD, "1")
+            .env("DESKTOP_CARDS_CONFIG", dir.join("config.json"))
+            .output()
+            .unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stdout)
+        );
+        return;
+    }
+    let connection = sample_connection();
+    store::replace(&Connection::default(), &connection).unwrap();
+    let month = "2026-10";
+    let at = |minutes: i64| {
+        (chrono::DateTime::parse_from_rfc3339("2026-10-14T09:00:00+00:00").unwrap()
+            + chrono::TimeDelta::minutes(minutes))
+        .to_rfc3339()
+    };
+    let mut data = crate::data::CalendarData {
+        account: connection.account.clone(),
+        month: month.into(),
+        updated_at: at(0),
+        connection_revision: connection.revision.clone(),
+        calendar_id: connection.calendar_id.clone(),
+        events: vec![crate::data::CalendarEvent {
+            title: "Standup".into(),
+            ..Default::default()
+        }],
+    };
+    let writes = || store::WRITES.with(|count| count.get());
+    let before = writes();
+    store::save_cache(&connection, month, &data).unwrap();
+    assert_eq!(writes() - before, 1, "the first save writes");
+    // Refreshes every few minutes find the same events.
+    for minutes in [5, 10, 59] {
+        data.updated_at = at(minutes);
+        store::save_cache(&connection, month, &data).unwrap();
+    }
+    assert_eq!(writes() - before, 1, "identical refreshes wrote again");
+    assert_eq!(store::cached(&connection, month).unwrap().updated_at, at(0));
+    // A changed event is written at once.
+    data.updated_at = at(60);
+    data.events[0].title = "Planning".into();
+    store::save_cache(&connection, month, &data).unwrap();
+    assert_eq!(writes() - before, 2, "a change is written");
+    // An unchanged month refreshes its saved time after an hour.
+    data.updated_at = at(119);
+    store::save_cache(&connection, month, &data).unwrap();
+    assert_eq!(writes() - before, 2);
+    data.updated_at = at(120);
+    store::save_cache(&connection, month, &data).unwrap();
+    assert_eq!(writes() - before, 3, "the saved time stays within an hour");
+    let saved = store::cached(&connection, month).unwrap();
+    assert_eq!(
+        (saved.updated_at, saved.events[0].title.as_str()),
+        (at(120), "Planning")
+    );
+}
+
+/// The legacy account record is rewritten only when it differs.
+#[test]
+fn unchanged_files_are_not_rewritten() {
+    let dir = std::env::temp_dir().join(format!("cards-unchanged-{}", store::nonce().unwrap()));
+    let path = dir.join("account.json");
+    let writes = || store::WRITES.with(|count| count.get());
+    let before = writes();
+    store::atomic_if_changed(&path, b"{}").unwrap();
+    store::atomic_if_changed(&path, b"{}").unwrap();
+    assert_eq!(writes() - before, 1);
+    store::atomic_if_changed(&path, b"[]").unwrap();
+    store::atomic_if_changed(&path, b"[1]").unwrap();
+    assert_eq!(writes() - before, 3);
+    assert_eq!(std::fs::read(&path).unwrap(), b"[1]");
+    std::fs::remove_dir_all(dir).unwrap();
+}

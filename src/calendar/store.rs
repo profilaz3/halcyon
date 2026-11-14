@@ -118,8 +118,15 @@ fn private_parent(path: &Path) -> Result<(), Problem> {
     }
     Ok(())
 }
+#[cfg(test)]
+thread_local! {
+    /// Files this thread wrote through `atomic`.
+    pub(super) static WRITES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 pub(super) fn atomic(path: &Path, bytes: &[u8]) -> Result<(), Problem> {
     use std::io::Write;
+    #[cfg(test)]
+    WRITES.with(|count| count.set(count.get() + 1));
     private_parent(path)?;
     let temp = path.with_file_name(format!(".calendar-{}.tmp", nonce()?));
     let result = (|| {
@@ -135,6 +142,12 @@ pub(super) fn atomic(path: &Path, bytes: &[u8]) -> Result<(), Problem> {
     })();
     let _ = std::fs::remove_file(&temp);
     result
+}
+/// Writes `bytes` unless `path` already holds exactly them.
+pub(super) fn atomic_if_changed(path: &Path, bytes: &[u8]) -> Result<(), Problem> {
+    let same = std::fs::metadata(path).is_ok_and(|meta| meta.len() == bytes.len() as u64)
+        && std::fs::read(path).is_ok_and(|current| current == bytes);
+    if same { Ok(()) } else { atomic(path, bytes) }
 }
 struct Lock(std::fs::File);
 impl Drop for Lock {
@@ -339,15 +352,44 @@ pub(super) fn save_cache(
         return Err(Problem::Changed);
     }
     // Persist legacy metadata once, before the upgraded cache replaces the
-    // old record used to recognize this existing installation.
+    // old record used to recognize this existing installation. Later saves
+    // find it already written.
     if connection.backend == Backend::Legacy {
-        persist(connection)?;
+        atomic_if_changed(
+            &account_path().ok_or(Problem::Storage)?,
+            &serde_json::to_vec(connection).map_err(|_| Problem::Storage)?,
+        )?;
     }
     let bytes = serde_json::to_vec(data).map_err(|_| Problem::Storage)?;
     if bytes.len() > 16 * 1024 * 1024 {
         return Err(Problem::FeedLimit);
     }
-    atomic(&cache_path(month).ok_or(Problem::InvalidResponse)?, &bytes)
+    let path = cache_path(month).ok_or(Problem::InvalidResponse)?;
+    if cache_current(&path, data) {
+        return Ok(());
+    }
+    atomic(&path, &bytes)
+}
+/// How old the saved fetch time may grow while refreshes keep finding the
+/// same events. The card shows it ("Saved · 14:05") only after a failed
+/// refresh, a restart or a change of month.
+const CACHE_STAMP: chrono::TimeDelta = chrono::TimeDelta::hours(1);
+/// Whether `path` already holds `data` but for a fetch time less than
+/// `CACHE_STAMP` older. Every fetch stamps the current time, so comparing
+/// bytes alone would rewrite and sync the cache on every refresh.
+fn cache_current(path: &Path, data: &crate::data::CalendarData) -> bool {
+    let Ok(Some(bytes)) = crate::tools::read_bounded(path, 16 * 1024 * 1024) else {
+        return false;
+    };
+    let Ok(mut stored) = serde_json::from_slice::<crate::data::CalendarData>(&bytes) else {
+        return false;
+    };
+    let time = |value: &str| chrono::DateTime::parse_from_rfc3339(value).ok();
+    let fresh = time(&stored.updated_at)
+        .zip(time(&data.updated_at))
+        .is_some_and(|(stored, now)| stored <= now && now - stored < CACHE_STAMP);
+    stored.updated_at.clone_from(&data.updated_at);
+    fresh && serde_json::to_vec(&stored).ok() == serde_json::to_vec(data).ok()
 }
 pub fn cached(connection: &Connection, month: &str) -> Option<crate::data::CalendarData> {
     if !connection.connected() {

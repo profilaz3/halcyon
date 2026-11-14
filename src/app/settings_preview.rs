@@ -184,6 +184,7 @@ impl SettingsSamples {
             recovery_details: false,
             restart: Default::default(),
             applying_colors: 0,
+            wallpaper_watch: Default::default(),
             surface_geometry: None,
             displays: Default::default(),
             selected_output: None,

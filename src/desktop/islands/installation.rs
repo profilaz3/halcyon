@@ -142,6 +142,19 @@ impl Installation {
     pub fn installed(&self) -> bool {
         matches!(self, Self::Installed { .. })
     }
+    /// The Islands panel is enabled, compatible and the one running now
+    /// (not the standard panel it falls back to).
+    pub fn running(&self) -> bool {
+        matches!(
+            self,
+            Self::Installed {
+                enabled: true,
+                compatible: Some(true) | None,
+                status: Some(CompatibilityStatus::Ready),
+                ..
+            }
+        )
+    }
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn status_label(&self) -> &'static str {
         match self {

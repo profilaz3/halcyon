@@ -1,7 +1,8 @@
 //! Watch the containing directories so atomic config/command replacements are seen.
 //! Only changed contents reach the UI; the fallback also recovers missed events.
 use cosmic::iced::{Subscription, futures::SinkExt, stream};
-use notify::{EventKind, RecursiveMode, Watcher};
+pub(crate) mod dir;
+use dir::DirWatch;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -25,48 +26,16 @@ fn changes_with(
     create_parents: bool,
 ) -> impl cosmic::iced::futures::Stream<Item = ()> {
     stream::channel(1, async move |mut output| {
-        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
-        let watched = paths.clone();
-        let mut watcher =
-            notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-                let relevant = match event {
-                    Ok(event) => {
-                        matches!(
-                            event.kind,
-                            EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
-                        ) && event.paths.iter().any(|path| watched.contains(path))
-                    }
-                    Err(_) => true,
-                };
-                if relevant {
-                    let _ = sender.try_send(());
-                }
-            })
-            .ok();
-        if let Some(watcher) = &mut watcher {
-            let mut directories = Vec::new();
-            for path in &paths {
-                if let Some(parent) = path.parent() {
-                    if !directories.contains(&parent) {
-                        if create_parents {
-                            let _ = std::fs::create_dir_all(parent);
-                        }
-                        let _ = watcher.watch(parent, RecursiveMode::NonRecursive);
-                        directories.push(parent);
-                    }
-                }
-            }
-        }
+        let mut watch = watch_parents(&paths, create_parents);
         let mut previous = None;
         let mut fallback = tokio::time::interval(Duration::from_secs(30));
         fallback.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
-                signal = receiver.recv(), if watcher.is_some() => {
-                    if signal.is_none() { watcher = None; }
+                woke = changed(&mut watch, &paths), if watch.is_some() => {
+                    if woke.is_err() { watch = None; }
                     // Coalesce the write/rename pair, and avoid reading a partial write.
-                    tokio::time::sleep(Duration::from_millis(25)).await;
-                    while receiver.try_recv().is_ok() {}
+                    settle(&mut watch, &paths).await;
                 }
                 _ = fallback.tick() => {}
             }
@@ -79,6 +48,41 @@ fn changes_with(
             }
         }
     })
+}
+
+/// Watches the folders holding `paths`, creating them first when asked.
+/// `None` when inotify is not available; the fallback still polls.
+fn watch_parents(paths: &[PathBuf], create: bool) -> Option<DirWatch> {
+    let mut watch = DirWatch::new().ok()?;
+    rewatch(&mut watch, paths, create);
+    Some(watch)
+}
+/// Watches each existing parent again: one that was removed and made
+/// again, as some writers replace a whole namespace, needs a new watch.
+fn rewatch(watch: &mut DirWatch, paths: &[PathBuf], create: bool) {
+    let mut parents = std::collections::BTreeSet::new();
+    for parent in paths.iter().filter_map(|path| path.parent()) {
+        if parents.insert(parent) {
+            if create {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = watch.watch(parent);
+        }
+    }
+}
+/// Waits for a change to one of `paths`.
+async fn changed(watch: &mut Option<DirWatch>, paths: &[PathBuf]) -> std::io::Result<()> {
+    match watch {
+        Some(watch) => watch.changed(|path| paths.iter().any(|p| p == path)).await,
+        None => std::future::pending().await,
+    }
+}
+/// Lets a burst of changes finish, then watches the folders again.
+async fn settle(watch: &mut Option<DirWatch>, paths: &[PathBuf]) {
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    if let Some(watch) = watch {
+        rewatch(watch, paths, false);
+    }
 }
 
 /// Files up to this size are compared by contents; larger ones by metadata.
@@ -128,35 +132,19 @@ fn image_changes(
     paths: Vec<(PathBuf, Option<FileStamp>)>,
 ) -> impl cosmic::iced::futures::Stream<Item = ()> {
     stream::channel(1, async move |mut output| {
-        let (send, mut receive) = tokio::sync::mpsc::channel(1);
         let watched = paths.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>();
-        let mut watcher =
-            notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-                if event.is_ok_and(|e| {
-                    matches!(
-                        e.kind,
-                        EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
-                    ) && e.paths.iter().any(|p| watched.contains(p))
-                }) {
-                    let _ = send.try_send(());
-                }
-            })
-            .ok();
-        if let Some(w) = &mut watcher {
-            let mut parents = std::collections::BTreeSet::new();
-            for (p, _) in &paths {
-                if let Some(dir) = p.parent()
-                    && parents.insert(dir)
-                {
-                    let _ = w.watch(dir, RecursiveMode::NonRecursive);
-                }
-            }
-        }
+        let mut watch = watch_parents(&watched, false);
         let mut previous = paths.iter().map(|(_, s)| *s).collect::<Vec<_>>();
         let mut fallback = tokio::time::interval(Duration::from_secs(30));
         fallback.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            tokio::select! { _=fallback.tick()=>{}, _=receive.recv(),if watcher.is_some()=>{tokio::time::sleep(Duration::from_millis(25)).await;while receive.try_recv().is_ok(){}} }
+            tokio::select! {
+                _ = fallback.tick() => {}
+                woke = changed(&mut watch, &watched), if watch.is_some() => {
+                    if woke.is_err() { watch = None; }
+                    settle(&mut watch, &watched).await;
+                }
+            }
             let current = paths.iter().map(|(p, _)| file_stamp(p)).collect::<Vec<_>>();
             if current != previous {
                 previous = current;

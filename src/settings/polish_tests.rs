@@ -2350,3 +2350,85 @@ fn previews_wizard_bars_step_shows_each_choice_close_up() {
         }
     }
 }
+
+/// The Wallpaper page with a 172-picture slideshow folder chosen (not
+/// applied yet), settled and right after a refresh like the one each
+/// cosmic-bg state write sends, and the Frosted rows with the standard and
+/// the Islands panel. A refresh keeps the folder's check and preview.
+#[test]
+fn wallpaper_folder_refresh_and_frosted_rows() {
+    let name = "wallpaper_folder_refresh_and_frosted_rows";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::desktop::islands::{CompatibilityStatus, Installation, Provenance};
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    let size = Size::new(1024., 760.);
+    send_settings(&mut app, Message::Resized(size));
+    let folder = root.join("home/Pictures/Slideshow");
+    std::fs::create_dir_all(&folder).unwrap();
+    for index in 0..172u32 {
+        let shade = (index * 37 % 200) as u8;
+        image::RgbImage::from_pixel(64, 36, image::Rgb([30 + shade / 3, 50, 90 + shade / 2]))
+            .save(folder.join(format!("{index:03}.png")))
+            .unwrap();
+    }
+    std::fs::File::open(&folder)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+        .unwrap();
+    send_settings(&mut app, Message::OpenRoot(Page::DesktopWallpaper));
+    send_settings(
+        &mut app,
+        Message::Wallpaper(wallpaper::Message::Select(wallpaper::Pick::Folder(
+            folder.clone(),
+        ))),
+    );
+    let mut native = crate::native_test::Native::new(size);
+    capture_both(&app, &mut native, "wallpaper-folder-settled");
+    assert_eq!(app.wallpaper.source_problem(), None);
+    assert!(app.wallpaper.shown().handle.is_some());
+    // The refresh a cosmic-bg state write (or the watch starting over)
+    // sends, seen before its background work finishes.
+    for round in 0..3 {
+        let task = app.update(Message::Wallpaper(wallpaper::Message::Refresh));
+        let mut native = crate::native_test::Native::new(size);
+        capture_both(&app, &mut native, &format!("wallpaper-folder-refreshed-{round}"));
+        assert_eq!(app.wallpaper.source_problem(), None, "no banner");
+        assert!(app.wallpaper.shown().handle.is_some(), "no Loading…");
+        settle_settings(&mut app, task);
+    }
+    let mut native = crate::native_test::Native::new(size);
+    capture_both(&app, &mut native, "wallpaper-folder-rechecked");
+
+    send_settings(&mut app, Message::OpenRoot(Page::DesktopWindows));
+    send_settings(&mut app, Message::ToggleSection("appearance-window-details"));
+    app.system_appearance.effects = true;
+    for (panel, installation) in [
+        ("standard", Installation::Absent),
+        (
+            "islands",
+            Installation::Installed {
+                provenance: Provenance::Package,
+                enabled: true,
+                compatible: Some(true),
+                status: Some(CompatibilityStatus::Ready),
+                diagnostics: String::new(),
+            },
+        ),
+    ] {
+        app.desktop.islands.installation = installation;
+        let mut native = crate::native_test::Native::new(size);
+        native_reveal(&app, &mut native, "appearance-effects");
+        capture_both(&app, &mut native, &format!("frosted-{panel}-panel"));
+    }
+}
