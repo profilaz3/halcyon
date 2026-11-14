@@ -28,8 +28,8 @@ class ReleaseEndpointTests(unittest.TestCase):
         path = Path(__file__).resolve().parents[2] / "assets/usage-endpoint.txt"
         module.validate_endpoint(path.read_text())
 
-    def test_live_gate_requires_schema_7_support(self):
-        for schema in (1, 2, 3, 4, 5, 6, 7):
+    def test_live_gate_requires_schema_8_support(self):
+        for schema in (1, 2, 3, 4, 5, 6, 7, 8):
             response = MagicMock()
             response.__enter__.return_value = response
             response.status = 200
@@ -39,7 +39,7 @@ class ReleaseEndpointTests(unittest.TestCase):
             with patch("sys.argv", ["release-check", "--check-live"]), \
                     patch.object(module.urllib.request, "build_opener", return_value=opener), \
                     contextlib.redirect_stdout(io.StringIO()):
-                if schema < 7:
+                if schema < 8:
                     with self.assertRaises(SystemExit):
                         module.main()
                 else:

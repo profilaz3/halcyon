@@ -92,7 +92,7 @@ fn endpoint_is_limited_to_the_cloudflare_collector() {
 fn report_contains_only_the_documented_fields() {
     let counts = counts::Counts::default();
     let report = serde_json::to_value(Report {
-        schema: 7,
+        schema: 8,
         kind: "activity",
         revision: 0,
         installation: &"a".repeat(64),
@@ -109,7 +109,7 @@ fn report_contains_only_the_documented_fields() {
     })
     .unwrap();
     assert_eq!(report.as_object().unwrap().len(), 16);
-    assert_eq!(report["schema"], 7);
+    assert_eq!(report["schema"], 8);
     assert_eq!(report["pages"], serde_json::json!({}));
     assert_eq!(report["runtime_hours"], 0);
     assert_eq!(report["system"].as_object().unwrap().len(), 6);
@@ -306,7 +306,7 @@ async fn failed_country_lookup_still_sends_activity_with_unknown_country() {
     let report: serde_json::Value =
         serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
     assert_eq!(report.as_object().unwrap().len(), 16);
-    assert_eq!(report["schema"], 7);
+    assert_eq!(report["schema"], 8);
     assert_eq!(report["installation"], id);
     assert_eq!(report["first_started_at"], 900);
     assert!(report["country"].is_null());
@@ -921,4 +921,42 @@ async fn an_accepted_report_sends_the_counts_once_and_opting_out_forgets_them() 
     change(&path, false, 2000).unwrap();
     assert!(!counts.exists());
     std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+}
+
+/// Every widget and Settings page key the app can send is one the collector
+/// accepts and PRIVACY.md lists, so a new widget or page cannot get whole
+/// reports refused without a schema bump.
+#[test]
+fn widget_and_page_keys_are_accepted_by_the_collector_and_documented() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let read = |path: &str| std::fs::read_to_string(root.join(path)).unwrap();
+    let report = read("scripts/usage/worker/src/report.js");
+    let widgets: String = report
+        .lines()
+        .filter(|line| line.starts_with("export const WIDGETS"))
+        .collect();
+    let details = read("scripts/usage/worker/src/details.js");
+    let start = details.find("export const PAGES = {").unwrap();
+    let pages = &details[start..start + details[start..].find("};").unwrap()];
+    let privacy = read("docs/PRIVACY.md");
+    for widget in crate::drawer::Widget::ALL.map(crate::drawer::Widget::key) {
+        assert!(
+            widgets.contains(&format!("'{widget}'")),
+            "collector widget list lacks {widget}"
+        );
+        assert!(
+            privacy.contains(&format!("`{widget}`")),
+            "PRIVACY.md lacks widget {widget}"
+        );
+    }
+    for page in counts::PAGES {
+        assert!(
+            pages.contains(&format!(" {page}:")) || pages.contains(&format!("'{page}':")),
+            "collector page list lacks {page}"
+        );
+        assert!(
+            privacy.contains(&format!("`{page}`")),
+            "PRIVACY.md lacks page {page}"
+        );
+    }
 }

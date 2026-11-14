@@ -50,7 +50,7 @@ test('handler stores a hash, one row per day, and answers like the Apps Script c
   assert.deepEqual(await post(env, 'x'.repeat(2000)), {ok: false});
   assert.deepEqual(await post(env, '{'), {ok: false});
   const health = await worker.fetch(new Request('https://reports.test/v1/report'), env);
-  assert.deepEqual(await health.json(), {service: 'halcyon-activity', schema: 7});
+  assert.deepEqual(await health.json(), {service: 'halcyon-activity', schema: 8});
   assert.equal((await worker.fetch(new Request('https://reports.test/v1/report', {method: 'PUT'}), env)).status, 405);
   assert.equal(JSON.stringify(state(env.DB)).includes(token), false);
 });

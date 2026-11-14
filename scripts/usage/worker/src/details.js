@@ -14,6 +14,9 @@ export const PAGES = {
   'desktop-automation': 'Time of day', moments: 'Time of day (widget styles)', adaptive: 'Adaptive looks',
   builder: 'Widget builder', changes: 'Changes',
 };
+// Schema 7 clients (0.6.5) have no Devices page; schema 8 (0.7.0) adds it.
+const SCHEMA_8_PAGES = ['devices'];
+const PAGES_7 = Object.fromEntries(Object.entries(PAGES).filter(([key]) => !SCHEMA_8_PAGES.includes(key)));
 
 // Update and Islands failures, as named by the app's own Failure kinds.
 const FAILURES = {
@@ -84,10 +87,10 @@ function system(v) {
   };
 }
 
-// The canonical stored form of a schema 7 report's details, or null.
-export function canonicalDetails(v) {
+// The canonical stored form of a schema 7 or 8 report's details, or null.
+export function canonicalDetails(v, schema = 8) {
   if (!plainObject(v) || !sameKeys(v, DETAIL_KEYS)) return null;
-  const pages = counts(v.pages, PAGES), problems = counts(v.problems, PROBLEMS), setup = counts(v.setup, SETUP);
+  const pages = counts(v.pages, schema >= 8 ? PAGES : PAGES_7), problems = counts(v.problems, PROBLEMS), setup = counts(v.setup, SETUP);
   const sys = system(v.system);
   const runtime = v.runtime_hours;
   if (!pages || !problems || !setup || !sys

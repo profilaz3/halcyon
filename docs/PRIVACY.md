@@ -78,7 +78,8 @@ not be read:
 - `activity_island`, `penumbra`, `islands`: whether the Activity island applet,
   the Penumbra bar gradient or Islands is on for a listed panel or dock
 - `widgets`: which of the built-in widgets are shown (`calendar`, `projects`,
-  `devbox`, `weather`, `clock`, `glance`, `music`, `notes`, `focus`)
+  `devbox`, `weather`, `clock`, `glance`, `music`, `notes`, `focus`, and from
+  schema 8 also `devices`)
 - `visualizer`, `wallpaper_depth`, `automation`: whether the audio visualizer,
   wallpaper depth or setup automation is on
 - `theme_style`: the built-in theme style name, or `default`
@@ -100,11 +101,11 @@ count are left out.
 - `pages`: how many times each Settings page was opened, by its fixed page key:
   `overview`, `layout`, `pending`, `appearance`, `widgets`, `glance`,
   `calendar`, `weather`, `devbox`, `clock`, `projects`, `music`, `notes`,
-  `focus`, `general`, `desktop`, `desktop-dock`, `desktop-appearance`,
-  `desktop-wallpaper`, `desktop-icons`, `desktop-profiles`, `themes`,
-  `desktop-windows`, `desktop-workspaces`, `desktop-motion`,
-  `desktop-window-rules`, `desktop-shortcuts`, `desktop-automation`,
-  `moments`, `adaptive`, `builder` and `changes`. A page counts when Settings
+  `focus`, `devices` (from schema 8), `general`, `desktop`, `desktop-dock`,
+  `desktop-appearance`, `desktop-wallpaper`, `desktop-icons`,
+  `desktop-profiles`, `themes`, `desktop-windows`, `desktop-workspaces`,
+  `desktop-motion`, `desktop-window-rules`, `desktop-shortcuts`,
+  `desktop-automation`, `moments`, `adaptive`, `builder` and `changes`. A page counts when Settings
   opens on it and each time you move to it. Nothing you type or search for is
   recorded.
 - `runtime_hours`: how long the desktop process ran, counted in ten-minute
@@ -171,6 +172,16 @@ text, crash logs or screenshots. Hardware is limited to the graphics maker,
 display count and largest resolution listed above. Use is limited to the page
 counts and running hours above: no clicks, times of day or per-page durations.
 
+### Schema 8: the Devices widget and page
+
+Halcyon 0.7.0 and later use schema 8. It has exactly the fields of schema 7 and
+adds one key to two of its fixed lists: `devices` in the `features.widgets` list
+when the Devices widget is shown, and `devices` in `pages` when the Devices
+Settings page is opened. Nothing about the devices themselves is sent: no
+names, models, addresses, battery levels or how many there are. The collector
+still accepts schema 7 from 0.6.5, without these keys, and refuses `devices`
+in a schema 6 or 7 report.
+
 ### Approximate country
 
 Before the first activity report, Halcyon requests an approximate country from
@@ -233,7 +244,7 @@ size, so a group of one installation is visible as 1.
 
 The statistics use the existing daily reports; the move to Cloudflare added no
 fields or client requests. The schema 6 feature snapshot and the schema 7
-fields travel inside the same daily request and add no requests.
+and 8 fields travel inside the same daily request and add no requests.
 
 Each installation has one current record. The row keeps
 its latest activity date, version, first country, current reporting status,
@@ -258,7 +269,7 @@ clients and days without these fields remain unknown. A channel change is an
 observation, not a package-manager transaction log. Schema 6 keeps the feature
 snapshot on the same daily row, so at most one per UTC day for 90 days, and it
 is deleted with the rest of the daily activity when reporting is turned off.
-Schema 7 keeps its five fields the same way: on that day's row, in a fixed
+Schemas 7 and 8 keep their five fields the same way: on that day's row, in a fixed
 order, replaced by a later report the same day, kept for 90 days and deleted
 when reporting is turned off.
 

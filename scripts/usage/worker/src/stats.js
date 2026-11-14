@@ -89,7 +89,7 @@ export const FEATURE_NAMES = {
 };
 export const WIDGET_NAMES = {
   calendar: 'Calendar', projects: 'Projects', devbox: 'System monitor', weather: 'Weather', clock: 'Clock',
-  glance: 'Daily overview', music: 'Music', notes: 'Notes', focus: 'Focus',
+  glance: 'Daily overview', music: 'Music', notes: 'Notes', focus: 'Focus', devices: 'Devices',
 };
 const VALUE_NAMES = {
   off: 'Off', rain: 'Rain', snow: 'Snow', fog: 'Fog', clouds: 'Cloud shadows', default: 'Default',
