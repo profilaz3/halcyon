@@ -1158,6 +1158,7 @@ fn empty_or_missing_sources_block_apply() {
             others: 10_001,
             truncated: true,
             first: Vec::new(),
+            ..FolderScan::default()
         }),
     ));
     assert_eq!(
@@ -2561,4 +2562,143 @@ fn repair_r1_retained_accent_submission_reloads_model_but_guards_later_writers()
         Some([99, 88, 77])
     );
     assert!(editor.colors_conflict);
+}
+
+/// Moves folders' modification times a minute back, as if written earlier
+/// (a folder written just now is rescanned until it settles).
+fn settle(dirs: &[&Path]) {
+    let earlier = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+    for dir in dirs {
+        fs::File::open(dir).unwrap().set_modified(earlier).unwrap();
+    }
+}
+
+/// The reported loop: a slideshow folder selected (not applied yet) went
+/// back to "Checking the folder…" and "Loading…" on every refresh, and
+/// each finished scan changed the watched picture, which refreshed again.
+/// Now a folder is scanned once; refreshes (a cosmic-bg state rewrite, a
+/// slideshow turn, the watch starting over) recheck it in the background,
+/// keep the banner away and the preview shown, and only a real change to
+/// the folder scans it again.
+#[test]
+fn refresh_keeps_a_checked_folder_and_rescans_only_a_changed_one() {
+    let fixture = seeded("wallpaper-page-folder-cache");
+    let folder = fixture.0.join("slideshow");
+    // 172 pictures as in the report: three real ones first, then names
+    // only (scans go by extension).
+    for index in 0..3u8 {
+        png(
+            &folder.join(format!("{index:03}.png")),
+            [40 * index, 90, 160],
+        );
+    }
+    for index in 3..172 {
+        fs::write(folder.join(format!("{index:03}.jpg")), "jpg").unwrap();
+    }
+    settle(&[&folder]);
+    let store = fixture.store();
+    let state = media::state_path(&store).unwrap();
+    fs::create_dir_all(state.parent().unwrap()).unwrap();
+    let applied = fixture.0.join("home/current.png");
+    let state_text = format!("[\n    (\"DP-1\", Path(\"{}\")),\n]", applied.display());
+    fs::write(&state, &state_text).unwrap();
+
+    let mut editor = WallpaperEditor::with_store(store);
+    drive(&mut editor);
+    editor.update(Message::Select(Pick::Folder(folder.clone())));
+    // The first look at a new folder is the only time the banner shows.
+    assert_eq!(editor.source_problem(), Some("Checking the folder…"));
+    let first = drive_bounded(&mut editor);
+    assert_eq!(
+        first
+            .iter()
+            .filter(|job| matches!(job, Job::Scan { path, .. } if *path == folder))
+            .count(),
+        1
+    );
+    let scan = editor.scan(&folder).unwrap().as_ref().unwrap().clone();
+    assert_eq!((scan.images, scan.others), (172, 0));
+    assert_eq!(editor.source_problem(), None);
+    let shown = editor.shown().image.clone();
+    assert_eq!(shown, Some(folder.join("000.png")));
+    assert!(editor.shown().handle.is_some(), "the preview shows");
+    assert_eq!(editor.shown().note, None);
+
+    // cosmic-bg rewrites its state with the same content, and the watch
+    // starts over whenever the shown picture changes: refresh many times.
+    for _ in 0..5 {
+        fs::write(&state, &state_text).unwrap();
+        editor.update(Message::Refresh);
+        assert_eq!(editor.source_problem(), None, "no banner on a recheck");
+        assert_eq!(editor.shown().image, shown);
+        assert!(editor.shown().handle.is_some(), "no Loading… on a recheck");
+        let ran = drive_bounded(&mut editor);
+        assert!(
+            !ran.iter().any(|job| matches!(job, Job::Scan { .. })),
+            "an unchanged folder is not scanned again: {ran:?}"
+        );
+        assert!(
+            ran.iter()
+                .any(|job| matches!(job, Job::Recheck { path, .. } if *path == folder)),
+            "it is rechecked in the background"
+        );
+        assert_eq!(editor.scan(&folder).unwrap().as_ref().unwrap(), &scan);
+        assert!(editor.dirty(), "the draft is kept");
+    }
+
+    // A real change: a picture added. The recheck scans again, and the
+    // banner never shows meanwhile.
+    fs::write(folder.join("172.jpg"), "jpg").unwrap();
+    editor.update(Message::Refresh);
+    assert_eq!(editor.source_problem(), None);
+    let jobs = editor.take_jobs();
+    let recheck = jobs
+        .iter()
+        .find(|job| matches!(job, Job::Recheck { path, .. } if *path == folder))
+        .cloned()
+        .expect("a background recheck");
+    for job in jobs {
+        if job != recheck {
+            editor.update(job.run());
+        }
+    }
+    let result = recheck.run();
+    assert!(
+        matches!(&result, Message::Rechecked(_, _, Some(Ok(scan))) if scan.images == 173),
+        "{result:?}"
+    );
+    editor.update(result);
+    drive(&mut editor);
+    assert_eq!(editor.scan(&folder).unwrap().as_ref().unwrap().images, 173);
+    assert_eq!(editor.source_problem(), None);
+    assert_eq!(editor.shown().image, shown);
+    assert!(editor.shown().handle.is_some());
+}
+
+/// A recheck of a folder that disappeared reports it, and one whose
+/// result arrives for an older request is dropped like other results.
+#[test]
+fn recheck_reports_a_removed_folder_and_drops_stale_results() {
+    let fixture = seeded("wallpaper-page-folder-gone");
+    let folder = fixture.0.join("slides");
+    settle(&[&folder]);
+    let mut editor = WallpaperEditor::with_store(fixture.store());
+    drive(&mut editor);
+    editor.update(Message::Select(Pick::Folder(folder.clone())));
+    drive(&mut editor);
+    assert_eq!(editor.source_problem(), None);
+    let scan = editor.scan(&folder).unwrap().clone();
+
+    editor.update(Message::Rechecked(
+        424_242,
+        folder.clone(),
+        Some(Ok(FolderScan::default())),
+    ));
+    assert_eq!(editor.scan(&folder), Some(&scan), "stale recheck dropped");
+
+    fs::rename(&folder, fixture.0.join("moved")).unwrap();
+    editor.update(Message::Refresh);
+    drive(&mut editor);
+    assert!(editor.source_problem().is_some(), "the move is reported");
+    assert!(!editor.can_apply());
 }

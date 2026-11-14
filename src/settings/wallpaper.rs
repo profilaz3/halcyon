@@ -143,6 +143,9 @@ pub enum Message {
     Animated(PathBuf, bool),
     Bundled(Vec<(&'static str, Option<Pixels>)>),
     Scanned(u64, PathBuf, Result<FolderScan, String>),
+    /// A background recheck of a folder scanned before: `None` when the
+    /// folder did not change (`media::recheck_folder`).
+    Rechecked(u64, PathBuf, Option<Result<FolderScan, String>>),
     Analysed(u64, Suggestion),
     AutoAnalysed(u64, u64, Result<Suggestion, String>),
     /// Custom colour: stop text (`#RRGGBB`).
@@ -231,9 +234,17 @@ pub enum Job {
         path: PathBuf,
     },
     Bundled,
+    /// The first scan of a folder.
     Scan {
         id: u64,
         path: PathBuf,
+    },
+    /// Whether a scanned folder changed since (metadata only), and its new
+    /// scan if it did.
+    Recheck {
+        id: u64,
+        path: PathBuf,
+        known: Box<FolderScan>,
     },
     Analyse {
         id: u64,
@@ -272,6 +283,10 @@ impl Job {
                 let scan = media::scan_folder(&path);
                 Message::Scanned(id, path, scan)
             }
+            Self::Recheck { id, path, known } => {
+                let scan = media::recheck_folder(&path, &known);
+                Message::Rechecked(id, path, scan)
+            }
             Self::Analyse { id, input } => Message::Analysed(
                 id,
                 match input {
@@ -295,6 +310,8 @@ impl Job {
             Self::Scan { id, path } => {
                 Message::Scanned(*id, path.clone(), Err("The folder couldn’t be read".into()))
             }
+            // The earlier result stays; the next refresh checks again.
+            Self::Recheck { id, path, .. } => Message::Rechecked(*id, path.clone(), None),
             Self::Analyse { id, .. } => Message::Analysed(*id, Suggestion::default()),
             Self::Automatic { id, source } => Message::AutoAnalysed(
                 *id,
@@ -716,7 +733,12 @@ pub struct WallpaperEditor {
     keys: BTreeMap<PathBuf, ThumbKey>,
     queue: VecDeque<PathBuf>,
     decoding: BTreeMap<u64, ThumbKey>,
+    /// Folder scans by path; each Ok scan carries its folder's signature.
     scans: BTreeMap<PathBuf, Result<FolderScan, String>>,
+    /// Scanned folders to check again in the background (after a refresh).
+    /// Their scans keep showing meanwhile: a recheck never brings back
+    /// "Checking the folder…" or "Loading…".
+    stale: BTreeSet<PathBuf>,
     scan_order: VecDeque<PathBuf>,
     scan_queue: VecDeque<PathBuf>,
     scanning: Option<(u64, PathBuf)>,
@@ -779,6 +801,7 @@ impl Default for WallpaperEditor {
             queue: VecDeque::new(),
             decoding: BTreeMap::new(),
             scans: BTreeMap::new(),
+            stale: BTreeSet::new(),
             scan_order: VecDeque::new(),
             scan_queue: VecDeque::new(),
             scanning: None,
@@ -1947,6 +1970,16 @@ impl WallpaperEditor {
                     self.remember_scan(path, scan);
                 }
             }
+            Message::Rechecked(id, path, scan) => {
+                if self.scanning.as_ref() == Some(&(id, path.clone())) {
+                    self.scanning = None;
+                    if let Some(scan) = scan
+                        && self.scans.contains_key(&path)
+                    {
+                        self.remember_scan(path, scan);
+                    }
+                }
+            }
             Message::Analysed(id, suggestion) => {
                 if let Some((pending, source)) = self.analysis.take() {
                     if pending == id {
@@ -2358,23 +2391,24 @@ impl WallpaperEditor {
             }
         }
     }
-    /// Forgets cached checks of edited folders and rereads collections.
+    /// Marks the cached folder scans for a background recheck and rereads
+    /// collections. The scans keep showing until a recheck finds a change,
+    /// so a refresh (a cosmic-bg state rewrite, a slideshow turn) never
+    /// starts a folder over.
     fn recheck(&mut self) {
-        if let Some(draft) = self.core.draft() {
-            for path in draft.edited_paths() {
-                self.scans.remove(&path);
-            }
-        }
+        self.stale.extend(self.scans.keys().cloned());
         self.keys.clear();
         self.reread();
     }
     fn remember_scan(&mut self, path: PathBuf, scan: Result<FolderScan, String>) {
         self.scan_order.retain(|known| *known != path);
         self.scan_order.push_back(path.clone());
+        self.stale.remove(&path);
         self.scans.insert(path, scan);
         while self.scan_order.len() > SCANS {
             if let Some(oldest) = self.scan_order.pop_front() {
                 self.scans.remove(&oldest);
+                self.stale.remove(&oldest);
             }
         }
     }
@@ -2691,10 +2725,11 @@ impl WallpaperEditor {
             self.jobs.push(Job::Thumb { id, path });
         }
 
-        // Folder scans, one at a time. The wanted ones are kept (touched),
-        // so a result never evicts another wanted one and the queue
-        // settles; only a draft over the display limit (blocked anyway)
-        // can want more than is kept.
+        // Folder scans, one at a time: first scans of new folders, then
+        // background rechecks of stale ones. The wanted ones are kept
+        // (touched), so a result never evicts another wanted one and the
+        // queue settles; only a draft over the display limit (blocked
+        // anyway) can want more than is kept.
         let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
         folders.retain(|path| seen.insert(path.clone()));
         folders.truncate(SCANS);
@@ -2706,16 +2741,28 @@ impl WallpaperEditor {
                 self.scan_order.push_back(known);
             }
         }
-        self.scan_queue = folders
+        let (new, stale): (VecDeque<PathBuf>, VecDeque<PathBuf>) = folders
             .into_iter()
-            .filter(|path| !self.scans.contains_key(path))
-            .collect();
+            .filter(|path| !self.scans.contains_key(path) || self.stale.contains(path))
+            .partition(|path| !self.scans.contains_key(path));
+        self.scan_queue = new;
+        self.scan_queue.extend(stale);
         if self.scanning.is_none()
             && let Some(path) = self.scan_queue.pop_front()
         {
             let id = self.id();
             self.scanning = Some((id, path.clone()));
-            self.jobs.push(Job::Scan { id, path });
+            self.stale.remove(&path);
+            self.jobs.push(match self.scans.get(&path) {
+                Some(Ok(known)) => Job::Recheck {
+                    id,
+                    path,
+                    known: Box::new(known.clone()),
+                },
+                // An unreadable folder is scanned again; its message stays
+                // until the new result.
+                _ => Job::Scan { id, path },
+            });
         }
 
         // The preview image and the colour analysis input.

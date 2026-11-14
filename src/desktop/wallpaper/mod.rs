@@ -470,6 +470,16 @@ pub fn walk_folder(path: &Path, visit: impl FnMut(&Path) -> bool) -> Result<Walk
 fn walk_with(
     path: &Path,
     limits: Limits,
+    visit: impl FnMut(&Path) -> bool,
+) -> Result<(Walk, usize), String> {
+    walk_listing(path, limits, |_| {}, visit)
+}
+/// `walk_with` that also names every directory it lists, just before the
+/// listing is read (`listed`), so a later change to it is noticed.
+fn walk_listing(
+    path: &Path,
+    limits: Limits,
+    mut listed: impl FnMut(&Path),
     mut visit: impl FnMut(&Path) -> bool,
 ) -> Result<(Walk, usize), String> {
     let root =
@@ -485,6 +495,7 @@ fn walk_with(
     let mut stack: Vec<(PathBuf, usize)> = vec![(path.to_path_buf(), 0)];
     let mut first = true;
     while let Some((dir, depth)) = stack.pop() {
+        listed(&dir);
         let listing = match std::fs::read_dir(&dir) {
             Ok(listing) => listing,
             Err(error) if first => return Err(format!("{}: {error}", path.display())),

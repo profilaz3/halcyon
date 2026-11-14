@@ -457,3 +457,109 @@ fn auditfix_set01_fill_crops_the_center_on_both_axes() {
         assert_eq!(pixel(&scaled, 7, 7), pixel(&filled, 3, 3));
     }
 }
+
+/// A scanned folder is checked again with one `stat` per listed directory:
+/// the same entries (even rewritten pictures) need no new listing, an
+/// added, removed or renamed entry, also in a subfolder, does.
+#[test]
+fn folder_recheck_rescans_only_when_entries_change() {
+    let fixture = Fixture::new("media-recheck");
+    let folder = fixture.0.join("slides");
+    fs::create_dir_all(folder.join("sub")).unwrap();
+    for name in ["a.png", "b.jpg", "sub/c.png"] {
+        fs::write(folder.join(name), "png").unwrap();
+    }
+    // Just written: no signature yet, so a recheck scans again.
+    let fresh = scan_folder(&folder).unwrap();
+    assert!(!folder_unchanged(&fresh));
+    assert_eq!(recheck_folder(&folder, &fresh), Some(Ok(fresh.clone())));
+    settle(&[&folder, &folder.join("sub")]);
+    let scan = scan_folder(&folder).unwrap();
+    assert_eq!(scan.signature.len(), 2, "the folder and its subfolder");
+    assert!(folder_unchanged(&scan));
+    assert_eq!(recheck_folder(&folder, &scan), None);
+    // A picture rewritten in place keeps the counts and the order.
+    fs::write(folder.join("a.png"), "other pixels").unwrap();
+    assert_eq!(recheck_folder(&folder, &scan), None);
+
+    let changes: [(&str, &dyn Fn()); 4] = [
+        ("added", &|| fs::write(folder.join("d.png"), "png").unwrap()),
+        ("removed", &|| {
+            fs::remove_file(folder.join("b.jpg")).unwrap()
+        }),
+        ("renamed", &|| {
+            fs::rename(folder.join("a.png"), folder.join("z.png")).unwrap()
+        }),
+        ("added below", &|| {
+            fs::write(folder.join("sub/e.png"), "png").unwrap()
+        }),
+    ];
+    for (change, apply) in changes {
+        settle(&[&folder, &folder.join("sub")]);
+        let before = scan_folder(&folder).unwrap();
+        assert!(folder_unchanged(&before), "{change}");
+        apply();
+        let after = recheck_folder(&folder, &before)
+            .unwrap_or_else(|| panic!("{change}: rescanned"))
+            .unwrap();
+        assert_ne!(
+            (after.images, &after.first),
+            (before.images, &before.first),
+            "{change}"
+        );
+        assert_eq!(after, scan_folder(&folder).unwrap(), "{change}");
+    }
+    // A folder that went away is rescanned (and reported).
+    settle(&[&folder, &folder.join("sub")]);
+    let gone = scan_folder(&folder).unwrap();
+    fs::rename(&folder, fixture.0.join("moved")).unwrap();
+    assert!(matches!(recheck_folder(&folder, &gone), Some(Err(_))));
+    // A scan without a signature (an older result) is never current.
+    assert!(!folder_unchanged(&FolderScan::default()));
+}
+
+/// Large slideshow folders (a 172-picture one and a few thousand) scan
+/// once, and their routine rechecks read one directory's metadata.
+#[test]
+fn large_folder_scans_once_and_rechecks_cheaply() {
+    let fixture = Fixture::new("media-large-folder");
+    for count in [172usize, 3000] {
+        let folder = fixture.0.join(format!("slides-{count}"));
+        fs::create_dir_all(&folder).unwrap();
+        for index in 0..count {
+            fs::write(folder.join(format!("{index:05}.jpg")), "jpg").unwrap();
+        }
+        settle(&[&folder]);
+        let started = Instant::now();
+        let scan = scan_folder(&folder).unwrap();
+        let scanned = started.elapsed();
+        assert_eq!(
+            (scan.images, scan.others, scan.truncated),
+            (count, 0, false)
+        );
+        assert_eq!(scan.first[0], folder.join("00000.jpg"));
+        assert_eq!(scan.signature.len(), 1, "one directory to stat");
+        let started = Instant::now();
+        for _ in 0..100 {
+            assert_eq!(recheck_folder(&folder, &scan), None);
+        }
+        let rechecked = started.elapsed();
+        // Generous bounds for loaded test machines; a recheck is a stat.
+        assert!(
+            scanned < Duration::from_secs(10),
+            "{count}: scan {scanned:?}"
+        );
+        assert!(
+            rechecked < Duration::from_secs(1),
+            "{count}: 100 rechecks {rechecked:?}"
+        );
+    }
+}
+
+/// Moves folders' modification times a minute back, as if written earlier.
+pub(crate) fn settle(dirs: &[&Path]) {
+    let earlier = std::time::SystemTime::now() - Duration::from_secs(60);
+    for dir in dirs {
+        fs::File::open(dir).unwrap().set_modified(earlier).unwrap();
+    }
+}

@@ -5800,6 +5800,7 @@ impl Settings {
                 | Edit::Animated(..)
                 | Edit::Bundled(_)
                 | Edit::Scanned(..)
+                | Edit::Rechecked(..)
                 | Edit::Analysed(..)
                 | Edit::AutoAnalysed(..)
                 | Edit::Picked(..)
