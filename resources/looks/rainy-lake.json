@@ -1,0 +1,167 @@
+{
+  "format": "desktop-cards-profile",
+  "version": 22,
+  "name": "Rainy Lake",
+  "description": "Rain on a still lake at dusk, warm amber light, and a large clock that sits behind the hills.",
+  "dock": {
+    "floating": true,
+    "margin": 6,
+    "opacity": 0.9,
+    "border_radius": 160,
+    "spacing": 8,
+    "padding": 6,
+    "background": "ThemeDefault",
+    "autohide": "Always"
+  },
+  "panel": {
+    "floating": true,
+    "margin": 6,
+    "opacity": 0.9,
+    "border_radius": 160,
+    "spacing": 6,
+    "padding": 2,
+    "background": "ThemeDefault",
+    "autohide": "Always"
+  },
+  "appearance": {
+    "mode": "dark",
+    "interface_font": {
+      "family": "Open Sans",
+      "weight": "Normal",
+      "stretch": "Normal",
+      "style": "Normal"
+    },
+    "icon_theme": "Cosmic",
+    "icon_shape": "squircle",
+    "folder_tint": true,
+    "light": {
+      "accent": "#88652E",
+      "background": "#FBF2E6",
+      "primary": "#F0E7DB",
+      "secondary": "auto",
+      "outline": "auto",
+      "outline_width": 1,
+      "corners": "Round",
+      "gaps": [
+        8,
+        12
+      ]
+    },
+    "dark": {
+      "accent": "#D0AA73",
+      "background": "#2F281F",
+      "primary": "#393128",
+      "secondary": "#2F2731",
+      "outline": "auto",
+      "outline_width": 1,
+      "corners": "Round",
+      "gaps": [
+        8,
+        12
+      ]
+    }
+  },
+  "widget_style": {
+    "theme": "graphite",
+    "appearance": {
+      "family": "bare",
+      "native_mode_palettes": 1,
+      "color_policy": "custom",
+      "overrides": 0,
+      "surface": null,
+      "accent": [
+        208,
+        170,
+        115
+      ],
+      "color_source": "custom",
+      "sync_colors": true,
+      "wallpaper_colors": false,
+      "opacity": 92,
+      "corner_radius": 24,
+      "border_opacity": 0,
+      "contrast_assist": false,
+      "wallpaper_light": false
+    },
+    "glance": {
+      "style": "transparent",
+      "opacity": 85
+    },
+    "clock": {
+      "face": "digital",
+      "surface": "none",
+      "depth": true,
+      "scale": 200,
+      "weight": "normal",
+      "italic": false,
+      "alignment": "center",
+      "center_vertically": false
+    },
+    "clock_font": null,
+    "rain": {
+      "enabled": true,
+      "effect": "rain",
+      "intensity": 40,
+      "trails": 45,
+      "size": 30,
+      "speed": 40,
+      "wind": -6,
+      "mist": 30,
+      "refraction": 60
+    }
+  },
+  "widget_layout": {
+    "enabled_widgets": [
+      "clock",
+      "weather"
+    ],
+    "widget_positions": {
+      "clock": [
+        0.44,
+        0.31
+      ],
+      "weather": [
+        0.96,
+        0.1
+      ]
+    },
+    "widget_sizes": {
+      "clock": [
+        800,
+        330
+      ]
+    },
+    "glance": {
+      "enabled": false,
+      "initialized": true
+    },
+    "music": {
+      "enabled": false
+    },
+    "notes": {
+      "enabled": false
+    },
+    "focus": {
+      "enabled": false
+    }
+  },
+  "windows": {
+    "active_hint": true,
+    "show_minimize": true,
+    "show_maximize": true
+  },
+  "wallpaper": {
+    "background": {
+      "source": {
+        "bundled": "halcyon-fog"
+      },
+      "fit": "fill"
+    }
+  },
+  "desktop_icons": {
+    "icon_size": 100,
+    "spacing": 125,
+    "show_drives": false,
+    "show_trash": false
+  }
+}

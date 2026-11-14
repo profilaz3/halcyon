@@ -1,0 +1,67 @@
+{
+  "appearance_only": true,
+  "format": "desktop-cards-profile",
+  "version": 21,
+  "name": "Rainy Lake",
+  "description": "Warm amber on deep brown",
+  "dock": {
+    "floating": true,
+    "margin": 6,
+    "opacity": 0.9,
+    "border_radius": 160,
+    "spacing": 8,
+    "padding": 6,
+    "background": "ThemeDefault"
+  },
+  "panel": {
+    "floating": true,
+    "margin": 6,
+    "opacity": 0.9,
+    "border_radius": 160,
+    "spacing": 6,
+    "padding": 2,
+    "background": "ThemeDefault"
+  },
+  "appearance": {
+    "light": {
+      "accent": "#88652E",
+      "background": "#FBF2E6",
+      "primary": "#F0E7DB",
+      "secondary": "auto",
+      "outline": "auto"
+    },
+    "dark": {
+      "accent": "#D0AA73",
+      "background": "#2F281F",
+      "primary": "#393128",
+      "secondary": "#2F2731",
+      "outline": "auto"
+    }
+  },
+  "widget_style": {
+    "theme": "graphite",
+    "appearance": {
+      "family": "bare",
+      "native_mode_palettes": 1,
+      "color_policy": "custom",
+      "overrides": 0,
+      "surface": null,
+      "accent": [
+        208,
+        170,
+        115
+      ],
+      "color_source": "custom",
+      "sync_colors": true,
+      "wallpaper_colors": false,
+      "opacity": 92,
+      "corner_radius": 24,
+      "border_opacity": 0,
+      "contrast_assist": false
+    },
+    "glance": {
+      "style": "transparent",
+      "opacity": 85
+    }
+  }
+}

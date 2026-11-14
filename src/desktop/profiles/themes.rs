@@ -581,6 +581,7 @@ fn preserve_explicit(
     }
     Ok(())
 }
+/// Every built-in theme: the styles, then the ready-made themes.
 pub fn presets() -> Vec<Preset> {
     Family::ALL
         .into_iter()
@@ -589,7 +590,103 @@ pub fn presets() -> Vec<Preset> {
             description: f.description(),
             profile: record(f),
         })
+        .chain(named().iter().cloned())
         .collect()
+}
+
+mod resources {
+    // `FILES`: every `resources/themes/<id>.json` as `theme-<id>`, embedded
+    // by build.rs.
+    include!(concat!(env!("OUT_DIR"), "/built_in_themes.rs"));
+}
+
+/// A ready-made theme shipped as `resources/themes/<id>.json` (`id` is
+/// `theme-<id>`): a style in its own colors, with its own dock and panel.
+/// It applies exactly as it was saved, so it must choose all of them and
+/// keep its color instead of following the wallpaper.
+pub fn parse_named(id: &str, text: &str) -> Result<Profile, String> {
+    let profile = import(text.as_bytes()).map_err(|error| format!("{id}: {error}"))?;
+    if Family::ALL.into_iter().any(|f| f.preset() == id) {
+        return Err(format!("{id}: this ID belongs to a style"));
+    }
+    if !profile.appearance_only {
+        return Err(format!("{id}: a built-in theme holds appearance only"));
+    }
+    validate(&profile).map_err(|error| format!("{id}: {error}"))?;
+    if profile.wallpaper.is_some() {
+        return Err(format!(
+            "{id}: a built-in theme keeps the wallpaper; a look can bring one"
+        ));
+    }
+    if !selects_style(&profile) {
+        return Err(format!(
+            "{id}: a built-in theme chooses a style, colors, the dock and the panel"
+        ));
+    }
+    if !matches!(LookColor::of(&profile), Some(LookColor::Fixed(_))) {
+        return Err(format!(
+            "{id}: a built-in theme keeps its own color instead of following the wallpaper"
+        ));
+    }
+    if profile.description.is_none() {
+        return Err(format!("{id}: a built-in theme needs a description"));
+    }
+    if super::built_in::personal_member(&profile).is_some() {
+        return Err(format!("{id}: a built-in theme can't carry personal data"));
+    }
+    Ok(profile)
+}
+
+/// The ready-made themes, parsed once. A file that doesn't parse is left
+/// out (the tests refuse it before release).
+pub fn named() -> &'static [Preset] {
+    static THEMES: std::sync::OnceLock<Vec<Preset>> = std::sync::OnceLock::new();
+    THEMES.get_or_init(|| {
+        resources::FILES
+            .iter()
+            .filter_map(|(id, text)| {
+                let profile = parse_named(id, text).ok()?;
+                // Parsed once for the life of the app, like the built-in looks.
+                let description: &'static str = Box::leak(
+                    profile
+                        .description
+                        .clone()
+                        .unwrap_or_default()
+                        .into_boxed_str(),
+                );
+                Some(Preset {
+                    id,
+                    description,
+                    profile,
+                })
+            })
+            .collect()
+    })
+}
+
+/// Whether `id` is a ready-made theme, which applies as saved instead of
+/// keeping the desktop's own color and bar choices (see `preserve_custom`).
+pub fn is_named(id: &str) -> bool {
+    named().iter().any(|preset| preset.id == id)
+}
+
+/// The ready-made theme the applied appearance is: its style, color and
+/// widget shape. None after any of them changed.
+pub fn applied_named(a: &Appearance) -> Option<&'static Preset> {
+    named().iter().find(|preset| {
+        let style = preset
+            .profile
+            .widget_style
+            .as_ref()
+            .and_then(|s| s.get("appearance"));
+        let number = |key: &str| style.and_then(|s| s.get(key)).and_then(Value::as_u64);
+        a.family.is_some()
+            && a.family == family(&preset.profile)
+            && Some(LookColor::applied(a)) == LookColor::of(&preset.profile)
+            && number("opacity") == Some(u64::from(a.opacity))
+            && number("corner_radius") == Some(u64::from(a.corner_radius))
+            && number("border_opacity") == Some(u64::from(a.border_opacity))
+    })
 }
 pub fn matching(family: Family) -> WallpaperLook {
     let (a, b) = family.wallpaper();
@@ -943,10 +1040,237 @@ mod frosted_tests {
 mod color_tests;
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::desktop::store::tests::Fixture;
     use std::fs;
+
+    /// The themes the person saved that ship as ready-made themes, exactly
+    /// as Save style wrote them.
+    pub(crate) const SAVED: [(&str, &str); 2] = [
+        (
+            "theme-rainy-lake",
+            include_str!("testdata/saved-themes/rainy-lake.json"),
+        ),
+        (
+            "theme-deep-purple",
+            include_str!("testdata/saved-themes/deep-purple.json"),
+        ),
+    ];
+
+    /// What a saved theme records, as `capture` writes it, in one case. A
+    /// ready-made theme keeps its own color where the saved one followed
+    /// the wallpaper, and the wallpaper's lightness is the desktop's.
+    pub(crate) fn recorded(p: &Profile) -> Value {
+        let mut value = serde_json::to_value(p).unwrap();
+        let mut out = json!({});
+        for key in ["dock", "panel", "appearance", "widget_style"] {
+            out[key] = value[key].take();
+        }
+        let style = out["widget_style"]["appearance"].as_object_mut().unwrap();
+        for key in ["color_policy", "wallpaper_colors", "wallpaper_light"] {
+            style.remove(key);
+        }
+        serde_json::from_str(&out.to_string().to_lowercase()).unwrap()
+    }
+
+    #[test]
+    fn ready_made_themes_ship_parse_and_keep_their_own_color() {
+        assert_eq!(named().len(), resources::FILES.len(), "every file parses");
+        for (id, text) in resources::FILES {
+            let profile = parse_named(id, text).unwrap();
+            assert!(is_named(id));
+            assert!(presets().iter().any(|p| p.id == *id));
+            assert!(Family::parse(id).is_none(), "{id} is not a style's ID");
+            assert!(matches!(LookColor::of(&profile), Some(LookColor::Fixed(_))));
+            assert!(valid_description(profile.description.as_deref().unwrap()));
+            let description = profile.description.as_deref().unwrap();
+            assert!(
+                !description.contains(['\u{2013}', '\u{2014}']),
+                "{id}: {description}"
+            );
+        }
+        for (id, saved) in SAVED {
+            let shipped = named().iter().find(|p| p.id == id).unwrap();
+            let saved = import(saved.as_bytes()).unwrap();
+            assert_eq!(shipped.profile.name, saved.name);
+            assert_eq!(recorded(&shipped.profile), recorded(&saved), "{id}");
+        }
+        // A wallpaper, a following color or a style's ID is refused.
+        let (id, text) = resources::FILES[0];
+        let mut value: Value = serde_json::from_str(text).unwrap();
+        value["widget_style"]["appearance"]["color_policy"] = "wallpaper".into();
+        value["widget_style"]["appearance"]["wallpaper_colors"] = true.into();
+        assert!(parse_named(id, &value.to_string()).is_err());
+        let mut value: Value = serde_json::from_str(text).unwrap();
+        value["wallpaper"] = json!({"background":{"source":{"bundled":"ocean"}}});
+        assert!(parse_named(id, &value.to_string()).is_err());
+        assert!(parse_named("theme-soft", text).is_err());
+    }
+
+    /// Each ready-made theme also ships as a look with a bundled wallpaper
+    /// and a weather effect. Applied on a default install, it leaves the
+    /// desktop wearing exactly the saved theme.
+    #[test]
+    fn ready_made_looks_wear_their_saved_themes_exactly() {
+        for (id, wallpaper, rain, depth) in [
+            ("rainy-lake", "halcyon-fog", true, true),
+            ("deep-purple", "halcyon-night", false, false),
+        ] {
+            let saved = SAVED
+                .iter()
+                .find(|(theme, _)| *theme == format!("theme-{id}"))
+                .map(|(_, text)| import(text.as_bytes()).unwrap())
+                .unwrap();
+            let look = super::super::built_in_looks()
+                .iter()
+                .find(|look| look.id == id)
+                .unwrap_or_else(|| panic!("resources/looks/{id}.json loads"));
+            assert_eq!(look.profile.name, saved.name);
+            assert_eq!(look.profile.version, super::super::VERSION);
+            assert!(!look.description.contains(['\u{2013}', '\u{2014}']));
+            assert_eq!(
+                look.profile
+                    .wallpaper
+                    .as_ref()
+                    .unwrap()
+                    .background
+                    .as_ref()
+                    .unwrap()
+                    .source,
+                Some(SourceLook::Bundled(wallpaper.into()))
+            );
+            let style = look.profile.widget_style.as_ref().unwrap();
+            assert_eq!(
+                style.pointer("/rain/enabled").and_then(Value::as_bool) == Some(true),
+                rain,
+                "{id}"
+            );
+            if rain {
+                assert_eq!(style.pointer("/rain/effect"), Some(&json!("rain")));
+            }
+            assert_eq!(
+                style.pointer("/clock/depth").and_then(Value::as_bool) == Some(true),
+                depth,
+                "{id}"
+            );
+            let fixture = Fixture::new(&format!("ready-made-look-{id}"));
+            fixture.system(
+                "com.system76.CosmicPanel",
+                "entries",
+                "[\"Panel\",\"Dock\"]",
+            );
+            fixture.system("com.system76.CosmicPanel.Dock", "anchor", "Bottom");
+            fixture.system("com.system76.CosmicPanel.Panel", "anchor", "Top");
+            fixture.user("com.system76.CosmicTheme.Mode", "is_dark", "true");
+            let bundled = fixture.0.join("pictures/Desktop Cards");
+            fs::create_dir_all(&bundled).unwrap();
+            let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/wallpapers");
+            fs::copy(
+                crate::desktop::wallpaper::bundled_path(&assets, wallpaper),
+                crate::desktop::wallpaper::bundled_path(&bundled, wallpaper),
+            )
+            .unwrap();
+            let path = fixture.0.join("config.json");
+            fs::write(
+                &path,
+                r#"{"theme":"teal","appearance":{"wallpaper_colors":true}}"#,
+            )
+            .unwrap();
+            let store = fixture.store().with_app_config(path.clone());
+            let installed = Installed::discover(&store);
+            let config = crate::config::Config::from_bytes(&fs::read(&path).unwrap()).unwrap();
+            let dir = crate::desktop::wallpaper::bundled_dir(&store);
+            let p = super::super::fitted(look.clone(), &config, &dir, false).profile;
+            assert!(
+                p.wallpaper.is_some(),
+                "{id}: the bundled wallpaper is found"
+            );
+            let plan = plan(&store, &installed, &p, &p.domains().into_iter().collect());
+            assert!(plan.can_apply(), "{id}: {:?}", plan.blocking_reasons());
+            apply(&store, &plan).unwrap();
+            let captured = capture(&store, "Applied").unwrap().profile;
+            assert_eq!(recorded(&captured), recorded(&saved), "{id}");
+        }
+    }
+
+    #[test]
+    fn ready_made_themes_apply_exactly_as_saved_in_both_modes() {
+        for (id, saved) in SAVED {
+            let saved = import(saved.as_bytes()).unwrap();
+            let theme = named().iter().find(|p| p.id == id).unwrap();
+            for dark in [true, false] {
+                let fixture = Fixture::new(&format!("ready-made-{id}-{dark}"));
+                fixture.system(
+                    "com.system76.CosmicPanel",
+                    "entries",
+                    "[\"Panel\",\"Dock\"]",
+                );
+                fixture.system("com.system76.CosmicPanel.Dock", "anchor", "Bottom");
+                fixture.system("com.system76.CosmicPanel.Panel", "anchor", "Top");
+                fixture.user(
+                    "com.system76.CosmicTheme.Mode",
+                    "is_dark",
+                    &dark.to_string(),
+                );
+                // Someone else's look: a style, a wallpaper color and a
+                // custom dock.
+                for variant in ["Dark", "Light"] {
+                    let dir = fixture
+                        .0
+                        .join("config/cosmic")
+                        .join(format!("com.system76.CosmicTheme.{variant}.Builder"))
+                        .join("v2");
+                    fs::create_dir_all(&dir).unwrap();
+                    fs::write(dir.join("accent"), "Some(\"#40352CFF\")").unwrap();
+                }
+                fixture.system("com.system76.CosmicPanel.Dock", "opacity", "0.5");
+                let path = fixture.0.join("config.json");
+                fs::write(
+                    &path,
+                    r#"{"theme":"amber","appearance":{"family":"soft","native_mode_palettes":1,"opacity":70,"corner_radius":8,"border_opacity":30,"accent":[64,53,44],"color_source":"custom","sync_colors":true,"wallpaper_colors":true,"color_policy":"wallpaper","overrides":256},"glance":{"style":"panel"}}"#,
+                )
+                .unwrap();
+                let store = fixture.store().with_app_config(path.clone());
+                let installed = Installed::discover(&store);
+                let p = &theme.profile;
+                let plan = plan(&store, &installed, p, &p.domains().into_iter().collect());
+                assert!(plan.can_apply(), "{id}: {:?}", plan.blocking_reasons());
+                apply(&store, &plan).unwrap();
+                let captured = capture(&store, "Applied").unwrap().profile;
+                assert_eq!(recorded(&captured), recorded(&saved), "{id}, dark {dark}");
+                let config = crate::config::Config::from_bytes(&fs::read(&path).unwrap()).unwrap();
+                let a = &config.appearance;
+                assert_eq!(a.color_policy, Some(crate::config::ColorPolicy::Custom));
+                assert!(!a.wallpaper_colors);
+                assert_eq!(a.overrides, 0, "{id}: the old dock override is gone");
+                assert_eq!(applied_named(a).map(|p| p.id), Some(id));
+                // The native colors are the saved ones, in both variants.
+                let draft = AppearanceDraft::load(&store).unwrap();
+                for variant in ThemeVariant::ALL {
+                    let expected = saved.appearance.as_ref().unwrap().variant(variant).unwrap();
+                    for (role, choice) in [
+                        (ColorRole::Accent, &expected.accent),
+                        (ColorRole::Background, &expected.background),
+                        (ColorRole::Primary, &expected.primary),
+                    ] {
+                        let want = choice.as_ref().unwrap().color(role).unwrap().unwrap();
+                        let have = draft
+                            .color(variant, role)
+                            .known()
+                            .copied()
+                            .flatten()
+                            .unwrap();
+                        assert_eq!(
+                            appearance::hex(have, false),
+                            appearance::hex(want, false),
+                            "{id} {variant:?} {role:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn shared_theme_apply_undo_capture_and_share_preserve_content_and_geometry() {
         for f in Family::ALL {

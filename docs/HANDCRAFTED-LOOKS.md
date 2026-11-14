@@ -105,3 +105,42 @@ the tests fail on, a file that:
 Select it on Looks and choose **Edit a copy in studio…**. Change what you
 like, keep the name (so the ID stays the same), choose **Make built-in** and
 copy the new file over the old one in `resources/looks/`.
+
+## Adding a ready-made theme
+
+A theme is the appearance part of a look: a widget style in its own colors,
+with its own dock and panel and the COSMIC light and dark palettes. Built-in
+themes ship as data files in `resources/themes/`, and they appear on
+Appearance under **Themes**, above the styles. Choosing one applies it
+exactly as it was saved: unlike choosing a style, it doesn't keep the
+desktop's own color or bar changes.
+
+1. Make the theme on Appearance: choose a style, a color, the mode and the
+   dock and panel you want, and save it as a theme (**Save style…** under
+   **Your themes**). Saved themes are files in
+   `$XDG_DATA_HOME/halcyon/profiles/`.
+2. Copy it to `resources/themes/<id>.json`. The file name is the theme's
+   stable ID (lowercase letters, digits and single hyphens); the app knows
+   it as `theme-<id>`, so it can't take a style's name such as `soft`.
+3. Edit the copy:
+   - add a short `"description"` (it shows under the tile, so keep it to a
+     few words) and set `"version"` to 21, the first version with
+     descriptions;
+   - keep the color: under `widget_style.appearance`, set `"color_policy"`
+     to `"custom"` and `"wallpaper_colors"` to `false`. A theme that follows
+     the wallpaper would look different on every desktop, so the app
+     refuses it;
+   - remove `"wallpaper_light"`; it describes the wallpaper of the computer
+     the theme was saved on.
+4. Build and run the tests. The tests in `src/desktop/profiles/themes.rs`
+   check every file: it parses, it holds appearance only, it chooses a
+   style, colors, the dock and the panel, it has no wallpaper and keeps its
+   own color. `ready_made_themes_apply_exactly_as_saved_in_both_modes`
+   applies each listed theme to a test desktop and compares the result with
+   the saved file in `src/desktop/profiles/testdata/saved-themes/`; add the
+   saved file there and to `SAVED` when you add a theme.
+
+To give a theme its whole mood (a wallpaper, weather, a clock), also ship a
+look with the same name that uses the theme's dock, panel, colors and widget
+style. `resources/looks/rainy-lake.json` and `deep-purple.json` go with the
+Rainy Lake and Deep Purple themes.
