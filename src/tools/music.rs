@@ -1545,24 +1545,11 @@ mod tests {
     /// control call behave as on a desktop, without touching the real one.
     #[test]
     fn a_private_bus_player_is_listed_and_controlled() {
-        let Ok(mut daemon) = std::process::Command::new("dbus-daemon")
-            .args(["--session", "--nofork", "--print-address"])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-        else {
+        let Ok(bus) = crate::test_env::PrivateBus::start() else {
             eprintln!("dbus-daemon is not installed; skipping");
             return;
         };
-        let mut address = String::new();
-        {
-            use std::io::BufRead;
-            let stdout = daemon.stdout.take().unwrap();
-            std::io::BufReader::new(stdout)
-                .read_line(&mut address)
-                .unwrap();
-        }
-        let address = address.trim().to_string();
+        let address = bus.address.clone();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -1697,8 +1684,7 @@ mod tests {
             drop(service);
             Ok::<(), zbus::Error>(())
         });
-        let _ = daemon.kill();
-        let _ = daemon.wait();
+        drop(bus);
         result.unwrap();
     }
 

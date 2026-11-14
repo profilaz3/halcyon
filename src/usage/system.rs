@@ -206,13 +206,8 @@ fn gpus(root: &Path) -> Option<Vec<&'static str>> {
 mod tests {
     use super::*;
 
-    fn root() -> PathBuf {
-        let mut bytes = [0u8; 8];
-        getrandom::fill(&mut bytes).unwrap();
-        let p =
-            std::env::temp_dir().join(format!("halcyon-system-{:x}", u64::from_le_bytes(bytes)));
-        std::fs::create_dir_all(&p).unwrap();
-        p
+    fn root() -> crate::test_env::TempPath {
+        crate::test_env::TempPath::new("system")
     }
     fn write(root: &Path, path: &str, text: &str) {
         let path = rooted(root, path);

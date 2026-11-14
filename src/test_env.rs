@@ -91,6 +91,234 @@ pub fn assert_isolated() -> PathBuf {
     root
 }
 
+/// A path inside a fresh `/tmp/halcyon-<label>-*` folder. Dropping it, also
+/// while a failed test unwinds, unmounts anything left mounted under the folder
+/// and removes the folder.
+pub struct TempPath {
+    root: PathBuf,
+    path: PathBuf,
+}
+
+impl TempPath {
+    pub fn new(label: &str) -> Self {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let mut bytes = [0u8; 8];
+        getrandom::fill(&mut bytes).unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "halcyon-{label}-{}-{}-{:x}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            u64::from_le_bytes(bytes)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        Self {
+            path: root.clone(),
+            root,
+        }
+    }
+
+    /// The same folder, pointing at `relative` inside it.
+    pub fn at(mut self, relative: &str) -> Self {
+        self.path = self.root.join(relative);
+        self
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+}
+
+impl std::ops::Deref for TempPath {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl AsRef<Path> for TempPath {
+    fn as_ref(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempPath {
+    fn drop(&mut self) {
+        unmount_under(&self.root);
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+/// Mount points at or below `root` in `/proc/mounts` text, deepest first.
+fn mounts_under(mounts: &str, root: &Path) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = mounts
+        .lines()
+        .filter_map(|line| line.split(' ').nth(1))
+        .map(|field| {
+            // /proc/mounts writes space, tab, newline and backslash as octal.
+            PathBuf::from(
+                field
+                    .replace("\\040", " ")
+                    .replace("\\011", "\t")
+                    .replace("\\012", "\n")
+                    .replace("\\134", "\\"),
+            )
+        })
+        .filter(|point| point.starts_with(root))
+        .collect();
+    found.sort_by_key(|point| std::cmp::Reverse(point.components().count()));
+    found
+}
+
+/// Detach FUSE mounts a test left under `root`, such as a document portal or
+/// gvfs mount whose daemon has gone.
+pub fn unmount_under(root: &Path) {
+    let Ok(mounts) = std::fs::read_to_string("/proc/self/mounts") else {
+        return;
+    };
+    for point in mounts_under(&mounts, root) {
+        for tool in ["fusermount3", "fusermount"] {
+            let done = Command::new(tool)
+                .args(["-u", "-z"])
+                .arg(&point)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success());
+            if done {
+                break;
+            }
+        }
+    }
+}
+
+/// A private session bus that can't start anything by itself. The stock
+/// session config lists every installed service, so a test that touched the
+/// document portal or gvfs started a private xdg-document-portal or
+/// gvfsd-fuse that outlived the bus and left FUSE mounts behind.
+pub struct PrivateBus {
+    daemon: std::process::Child,
+    pub address: String,
+    _folder: TempPath,
+}
+
+impl PrivateBus {
+    pub fn start() -> std::io::Result<Self> {
+        use std::io::BufRead;
+        let folder = TempPath::new("bus");
+        let config = folder.join("bus.conf");
+        std::fs::write(
+            &config,
+            format!(
+                r#"<busconfig><type>session</type><listen>unix:path={}</listen><auth>EXTERNAL</auth><policy context="default"><allow user="*"/><allow own="*"/><allow send_destination="*"/><allow receive_sender="*"/></policy></busconfig>"#,
+                folder.join("socket").display()
+            ),
+        )?;
+        let mut daemon = Command::new("dbus-daemon")
+            .arg("--config-file")
+            .arg(&config)
+            .args(["--nofork", "--print-address"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()?;
+        let mut address = String::new();
+        std::io::BufReader::new(daemon.stdout.take().unwrap()).read_line(&mut address)?;
+        if address.trim().is_empty() {
+            let _ = daemon.kill();
+            let _ = daemon.wait();
+            return Err(std::io::Error::other("dbus-daemon printed no address"));
+        }
+        Ok(Self {
+            daemon,
+            address: address.trim().into(),
+            _folder: folder,
+        })
+    }
+
+    pub fn new() -> Self {
+        Self::start().expect("private DBus fixture needs dbus-daemon")
+    }
+}
+
+impl Drop for PrivateBus {
+    fn drop(&mut self) {
+        let _ = self.daemon.kill();
+        let _ = self.daemon.wait();
+    }
+}
+
+#[test]
+fn a_temp_path_goes_away_even_when_the_test_fails() {
+    let mut kept = PathBuf::new();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let file = TempPath::new("guard").at("inside/usage.json");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"{}").unwrap();
+        kept = file.root().to_path_buf();
+        assert!(
+            kept.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("halcyon-guard-")
+        );
+        panic!("a failing test");
+    }));
+    assert!(result.is_err());
+    assert!(!kept.as_os_str().is_empty());
+    assert!(!kept.exists(), "{} was left behind", kept.display());
+}
+
+#[test]
+fn leftover_mounts_are_found_deepest_first() {
+    let mounts = "\
+proc /proc proc rw 0 0
+xdg-document-portal /tmp/halcyon-qa-1/runtime/doc fuse.portal rw 0 0
+gvfsd-fuse /tmp/halcyon-qa-1/runtime/gvfs fuse.gvfsd-fuse rw 0 0
+gvfsd-fuse /tmp/halcyon-qa-10/runtime/gvfs fuse.gvfsd-fuse rw 0 0
+tmpfs /tmp/halcyon-qa-1 tmpfs rw 0 0
+x /tmp/halcyon-qa-1/a\\040b/doc fuse rw 0 0
+";
+    let found = mounts_under(mounts, Path::new("/tmp/halcyon-qa-1"));
+    assert_eq!(
+        found,
+        [
+            "/tmp/halcyon-qa-1/runtime/doc",
+            "/tmp/halcyon-qa-1/runtime/gvfs",
+            "/tmp/halcyon-qa-1/a b/doc",
+            "/tmp/halcyon-qa-1",
+        ]
+        .map(PathBuf::from)
+    );
+}
+
+#[test]
+fn a_private_bus_starts_nothing_on_its_own() {
+    let bus = PrivateBus::start().expect("dbus-daemon");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let names = runtime.block_on(async {
+        let connection = zbus::connection::Builder::address(bus.address.as_str())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        zbus::fdo::DBusProxy::new(&connection)
+            .await
+            .unwrap()
+            .list_activatable_names()
+            .await
+            .unwrap()
+    });
+    let names: Vec<String> = names.into_iter().map(|name| name.to_string()).collect();
+    assert_eq!(
+        names,
+        ["org.freedesktop.DBus"],
+        "the bus can start {names:?}"
+    );
+}
+
 /// Select production worker dispatch independently of any provider stub.
 pub fn native_worker(root: &Path, enabled: bool) {
     assert_eq!(

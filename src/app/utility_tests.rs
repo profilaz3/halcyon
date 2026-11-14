@@ -662,8 +662,7 @@ fn times_follow_the_clocks_24_hour_switch() {
         "Oct 16 · 2:05 PM"
     );
     // The island reads the same switch from the saved file.
-    let dir = std::env::temp_dir().join(format!("halcyon-clock-format-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_env::TempPath::new("clock-format");
     let path = dir.join("config.json");
     let mut read = Vec::new();
     for text in [
@@ -677,6 +676,5 @@ fn times_follow_the_clocks_24_hour_switch() {
         }
         read.push(crate::config::format_24h_at(Some(&path)));
     }
-    let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(read, [true, false, true, true]);
 }

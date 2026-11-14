@@ -139,22 +139,19 @@ mod tests {
     use crate::desktop::store::DesktopStore;
 
     fn bars(files: &[(&str, &str, &str)]) -> Vec<PanelDraft> {
-        let mut bytes = [0u8; 8];
-        getrandom::fill(&mut bytes).unwrap();
-        let root =
-            std::env::temp_dir().join(format!("halcyon-features-{:x}", u64::from_le_bytes(bytes)));
+        let folder = crate::test_env::TempPath::new("features");
+        let root = folder.root();
         std::fs::create_dir_all(root.join("system/cosmic")).unwrap();
         for (namespace, key, value) in files {
             let dir = root.join("config/cosmic").join(namespace).join("v1");
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(dir.join(key), value).unwrap();
         }
-        let store = DesktopStore::fixture(&root).unwrap();
+        let store = DesktopStore::fixture(root).unwrap();
         let out = [PanelKind::Panel, PanelKind::Dock]
             .into_iter()
             .map(|kind| PanelDraft::load(&store, kind).unwrap())
             .collect();
-        std::fs::remove_dir_all(&root).unwrap();
         out
     }
 

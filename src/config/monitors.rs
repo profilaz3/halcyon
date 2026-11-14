@@ -117,8 +117,7 @@ mod tests {
     use super::*;
     #[test]
     fn multi_monitor_layouts_preserve_original_and_other_displays() {
-        let dir = std::env::temp_dir().join(format!("halcyon-multilayout-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_env::TempPath::new("multilayout");
         let path = dir.join("config.json");
         std::fs::write(&path,r#"{"widget_positions":{"weather":[0.8,0.2]},"widget_sizes":{"weather":[500,300]},"widget_monitors":{"weather":{"display":"DP-2"}},"future":{"keep":true}}"#).unwrap();
         let mut contexts = Contexts::from([("weather".into(), "eDP-1".into())]);
