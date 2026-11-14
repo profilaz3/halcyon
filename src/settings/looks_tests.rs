@@ -607,6 +607,25 @@ fn looks_undo_keeps_restored_colors(name: &str, undo: fn(&mut Settings, String))
     let root = isolated_root();
     let mut app = looks_desktop(&root);
     let store = crate::desktop::actions::history_store().unwrap();
+    // A bundled picture, not cosmic-bg's fallback under /usr/share, which
+    // a machine without COSMIC (CI) does not have.
+    let ridge = crate::desktop::wallpaper::bundled_path(
+        &crate::desktop::wallpaper::bundled_dir(&store),
+        "halcyon-ridge",
+    );
+    assert!(ridge.is_file());
+    seed(
+        &root.join("cosmic-root/config/cosmic"),
+        &[(
+            "com.system76.CosmicBackground",
+            "all",
+            &ron::to_string(&crate::desktop::wallpaper::BgEntry::new(
+                "all",
+                crate::desktop::wallpaper::BgSource::Path(ridge),
+            ))
+            .unwrap(),
+        )],
+    );
     crate::config::patch_config(store.app_config().unwrap(), |value| {
         value["appearance"]["wallpaper_colors"] = true.into();
         Ok(())
