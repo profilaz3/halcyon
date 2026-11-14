@@ -67,44 +67,47 @@ fn dnd_in(store: &crate::desktop::store::DesktopStore) -> bool {
         .and_then(|s| s.effective(&key).and_then(|v| v.decode::<bool>().ok()))
         .unwrap_or(false)
 }
-/// Whether a file event under COSMIC's config folder can have changed Do Not
-/// Disturb: a creation, write, rename or removal of the key or a folder above
-/// it. Opening or reading is not a change. `dnd` opens the key and each
-/// folder above it, so a watch that counted opens woke itself on every read
-/// and queried logind each time, about 1,500 times a second.
-fn dnd_changed(event: &notify::Result<notify::Event>, key: &std::path::Path) -> bool {
-    use notify::EventKind;
-    match event {
-        Ok(e) => {
-            matches!(
-                e.kind,
-                EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
-            ) && e.paths.iter().any(|p| key.starts_with(p))
+/// Do Not Disturb's key under COSMIC's config folder `cosmic`.
+fn dnd_key(cosmic: &std::path::Path) -> std::path::PathBuf {
+    cosmic.join("com.system76.CosmicNotifications/v1/do_not_disturb")
+}
+/// Whether a change to the entry `path` can have changed Do Not Disturb:
+/// the key itself, or a folder on the way to it being made, renamed or
+/// removed. Other settings in the same folders are not.
+fn dnd_changed(path: &std::path::Path, key: &std::path::Path) -> bool {
+    key.starts_with(path)
+}
+/// Watches the folders that lead to Do Not Disturb's key, and only those:
+/// COSMIC's config folder (for the namespace appearing), the namespace and
+/// its version folder. Not recursive, so other apps' settings never wake
+/// it, and never for reads: `dnd` opens the key and each folder above it,
+/// and a watch that counted opens woke itself on every read. Folders made
+/// later are watched by [`rewatch_dnd`] after the change that made them.
+fn watch_dnd(cosmic: &std::path::Path) -> Option<crate::watch::dir::DirWatch> {
+    let mut watch = crate::watch::dir::DirWatch::new().ok()?;
+    rewatch_dnd(&mut watch, cosmic);
+    Some(watch)
+}
+fn rewatch_dnd(watch: &mut crate::watch::dir::DirWatch, cosmic: &std::path::Path) {
+    let key = dnd_key(cosmic);
+    for dir in key.ancestors().skip(1) {
+        let _ = watch.watch(dir);
+        if dir == cosmic {
+            break;
         }
-        Err(_) => true,
     }
 }
-/// Watches `cosmic` (COSMIC's config folder) for Do Not Disturb changes. The
-/// receiver gets one wake per burst of changes.
-fn watch_dnd(
-    cosmic: &std::path::Path,
-) -> (
-    Option<notify::RecommendedWatcher>,
-    tokio::sync::mpsc::Receiver<()>,
-) {
-    use notify::Watcher;
-    let (changed, files) = tokio::sync::mpsc::channel(1);
-    let key = cosmic.join("com.system76.CosmicNotifications/v1/do_not_disturb");
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        if dnd_changed(&event, &key) {
-            let _ = changed.try_send(());
+/// The Do Not Disturb watch and the COSMIC config folder it watches.
+type DndWatch = Option<(crate::watch::dir::DirWatch, std::path::PathBuf)>;
+/// Waits for a change that can affect Do Not Disturb; never with no watch.
+async fn dnd_wait(watch: &mut DndWatch) -> std::io::Result<()> {
+    match watch {
+        Some((watch, cosmic)) => {
+            let key = dnd_key(cosmic);
+            watch.changed(|path| dnd_changed(path, &key)).await
         }
-    })
-    .ok();
-    if let Some(w) = &mut watcher {
-        let _ = w.watch(cosmic, notify::RecursiveMode::Recursive);
+        None => std::future::pending().await,
     }
-    (watcher, files)
 }
 async fn locked(c: &zbus::Connection) -> bool {
     tokio::time::timeout(Duration::from_secs(2), async {
@@ -161,10 +164,9 @@ async fn locked(c: &zbus::Connection) -> bool {
     .unwrap_or(true)
 }
 async fn policy(tx: tokio::sync::mpsc::Sender<Part>) {
-    let (_watcher, mut files) = match dirs::config_dir() {
-        Some(dir) => watch_dnd(&dir.join("cosmic")),
-        None => (None, tokio::sync::mpsc::channel(1).1),
-    };
+    let mut files: DndWatch = dirs::config_dir()
+        .map(|dir| dir.join("cosmic"))
+        .and_then(|cosmic| Some((watch_dnd(&cosmic)?, cosmic)));
     loop {
         let c = tokio::time::timeout(Duration::from_secs(3), zbus::Connection::system())
             .await
@@ -190,9 +192,13 @@ async fn policy(tx: tokio::sync::mpsc::Sender<Part>) {
                         },
                         // A Do Not Disturb change needs no logind round trip.
                         // Coalesce the write/rename pair, as `watch::files` does.
-                        Some(_)=files.recv()=>{
+                        woke=dnd_wait(&mut files), if files.is_some()=>{
+                            if woke.is_err() { files = None; }
                             tokio::time::sleep(Duration::from_millis(25)).await;
-                            while files.try_recv().is_ok() {}
+                            // A folder on the way to the key may be new.
+                            if let Some((watch, cosmic)) = &mut files {
+                                rewatch_dnd(watch, cosmic);
+                            }
                         },
                         _=tokio::time::sleep(Duration::from_secs(30))=>is_locked = locked(&c).await,
                     }
@@ -209,8 +215,6 @@ async fn policy(tx: tokio::sync::mpsc::Sender<Part>) {
 mod tests {
     use super::*;
     use crate::desktop::store::DesktopStore;
-    use notify::EventKind;
-    use notify::event::{AccessKind, AccessMode, CreateKind, DataChange, ModifyKind, RemoveKind};
     use std::path::{Path, PathBuf};
 
     fn root(name: &str) -> PathBuf {
@@ -228,19 +232,16 @@ mod tests {
         root
     }
     fn key(cosmic: &Path) -> PathBuf {
-        cosmic.join("com.system76.CosmicNotifications/v1/do_not_disturb")
+        dnd_key(cosmic)
     }
     /// What `policy` does with the watch: every wake reads the key again.
     /// Returns the wakes before the watch stays quiet for 300 ms, at most 50.
-    async fn wakes_until_quiet(
-        files: &mut tokio::sync::mpsc::Receiver<()>,
-        store: &DesktopStore,
-    ) -> usize {
+    async fn wakes_until_quiet(watch: &mut DndWatch, store: &DesktopStore) -> usize {
         let mut wakes = 0;
         while wakes < 50
-            && tokio::time::timeout(Duration::from_millis(300), files.recv())
+            && tokio::time::timeout(Duration::from_millis(300), dnd_wait(watch))
                 .await
-                .is_ok_and(|w| w.is_some())
+                .is_ok_and(|w| w.is_ok())
         {
             wakes += 1;
             dnd_in(store);
@@ -252,29 +253,15 @@ mod tests {
     fn only_changes_to_the_key_or_a_folder_above_it_count() {
         let cosmic = Path::new("/home/a/.config/cosmic");
         let key = key(cosmic);
-        let event = |kind, path: &Path| -> notify::Result<notify::Event> {
-            Ok(notify::Event::new(kind).add_path(path.into()))
-        };
-        let open = EventKind::Access(AccessKind::Open(AccessMode::Any));
-        let close = EventKind::Access(AccessKind::Close(AccessMode::Read));
-        let write = EventKind::Modify(ModifyKind::Data(DataChange::Any));
-        let create = EventKind::Create(CreateKind::Folder);
-        let remove = EventKind::Remove(RemoveKind::Any);
-        // Reads, including `dnd`'s own, are not changes.
-        assert!(!dnd_changed(&event(open, &key), &key));
-        assert!(!dnd_changed(&event(close, &key), &key));
-        assert!(!dnd_changed(&event(open, cosmic), &key));
-        assert!(!dnd_changed(&event(open, key.parent().unwrap()), &key));
-        // Writes to the key, or a folder above it appearing, are.
-        assert!(dnd_changed(&event(write, &key), &key));
-        assert!(dnd_changed(&event(create, key.parent().unwrap()), &key));
-        assert!(dnd_changed(&event(remove, &key), &key));
-        // Other keys are not; a lost watch is.
-        assert!(!dnd_changed(
-            &event(write, &key.with_file_name("max_notifications")),
+        assert!(dnd_changed(&key, &key));
+        assert!(dnd_changed(key.parent().unwrap(), &key));
+        assert!(dnd_changed(
+            &cosmic.join("com.system76.CosmicNotifications"),
             &key
         ));
-        assert!(dnd_changed(&Err(notify::Error::generic("lost")), &key));
+        // Other keys and namespaces are not.
+        assert!(!dnd_changed(&key.with_file_name("max_notifications"), &key));
+        assert!(!dnd_changed(&cosmic.join("com.system76.CosmicPanel"), &key));
     }
 
     /// The idle CPU bug in 0.6.1: reading Do Not Disturb woke its own watch,
@@ -286,24 +273,66 @@ mod tests {
         let store = DesktopStore::fixture(&root).unwrap();
         let cosmic = store.user_root().to_path_buf();
         std::fs::write(key(&cosmic), "false").unwrap();
-        let (watcher, mut files) = watch_dnd(&cosmic);
-        assert!(watcher.is_some(), "inotify watch");
+        let mut watch: DndWatch =
+            Some((watch_dnd(&cosmic).expect("inotify watch"), cosmic.clone()));
 
         // The loop's first pass reads the key; nothing changed, so it sleeps.
         assert!(!dnd_in(&store));
-        assert_eq!(wakes_until_quiet(&mut files, &store).await, 0);
+        assert_eq!(wakes_until_quiet(&mut watch, &store).await, 0);
+        assert_eq!(watch.as_ref().unwrap().0.wakes, 0, "reads woke the task");
 
         // A real change wakes it, and the read that follows does not.
         std::fs::write(key(&cosmic), "true").unwrap();
         assert!(
-            tokio::time::timeout(Duration::from_secs(5), files.recv())
+            tokio::time::timeout(Duration::from_secs(5), dnd_wait(&mut watch))
                 .await
-                .is_ok_and(|w| w.is_some()),
+                .is_ok_and(|w| w.is_ok()),
             "a write to the key wakes the watch"
         );
         assert!(dnd_in(&store));
-        assert!(wakes_until_quiet(&mut files, &store).await <= 2);
-        drop(watcher);
+        assert!(wakes_until_quiet(&mut watch, &store).await <= 2);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Other apps' settings under COSMIC's config folder never wake the
+    /// task: the watch was recursive over all of it.
+    #[tokio::test]
+    async fn other_settings_do_not_wake_the_watch_and_a_new_namespace_does() {
+        let root = root("dnd-narrow");
+        let cosmic = root.join("config/cosmic");
+        std::fs::remove_dir_all(cosmic.join("com.system76.CosmicNotifications")).unwrap();
+        let other = cosmic.join("com.system76.CosmicPanel.Panel/v1");
+        std::fs::create_dir_all(&other).unwrap();
+        let mut watch: DndWatch = Some((watch_dnd(&cosmic).unwrap(), cosmic.clone()));
+        for i in 0..50 {
+            std::fs::write(other.join("size"), format!("{i}")).unwrap();
+            std::fs::write(other.join(".tmp"), "x").unwrap();
+            std::fs::rename(other.join(".tmp"), other.join("spacing")).unwrap();
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), dnd_wait(&mut watch))
+                .await
+                .is_err()
+        );
+        assert_eq!(watch.as_ref().unwrap().0.wakes, 0, "another app's settings");
+
+        // The namespace appearing wakes it; the watch then follows the new
+        // folders down to the key.
+        let v1 = cosmic.join("com.system76.CosmicNotifications/v1");
+        std::fs::create_dir_all(&v1).unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), dnd_wait(&mut watch))
+                .await
+                .is_ok()
+        );
+        let (dir_watch, _) = watch.as_mut().unwrap();
+        rewatch_dnd(dir_watch, &cosmic);
+        std::fs::write(key(&cosmic), "true").unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), dnd_wait(&mut watch))
+                .await
+                .is_ok()
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 }
