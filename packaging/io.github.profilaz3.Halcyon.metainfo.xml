@@ -43,6 +43,18 @@
   </provides>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.7.0" date="2026-11-14">
+      <description><ul>
+        <li>Apply only the parts of a look you want, or make your own in the Look studio.</li>
+        <li>New Rainy Lake and Deep Purple themes, icon packs, app icon shapes and accent folders.</li>
+        <li>Move, restyle or turn off the edge menu and choose what it lists.</li>
+        <li>Settings opens on a picture of your desktop, and Arrange matches the desktop exactly.</li>
+        <li>Rain on fogged glass with the clock behind it, resting while the desktop is hidden.</li>
+        <li>Activity island notification groups, live progress, a quick timer, a file shelf and styles.</li>
+        <li>Device batteries in the island and a new Devices widget.</li>
+        <li>Fewer panel restarts, less idle work, and settings that survive a bad value.</li>
+      </ul></description>
+    </release>
     <release version="0.6.5" date="2026-11-12">
       <description><ul>
         <li>Wallpaper rain, snow, fog and cloud shadows can match the weather.</li>

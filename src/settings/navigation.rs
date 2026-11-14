@@ -418,6 +418,34 @@ pub(super) const SCENE_COVERS_CLOCK: SearchHit =
     hit(Page::Clock, "Let the scene cover the clock", "", false);
 pub(super) const MATCH_WEATHER: SearchHit =
     hit(Page::WeatherEffects, "Match the weather", "", false);
+pub(super) const DEVICES: SearchHit = hit(
+    Page::Devices,
+    "Devices",
+    "devices battery bluetooth headphones mouse keyboard controller phone kde connect gsconnect",
+    false,
+)
+.names_page();
+pub(super) const GET_MORE_ICONS: SearchHit = hit(
+    Page::DesktopAppearance,
+    "Get more icons",
+    "download install icon packs themes papirus tela pling",
+    false,
+)
+.at("appearance-icons");
+pub(super) const WEATHER_EFFECTS: SearchHit = hit(
+    Page::WeatherEffects,
+    "Effects",
+    "weather effects wallpaper effects rain snow fog clouds cloud shadows living animated wallpaper",
+    false,
+)
+.names_page();
+pub(super) const EDGE_MENU: SearchHit = hit(
+    Page::EdgeMenu,
+    "Edge menu",
+    "edge menu flyout sidebar drawer panel strip screen edge shortcuts apps folders actions customize hover click off disable left right position",
+    false,
+)
+.names_page();
 
 const SEARCH: &[SearchHit] = &[
     hit(
@@ -689,13 +717,7 @@ const SEARCH: &[SearchHit] = &[
         false,
     )
     .names_page(),
-    hit(
-        Page::Devices,
-        "Devices",
-        "devices battery bluetooth headphones mouse keyboard controller phone kde connect gsconnect",
-        false,
-    )
-    .names_page(),
+    DEVICES,
     DOCK_SEE_THROUGH,
     hit(
         Page::DesktopPanel,
@@ -804,13 +826,7 @@ const SEARCH: &[SearchHit] = &[
     .at("dock-corners")
     .bar(crate::desktop::panels::PanelKind::Panel)
     .section(BAR_ADVANCED),
-    hit(
-        Page::WeatherEffects,
-        "Effects",
-        "weather effects wallpaper effects rain snow fog clouds cloud shadows living animated wallpaper",
-        false,
-    )
-    .names_page(),
+    WEATHER_EFFECTS,
     hit(
         Page::Home,
         "Home",
@@ -928,13 +944,7 @@ const SEARCH: &[SearchHit] = &[
     .names_page(),
     TIME_OF_DAY,
     STARTUP,
-    hit(
-        Page::EdgeMenu,
-        "Edge menu",
-        "edge menu flyout sidebar drawer panel strip screen edge shortcuts apps folders actions customize hover click off disable left right position",
-        false,
-    )
-    .names_page(),
+    EDGE_MENU,
     hit(
         Page::Widgets,
         "Widget controls",
@@ -1010,13 +1020,7 @@ const ROWS: &[SearchHit] = &[
         false,
     )
     .at("appearance-icons"),
-    hit(
-        Page::DesktopAppearance,
-        "Get more icons",
-        "download install icon packs themes papirus tela pling",
-        false,
-    )
-    .at("appearance-icons"),
+    GET_MORE_ICONS,
     hit(
         Page::DesktopAppearance,
         "App icon shape",

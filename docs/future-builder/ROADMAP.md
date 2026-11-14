@@ -1,6 +1,6 @@
 # Build sequence
 
-The target is a coherent, production-qualified customization system. The current source baseline is 0.6.5; the next release number is unassigned. These stages supersede the UI-first sequencing in the archived concept proposals.
+The target is a coherent, production-qualified customization system. The current source baseline is 0.7.0; the next release number is unassigned. These stages supersede the UI-first sequencing in the archived concept proposals.
 
 ## Next work accepted 2026-11-01
 

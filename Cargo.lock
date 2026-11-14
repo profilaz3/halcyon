@@ -1047,7 +1047,7 @@ dependencies = [
 
 [[package]]
 name = "cosmic-ext-halcyon"
-version = "0.6.5"
+version = "0.7.0"
 dependencies = [
  "base64",
  "chrono",

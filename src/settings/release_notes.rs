@@ -19,6 +19,59 @@ pub(super) struct Release {
 
 pub(super) const RELEASES: &[Release] = &[
     Release {
+        version: "0.7.0",
+        notes: &[
+            Note {
+                title: "Looks, part by part",
+                body: "Take only the parts of a look you want, or make your own in the Look studio.",
+                place: Some(navigation::LOOKS),
+                link: None,
+            },
+            Note {
+                title: "Rainy Lake and Deep Purple",
+                body: "Two new ready-made themes, each with a matching look and wallpaper.",
+                place: None,
+                link: None,
+            },
+            Note {
+                title: "Icon packs",
+                body: "Get more icons, give app icons one shape and tint folders with your accent.",
+                place: Some(navigation::GET_MORE_ICONS),
+                link: None,
+            },
+            Note {
+                title: "Edge menu",
+                body: "Move it, show it as icons or a grid, or turn it off, and choose what it lists.",
+                place: Some(navigation::EDGE_MENU),
+                link: None,
+            },
+            Note {
+                title: "Settings Home",
+                body: "Settings opens on a picture of your desktop. Click a part to change it.",
+                place: None,
+                link: None,
+            },
+            Note {
+                title: "Rain on glass",
+                body: "Rain fogs the glass and runs down in natural drops, with the clock behind it.",
+                place: Some(navigation::WEATHER_EFFECTS),
+                link: None,
+            },
+            Note {
+                title: "Activity island",
+                body: "Grouped notifications, live progress, a quick timer and a shelf for files.",
+                place: Some(navigation::ACTIVITY_ISLAND),
+                link: None,
+            },
+            Note {
+                title: "Devices and battery",
+                body: "See the battery of headphones, mice and phones in the island and a widget.",
+                place: Some(navigation::DEVICES),
+                link: None,
+            },
+        ],
+    },
+    Release {
         version: "0.6.5",
         notes: &[
             Note {
