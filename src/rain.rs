@@ -3,6 +3,7 @@
 mod atmosphere;
 #[cfg(test)]
 mod benchmark;
+pub mod desk;
 pub use atmosphere::{Clouds, Effect, Fog, FogColor, Snow};
 pub mod gpu;
 pub mod lifecycle;

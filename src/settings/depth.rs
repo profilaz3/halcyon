@@ -191,7 +191,9 @@ impl Settings {
             return match judgement.verdict {
                 Verdict::Works => None,
                 Verdict::NeedsNudge => {
-                    let now = self.clock_stage_place().map(|p| p.0[1]);
+                    // The spot is on the whole output, like the frame.
+                    let screen = self.clock_stage_screen();
+                    let now = self.clock_stage_place().map(|p| screen.on_output(p.0)[1]);
                     let lower = judgement
                         .suggested
                         .zip(now)

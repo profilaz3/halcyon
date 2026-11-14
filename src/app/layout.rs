@@ -549,7 +549,10 @@ impl Cards {
                     .recipes
                     .clock
                     .as_ref()
-                    .and_then(|r| super::recipe::action_rect(r, self.widget_size(widget)))
+                    .and_then(|r| {
+                        let r = super::recipe::shown(r, &self.config);
+                        super::recipe::action_rect(&r, self.widget_size(widget))
+                    })
                     .map(|r| [r[0] + m.round() as u32, r[1] + m.round() as u32, r[2], r[3]])
                     .into_iter()
                     .collect()
@@ -717,14 +720,10 @@ impl Cards {
         self.surface_inputs = Some(Widget::BASE.map(|widget| self.card_input_rects(widget)));
         Task::batch(tasks)
     }
-    pub(super) fn sync_widget_surfaces(&mut self) -> Task<Message> {
-        if !self.output_known || self.selected_output.is_none() {
-            return Task::none();
-        }
-        if let Some(config) = self.seed_glance_position() {
-            return self.apply_config(config);
-        }
-        let snapshot = crate::layout_state::Snapshot {
+    /// The geometry Settings previews: each output's area widgets use, and
+    /// every widget's size and place in it.
+    pub(crate) fn layout_snapshot(&self) -> crate::layout_state::Snapshot {
+        crate::layout_state::Snapshot {
             monitors: self
                 .displays
                 .outputs()
@@ -776,7 +775,17 @@ impl Cards {
                     position: self.placed_position(widget),
                 })
                 .collect(),
-        };
+            output: None,
+        }
+    }
+    pub(super) fn sync_widget_surfaces(&mut self) -> Task<Message> {
+        if !self.output_known || self.selected_output.is_none() {
+            return Task::none();
+        }
+        if let Some(config) = self.seed_glance_position() {
+            return self.apply_config(config);
+        }
+        let snapshot = self.layout_snapshot();
         let generation = crate::layout_state::next_generation();
         let publish = cosmic::iced::Task::future(async move {
             crate::layout_state::publish(&snapshot, generation);

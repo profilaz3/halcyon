@@ -108,13 +108,16 @@ impl Settings {
         )
     }
     pub(super) fn clock_stage_view(&self) -> Element<'_, Message> {
-        let screen = stage::known(self.placement.preview_snapshot().screen);
-        let cap = stage::stage_size([self.content_width(), f32::INFINITY], screen);
+        // The stage is the whole output; the clock sits in the area
+        // widgets use, where panels leave it.
+        let screen = self.clock_stage_screen();
+        let whole = screen.whole;
+        let cap = stage::stage_size([self.content_width(), f32::INFINITY], whole);
         let accent = self.settings_accent();
         let picture = cosmic::widget::responsive(move |available| {
-            let size = stage::stage_size([available.width, cap[1]], screen);
+            let size = stage::stage_size([available.width, cap[1]], whole);
             let [width, height] = size;
-            let scale = stage::scale(size, screen);
+            let scale = stage::scale(size, whole);
             let backdrop: Element<'_, Message> =
                 match (self.clock_stage.backdrop(), self.profiles.home_image()) {
                     // Rendered at the screen's shape with its own fit.
@@ -201,7 +204,7 @@ impl Settings {
                     resizing
                         .then(|| self.clock_stage.last_lit())
                         .flatten()
-                        .map(|handle| (handle, position))
+                        .map(|handle| (handle, screen.on_output(position)))
                 });
                 let (content, at): (Element<'_, Message>, _) = match lit {
                     Some((handle, at)) => (
@@ -214,7 +217,7 @@ impl Settings {
                     ),
                     None => (
                         profiles::card(Widget::Clock, shown, &self.config, scale),
-                        position,
+                        screen.on_output(position),
                     ),
                 };
                 // The button gives Tab focus, so arrow keys can move it;
@@ -289,9 +292,16 @@ impl Settings {
                     .into(),
             );
             container(
-                mouse_area(stack(layers).width(width).height(height).clip(true))
-                    .on_move(move |point| action(Edit::Pointer(point, scale)))
-                    .on_exit(action(Edit::Hover(false))),
+                mouse_area(
+                    container(stack(layers).width(width).height(height).clip(true))
+                        .id(cosmic::widget::Id::new(stage::SCREEN_ID)),
+                )
+                // Placement works in the area widgets use.
+                .on_move(move |point| {
+                    let [x, y] = screen.in_area([point.x / scale, point.y / scale]);
+                    action(Edit::Pointer(Point::new(x * scale, y * scale), scale))
+                })
+                .on_exit(action(Edit::Hover(false))),
             )
             .id(cosmic::widget::Id::new("clock-stage"))
             .width(Length::Fill)

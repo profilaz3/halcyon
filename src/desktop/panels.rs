@@ -782,6 +782,26 @@ impl PanelDraft {
             .and_then(|value| value.decode::<Vec<String>>().ok())
             .is_some_and(|entries| entries.iter().any(|entry| entry == self.kind.entry()))
     }
+    /// The edge whose space this panel keeps from other surfaces on the
+    /// output named `output`, and about how thick that strip is. None when
+    /// it is off, hides, keeps no space or sits on another output.
+    pub fn reserves(&self, output: &str) -> Option<(Anchor, u32)> {
+        if !self.listed()
+            || !self.get::<bool>("exclusive_zone").known().copied()?
+            || *self.autohide().known()? != AutoHide::Never
+        {
+            return None;
+        }
+        match self.output().known()? {
+            Output::Name(name) if name != output => return None,
+            _ => {}
+        }
+        let margin = self.margin().known().copied().unwrap_or(0);
+        Some((
+            *self.anchor().known()?,
+            self.size().known()?.thickness() + u32::from(margin),
+        ))
+    }
     /// Whether any user or system value exists for this panel at all.
     pub fn installed(&self) -> bool {
         self.base
