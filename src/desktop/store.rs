@@ -815,6 +815,8 @@ impl DesktopStore {
     /// live (or alternate preview) `config.json`, but for a fixture only an
     /// explicitly configured alternate file, never the real one.
     pub fn from_env() -> Result<Self, DesktopError> {
+        #[cfg(test)]
+        FROM_ENV.with(|count| count.set(count.get() + 1));
         let fixture = std::env::var_os(FIXTURE_ENV).map(PathBuf::from);
         let alternate = std::env::var_os("DESKTOP_CARDS_CONFIG").map(PathBuf::from);
         match choose_root(alternate.is_some(), fixture) {
@@ -2578,6 +2580,12 @@ mod transaction_tests;
 
 #[cfg(test)]
 mod apply_cost_tests;
+
+#[cfg(test)]
+thread_local! {
+    /// How often this thread opened the desktop store from the environment.
+    pub(crate) static FROM_ENV: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
 
 #[cfg(test)]
 pub(crate) mod tests {

@@ -166,6 +166,9 @@ pub enum Message {
     SystemMotion(bool),
     DesktopPaletteChanged,
     WallpaperColorsChanged,
+    /// The wallpaper files to watch, read off the UI thread for this
+    /// generation of [`Cards::wallpaper_watch`].
+    WallpaperWatch(u64, Vec<std::path::PathBuf>),
     RainLifecycle(crate::rain::lifecycle::State),
     /// A quiet scene finished fading out; its surfaces can go.
     RainRetired(u64),
@@ -440,6 +443,11 @@ pub struct Cards {
     restart: restart::Restart,
     /// Wallpaper colors being written to the desktop.
     applying_colors: u32,
+    /// The wallpaper and automation files whose change re-derives the
+    /// desktop colors, and the generation of the read that found them.
+    /// Read off the UI thread when settings, the wallpaper or a display
+    /// change, so building subscriptions never touches the disk.
+    wallpaper_watch: (u64, Vec<std::path::PathBuf>),
 }
 impl cosmic::Application for Cards {
     type Executor = cosmic::executor::Default;
@@ -551,10 +559,12 @@ impl cosmic::Application for Cards {
             recovery_details: false,
             restart: Default::default(),
             applying_colors: 0,
+            wallpaper_watch: Default::default(),
         };
         // Output discovery creates the first probe, including on late startup.
         tasks.extend(app.refresh_visible_data());
         tasks.push(app.wallpaper_colors_changed());
+        tasks.push(app.refresh_wallpaper_watch());
         tasks.push(app.publish_display_state());
         tasks.push(Self::read_system_motion());
         app.activity.timer = crate::activity_island::timer::path().and_then(|path| {
@@ -625,18 +635,10 @@ impl cosmic::Application for Cards {
                 .color_subscription()
                 .map(|_| Message::DesktopPaletteChanged),
         );
-        if (self.config.rain.wanted()
-            || self.config.clock.depth
-            || self.config.appearance.wallpaper_colors
-            || self.config.appearance.family.is_some())
-            && let Ok(store) = crate::desktop::DesktopStore::from_env()
-            && store.writable()
-        {
+        if self.wallpaper_watch_wanted() && !self.wallpaper_watch.1.is_empty() {
             subscriptions.push(
-                crate::watch::read_only_files(crate::desktop::wallpaper::automatic::watch_paths(
-                    &store,
-                ))
-                .map(|_| Message::WallpaperColorsChanged),
+                crate::watch::read_only_files(self.wallpaper_watch.1.clone())
+                    .map(|_| Message::WallpaperColorsChanged),
             );
         }
         if self.config.clock.depth
@@ -1216,6 +1218,7 @@ impl Cards {
                 tasks.push(self.automation_reload());
                 tasks.extend(self.refresh_visible_data());
                 tasks.push(self.capture_if_changed());
+                tasks.push(self.refresh_wallpaper_watch());
                 Task::batch(tasks)
             }
             Message::ReadSystemMotion => Self::read_system_motion(),
@@ -1248,7 +1251,17 @@ impl Cards {
             Message::WallpaperColorsChanged => {
                 self.depth.invalidate();
                 let rain = self.rain.invalidate();
-                Task::batch([rain, self.wallpaper_colors_changed()])
+                Task::batch([
+                    rain,
+                    self.wallpaper_colors_changed(),
+                    self.refresh_wallpaper_watch(),
+                ])
+            }
+            Message::WallpaperWatch(generation, paths) => {
+                if generation == self.wallpaper_watch.0 {
+                    self.wallpaper_watch.1 = paths;
+                }
+                Task::none()
             }
             Message::DepthObserved(id, entry) => {
                 self.depth.observe(id, entry);
@@ -1845,7 +1858,12 @@ impl Cards {
                 let (count, largest) = self.displays.summary();
                 crate::usage::system::displays(count, largest);
                 let migration = self.reconcile_output();
-                Task::batch([migration, self.automation_displays(), self.identity_scan()])
+                Task::batch([
+                    migration,
+                    self.automation_displays(),
+                    self.identity_scan(),
+                    self.refresh_wallpaper_watch(),
+                ])
             }
             Message::RebuildSurfaces(epoch) => {
                 if epoch != self.display_generation
