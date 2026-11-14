@@ -822,6 +822,21 @@ pub fn preview_folder(source: &Path, accent: Option<[u8; 3]>, size: u32) -> Opti
     Some(raster::resize(&icon, size, size))
 }
 
+/// The nice value for background icon work: ten above the calling thread's.
+fn background_nice() -> i32 {
+    // getpriority can return -1 as a value; errno tells the cases apart, and
+    // either way the result below is a valid, lower priority.
+    let current = unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) };
+    (current + 10).clamp(10, 19)
+}
+
+/// On Linux a thread has its own nice value; 0 means the calling thread.
+fn set_thread_nice(nice: i32) {
+    unsafe {
+        libc::setpriority(libc::PRIO_PROCESS, 0, nice);
+    }
+}
+
 /// Builds the overlay for `request` into the slot not in use and returns
 /// its id. `current` is the desktop's `icon_theme`. `progress` hears
 /// (done, total) as icons finish, from worker threads.
@@ -851,7 +866,12 @@ pub fn generate(
         .icons
         .join(format!(".halcyon-overlay-{}", super::unique()));
     let result = (|| {
-        for (dir, ..) in directories(request.shape != Shape::Original, request.tint.is_some()) {
+        let folders: Vec<String> =
+            directories(request.shape != Shape::Original, request.tint.is_some())
+                .into_iter()
+                .map(|(dir, ..)| dir)
+                .collect();
+        for dir in &folders {
             fs::create_dir_all(staging.join(dir)).map_err(|error| error.to_string())?;
         }
         let mask = mask(request.shape);
@@ -859,9 +879,13 @@ pub fn generate(
         let threads = std::thread::available_parallelism()
             .map(|count| (count.get() / 2).max(1))
             .unwrap_or(2);
+        // Background work: ten steps nicer than the caller, as depth
+        // analysis runs, so drawing icons never competes with the desktop.
+        let nice = background_nice();
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(threads)
             .thread_name(|index| format!("halcyon-icons-{index}"))
+            .start_handler(move |_| set_thread_nice(nice))
             .build()
             .map_err(|error| error.to_string())?;
         pool.install(|| {
@@ -887,10 +911,13 @@ pub fn generate(
         });
         fs::write(staging.join("index.theme"), index_for(request))
             .map_err(|error| error.to_string())?;
+        // On a pool thread, so a gtk-update-icon-cache it starts is niced too.
+        pool.install(|| super::cache::write(&staging, &folders))?;
         if fs::symlink_metadata(&target).is_ok() {
             fs::remove_dir_all(&target).map_err(|error| error.to_string())?;
         }
-        fs::rename(&staging, &target).map_err(|error| error.to_string())
+        fs::rename(&staging, &target).map_err(|error| error.to_string())?;
+        super::cache::settle(&target)
     })();
     if result.is_err() {
         let _ = fs::remove_dir_all(&staging);
