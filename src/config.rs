@@ -1264,6 +1264,31 @@ impl Default for ClockPreferences {
     }
 }
 
+/// A time of day as the clock's 24-hour switch (Settings › Clock) shows
+/// it: "14:05", or "2:05 PM". Every time Halcyon shows (Calendar, At a
+/// glance, the Activity island, saved and refreshed times) uses it, so one
+/// event never reads 14:00 on the desktop and 2:00 PM in the panel.
+pub fn time_of_day<Tz: chrono::TimeZone>(at: &chrono::DateTime<Tz>, format_24h: bool) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    at.format(if format_24h { "%H:%M" } else { "%-I:%M %p" })
+        .to_string()
+}
+
+/// The clock's 24-hour switch as saved, for a process that doesn't keep
+/// the whole configuration (the Activity island in the panel). Reads only
+/// that switch; anything unreadable is the clock's default.
+pub fn saved_format_24h() -> bool {
+    format_24h_at(Config::path().as_deref())
+}
+pub(crate) fn format_24h_at(path: Option<&std::path::Path>) -> bool {
+    path.and_then(|path| read_config_text(path).ok().flatten())
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|value| value.pointer("/clock/format_24h")?.as_bool())
+        .unwrap_or(ClockPreferences::default().format_24h)
+}
+
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ClockAlignment {

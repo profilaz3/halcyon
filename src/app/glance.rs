@@ -809,15 +809,14 @@ impl Cards {
         } else {
             p.accent
         };
+        let h24 = self.config.clock.format_24h;
         let mut timing = vec![label(
-            event.time_label(),
+            event.time_label(h24),
             12.,
             if event.finished() { p.muted } else { color },
         )];
         if !self.glance_compact() && !event.all_day {
-            let end = chrono::DateTime::parse_from_rfc3339(&event.end)
-                .map(|date| date.with_timezone(&Local).format("%H:%M").to_string())
-                .unwrap_or_default();
+            let end = event.end_label(h24);
             timing.push(label(end, 10., p.muted));
         }
         let mut detail = vec![
@@ -1017,7 +1016,7 @@ impl Cards {
                 timestamp(
                     self.glance_calendar().map(|c| c.updated_at.as_str()),
                     self.calendar_today_error,
-                    "Calendar",
+                    self.config.clock.format_24h,
                     p,
                 ),
             )

@@ -1251,13 +1251,23 @@ impl CalendarEvent {
             _ => false,
         }
     }
-    pub fn time_label(&self) -> String {
+    /// When it starts, in the clock's format (`config::time_of_day`).
+    pub fn time_label(&self, format_24h: bool) -> String {
         if self.all_day {
             return "All day".into();
         }
         chrono::DateTime::parse_from_rfc3339(&self.start)
-            .map(|d| d.with_timezone(&chrono::Local).format("%H:%M").to_string())
+            .map(|d| crate::config::time_of_day(&d.with_timezone(&chrono::Local), format_24h))
             .unwrap_or_else(|_| "—".into())
+    }
+    /// When it ends, in the clock's format; empty for an all-day event.
+    pub fn end_label(&self, format_24h: bool) -> String {
+        if self.all_day {
+            return String::new();
+        }
+        chrono::DateTime::parse_from_rfc3339(&self.end)
+            .map(|d| crate::config::time_of_day(&d.with_timezone(&chrono::Local), format_24h))
+            .unwrap_or_default()
     }
     pub fn finished(&self) -> bool {
         self.finished_at(chrono::Local::now())

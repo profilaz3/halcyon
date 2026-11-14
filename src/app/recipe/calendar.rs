@@ -64,9 +64,13 @@ pub(in crate::app) fn reading(
                 }
                 output.agenda.push(Entry {
                     time: if days.len() > 1 {
-                        format!("{} · {}", day.format("%a"), event.time_label())
+                        format!(
+                            "{} · {}",
+                            day.format("%a"),
+                            event.time_label(config.clock.format_24h)
+                        )
                     } else {
-                        event.time_label()
+                        event.time_label(config.clock.format_24h)
                     },
                     title: if config.calendar_private {
                         "Busy".into()

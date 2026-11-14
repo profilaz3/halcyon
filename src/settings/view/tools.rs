@@ -303,9 +303,11 @@ impl Settings {
             {
                 Some(at) => chrono::DateTime::parse_from_rfc3339(at)
                     .map(|at| {
+                        let at = at.with_timezone(&chrono::Local);
                         format!(
-                            "Saved {}",
-                            at.with_timezone(&chrono::Local).format("%b %-d, %H:%M")
+                            "Saved {}, {}",
+                            at.format("%b %-d"),
+                            crate::config::time_of_day(&at, self.config.clock.format_24h)
                         )
                     })
                     .unwrap_or_else(|_| "Saved".into()),

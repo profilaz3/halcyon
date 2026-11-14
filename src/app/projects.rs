@@ -1061,7 +1061,12 @@ impl Presentation<'_> {
                     label("", crate::widget_style::META, p.muted)
                 },
                 label(
-                    timestamp_text(Some(&data.updated_at), self.projects_error, Local::now()),
+                    timestamp_text(
+                        Some(&data.updated_at),
+                        self.projects_error,
+                        Local::now(),
+                        self.config.clock.format_24h,
+                    ),
                     11.,
                     if self.projects_error {
                         Color::from_rgb8(233, 192, 124)

@@ -978,7 +978,10 @@ pub fn notes<'a, M: Clone + 'a>(
                 .map(|at| {
                     let at = at.with_timezone(&chrono::Local);
                     if at.date_naive() == chrono::Local::now().date_naive() {
-                        format!("Saved {}", at.format("%H:%M"))
+                        format!(
+                            "Saved {}",
+                            crate::config::time_of_day(&at, config.clock.format_24h)
+                        )
                     } else {
                         format!("Saved {}", at.format("%b %-d"))
                     }
