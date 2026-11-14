@@ -251,19 +251,77 @@ impl Tracker {
         activity
     }
 }
-async fn read(c: &Connection, source: Source, service: &str) -> Option<Raw> {
+const POWER_PATH: &str = "/org/freedesktop/UPower/devices/DisplayDevice";
+const POWER_DEVICE: &str = "org.freedesktop.UPower.Device";
+const NM_PATH: &str = "/org/freedesktop/NetworkManager";
+const NM: &str = "org.freedesktop.NetworkManager";
+const NM_ACTIVE: &str = "org.freedesktop.NetworkManager.Connection.Active";
+const PK_PATH: &str = "/org/freedesktop/PackageKit";
+const PK: &str = "org.freedesktop.PackageKit";
+const PK_TRANSACTION: &str = "org.freedesktop.PackageKit.Transaction";
+const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
+
+/// What a source's service last said: its main object's properties and,
+/// for networks and updates, those of each active connection or package
+/// transaction, in the service's order. Kept current from the service's
+/// own change signals, so a change costs no read.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Model {
+    root: Props,
+    children: Vec<(String, Props)>,
+}
+/// Reads a source's model in full, as at start and after the service
+/// restarts or its list of connections or transactions changes.
+async fn load(c: &Connection, source: Source, service: &str) -> Option<Model> {
     if !owner(c, service).await {
         return None;
     }
+    let mut children = Vec::new();
+    let root = match source {
+        Source::Power => props(c, service, POWER_PATH, POWER_DEVICE).await?,
+        Source::Network => {
+            let root = props(c, service, NM_PATH, NM).await?;
+            let paths = root
+                .get("ActiveConnections")
+                .and_then(|v| v.try_clone().ok())
+                .and_then(|v| Vec::<OwnedObjectPath>::try_from(v).ok())
+                .unwrap_or_default();
+            for path in paths.iter().take(8) {
+                if let Some(a) = props(c, service, path.as_str(), NM_ACTIVE).await {
+                    children.push((path.to_string(), a));
+                }
+            }
+            root
+        }
+        Source::Updates => {
+            let root = Proxy::new(c, service, PK_PATH, PK).await.ok()?;
+            let paths: Vec<OwnedObjectPath> = tokio::time::timeout(
+                Duration::from_secs(2),
+                root.call_with_flags(
+                    "GetTransactionList",
+                    zbus::proxy::MethodFlags::NoAutoStart.into(),
+                    &(),
+                ),
+            )
+            .await
+            .ok()?
+            .ok()??;
+            for path in paths.iter().take(16) {
+                if let Some(p) = props(c, service, path.as_str(), PK_TRANSACTION).await {
+                    children.push((path.to_string(), p));
+                }
+            }
+            Props::new()
+        }
+        _ => return None,
+    };
+    Some(Model { root, children })
+}
+/// What the island shows of a model.
+fn raw(source: Source, model: &Model) -> Option<Raw> {
+    let p = &model.root;
     match source {
         Source::Power => {
-            let p = props(
-                c,
-                service,
-                "/org/freedesktop/UPower/devices/DisplayDevice",
-                "org.freedesktop.UPower.Device",
-            )
-            .await?;
             if !p
                 .get("IsPresent")
                 .and_then(|v| bool::try_from(v).ok())
@@ -277,9 +335,9 @@ async fn read(c: &Connection, source: Source, service: &str) -> Option<Raw> {
                 .filter(|p| p.is_finite() && (0.0..=100.0).contains(p))
                 .map(|p| p.round() as u8);
             Some(Raw::Power {
-                state: number(&p, "State")?,
-                level: number(&p, "WarningLevel").unwrap_or(0),
-                percent: if number(&p, "BatteryLevel").unwrap_or(0) == 0 {
+                state: number(p, "State")?,
+                level: number(p, "WarningLevel").unwrap_or(0),
+                percent: if number(p, "BatteryLevel").unwrap_or(0) == 0 {
                     pct
                 } else {
                     None
@@ -287,88 +345,38 @@ async fn read(c: &Connection, source: Source, service: &str) -> Option<Raw> {
             })
         }
         Source::Network => {
-            let p = props(
-                c,
-                service,
-                "/org/freedesktop/NetworkManager",
-                "org.freedesktop.NetworkManager",
-            )
-            .await?;
-            let state = number(&p, "State")?;
-            let paths = p
-                .get("ActiveConnections")
-                .and_then(|v| v.try_clone().ok())
-                .and_then(|v| Vec::<OwnedObjectPath>::try_from(v).ok())
+            let state = number(p, "State")?;
+            let vpn = model
+                .children
+                .iter()
+                .map(|(_, a)| a)
+                .find(|a| {
+                    matches!(word(a, "Type").as_str(), "vpn" | "wireguard")
+                        && number(a, "State") == Some(2)
+                })
+                .map(|a| word(a, "Id"))
                 .unwrap_or_default();
-            let mut vpn = String::new();
-            for path in paths.iter().take(8) {
-                if let Some(a) = props(
-                    c,
-                    service,
-                    path.as_str(),
-                    "org.freedesktop.NetworkManager.Connection.Active",
-                )
-                .await
-                {
-                    let kind = word(&a, "Type");
-                    if matches!(kind.as_str(), "vpn" | "wireguard")
-                        && number(&a, "State") == Some(2)
-                    {
-                        vpn = word(&a, "Id");
-                        break;
-                    }
-                }
-            }
             Some(Raw::Network { state, vpn })
         }
         Source::Updates => {
-            let root = Proxy::new(
-                c,
-                service,
-                "/org/freedesktop/PackageKit",
-                "org.freedesktop.PackageKit",
-            )
-            .await
-            .ok()?;
-            let paths: Vec<OwnedObjectPath> = tokio::time::timeout(
-                Duration::from_secs(2),
-                root.call_with_flags(
-                    "GetTransactionList",
-                    zbus::proxy::MethodFlags::NoAutoStart.into(),
-                    &(),
-                ),
-            )
-            .await
-            .ok()?
-            .ok()??;
             let mut running = Vec::new();
             let mut ids = Vec::new();
-            for path in paths.iter().take(16) {
-                let Some(p) = props(
-                    c,
-                    service,
-                    path.as_str(),
-                    "org.freedesktop.PackageKit.Transaction",
-                )
-                .await
-                else {
-                    continue;
-                };
-                if !number(&p, "Uid")
+            for (path, p) in &model.children {
+                if !number(p, "Uid")
                     .is_some_and(|uid| uid == 0 || uid == unsafe { libc::geteuid() })
                 {
                     continue;
                 }
-                if !matches!(number(&p, "Role"), Some(10 | 11 | 14 | 22 | 25 | 29 | 33)) {
+                if !matches!(number(p, "Role"), Some(10 | 11 | 14 | 22 | 25 | 29 | 33)) {
                     continue;
                 }
-                if matches!(number(&p, "Status"), Some(18 | 19)) {
+                if matches!(number(p, "Status"), Some(18 | 19)) {
                     continue;
                 }
-                ids.push(path.to_string());
+                ids.push(path.clone());
                 running.push((
-                    number(&p, "Status").unwrap_or(0),
-                    number(&p, "Percentage")
+                    number(p, "Status").unwrap_or(0),
+                    number(p, "Percentage")
                         .filter(|p| *p <= 100)
                         .map(|p| p as u8),
                 ));
@@ -384,6 +392,200 @@ async fn read(c: &Connection, source: Source, service: &str) -> Option<Raw> {
         _ => None,
     }
 }
+#[cfg(test)]
+async fn read(c: &Connection, source: Source, service: &str) -> Option<Raw> {
+    raw(source, &load(c, source, service).await?)
+}
+/// What a signal means for a model.
+#[derive(Debug, PartialEq)]
+enum Step {
+    /// Nothing shown can have changed.
+    Same,
+    /// The model changed in place.
+    Changed,
+    /// The model must be read again.
+    Reload,
+}
+/// Applies one of the source's signals to its model.
+fn apply(source: Source, model: &mut Model, message: &zbus::Message) -> Step {
+    let header = message.header();
+    let path = header.path().map(|p| p.as_str()).unwrap_or_default();
+    match header.member().map(|m| m.as_str()) {
+        Some("TransactionListChanged") if source == Source::Updates => Step::Reload,
+        // The completion it announces is the tracker's; show it now.
+        Some("Finished") if source == Source::Updates => Step::Changed,
+        Some("PropertiesChanged") => {
+            let Ok((interface, changed, invalidated)) =
+                message.body().deserialize::<(String, Props, Vec<String>)>()
+            else {
+                return Step::Same;
+            };
+            let target = match (source, interface.as_str()) {
+                (Source::Power, POWER_DEVICE) if path == POWER_PATH => Some(&mut model.root),
+                (Source::Network, NM) if path == NM_PATH => {
+                    if changed.contains_key("ActiveConnections") {
+                        return Step::Reload;
+                    }
+                    Some(&mut model.root)
+                }
+                (Source::Network, NM_ACTIVE) | (Source::Updates, PK_TRANSACTION) => model
+                    .children
+                    .iter_mut()
+                    .find(|(p, _)| p == path)
+                    .map(|(_, props)| props),
+                _ => None,
+            };
+            let Some(target) = target else {
+                return Step::Same;
+            };
+            if !invalidated.is_empty() {
+                return Step::Reload;
+            }
+            let mut step = Step::Same;
+            for (key, value) in changed {
+                if target.get(&key) != Some(&value) {
+                    target.insert(key, value);
+                    step = Step::Changed;
+                }
+            }
+            step
+        }
+        _ => Step::Same,
+    }
+}
+/// The signals a source listens to: property changes of the objects it
+/// shows, on their own interfaces, and PackageKit's list and completion
+/// signals. Not every signal the service sends: NetworkManager alone
+/// reports signal strength and traffic many times a minute.
+fn rules(source: Source, service: &'static str) -> zbus::Result<Vec<MatchRule<'static>>> {
+    let changed = |path: Option<&'static str>, interface: &'static str| {
+        let rule = MatchRule::builder()
+            .msg_type(Type::Signal)
+            .sender(service)?
+            .interface(PROPERTIES)?
+            .member("PropertiesChanged")?;
+        let rule = match path {
+            Some(path) => rule.path(path)?,
+            None => rule,
+        };
+        Ok::<_, zbus::Error>(rule.arg(0, interface)?.build())
+    };
+    let signal = |path: Option<&'static str>, interface: &'static str, member: &'static str| {
+        let rule = MatchRule::builder()
+            .msg_type(Type::Signal)
+            .sender(service)?
+            .interface(interface)?
+            .member(member)?;
+        Ok::<_, zbus::Error>(
+            match path {
+                Some(path) => rule.path(path)?,
+                None => rule,
+            }
+            .build(),
+        )
+    };
+    Ok(match source {
+        Source::Power => vec![changed(Some(POWER_PATH), POWER_DEVICE)?],
+        Source::Network => vec![changed(Some(NM_PATH), NM)?, changed(None, NM_ACTIVE)?],
+        Source::Updates => vec![
+            signal(Some(PK_PATH), PK, "TransactionListChanged")?,
+            changed(None, PK_TRANSACTION)?,
+            signal(None, PK_TRANSACTION, "Finished")?,
+        ],
+        _ => Vec::new(),
+    })
+}
+/// Follows one source on `c` until the bus fails (`Some`) or the island
+/// goes away (`None`). Reads in full only at start, when the service comes
+/// or goes and when its list of connections or transactions changes;
+/// otherwise each change signal updates the model in place. No polling.
+async fn follow(
+    c: &Connection,
+    source: Source,
+    service: &'static str,
+    tx: &tokio::sync::mpsc::Sender<(Source, Option<Activity>)>,
+) -> Option<()> {
+    let owners = MatchRule::builder()
+        .msg_type(Type::Signal)
+        .sender("org.freedesktop.DBus")
+        .ok()?
+        .member("NameOwnerChanged")
+        .ok()?
+        .arg(0, service)
+        .ok()?
+        .build();
+    let mut owners = MessageStream::for_match_rule(owners, c, Some(4))
+        .await
+        .ok()?;
+    let mut streams = Vec::new();
+    for rule in rules(source, service).ok()? {
+        streams.push(
+            MessageStream::for_match_rule(rule, c, Some(16))
+                .await
+                .ok()?,
+        );
+    }
+    let mut changes = cosmic::iced::futures::stream::select_all(streams);
+    let mut tracker = Tracker::default();
+    let mut model = None;
+    let mut reload = true;
+    let now = || chrono::Utc::now().timestamp_millis();
+    loop {
+        if reload {
+            model = tokio::time::timeout(Duration::from_secs(5), load(c, source, service))
+                .await
+                .ok()
+                .flatten();
+            reload = false;
+        }
+        let state = tracker.update(source, model.as_ref().and_then(|m| raw(source, m)), now());
+        tx.send((source, state)).await.ok()?;
+        loop {
+            tokio::select! {
+                _ = tx.closed() => return None,
+                msg = changes.next() => {
+                    if take(source, &mut tracker, &mut model, &msg?.ok()?, &mut reload) {
+                        break;
+                    }
+                }
+                msg = owners.next() => {
+                    msg?.ok()?;
+                    tracker = Tracker::default();
+                    reload = true;
+                    break;
+                }
+            }
+        }
+        // Bound redraw and read bursts: take what else arrived meanwhile.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        for _ in 0..16 {
+            match changes.next().now_or_never() {
+                Some(Some(Ok(m))) => {
+                    take(source, &mut tracker, &mut model, &m, &mut reload);
+                }
+                Some(Some(Err(_))) | Some(None) => return None,
+                None => break,
+            }
+        }
+    }
+}
+/// Takes one signal into the tracker and the model; answers whether what
+/// the island shows can have changed. Without a model, any signal reads.
+fn take(
+    source: Source,
+    tracker: &mut Tracker,
+    model: &mut Option<Model>,
+    message: &zbus::Message,
+    reload: &mut bool,
+) -> bool {
+    tracker.signal(message, chrono::Utc::now().timestamp_millis());
+    let step = match model {
+        Some(m) => apply(source, m, message),
+        None => Step::Reload,
+    };
+    *reload |= step == Step::Reload;
+    step != Step::Same
+}
 pub(super) async fn observe(
     source: Source,
     tx: tokio::sync::mpsc::Sender<(Source, Option<Activity>)>,
@@ -395,60 +597,10 @@ pub(super) async fn observe(
         _ => return,
     };
     loop {
-        let result = async {
-            let c = tokio::time::timeout(Duration::from_secs(3), Connection::system())
-                .await
-                .ok()?
-                .ok()?;
-            let changes = MatchRule::builder()
-                .msg_type(Type::Signal)
-                .sender(service)
-                .ok()?
-                .build();
-            let owners = MatchRule::builder()
-                .msg_type(Type::Signal)
-                .sender("org.freedesktop.DBus")
-                .ok()?
-                .member("NameOwnerChanged")
-                .ok()?
-                .arg(0, service)
-                .ok()?
-                .build();
-            let mut changes = MessageStream::for_match_rule(changes, &c, Some(16))
-                .await
-                .ok()?;
-            let mut owners = MessageStream::for_match_rule(owners, &c, Some(4))
-                .await
-                .ok()?;
-            let mut tracker = Tracker::default();
-            loop {
-                let raw = tokio::time::timeout(Duration::from_secs(5), read(&c, source, service))
-                    .await
-                    .ok()
-                    .flatten();
-                let state = tracker.update(source, raw, chrono::Utc::now().timestamp_millis());
-                tx.send((source, state)).await.ok()?;
-                tokio::select! {
-                    _=tx.closed()=>return None,
-                    msg=changes.next()=>{tracker.signal(&msg?.ok()?,chrono::Utc::now().timestamp_millis());},
-                    msg=owners.next()=>{if msg?.is_err(){return None} tracker=Tracker::default();},
-                    _=tokio::time::sleep(Duration::from_secs(30))=>{},
-                }
-                // Bound redraw/read bursts; the next read is the authoritative state.
-                tokio::time::sleep(Duration::from_millis(200)).await;
-                for _ in 0..16 {
-                    match changes.next().now_or_never() {
-                        Some(Some(Ok(m)))=>tracker.signal(&m,chrono::Utc::now().timestamp_millis()),
-                        Some(Some(Err(_)))|Some(None)=>return None,
-                        None=>break,
-                    }
-                }
-            }
-            #[allow(unreachable_code)]
-            Some(())
+        if let Ok(Ok(c)) = tokio::time::timeout(Duration::from_secs(3), Connection::system()).await
+        {
+            follow(&c, source, service, &tx).await;
         }
-        .await;
-        let _ = result;
         if tx.send((source, None)).await.is_err() {
             return;
         }

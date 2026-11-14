@@ -695,11 +695,7 @@ async fn watch(
 ) -> Option<cosmic::iced::futures::stream::SelectAll<MessageStream>> {
     let mut streams = Vec::new();
     for service in services {
-        let from = MatchRule::builder()
-            .msg_type(Type::Signal)
-            .sender(*service)
-            .ok()?
-            .build();
+        let from = rules(service).ok()?;
         // Notice the service starting or stopping.
         let owner = MatchRule::builder()
             .msg_type(Type::Signal)
@@ -712,7 +708,7 @@ async fn watch(
             .arg(0, *service)
             .ok()?
             .build();
-        for rule in [from, owner] {
+        for rule in from.into_iter().chain([owner]) {
             streams.push(
                 MessageStream::for_match_rule(rule, c, Some(32))
                     .await
@@ -721,6 +717,61 @@ async fn watch(
         }
     }
     Some(cosmic::iced::futures::stream::select_all(streams))
+}
+/// The signals asked of each service: property changes on the interfaces
+/// read, and device lists. Not everything it sends: UPower reports the
+/// laptop's energy rate and BlueZ each scan result's signal strength, and
+/// the bus woke this task for each. KDE Connect spreads its signals over
+/// several interfaces a rule cannot name by prefix; it is quiet and on the
+/// session bus, so all of its signals still count.
+fn rules(service: &str) -> zbus::Result<Vec<MatchRule<'_>>> {
+    let changed = |interface: &'static str| {
+        Ok::<_, zbus::Error>(
+            MatchRule::builder()
+                .msg_type(Type::Signal)
+                .sender(service)?
+                .interface("org.freedesktop.DBus.Properties")?
+                .member("PropertiesChanged")?
+                .arg(0, interface)?
+                .build(),
+        )
+    };
+    let signal = |interface: &'static str, member: &'static str| {
+        Ok::<_, zbus::Error>(
+            MatchRule::builder()
+                .msg_type(Type::Signal)
+                .sender(service)?
+                .interface(interface)?
+                .member(member)?
+                .build(),
+        )
+    };
+    const OBJECTS: &str = "org.freedesktop.DBus.ObjectManager";
+    Ok(match service {
+        UPOWER => vec![
+            changed(UPOWER_DEVICE)?,
+            signal(UPOWER, "DeviceAdded")?,
+            signal(UPOWER, "DeviceRemoved")?,
+        ],
+        BLUEZ => vec![
+            changed(BLUEZ_DEVICE)?,
+            changed(BLUEZ_BATTERY)?,
+            signal(OBJECTS, "InterfacesAdded")?,
+            signal(OBJECTS, "InterfacesRemoved")?,
+        ],
+        GSCONNECT => vec![
+            changed(GSCONNECT_DEVICE)?,
+            signal(OBJECTS, "InterfacesAdded")?,
+            signal(OBJECTS, "InterfacesRemoved")?,
+            signal("org.gtk.Actions", "Changed")?,
+        ],
+        _ => vec![
+            MatchRule::builder()
+                .msg_type(Type::Signal)
+                .sender(service)?
+                .build(),
+        ],
+    })
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Bus {
@@ -755,8 +806,9 @@ async fn observe(bus: Bus, tx: tokio::sync::mpsc::Sender<(Bus, Vec<Device>)>) {
                     }
                 };
                 tx.send((bus, list)).await.ok()?;
-                // Signals wake the next read; the long fallback only covers
-                // a source that changed without saying so.
+                // Signals wake the next read. UPower and BlueZ say when
+                // anything changes; the phone services get a long fallback
+                // for a battery that changed without saying so.
                 let deadline = tokio::time::sleep(Duration::from_secs(600));
                 tokio::pin!(deadline);
                 let mut wanted = false;
@@ -764,7 +816,7 @@ async fn observe(bus: Bus, tx: tokio::sync::mpsc::Sender<(Bus, Vec<Device>)>) {
                     tokio::select! {
                         _ = tx.closed() => return None,
                         msg = changes.next() => wanted = relevant(&msg?.ok()?),
-                        _ = &mut deadline => wanted = true,
+                        _ = &mut deadline, if bus == Bus::Session => wanted = true,
                     }
                 }
                 // Connecting raises a burst of signals; read once after it.
@@ -1221,5 +1273,62 @@ mod tests {
         .build(&())
         .unwrap();
         assert!(!relevant(&media));
+    }
+
+    /// The bus delivers only the signals a read could follow: not UPower's
+    /// own properties (such as OnBattery) or other signals it sends.
+    #[tokio::test]
+    async fn only_the_signals_read_reach_the_watch() {
+        use cosmic::iced::futures::StreamExt;
+        let bus = crate::activity_island::test_bus::Bus::new();
+        let service = zbus::connection::Builder::address(bus.address.as_str())
+            .unwrap()
+            .name(UPOWER)
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let client = zbus::connection::Builder::address(bus.address.as_str())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let mut changes = watch(&client, &[UPOWER]).await.unwrap();
+        let path = "/org/freedesktop/UPower";
+        let props = HashMap::from([("OnBattery", zbus::zvariant::Value::from(true))]);
+        for _ in 0..20 {
+            service
+                .emit_signal(
+                    None::<()>,
+                    path,
+                    "org.freedesktop.DBus.Properties",
+                    "PropertiesChanged",
+                    &(UPOWER, &props, Vec::<&str>::new()),
+                )
+                .await
+                .unwrap();
+            service
+                .emit_signal(None::<()>, path, UPOWER, "Changed", &())
+                .await
+                .unwrap();
+        }
+        let device =
+            zbus::zvariant::ObjectPath::try_from("/org/freedesktop/UPower/devices/mouse_0")
+                .unwrap();
+        service
+            .emit_signal(None::<()>, path, UPOWER, "DeviceAdded", &(device,))
+            .await
+            .unwrap();
+        let first = tokio::time::timeout(Duration::from_secs(3), changes.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.header().member().unwrap().as_str(), "DeviceAdded");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), changes.next())
+                .await
+                .is_err()
+        );
     }
 }
