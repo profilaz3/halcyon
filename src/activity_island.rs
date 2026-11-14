@@ -13,6 +13,8 @@ mod palette;
 pub(crate) mod popups;
 pub mod preferences;
 mod quiet;
+#[cfg(test)]
+pub(crate) mod test_bus;
 mod reactive;
 mod shelf;
 mod surface;

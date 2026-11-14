@@ -109,59 +109,137 @@ async fn dnd_wait(watch: &mut DndWatch) -> std::io::Result<()> {
         None => std::future::pending().await,
     }
 }
-async fn locked(c: &zbus::Connection) -> bool {
-    tokio::time::timeout(Duration::from_secs(2), async {
-        let root = zbus::Proxy::new(
-            c,
-            "org.freedesktop.login1",
-            "/org/freedesktop/login1",
-            "org.freedesktop.login1.Manager",
-        )
+const LOGIN1: &str = "org.freedesktop.login1";
+/// This process's logind session. The island runs in the user's app slice,
+/// which need not belong to a session, so the user's graphical Display
+/// session stands in when the PID has none.
+async fn session(c: &zbus::Connection) -> Option<zbus::Proxy<'static>> {
+    let manager = zbus::Proxy::new(
+        c,
+        LOGIN1,
+        "/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager",
+    )
+    .await
+    .ok()?;
+    let path = match manager
+        .call::<_, _, zbus::zvariant::OwnedObjectPath>("GetSessionByPID", &(std::process::id(),))
         .await
-        .ok()?;
-        let pid = std::process::id();
-        let path = match root
-            .call::<_, _, zbus::zvariant::OwnedObjectPath>("GetSessionByPID", &(pid,))
-            .await
-        {
-            Ok(path) => path,
-            Err(_) => {
-                let user: zbus::zvariant::OwnedObjectPath = root
-                    .call("GetUser", &(unsafe { libc::geteuid() },))
-                    .await
-                    .ok()?;
-                let user = zbus::Proxy::new(
-                    c,
-                    "org.freedesktop.login1",
-                    user,
-                    "org.freedesktop.login1.User",
-                )
+    {
+        Ok(path) => path,
+        Err(_) => {
+            // SAFETY: geteuid has no preconditions.
+            let uid = unsafe { libc::geteuid() };
+            let user: zbus::zvariant::OwnedObjectPath =
+                manager.call("GetUser", &(uid,)).await.ok()?;
+            let user = zbus::Proxy::new(c, LOGIN1, user, "org.freedesktop.login1.User")
                 .await
                 .ok()?;
-                let (id, path): (String, zbus::zvariant::OwnedObjectPath) =
-                    user.get_property("Display").await.ok()?;
-                if id.is_empty() {
-                    return None;
-                }
-                path
+            let (id, path): (String, zbus::zvariant::OwnedObjectPath) =
+                user.get_property("Display").await.ok()?;
+            if id.is_empty() {
+                return None;
             }
-        };
-        let session = zbus::Proxy::new(
-            c,
-            "org.freedesktop.login1",
-            path,
-            "org.freedesktop.login1.Session",
-        )
+            path
+        }
+    };
+    zbus::Proxy::new(c, LOGIN1, path, "org.freedesktop.login1.Session")
+        .await
+        .ok()
+}
+/// Reads Active and LockedHint from logind itself, past the proxy's cache.
+async fn read_state(session: &zbus::Proxy<'_>) -> Option<(bool, bool)> {
+    let properties = zbus::fdo::PropertiesProxy::builder(session.connection())
+        .destination(session.destination().to_owned())
+        .ok()?
+        .path(session.path().to_owned())
+        .ok()?
+        .cache_properties(zbus::proxy::CacheProperties::No)
+        .build()
         .await
         .ok()?;
-        let active: bool = session.get_property("Active").await.ok()?;
-        let locked: bool = session.get_property("LockedHint").await.ok()?;
-        Some(!active || locked)
-    })
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or(true)
+    let interface = session.interface().to_owned();
+    let all = properties.get_all(interface).await.ok()?;
+    let flag = |name: &str| all.get(name).and_then(|v| bool::try_from(v).ok());
+    Some((flag("Active")?, flag("LockedHint")?))
+}
+/// How following the session ended.
+enum Ended {
+    /// The island went away.
+    Closed,
+    /// The bus or logind did; reconnect.
+    Lost,
+}
+/// Follows the session on `c`: resolved once, read once, then kept current
+/// from its own LockedHint and Active changes and its Lock and Unlock
+/// signals. No polling: nothing is read again until logind says something
+/// changed. Sends Do Not Disturb (`dnd`) with each change, and again when
+/// its file changes.
+async fn follow(
+    c: &zbus::Connection,
+    tx: &tokio::sync::mpsc::Sender<Part>,
+    files: &mut DndWatch,
+    dnd: &impl Fn() -> bool,
+) -> Ended {
+    let followed = async {
+        let session = tokio::time::timeout(Duration::from_secs(2), session(c))
+            .await
+            .ok()??;
+        let owner = session.receive_owner_changed().await.ok()?;
+        let hint = session.receive_property_changed::<bool>("LockedHint").await;
+        let active = session.receive_property_changed::<bool>("Active").await;
+        let lock = session.receive_signal("Lock").await.ok()?;
+        let unlock = session.receive_signal("Unlock").await.ok()?;
+        let state = tokio::time::timeout(Duration::from_secs(2), read_state(&session))
+            .await
+            .ok()??;
+        Some((session, owner, hint, active, lock, unlock, state))
+    };
+    let Some((session, mut owner, mut hint, mut active, mut lock, mut unlock, mut state)) =
+        followed.await
+    else {
+        return Ended::Lost;
+    };
+    // Unknown after a failed read: the gate closes, as on any loss.
+    let reread = async |session: &zbus::Proxy<'_>| {
+        tokio::time::timeout(Duration::from_secs(2), read_state(session))
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or((false, true))
+    };
+    let mut sent = None;
+    loop {
+        // The property streams start with the value already known, and a
+        // change can be announced twice; only news is sent.
+        let now = (dnd(), !state.0 || state.1);
+        if sent != Some(now) {
+            sent = Some(now);
+            if tx.send(Part::Policy(now.0, now.1)).await.is_err() {
+                return Ended::Closed;
+            }
+        }
+        tokio::select! {
+            _ = tx.closed() => return Ended::Closed,
+            _ = owner.next() => return Ended::Lost,
+            // PropertiesChanged carries the new value: no round trip.
+            Some(v) = hint.next() => state.1 = v.get().await.unwrap_or(true),
+            Some(v) = active.next() => state.0 = v.get().await.unwrap_or(false),
+            Some(_) = lock.next() => state = reread(&session).await,
+            Some(_) = unlock.next() => state = reread(&session).await,
+            // A Do Not Disturb change needs no logind round trip.
+            // Coalesce the write/rename pair, as `watch::files` does.
+            woke = dnd_wait(files), if files.is_some() => {
+                if woke.is_err() { *files = None; }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+                // A folder on the way to the key may be new.
+                if let Some((watch, cosmic)) = files {
+                    rewatch_dnd(watch, cosmic);
+                }
+            }
+            else => return Ended::Lost,
+        }
+    }
 }
 async fn policy(tx: tokio::sync::mpsc::Sender<Part>) {
     let mut files: DndWatch = dirs::config_dir()
@@ -172,38 +250,10 @@ async fn policy(tx: tokio::sync::mpsc::Sender<Part>) {
             .await
             .ok()
             .and_then(Result::ok);
-        if let Some(c) = c {
-            let rule = zbus::MatchRule::builder()
-                .msg_type(zbus::message::Type::Signal)
-                .sender("org.freedesktop.login1")
-                .expect("constant")
-                .build();
-            if let Ok(mut changes) = zbus::MessageStream::for_match_rule(rule, &c, Some(8)).await {
-                let mut is_locked = locked(&c).await;
-                loop {
-                    if tx.send(Part::Policy(dnd(), is_locked)).await.is_err() {
-                        return;
-                    }
-                    tokio::select! {
-                        _=tx.closed()=>return,
-                        m=changes.next()=>{
-                            if !matches!(m,Some(Ok(_))){break}
-                            is_locked = locked(&c).await;
-                        },
-                        // A Do Not Disturb change needs no logind round trip.
-                        // Coalesce the write/rename pair, as `watch::files` does.
-                        woke=dnd_wait(&mut files), if files.is_some()=>{
-                            if woke.is_err() { files = None; }
-                            tokio::time::sleep(Duration::from_millis(25)).await;
-                            // A folder on the way to the key may be new.
-                            if let Some((watch, cosmic)) = &mut files {
-                                rewatch_dnd(watch, cosmic);
-                            }
-                        },
-                        _=tokio::time::sleep(Duration::from_secs(30))=>is_locked = locked(&c).await,
-                    }
-                }
-            }
+        if let Some(c) = c
+            && let Ended::Closed = follow(&c, &tx, &mut files, &dnd).await
+        {
+            return;
         }
         if tx.send(Part::Policy(dnd(), true)).await.is_err() {
             return;
@@ -334,5 +384,152 @@ mod tests {
                 .is_ok()
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    mod logind {
+        use super::super::*;
+        use crate::activity_island::test_bus::Bus;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+        use zbus::object_server::SignalEmitter;
+
+        const SESSION: &str = "/org/freedesktop/login1/session/_31";
+        struct Manager(Arc<AtomicUsize>);
+        #[zbus::interface(name = "org.freedesktop.login1.Manager")]
+        impl Manager {
+            #[zbus(name = "GetSessionByPID")]
+            fn get_session_by_pid(&self, _pid: u32) -> zbus::zvariant::OwnedObjectPath {
+                self.0.fetch_add(1, Relaxed);
+                zbus::zvariant::OwnedObjectPath::try_from(SESSION).unwrap()
+            }
+        }
+        struct Session {
+            active: bool,
+            locked: bool,
+            reads: Arc<AtomicUsize>,
+        }
+        #[zbus::interface(name = "org.freedesktop.login1.Session")]
+        impl Session {
+            #[zbus(property)]
+            fn active(&self) -> bool {
+                self.reads.fetch_add(1, Relaxed);
+                self.active
+            }
+            #[zbus(property)]
+            fn locked_hint(&self) -> bool {
+                self.reads.fetch_add(1, Relaxed);
+                self.locked
+            }
+            #[zbus(signal)]
+            async fn lock(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
+            #[zbus(signal)]
+            async fn unlock(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
+        }
+        async fn next(rx: &mut tokio::sync::mpsc::Receiver<Part>) -> Option<bool> {
+            match tokio::time::timeout(Duration::from_secs(3), rx.recv()).await {
+                Ok(Some(Part::Policy(_, locked))) => Some(locked),
+                _ => None,
+            }
+        }
+
+        /// The session is looked up once and read only when logind says it
+        /// changed. Before, every logind signal on the bus (any session,
+        /// any user) looked the session up again and read it, and a 30 s
+        /// timer read it again regardless.
+        #[tokio::test]
+        async fn the_session_is_resolved_once_and_read_only_on_its_own_changes() {
+            let bus = Bus::new();
+            let lookups = Arc::new(AtomicUsize::new(0));
+            let reads = Arc::new(AtomicUsize::new(0));
+            let service = zbus::connection::Builder::address(bus.address.as_str())
+                .unwrap()
+                .name(LOGIN1)
+                .unwrap()
+                .serve_at("/org/freedesktop/login1", Manager(lookups.clone()))
+                .unwrap()
+                .serve_at(
+                    SESSION,
+                    Session {
+                        active: true,
+                        locked: false,
+                        reads: reads.clone(),
+                    },
+                )
+                .unwrap()
+                .build()
+                .await
+                .unwrap();
+            let client = zbus::connection::Builder::address(bus.address.as_str())
+                .unwrap()
+                .build()
+                .await
+                .unwrap();
+            let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+            let task = tokio::spawn(async move {
+                let mut files = None;
+                matches!(
+                    follow(&client, &tx, &mut files, &|| false).await,
+                    Ended::Lost
+                )
+            });
+            assert_eq!(next(&mut rx).await, Some(false), "active and unlocked");
+
+            // Idle: nothing is read.
+            let idle = reads.load(Relaxed);
+            assert!(
+                tokio::time::timeout(Duration::from_millis(500), rx.recv())
+                    .await
+                    .is_err()
+            );
+            assert_eq!(reads.load(Relaxed), idle, "read while nothing changed");
+
+            // Another session's signals are not this session's changes.
+            service
+                .emit_signal(
+                    None::<()>,
+                    "/org/freedesktop/login1/session/_99",
+                    "org.freedesktop.login1.Session",
+                    "Lock",
+                    &(),
+                )
+                .await
+                .unwrap();
+            assert!(
+                tokio::time::timeout(Duration::from_millis(300), rx.recv())
+                    .await
+                    .is_err()
+            );
+
+            let session = service
+                .object_server()
+                .interface::<_, Session>(SESSION)
+                .await
+                .unwrap();
+            let emitter = session.signal_emitter().clone();
+            session.get_mut().await.locked = true;
+            session
+                .get()
+                .await
+                .locked_hint_changed(&emitter)
+                .await
+                .unwrap();
+            assert_eq!(next(&mut rx).await, Some(true), "LockedHint");
+            session.get_mut().await.locked = false;
+            Session::unlock(&emitter).await.unwrap();
+            assert_eq!(next(&mut rx).await, Some(false), "Unlock");
+            session.get_mut().await.active = false;
+            session.get().await.active_changed(&emitter).await.unwrap();
+            assert_eq!(next(&mut rx).await, Some(true), "inactive");
+            assert_eq!(lookups.load(Relaxed), 1, "the session is looked up once");
+
+            // logind going away ends the follow, to reconnect.
+            service.release_name(LOGIN1).await.unwrap();
+            assert!(
+                tokio::time::timeout(Duration::from_secs(3), task)
+                    .await
+                    .unwrap()
+                    .unwrap()
+            );
+        }
     }
 }
