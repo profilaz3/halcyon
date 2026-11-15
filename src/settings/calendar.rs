@@ -40,6 +40,15 @@ pub enum Message {
     FileName(String),
     AddFile,
     CancelFile,
+    ChooseFolder,
+    /// The calendars found in a chosen folder, or why there are none.
+    FolderFound(Result<Option<Vec<account::FolderCalendar>>, String>),
+    PickFolder(usize, bool),
+    AddFolders,
+    CancelFolder,
+    HolidaysForm(bool),
+    HolidaysCountry(usize),
+    AddHolidays,
     /// Asks before removing a subscription: its private link isn't kept.
     ConfirmRemove(Option<String>),
     RemoveSubscription(String),
@@ -89,6 +98,7 @@ impl SubscriptionProvider {
             Self::Other => &[
                 "1. Find Subscribe, Export or Share in your calendar provider.",
                 "2. Copy its iCal or ICS subscription link, then paste it below.",
+                "Links that work today: Proton Calendar (Share with anyone), Fastmail, Nextcloud, Zoho, Yahoo and Teamup. The steps for each are in CALENDAR.md.",
                 "Use an HTTPS or webcal link. Calendar webpages and links needing a browser login will not work. For a local file, use Add calendar file.",
             ],
         }
@@ -143,6 +153,11 @@ pub struct Editor {
     /// A chosen calendar file waiting for Add calendar.
     pub file_pending: Option<PathBuf>,
     pub file_name: String,
+    /// Calendars found in a chosen folder, and which of them to add.
+    pub folder_found: Vec<account::FolderCalendar>,
+    pub folder_picked: Vec<bool>,
+    pub holidays_form: bool,
+    pub holidays_country: Option<usize>,
     attempt: u64,
 }
 impl Default for Editor {
@@ -176,6 +191,10 @@ impl Default for Editor {
             caldav_searching: false,
             file_pending: None,
             file_name: String::new(),
+            folder_found: vec![],
+            folder_picked: vec![],
+            holidays_form: false,
+            holidays_country: None,
             attempt: 0,
         }
     }
@@ -199,7 +218,11 @@ impl Editor {
     }
     /// Whether any way of adding a calendar is open.
     pub fn adding(&self) -> bool {
-        self.subscription_form || self.caldav_form || self.file_pending.is_some()
+        self.subscription_form
+            || self.caldav_form
+            || self.file_pending.is_some()
+            || !self.folder_found.is_empty()
+            || self.holidays_form
     }
     /// Closes every add form and forgets what was typed into it.
     fn close_forms(&mut self) {
@@ -219,6 +242,10 @@ impl Editor {
         self.caldav_searching = false;
         self.file_pending = None;
         self.file_name.clear();
+        self.folder_found.clear();
+        self.folder_picked.clear();
+        self.holidays_form = false;
+        self.holidays_country = None;
     }
     fn caldav_login(&self) -> account::Login {
         account::Login {
@@ -259,6 +286,8 @@ enum Change {
     Link(String, account::SecretText, Option<account::Login>),
     CalDav(account::Login, Vec<account::CalDavCalendar>),
     File(String, PathBuf),
+    Folders(Vec<account::FolderCalendar>),
+    Holidays(usize),
 }
 fn wrap(message: Message) -> super::Message {
     super::Message::Calendar(message)
@@ -567,6 +596,67 @@ impl Settings {
                 Err(error) => self.calendar.error = Some(error),
             },
             Message::FileName(name) => self.calendar.file_name = name.chars().take(80).collect(),
+            Message::ChooseFolder => {
+                if self.calendar.busy {
+                    return Task::none();
+                }
+                return cosmic::task::future(async {
+                    use cosmic::dialog::file_chooser::{self, open::Dialog};
+                    let path =
+                        match Dialog::new().title("Calendar folder").open_folder().await {
+                            Ok(response) => response.url().to_file_path().map(Some).map_err(|_| {
+                                "Choose a calendar folder on this computer.".to_string()
+                            }),
+                            Err(file_chooser::Error::Cancelled) => Ok(None),
+                            Err(_) => Err("Could not open the file chooser.".into()),
+                        };
+                    let result = match path {
+                        Ok(Some(path)) => {
+                            tokio::task::spawn_blocking(move || account::discover_folder(&path))
+                                .await
+                                .unwrap_or(Err(account::Problem::CalendarFile))
+                                .map(Some)
+                                .map_err(|problem| problem.to_string())
+                        }
+                        Ok(None) => Ok(None),
+                        Err(error) => Err(error),
+                    };
+                    wrap(Message::FolderFound(result))
+                });
+            }
+            Message::FolderFound(result) => match result {
+                Ok(Some(found)) if !self.calendar.busy => {
+                    self.calendar.close_forms();
+                    self.calendar.error = None;
+                    let free = self.calendar.free_slots();
+                    self.calendar.folder_picked =
+                        (0..found.len()).map(|index| index < free).collect();
+                    self.calendar.folder_found = found;
+                }
+                Ok(_) => {}
+                Err(error) => self.calendar.error = Some(error),
+            },
+            Message::PickFolder(index, on) => {
+                if let Some(picked) = self.calendar.folder_picked.get_mut(index) {
+                    *picked = on;
+                }
+            }
+            Message::CancelFolder => {
+                self.calendar.folder_found.clear();
+                self.calendar.folder_picked.clear();
+            }
+            Message::HolidaysForm(show) => {
+                if self.calendar.busy {
+                    return Task::none();
+                }
+                self.calendar.close_forms();
+                self.calendar.holidays_form = show;
+                self.calendar.error = None;
+            }
+            Message::HolidaysCountry(index) => {
+                self.calendar.holidays_country =
+                    (index < account::holidays::COUNTRIES.len()).then_some(index);
+            }
             Message::CancelFile => {
                 self.calendar.file_pending = None;
                 self.calendar.file_name.clear();
@@ -588,7 +678,9 @@ impl Settings {
             Message::AddSubscription
             | Message::RemoveSubscription(_)
             | Message::AddCalDav
-            | Message::AddFile => {
+            | Message::AddFile
+            | Message::AddFolders
+            | Message::AddHolidays => {
                 if self.calendar.busy || self.calendar.connection.cleanup_pending() {
                     return Task::none();
                 }
@@ -620,6 +712,27 @@ impl Settings {
                         }
                         Change::CalDav(editor.caldav_login(), picked)
                     }
+                    Message::AddFolders => {
+                        let picked: Vec<_> = editor
+                            .folder_found
+                            .iter()
+                            .zip(&editor.folder_picked)
+                            .filter(|(_, on)| **on)
+                            .map(|(calendar, _)| calendar.clone())
+                            .collect();
+                        if picked.is_empty() || picked.len() > editor.free_slots() {
+                            self.calendar.busy = false;
+                            return Task::none();
+                        }
+                        Change::Folders(picked)
+                    }
+                    Message::AddHolidays => match editor.holidays_country {
+                        Some(country) => Change::Holidays(country),
+                        None => {
+                            self.calendar.busy = false;
+                            return Task::none();
+                        }
+                    },
                     Message::AddFile => match editor.file_pending.clone() {
                         Some(path) => Change::File(editor.file_name.clone(), path),
                         None => {
@@ -650,6 +763,10 @@ impl Settings {
                             }
                             Change::File(name, path) => {
                                 account::add_file(expected, name, path).await
+                            }
+                            Change::Folders(picked) => account::add_folders(expected, picked).await,
+                            Change::Holidays(country) => {
+                                account::add_holidays(expected, country).await
                             }
                         }
                     })
@@ -1195,6 +1312,266 @@ mod tests {
                     Message::CalDavPassword(account::SecretText(password.into()))
                 )
                 .contains(password)
+            );
+        }
+        assert_eq!(
+            std::fs::read(Config::path().unwrap()).unwrap(),
+            config_before
+        );
+        assert_eq!(std::fs::read(&account_path).ok(), account_before);
+    }
+
+    #[test]
+    fn calendar_folder_holidays_and_provider_list_flows() {
+        if crate::displays::test_support::isolated(
+            "settings::calendar::tests::calendar_folder_holidays_and_provider_list_flows",
+        ) {
+            return;
+        }
+        use crate::settings::tests::{native_reveal, send_settings};
+        use cosmic::iced::{Event, mouse};
+        fn click(app: &mut Settings, native: &mut crate::native_test::Native, id: &str) {
+            let bounds = native_reveal(app, native, id);
+            for event in [
+                mouse::Event::CursorMoved {
+                    position: bounds.center(),
+                },
+                mouse::Event::ButtonPressed(mouse::Button::Left),
+                mouse::Event::ButtonReleased(mouse::Button::Left),
+            ] {
+                for message in native
+                    .event(app.settings_view(), Event::Mouse(event), bounds.center())
+                    .0
+                {
+                    send_settings(app, message);
+                }
+            }
+        }
+        fn visible(native: &mut crate::native_test::Native, app: &Settings, id: &str, size: Size) {
+            let bounds = native_reveal(app, native, id);
+            assert!(
+                bounds.x >= 0.
+                    && bounds.x + bounds.width <= size.width
+                    && bounds.y >= 0.
+                    && bounds.y + bounds.height <= size.height,
+                "{id}: {bounds:?}"
+            );
+        }
+        fn listed(
+            choices: &[account::CalendarChoice],
+            kind: account::SourceKind,
+        ) -> account::Connection {
+            account::Connection {
+                backend: account::Backend::Subscription,
+                account: "Calendar subscriptions".into(),
+                calendar_id: choices[0].id.clone(),
+                calendar_name: choices[0].name.clone(),
+                revision: format!("after-{kind:?}"),
+                credential: String::new(),
+                selections: choices.to_vec(),
+                subscriptions: choices.to_vec(),
+                sources: choices
+                    .iter()
+                    .map(|c| account::Source {
+                        id: c.id.clone(),
+                        kind: kind.clone(),
+                        path: (!kind.uses_keyring())
+                            .then(|| PathBuf::from("/home/alex/.calendars/work")),
+                    })
+                    .collect(),
+            }
+        }
+        seed_ridge();
+        let config_before = std::fs::read(Config::path().unwrap()).unwrap();
+        let account_path = account::account_path().unwrap();
+        let account_before = std::fs::read(&account_path).ok();
+        let germany = account::holidays::COUNTRIES
+            .iter()
+            .position(|(label, _)| *label == "Germany")
+            .unwrap();
+        for (width, height) in [(820., 600.), (1280., 800.)] {
+            let size = Size::new(width, height);
+            let (mut app, _) = Settings::init(Core::default(), Page::Calendar);
+            app.calendar.client_ready = false;
+            send_settings(&mut app, super::super::Message::Resized(size));
+            let mut native = crate::native_test::Native::new(size);
+            let theme = cosmic::Theme::dark();
+            visible(&mut native, &app, "calendar-folder-open", size);
+            visible(&mut native, &app, "calendar-holidays-open", size);
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("calendar-sources-{width}"),
+            );
+
+            // A folder with nothing in it says so.
+            let _ = app.update_calendar(Message::FolderFound(Err(
+                account::Problem::EmptyFolder.to_string()
+            )));
+            assert_eq!(
+                native
+                    .text_all(
+                        app.settings_view(),
+                        "This folder has no .ics calendar files."
+                    )
+                    .len(),
+                1
+            );
+            // The calendars vdirsyncer keeps, after the folder chooser.
+            let found = vec![
+                account::FolderCalendar {
+                    path: "/home/alex/.calendars/work".into(),
+                    name: "Work".into(),
+                    color: "#3a86ff".into(),
+                },
+                account::FolderCalendar {
+                    path: "/home/alex/.calendars/family".into(),
+                    name: "Family".into(),
+                    color: String::new(),
+                },
+                account::FolderCalendar {
+                    path: "/home/alex/.calendars/birthdays".into(),
+                    name: "Birthdays".into(),
+                    color: String::new(),
+                },
+            ];
+            let _ = app.update_calendar(Message::FolderFound(Ok(Some(found.clone()))));
+            assert!(app.calendar.error.is_none());
+            assert_eq!(app.calendar.folder_picked, [true, true, true]);
+            click(&mut app, &mut native, "calendar-folder-pick-2");
+            assert_eq!(app.calendar.folder_picked, [true, true, false]);
+            visible(&mut native, &app, "calendar-folder-add", size);
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("calendar-folder-{width}"),
+            );
+            // Cancelling the chooser keeps what was found.
+            let _ = app.update_calendar(Message::FolderFound(Ok(None)));
+            assert_eq!(app.calendar.folder_found.len(), 3);
+            let _ = app.update_calendar(Message::AddFolders);
+            assert!(app.calendar.busy);
+            let work = account::CalendarChoice {
+                id: "work-id".into(),
+                name: "Work".into(),
+                primary: false,
+                color: "#3a86ff".into(),
+            };
+            let connection = listed(std::slice::from_ref(&work), account::SourceKind::Folder);
+            let _ = app.update_calendar(Message::Finished(
+                app.calendar.attempt,
+                Ok(connection.clone()),
+            ));
+            assert!(!app.calendar.busy && app.calendar.folder_found.is_empty());
+            let _ = app.update_calendar(Message::Loaded(
+                connection.revision.clone(),
+                Ok(vec![work.clone()]),
+            ));
+            click(&mut app, &mut native, "calendar-remove-0");
+            assert_eq!(
+                native
+                    .text_all(app.settings_view(), "The folder stays on your computer.")
+                    .len(),
+                1
+            );
+            let _ = app.update_calendar(Message::ConfirmRemove(None));
+            // With one slot left, only the first found calendar starts on.
+            let seven: Vec<_> = (0..7)
+                .map(|i| account::CalendarChoice {
+                    id: format!("c{i}"),
+                    name: format!("Calendar {i}"),
+                    primary: false,
+                    color: String::new(),
+                })
+                .collect();
+            app.calendar.connection = listed(&seven, account::SourceKind::Folder);
+            let _ = app.update_calendar(Message::FolderFound(Ok(Some(found.clone()))));
+            assert_eq!(app.calendar.folder_picked, [true, false, false]);
+            click(&mut app, &mut native, "calendar-folder-pick-1");
+            assert_eq!(
+                native
+                    .text_all(
+                        app.settings_view(),
+                        "You can add 1 more. Halcyon shows up to eight calendars."
+                    )
+                    .len(),
+                1
+            );
+            let _ = app.update_calendar(Message::AddFolders);
+            assert!(!app.calendar.busy, "more than fits is not sent");
+            let _ = app.update_calendar(Message::CancelFolder);
+            app.calendar.connection = connection.clone();
+
+            // Holidays: Add stays off until a country is chosen.
+            click(&mut app, &mut native, "calendar-holidays-open");
+            assert!(app.calendar.holidays_form && app.calendar.holidays_country.is_none());
+            click(&mut app, &mut native, "calendar-holidays-add");
+            assert!(!app.calendar.busy);
+            let _ =
+                app.update_calendar(Message::HolidaysCountry(account::holidays::COUNTRIES.len()));
+            assert!(app.calendar.holidays_country.is_none());
+            let _ = app.update_calendar(Message::HolidaysCountry(germany));
+            assert_eq!(app.calendar.holidays_country, Some(germany));
+            visible(&mut native, &app, "calendar-holidays-add", size);
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("calendar-holidays-{width}"),
+            );
+            let _ = app.update_calendar(Message::AddHolidays);
+            assert!(app.calendar.busy);
+            let holidays = account::CalendarChoice {
+                id: "holidays-id".into(),
+                name: "Germany holidays".into(),
+                primary: false,
+                color: account::holidays::COLOR.into(),
+            };
+            let connection = listed(
+                std::slice::from_ref(&holidays),
+                account::SourceKind::Holidays,
+            );
+            let _ = app.update_calendar(Message::Finished(
+                app.calendar.attempt,
+                Ok(connection.clone()),
+            ));
+            assert!(!app.calendar.holidays_form && app.calendar.holidays_country.is_none());
+            let _ = app.update_calendar(Message::Loaded(
+                connection.revision.clone(),
+                Ok(vec![holidays]),
+            ));
+            click(&mut app, &mut native, "calendar-remove-0");
+            assert_eq!(
+                native
+                    .text_all(
+                        app.settings_view(),
+                        "You can add it again from Add holidays."
+                    )
+                    .len(),
+                1
+            );
+            let _ = app.update_calendar(Message::ConfirmRemove(None));
+
+            // The link guide names the providers whose links work today.
+            click(&mut app, &mut native, "calendar-subscription-open");
+            click(&mut app, &mut native, "calendar-link-help");
+            send_settings(
+                &mut app,
+                wrap(Message::SubscriptionProvider(SubscriptionProvider::Other)),
+            );
+            let providers = SubscriptionProvider::Other.steps()[2];
+            for name in ["Proton", "Fastmail", "Nextcloud", "Zoho", "Yahoo", "Teamup"] {
+                assert!(providers.contains(name), "{name}");
+            }
+            native_reveal(&app, &mut native, "calendar-link-guide");
+            let bounds = native.text_bounds(app.settings_view(), providers);
+            assert!(
+                bounds.x >= 0. && bounds.x + bounds.width <= width,
+                "{bounds:?}"
+            );
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("calendar-link-providers-{width}"),
             );
         }
         assert_eq!(

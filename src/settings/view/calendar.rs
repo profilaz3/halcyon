@@ -136,7 +136,9 @@ impl Settings {
                             SourceKind::CalDav => {
                                 "You can add it again from your CalDAV account at any time."
                             }
+                            SourceKind::Holidays => "You can add it again from Add holidays.",
                             SourceKind::File => "The file stays on your computer.",
+                            SourceKind::Folder => "The folder stays on your computer.",
                         },
                     ));
                     rows.push(
@@ -233,7 +235,11 @@ impl Settings {
                     .on_press(message(Account::Disconnect))
                     .into(),
             );
-        } else if editor.caldav_form || editor.file_pending.is_some() {
+        } else if editor.caldav_form
+            || editor.file_pending.is_some()
+            || !editor.folder_found.is_empty()
+            || editor.holidays_form
+        {
             rows.push(label("Halcyon only reads your events.", 12., MUTED));
         } else if editor.subscription_form {
             rows.push(label(
@@ -387,6 +393,10 @@ impl Settings {
                     .wrap()
                     .into(),
                 );
+            } else if !editor.folder_found.is_empty() {
+                rows.extend(self.calendar_folder_form(replaces));
+            } else if editor.holidays_form {
+                rows.extend(self.calendar_holidays_form(replaces));
             } else {
                 // Every way to connect sits together in one row.
                 // Google sign-in can become available while this page is open,
@@ -422,6 +432,18 @@ impl Settings {
                     button::text("Add calendar file…")
                         .id(cosmic::widget::Id::new("calendar-file-open"))
                         .on_press_maybe((!full).then(|| message(Account::ChooseFile)))
+                        .into(),
+                ));
+                actions.push(slot(
+                    button::text("Add calendar folder…")
+                        .id(cosmic::widget::Id::new("calendar-folder-open"))
+                        .on_press_maybe((!full).then(|| message(Account::ChooseFolder)))
+                        .into(),
+                ));
+                actions.push(slot(
+                    button::text("Add holidays…")
+                        .id(cosmic::widget::Id::new("calendar-holidays-open"))
+                        .on_press_maybe((!full).then(|| message(Account::HolidaysForm(true))))
                         .into(),
                 ));
                 let actions = row::with_children(actions).spacing(8).wrap();
@@ -574,6 +596,119 @@ impl Settings {
                 .into(),
             );
         }
+        rows
+    }
+    /// The calendars found in a chosen folder, each with a switch.
+    fn calendar_folder_form(&self, replaces: bool) -> Vec<Element<'_, Message>> {
+        let editor = &self.calendar;
+        let message = |value| Message::Calendar(value);
+        let found = editor.folder_found.len();
+        let mut rows: Vec<Element<'_, Message>> = vec![detail_state(
+            "Calendar folder",
+            if found == 1 {
+                "1 calendar found".to_string()
+            } else {
+                format!("{found} calendars found")
+            },
+        )];
+        for (index, calendar) in editor.folder_found.iter().enumerate() {
+            let on = editor.folder_picked.get(index).copied().unwrap_or(false);
+            rows.push(split(
+                label(calendar.name.clone(), 14., FG),
+                container(toggler(on).on_toggle(move |on| message(Account::PickFolder(index, on))))
+                    .id(cosmic::widget::Id::new(format!(
+                        "calendar-folder-pick-{index}"
+                    )))
+                    .into(),
+            ));
+        }
+        rows.push(label(
+            "Halcyon reads the folder again whenever its files change.",
+            12.,
+            MUTED,
+        ));
+        let picked = editor.folder_picked.iter().filter(|on| **on).count();
+        let free = editor.free_slots();
+        if picked > free {
+            rows.push(label(
+                format!("You can add {free} more. Halcyon shows up to eight calendars."),
+                12.,
+                Color::from_rgb8(245, 190, 107),
+            ));
+        }
+        if replaces {
+            rows.push(label(REPLACES_GOOGLE, 12., MUTED));
+        }
+        rows.push(
+            row::with_children(vec![
+                button::standard(if picked > 1 {
+                    "Add calendars"
+                } else {
+                    "Add calendar"
+                })
+                .id(cosmic::widget::Id::new("calendar-folder-add"))
+                .on_press_maybe(
+                    (picked > 0 && picked <= free).then_some(message(Account::AddFolders)),
+                )
+                .into(),
+                button::text("Cancel")
+                    .on_press(message(Account::CancelFolder))
+                    .into(),
+            ])
+            .spacing(8)
+            .wrap()
+            .into(),
+        );
+        rows
+    }
+    /// A country picker for a public holiday calendar.
+    fn calendar_holidays_form(&self, replaces: bool) -> Vec<Element<'_, Message>> {
+        let editor = &self.calendar;
+        let message = |value| Message::Calendar(value);
+        let mut rows: Vec<Element<'_, Message>> = vec![
+            detail_state(
+                "Public holidays",
+                "Shown in a muted color behind your own events.",
+            ),
+            super::focus::control(
+                Some("Country".to_owned()),
+                None,
+                container(cosmic::widget::dropdown(
+                    crate::calendar::holidays::LABELS.as_slice(),
+                    editor.holidays_country,
+                    |index| Message::Calendar(Account::HolidaysCountry(index)),
+                ))
+                .id("calendar-holidays-country")
+                .into(),
+            ),
+        ];
+        if replaces {
+            rows.push(label(REPLACES_GOOGLE, 12., MUTED));
+        }
+        rows.push(
+            row::with_children(vec![
+                button::standard("Add calendar")
+                    .id(cosmic::widget::Id::new("calendar-holidays-add"))
+                    .on_press_maybe(
+                        editor
+                            .holidays_country
+                            .map(|_| message(Account::AddHolidays)),
+                    )
+                    .into(),
+                button::text("Cancel")
+                    .on_press(message(Account::HolidaysForm(false)))
+                    .into(),
+                self.help(
+                    "calendar-holidays-privacy",
+                    "Where holidays come from",
+                    "Holiday calendars are public files kept by Thunderbird. Halcyon downloads them from thunderbird.net like any calendar link.",
+                ),
+            ])
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .wrap()
+            .into(),
+        );
         rows
     }
     fn calendar_subscription_guide(&self) -> Element<'_, Message> {
