@@ -126,8 +126,8 @@ async fn observe_with(
     .ok();
     let mut watched: Vec<PathBuf> = Vec::new();
     let mut last: Option<Option<Activity>> = None;
-    // Something happened to a camera node: look at who holds it.
-    let mut look = true;
+    // Each pass, woken by a camera node's event or by the recheck, looks at
+    // who holds the cameras.
     loop {
         let find = cameras.clone();
         let devices = tokio::task::spawn_blocking(find)
@@ -143,18 +143,12 @@ async fn observe_with(
                 let _ = w.watch(device, notify::RecursiveMode::NonRecursive);
             }
         }
-        look |= devices != watched || last.as_ref().is_some_and(Option::is_some);
         watched = devices.clone();
-        let state = if look {
-            let sample = sample.clone();
-            tokio::task::spawn_blocking(move || sample(&devices))
-                .await
-                .ok()
-                .flatten()
-        } else {
-            last.clone().flatten()
-        };
-        look = false;
+        let sample = sample.clone();
+        let state = tokio::task::spawn_blocking(move || sample(&devices))
+            .await
+            .ok()
+            .flatten();
         let recheck = if state.is_some() {
             in_use_recheck
         } else {
@@ -172,11 +166,10 @@ async fn observe_with(
                 // An app opening a camera often opens it more than once.
                 tokio::time::sleep(Duration::from_millis(250)).await;
                 while events.try_recv().is_ok() {}
-                look = true;
             }
             // The fallback looks at the holders too: a camera opened
             // without a file event is still seen, a little later.
-            _ = tokio::time::sleep(recheck) => look = true,
+            _ = tokio::time::sleep(recheck) => {}
         }
     }
 }
