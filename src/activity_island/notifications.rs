@@ -205,6 +205,7 @@ async fn run<P, PF, S, SF>(
     SF: std::future::Future<Output = Option<zbus::Connection>>,
 {
     let mut panel_backoff = backoff;
+    // What the island was last told while the panel was out of reach.
     let mut ready = None;
     loop {
         let panel = match connect_panel().await {
@@ -228,7 +229,6 @@ async fn run<P, PF, S, SF>(
         let mut closed: Option<zbus::MessageStream> = None;
         // Ask for the session bus right away, then after each wait.
         let mut session_at = Some(tokio::time::Instant::now());
-        ready = Some(true);
         if out.send(Event::Ready(true)).await.is_err() {
             return;
         }
