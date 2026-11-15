@@ -65,6 +65,8 @@ base64 = "=0.22.1"
 sha2 = "=0.11.0"
 getrandom = "=0.4.3"
 ical = "=0.11.0"
+# CalDAV replies are XML. The version fontconfig-parser already builds.
+roxmltree = "=0.20.0"
 rrule = "=0.14.0"
 # The scene model (Depth Anything V2 Small, downloaded on request) runs in
 # a bounded child with tract, pure Rust, so packages need no ONNX Runtime.

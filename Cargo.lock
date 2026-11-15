@@ -1069,6 +1069,7 @@ dependencies = [
  "reqwest",
  "resvg",
  "ron",
+ "roxmltree",
  "rrule",
  "secret-service",
  "serde",

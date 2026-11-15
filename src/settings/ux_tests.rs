@@ -1470,6 +1470,7 @@ fn calendar_subscription_form_and_selection_use_real_controls() {
         credential: "opaque-keyring-id".into(),
         subscriptions: choices.clone(),
         selections: vec![choices[0].clone()],
+        sources: vec![],
     };
     std::fs::write(
         crate::calendar::account_path().unwrap(),

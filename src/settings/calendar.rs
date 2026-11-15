@@ -395,7 +395,7 @@ impl Settings {
                         if let Some(id) = remove {
                             account::remove_subscription(expected, id).await
                         } else {
-                            account::add_subscription(expected, name, secret).await
+                            account::add_subscription(expected, name, secret, None).await
                         }
                     })
                     .await

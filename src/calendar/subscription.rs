@@ -1,4 +1,5 @@
 //! Read-only calendar feeds. Subscription URLs are credentials, never config or logs.
+use super::http::{self, Login};
 use super::*;
 use crate::data::{CalendarData, CalendarEvent};
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Offset, TimeZone, Utc};
@@ -7,9 +8,10 @@ use rrule::{RRuleSet, Tz};
 use std::{
     collections::{BTreeMap, BTreeSet},
     io::Cursor,
+    path::{Path, PathBuf},
 };
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecretText(pub String);
 impl std::fmt::Debug for SecretText {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -17,82 +19,88 @@ impl std::fmt::Debug for SecretText {
     }
 }
 #[derive(Clone, Serialize, Deserialize)]
-struct Feed {
-    choice: CalendarChoice,
-    url: SecretText,
+pub(super) struct Feed {
+    pub choice: CalendarChoice,
+    /// A link, or for CalDAV the calendar's own address.
+    pub url: SecretText,
+    #[serde(default)]
+    pub kind: SourceKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub login: Option<Login>,
 }
-#[derive(Clone, Serialize, Deserialize)]
-struct Feeds {
-    feeds: Vec<Feed>,
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub(super) struct Feeds {
+    pub feeds: Vec<Feed>,
 }
-const MAX_BYTES: usize = 4 * 1024 * 1024;
+const MAX_BYTES: usize = http::MAX_BYTES;
 const MAX_EVENTS: usize = 10000;
+/// Calendars of every kind together.
+const MAX_CALENDARS: usize = 8;
 
 fn url(value: &str) -> Result<reqwest::Url, Problem> {
-    if value.len() > 8192 {
-        return Err(Problem::FeedUrl);
-    }
-    let value = value.trim();
-    let value = value
-        .strip_prefix("webcal://")
-        .map(|s| format!("https://{s}"))
-        .unwrap_or_else(|| value.into());
-    let u = reqwest::Url::parse(&value).map_err(|_| Problem::FeedUrl)?;
-    if u.scheme() != "https"
-        || !u.has_host()
-        || !u.username().is_empty()
-        || u.password().is_some()
-        || u.fragment().is_some()
-    {
-        return Err(Problem::FeedUrl);
-    }
-    Ok(u)
+    http::parse(value, false)
 }
-async fn download(value: &SecretText) -> Result<Vec<u8>, Problem> {
-    let client = reqwest::Client::builder()
-        .referer(false) // A redirected request must not disclose a private subscription URL.
-        .timeout(Duration::from_secs(20))
-        .connect_timeout(Duration::from_secs(8))
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if attempt.previous().len() >= 5
-                || attempt.url().scheme() != "https"
-                || !attempt.url().username().is_empty()
-                || attempt.url().password().is_some()
-            {
-                attempt.stop()
-            } else {
-                attempt.follow()
-            }
-        }))
-        .build()
-        .map_err(|_| Problem::Network)?;
-    let mut response = client
-        .get(url(&value.0)?)
-        .header("Accept", "text/calendar")
-        .send()
-        .await
-        .map_err(|_| Problem::Network)?;
-    if !response.status().is_success() {
-        return Err(Problem::InvalidFeed);
+async fn download(value: &SecretText, login: Option<&Login>) -> Result<Vec<u8>, Problem> {
+    let reply = http::send(http::Request {
+        method: reqwest::Method::GET,
+        url: url(&value.0)?,
+        login,
+        headers: &[("Accept", "text/calendar")],
+        body: None,
+    })
+    .await?;
+    match reply.status.as_u16() {
+        200..=299 => Ok(reply.bytes),
+        401 => Err(Problem::Credentials),
+        403 if reply.sent_login => Err(Problem::Credentials),
+        _ => Err(Problem::InvalidFeed),
     }
-    if response
-        .content_length()
-        .is_some_and(|n| n > MAX_BYTES as u64)
-    {
-        return Err(Problem::FeedLimit);
-    }
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| Problem::Network)? {
-        if bytes.len().saturating_add(chunk.len()) > MAX_BYTES {
+}
+pub(super) async fn parsed(feed: &Feed, month: &str) -> Result<Vec<CalendarEvent>, Problem> {
+    let bytes = match feed.kind {
+        SourceKind::CalDav => {
+            caldav::month(
+                &feed.url,
+                feed.login.as_ref().ok_or(Problem::Changed)?,
+                month,
+            )
+            .await?
+        }
+        _ => download(&feed.url, feed.login.as_ref()).await?,
+    };
+    parse_isolated(bytes, month.to_string(), feed.choice.clone()).await
+}
+/// A calendar file is read again on every refresh, with the same limits.
+pub(super) async fn parsed_file(
+    path: &Path,
+    month: &str,
+    choice: &CalendarChoice,
+) -> Result<Vec<CalendarEvent>, Problem> {
+    let path = path.to_path_buf();
+    let bytes = tokio::task::spawn_blocking(move || {
+        if !path.is_absolute() {
+            return Err(Problem::CalendarFile);
+        }
+        let meta = std::fs::metadata(&path).map_err(|_| Problem::CalendarFile)?;
+        if !meta.is_file() {
+            return Err(Problem::CalendarFile);
+        }
+        if meta.len() > MAX_BYTES as u64 {
             return Err(Problem::FeedLimit);
         }
-        bytes.extend_from_slice(&chunk);
-    }
-    Ok(bytes)
-}
-async fn parsed(feed: &Feed, month: &str) -> Result<Vec<CalendarEvent>, Problem> {
-    let bytes = download(&feed.url).await?;
-    parse_isolated(bytes, month.to_string(), feed.choice.clone()).await
+        match crate::tools::read_bounded(&path, MAX_BYTES) {
+            Ok(Some(bytes)) => Ok(bytes),
+            _ => Err(Problem::CalendarFile),
+        }
+    })
+    .await
+    .map_err(|_| Problem::CalendarFile)??;
+    parse_isolated(bytes, month.to_string(), choice.clone())
+        .await
+        .map_err(|problem| match problem {
+            Problem::InvalidFeed => Problem::CalendarFile,
+            other => other,
+        })
 }
 
 // A dropped refresh must stop the parser, including work inside rrule. One
@@ -197,28 +205,15 @@ pub(crate) fn parser_main() -> ! {
     std::process::exit(0);
 }
 
-pub async fn add_subscription(
-    expected: Connection,
-    name: String,
-    secret: SecretText,
-) -> Result<Connection, Problem> {
-    if store::preview() {
-        return Err(Problem::Preview);
-    }
-    let normalized = SecretText(url(&secret.0)?.into());
-    let mut feeds = if expected.backend == Backend::Subscription {
-        keyring::read::<Feeds>(&expected.credential, true).await?
-    } else {
-        Feeds { feeds: vec![] }
-    };
-    if feeds.feeds.len() >= 8 {
-        return Err(Problem::FeedLimit);
-    }
-    if feeds.feeds.iter().any(|f| f.url.0 == normalized.0) {
-        return Err(Problem::InvalidFeed);
-    }
+/// One calendar to add: a link, a CalDAV calendar, or a file.
+pub(super) enum Added {
+    Feed(Feed),
+    /// A path and the name typed for it, if any.
+    File(PathBuf, String),
+}
+fn choice(name: &str, color: &str) -> Result<CalendarChoice, Problem> {
     let name: String = name.trim().chars().take(80).collect();
-    let choice = CalendarChoice {
+    Ok(CalendarChoice {
         id: store::nonce()?,
         name: if name.is_empty() {
             "Calendar".into()
@@ -226,40 +221,173 @@ pub async fn add_subscription(
             name
         },
         primary: false,
-        color: String::new(),
-    };
+        color: color.into(),
+    })
+}
+
+pub async fn add_subscription(
+    expected: Connection,
+    name: String,
+    secret: SecretText,
+    login: Option<Login>,
+) -> Result<Connection, Problem> {
+    if store::preview() {
+        return Err(Problem::Preview);
+    }
     let feed = Feed {
-        choice: choice.clone(),
-        url: normalized,
+        choice: choice(&name, "")?,
+        url: SecretText(url(&secret.0)?.into()),
+        kind: SourceKind::Link,
+        login: login.filter(|l| !l.is_empty()),
     };
-    parsed(&feed, &chrono::Local::now().format("%Y-%m").to_string()).await?;
-    keyring::ready().await?;
-    feeds.feeds.push(feed);
-    let selections = if expected.backend == Backend::Subscription {
-        let mut s = expected.selected_calendars();
-        s.push(choice.clone());
-        s
+    add(expected, vec![Added::Feed(feed)]).await
+}
+/// Adds the chosen calendars of one CalDAV account. Each keeps its name and
+/// color from the server.
+pub async fn add_caldav(
+    expected: Connection,
+    login: Login,
+    calendars: Vec<caldav::CalDavCalendar>,
+) -> Result<Connection, Problem> {
+    if store::preview() {
+        return Err(Problem::Preview);
+    }
+    if calendars.is_empty() {
+        return Err(Problem::NoCalendars);
+    }
+    let mut added = vec![];
+    for calendar in calendars {
+        added.push(Added::Feed(Feed {
+            choice: choice(&calendar.name, &calendar.color)?,
+            url: SecretText(url(&calendar.url.0)?.into()),
+            kind: SourceKind::CalDav,
+            login: Some(login.clone()),
+        }));
+    }
+    add(expected, added).await
+}
+/// Adds a local .ics file. Its path is not a secret and needs no keyring.
+pub async fn add_file(
+    expected: Connection,
+    name: String,
+    path: PathBuf,
+) -> Result<Connection, Problem> {
+    if store::preview() {
+        return Err(Problem::Preview);
+    }
+    if !path.is_absolute() {
+        return Err(Problem::CalendarFile);
+    }
+    add(expected, vec![Added::File(path, name)]).await
+}
+pub(super) async fn add(expected: Connection, added: Vec<Added>) -> Result<Connection, Problem> {
+    // A Google sign-in is replaced, as before; other sources join the list.
+    let subscribed = expected.backend == Backend::Subscription;
+    let current = if subscribed {
+        expected.subscriptions.clone()
     } else {
-        vec![choice.clone()]
+        vec![]
     };
+    if current.len() + added.len() > MAX_CALENDARS {
+        return Err(Problem::FeedLimit);
+    }
+    let new_feeds = added.iter().any(|a| matches!(a, Added::Feed(_)));
+    let mut feeds = if new_feeds && subscribed && !expected.credential.is_empty() {
+        keyring::read::<Feeds>(&expected.credential, true).await?
+    } else {
+        Feeds::default()
+    };
+    let mut sources = if subscribed {
+        expected.sources.clone()
+    } else {
+        vec![]
+    };
+    let month = chrono::Local::now().format("%Y-%m").to_string();
+    let mut choices = vec![];
+    for item in added {
+        match item {
+            Added::Feed(feed) => {
+                if feeds
+                    .feeds
+                    .iter()
+                    .any(|f| f.url.0 == feed.url.0 && f.kind == feed.kind)
+                {
+                    return Err(Problem::Duplicate);
+                }
+                parsed(&feed, &month).await?;
+                sources.push(Source {
+                    id: feed.choice.id.clone(),
+                    kind: feed.kind.clone(),
+                    path: None,
+                });
+                choices.push(feed.choice.clone());
+                feeds.feeds.push(feed);
+            }
+            Added::File(path, name) => {
+                if sources.iter().any(|s| s.path.as_ref() == Some(&path)) {
+                    return Err(Problem::Duplicate);
+                }
+                let name = if name.trim().is_empty() {
+                    path.file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                } else {
+                    name
+                };
+                let choice = choice(&name, "")?;
+                parsed_file(&path, &month, &choice).await?;
+                sources.push(Source {
+                    id: choice.id.clone(),
+                    kind: SourceKind::File,
+                    path: Some(path),
+                });
+                choices.push(choice);
+            }
+        }
+    }
+    if new_feeds {
+        keyring::ready().await?;
+    }
+    let mut selections = if subscribed {
+        expected.selected_calendars()
+    } else {
+        vec![]
+    };
+    selections.extend(choices.iter().cloned());
+    let mut subscriptions = current;
+    subscriptions.extend(choices.iter().cloned());
     let connection = Connection {
         backend: Backend::Subscription,
         account: "Calendar subscriptions".into(),
-        calendar_id: choice.id.clone(),
-        calendar_name: choice.name.clone(),
+        calendar_id: selections[0].id.clone(),
+        calendar_name: selections[0].name.clone(),
         revision: store::nonce()?,
-        credential: store::nonce()?,
+        // Files alone need no keyring item; an unchanged one is kept.
+        credential: if new_feeds {
+            store::nonce()?
+        } else if subscribed {
+            expected.credential.clone()
+        } else {
+            String::new()
+        },
         selections,
-        subscriptions: feeds.feeds.iter().map(|f| f.choice.clone()).collect(),
+        subscriptions,
+        sources,
     };
-    commit(&expected, connection, &feeds).await
+    commit(&expected, connection, new_feeds.then_some(&feeds)).await
 }
 async fn commit(
     expected: &Connection,
     connection: Connection,
-    feeds: &Feeds,
+    feeds: Option<&Feeds>,
 ) -> Result<Connection, Problem> {
-    let _lease = keyring::save_prepared(connection.credential.clone(), feeds.clone()).await?;
+    // Without feeds to save there is no keyring item for this connection.
+    let _lease = match feeds {
+        Some(feeds) if !feeds.feeds.is_empty() => {
+            Some(keyring::save_prepared(connection.credential.clone(), feeds.clone()).await?)
+        }
+        _ => None,
+    };
     if let Err(problem) = store::replace(expected, &connection) {
         // The prepared credential remains journaled for retry.
         return Err(problem);
@@ -275,17 +403,15 @@ pub async fn remove_subscription(expected: Connection, id: String) -> Result<Con
     if expected.backend != Backend::Subscription {
         return Err(Problem::Changed);
     }
-    let mut feeds: Feeds = keyring::read(&expected.credential, true).await?;
-    let old = feeds.feeds.len();
-    feeds.feeds.retain(|f| f.choice.id != id);
-    if feeds.feeds.len() == old {
+    if !expected.subscriptions.iter().any(|c| c.id == id) {
         return Err(Problem::Changed);
     }
-    if feeds.feeds.is_empty() {
+    if expected.subscriptions.len() == 1 {
         return super::disconnect(expected).await;
     }
     let mut connection = expected.clone();
-    connection.subscriptions = feeds.feeds.iter().map(|f| f.choice.clone()).collect();
+    connection.subscriptions.retain(|c| c.id != id);
+    connection.sources.retain(|s| s.id != id);
     connection.selections = expected
         .selected_calendars()
         .into_iter()
@@ -299,26 +425,61 @@ pub async fn remove_subscription(expected: Connection, id: String) -> Result<Con
     connection.calendar_id = connection.selections[0].id.clone();
     connection.calendar_name = connection.selections[0].name.clone();
     connection.revision = store::nonce()?;
-    connection.credential = store::nonce()?;
-    commit(&expected, connection, &feeds).await
+    // A file leaves the keyring item as it is.
+    if expected.source_kind(&id) == SourceKind::File {
+        return commit(&expected, connection, None).await;
+    }
+    let mut feeds: Feeds = keyring::read(&expected.credential, true).await?;
+    let old = feeds.feeds.len();
+    feeds.feeds.retain(|f| f.choice.id != id);
+    if feeds.feeds.len() == old {
+        return Err(Problem::Changed);
+    }
+    connection.credential = if feeds.feeds.is_empty() {
+        String::new()
+    } else {
+        store::nonce()?
+    };
+    commit(&expected, connection, Some(&feeds)).await
 }
 pub(super) async fn events(
     connection: &Connection,
     month: &str,
     unlock: bool,
 ) -> Result<CalendarData, Problem> {
-    let feeds: Feeds = keyring::read(&connection.credential, unlock).await?;
-    if feeds.feeds.len() > 8 {
+    let selected = connection.selected_calendars();
+    let feeds: Feeds = if selected
+        .iter()
+        .any(|c| connection.source_kind(&c.id) != SourceKind::File)
+    {
+        keyring::read(&connection.credential, unlock).await?
+    } else {
+        Feeds::default()
+    };
+    if feeds.feeds.len() > MAX_CALENDARS {
         return Err(Problem::FeedLimit);
     }
     let mut events = vec![];
-    for choice in connection.selected_calendars() {
-        let feed = feeds
-            .feeds
-            .iter()
-            .find(|f| f.choice.id == choice.id)
-            .ok_or(Problem::Changed)?;
-        events.extend(parsed(feed, month).await?);
+    for choice in selected {
+        if connection.source_kind(&choice.id) == SourceKind::File {
+            let path = connection
+                .sources
+                .iter()
+                .find(|s| s.id == choice.id)
+                .and_then(|s| s.path.as_ref())
+                .ok_or(Problem::Changed)?;
+            events.extend(parsed_file(path, month, &choice).await?);
+        } else {
+            let feed = feeds
+                .feeds
+                .iter()
+                .find(|f| f.choice.id == choice.id)
+                .ok_or(Problem::Changed)?;
+            // The name and color shown are the ones in Settings.
+            let mut feed = feed.clone();
+            feed.choice = choice.clone();
+            events.extend(parsed(&feed, month).await?);
+        }
         if events.len() > MAX_EVENTS
             || events.iter().map(event_text_bytes).sum::<usize>() > EVENT_TEXT_BUDGET
         {
@@ -1114,8 +1275,15 @@ mod tests {
             url("webcal://example.com/private.ics").unwrap().as_str(),
             "https://example.com/private.ics"
         );
+        assert_eq!(
+            url("http://example.com/a.ics").unwrap_err(),
+            Problem::PublicHttp
+        );
+        assert_eq!(
+            url("http://192.168.1.4/a.ics").unwrap().as_str(),
+            "http://192.168.1.4/a.ics"
+        );
         for invalid in [
-            "http://example.com/a.ics",
             "file:///etc/passwd",
             "https://user:pass@example.com/x",
             "https://example.com/x#secret",
@@ -1245,6 +1413,8 @@ async fn private_subscription_commit_remove_and_stale_replacement() {
                 url: SecretText(format!(
                     "https://example.invalid/{name}/private-feed-token.ics"
                 )),
+                kind: SourceKind::Link,
+                login: None,
             })
             .collect(),
     };
@@ -1257,9 +1427,10 @@ async fn private_subscription_commit_remove_and_stale_replacement() {
         credential: store::nonce().unwrap(),
         selections: feeds.feeds.iter().map(|f| f.choice.clone()).collect(),
         subscriptions: feeds.feeds.iter().map(|f| f.choice.clone()).collect(),
+        sources: vec![],
     };
     let expected = store::load_connection();
-    let connected = commit(&expected, connection, &feeds).await.unwrap();
+    let connected = commit(&expected, connection, Some(&feeds)).await.unwrap();
     let secret: Feeds = keyring::read(&connected.credential, false).await.unwrap();
     assert_eq!(secret.feeds[1].url.0, feeds.feeds[1].url.0);
     let metadata = std::fs::read_to_string(store::account_path().unwrap()).unwrap();
@@ -1270,7 +1441,7 @@ async fn private_subscription_commit_remove_and_stale_replacement() {
         ..connected.clone()
     };
     assert_eq!(
-        commit(&expected, candidate.clone(), &feeds).await,
+        commit(&expected, candidate.clone(), Some(&feeds)).await,
         Err(Problem::Changed)
     );
     assert!(
