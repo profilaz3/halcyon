@@ -394,6 +394,8 @@ pub struct Cards {
     projects: Option<ProjectsData>,
     projects_fetching: bool,
     projects_error: bool,
+    /// The room Projects took last time, kept until its first reading.
+    projects_reserved: Option<projects::Reserved>,
     next_projects: Instant,
     all_projects: bool,
     expanded_projects: std::collections::BTreeSet<String>,
@@ -521,6 +523,7 @@ impl cosmic::Application for Cards {
             projects: config.project_roots.is_empty().then(ProjectsData::default),
             projects_fetching: false,
             projects_error: false,
+            projects_reserved: projects::Reserved::load(),
             next_projects: Instant::now(),
             all_projects: false,
             expanded_projects: Default::default(),
@@ -1700,6 +1703,7 @@ impl Cards {
                     self.expanded_projects
                         .retain(|id| projects::has_group(&projects.projects, id));
                     self.projects = Some(projects);
+                    self.remember_projects_height();
                 }
                 self.next_projects =
                     Instant::now() + self.config.refresh_intervals.duration(Widget::Projects);
