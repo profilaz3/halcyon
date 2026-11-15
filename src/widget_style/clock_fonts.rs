@@ -93,6 +93,18 @@ pub fn load(system: &mut cosmic::iced::advanced::graphics::text::FontSystem) {
     }
 }
 
+/// Adds the shipped typefaces to the shared renderer once, waiting for the
+/// font system if another thread holds it. Test renders call this first, so
+/// the font database never changes between two renders being compared.
+pub fn ensure_loaded() {
+    static LOADED: std::sync::Once = std::sync::Once::new();
+    LOADED.call_once(|| {
+        if let Ok(mut system) = cosmic::iced::advanced::graphics::text::font_system().write() {
+            load(&mut system);
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
