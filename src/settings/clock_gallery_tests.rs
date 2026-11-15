@@ -1,5 +1,27 @@
 // The Clock page's face gallery and typeface tiles, through the native tree.
 
+/// The bundled Ridge picture as the wallpaper, so the tiles and captures
+/// show a Halcyon picture rather than cosmic-bg's fallback.
+fn clock_page_wallpaper(root: &std::path::Path) {
+    let ridge = crate::desktop::wallpaper::bundled_path(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/wallpapers"),
+        "halcyon-ridge",
+    );
+    assert!(ridge.is_file());
+    seed(
+        &root.join("cosmic-root/config/cosmic"),
+        &[(
+            "com.system76.CosmicBackground",
+            "all",
+            &ron::to_string(&crate::desktop::wallpaper::BgEntry::new(
+                "all",
+                crate::desktop::wallpaper::BgSource::Path(ridge),
+            ))
+            .unwrap(),
+        )],
+    );
+}
+
 /// Every face shows as a picture and every shipped typeface as the time in
 /// that typeface; a tile click saves exactly its choice, weight stays on
 /// offer, and More fonts opens the searchable picker.
@@ -19,7 +41,8 @@ fn clock_page_face_gallery_and_typefaces_choose_and_draw() {
     use crate::native_test::Native;
     use crate::settings::navigation::ObjectTab;
     use crate::widget_style::resolver::{ClockFace, ClockWeight};
-    let _root = isolated_root();
+    let root = isolated_root();
+    clock_page_wallpaper(&root);
     let (mut app, initial) = Settings::init(Core::default(), Page::Clock);
     settle_settings(&mut app, initial);
     send_settings(&mut app, Message::ObjectTab(ObjectTab::Design));
@@ -236,7 +259,8 @@ fn clock_page_previews_the_daily_overview_clock() {
     use crate::native_test::Native;
     use crate::settings::clock_stage::OVERVIEW_ID;
     use crate::widget_style::resolver::ClockFace;
-    let _root = isolated_root();
+    let root = isolated_root();
+    clock_page_wallpaper(&root);
     Config::save_clock(json!({"show_date": true})).unwrap();
     let (mut app, initial) = Settings::init(Core::default(), Page::Clock);
     settle_settings(&mut app, initial);
@@ -316,7 +340,8 @@ fn clock_size_gestures_save_once_off_the_interface_thread() {
     use crate::native_test::Native;
     use cosmic::iced::keyboard::{self, Key, key};
     use cosmic::iced::{Event, Point, mouse};
-    let _root = isolated_root();
+    let root = isolated_root();
+    clock_page_wallpaper(&root);
     let (mut app, initial) = Settings::init(Core::default(), Page::Clock);
     settle_settings(&mut app, initial);
     let size = Size::new(1280., 800.);
