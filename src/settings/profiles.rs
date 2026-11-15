@@ -129,6 +129,8 @@ pub enum Message {
     /// Opens (`Some`) or closes the custom color field, with its text.
     ThemeCustom(Option<String>),
     ThemeWallpaper(bool),
+    /// The applied style's Window tone (see `desktop_theme::WindowTone`).
+    WindowTone(i8),
     ResetSurface(Domain),
     RepairThemeMatching,
     ThemeReady(
@@ -1699,7 +1701,13 @@ impl ProfilesEditor {
         let mut p = profiles::themes::record(f);
         p.name = format!("Reset {} to {}", domain.title(), f.title());
         p.appearance_only = true;
-        let mut look = profiles::themes::appearance(f, config.appearance.accent);
+        // The style's own surfaces at its Window tone, which is a window
+        // choice that a dock or panel Reset keeps.
+        let mut look = profiles::themes::toned(
+            f,
+            config.appearance.accent,
+            config.appearance.window_tone.get(f),
+        );
         for variant in [&mut look.light, &mut look.dark].into_iter().flatten() {
             match domain {
                 // Bars paint the surfaces; the window outline is not theirs.
@@ -1920,6 +1928,7 @@ impl ProfilesEditor {
             Message::ThemeAccent(_) => Some("accent"),
             Message::ThemeWallpaper(_) => Some("matching wallpaper"),
             Message::ThemeScope(_) => Some("color scope"),
+            Message::WindowTone(_) => Some("window tone"),
             Message::ResetSurface(_) => Some("surface"),
             Message::MixPick(..) => Some("mix part"),
             _ => None,
@@ -1989,6 +1998,7 @@ impl ProfilesEditor {
                 }
             }
             Message::ThemeScope(sync) => self.color_scope(sync),
+            Message::WindowTone(tone) => self.window_tone(tone),
             Message::ResetSurface(domain) => self.reset_surface(domain),
             Message::RepairThemeMatching => {
                 if let Some(store) = self.store() {

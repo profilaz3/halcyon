@@ -168,7 +168,7 @@ macro_rules! fields {
 }
 
 /// Every member a profile, its Undo or its recovery may write.
-pub static FIELDS: [WidgetField; 112] = fields![
+pub static FIELDS: [WidgetField; 113] = fields![
     "/recipes/music", "Music recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Music);
     "/recipes/focus", "Focus recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Focus);
     "/recipes/devbox", "System recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::System);
@@ -208,6 +208,7 @@ pub static FIELDS: [WidgetField; 112] = fields![
     "/appearance/corner_radius", "Card corners", Style, card_corners;
     "/appearance/border_opacity", "Card outlines", Style, card_outline;
     "/appearance/contrast_assist", "Widget readability", Style, boolean;
+    "/appearance/window_tone", "Window tone", Style, crate::desktop_theme::WindowTone::accepts;
     "/clock/format_24h", "Clock 24-hour time", Style, boolean;
     "/clock/show_date", "Clock date", Style, boolean;
     "/clock/alignment", "Clock alignment", Style, clock_alignment;

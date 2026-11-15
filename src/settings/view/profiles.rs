@@ -931,7 +931,13 @@ impl Settings {
             // where cards rarely are.
             if let Some(draft) = preview.appearance.as_ref().filter(|_| show_window) {
                 let size = [screen[0] * 0.36, (screen[1] * 0.34).max(64.)];
-                let window = schematic_window(draft.preview(draft.active_variant()), size);
+                let window = schematic_window(
+                    self.held_tone(
+                        draft.preview(draft.active_variant()),
+                        draft.active_variant(),
+                    ),
+                    size,
+                );
                 let window = if own(Page::DesktopAppearance) {
                     button::custom(window)
                         .class(super::home::hotspot(accent, 6.))

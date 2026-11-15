@@ -29,6 +29,7 @@ pub const STYLE: &[&str] = &[
     "/appearance/corner_radius",
     "/appearance/border_opacity",
     "/appearance/contrast_assist",
+    "/appearance/window_tone",
     "/glance/style",
     "/glance/opacity",
 ];
@@ -216,6 +217,12 @@ pub fn linked_accents(draft: &mut AppearanceDraft, original: Appearance, rgb: [u
 /// outline following that accent, and the owned variant's surfaces (its
 /// background is what the dock and panel paint).
 pub fn appearance(family: Family, accent: Option<[u8; 3]>) -> AppearanceLook {
+    toned(family, accent, 0)
+}
+/// A family's native look at a Window tone: the background and primary
+/// container move together (COSMIC derives the secondary container from the
+/// background), so their steps stay the same.
+pub fn toned(family: Family, accent: Option<[u8; 3]>, tone: i8) -> AppearanceLook {
     let seed = accent.unwrap_or_else(|| family.accent());
     let look = |variant: ThemeVariant| {
         let dark = variant == ThemeVariant::Dark;
@@ -226,8 +233,8 @@ pub fn appearance(family: Family, accent: Option<[u8; 3]>) -> AppearanceLook {
         };
         // Color synchronization does not own native backdrop effects. Leave
         // existing system preferences untouched, including on legacy Frosted.
-        look.background = Some(hex(family.surface_for(seed, dark)));
-        look.primary = Some(hex(family.container_for(seed, dark)));
+        look.background = Some(hex(family.window_for(seed, dark, tone)));
+        look.primary = Some(hex(family.window_container_for(seed, dark, tone)));
         look
     };
     AppearanceLook {
@@ -263,6 +270,110 @@ pub fn record(family: Family) -> Profile {
     p
 }
 
+/// The Window tones a record carries, if it carries them.
+pub fn tones(p: &Profile) -> Option<desktop_theme::WindowTone> {
+    p.widget_style
+        .as_ref()?
+        .pointer("/appearance/window_tone")
+        .map(desktop_theme::WindowTone::from_value)
+}
+/// The color a record's style is seeded with.
+fn record_accent(p: &Profile) -> Option<[u8; 3]> {
+    p.widget_style
+        .as_ref()
+        .and_then(|s| s.pointer("/appearance/accent"))
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .flatten()
+}
+/// Whether a window surface still follows its style: unset, the style's
+/// derivation at `tone`, or one an earlier release derived.
+fn follows(
+    family: Family,
+    seed: [u8; 3],
+    variant: ThemeVariant,
+    role: ColorRole,
+    tone: i8,
+    current: Option<cosmic::cosmic_theme::palette::Srgba>,
+) -> bool {
+    let dark = variant == ThemeVariant::Dark;
+    let Some(current) = current else {
+        return true;
+    };
+    let (expected, earlier) = match role {
+        ColorRole::Background => (
+            family.window_for(seed, dark, tone),
+            family.earlier_window(seed, dark).0,
+        ),
+        ColorRole::Primary => (
+            family.window_container_for(seed, dark, tone),
+            family.earlier_window(seed, dark).1,
+        ),
+        _ => return false,
+    };
+    same(Some(current), expected) || same(Some(current), earlier)
+}
+/// Sets the record's Window tone for its style and moves the window
+/// surfaces that follow the style. A surface chosen in Advanced theme
+/// colors (an override bit, or a color the style never derived) stays.
+pub fn set_tone(p: &mut Profile, tone: i8, base: desktop_theme::WindowTone) {
+    let Some(f) = family(p) else {
+        return;
+    };
+    // A record without tones was derived at the style's default.
+    let before = tones(p).map_or(0, |t| t.get(f));
+    let tones = tones(p).unwrap_or(base);
+    let seed = record_accent(p).unwrap_or_else(|| f.accent());
+    let flags = p
+        .widget_style
+        .as_ref()
+        .and_then(|s| s.pointer("/appearance/overrides"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let style = p.widget_style.get_or_insert_with(|| json!({}));
+    let _ = widget::put(
+        style,
+        "/appearance/window_tone",
+        Some(tones.with(f, tone).to_value()),
+    );
+    let target = toned(f, Some(seed), tone);
+    let Some(current) = &mut p.appearance else {
+        return;
+    };
+    for (variant, start) in [(ThemeVariant::Dark, 24), (ThemeVariant::Light, 32)] {
+        let (look, after) = match variant {
+            ThemeVariant::Dark => (&mut current.dark, &target.dark),
+            ThemeVariant::Light => (&mut current.light, &target.light),
+        };
+        let (Some(look), Some(after)) = (look, after) else {
+            continue;
+        };
+        for (role, bit, slot, next) in [
+            (
+                ColorRole::Background,
+                1,
+                &mut look.background,
+                &after.background,
+            ),
+            (ColorRole::Primary, 2, &mut look.primary, &after.primary),
+        ] {
+            if flags & (1 << (start + bit)) != 0 {
+                continue;
+            }
+            let Some(choice) = slot.as_ref() else {
+                continue;
+            };
+            let Ok(color) = choice.color(role) else {
+                continue;
+            };
+            // COSMIC's default (Auto) follows the style too, as in
+            // `linked_surface`.
+            if follows(f, seed, variant, role, before, color) {
+                *slot = next.clone();
+            }
+        }
+    }
+}
+
 /// Explicit repair is a normal reviewable profile, with no applets, placement,
 /// geometry, widget mode, or wallpaper edits. Legacy installations have no
 /// reliable fixed-color provenance, so opening Settings never applies it.
@@ -276,7 +387,11 @@ pub fn repair_matching(store: &DesktopStore) -> Result<Profile, ProfileError> {
     let mut profile = Profile::new("Repair theme matching").expect("fixed valid name");
     profile.appearance_only = true;
     profile.version = super::format::VERSION_7;
-    let mut look = appearance(family, config.appearance.accent);
+    let mut look = toned(
+        family,
+        config.appearance.accent,
+        config.appearance.window_tone.get(family),
+    );
     for variant in [&mut look.light, &mut look.dark].into_iter().flatten() {
         variant.accent = None;
         variant.outline = None;
@@ -318,6 +433,15 @@ pub fn preserve_custom(
         )
         .map_err(ProfileError::Invalid)?;
     }
+    // Each style keeps its own Window tone: the record takes the saved one
+    // for its style before its color is chosen below.
+    if let Some(f) = family(next) {
+        set_tone(
+            next,
+            config.appearance.window_tone.get(f),
+            config.appearance.window_tone,
+        );
+    }
     let captured = capture(store, "Current surfaces")?.profile;
     let Some(previous) = config.appearance.family else {
         LookColor::applied(&config.appearance).set(next);
@@ -333,7 +457,11 @@ pub fn preserve_custom(
             .map_err(ProfileError::Invalid)?;
     }
     let mut expected = record(previous);
-    expected.appearance = Some(appearance(previous, config.appearance.accent));
+    expected.appearance = Some(toned(
+        previous,
+        config.appearance.accent,
+        config.appearance.window_tone.get(previous),
+    ));
     let comparison = plan(
         store,
         installed,
@@ -875,12 +1003,10 @@ pub fn linked_surface(
     let Some(family) = original.family else {
         return false;
     };
+    if !matches!(role, ColorRole::Background | ColorRole::Primary) {
+        return false;
+    }
     let seed = original.accent.unwrap_or_else(|| family.accent());
-    let expected = match role {
-        ColorRole::Background => family.surface_for(seed, variant == ThemeVariant::Dark),
-        ColorRole::Primary => family.container_for(seed, variant == ThemeVariant::Dark),
-        _ => return false,
-    };
     let previous = desktop_theme::previous_native(family, original.accent).1;
     let current = base_color(draft, variant, role);
     // COSMIC's own default (unset) was never chosen by anyone, so windows
@@ -889,8 +1015,47 @@ pub fn linked_surface(
         return true;
     }
     let current = current.flatten();
-    same(current, expected)
+    let tone = original.window_tone.get(family);
+    current.is_some_and(|c| follows(family, seed, variant, role, tone, Some(c)))
         || (family.light() == (variant == ThemeVariant::Light) && same(current, previous))
+}
+/// What the Window tone control can do for the applied style's windows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToneState {
+    /// The background is the style's own at the saved tone.
+    Follows,
+    /// It still follows the style but shows an earlier default (or COSMIC's
+    /// own); applying the tone brings it up to date.
+    Earlier,
+    /// A Background color chosen in Advanced theme colors wins.
+    Explicit,
+    /// A background the style never derived, set elsewhere (a ready-made
+    /// theme, another app).
+    Custom,
+}
+pub fn tone_state(draft: &AppearanceDraft, a: Appearance, variant: ThemeVariant) -> ToneState {
+    let key = appearance::theme::builder_key(variant, "bg_color");
+    if a.overrides & crate::desktop::actions::override_for_native(&key) != 0 {
+        return ToneState::Explicit;
+    }
+    let Some(family) = a.family else {
+        return ToneState::Custom;
+    };
+    if !linked_surface(draft, a, variant, ColorRole::Background) {
+        return ToneState::Custom;
+    }
+    let seed = a.accent.unwrap_or_else(|| family.accent());
+    let expected = family.window_for(
+        seed,
+        variant == ThemeVariant::Dark,
+        a.window_tone.get(family),
+    );
+    let current = base_color(draft, variant, ColorRole::Background).flatten();
+    if same(current, expected) {
+        ToneState::Follows
+    } else {
+        ToneState::Earlier
+    }
 }
 /// Whether a variant's native accent is what the shared color gives it,
 /// in this release or the previous one.
@@ -945,7 +1110,7 @@ pub fn linked_colors(draft: &mut AppearanceDraft, original: Appearance, rgb: [u8
     let Some(family) = original.family else {
         return;
     };
-    let next = appearance(family, Some(rgb));
+    let next = toned(family, Some(rgb), original.window_tone.get(family));
     for variant in ThemeVariant::ALL {
         for role in [ColorRole::Background, ColorRole::Primary] {
             let get = |look: &AppearanceLook| {
@@ -971,14 +1136,10 @@ pub fn recolor(p: &mut Profile, accent: Option<[u8; 3]>) {
     let Some(f) = family(p) else {
         return;
     };
-    let previous = p
-        .widget_style
-        .as_ref()
-        .and_then(|s| s.pointer("/appearance/accent"))
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .flatten();
-    let old = appearance(f, previous);
-    let next = appearance(f, accent);
+    let previous = record_accent(p);
+    let tone = tones(p).map_or(0, |t| t.get(f));
+    let old = toned(f, previous, tone);
+    let next = toned(f, accent, tone);
     let flags = p
         .widget_style
         .as_ref()
@@ -1038,6 +1199,9 @@ mod frosted_tests {
 #[cfg(test)]
 #[path = "theme_color_tests.rs"]
 mod color_tests;
+#[cfg(test)]
+#[path = "window_tone_tests.rs"]
+mod window_tone_tests;
 
 #[cfg(test)]
 #[path = "bar_style_tests.rs"]

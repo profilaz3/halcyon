@@ -538,3 +538,121 @@ fn material_native_chooser_adjust_reset_and_undo() {
         assert!(Config::load().materials.dock.is_none());
     }
 }
+
+/// The Settings window drawn in the COSMIC colors the fixture now holds,
+/// as COSMIC would draw it after an apply.
+fn written_theme() -> cosmic::Theme {
+    use crate::desktop::appearance::AppearanceDraft;
+    let store = crate::desktop::DesktopStore::from_env().unwrap();
+    let draft = AppearanceDraft::load(&store).unwrap();
+    let builder = draft
+        .builder(draft.active_variant())
+        .unwrap_or_else(|_| panic!("readable theme"));
+    cosmic::Theme::custom(std::sync::Arc::new(builder.build()))
+}
+
+const WINDOW_TONE: &str = r#"{"setup_dismissed":true,"enabled_widgets":["clock","weather","devbox"],"location":{"name":"Sample city","latitude":45.0,"longitude":16.0}}"#;
+
+/// Window tone in the real Appearance page and the Settings window it
+/// colors: Bare at its new default, Bare at its darkest, and Terminal for
+/// comparison, over the bundled Ridge wallpaper.
+#[test]
+fn window_tone_native_captures() {
+    use crate::desktop::appearance::{AppearanceDraft, ColorRole, ThemeVariant};
+    use crate::desktop::wallpaper::{bundled_dir, bundled_path};
+    use crate::desktop_theme::Family;
+    if child("window_tone_native_captures", WINDOW_TONE) {
+        return;
+    }
+    let (probe, _) = Settings::init(Core::default(), Page::Themes);
+    let bundled = bundled_dir(probe.wallpaper.store().unwrap());
+    drop(probe);
+    let ridge = bundled_path(&bundled, "halcyon-ridge");
+    std::fs::create_dir_all(&bundled).unwrap();
+    std::fs::copy(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("assets/wallpapers/halcyon-ridge.png"),
+        &ridge,
+    )
+    .unwrap();
+    wallpaper(&ridge);
+    cosmic("com.system76.CosmicTheme.Mode", 1, "is_dark", "true");
+    let size = Size::new(1024., 720.);
+    let (mut app, _) = Settings::init(Core::default(), Page::Themes);
+    let _ = app.update(Message::Resized(size));
+    goto(&mut app, Page::Themes);
+    let background = || {
+        let store = crate::desktop::DesktopStore::from_env().unwrap();
+        let draft = AppearanceDraft::load(&store).unwrap();
+        let c = draft
+            .color(ThemeVariant::Dark, ColorRole::Background)
+            .known()
+            .copied()
+            .flatten()
+            .unwrap();
+        [c.red, c.green, c.blue].map(|v| (v * 255.).round() as u8)
+    };
+    let seed = |app: &Settings, family: Family| {
+        app.config
+            .appearance
+            .accent
+            .unwrap_or_else(|| family.accent())
+    };
+    let apply = |app: &mut Settings, message: profiles::Message| {
+        themes(app, message);
+        let _ = app.update(Message::Profiles(profiles::Message::Apply));
+        goto(app, Page::Themes);
+    };
+
+    apply(
+        &mut app,
+        profiles::Message::Select(profiles::Selection::Preset("theme-bare")),
+    );
+    assert_eq!(app.config.appearance.family, Some(Family::Bare));
+    assert_eq!(
+        background(),
+        Family::Bare.window_for(seed(&app, Family::Bare), true, 0)
+    );
+    let mut native = Native::new(size);
+    let _ = native.render(app.settings_view(), &written_theme());
+    super::tests::native_reveal(&app, &mut native, "window-tone");
+    capture_page(&app, size, &written_theme(), "window-tone-bare-default", 2);
+
+    // Held at the darkest step: the preview shows it before it applies.
+    let (darkest, _) = Family::Bare.tone_range(true);
+    let _ = app.update(Message::WindowTone(darkest));
+    assert_eq!(app.window_tone_drag, Some(darkest));
+    assert_eq!(app.shown_tone(Family::Bare), darkest);
+    assert_eq!(
+        background(),
+        Family::Bare.window_for(seed(&app, Family::Bare), true, 0)
+    );
+    capture_page(&app, size, &written_theme(), "window-tone-bare-held", 1);
+    // Release: the slider's save is the editor message, applied at once.
+    let _ = app.update(Message::WindowToneSave);
+    let _ = app.update(Message::Profiles(profiles::Message::WindowTone(darkest)));
+    drive(&mut app);
+    assert_eq!(app.window_tone_drag, None);
+    // The instant apply's own task, which the test runs by hand.
+    assert!(app.profiles.can_apply(), "{:?}", app.profiles.notice);
+    let _ = app.update(Message::Profiles(profiles::Message::Apply));
+    goto(&mut app, Page::Themes);
+    assert_eq!(app.config.appearance.window_tone.get(Family::Bare), darkest);
+    assert_eq!(
+        background(),
+        Family::Bare.window_for(seed(&app, Family::Bare), true, darkest)
+    );
+    capture_page(&app, size, &written_theme(), "window-tone-bare-darkest", 2);
+
+    apply(
+        &mut app,
+        profiles::Message::Select(profiles::Selection::Preset("theme-terminal")),
+    );
+    assert_eq!(
+        background(),
+        Family::Terminal.window_for(seed(&app, Family::Terminal), true, 0)
+    );
+    // Bare keeps its own tone while another style shows.
+    assert_eq!(app.config.appearance.window_tone.get(Family::Bare), darkest);
+    capture_page(&app, size, &written_theme(), "window-tone-terminal", 2);
+}

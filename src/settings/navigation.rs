@@ -466,6 +466,13 @@ const SEARCH: &[SearchHit] = &[
     .at("appearance-mode"),
     hit(
         Page::Themes,
+        "Window tone",
+        "window background darker lighter dark light tone brightness apps panels",
+        false,
+    )
+    .at("appearance-window-tone"),
+    hit(
+        Page::Themes,
         "Style",
         "shared desktop themes theme look soft outline paper bare frosted widgets save share",
         false,
@@ -1310,6 +1317,11 @@ pub(super) const UNCHECKED_LABELS: &[(&str, &str)] = &[
     ("Hide event details", "in Calendar, shown once a calendar is connected"),
     ("Calendar colors", "in Calendar, shown once a calendar is connected"),
     ("Highlight meetings", "in Calendar, shown once a calendar is connected"),
+    (
+        "Window tone",
+        "on Appearance under Mode, shown once a style is applied; \
+         window_tone_native_captures reveals it",
+    ),
 ];
 
 const fn hit(page: Page, label: &'static str, terms: &'static str, advanced: bool) -> SearchHit {
