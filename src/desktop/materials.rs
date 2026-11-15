@@ -3,8 +3,21 @@ use super::store::{
     ConfigKey, DesktopPatch, DesktopStore, KeyRule, Namespace, Owner, RawValue, Source,
     WidgetPatch, widget,
 };
+use crate::desktop_theme::Family;
 use crate::materials::{Finish, Target};
 use dock_islands_core::material::{BarMaterial, NAMESPACE};
+/// The dock or panel record for a finish under a style. The saved finish
+/// stays the user's; only the bar may not become more see-through than the
+/// style allows (see `BarSpec::glass_floor`).
+pub fn bar_record(finish: Finish, family: Option<Family>) -> BarMaterial {
+    let mut bar = BarMaterial::new(finish);
+    if let Some(floor) = family.map(|family| family.spec().bar.glass_floor)
+        && bar.finish.opacity() < floor
+    {
+        bar.finish.opacity = Some(floor);
+    }
+    bar
+}
 pub fn key(panel: &str) -> ConfigKey {
     ConfigKey::new(NAMESPACE, 1, panel).expect("material key")
 }
@@ -84,7 +97,7 @@ pub fn apply_from(
         } // preserve unknown future records
         let desired = next
             .effective(bar)
-            .map(|finish| RawValue::encode(&BarMaterial::new(finish)))
+            .map(|finish| RawValue::encode(&bar_record(finish, config.appearance.family)))
             .transpose()
             .map_err(|e| e.to_string())?;
         patch.set(key, base, desired);

@@ -1049,12 +1049,19 @@ pub fn plan_with(
                 widget::put(&mut value, pointer, entry.desired.clone())
             })
             .and_then(|()| config::check_config_change(current, &value).map(drop));
+        let materials_changed = result
+            .widget
+            .changes()
+            .any(|(p, _)| p.starts_with("/materials/"));
+        // A new style refits the bars' glass to its own floor, in the same
+        // change so Undo restores both.
+        let style_changed = result
+            .widget
+            .changes()
+            .any(|(p, _)| p == "/appearance/family");
         if outcome.is_ok()
+            && (materials_changed || style_changed)
             && crate::desktop::islands::Installation::discover(store).installed()
-            && result
-                .widget
-                .changes()
-                .any(|(p, _)| p.starts_with("/materials/"))
         {
             let material_result = (|| -> Result<(), String> {
                 let next = config::check_config_value(&value)?;
@@ -1064,18 +1071,33 @@ pub fn plan_with(
                 ] {
                     let key = crate::desktop::materials::key(name);
                     let original = store.read_user(&key).map_err(|e| e.to_string())?;
-                    if let Some(raw) = &original {
-                        raw.decode::<dock_islands_core::material::BarMaterial>()?
-                            .validate()?;
+                    let valid = |raw: &RawValue| {
+                        raw.decode::<dock_islands_core::material::BarMaterial>()
+                            .and_then(|bar| bar.validate())
+                    };
+                    if !materials_changed {
+                        // Only a style change: refit an existing, readable
+                        // record and leave absent or future records alone.
+                        if original.as_ref().is_none_or(|raw| valid(raw).is_err()) {
+                            continue;
+                        }
+                    } else if let Some(raw) = &original {
+                        valid(raw)?;
                     }
                     let desired = next
                         .materials
                         .effective(target)
                         .map(|finish| {
-                            RawValue::encode(&dock_islands_core::material::BarMaterial::new(finish))
+                            RawValue::encode(&crate::desktop::materials::bar_record(
+                                finish,
+                                next.appearance.family,
+                            ))
                         })
                         .transpose()
                         .map_err(|e| e.to_string())?;
+                    if !materials_changed && desired.is_none() {
+                        continue;
+                    }
                     result.patch.set(key, original, desired);
                 }
                 Ok(())
