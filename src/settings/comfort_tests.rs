@@ -406,3 +406,68 @@ fn every_page_fits_the_narrowest_window() {
         overflow.join("\n")
     );
 }
+
+// S11: the Wallpaper preview takes the selected display's shape, and the
+// clock sits where the desktop puts it, drawn by the shared card renderer.
+#[test]
+fn wallpaper_preview_takes_the_display_shape_with_the_clock_in_place() {
+    let name = "wallpaper_preview_takes_the_display_shape_with_the_clock_in_place";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let root = isolated_root();
+    let mut app = looks_desktop(&root);
+    comfort_square_display(&mut app);
+    let size = Size::new(1024., 760.);
+    send_settings(&mut app, Message::Resized(size));
+    send_settings(&mut app, Message::Page(Page::DesktopWallpaper));
+    assert_eq!(app.wallpaper_screen(), [1280., 1024.]);
+    let mut native = crate::native_test::Native::new(size);
+    native.scroll(app.settings_view(), "settings-content", 0.);
+    let preview = native.bounds(app.settings_view(), "wallpaper-preview");
+    let ratio = preview.height / preview.width;
+    assert!(
+        (ratio - 1024. / 1280.).abs() < 0.01,
+        "a 5:4 display, a 5:4 preview: {preview:?}"
+    );
+    let clock = native.bounds(app.settings_view(), "wallpaper-preview-clock");
+    assert!(
+        preview.contains(clock.position())
+            && clock.x + clock.width <= preview.x + preview.width + 0.5
+            && clock.y + clock.height <= preview.y + preview.height + 0.5,
+        "the clock stays on the picture: {clock:?} in {preview:?}"
+    );
+    let layout =
+        view::profiles::scene_geometry(app.placement.preview_snapshot().clone(), &app.config);
+    let geometry = layout
+        .widgets
+        .iter()
+        .find(|geometry| geometry.key == "clock")
+        .unwrap();
+    let (full, origin) = layout
+        .output
+        .as_ref()
+        .map_or((layout.screen, [0., 0.]), |frame| {
+            (frame.size, frame.origin)
+        });
+    let scale = preview.width / full[0];
+    let expected = [
+        preview.x + (origin[0] + geometry.position[0]) * scale,
+        preview.y + (origin[1] + geometry.position[1]) * scale,
+    ];
+    assert!(
+        (clock.x - expected[0]).abs() < 1.5 && (clock.y - expected[1]).abs() < 1.5,
+        "the clock at its desktop position: {clock:?}, expected {expected:?}"
+    );
+    assert!(
+        (clock.width - geometry.size[0] * scale).abs() < 1.5,
+        "the clock at its desktop size: {clock:?}"
+    );
+}

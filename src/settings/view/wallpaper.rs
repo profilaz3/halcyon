@@ -136,16 +136,98 @@ impl Settings {
         self.settings_accent()
     }
 
-    /// Room for display controls beside a compact picture.
-    fn wallpaper_wide(&self) -> bool {
-        self.content_width() >= 584.
+    /// The logical size of the display this page edits: the chosen display,
+    /// or with one background on all displays, the display the widgets are
+    /// on. 16:9 until a display is known.
+    pub(in crate::settings) fn wallpaper_screen(&self) -> [f32; 2] {
+        let usable = |size: [f32; 2]| (size[0] >= 1. && size[1] >= 1.).then_some(size);
+        let measured = |output: &crate::displays::Output| {
+            let (w, h) = output.info.logical_size?;
+            usable([w as f32, h as f32])
+        };
+        let snapshot = self.placement.preview_snapshot();
+        match self.wallpaper.target() {
+            Target::Output(name) => self
+                .displays
+                .outputs()
+                .iter()
+                .find(|output| output.name() == Some(name.as_str()))
+                .and_then(measured)
+                .or_else(|| snapshot.monitors.get(name).copied().and_then(usable)),
+            Target::Shared => snapshot
+                .output
+                .as_ref()
+                .and_then(|frame| usable(frame.size))
+                .or_else(|| usable(snapshot.screen))
+                .or_else(|| self.displays.outputs().iter().find_map(measured)),
+        }
+        .unwrap_or([1920., 1080.])
     }
 
-    /// The selected display's draft background, as COSMIC will draw it, with
-    /// the real clock renderer on top when the clock is a separate card.
+    /// Whether the widgets are on the display this page edits.
+    fn wallpaper_has_widgets(&self) -> bool {
+        let Target::Output(name) = self.wallpaper.target() else {
+            return true;
+        };
+        self.placement
+            .preview_snapshot()
+            .display
+            .as_ref()
+            .and_then(|display| display.output.as_ref())
+            .is_none_or(|widgets| widgets == name)
+    }
+
+    /// The clock where it sits on the desktop, drawn by the shared desktop
+    /// preview's card renderer, scaled to a `size` picture of the display.
+    fn wallpaper_clock(&self, size: [f32; 2], config: &Config) -> Option<Element<'_, Message>> {
+        let layout =
+            super::profiles::scene_geometry(self.placement.preview_snapshot().clone(), config);
+        let geometry = layout
+            .widgets
+            .iter()
+            .find(|geometry| Widget::parse(&geometry.key) == Some(Widget::Clock))?;
+        // Widgets sit on the usable area; panels may keep the rest.
+        let (full, origin) = match &layout.output {
+            Some(frame) if frame.size[0] >= 1. => (frame.size, frame.origin),
+            _ => (layout.screen, [0., 0.]),
+        };
+        if full[0] < 1. || full[1] < 1. {
+            return None;
+        }
+        let scale = (size[0] / full[0]).min(size[1] / full[1]);
+        let card_size = [geometry.size[0] * scale, geometry.size[1] * scale];
+        let at = cosmic::iced::Point::new(
+            (origin[0] + geometry.position[0]) * scale,
+            (origin[1] + geometry.position[1]) * scale,
+        );
+        Some(
+            cosmic::iced::widget::pin(
+                container(super::profiles::card(
+                    Widget::Clock,
+                    card_size,
+                    config,
+                    scale,
+                ))
+                .id(cosmic::widget::Id::new("wallpaper-preview-clock"))
+                .width(card_size[0])
+                .height(card_size[1]),
+            )
+            .position(at)
+            .into(),
+        )
+    }
+
+    /// The selected display's draft background, as COSMIC will draw it, in
+    /// that display's shape, with the clock where it sits when the clock is
+    /// a separate card on this display.
     fn wallpaper_preview(&self, width: f32) -> Element<'_, Message> {
         let editor = &self.wallpaper;
-        let height = (width * 9. / 16.).round();
+        let screen = self.wallpaper_screen();
+        // A tall (rotated) display is narrower, never taller than wide.
+        let ratio = (screen[1] / screen[0]).clamp(0.2, 4.);
+        let frame = width;
+        let width = (frame / ratio.max(1.)).round();
+        let height = (width * ratio).round();
         let shown = editor.shown();
         let picture: Element<'_, Message> = match &shown.handle {
             Some(handle) => cosmic::widget::image(handle.clone())
@@ -198,22 +280,19 @@ impl Settings {
             picture,
         ];
         // Only cards that are on the desktop; never panels or a dock.
-        if width >= 400.
+        if width >= 160.
             && shown.handle.is_some()
             && !self.config.glance.enabled
+            && self.config.widgets_visible
             && self.config.data_visible(Widget::Clock)
+            && self.wallpaper_has_widgets()
         {
             let mut config = self.config.clone();
             config.desktop_palette = Some(editor.preview_palette(&self.config));
             config.appearance.color_source = crate::config::ColorSource::Desktop;
-            layers.push(
-                container(
-                    crate::app::settings_clock_preview(&config, [width * 0.46, height * 0.36])
-                        .map(|_| Message::Preview),
-                )
-                .padding([14, 16])
-                .into(),
-            );
+            if let Some(clock) = self.wallpaper_clock([width, height], &config) {
+                layers.push(clock);
+            }
         }
         let mut notes = Vec::new();
         if shown.animated {
@@ -242,17 +321,16 @@ impl Settings {
             );
         }
         container(
-            cosmic::iced::widget::Stack::with_children(layers)
-                .width(Length::Fill)
-                .clip(true),
+            container(
+                cosmic::iced::widget::Stack::with_children(layers)
+                    .width(Length::Fill)
+                    .clip(true),
+            )
+            .id(cosmic::widget::Id::new("wallpaper-preview"))
+            .width(width)
+            .height(height),
         )
-        .id(cosmic::widget::Id::new("wallpaper-preview"))
-        .width(if self.wallpaper_wide() {
-            Length::Fill
-        } else {
-            Length::Fixed(width)
-        })
-        .max_width(width)
+        .center_x(frame)
         .into()
     }
 
