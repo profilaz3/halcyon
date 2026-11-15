@@ -70,7 +70,9 @@ fn capture_rail(cards: &Cards, name: &str) {
 }
 
 fn press(cards: &mut Cards, key: Key, modifiers: Modifiers) {
-    let _ = cards.update(Message::KeyInput(cards.ids[2], key, modifiers));
+    // Settings are saved off the UI thread; let a save land.
+    let input = Message::KeyInput(cards.ids[2], key, modifiers);
+    super::config_writes::update_saved(cards, input);
 }
 
 #[test]
@@ -284,7 +286,10 @@ fn dt02_right_click_menu_hides_the_widget_it_was_opened_on() {
     ));
     assert!(cards.menu.is_none());
     let _ = cards.update(Message::WidgetMenu(Widget::Music));
-    let _ = cards.update(Message::WidgetMenuPick(layout::MenuPick::Hide));
+    super::config_writes::update_saved(
+        &mut cards,
+        Message::WidgetMenuPick(layout::MenuPick::Hide),
+    );
     assert!(cards.menu.is_none());
     assert!(!Config::load().widget_visible(Widget::Music));
     // Arranging turns the menu off so right clicks stay with the editor.

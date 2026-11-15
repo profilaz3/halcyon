@@ -96,6 +96,8 @@ impl Cards {
         revert: Option<Revert>,
         write: impl FnOnce() -> Result<Config, String> + Send + 'static,
     ) -> Task<Message> {
+        #[cfg(test)]
+        QUEUED.with(|queued| queued.set(queued.get() + 1));
         let nonblocking = crate::config::settings_lock_operation() & libc::LOCK_NB != 0;
         let (reply, answer) = tokio::sync::oneshot::channel();
         let job: Job = Box::new(move || {
@@ -181,6 +183,41 @@ pub(crate) fn finish(cards: &mut Cards, task: Task<Message>) {
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Writes queued from this thread, so a test knows a task carries one.
+    static QUEUED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+/// Runs one desktop update in a test, letting the settings write it queued
+/// (if any) land. A task that queued none is dropped untouched, so nothing
+/// it would launch is started.
+#[cfg(test)]
+pub(crate) fn update_saved(cards: &mut Cards, message: Message) {
+    let before = QUEUED.with(std::cell::Cell::get);
+    let task = cards.update(message);
+    if QUEUED.with(std::cell::Cell::get) != before {
+        settle(cards, task);
+    }
+}
+/// Lets queued writes finish and feeds back what a desktop task has ready,
+/// in a test. Unlike `finish` it never waits on the rest of the task (a
+/// focus or surface request that only a running desktop would answer).
+#[cfg(test)]
+pub(crate) fn settle(cards: &mut Cards, task: Task<Message>) {
+    use cosmic::iced::futures::{FutureExt, StreamExt};
+    use cosmic::iced::runtime::Action as RuntimeAction;
+    flush();
+    let Some(mut stream) = cosmic::iced::runtime::task::into_stream(task) else {
+        return;
+    };
+    while let Some(Some(action)) = stream.next().now_or_never() {
+        if let RuntimeAction::Output(cosmic::Action::App(message)) = action {
+            let next = cards.update(message);
+            settle(cards, next);
+        }
     }
 }
 
