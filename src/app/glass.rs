@@ -145,13 +145,14 @@ impl Cards {
             }
             return Task::none();
         };
-        let Some(request) =
+        let Some(mut request) =
             crate::depth::Request::plain(&self.config, frame, self.clock_at.naive_local())
         else {
             self.glass.clear();
             self.rain.set_behind(None);
             return Task::none();
         };
+        request.backdrop = self.clock_backdrop.luminance;
         // While the clock cut by the scene is on its way, it stays on its
         // own surface rather than showing uncut behind the glass first.
         if crate::depth::eligible(&self.config) && self.depth.waiting() {

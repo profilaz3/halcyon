@@ -215,8 +215,11 @@ impl Settings {
                             .into(),
                         at,
                     ),
+                    // The same ink the desktop picks for this picture.
                     None => (
-                        profiles::card(Widget::Clock, shown, &self.config, scale),
+                        crate::app::with_backdrop(self.clock_stage_backdrop(), || {
+                            profiles::card(Widget::Clock, shown, &self.config, scale)
+                        }),
                         screen.on_output(position),
                     ),
                 };

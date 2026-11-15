@@ -408,7 +408,7 @@ pub(crate) fn ratio(a: Color, b: Color) -> f32 {
     let b = luminance(b);
     (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }
-fn readable_ink(ink: Color, background: Color) -> Color {
+pub(crate) fn readable_ink(ink: Color, background: Color) -> Color {
     let target = if luminance(background) < 0.179 {
         Color::WHITE
     } else {

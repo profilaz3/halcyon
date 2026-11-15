@@ -275,6 +275,7 @@ impl Cards {
             self.depth.cancel();
             return Task::none();
         };
+        request.backdrop = self.clock_backdrop.luminance;
         let asked = match &request.background.source {
             BgSource::Path(path) => crate::depth::Stamp::at(path)
                 .zip(request.basis())

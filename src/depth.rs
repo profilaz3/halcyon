@@ -65,6 +65,10 @@ pub struct Request {
     /// Draw the clock alone, uncut, to stand behind the rain glass.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub plain: bool,
+    /// The wallpaper's middle brightness under the clock, so the drawn
+    /// clock picks the same ink as the one on the desktop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backdrop: Option<f32>,
 }
 
 /// A picture file's identity: replacing or editing the file changes it.
@@ -133,6 +137,7 @@ impl Request {
             scenes: None,
             seen: None,
             plain: false,
+            backdrop: None,
         })
     }
     /// A request for the clock alone, to stand behind the rain glass.
@@ -156,6 +161,7 @@ impl Request {
             scenes: None,
             seen: None,
             plain: true,
+            backdrop: None,
         })
     }
     /// The same request, also allowed to use analysed pictures from `root`.
@@ -377,7 +383,7 @@ pub fn render(request: &Request) -> Option<Pixels> {
     if !matches_picture(&request.background) {
         return None;
     }
-    render_clock(request)
+    crate::app::with_backdrop(request.backdrop, || render_clock(request))
 }
 /// Public prepared pairs never consult a local path. Call only when the
 /// selected public background is the compiled Ridge asset.
@@ -609,6 +615,9 @@ fn judging_time(time: chrono::NaiveDateTime) -> chrono::NaiveDateTime {
 /// The Ridge picture keeps its drawn matte; any other picture uses its
 /// analysis from `request.scenes`, if there is one.
 pub fn render_scene(request: &Request) -> Option<Rendered> {
+    crate::app::with_backdrop(request.backdrop, || render_scene_on(request))
+}
+fn render_scene_on(request: &Request) -> Option<Rendered> {
     if request.plain {
         let config = request.style_config().filter(behind_glass)?;
         let time =

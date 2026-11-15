@@ -53,15 +53,15 @@ pub(super) struct Frame {
 }
 impl Presentation {
     pub fn new(config: &Config) -> Self {
-        Self::project(config, config.wallpaper_palette(), false)
+        Self::project(config, config.wallpaper_palette(), false, BACKDROP.get())
     }
     pub fn part(config: &Config, palette: Palette) -> Self {
-        Self::project(config, palette, false)
+        Self::project(config, palette, false, None)
     }
     pub fn grouped(config: &Config, palette: Palette) -> Self {
-        Self::project(config, palette, true)
+        Self::project(config, palette, true, None)
     }
-    fn project(config: &Config, palette: Palette, grouped: bool) -> Self {
+    fn project(config: &Config, palette: Palette, grouped: bool, backdrop: Option<f32>) -> Self {
         let _scope = crate::widget_style::scope(config);
         let _fonts = grouped.then(|| {
             crate::widget_style::fonts(
@@ -75,6 +75,19 @@ impl Presentation {
             style.ink.value = palette.foreground;
             style.muted.value = palette.muted;
             style.accent.value = palette.accent;
+        }
+        // Straight on a picture whose brightness is known, ink too close to
+        // it turns to the tone that reads there.
+        if let Some(backdrop) =
+            backdrop.filter(|_| !grouped && style.surface.value == Surface::None)
+        {
+            for value in [
+                &mut style.ink.value,
+                &mut style.muted.value,
+                &mut style.accent.value,
+            ] {
+                *value = adapted_ink(*value, backdrop);
+            }
         }
         Self {
             preferences: config.clock,
@@ -106,6 +119,79 @@ impl Presentation {
             self.style.body.value,
         )
     }
+}
+thread_local! {
+    static BACKDROP: std::cell::Cell<Option<f32>> = const { std::cell::Cell::new(None) };
+}
+/// Builds the clocks made inside `run` for a picture whose middle
+/// brightness under them is `luminance` (relative, 0 to 1), so a clock
+/// drawn straight on it picks ink that reads there.
+pub(crate) fn with_backdrop<T>(luminance: Option<f32>, run: impl FnOnce() -> T) -> T {
+    struct Restore(Option<f32>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            BACKDROP.set(self.0);
+        }
+    }
+    let _restore = Restore(BACKDROP.replace(luminance.filter(|l| l.is_finite())));
+    run()
+}
+/// The contrast ink needs with the picture behind it before it is left as
+/// it is; below it, the ink turns toward the tone that reads.
+pub(crate) const READABLE: f32 = 3.;
+fn contrast(a: f32, b: f32) -> f32 {
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+/// `ink`, or when it is too close to a picture of brightness `backdrop`,
+/// the nearest ink toward black or white that reads on it.
+pub(crate) fn adapted_ink(ink: Color, backdrop: f32) -> Color {
+    let backdrop = backdrop.clamp(0., 1.);
+    if contrast(crate::widget_style::luminance(ink), backdrop) >= READABLE {
+        return ink;
+    }
+    let tone = if backdrop <= 0.003_130_8 {
+        backdrop * 12.92
+    } else {
+        1.055 * backdrop.powf(1. / 2.4) - 0.055
+    };
+    let gray = Color::from_rgb(tone, tone, tone);
+    Color {
+        a: ink.a,
+        ..crate::widget_style::readable_ink(ink, gray)
+    }
+}
+/// The brightness of the picture under `area` (fractions of the picture:
+/// left, top, right, bottom), as its darker tenth, middle and lighter
+/// tenth, so a few bright or dark spots don't decide it. `None` when the
+/// area misses the picture.
+pub(crate) fn backdrop_brightness(rgba: &[u8], size: [u32; 2], area: [f32; 4]) -> Option<[f32; 3]> {
+    let [w, h] = size.map(|v| v as usize);
+    if w == 0 || h == 0 || rgba.len() < w * h * 4 {
+        return None;
+    }
+    let span = |from: f32, to: f32, n: usize| {
+        let from = (from.clamp(0., 1.) * n as f32).floor() as usize;
+        let to = ((to.clamp(0., 1.) * n as f32).ceil() as usize).min(n);
+        (from < to).then_some((from, to))
+    };
+    let (x0, x1) = span(area[0], area[2], w)?;
+    let (y0, y1) = span(area[1], area[3], h)?;
+    // About 64 samples a side is plenty.
+    let step = ((x1 - x0).max(y1 - y0) / 64).max(1);
+    let mut light: Vec<f32> = (y0..y1)
+        .step_by(step)
+        .flat_map(|y| (x0..x1).step_by(step).map(move |x| (y * w + x) * 4))
+        .map(|i| {
+            crate::widget_style::luminance(Color::from_rgb8(rgba[i], rgba[i + 1], rgba[i + 2]))
+        })
+        .collect();
+    light.sort_by(f32::total_cmp);
+    let at = |share: f32| {
+        light
+            .get(((light.len() - 1) as f32 * share).round() as usize)
+            .copied()
+    };
+    Some([at(0.1)?, at(0.5)?, at(0.9)?])
 }
 fn clock_label(
     value: impl Into<String>,
