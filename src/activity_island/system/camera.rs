@@ -11,7 +11,8 @@ const SYSFS: &str = "/sys/class/video4linux";
 /// While a camera is on, look again this often: closing a camera opened
 /// read-only raises no file event.
 const IN_USE_RECHECK: Duration = Duration::from_secs(5);
-/// Otherwise only for cameras plugged in or out.
+/// Otherwise less often, for cameras plugged in or out and for an opening
+/// whose file event was missed (no watch on the node, a full event queue).
 const IDLE_RECHECK: Duration = Duration::from_secs(30);
 
 /// `/dev/videoN` for each hardware camera under `sys`.
@@ -100,6 +101,22 @@ fn sample(devices: &[PathBuf]) -> Option<Activity> {
     activity(&holders(Path::new("/proc"), devices))
 }
 pub(super) async fn observe(tx: tokio::sync::mpsc::Sender<(Source, Option<Activity>)>) {
+    observe_with(
+        tx,
+        || cameras(Path::new(SYSFS)),
+        |devices: &[PathBuf]| sample(devices),
+        [IN_USE_RECHECK, IDLE_RECHECK],
+    )
+    .await
+}
+/// `observe` with where it finds cameras and their holders, and how often
+/// it looks again while in use and while idle.
+async fn observe_with(
+    tx: tokio::sync::mpsc::Sender<(Source, Option<Activity>)>,
+    cameras: impl Fn() -> Vec<PathBuf> + Clone + Send + 'static,
+    sample: impl Fn(&[PathBuf]) -> Option<Activity> + Clone + Send + 'static,
+    [in_use_recheck, idle_recheck]: [Duration; 2],
+) {
     use notify::Watcher;
     let (changed, mut events) = tokio::sync::mpsc::channel(1);
     // Opening or closing a watched camera node wakes the scan.
@@ -112,7 +129,8 @@ pub(super) async fn observe(tx: tokio::sync::mpsc::Sender<(Source, Option<Activi
     // Something happened to a camera node: look at who holds it.
     let mut look = true;
     loop {
-        let devices = tokio::task::spawn_blocking(|| cameras(Path::new(SYSFS)))
+        let find = cameras.clone();
+        let devices = tokio::task::spawn_blocking(find)
             .await
             .unwrap_or_default();
         // Watched afresh each time: a node replugged under the same name is
@@ -128,6 +146,7 @@ pub(super) async fn observe(tx: tokio::sync::mpsc::Sender<(Source, Option<Activi
         look |= devices != watched || last.as_ref().is_some_and(Option::is_some);
         watched = devices.clone();
         let state = if look {
+            let sample = sample.clone();
             tokio::task::spawn_blocking(move || sample(&devices))
                 .await
                 .ok()
@@ -137,9 +156,9 @@ pub(super) async fn observe(tx: tokio::sync::mpsc::Sender<(Source, Option<Activi
         };
         look = false;
         let recheck = if state.is_some() {
-            IN_USE_RECHECK
+            in_use_recheck
         } else {
-            IDLE_RECHECK
+            idle_recheck
         };
         if last.as_ref() != Some(&state) {
             if tx.send((Source::Camera, state.clone())).await.is_err() {
@@ -155,7 +174,9 @@ pub(super) async fn observe(tx: tokio::sync::mpsc::Sender<(Source, Option<Activi
                 while events.try_recv().is_ok() {}
                 look = true;
             }
-            _ = tokio::time::sleep(recheck) => {}
+            // The fallback looks at the holders too: a camera opened
+            // without a file event is still seen, a little later.
+            _ = tokio::time::sleep(recheck) => look = true,
         }
     }
 }
@@ -214,5 +235,40 @@ mod tests {
         assert!(!a.announce && a.expires_ms.is_none());
         assert!(activity(&[]).is_none());
         assert!(sample(&[]).is_none());
+    }
+    #[tokio::test]
+    async fn d10_a_camera_opened_without_a_file_event_is_seen_by_the_fallback() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        // A node no watch can be put on: no file event ever comes.
+        let devices = vec![PathBuf::from("/nonexistent/halcyon-test/video0")];
+        let open = Arc::new(AtomicBool::new(false));
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        let holder = open.clone();
+        let task = tokio::spawn(observe_with(
+            tx,
+            move || devices.clone(),
+            move |_: &[PathBuf]| activity(&if holder.load(Ordering::SeqCst) {
+                vec!["zoom".to_string()]
+            } else {
+                Vec::new()
+            }),
+            [Duration::from_millis(40), Duration::from_millis(60)],
+        ));
+        async fn wait(
+            rx: &mut tokio::sync::mpsc::Receiver<(Source, Option<Activity>)>,
+        ) -> (Source, Option<Activity>) {
+            tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                .await
+                .expect("the fallback looks again")
+                .expect("still observing")
+        }
+        assert_eq!(wait(&mut rx).await, (Source::Camera, None));
+        open.store(true, Ordering::SeqCst);
+        let (_, on) = wait(&mut rx).await;
+        assert_eq!(on.expect("the camera is on").detail, "zoom");
+        open.store(false, Ordering::SeqCst);
+        assert_eq!(wait(&mut rx).await, (Source::Camera, None));
+        task.abort();
     }
 }
