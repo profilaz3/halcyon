@@ -114,7 +114,10 @@ fn ux_native_notes_undo_is_document_local_and_controls_fit() {
         // The note has no buttons of its own now: it saves as you type and
         // Undo is the app's own (Ctrl+Z above, global Undo below).
         let b = native.bounds(app.settings_view(), "note-editor");
-        assert!(b.x >= 0. && b.x + b.width <= size.width, "note-editor: {b:?}");
+        assert!(
+            b.x >= 0. && b.x + b.width <= size.width,
+            "note-editor: {b:?}"
+        );
     }
     // Global Undo after the editor loses focus still belongs to this note.
     let _ = app.update(Message::UndoDesktop);
@@ -525,10 +528,7 @@ fn native_task_navigation_and_widget_switches_keep_layout_drafts() {
         assert_eq!(app.page, Page::DesktopProfiles);
         click(&mut app, &mut native, "presets-schedules");
         assert_eq!(app.page, Page::DesktopAutomation);
-        assert_eq!(
-            app.nav_model.active_data::<Page>(),
-            Some(&Page::Themes)
-        );
+        assert_eq!(app.nav_model.active_data::<Page>(), Some(&Page::Themes));
         assert_eq!(app.back_title().as_deref(), Some("Looks"));
         assert!(
             native
@@ -1063,9 +1063,7 @@ fn review_r1_gallery_keyboard_actions_are_reachable() {
                             Message::Profiles(profiles::Message::ThemeColors(true))
                         ) && !reached.contains(&label)
                         {
-                            let target = bounds
-                                .bounds
-                                .expect("From wallpaper has keyboard focus");
+                            let target = bounds.bounds.expect("From wallpaper has keyboard focus");
                             assert!(
                                 target.x >= 0.
                                     && target.y >= 0.
@@ -1229,7 +1227,10 @@ fn color_control_offers_suggestions_and_the_picker_and_applies_a_choice() {
         mouse::Event::ButtonPressed(mouse::Button::Left),
         mouse::Event::ButtonReleased(mouse::Button::Left),
     ] {
-        for message in native.event(app.settings_view(), Event::Mouse(event), done).0 {
+        for message in native
+            .event(app.settings_view(), Event::Mouse(event), done)
+            .0
+        {
             crate::settings::tests::send_settings(&mut app, message);
         }
     }
@@ -1419,7 +1420,11 @@ fn appearance_shows_one_row_of_styles_and_every_style_on_request() {
     // Dock page needs a desktop to draw its switch, so the isolated
     // polish_e_dock_shape_follow_style_and_looks_header checks it there.
     let mut native = crate::native_test::Native::new(size);
-    assert!(native.text_all(app.settings_view(), "Style the dock and panel").is_empty());
+    assert!(
+        native
+            .text_all(app.settings_view(), "Style the dock and panel")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -1435,7 +1440,8 @@ fn calendar_subscription_form_and_selection_use_real_controls() {
         app.calendar.subscription_form = false;
         // The preview is always shown; the link button is reached by scrolling.
         native.scroll(app.settings_view(), "settings-content", 0.);
-        click(&mut app, &mut native, "calendar-subscription-open");
+        click(&mut app, &mut native, "calendar-add-open");
+        click(&mut app, &mut native, "calendar-add-link");
         assert!(app.calendar.subscription_form);
         native.capture(
             app.settings_view(),
@@ -1451,6 +1457,9 @@ fn calendar_subscription_form_and_selection_use_real_controls() {
             false,
         )));
         assert!(app.calendar.subscription_url.0.is_empty());
+        // Cancel goes back to the list of calendar kinds.
+        assert!(app.calendar.chooser);
+        let _ = app.update(Message::Calendar(calendar::Message::Chooser(false)));
     }
     let choices: Vec<_> = ["Work", "Personal"]
         .into_iter()
@@ -1470,6 +1479,7 @@ fn calendar_subscription_form_and_selection_use_real_controls() {
         credential: "opaque-keyring-id".into(),
         subscriptions: choices.clone(),
         selections: vec![choices[0].clone()],
+        sources: vec![],
     };
     std::fs::write(
         crate::calendar::account_path().unwrap(),
@@ -1499,9 +1509,20 @@ fn calendar_subscription_form_and_selection_use_real_controls() {
     click(&mut app, &mut native, "calendar-remove-1");
     assert_eq!(app.calendar.confirm_remove.as_deref(), Some("Personal"));
     native.text_bounds(app.settings_view(), "Remove “Personal”?");
-    native.text_bounds(app.settings_view(), "You’ll need its private link to add it again.");
-    native.capture(app.settings_view(), &cosmic::Theme::dark(), "calendar-remove-confirm");
-    native.capture(app.settings_view(), &cosmic::Theme::light(), "calendar-remove-confirm-light");
+    native.text_bounds(
+        app.settings_view(),
+        "You’ll need its private link to add it again.",
+    );
+    native.capture(
+        app.settings_view(),
+        &cosmic::Theme::dark(),
+        "calendar-remove-confirm",
+    );
+    native.capture(
+        app.settings_view(),
+        &cosmic::Theme::light(),
+        "calendar-remove-confirm-light",
+    );
     click(&mut app, &mut native, "calendar-remove-cancel");
     assert!(app.calendar.confirm_remove.is_none());
     // Without its confirmation, a removal does nothing.
@@ -2681,7 +2702,10 @@ fn ux_three_screens_keep_primary_actions_reachable_and_state_local() {
         // Glass is a detail page of Appearance; Back names it.
         let back = native.bounds(app.settings_view(), "settings-back");
         assert!(back.width > 70. && back.x >= app.sidebar_width());
-        assert_eq!(app.up_link().map(|(title, _)| title).as_deref(), Some("Appearance"));
+        assert_eq!(
+            app.up_link().map(|(title, _)| title).as_deref(),
+            Some("Appearance")
+        );
         native.capture(
             app.settings_view(),
             &cosmic::Theme::dark(),

@@ -1,7 +1,48 @@
 use super::*;
-use crate::calendar::Backend;
-use crate::settings::calendar::{Message as Account, SubscriptionProvider};
+use crate::calendar::{Backend, SourceKind};
+use crate::settings::calendar::{AddSource, Message as Account, SubscriptionProvider};
 use cosmic::Apply;
+
+use crate::settings::calendar::PLAIN_HTTP;
+const REPLACES_GOOGLE: &str = "This replaces the current Google connection on this computer.";
+/// Width of the names beside labelled inputs.
+const FIELD_NAME: f32 = 96.;
+
+/// A form row: its name on the left, the input filling the right, and any
+/// notes under the input.
+fn labelled<'a>(
+    name: &'static str,
+    input: Element<'a, Message>,
+    notes: Vec<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let line = row::with_children(vec![
+        container(label(name, 14., FG))
+            .width(Length::Fixed(FIELD_NAME))
+            .into(),
+        container(input).width(Length::Fill).into(),
+    ])
+    .spacing(12)
+    .align_y(Alignment::Center);
+    if notes.is_empty() {
+        return line.into();
+    }
+    let notes = container(column::with_children(notes).spacing(4)).padding(cosmic::iced::Padding {
+        left: FIELD_NAME + 12.,
+        ..cosmic::iced::Padding::ZERO
+    });
+    column::with_children(vec![line.into(), notes.into()])
+        .spacing(6)
+        .into()
+}
+/// A text input in the shared form style; `hidden` masks what is typed.
+fn form_input<'a>(
+    placeholder: &'static str,
+    value: &'a str,
+    hidden: bool,
+) -> cosmic::widget::TextInput<'a, Message> {
+    let input = text_input(placeholder, value).width(Length::Fill);
+    if hidden { input.password() } else { input }
+}
 
 impl Settings {
     pub(super) fn calendar_connection(&self) -> Element<'_, Message> {
@@ -16,7 +57,7 @@ impl Settings {
                 .into(),
             detail_state(
                 match editor.connection.backend {
-                    Backend::Subscription => "Calendar links",
+                    Backend::Subscription => "Your calendars",
                     Backend::Disconnected => "Connect a calendar",
                     _ => "Google Calendar",
                 },
@@ -52,7 +93,7 @@ impl Settings {
         let invite = !editor.connection.connected()
             && !editor.busy
             && !editor.confirm_disconnect
-            && !editor.subscription_form
+            && !editor.adding()
             && !editor.connection.cleanup_pending();
         let mut rows = Vec::new();
         if !invite {
@@ -128,7 +169,18 @@ impl Settings {
                 if editor.confirm_remove.as_ref() == Some(&choice.id) {
                     rows.push(detail_state(
                         format!("Remove “{}”?", choice.name),
-                        "You’ll need its private link to add it again.",
+                        match editor.connection.source_kind(&choice.id) {
+                            SourceKind::Link => "You’ll need its private link to add it again.",
+                            SourceKind::CalDav => {
+                                "You can add it again from your CalDAV account at any time."
+                            }
+                            SourceKind::Holidays => "You can add it again from Add holidays.",
+                            SourceKind::File => "The file stays on your computer.",
+                            SourceKind::Folder => "The folder stays on your computer.",
+                            SourceKind::System => {
+                                "You can add it again from Online Accounts at any time."
+                            }
+                        },
                     ));
                     rows.push(
                         row::with_children(vec![
@@ -165,10 +217,24 @@ impl Settings {
                             .into(),
                     );
                 }
-                rows.push(split(
-                    label(choice.name.clone(), 14., FG),
-                    row::with_children(controls).spacing(8).into(),
-                ));
+                // Where each calendar comes from, once kinds can be mixed.
+                let name = if editor.connection.backend == Backend::Subscription {
+                    use crate::calendar::SourceKind as Kind;
+                    detail_state(
+                        choice.name.clone(),
+                        match editor.connection.source_kind(&choice.id) {
+                            Kind::Link => "Calendar link",
+                            Kind::CalDav => "CalDAV account",
+                            Kind::Holidays => "Holidays",
+                            Kind::File => "Calendar file",
+                            Kind::Folder => "Calendar folder",
+                            Kind::System => "Online Accounts",
+                        },
+                    )
+                } else {
+                    label(choice.name.clone(), 14., FG)
+                };
+                rows.push(split(name, row::with_children(controls).spacing(8).into()));
             }
             let mut actions = vec![
                 button::text(if editor.loading {
@@ -224,6 +290,13 @@ impl Settings {
                     .on_press(message(Account::Disconnect))
                     .into(),
             );
+        } else if editor.caldav_form
+            || editor.file_pending.is_some()
+            || !editor.folder_found.is_empty()
+            || editor.holidays_form
+            || editor.chooser
+        {
+            rows.push(label("Halcyon only reads your events.", 12., MUTED));
         } else if editor.subscription_form {
             rows.push(label(
                 if editor.client_ready {
@@ -236,6 +309,9 @@ impl Settings {
             ));
         }
         if !editor.busy && !editor.confirm_disconnect && !editor.connection.cleanup_pending() {
+            // Adding replaces a Google sign-in, as a calendar link always has.
+            let replaces =
+                editor.connection.connected() && editor.connection.backend != Backend::Subscription;
             if editor.subscription_form {
                 rows.push(
                     button::text(if editor.subscription_help {
@@ -253,35 +329,72 @@ impl Settings {
                     rows.push(self.calendar_subscription_guide());
                 }
                 // Enter adds the calendar, like Add calendar, once there's a link.
-                let add = (!editor.subscription_url.0.trim().is_empty())
-                    .then_some(message(Account::AddSubscription));
-                rows.push(
-                    text_input("Calendar name", &editor.subscription_name)
+                let add = (!editor.subscription_url.0.trim().is_empty()
+                    && (!editor.subscription_login
+                        || !editor.subscription_username.0.trim().is_empty()))
+                .then_some(message(Account::AddSubscription));
+                rows.push(labelled(
+                    "Name",
+                    form_input("Calendar name", &editor.subscription_name, false)
                         .on_input(move |name| message(Account::SubscriptionName(name)))
                         .on_submit_maybe(add.clone().map(|add| move |_| add.clone()))
                         .into(),
-                );
-                rows.push(
-                    cosmic::widget::secure_input(
-                        "Calendar subscription link",
-                        &editor.subscription_url.0,
-                        None,
-                        true,
+                    vec![],
+                ));
+                let mut link_notes = vec![];
+                if crate::calendar::plain_local(&editor.subscription_url.0, false) {
+                    link_notes.push(label(PLAIN_HTTP, 12., MUTED));
+                }
+                rows.push(labelled(
+                    "Link",
+                    form_input("https://…/calendar.ics", &editor.subscription_url.0, true)
+                        .id("calendar-link-url".into())
+                        .on_input(move |url| {
+                            message(Account::SubscriptionUrl(crate::calendar::SecretText(url)))
+                        })
+                        .on_submit_maybe(add.clone().map(|add| move |_| add.clone()))
+                        .into(),
+                    link_notes,
+                ));
+                rows.push(split(
+                    label("This link needs a password", 14., FG),
+                    container(
+                        toggler(editor.subscription_login)
+                            .on_toggle(move |on| message(Account::SubscriptionLogin(on))),
                     )
-                    .on_input(move |url| {
-                        message(Account::SubscriptionUrl(crate::calendar::SecretText(url)))
-                    })
-                    .on_submit_maybe(add.clone().map(|add| move |_| add.clone()))
+                    .id("calendar-link-login")
                     .into(),
-                );
-                if editor.connection.connected()
-                    && editor.connection.backend != Backend::Subscription
-                {
-                    rows.push(label(
-                        "This replaces the current Google connection on this computer.",
-                        12.,
-                        MUTED,
+                ));
+                if editor.subscription_login {
+                    rows.push(labelled(
+                        "Username",
+                        form_input("", &editor.subscription_username.0, false)
+                            .id("calendar-link-username".into())
+                            .on_input(move |value| {
+                                message(Account::SubscriptionUsername(crate::calendar::SecretText(
+                                    value,
+                                )))
+                            })
+                            .on_submit_maybe(add.clone().map(|add| move |_| add.clone()))
+                            .into(),
+                        vec![],
                     ));
+                    rows.push(labelled(
+                        "Password",
+                        form_input("", &editor.subscription_password.0, true)
+                            .id("calendar-link-password".into())
+                            .on_input(move |value| {
+                                message(Account::SubscriptionPassword(crate::calendar::SecretText(
+                                    value,
+                                )))
+                            })
+                            .on_submit_maybe(add.clone().map(|add| move |_| add.clone()))
+                            .into(),
+                        vec![],
+                    ));
+                }
+                if replaces {
+                    rows.push(label(REPLACES_GOOGLE, 12., MUTED));
                 }
                 rows.push(
                     row::with_children(vec![
@@ -299,13 +412,61 @@ impl Settings {
                     .wrap()
                     .into(),
                 );
+            } else if editor.caldav_form {
+                rows.extend(self.calendar_caldav_form(replaces));
+            } else if let Some(path) = &editor.file_pending {
+                let add = Some(message(Account::AddFile));
+                rows.push(detail_state(
+                    "Calendar file",
+                    path.file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                ));
+                rows.push(
+                    text_input("Calendar name", &editor.file_name)
+                        .on_input(move |name| message(Account::FileName(name)))
+                        .on_submit_maybe(add.clone().map(|add| move |_| add.clone()))
+                        .into(),
+                );
+                rows.push(label(
+                    "Halcyon reads the file again whenever it changes.",
+                    12.,
+                    MUTED,
+                ));
+                if replaces {
+                    rows.push(label(REPLACES_GOOGLE, 12., MUTED));
+                }
+                rows.push(
+                    row::with_children(vec![
+                        button::standard("Add calendar")
+                            .id(cosmic::widget::Id::new("calendar-file-add"))
+                            .on_press_maybe(add)
+                            .into(),
+                        button::text("Cancel")
+                            .on_press(message(Account::CancelFile))
+                            .into(),
+                    ])
+                    .spacing(8)
+                    .wrap()
+                    .into(),
+                );
+            } else if !editor.folder_found.is_empty() {
+                rows.extend(self.calendar_folder_form(replaces));
+            } else if editor.holidays_form {
+                rows.extend(self.calendar_holidays_form(replaces));
+            } else if editor.system.open {
+                rows.push(self.calendar_system_picker());
+            } else if editor.chooser {
+                rows.extend(self.calendar_add_chooser(replaces));
             } else {
-                // Both ways to connect sit together in one row.
-                // Google sign-in can become available while this page is open,
-                // which puts a named Connect button in front of the named link
-                // button. Unnamed slots keep both on the right widget state.
+                // Google sign-in, when configured, sits beside one button that
+                // lists every other kind of calendar. Unnamed slots keep both
+                // on the right widget state when sign-in appears later.
+                let connected = editor.connection.connected();
+                let google = editor.client_ready && !connected;
+                let full = editor.free_slots() == 0;
                 let mut actions: Vec<Element<'_, Message>> = Vec::new();
-                if editor.client_ready && !editor.connection.connected() {
+                if google {
                     actions.push(slot(
                         button::suggested("Connect Google Calendar")
                             .id(cosmic::widget::Id::new("calendar-connect"))
@@ -313,29 +474,37 @@ impl Settings {
                             .into(),
                     ));
                 }
+                // One suggested button at a time: Google's, when it is there.
+                let add = if connected || google {
+                    button::standard("Add calendar…")
+                } else {
+                    button::suggested("Add calendar…")
+                };
                 actions.push(slot(
-                    button::standard(if editor.connection.connected() {
-                        "Add calendar link"
-                    } else {
-                        "Paste link…"
-                    })
-                    .id(cosmic::widget::Id::new("calendar-subscription-open"))
-                    .on_press(message(Account::SubscriptionForm(true)))
-                    .into(),
+                    add.id(cosmic::widget::Id::new("calendar-add-open"))
+                        .on_press_maybe((!full).then(|| message(Account::Chooser(true))))
+                        .into(),
                 ));
                 let actions = row::with_children(actions).spacing(8).wrap();
-                if editor.connection.connected() {
+                if connected {
                     rows.push(actions.into());
+                    if full {
+                        rows.push(label(
+                            "You have eight calendars, the most Halcyon shows. Remove one to add another.",
+                            12.,
+                            MUTED,
+                        ));
+                    }
                 } else {
                     // Not connected yet: one row that says what to do, with
                     // the ways to do it on the right.
                     rows.push(split(
                         detail_state(
                             "Add a calendar",
-                            if editor.client_ready {
-                                "Sign in to Google, or paste the sharing link from Outlook or Apple Calendar"
+                            if google {
+                                "Sign in to Google, or add one from an account, a link or a file"
                             } else {
-                                "Paste the sharing link from Google, Outlook or Apple Calendar"
+                                "From an online account, a CalDAV server, a link or a file"
                             },
                         ),
                         actions.into(),
@@ -344,6 +513,283 @@ impl Settings {
             }
         }
         group(Some("Calendars"), rows)
+    }
+    /// The kinds of calendar to add, one row each, in place of the button.
+    fn calendar_add_chooser(&self, replaces: bool) -> Vec<Element<'_, Message>> {
+        let editor = &self.calendar;
+        let accent = self.settings_accent();
+        let mut rows: Vec<Element<'_, Message>> = AddSource::ALL
+            .into_iter()
+            .filter(|source| *source != AddSource::OnlineAccounts || editor.offers_system())
+            .map(|source| {
+                button::custom(
+                    row::with_children(vec![
+                        detail_state(source.title(), source.line()),
+                        icon::from_name("go-next-symbolic").size(16).icon().into(),
+                    ])
+                    .spacing(14)
+                    .align_y(Alignment::Center),
+                )
+                .id(cosmic::widget::Id::new(source.id()))
+                .class(nav_style(false, accent))
+                .padding([4, 0])
+                .width(Length::Fill)
+                .on_press(Message::Calendar(Account::Choose(source)))
+                .into()
+            })
+            .collect();
+        if replaces {
+            rows.push(label(REPLACES_GOOGLE, 12., MUTED));
+        }
+        rows.push(
+            button::text("Cancel")
+                .id(cosmic::widget::Id::new("calendar-add-cancel"))
+                .on_press(Message::Calendar(Account::Chooser(false)))
+                .into(),
+        );
+        rows
+    }
+    /// Server, username and password, then the calendars found there.
+    fn calendar_caldav_form(&self, replaces: bool) -> Vec<Element<'_, Message>> {
+        let editor = &self.calendar;
+        let message = |value| Message::Calendar(value);
+        let ready = !editor.caldav_server.0.trim().is_empty()
+            && !editor.caldav_username.0.trim().is_empty()
+            && !editor.caldav_password.0.is_empty()
+            && !editor.caldav_searching;
+        let find = ready.then_some(message(Account::FindCalendars));
+        let mut rows: Vec<Element<'_, Message>> = vec![detail_state(
+            "CalDAV account",
+            "Works with iCloud, Fastmail, Nextcloud, mailbox.org and other CalDAV servers.",
+        )];
+        let mut server_notes = vec![label(
+            "For example caldav.icloud.com, caldav.fastmail.com or https://cloud.example.com/remote.php/dav",
+            12.,
+            MUTED,
+        )];
+        if crate::calendar::plain_local(&editor.caldav_server.0, true) {
+            server_notes.push(label(PLAIN_HTTP, 12., MUTED));
+        }
+        rows.push(labelled(
+            "Server",
+            form_input("caldav.example.com", &editor.caldav_server.0, false)
+                .id("calendar-caldav-server".into())
+                .on_input(move |value| {
+                    message(Account::CalDavServer(crate::calendar::SecretText(value)))
+                })
+                .on_submit_maybe(find.clone().map(|find| move |_| find.clone()))
+                .into(),
+            server_notes,
+        ));
+        rows.push(labelled(
+            "Username",
+            form_input("", &editor.caldav_username.0, false)
+                .id("calendar-caldav-username".into())
+                .on_input(move |value| {
+                    message(Account::CalDavUsername(crate::calendar::SecretText(value)))
+                })
+                .on_submit_maybe(find.clone().map(|find| move |_| find.clone()))
+                .into(),
+            vec![],
+        ));
+        rows.push(labelled(
+            "Password",
+            form_input("", &editor.caldav_password.0, true)
+                .id("calendar-caldav-password".into())
+                .on_input(move |value| {
+                    message(Account::CalDavPassword(crate::calendar::SecretText(value)))
+                })
+                .on_submit_maybe(find.clone().map(|find| move |_| find.clone()))
+                .into(),
+            vec![label(
+                "Use an app password if your provider offers one. Google Calendar needs its sign in or a calendar link instead.",
+                12.,
+                MUTED,
+            )],
+        ));
+        if !editor.caldav_found.is_empty() {
+            rows.push(label("Choose calendars to add", 14., FG));
+            for (index, calendar) in editor.caldav_found.iter().enumerate() {
+                let on = editor.caldav_picked.get(index).copied().unwrap_or(false);
+                rows.push(split(
+                    label(calendar.name.clone(), 14., FG),
+                    container(
+                        toggler(on).on_toggle(move |on| message(Account::PickCalendar(index, on))),
+                    )
+                    .id(cosmic::widget::Id::new(format!(
+                        "calendar-caldav-pick-{index}"
+                    )))
+                    .into(),
+                ));
+            }
+            let picked = editor.caldav_picked.iter().filter(|on| **on).count();
+            let free = editor.free_slots();
+            if picked > free {
+                rows.push(label(
+                    format!("You can add {free} more. Halcyon shows up to eight calendars."),
+                    12.,
+                    Color::from_rgb8(245, 190, 107),
+                ));
+            }
+            if replaces {
+                rows.push(label(REPLACES_GOOGLE, 12., MUTED));
+            }
+            rows.push(
+                row::with_children(vec![
+                    button::standard("Add calendars")
+                        .id(cosmic::widget::Id::new("calendar-caldav-add"))
+                        .on_press_maybe(
+                            (picked > 0 && picked <= free).then_some(message(Account::AddCalDav)),
+                        )
+                        .into(),
+                    button::text("Cancel")
+                        .on_press(message(Account::CalDavForm(false)))
+                        .into(),
+                ])
+                .spacing(8)
+                .wrap()
+                .into(),
+            );
+        } else {
+            rows.push(
+                row::with_children(vec![
+                    button::standard(if editor.caldav_searching {
+                        "Finding calendars…"
+                    } else {
+                        "Find calendars"
+                    })
+                    .id(cosmic::widget::Id::new("calendar-caldav-find"))
+                    .on_press_maybe(find)
+                    .into(),
+                    button::text("Cancel")
+                        .on_press(message(Account::CalDavForm(false)))
+                        .into(),
+                    self.help(
+                        "calendar-caldav-privacy",
+                        "Your password",
+                        "The server, username and password are saved in your system keyring and sent only to that server.",
+                    ),
+                ])
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .wrap()
+                .into(),
+            );
+        }
+        rows
+    }
+    /// The calendars found in a chosen folder, each with a switch.
+    fn calendar_folder_form(&self, replaces: bool) -> Vec<Element<'_, Message>> {
+        let editor = &self.calendar;
+        let message = |value| Message::Calendar(value);
+        let found = editor.folder_found.len();
+        let mut rows: Vec<Element<'_, Message>> = vec![detail_state(
+            "Calendar folder",
+            if found == 1 {
+                "1 calendar found".to_string()
+            } else {
+                format!("{found} calendars found")
+            },
+        )];
+        for (index, calendar) in editor.folder_found.iter().enumerate() {
+            let on = editor.folder_picked.get(index).copied().unwrap_or(false);
+            rows.push(split(
+                label(calendar.name.clone(), 14., FG),
+                container(toggler(on).on_toggle(move |on| message(Account::PickFolder(index, on))))
+                    .id(cosmic::widget::Id::new(format!(
+                        "calendar-folder-pick-{index}"
+                    )))
+                    .into(),
+            ));
+        }
+        rows.push(label(
+            "Halcyon reads the folder again whenever its files change.",
+            12.,
+            MUTED,
+        ));
+        let picked = editor.folder_picked.iter().filter(|on| **on).count();
+        let free = editor.free_slots();
+        if picked > free {
+            rows.push(label(
+                format!("You can add {free} more. Halcyon shows up to eight calendars."),
+                12.,
+                Color::from_rgb8(245, 190, 107),
+            ));
+        }
+        if replaces {
+            rows.push(label(REPLACES_GOOGLE, 12., MUTED));
+        }
+        rows.push(
+            row::with_children(vec![
+                button::standard(if picked > 1 {
+                    "Add calendars"
+                } else {
+                    "Add calendar"
+                })
+                .id(cosmic::widget::Id::new("calendar-folder-add"))
+                .on_press_maybe(
+                    (picked > 0 && picked <= free).then_some(message(Account::AddFolders)),
+                )
+                .into(),
+                button::text("Cancel")
+                    .on_press(message(Account::CancelFolder))
+                    .into(),
+            ])
+            .spacing(8)
+            .wrap()
+            .into(),
+        );
+        rows
+    }
+    /// A country picker for a public holiday calendar.
+    fn calendar_holidays_form(&self, replaces: bool) -> Vec<Element<'_, Message>> {
+        let editor = &self.calendar;
+        let message = |value| Message::Calendar(value);
+        let mut rows: Vec<Element<'_, Message>> = vec![
+            detail_state(
+                "Public holidays",
+                "Shown in a muted color behind your own events.",
+            ),
+            super::focus::control(
+                Some("Country".to_owned()),
+                None,
+                container(cosmic::widget::dropdown(
+                    crate::calendar::holidays::LABELS.as_slice(),
+                    editor.holidays_country,
+                    |index| Message::Calendar(Account::HolidaysCountry(index)),
+                ))
+                .id("calendar-holidays-country")
+                .into(),
+            ),
+        ];
+        if replaces {
+            rows.push(label(REPLACES_GOOGLE, 12., MUTED));
+        }
+        rows.push(
+            row::with_children(vec![
+                button::standard("Add calendar")
+                    .id(cosmic::widget::Id::new("calendar-holidays-add"))
+                    .on_press_maybe(
+                        editor
+                            .holidays_country
+                            .map(|_| message(Account::AddHolidays)),
+                    )
+                    .into(),
+                button::text("Cancel")
+                    .on_press(message(Account::HolidaysForm(false)))
+                    .into(),
+                self.help(
+                    "calendar-holidays-privacy",
+                    "Where holidays come from",
+                    "Holiday calendars are public files kept by Thunderbird. Halcyon downloads them from thunderbird.net like any calendar link.",
+                ),
+            ])
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .wrap()
+            .into(),
+        );
+        rows
     }
     fn calendar_subscription_guide(&self) -> Element<'_, Message> {
         let provider = self.calendar.subscription_provider;

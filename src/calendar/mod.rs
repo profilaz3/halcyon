@@ -2,15 +2,34 @@
 //! configuration and profiles contain no credentials. A legacy connection is
 //! recognized only for an existing installation with its own calendar cache.
 mod auth;
+mod caldav;
+mod eds;
+mod folder;
 mod google;
+pub mod holidays;
+mod http;
 mod keyring;
 mod store;
 mod subscription;
+pub use caldav::{CalDavCalendar, discover as discover_caldav};
+pub use folder::{FolderCalendar, discover as discover_folder};
+pub use http::{Login, plain_local};
 pub(crate) use subscription::parser_main;
-pub use subscription::{SecretText, add_subscription, remove_subscription};
+pub use subscription::{
+    SecretText, add_caldav, add_file, add_folders, add_holidays, add_subscription,
+    remove_subscription,
+};
+#[cfg(test)]
+mod caldav_tests;
 #[cfg(test)]
 mod tests;
 pub use auth::{Authorization, begin_sign_in, finish_sign_in};
+pub use eds::{
+    SystemCalendar, is_system, online_accounts_app, open_online_accounts, set_system_calendar,
+    system_available, system_calendars,
+};
+/// Calendars of every kind share one list of at most eight.
+pub const MAX_CALENDARS: usize = 8;
 pub use google::CalendarChoice;
 pub use store::cached as store_cached;
 pub use store::{
@@ -65,6 +84,48 @@ pub struct Connection {
     pub selections: Vec<CalendarChoice>,
     /// Non-secret subscription labels and opaque IDs; URLs live in the keyring.
     pub subscriptions: Vec<CalendarChoice>,
+    /// What each subscription is. Missing entries, as in connections saved
+    /// before CalDAV support, are calendar links. Only file paths are kept here.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<Source>,
+}
+/// The kind of a calendar in the subscription list.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceKind {
+    /// An iCalendar link, with or without a password.
+    #[default]
+    Link,
+    /// A calendar on a CalDAV account.
+    CalDav,
+    /// A public holiday link, shown in a muted color.
+    Holidays,
+    /// One .ics file on this computer.
+    File,
+    /// A folder of .ics files, as vdirsyncer and khal keep them.
+    Folder,
+    /// A calendar from a system account, read through Evolution Data
+    /// Server. Only its UID (in the calendar ID), name and color are kept.
+    System,
+}
+impl SourceKind {
+    /// Whether this kind keeps its address and login in the keyring entry.
+    /// Kinds that don't keep a path in `Source` instead.
+    pub fn uses_keyring(&self) -> bool {
+        match self {
+            Self::Link | Self::CalDav | Self::Holidays => true,
+            Self::File | Self::Folder | Self::System => false,
+        }
+    }
+}
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Source {
+    pub id: String,
+    pub kind: SourceKind,
+    /// A local .ics file. Not a secret, but never part of usage reports.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<std::path::PathBuf>,
 }
 impl Connection {
     pub fn connected(&self) -> bool {
@@ -84,6 +145,37 @@ impl Connection {
         } else {
             self.selections.clone()
         }
+    }
+    pub fn source_kind(&self, id: &str) -> SourceKind {
+        self.sources
+            .iter()
+            .find(|s| s.id == id)
+            .map(|s| s.kind.clone())
+            .unwrap_or_else(|| {
+                if is_system(id) {
+                    SourceKind::System
+                } else {
+                    SourceKind::Link
+                }
+            })
+    }
+    /// Calendar files to watch for changes.
+    pub fn calendar_files(&self) -> Vec<std::path::PathBuf> {
+        self.paths(SourceKind::File)
+    }
+    /// Calendar folders to watch for changes.
+    pub fn calendar_folders(&self) -> Vec<std::path::PathBuf> {
+        self.paths(SourceKind::Folder)
+    }
+    fn paths(&self, kind: SourceKind) -> Vec<std::path::PathBuf> {
+        if self.backend != Backend::Subscription {
+            return vec![];
+        }
+        self.sources
+            .iter()
+            .filter(|s| s.kind == kind)
+            .filter_map(|s| s.path.clone())
+            .collect()
     }
     pub fn web_url(&self) -> String {
         if self.backend == Backend::Subscription {
@@ -119,6 +211,16 @@ pub enum Problem {
     FeedUrl,
     FeedTimezone,
     FeedLimit,
+    Credentials,
+    NotCalDav,
+    NoCalendars,
+    PublicHttp,
+    InsecureRedirect,
+    CalendarFile,
+    Duplicate,
+    EmptyFolder,
+    SystemUnavailable,
+    CalendarLimit,
 }
 impl Problem {
     pub fn message(&self) -> &'static str {
@@ -161,6 +263,24 @@ impl Problem {
                 "This calendar is too large or has an unsupported recurrence. Your previous events were kept."
             }
             Self::Preview => "Account changes are unavailable in preview mode.",
+            Self::Credentials => "The server did not accept the username or password.",
+            Self::NotCalDav => {
+                "This address does not offer CalDAV. Check the server address, or enter the full CalDAV address from your provider."
+            }
+            Self::NoCalendars => "No calendars with events were found on this account.",
+            Self::PublicHttp => {
+                "Plain http only works for servers on your network. Use an https address."
+            }
+            Self::InsecureRedirect => {
+                "The server tried to switch to an unencrypted connection, so Halcyon stopped."
+            }
+            Self::CalendarFile => {
+                "Could not read this calendar file. Check that it still exists and is an .ics file."
+            }
+            Self::Duplicate => "This calendar is already in your list.",
+            Self::EmptyFolder => "This folder has no .ics calendar files.",
+            Self::SystemUnavailable => "System calendars are not available.",
+            Self::CalendarLimit => "You can show up to eight calendars. Remove one to add another.",
         }
     }
 }

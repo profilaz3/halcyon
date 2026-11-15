@@ -2,6 +2,7 @@ mod activate;
 mod adaptive;
 mod automation;
 mod calendar;
+mod calendar_system;
 mod canvas;
 mod changes;
 mod clock_gallery;

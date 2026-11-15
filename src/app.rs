@@ -681,6 +681,20 @@ impl cosmic::Application for Cards {
             .chain(self.automator.paths())
             .collect();
         subscriptions.push(crate::watch::files(paths).map(|_| Message::FilesChanged));
+        // Calendar files are read again when they change on disk.
+        let calendar_files = self.calendar_connection.calendar_files();
+        if !calendar_files.is_empty() && !self.calendar_preview {
+            subscriptions.push(
+                crate::watch::read_only_files(calendar_files).map(|_| Message::RefreshCalendar),
+            );
+        }
+        // Calendar folders, such as the ones vdirsyncer keeps in sync.
+        let calendar_folders = self.calendar_connection.calendar_folders();
+        if !calendar_folders.is_empty() && !self.calendar_preview {
+            subscriptions.push(
+                crate::watch::calendar_folders(calendar_folders).map(|_| Message::RefreshCalendar),
+            );
+        }
         // The same files Settings watches for Accessibility › Reduce motion.
         if let Some(dir) = dirs::config_dir() {
             subscriptions.push(
