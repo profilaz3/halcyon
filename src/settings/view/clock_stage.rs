@@ -273,6 +273,27 @@ impl Settings {
                 );
                 let at = stage::to_stage(at, scale);
                 layers.push(pin(body).position(Point::new(at[0], at[1])).into());
+            } else if let Some((position, card)) = self.clock_stage_overview() {
+                // Daily overview carries the time: its clock and date, where
+                // the overview sits. It is moved on the Daily overview page.
+                let (clock, tall) = crate::app::settings_overview_clock_at(
+                    &self.config,
+                    card[0],
+                    chrono::Local::now().naive_local(),
+                );
+                let source = [card[0], tall.min(card[1]).max(1.)];
+                let shown = source.map(|v| v * scale);
+                let at = stage::to_stage(screen.on_output(position), scale);
+                layers.push(
+                    pin(container(super::sample::thumbnail(
+                        clock.map(|_| Message::Preview),
+                        source,
+                        shown,
+                    ))
+                    .id(cosmic::widget::Id::new(stage::OVERVIEW_ID)))
+                    .position(Point::new(at[0], at[1]))
+                    .into(),
+                );
             }
             // A thin frame, like the edge of a screen.
             layers.push(

@@ -101,6 +101,15 @@ pub(crate) fn settings_recipe_preview(
     }
 }
 
+/// Daily overview's clock and date, `width` wide, and its height.
+pub(crate) fn settings_overview_clock_at(
+    config: &Config,
+    width: f32,
+    now: chrono::NaiveDateTime,
+) -> (cosmic::Element<'static, Message>, f32) {
+    glance::overview_clock(config, width, now)
+}
+
 pub(crate) fn settings_clock_face_rows(
     config: &Config,
     size: [f32; 2],

@@ -353,6 +353,17 @@ impl Settings {
         Screen::of(self.placement.preview_snapshot())
     }
     /// The clock's place in the area widgets use: position and size.
+    /// Where Daily overview sits and its size, when it shows the time in
+    /// place of the clock.
+    pub(super) fn clock_stage_overview(&self) -> Option<([f32; 2], [f32; 2])> {
+        let key = Widget::Glance.key();
+        (self.config.glance.show_clock && self.config.widget_visible(Widget::Glance))
+            .then_some(())?;
+        Some((
+            self.placement.widget_position(key)?,
+            self.placement.display_size(key)?,
+        ))
+    }
     pub(super) fn clock_stage_place(&self) -> Option<([f32; 2], [f32; 2])> {
         Some((
             self.placement.widget_position(Widget::Clock.key())?,
@@ -716,6 +727,8 @@ pub(super) fn focus_check() -> Task<Message> {
 }
 
 pub(super) const CLOCK_ID: &str = "clock-stage-clock";
+/// Daily overview's clock on the stage, when it carries the time.
+pub(super) const OVERVIEW_ID: &str = "clock-stage-overview";
 /// The stage's picture of the whole output.
 pub(super) const SCREEN_ID: &str = "clock-stage-screen";
 
