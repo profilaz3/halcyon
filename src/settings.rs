@@ -11272,17 +11272,21 @@ mod tests {
         }
         send_settings(&mut app, Message::Resized(size));
 
+        // Every face stands behind the scene: none blocks it.
+        for face in ClockFace::ALL {
+            send_settings(&mut app, Message::ClockFace(Some(face)));
+            assert!(!app.error, "{}", app.status);
+            assert!(app.depth_block().is_none(), "{face:?}");
+            assert!(lighting(&app, &mut Native::new(size)), "{face:?}");
+        }
+        send_settings(&mut app, Message::ClockFace(Some(ClockFace::Digital)));
+
         // Each block names itself; its button removes exactly that block.
-        let cases: [(Message, &str, fn(&Config) -> bool); 4] = [
+        let cases: [(Message, &str, fn(&Config) -> bool); 3] = [
             (
                 Message::Widget(Widget::Glance, true),
                 "Daily overview shows the time instead",
                 |c| !c.glance.enabled,
-            ),
-            (
-                Message::ClockFace(Some(ClockFace::Analog)),
-                "Needs the digital type",
-                |c| c.clock.face == Some(ClockFace::Digital),
             ),
             (
                 Message::ClockSurface(Some(ClockSurface::Panel)),

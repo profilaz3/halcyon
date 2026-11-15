@@ -66,15 +66,18 @@ fn fb15_precedence_reset_and_readability_keep_base_clock_intact() {
     assert_eq!(c.moment_clock(), base);
 }
 #[test]
-fn fb15_depth_falls_back_for_analog_moment_and_returns_on_reset() {
+fn fb15_depth_falls_back_for_a_moment_card_and_returns_on_reset() {
     let mut c = Config::default();
     c.clock.depth = true;
     c.clock.surface = Some(ClockSurface::None);
     c.moments.active = Some(Phase::Day);
     assert!(crate::depth::eligible(&c));
+    // Every face stands behind the scene; a moment's card does not.
     c.moments.day.clock.face = Some(ClockFace::Analog);
+    assert!(crate::depth::eligible(&c));
+    c.moments.day.clock.surface = Some(ClockSurface::Panel);
     assert!(!crate::depth::eligible(&c));
-    c.moments.day.clock.face = None;
+    c.moments.day.clock.surface = None;
     assert!(crate::depth::eligible(&c));
     assert!(c.clock.depth);
 }

@@ -204,13 +204,12 @@ pub fn behind_glass(config: &Config) -> bool {
 }
 
 pub fn eligible(config: &Config) -> bool {
-    use crate::widget_style::resolver::{ClockFace, Surface};
+    use crate::widget_style::resolver::Surface;
     let _scope = crate::widget_style::scope(config);
     let style = crate::widget_style::presentation(config, config.wallpaper_palette(), true);
     config.clock.depth
         && config.recipes.clock.is_none()
         && !config.glance.enabled
-        && style.clock_face.value == ClockFace::Digital
         && style.surface.value == Surface::None
         && !config.appearance.contrast_assist
 }
@@ -465,17 +464,31 @@ fn cut(
     matte: &Matte,
 ) -> Option<Pixels> {
     let (mut pixels, face) = drawn;
-    let face_ink = |pixels: &Pixels| -> u64 {
-        pixels
-            .rgba
-            .chunks_exact(4)
-            .enumerate()
-            .filter(|(i, _)| {
-                let y = (*i as u32 / pixels.width) as f32 / request.frame.scale;
-                y >= face[0] && y < face[1]
-            })
-            .map(|(_, p)| u64::from(p[3]))
-            .sum()
+    // The face's lines: the time on one line, or hours over minutes and
+    // the two lines of words, each of which has to stay readable.
+    let lines: Vec<[f32; 2]> = {
+        use crate::widget_style::resolver::ClockFace;
+        let _scope = crate::widget_style::scope(config);
+        let style = crate::widget_style::presentation(config, config.wallpaper_palette(), true);
+        if matches!(
+            style.clock_face.value,
+            ClockFace::Stacked | ClockFace::Words
+        ) {
+            let middle = (face[0] + face[1]) / 2.;
+            vec![[face[0], middle], [middle, face[1]]]
+        } else {
+            vec![face]
+        }
+    };
+    let face_ink = |pixels: &Pixels| -> Vec<u64> {
+        let mut ink = vec![0; lines.len()];
+        for (i, p) in pixels.rgba.chunks_exact(4).enumerate() {
+            let y = (i as u32 / pixels.width) as f32 / request.frame.scale;
+            if let Some(line) = lines.iter().position(|line| y >= line[0] && y < line[1]) {
+                ink[line] += u64::from(p[3]);
+            }
+        }
+        ink
     };
     let before = face_ink(&pixels);
     let recipe = config.clock.lighting.recipe();
@@ -495,7 +508,11 @@ fn cut(
     let after = face_ink(&pixels);
     // Keep the time readable. A clock moved mostly into the foreground uses
     // its plain presentation instead of becoming an invisible widget.
-    if before == 0 || after * 100 < before * 55 {
+    if before
+        .iter()
+        .zip(&after)
+        .any(|(before, after)| *before == 0 || after * 100 < before * 55)
+    {
         return None;
     }
     // Lighting only recolours what the matte left visible. If it cannot run,
