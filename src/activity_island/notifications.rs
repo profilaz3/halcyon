@@ -10,7 +10,7 @@ use cosmic::iced::{
     futures::{SinkExt, StreamExt},
 };
 use std::collections::HashMap;
-use tokio::sync::OnceCell;
+use std::time::Duration;
 use zbus::zvariant::{OwnedValue, Value};
 
 /// Newest first; older notifications fall off the end.
@@ -76,44 +76,97 @@ pub enum Event {
     Expired(u32),
 }
 
-static PANEL: OnceCell<Option<zbus::Connection>> = OnceCell::const_new();
-static SESSION: OnceCell<Option<zbus::Connection>> = OnceCell::const_new();
+/// The last connections that worked. A failed attempt is never kept, so
+/// the next use tries again.
+static PANEL: std::sync::Mutex<Option<zbus::Connection>> = std::sync::Mutex::new(None);
+static SESSION: std::sync::Mutex<Option<zbus::Connection>> = std::sync::Mutex::new(None);
 
-/// The panel connection, set up once per process. The descriptor is
-/// duplicated, so a wrong number can never close something else's file.
+fn kept(slot: &std::sync::Mutex<Option<zbus::Connection>>) -> Option<zbus::Connection> {
+    slot.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+fn keep(slot: &std::sync::Mutex<Option<zbus::Connection>>, connection: Option<zbus::Connection>) {
+    *slot.lock().unwrap_or_else(|e| e.into_inner()) = connection;
+}
+
+/// Why the panel connection could not be made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Unreachable {
+    /// The panel handed this process no connection: nothing to retry.
+    NotHanded,
+    /// The connection is there but did not answer: worth trying again.
+    Failed,
+}
+
+/// A new panel connection. The descriptor is duplicated, so a wrong number
+/// can never close something else's file.
+async fn connect_panel() -> Result<zbus::Connection, Unreachable> {
+    let raw: i32 = std::env::var("COSMIC_NOTIFICATIONS")
+        .ok()
+        .and_then(|raw| raw.parse().ok())
+        .filter(|raw| *raw > 2)
+        .ok_or(Unreachable::NotHanded)?;
+    // SAFETY: the panel opened this descriptor for us and it stays open for
+    // the life of the process; we only borrow it to dup it.
+    let fd = unsafe { std::os::fd::BorrowedFd::borrow_raw(raw) }
+        .try_clone_to_owned()
+        .map_err(|_| Unreachable::NotHanded)?;
+    let stream = std::os::unix::net::UnixStream::from(fd);
+    // Not a socket: refuse instead of speaking D-Bus to a file.
+    stream.peer_addr().map_err(|_| Unreachable::NotHanded)?;
+    stream
+        .set_nonblocking(true)
+        .map_err(|_| Unreachable::Failed)?;
+    let stream = tokio::net::UnixStream::from_std(stream).map_err(|_| Unreachable::Failed)?;
+    let connection = tokio::time::timeout(
+        Duration::from_secs(5),
+        zbus::connection::Builder::unix_stream(stream).p2p().build(),
+    )
+    .await
+    .map_err(|_| Unreachable::Failed)?
+    .map_err(|_| Unreachable::Failed)?;
+    keep(&PANEL, Some(connection.clone()));
+    Ok(connection)
+}
+async fn connect_session() -> Option<zbus::Connection> {
+    let connection = zbus::Connection::session().await.ok()?;
+    keep(&SESSION, Some(connection.clone()));
+    Some(connection)
+}
 async fn panel() -> Option<zbus::Connection> {
-    PANEL
-        .get_or_init(|| async {
-            let raw: i32 = std::env::var("COSMIC_NOTIFICATIONS").ok()?.parse().ok()?;
-            if raw <= 2 {
-                return None;
-            }
-            // SAFETY: the panel opened this descriptor for us and it stays
-            // open for the life of the process; we only borrow it to dup it.
-            let fd = unsafe { std::os::fd::BorrowedFd::borrow_raw(raw) }
-                .try_clone_to_owned()
-                .ok()?;
-            let stream = std::os::unix::net::UnixStream::from(fd);
-            // Not a socket: refuse instead of speaking D-Bus to a file.
-            stream.peer_addr().ok()?;
-            stream.set_nonblocking(true).ok()?;
-            let stream = tokio::net::UnixStream::from_std(stream).ok()?;
-            tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                zbus::connection::Builder::unix_stream(stream).p2p().build(),
-            )
-            .await
-            .ok()?
-            .ok()
-        })
-        .await
-        .clone()
+    match kept(&PANEL) {
+        Some(connection) => Some(connection),
+        None => connect_panel().await.ok(),
+    }
 }
 async fn session() -> Option<zbus::Connection> {
-    SESSION
-        .get_or_init(|| async { zbus::Connection::session().await.ok() })
-        .await
-        .clone()
+    match kept(&SESSION) {
+        Some(connection) => Some(connection),
+        None => connect_session().await,
+    }
+}
+
+/// The waits between tries to reach a connection again: doubling from
+/// `first` up to a minute, and short again after a connection that held.
+#[derive(Debug, Clone, Copy)]
+struct Backoff {
+    first: Duration,
+    next: Duration,
+}
+impl Backoff {
+    const LONGEST: Duration = Duration::from_secs(60);
+    /// A connection up this long counts as having held.
+    const HELD: Duration = Duration::from_secs(30);
+    fn new(first: Duration) -> Self {
+        Self { first, next: first }
+    }
+    fn wait(&mut self) -> Duration {
+        let wait = self.next;
+        self.next = (wait * 2).min(Self::LONGEST.max(self.first));
+        wait
+    }
+    fn reset(&mut self) {
+        self.next = self.first;
+    }
 }
 
 pub fn subscription() -> Subscription<Event> {
@@ -122,51 +175,118 @@ pub fn subscription() -> Subscription<Event> {
     }
     Subscription::run_with((), |_| {
         cosmic::iced::stream::channel(32, async |mut out| {
-            let Some(panel) = panel().await else {
-                let _ = out.send(Event::Ready(false)).await;
-                return std::future::pending().await;
-            };
-            let mut notify = zbus::MessageStream::from(&panel);
-            let mut closed = match session().await {
-                Some(session) => closed_stream(&session).await,
-                None => None,
-            };
-            if out.send(Event::Ready(true)).await.is_err() {
-                return;
-            }
-            loop {
-                let event = tokio::select! {
-                    message = notify.next() => match message {
-                        Some(Ok(message)) => parse(&message).map(Event::Notify),
-                        Some(Err(_)) => None,
-                        None => {
-                            let _ = out.send(Event::Ready(false)).await;
-                            break;
-                        }
-                    },
-                    message = async {
-                        match closed.as_mut() {
-                            Some(stream) => stream.next().await,
-                            None => std::future::pending().await,
-                        }
-                    } => match message {
-                        Some(Ok(message)) => closed_event(&message),
-                        Some(Err(_)) => None,
-                        None => {
-                            closed = None;
-                            None
-                        }
-                    },
-                };
-                if let Some(event) = event
-                    && out.send(event).await.is_err()
-                {
-                    break;
-                }
-            }
+            run(
+                &mut out,
+                connect_panel,
+                || async {
+                    keep(&SESSION, None);
+                    connect_session().await
+                },
+                Backoff::new(Duration::from_secs(1)),
+            )
+            .await;
             std::future::pending().await
         })
     })
+}
+
+/// Follows the panel connection, and the session bus for closed
+/// notifications, reaching each again with backoff when it fails or drops.
+/// Returns only when nobody listens any more.
+async fn run<P, PF, S, SF>(
+    out: &mut cosmic::iced::futures::channel::mpsc::Sender<Event>,
+    mut connect_panel: P,
+    mut connect_session: S,
+    backoff: Backoff,
+) where
+    P: FnMut() -> PF,
+    PF: std::future::Future<Output = Result<zbus::Connection, Unreachable>>,
+    S: FnMut() -> SF,
+    SF: std::future::Future<Output = Option<zbus::Connection>>,
+{
+    let mut panel_backoff = backoff;
+    let mut ready = None;
+    loop {
+        let panel = match connect_panel().await {
+            Ok(panel) => panel,
+            Err(why) => {
+                if ready != Some(false) {
+                    ready = Some(false);
+                    if out.send(Event::Ready(false)).await.is_err() {
+                        return;
+                    }
+                }
+                if why == Unreachable::NotHanded {
+                    return std::future::pending().await;
+                }
+                tokio::time::sleep(panel_backoff.wait()).await;
+                continue;
+            }
+        };
+        let mut notify = zbus::MessageStream::from(&panel);
+        let mut session_backoff = backoff;
+        let mut closed: Option<zbus::MessageStream> = None;
+        // Ask for the session bus right away, then after each wait.
+        let mut session_at = Some(tokio::time::Instant::now());
+        ready = Some(true);
+        if out.send(Event::Ready(true)).await.is_err() {
+            return;
+        }
+        let up = tokio::time::Instant::now();
+        loop {
+            let event = tokio::select! {
+                message = notify.next() => match message {
+                    Some(Ok(message)) => parse(&message).map(Event::Notify),
+                    Some(Err(_)) => None,
+                    None => break,
+                },
+                message = async {
+                    match closed.as_mut() {
+                        Some(stream) => stream.next().await,
+                        None => std::future::pending().await,
+                    }
+                } => match message {
+                    Some(Ok(message)) => closed_event(&message),
+                    Some(Err(_)) => None,
+                    None => {
+                        closed = None;
+                        session_at = Some(tokio::time::Instant::now() + session_backoff.wait());
+                        None
+                    }
+                },
+                () = async {
+                    match session_at {
+                        Some(at) => tokio::time::sleep_until(at).await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    closed = match connect_session().await {
+                        Some(session) => closed_stream(&session).await,
+                        None => None,
+                    };
+                    session_at = closed
+                        .is_none()
+                        .then(|| tokio::time::Instant::now() + session_backoff.wait());
+                    None
+                }
+            };
+            if let Some(event) = event
+                && out.send(event).await.is_err()
+            {
+                return;
+            }
+        }
+        // The panel connection dropped: say so, and reach it again.
+        keep(&PANEL, None);
+        ready = Some(false);
+        if out.send(Event::Ready(false)).await.is_err() {
+            return;
+        }
+        if up.elapsed() >= Backoff::HELD {
+            panel_backoff.reset();
+        }
+        tokio::time::sleep(panel_backoff.wait()).await;
+    }
 }
 async fn closed_stream(session: &zbus::Connection) -> Option<zbus::MessageStream> {
     let rule = zbus::MatchRule::builder()
@@ -316,7 +436,13 @@ pub(super) fn clean(text: &str, limit: usize) -> String {
         out.push_str(word);
     }
     if out.chars().count() > limit {
-        out = out.chars().take(limit - 1).collect::<String>().trim_end().to_owned() + "…";
+        out = out
+            .chars()
+            .take(limit - 1)
+            .collect::<String>()
+            .trim_end()
+            .to_owned()
+            + "…";
     }
     out
 }
@@ -326,7 +452,13 @@ pub async fn invoke(id: u32, action: String) -> Result<(), String> {
     let panel = panel().await.ok_or("Notifications are unavailable")?;
     tokio::time::timeout(
         std::time::Duration::from_secs(3),
-        panel.call_method(None::<&str>, PATH, Some(INTERFACE), "InvokeAction", &(id, action.as_str())),
+        panel.call_method(
+            None::<&str>,
+            PATH,
+            Some(INTERFACE),
+            "InvokeAction",
+            &(id, action.as_str()),
+        ),
     )
     .await
     .ok()
@@ -401,10 +533,107 @@ pub async fn dismiss(ids: Vec<u32>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// A connected pair as the panel hands over: the daemon's end and ours.
+    async fn handed() -> (zbus::Connection, zbus::Connection) {
+        let (daemon, ours) = tokio::net::UnixStream::pair().unwrap();
+        let guid = zbus::Guid::generate();
+        let (daemon, ours) = tokio::join!(
+            zbus::connection::Builder::unix_stream(daemon)
+                .server(guid)
+                .unwrap()
+                .p2p()
+                .build(),
+            zbus::connection::Builder::unix_stream(ours).p2p().build(),
+        );
+        (daemon.unwrap(), ours.unwrap())
+    }
+    async fn notify(daemon: &zbus::Connection, id: u32, title: &str) {
+        let hints: HashMap<String, OwnedValue> = HashMap::new();
+        daemon
+            .emit_signal(
+                None::<()>,
+                PATH,
+                INTERFACE,
+                "Notify",
+                &("app", id, "", title, "", Vec::<String>::new(), hints, 0_i32),
+            )
+            .await
+            .unwrap();
+    }
+    #[tokio::test]
+    async fn d7_the_notification_connection_comes_back_after_failing_or_dropping() {
+        use cosmic::iced::futures::channel::mpsc;
+        let (first, ours) = handed().await;
+        let (second, ours_again) = handed().await;
+        let mut handouts = vec![
+            Ok(ours_again),
+            Ok(ours),
+            Err(Unreachable::Failed),
+            Err(Unreachable::Failed),
+        ];
+        let sessions = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let asked = sessions.clone();
+        let (mut out, mut events) = mpsc::channel(32);
+        let runner = tokio::spawn(async move {
+            run(
+                &mut out,
+                move || {
+                    let next = handouts.pop().unwrap_or(Err(Unreachable::Failed));
+                    async move { next }
+                },
+                move || {
+                    asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    async { None }
+                },
+                Backoff::new(Duration::from_millis(5)),
+            )
+            .await;
+        });
+        let next = async |events: &mut mpsc::Receiver<Event>| {
+            tokio::time::timeout(Duration::from_secs(5), events.next())
+                .await
+                .expect("an event in time")
+                .unwrap()
+        };
+        // Two failed tries say "not ready" once, then the connection is up.
+        assert!(matches!(next(&mut events).await, Event::Ready(false)));
+        assert!(matches!(next(&mut events).await, Event::Ready(true)));
+        notify(&first, 1, "Build finished").await;
+        assert!(matches!(next(&mut events).await, Event::Notify(n) if n.title == "Build finished"));
+        // The daemon's end goes away: not ready, then a new connection.
+        drop(first);
+        assert!(matches!(next(&mut events).await, Event::Ready(false)));
+        assert!(matches!(next(&mut events).await, Event::Ready(true)));
+        notify(&second, 2, "Still here").await;
+        assert!(matches!(next(&mut events).await, Event::Notify(n) if n.title == "Still here"));
+        // The session bus was asked for again after failing, with waits.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let tries = sessions.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(tries >= 3, "session asked {tries} times");
+        assert!(tries < 40, "session asked {tries} times: no backoff");
+        // Nobody listens any more: it stops.
+        drop(events);
+        drop(second);
+        tokio::time::timeout(Duration::from_secs(5), runner)
+            .await
+            .expect("stops when nobody listens")
+            .unwrap();
+    }
+    #[test]
+    fn d7_backoff_doubles_to_a_minute_and_starts_over() {
+        let mut backoff = Backoff::new(Duration::from_secs(1));
+        let waits: Vec<_> = (0..9).map(|_| backoff.wait().as_secs()).collect();
+        assert_eq!(waits, [1, 2, 4, 8, 16, 32, 60, 60, 60]);
+        backoff.reset();
+        assert_eq!(backoff.wait(), Duration::from_secs(1));
+    }
     #[test]
     fn markup_is_flattened_and_bounded() {
         assert_eq!(
-            clean("<b>Build</b> &amp; deploy\n  finished <a href=\"x\">log</a>", 80),
+            clean(
+                "<b>Build</b> &amp; deploy\n  finished <a href=\"x\">log</a>",
+                80
+            ),
             "Build & deploy finished log"
         );
         assert_eq!(clean("abcdefghij", 5), "abcd…");
@@ -418,9 +647,26 @@ mod tests {
             "desktop-entry".into(),
             OwnedValue::try_from(Value::from("org.gnome.Calendar")).unwrap(),
         );
-        let actions = ["default", "Open", "reply", "Reply", "mark", "Mark as read", "x", "Four"]
-            .map(String::from);
-        let n = note(7, "Calendar", "", "", "Stand-up <i>now</i>", &actions, &hints);
+        let actions = [
+            "default",
+            "Open",
+            "reply",
+            "Reply",
+            "mark",
+            "Mark as read",
+            "x",
+            "Four",
+        ]
+        .map(String::from);
+        let n = note(
+            7,
+            "Calendar",
+            "",
+            "",
+            "Stand-up <i>now</i>",
+            &actions,
+            &hints,
+        );
         assert!(n.urgent && n.default && !n.resident);
         assert_eq!(n.title, "Calendar");
         assert_eq!(n.icon, "org.gnome.Calendar");
@@ -437,7 +683,15 @@ mod tests {
                 ("x".into(), "Four".into())
             ]
         );
-        let n = note(8, "Files", "file:///tmp/a.png", "Copied", "", &[], &HashMap::new());
+        let n = note(
+            8,
+            "Files",
+            "file:///tmp/a.png",
+            "Copied",
+            "",
+            &[],
+            &HashMap::new(),
+        );
         assert_eq!(n.icon, "/tmp/a.png");
         assert!(!n.urgent && !n.low && !n.default);
         let mut hints = HashMap::new();
