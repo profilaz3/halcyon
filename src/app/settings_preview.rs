@@ -209,6 +209,7 @@ impl SettingsSamples {
             projects: None,
             projects_fetching: false,
             projects_error: false,
+            projects_reserved: None,
             next_projects: Instant::now(),
             all_projects: false,
             expanded_projects: Default::default(),

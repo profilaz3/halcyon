@@ -3,6 +3,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
+import argparse
 import json
 import os
 import re
@@ -10,15 +11,27 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 
 SKIP = {'.git', 'node_modules', 'target', 'dist', 'build', 'venv', '.venv', '__pycache__'}
 
 
-def command(args, timeout=4):
-    return subprocess.run(args, capture_output=True, timeout=timeout, check=True).stdout
+# Leave time for JSON output and process cleanup before the app's 25s deadline.
+SCAN_BUDGET = 20
 
 
-def git_command(path, args):
+def remaining(deadline, limit=4):
+    seconds = limit if deadline is None else min(limit, deadline - time.monotonic())
+    if seconds <= 0:
+        raise subprocess.TimeoutExpired('project scan', 0)
+    return seconds
+
+
+def command(args, timeout=4, deadline=None):
+    return subprocess.run(args, capture_output=True, timeout=remaining(deadline, timeout), check=True).stdout
+
+
+def git_command(path, args, deadline=None):
     env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
     env.update(GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_SYSTEM=os.devnull,
                GIT_CONFIG_GLOBAL=os.devnull, GIT_ATTR_NOSYSTEM='1',
@@ -31,13 +44,13 @@ def git_command(path, args):
     for option in options:
         argv.extend(['-c', option])
     return subprocess.run([*argv, '-C', str(path), *args], env=env,
-                          capture_output=True, timeout=4, check=True).stdout
+                          capture_output=True, timeout=remaining(deadline), check=True).stdout
 
 
-def status(path):
-    git_dir = Path(os.fsdecode(git_command(path, ['rev-parse', '--absolute-git-dir'])).rstrip('\n'))
-    common = Path(os.fsdecode(git_command(path, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).rstrip('\n'))
-    config = git_command(path, ['config', '--null', '--list']).split(b'\0')
+def status(path, deadline=None):
+    git_dir = Path(os.fsdecode(git_command(path, ['rev-parse', '--absolute-git-dir'], deadline=deadline)).rstrip('\n'))
+    common = Path(os.fsdecode(git_command(path, ['rev-parse', '--path-format=absolute', '--git-common-dir'], deadline=deadline)).rstrip('\n'))
+    config = git_command(path, ['config', '--null', '--list'], deadline=deadline).split(b'\0')
     settings = []
     for entry in config:
         if not entry:
@@ -75,11 +88,11 @@ def status(path):
         (view / 'config').write_text(''.join(lines), errors='surrogateescape')
         raw = git_command(path, ['--git-dir=' + str(view), '--work-tree=' + str(path),
                                 'status', '--porcelain=v2', '--branch', '-z',
-                                '--untracked-files=normal', '--ignore-submodules=all'])
+                                '--untracked-files=normal', '--ignore-submodules=all'], deadline=deadline)
     return raw, git_dir
 
 
-def discover(roots):
+def discover(roots, deadline=None):
     repos = set()
     for item in roots:
         base = Path(item).expanduser().resolve()
@@ -87,6 +100,8 @@ def discover(roots):
             continue
         visited = 0
         for current, directories, files in os.walk(base):
+            if deadline is not None and time.monotonic() >= deadline:
+                break
             visited += 1
             depth = len(Path(current).relative_to(base).parts)
             if '.git' in directories or '.git' in files:
@@ -101,7 +116,7 @@ def discover(roots):
     # Include linked worktrees so a running branch is not mistaken for the main checkout.
     for repo in sorted(repos):
         try:
-            entries = git_command(repo, ['worktree', 'list', '--porcelain', '-z']).split(b'\0')
+            entries = git_command(repo, ['worktree', 'list', '--porcelain', '-z'], deadline=deadline).split(b'\0')
             for entry in entries:
                 if entry.startswith(b'worktree '):
                     path = Path(os.fsdecode(entry[9:]))
@@ -140,10 +155,10 @@ def parse_status(raw):
     return state
 
 
-def listeners():
+def listeners(deadline=None):
     found = []
     try:
-        rows = command(['ss', '-H', '-ltnp']).decode('utf-8', 'replace').splitlines()
+        rows = command(['ss', '-H', '-ltnp'], deadline=deadline).decode('utf-8', 'replace').splitlines()
     except (OSError, subprocess.SubprocessError):
         return found
     for line in rows:
@@ -212,12 +227,12 @@ def project_title(root):
     return ' '.join(word[0].upper() + word[1:] for word in re.split(r'[-_\s]+', name) if word)
 
 
-def repository(path, sockets):
+def repository(path, sockets, deadline=None):
     path = path.resolve()
     root, identity = path, str(path)
     try:
         common_dir = Path(os.fsdecode(git_command(path,
-            ['rev-parse', '--path-format=absolute', '--git-common-dir']
+            ['rev-parse', '--path-format=absolute', '--git-common-dir'], deadline=deadline
         )).rstrip('\n')).resolve()
         identity = str(common_dir)
         if common_dir.name == '.git':
@@ -228,7 +243,7 @@ def repository(path, sockets):
             root = common_dir
             try:
                 configured = Path(os.fsdecode(git_command(path,
-                    ['config', '--path', '--get', 'core.worktree']
+                    ['config', '--path', '--get', 'core.worktree'], deadline=deadline
                 )).rstrip('\n'))
                 root = configured if configured.is_absolute() else (common_dir / configured).resolve()
             except (OSError, subprocess.SubprocessError, ValueError):
@@ -239,7 +254,7 @@ def repository(path, sockets):
     result = {'path': str(path), 'name': title, 'title': title, 'repository_id': identity,
               'group': root.parent.name, 'error': False, 'servers': []}
     try:
-        raw, git_dir = status(path)
+        raw, git_dir = status(path, deadline=deadline)
         result.update(parse_status(raw))
         result['recent'] = max((p.stat().st_mtime for p in [git_dir / 'index', git_dir / 'HEAD'] if p.exists()), default=0)
     except (OSError, subprocess.SubprocessError, ValueError):
@@ -254,7 +269,8 @@ def repository(path, sockets):
     return result
 
 
-def scan(roots=None):
+def scan(roots=None, budget=SCAN_BUDGET):
+    deadline = time.monotonic() + budget
     # CLI callers may still use the config default. The app passes its immutable
     # request inputs instead of asking this process to re-read mutable settings.
     if roots is None:
@@ -265,14 +281,14 @@ def scan(roots=None):
         except (OSError, ValueError):
             config = {}
         roots = config.get('project_roots', [])
-    paths = discover(roots)
+    paths = discover(roots, deadline=min(deadline, time.monotonic() + 3))
     # Empty/unavailable folders have no project servers to match. Avoid starting
     # ss and walking process metadata on every refresh of an empty widget.
     if not paths:
         return {'updated_at': datetime.now(timezone.utc).isoformat(), 'projects': []}
-    sockets = listeners()
+    sockets = listeners(deadline=min(deadline, time.monotonic() + 1))
     with ThreadPoolExecutor(max_workers=4) as pool:
-        projects = list(pool.map(lambda path: repository(path, sockets), paths))
+        projects = list(pool.map(lambda path: repository(path, sockets, deadline=deadline), paths))
     projects.sort(key=lambda p: (not bool(p['conflicts']), not any(s['web'] for s in p['servers']),
                                  not bool(p['changed'] + p['untracked']), p['error'], -p['recent'], p['title']))
     return {'updated_at': datetime.now(timezone.utc).isoformat(), 'projects': projects}
@@ -290,12 +306,16 @@ def read_roots(stream):
 
 
 if __name__ == '__main__':
-    if sys.argv[1:] == ['--roots-stdin']:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--roots-stdin', action='store_true')
+    parser.add_argument('--budget-seconds', type=float, default=SCAN_BUDGET)
+    args = parser.parse_args()
+    if not 0 < args.budget_seconds <= SCAN_BUDGET:
+        parser.error('Budget must be between 0 and 20 seconds')
+    if args.roots_stdin:
         roots = read_roots(sys.stdin.buffer)
-        result = scan(roots)
+        result = scan(roots, budget=args.budget_seconds)
         result['requested_roots'] = roots
-    elif not sys.argv[1:]:
-        result = scan()
     else:
-        raise SystemExit('Unknown project status arguments')
+        result = scan(budget=args.budget_seconds)
     print(json.dumps(result))

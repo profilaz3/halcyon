@@ -175,8 +175,10 @@ fn picked<'a>(selected: bool) -> Element<'a, Message> {
         icon::from_name("object-select-symbolic")
             .size(12)
             .icon()
-            .class(cosmic::theme::Svg::custom(|_| cosmic::iced::widget::svg::Style {
-                color: Some(Color::from_rgb(0.04, 0.05, 0.1)),
+            .class(cosmic::theme::Svg::custom(|_| {
+                cosmic::iced::widget::svg::Style {
+                    color: Some(Color::from_rgb(0.04, 0.05, 0.1)),
+                }
             })),
     )
     .width(18.)
@@ -207,7 +209,7 @@ fn picker<'a>(
             let ink = if selected {
                 FG
             } else if message.is_none() {
-                Color { a: 0.35, ..MUTED }
+                DIMMED
             } else {
                 MUTED
             };
@@ -275,9 +277,12 @@ impl Settings {
     fn wizard_preview_height(&self) -> f32 {
         let inner = self.wizard_inner_width();
         let left = inner - (inner * 0.40).clamp(340., 420.) - 16.;
-        let screen = self.wizard.as_ref().map_or(self.placement.preview_snapshot().screen, |w| {
-            w.widget_plan(&self.config).snapshot.screen
-        });
+        let screen = self
+            .wizard
+            .as_ref()
+            .map_or(self.placement.preview_snapshot().screen, |w| {
+                w.widget_plan(&self.config).snapshot.screen
+            });
         (left * screen[1] / screen[0].max(1.))
             .min((self.window.height - 300.).clamp(150., 340.))
             .floor()
@@ -737,16 +742,34 @@ impl Settings {
         let accent = self.settings_accent();
         let mut controls = vec![picker(
             vec![
-                ("Keep as they are", keep, Some(go(Step::KeepBars(true))), "wizard-bars-keep".into()),
-                ("Change them", !keep, Some(go(Step::KeepBars(false))), "wizard-bars-custom".into()),
+                (
+                    "Keep as they are",
+                    keep,
+                    Some(go(Step::KeepBars(true))),
+                    "wizard-bars-keep".into(),
+                ),
+                (
+                    "Change them",
+                    !keep,
+                    Some(go(Step::KeepBars(false))),
+                    "wizard-bars-custom".into(),
+                ),
             ],
             accent,
         )];
         let dock_summary = format!(
             "{}, {}, {}",
             bars.dock_shape.title(),
-            if bars.floating { "floating" } else { "on the screen edge" },
-            if bars.hides { "hides until needed" } else { "always shown" }
+            if bars.floating {
+                "floating"
+            } else {
+                "on the screen edge"
+            },
+            if bars.hides {
+                "hides until needed"
+            } else {
+                "always shown"
+            }
         );
         if keep {
             controls.push(group(
@@ -795,7 +818,12 @@ impl Settings {
                         "Islands splits it into floating pieces",
                         picker(
                             vec![
-                                ("Bar", !bars.islands, Some(go(Step::Islands(false))), "wizard-panel-bar".into()),
+                                (
+                                    "Bar",
+                                    !bars.islands,
+                                    Some(go(Step::Islands(false))),
+                                    "wizard-panel-bar".into(),
+                                ),
                                 (
                                     "Islands",
                                     bars.islands,
@@ -806,7 +834,11 @@ impl Settings {
                             accent,
                         ),
                     ),
-                    group_row("Corners", "", shapes(bars.panel_shape, "panel", Step::PanelShape)),
+                    group_row(
+                        "Corners",
+                        "",
+                        shapes(bars.panel_shape, "panel", Step::PanelShape),
+                    ),
                 ],
             ));
             if !islands_ready {
@@ -815,14 +847,28 @@ impl Settings {
             controls.push(group(
                 Some("Dock"),
                 vec![
-                    group_row("Corners", "", shapes(bars.dock_shape, "dock", Step::DockShape)),
+                    group_row(
+                        "Corners",
+                        "",
+                        shapes(bars.dock_shape, "dock", Step::DockShape),
+                    ),
                     group_row(
                         "Position",
                         "",
                         picker(
                             vec![
-                                ("Floating", bars.floating, Some(go(Step::Floating(true))), "wizard-dock-floating".into()),
-                                ("On the edge", !bars.floating, Some(go(Step::Floating(false))), "wizard-dock-attached".into()),
+                                (
+                                    "Floating",
+                                    bars.floating,
+                                    Some(go(Step::Floating(true))),
+                                    "wizard-dock-floating".into(),
+                                ),
+                                (
+                                    "On the edge",
+                                    !bars.floating,
+                                    Some(go(Step::Floating(false))),
+                                    "wizard-dock-attached".into(),
+                                ),
                             ],
                             accent,
                         ),
@@ -832,8 +878,18 @@ impl Settings {
                         "",
                         picker(
                             vec![
-                                ("Always shown", !bars.hides, Some(go(Step::Hides(false))), "wizard-dock-shown".into()),
-                                ("Hides", bars.hides, Some(go(Step::Hides(true))), "wizard-dock-hides".into()),
+                                (
+                                    "Always shown",
+                                    !bars.hides,
+                                    Some(go(Step::Hides(false))),
+                                    "wizard-dock-shown".into(),
+                                ),
+                                (
+                                    "Hides",
+                                    bars.hides,
+                                    Some(go(Step::Hides(true))),
+                                    "wizard-dock-hides".into(),
+                                ),
                             ],
                             accent,
                         ),
@@ -855,7 +911,15 @@ impl Settings {
         super::adaptive::columns(
             column::with_children(vec![
                 self.wizard_bars_preview(wizard),
-                words(if keep { "Your dock and panel now" } else { CAPTION }, 12., SOFT),
+                words(
+                    if keep {
+                        "Your dock and panel now"
+                    } else {
+                        CAPTION
+                    },
+                    12.,
+                    SOFT,
+                ),
             ])
             .spacing(8)
             .align_x(Alignment::Center)

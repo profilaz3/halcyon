@@ -79,9 +79,20 @@ pub(crate) const CAPTION: f32 = 12.;
 /// Ordinary row and body text.
 pub(crate) const BODY: f32 = 14.;
 
+/// Ink for an option that can't be picked right now.
+pub(super) const DIMMED: Color = Color { a: 0.35, ..MUTED };
+
 pub(super) fn text_style(color: Color) -> cosmic::theme::Text {
     if color == FG {
         cosmic::theme::Text::Default
+    } else if color == DIMMED {
+        cosmic::theme::Text::Custom(|theme| cosmic::iced::widget::text::Style {
+            color: Some(Color {
+                a: 0.45,
+                ..theme.cosmic().on_bg_color().into()
+            }),
+            ..Default::default()
+        })
     } else if color == MUTED {
         cosmic::theme::Text::Custom(|theme| cosmic::iced::widget::text::Style {
             color: Some(Color {
@@ -181,10 +192,7 @@ fn detail<'a>(title: impl Into<String>, description: impl Into<String>) -> Eleme
 }
 /// A title with a line under it that is always shown: current state,
 /// values, warnings and the next step.
-fn detail_state<'a>(
-    title: impl Into<String>,
-    state: impl Into<String>,
-) -> Element<'a, Message> {
+fn detail_state<'a>(title: impl Into<String>, state: impl Into<String>) -> Element<'a, Message> {
     let state = state.into();
     let mut lines = vec![label(title, BODY, FG)];
     if !state.is_empty() {
@@ -363,7 +371,7 @@ pub(super) fn segmented<'a>(
             let ink = if selected {
                 FG
             } else if message.is_none() {
-                Color { a: 0.35, ..MUTED }
+                DIMMED
             } else {
                 MUTED
             };
@@ -488,32 +496,34 @@ impl Settings {
     ) -> Element<'a, Message> {
         let open = self.open_sections.contains(key);
         // One child, so the closed section adds no gap under its title.
-        pages::section(vec![column::with_children(vec![
-            button::custom(split(
-                label(title, 14., FG),
-                icon::from_name(if open {
-                    "go-up-symbolic"
-                } else {
-                    "go-down-symbolic"
-                })
-                .size(16)
-                .icon()
+        pages::section(vec![
+            column::with_children(vec![
+                button::custom(split(
+                    label(title, 14., FG),
+                    icon::from_name(if open {
+                        "go-up-symbolic"
+                    } else {
+                        "go-down-symbolic"
+                    })
+                    .size(16)
+                    .icon()
+                    .into(),
+                ))
+                .id(cosmic::widget::Id::new(key))
+                .class(nav_style(false, self.settings_accent()))
+                .width(Length::Fill)
+                // Same inset as the rows inside cards, so labels line up.
+                .padding([4, 10])
+                .on_press(Message::ToggleSection(key))
                 .into(),
-            ))
-            .id(cosmic::widget::Id::new(key))
-            .class(nav_style(false, self.settings_accent()))
-            .width(Length::Fill)
-            // Same inset as the rows inside cards, so labels line up.
-            .padding([4, 10])
-            .on_press(Message::ToggleSection(key))
+                reveal::reveal(
+                    container(content).padding([10, 0, 0, 0]).into(),
+                    open,
+                    self.config.settings_animations && self.system_animations,
+                ),
+            ])
             .into(),
-            reveal::reveal(
-                container(content).padding([10, 0, 0, 0]).into(),
-                open,
-                self.config.settings_animations && self.system_animations,
-            ),
         ])
-        .into()])
     }
     /// At the supported minimum the sidebar becomes an icon and label rail.
     pub(super) fn rail(&self) -> bool {
@@ -541,8 +551,10 @@ impl Settings {
             );
         if scene && width >= 584. {
             width - (width * 0.40).clamp(248., 420.) - 16.
-        } else if matches!(self.page, Page::Themes | Page::DesktopDock | Page::DesktopPanel)
-            && width >= 576.
+        } else if matches!(
+            self.page,
+            Page::Themes | Page::DesktopDock | Page::DesktopPanel
+        ) && width >= 576.
         {
             (width - 16.) / 2.
         } else if !scene && width >= 600. {
@@ -618,10 +630,9 @@ impl Settings {
                 .explained
                 .and_then(|(page, key)| (page == self.page).then_some(key)),
         });
-        if self.config.design_problem.is_some() {
-            return self.design_recovery_view();
-        }
-        if let Some(wizard) = &self.wizard {
+        if let Some(wizard) = &self.wizard
+            && self.config.design_problem.is_none()
+        {
             return self.wizard_view(wizard);
         }
         let accent = self.settings_accent();
@@ -706,6 +717,14 @@ impl Settings {
             Page::Builder => self.recipe_page(),
             Page::EdgeMenu => self.edge_menu_page(),
         };
+        // An unreadable widget design pauses only the pages that could
+        // write it; navigation and COSMIC-only pages keep working.
+        let design_problem = self.config.design_problem.is_some();
+        let page = if design_problem && !Self::design_safe(self.page) {
+            self.design_recovery_view()
+        } else {
+            page
+        };
         let pinned = !searching && self.page == Page::DesktopAppearance && self.appearance_pinned();
         // Unpinned, System appearance keeps a fixed strip above its scroll
         // area instead of the top padding: a hex field scrolled across the
@@ -716,6 +735,9 @@ impl Settings {
         // stays covered.
         let strip = !searching && !pinned;
         let mut page_parts = Vec::new();
+        if design_problem && Self::design_safe(self.page) {
+            page_parts.push(self.design_banner());
+        }
         if let Some(hit) = self.search_selected {
             page_parts.push(pill(
                 format!(
@@ -1136,7 +1158,10 @@ impl Settings {
             ),
             separator(),
             split(
-                detail("Easier to read", "Adds a little more background behind small text on busy wallpapers"),
+                detail(
+                    "Easier to read",
+                    "Adds a little more background behind small text on busy wallpapers",
+                ),
                 container(toggler(appearance.contrast_assist).on_toggle(Message::ContrastAssist))
                     .id(cosmic::widget::Id::new("contrast-assist"))
                     .into(),

@@ -580,18 +580,17 @@ impl Cards {
                 self.tools.pinned = None;
                 self.tools.music_problem = false;
                 if self.config.music.player.is_some() {
-                    match Config::save_tool(Widget::Music, serde_json::json!({"player": null})) {
-                        Ok(config) => return self.apply_config(config),
-                        Err(error) => {
-                            eprintln!("Could not switch to automatic media: {error}");
-                            self.raise_notice(
-                                "Couldn’t switch to automatic media",
-                                "Your choice wasn’t saved.",
-                                error.to_string(),
-                                Some(Message::Tool(Action::MusicAuto)),
-                            );
-                        }
-                    }
+                    let save = self.save_config_later(
+                        "Automatic media",
+                        super::config_writes::Failure::notice(
+                            "Couldn’t switch to automatic media",
+                            "Your choice wasn’t saved.",
+                            Some(Message::Tool(Action::MusicAuto)),
+                        ),
+                        None,
+                        || Config::save_tool(Widget::Music, serde_json::json!({"player": null})),
+                    );
+                    return Task::batch([save, self.music_art_task()]);
                 }
                 return self.music_art_task();
             }
@@ -724,21 +723,21 @@ impl Cards {
                 self.save_focus();
             }
             Action::FocusMinutes(minutes) => {
-                match Config::save_tool(
-                    Widget::Focus,
-                    serde_json::json!({ "focus_minutes": minutes }),
-                ) {
-                    Ok(config) => return self.apply_config(config),
-                    Err(error) => {
-                        eprintln!("Could not save the focus length: {error}");
-                        self.raise_notice(
-                            "Couldn’t save the focus length",
-                            "The timer keeps its previous length.",
-                            error.to_string(),
-                            Some(Message::Tool(Action::FocusMinutes(minutes))),
-                        );
-                    }
-                }
+                return self.save_config_later(
+                    "Focus length",
+                    super::config_writes::Failure::notice(
+                        "Couldn’t save the focus length",
+                        "The timer keeps its previous length.",
+                        Some(Message::Tool(Action::FocusMinutes(minutes))),
+                    ),
+                    None,
+                    move || {
+                        Config::save_tool(
+                            Widget::Focus,
+                            serde_json::json!({ "focus_minutes": minutes }),
+                        )
+                    },
+                );
             }
         }
         Task::none()
@@ -1154,14 +1153,16 @@ mod tests {
         isolated("toggling_a_tool_writes_only_its_section", || {
             let (mut cards, _) = Cards::init(Core::default(), Config::load());
             let _output = cards.test_output_ready();
-            let _ = cards.update(Message::ToggleWidget(Widget::Focus));
+            let task = cards.update(Message::ToggleWidget(Widget::Focus));
+            crate::app::config_writes::finish(&mut cards, task);
             let raw: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(Config::path().unwrap()).unwrap()).unwrap();
             assert_eq!(raw["focus"]["enabled"], true);
             assert_eq!(raw["future_option"], 7);
             assert!(raw.get("enabled_widgets").is_none());
             assert!(cards.config.widget_visible(Widget::Focus));
-            let _ = cards.update(Message::ToggleWidget(Widget::Focus));
+            let task = cards.update(Message::ToggleWidget(Widget::Focus));
+            crate::app::config_writes::finish(&mut cards, task);
             assert!(!Config::load().widget_visible(Widget::Focus));
         });
     }
@@ -1194,7 +1195,8 @@ mod tests {
                 assert!(cards.tools_wake().is_none());
                 // Quick lengths are a preference.
                 let _ = cards.update(Message::Tool(Action::FocusReset));
-                let _ = cards.update(Message::Tool(Action::FocusMinutes(50)));
+                let task = cards.update(Message::Tool(Action::FocusMinutes(50)));
+                crate::app::config_writes::finish(&mut cards, task);
                 assert_eq!(Config::load().focus.focus_minutes, 50);
                 assert_eq!(
                     cards.tools.focus.remaining(0, &cards.config.focus),

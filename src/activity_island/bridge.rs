@@ -140,6 +140,40 @@ pub enum Event {
     /// The grace after the last island left ran out. Carries the departure
     /// it belongs to, so an island that came back in time cancels it.
     Released(u64),
+    /// An island left; the panel process that ran it, when known.
+    Left(Option<Host>),
+    /// A moment after the last island left: look at its panel again.
+    CheckHost(u64),
+}
+/// The panel process an island runs in, by pid and start time so a reused
+/// pid is never taken for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Host {
+    pid: u32,
+    start: u64,
+}
+impl Host {
+    /// The parent of process `pid`: COSMIC's panel, for an island.
+    pub fn parent_of(pid: u32) -> Option<Self> {
+        let parent = stat_field(pid, 1)?.parse().ok()?;
+        Some(Self {
+            pid: parent,
+            start: stat_field(parent, 19)?.parse().ok()?,
+        })
+    }
+    /// Still running. A panel that exited and was not reaped yet is not.
+    pub fn alive(&self) -> bool {
+        stat_field(self.pid, 19).and_then(|s| s.parse().ok()) == Some(self.start)
+            && !matches!(stat_field(self.pid, 0).as_deref(), Some("Z" | "X" | "x"))
+    }
+}
+/// Field `index` of a process's stat file, counted after its name (0 is
+/// the state, 1 the parent, 19 the start time).
+fn stat_field(pid: u32, index: usize) -> Option<String> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // The name may hold spaces; count from its closing parenthesis.
+    let rest = &stat[stat.rfind(')')? + 1..];
+    rest.split_whitespace().nth(index).map(str::to_owned)
 }
 #[derive(Clone, Debug)]
 pub enum ClientEvent {
@@ -167,6 +201,8 @@ pub struct Owner {
     pub clients: usize,
     /// Counts departures of the last island; see `Event::Released`.
     pub departures: u64,
+    /// The panel the island that left last ran in.
+    pub left_host: Option<Host>,
     pub timer: Option<super::timer::Timer>,
     /// Artwork address, its dominant colour and its island thumbnail, as
     /// many as the art cache.
@@ -185,6 +221,7 @@ impl Default for Owner {
                 system: Vec::new(),
                 clients: 0,
                 departures: 0,
+                left_host: None,
                 timer: None,
                 tints: Vec::new(),
                 sender: watch::channel(Snapshot::default()).0,
@@ -224,11 +261,16 @@ impl Owner {
                                     tokio::select! {
                                         accepted=listener.accept()=>if let Ok((stream,_))=accepted {
                                             if clients.len()<8 && same_user(&stream) {
-                                                clients.spawn(serve(stream,sender.subscribe(),events.clone()));
+                                                let host = stream.peer_cred().ok().and_then(|c| c.pid()).and_then(|pid| Host::parent_of(pid as u32));
+                                                let serving = serve(stream,sender.subscribe(),events.clone());
+                                                clients.spawn(async move { let _ = serving.await; host });
                                                 if out.send(Event::Clients(clients.len())).await.is_err(){break}
                                             }
                                         },
-                                        _=clients.join_next(),if !clients.is_empty()=>{if out.send(Event::Clients(clients.len())).await.is_err(){break}},
+                                        left=clients.join_next(),if !clients.is_empty()=>{
+                                            if out.send(Event::Left(left.and_then(Result::ok).flatten())).await.is_err(){break}
+                                            if out.send(Event::Clients(clients.len())).await.is_err(){break}
+                                        },
                                         command=incoming.recv()=>if let Some(command)=command {if out.send(Event::Command(command)).await.is_err(){break}},
                                     }
                                 }

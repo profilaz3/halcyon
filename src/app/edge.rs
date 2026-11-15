@@ -2,6 +2,7 @@
 //! area on the screen edge; turned off there is none, and the menu opens
 //! only from `halcyon --toggle drawer` and Settings. A customized menu is a
 //! list of items, each running an action the desktop already has.
+use super::config_writes::Failure;
 use super::*;
 use crate::config::edge_menu::{Action, Close, EdgeMenu, Item, Kind, Side, Style};
 use crate::desktop::apps::AppCatalog;
@@ -689,58 +690,43 @@ impl Cards {
         task
     }
     pub(super) fn save_edge_items(&mut self, items: Vec<Item>) -> Task<Message> {
-        let saved = crate::desktop::actions::in_action("Edge menu", || {
-            Config::save_edge_menu(serde_json::json!({ "items": items }))
-        });
-        match saved {
-            Ok(config) => self.apply_config(config),
-            Err(error) => {
-                eprintln!("Could not save the edge menu: {error}");
-                self.raise_notice(
-                    "Couldn’t save the edge menu",
-                    "The menu is as it was.",
-                    error,
-                    None,
-                );
-                Task::none()
-            }
-        }
+        self.save_config_later(
+            "Edge menu",
+            Failure::notice(
+                "Couldn’t save the edge menu",
+                "The menu is as it was.",
+                None,
+            ),
+            None,
+            move || Config::save_edge_menu(serde_json::json!({ "items": items })),
+        )
     }
     pub(super) fn set_widgets_visible(&mut self, visible: bool) -> Task<Message> {
-        let saved = crate::desktop::actions::in_action("Show widgets", || {
-            Config::save_changes(serde_json::json!({ "widgets_visible": visible }))
-        });
-        match saved {
-            Ok(config) => self.apply_config(config),
-            Err(error) => {
-                self.raise_notice(
-                    "Couldn’t show or hide the widgets",
-                    "Your change wasn’t kept.",
-                    error,
-                    Some(Message::SetWidgetsVisible(visible)),
-                );
-                Task::none()
-            }
-        }
+        self.save_config_later(
+            "Show widgets",
+            Failure::notice(
+                "Couldn’t show or hide the widgets",
+                "Your change wasn’t kept.",
+                Some(Message::SetWidgetsVisible(visible)),
+            ),
+            None,
+            move || Config::save_changes(serde_json::json!({ "widgets_visible": visible })),
+        )
     }
     pub(super) fn set_weather_effect(&mut self, on: bool) -> Task<Message> {
         let old = self.config.rain.clone();
         let mut next = old.clone();
         next.enabled = on;
-        let saved =
-            crate::desktop::actions::in_action("Weather effect", || Config::save_rain(&old, &next));
-        match saved {
-            Ok(config) => self.apply_config(config),
-            Err(error) => {
-                self.raise_notice(
-                    "Couldn’t change the weather effect",
-                    "Your change wasn’t kept.",
-                    error,
-                    Some(Message::SetWeatherEffect(on)),
-                );
-                Task::none()
-            }
-        }
+        self.save_config_later(
+            "Weather effect",
+            Failure::notice(
+                "Couldn’t change the weather effect",
+                "Your change wasn’t kept.",
+                Some(Message::SetWeatherEffect(on)),
+            ),
+            None,
+            move || Config::save_rain(&old, &next),
+        )
     }
     /// The same switch as the island's and COSMIC's notification applet.
     pub(super) fn set_dnd(&mut self, on: bool) -> Task<Message> {

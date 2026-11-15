@@ -431,12 +431,15 @@ pub(super) fn icon_layers<'a>(
 
 /// Two tiled windows in the planned theme: colors, corners, outline, the
 /// inner gap between them and, with the active hint on, the accent ring
-/// around the focused one. Title buttons follow the window settings.
+/// around the focused one. Title buttons follow the window settings. `id`
+/// names the pair where only one is drawn.
 pub(super) fn window_pair<'a>(
     preview: &ScenePreview,
     insets: [f32; 4],
     screen: [f32; 2],
     scale: f32,
+    avoid: &[Rect],
+    id: Option<&'static str>,
 ) -> Option<(Element<'a, Message>, Rect)> {
     use crate::desktop::windows::Behavior;
     let appearance = preview.appearance.as_ref()?;
@@ -460,12 +463,7 @@ pub(super) fn window_pair<'a>(
     } else {
         (inner as f32 * zoom).max(1.5)
     };
-    let free = [screen[0], screen[1] - insets[0] - insets[2]];
-    let size = [screen[0] * 0.46, (free[1] * 0.5).max(70.)];
-    let at = Point::new(
-        (screen[0] - size[0]) / 2.,
-        insets[0] + (free[1] - size[1]) * 0.62,
-    );
+    let (at, size) = window_spot(insets, screen, avoid);
     let first = ((size[0] - gap) * 0.6).floor();
     let second = size[0] - gap - first;
     let ring = if hint {
@@ -492,11 +490,65 @@ pub(super) fn window_pair<'a>(
         }
     }));
     let other = super::schematic_window_with(colors, [second, size[1]], buttons);
-    let pair = row::with_children(vec![focused.into(), other])
-        .spacing(gap)
-        .width(size[0])
-        .height(size[1]);
+    let mut pair = container(
+        row::with_children(vec![focused.into(), other])
+            .spacing(gap)
+            .width(size[0])
+            .height(size[1]),
+    );
+    if let Some(id) = id {
+        pair = pair.id(cosmic::widget::Id::new(id));
+    }
     Some((pin(pair).position(at).into(), (at, size)))
+}
+
+/// Where the sample windows go: centered and fairly large, as most desktops
+/// have them, unless that covers a widget (a big clock, a weather card) or
+/// the desktop icons. Then the largest spot that covers none, or the least.
+fn window_spot(insets: [f32; 4], screen: [f32; 2], avoid: &[Rect]) -> Rect {
+    let top = insets[0];
+    let free = (screen[1] - insets[0] - insets[2]).max(1.);
+    let margin = (screen[0] * 0.03).max(4.);
+    // A little air around each widget.
+    let air = (screen[0] * 0.01).max(2.);
+    let avoid: Vec<Rect> = avoid
+        .iter()
+        .map(|(at, size)| {
+            (
+                Point::new(at.x - air, at.y - air),
+                [size[0] + 2. * air, size[1] + 2. * air],
+            )
+        })
+        .collect();
+    let covered = |spot: Rect| -> f32 {
+        avoid
+            .iter()
+            .filter(|area| overlaps(spot, **area))
+            .map(|(at, size)| {
+                let w = (spot.0.x + spot.1[0]).min(at.x + size[0]) - spot.0.x.max(at.x);
+                let h = (spot.0.y + spot.1[1]).min(at.y + size[1]) - spot.0.y.max(at.y);
+                w.max(0.) * h.max(0.)
+            })
+            .sum()
+    };
+    let mut best: Option<(f32, Rect)> = None;
+    for (width, height) in [(0.46, 0.5), (0.4, 0.44), (0.34, 0.38), (0.28, 0.32)] {
+        let size = [screen[0] * width, (free * height).max(56.).min(free)];
+        for down in [0.62, 0.96, 0.3, 0.04] {
+            for across in [0.5, 0., 1.] {
+                let x = margin + (screen[0] - 2. * margin - size[0]).max(0.) * across;
+                let spot = (Point::new(x, top + (free - size[1]) * down), size);
+                let area = covered(spot);
+                if area < 1. {
+                    return spot;
+                }
+                if best.is_none_or(|(least, _)| area < least) {
+                    best = Some((area, spot));
+                }
+            }
+        }
+    }
+    best.map(|(_, spot)| spot).expect("at least one spot")
 }
 
 /// A soft accent ring around a part the parts list points at.

@@ -849,13 +849,13 @@ fn overlay_generates_shaped_apps_and_tinted_folders_in_alternating_slots() {
     // The next build goes to the other slot; then the first is removed.
     let next = overlay::generate(&paths, &request, Some(&slot), &|_, _| {}).unwrap();
     assert_eq!(next, "Halcyon-Shaped-Alt");
-    overlay::remove_all(&paths, Some(&next));
+    overlay::remove_all(&paths, &[next.as_str()]);
     assert!(!root.exists() && paths.icons.join(&next).exists());
     // A folder of a slot's name that Halcyon didn't write is never touched.
     fs::create_dir_all(&root).unwrap();
     fs::write(root.join("index.theme"), INDEX).unwrap();
     assert!(overlay::generate(&paths, &request, Some(&next), &|_, _| {}).is_err());
-    overlay::remove_all(&paths, None);
+    overlay::remove_all(&paths, &[]);
     assert!(root.join("index.theme").exists());
     assert!(!paths.icons.join(&next).exists());
     // An overlay can't be a base.

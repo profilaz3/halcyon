@@ -1321,7 +1321,7 @@ pub async fn fetch_projects(roots: Vec<String>) -> Result<ProjectsData, String> 
         let mut child = std::process::Command::new("/usr/bin/timeout")
             .args(["25s", "/usr/bin/python3"])
             .arg(helper)
-            .arg("--roots-stdin")
+            .args(["--roots-stdin", "--budget-seconds", "20"])
             .env("DESKTOP_CARDS_CONFIG", config)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -1398,9 +1398,16 @@ mod tests {
                 .unwrap()
                 .block_on(fetch_projects(roots.clone()))
                 .unwrap();
+            assert_eq!(data.projects.len(), 2);
+            assert!(!data.projects[0].error);
+            assert_eq!(data.projects[0].branch, "main");
+            assert!(data.projects[1].error);
             let observed: serde_json::Value = serde_json::from_str(&data.updated_at).unwrap();
             assert_eq!(observed["config"], expected);
-            assert_eq!(observed["args"], serde_json::json!(["--roots-stdin"]));
+            assert_eq!(
+                observed["args"],
+                serde_json::json!(["--roots-stdin", "--budget-seconds", "20"])
+            );
             assert_eq!(observed["roots"], serde_json::json!(roots));
             return;
         }
@@ -1423,7 +1430,9 @@ mod tests {
             r#"import json, os, sys
 roots = json.load(sys.stdin)
 observed = {'config': os.environ['DESKTOP_CARDS_CONFIG'], 'args': sys.argv[1:], 'roots': roots}
-print(json.dumps({'updated_at': json.dumps(observed), 'projects': [], 'requested_roots': roots}))
+row = dict(path='fast', name='fast', group='', branch='main', changed=0, untracked=0, conflicts=0, ahead=0, behind=0, upstream=False, error=False, servers=[])
+slow = dict(row, path='slow', name='slow', error=True)
+print(json.dumps({'updated_at': json.dumps(observed), 'projects': [row, slow], 'requested_roots': roots}))
 "#,
         )
         .unwrap();

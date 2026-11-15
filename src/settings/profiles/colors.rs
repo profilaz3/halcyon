@@ -106,7 +106,10 @@ impl ProfilesEditor {
                 selected.retain(|domain| matches!(domain, Domain::WidgetStyle | Domain::Wallpaper));
             }
         }
-        let mut plan = profiles::plan(store, &self.installed, profile, &selected);
+        let options = profiles::PlanOptions {
+            islands_off: self.islands_off,
+        };
+        let mut plan = profiles::plan_with(store, &self.installed, profile, &selected, options);
         if let Some(mode) = self.color_options.mode
             && !self.excluded.contains(&Domain::Appearance)
         {

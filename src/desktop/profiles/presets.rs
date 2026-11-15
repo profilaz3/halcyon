@@ -955,6 +955,32 @@ fn keep_widget_content(preset: &mut Preset, config: &crate::config::Config) {
     }
 }
 
+/// A complete look states the clock's whole arrangement: its size, place
+/// and depth, so an earlier look's (Ridge's depth, Tidal's size) never
+/// carries over. The face and its font stay as each look's record has
+/// them: legacy looks leave the person's own.
+fn complete_clock(preset: &mut Preset) {
+    if preset.profile.appearance_only {
+        return;
+    }
+    let Some(Value::Object(style)) = preset.profile.widget_style.as_mut() else {
+        return;
+    };
+    let Value::Object(clock) = style.entry("clock").or_insert_with(|| json!({})) else {
+        return;
+    };
+    let defaults = crate::config::ClockPreferences::default();
+    for (key, value) in [
+        ("scale", json!(defaults.scale)),
+        ("alignment", json!(defaults.alignment)),
+        ("center_vertically", json!(defaults.center_vertically)),
+        ("depth", json!(defaults.depth)),
+    ] {
+        clock.entry(key).or_insert(value);
+    }
+    preset.profile.version = preset.profile.version.max(super::format::VERSION_11);
+}
+
 /// A weather setup keeps the person's quality, battery, Match the weather and
 /// Weather strength choices; every other setup turns a running effect off, keeping its tuning
 /// (and Match the weather) for later.
@@ -1008,6 +1034,7 @@ pub fn fitted(
     }
     if preset.id != CLEAN {
         keep_widget_content(&mut preset, config);
+        complete_clock(&mut preset);
     }
     follow_atmosphere(&mut preset, config);
     if !installed(&preset, bundled_dir) {
@@ -1086,6 +1113,39 @@ mod tests {
                 .any(|s| s.contains("Turn off Islands"))
         );
         assert_eq!(fixture.tree(), before);
+        // The review offers to turn Islands off; only that choice does.
+        assert!(blocked.domains.iter().any(|part| part.islands_conflict));
+        let chosen = crate::desktop::profiles::plan_with(
+            &store,
+            &Installed::discover(&store),
+            &spine.profile,
+            &selected,
+            crate::desktop::profiles::PlanOptions { islands_off: true },
+        );
+        assert!(chosen.can_apply(), "{:?}", chosen.blocking_reasons());
+        assert!(
+            chosen.domains[0]
+                .changes
+                .iter()
+                .any(|change| change == "Panel Islands off"),
+            "{:?}",
+            chosen.domains[0].changes
+        );
+        let change = apply(&store, &chosen).unwrap();
+        let after = PanelDraft::load(&store, PanelKind::Panel).unwrap();
+        assert_eq!(after.anchor().known(), Some(&Anchor::Left));
+        assert_eq!(
+            after.islands().known().map(|islands| islands.enabled),
+            Some(false)
+        );
+        store.undo_latest(&change.id).unwrap();
+        let undone = PanelDraft::load(&store, PanelKind::Panel).unwrap();
+        assert_eq!(
+            undone.islands().known().map(|islands| islands.enabled),
+            Some(true),
+            "Undo brings Islands back"
+        );
+        assert_ne!(undone.anchor().known(), Some(&Anchor::Left));
         current.enabled = false;
         fixture.user(
             key.namespace(),
@@ -1316,6 +1376,65 @@ mod tests {
             store.undo_latest(&change.id).unwrap();
             assert_eq!(std::fs::read(&path).unwrap(), before, "{id}: Undo");
         }
+    }
+
+    #[test]
+    fn every_bundled_look_sets_its_whole_clock_arrangement_after_ridge() {
+        let (_fixture, store) = desk("clock-after-ridge");
+        let path = store.app_config().unwrap();
+        let installed = Installed::discover(&store);
+        let dir = crate::desktop::wallpaper::bundled_dir(&store);
+        let defaults = crate::config::ClockPreferences::default();
+        let apply_look = |id: &str| {
+            let config = crate::config::Config::from_bytes(&std::fs::read(&path).unwrap()).unwrap();
+            let p = fitted(preset(id).unwrap(), &config, &dir, false).profile;
+            let plan = plan(&store, &installed, &p, &p.domains().into_iter().collect());
+            assert!(plan.can_apply(), "{id}: {:?}", plan.blocking_reasons());
+            apply(&store, &plan).unwrap();
+            crate::config::Config::from_bytes(&std::fs::read(&path).unwrap())
+                .unwrap()
+                .clock
+        };
+        let mut checked = 0;
+        for look in studio_presets() {
+            if look.id == CLEAN || look.id == "ridge" || look.profile.appearance_only {
+                continue;
+            }
+            let ridge = apply_look("ridge");
+            assert!(ridge.depth && ridge.scale == 200, "Ridge applied");
+            let stated = look
+                .profile
+                .widget_style
+                .as_ref()
+                .and_then(|style| style.get("clock"))
+                .cloned()
+                .unwrap_or_default();
+            let clock = apply_look(look.id);
+            let want = |key: &str, default: Value| stated.get(key).cloned().unwrap_or(default);
+            let id = look.id;
+            assert_eq!(
+                json!(clock.depth),
+                want("depth", json!(false)),
+                "{id}: depth"
+            );
+            assert_eq!(
+                json!(clock.scale),
+                want("scale", json!(defaults.scale)),
+                "{id}"
+            );
+            assert_eq!(
+                json!(clock.alignment),
+                want("alignment", json!(defaults.alignment)),
+                "{id}: alignment"
+            );
+            assert_eq!(
+                json!(clock.center_vertically),
+                want("center_vertically", json!(defaults.center_vertically)),
+                "{id}: vertical centering"
+            );
+            checked += 1;
+        }
+        assert!(checked >= 10, "{checked} looks");
     }
 
     #[test]
@@ -2046,7 +2165,9 @@ mod tests {
         let mut all = presets();
         all.extend([spine(), ridge()]);
         for p in &all {
-            let Some(layout) = &p.profile.widget_layout else { continue };
+            let Some(layout) = &p.profile.widget_layout else {
+                continue;
+            };
             let widgets = layout["enabled_widgets"].as_array().unwrap();
             let has = |w: &str| widgets.iter().any(|v| v == w);
             let glance = &layout["glance"];
@@ -2109,7 +2230,11 @@ mod tests {
         assert_eq!(layout["glance"]["show_weather"], true);
         assert_eq!(layout["music"]["enabled"], true);
         for (widget, right) in [("glance", false), ("devbox", true), ("music", true)] {
-            assert_eq!(layout["widget_positions"][widget][0].as_f64().unwrap() > 0.5, right, "{widget}");
+            assert_eq!(
+                layout["widget_positions"][widget][0].as_f64().unwrap() > 0.5,
+                right,
+                "{widget}"
+            );
         }
     }
 
@@ -2120,7 +2245,14 @@ mod tests {
         let mut config = crate::config::Config::default();
         // Nothing running: a plain setup leaves the effect alone.
         let p = fitted(preset("halcyon").unwrap(), &config, &dir, false);
-        assert!(p.profile.widget_style.as_ref().unwrap().get("rain").is_none());
+        assert!(
+            p.profile
+                .widget_style
+                .as_ref()
+                .unwrap()
+                .get("rain")
+                .is_none()
+        );
         // Running: a plain setup stops it, keeping the person's tuning.
         config.rain.enabled = true;
         config.rain.intensity = 90;
@@ -2134,7 +2266,10 @@ mod tests {
         assert!(!rain.enabled);
         assert_eq!(rain.intensity, 90);
         assert!(rain.weather, "Match the weather is the person's choice");
-        assert_eq!(rain.weather_strength, crate::rain::weather::Strength::Strong);
+        assert_eq!(
+            rain.weather_strength,
+            crate::rain::weather::Strength::Strong
+        );
         // A weather setup starts its own, at the person's quality.
         let p = fitted(preset("snow").unwrap(), &config, &dir, false).profile;
         let rain: crate::rain::Preferences =
@@ -2142,15 +2277,17 @@ mod tests {
         assert!(rain.enabled && rain.effect == crate::rain::Effect::Snow);
         assert_eq!(rain.quality, crate::rain::Quality::Eco);
         assert!(rain.weather);
-        assert_eq!(rain.weather_strength, crate::rain::weather::Strength::Strong);
+        assert_eq!(
+            rain.weather_strength,
+            crate::rain::weather::Strength::Strong
+        );
         let installed = Installed::discover(&store);
         let plan = plan(&store, &installed, &p, &p.domains().into_iter().collect());
         assert!(plan.can_apply(), "{:?}", plan.blocking_reasons());
         let change = apply(&store, &plan).unwrap();
-        let applied = crate::config::Config::from_bytes(
-            &std::fs::read(store.app_config().unwrap()).unwrap(),
-        )
-        .unwrap();
+        let applied =
+            crate::config::Config::from_bytes(&std::fs::read(store.app_config().unwrap()).unwrap())
+                .unwrap();
         assert!(applied.rain.enabled && applied.rain.effect == crate::rain::Effect::Snow);
         store.undo_latest(&change.id).unwrap();
     }
@@ -2177,30 +2314,63 @@ mod tests {
         let p = preset("halcyon").unwrap().profile;
         let selected: BTreeSet<_> = [Domain::Panel].into_iter().collect();
         let proposal = plan(&store, &installed, &p, &selected);
-        assert!(proposal.patch().keys().all(|k| !k.key().starts_with("plugins_")));
+        assert!(
+            proposal
+                .patch()
+                .keys()
+                .all(|k| !k.key().starts_with("plugins_"))
+        );
         installed.applets = crate::desktop::applets::AppletCatalog::discover(&[applications]);
         // A setup without it leaves the applets alone.
         let focus = preset("focus").unwrap().profile;
         let proposal = plan(&store, &installed, &focus, &selected);
-        assert!(proposal.patch().keys().all(|k| !k.key().starts_with("plugins_")));
-        let before = PanelDraft::load(&store, PanelKind::Panel).unwrap().applets();
+        assert!(
+            proposal
+                .patch()
+                .keys()
+                .all(|k| !k.key().starts_with("plugins_"))
+        );
+        let before = PanelDraft::load(&store, PanelKind::Panel)
+            .unwrap()
+            .applets();
         let proposal = plan(&store, &installed, &p, &selected);
         assert!(proposal.can_apply(), "{:?}", proposal.blocking_reasons());
         let change = apply(&store, &proposal).unwrap();
-        let after = PanelDraft::load(&store, PanelKind::Panel).unwrap().applets();
-        let crate::desktop::panels::Setting::Known(regions) = &after else { panic!() };
+        let after = PanelDraft::load(&store, PanelKind::Panel)
+            .unwrap()
+            .applets();
+        let crate::desktop::panels::Setting::Known(regions) = &after else {
+            panic!()
+        };
         assert_eq!(regions.start, ["custom.Start"]);
         assert_eq!(regions.end, ["custom.End"]);
-        assert_eq!(regions.center, ["custom.Center", crate::activity_island::APPLET_ID]);
+        assert_eq!(
+            regions.center,
+            ["custom.Center", crate::activity_island::APPLET_ID]
+        );
         // Already there: applying again changes no applets.
         let again = plan(&store, &installed, &p, &selected);
-        assert!(again.patch().keys().all(|k| !k.key().starts_with("plugins_")));
+        assert!(
+            again
+                .patch()
+                .keys()
+                .all(|k| !k.key().starts_with("plugins_"))
+        );
         store.undo_latest(&change.id).unwrap();
-        assert_eq!(PanelDraft::load(&store, PanelKind::Panel).unwrap().applets(), before);
+        assert_eq!(
+            PanelDraft::load(&store, PanelKind::Panel)
+                .unwrap()
+                .applets(),
+            before
+        );
         // A panel on the side does not get it.
         fixture.system(PANEL, "anchor", "Left");
         let side = plan(&store, &installed, &p, &selected);
-        assert!(side.patch().keys().all(|k| !k.key().starts_with("plugins_")));
+        assert!(
+            side.patch()
+                .keys()
+                .all(|k| !k.key().starts_with("plugins_"))
+        );
     }
 
     #[test]
@@ -2217,7 +2387,12 @@ mod tests {
             let selected = p.domains().into_iter().collect();
             let before = fixture.tree();
             let plan = plan(&store, &installed, &p, &selected);
-            assert!(plan.can_apply(), "{}: {:?}", look.id, plan.blocking_reasons());
+            assert!(
+                plan.can_apply(),
+                "{}: {:?}",
+                look.id,
+                plan.blocking_reasons()
+            );
             assert_eq!(fixture.tree(), before, "{}: planning wrote", look.id);
             assert!(
                 studio_presets().iter().any(|known| known.id == look.id),

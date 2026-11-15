@@ -835,3 +835,65 @@ fn looks_ready_made_themes_and_looks_preview_and_apply_exactly() {
         assert_eq!(app.config.rain.enabled, id == "rainy-lake", "{id}");
     }
 }
+
+/// Spine's vertical panel over Islands: the review offers one explicit
+/// choice that turns Islands off for the panel and applies, and Undo brings
+/// Islands back.
+#[test]
+fn spine_offers_to_turn_off_islands_and_apply() {
+    use crate::desktop::panels::{Anchor, PanelDraft, PanelKind};
+    let name = "spine_offers_to_turn_off_islands_and_apply";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let root = isolated_root();
+    let mut app = looks_desktop(&root);
+    let key = crate::desktop::islands::key(PanelKind::Panel);
+    let on = dock_islands_core::Settings {
+        enabled: true,
+        ..Default::default()
+    };
+    seed(
+        &root.join("cosmic-root/config/cosmic"),
+        &[(key.namespace(), key.key(), &ron::to_string(&on).unwrap())],
+    );
+    looks_select(&mut app, "spine");
+    let plan = app.profiles.plan().unwrap();
+    assert!(!plan.can_apply());
+    assert!(plan.domains.iter().any(|part| part.islands_conflict));
+    let size = Size::new(1280., 800.);
+    send_settings(&mut app, Message::Resized(size));
+    let mut native = crate::native_test::Native::new(size);
+    let offer = native.text_bounds(app.settings_view(), "Turn off Islands and apply Spine");
+    assert!(offer.width > 0.);
+    looks_capture(&app, &mut native, "spine-islands");
+    let store = app.profiles.store().unwrap().clone();
+    let islands = |store: &crate::desktop::DesktopStore| {
+        PanelDraft::load(store, PanelKind::Panel)
+            .unwrap()
+            .islands()
+            .known()
+            .map(|islands| islands.enabled)
+    };
+    assert_eq!(islands(&store), Some(true));
+    looks_send(&mut app, profiles::Message::ApplyWithoutIslands);
+    let panel = PanelDraft::load(&store, PanelKind::Panel).unwrap();
+    assert_eq!(panel.anchor().known(), Some(&Anchor::Left));
+    assert_eq!(islands(&store), Some(false));
+    looks_send(&mut app, profiles::Message::Undo);
+    assert_eq!(islands(&store), Some(true));
+    assert_ne!(
+        PanelDraft::load(&store, PanelKind::Panel)
+            .unwrap()
+            .anchor()
+            .known(),
+        Some(&Anchor::Left)
+    );
+}

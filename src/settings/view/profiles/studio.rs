@@ -207,9 +207,9 @@ impl Settings {
             }
             Part::Windows => {
                 layers.push(picture(base, size));
-                if let Some((pair, _)) =
-                    planned.and_then(|preview| looks::window_pair(preview, [0.; 4], size, scale))
-                {
+                if let Some((pair, _)) = planned.and_then(|preview| {
+                    looks::window_pair(preview, [0.; 4], size, scale, &[], None)
+                }) {
                     layers.push(pair);
                 }
             }
@@ -1015,7 +1015,7 @@ impl Settings {
 
 fn line_text<'a>(text: String) -> Element<'a, Message> {
     text::caption(text)
-        .class(cosmic::theme::Text::Color(MUTED))
+        .class(super::super::text_style(MUTED))
         .wrapping(cosmic::iced::widget::text::Wrapping::None)
         .into()
 }

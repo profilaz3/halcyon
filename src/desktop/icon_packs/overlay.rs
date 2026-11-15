@@ -366,11 +366,11 @@ pub fn ours(dir: &Path) -> bool {
         .is_some_and(|bytes| String::from_utf8_lossy(&bytes).contains(&format!("{MARKER}=true")))
 }
 
-/// Removes Halcyon's overlay slots, except `keep`. A folder of that name
-/// Halcyon did not write is left alone.
-pub fn remove_all(paths: &Paths, keep: Option<&str>) {
+/// Removes Halcyon's overlay slots, except those in `keep`. A folder of
+/// that name Halcyon did not write is left alone.
+pub fn remove_all(paths: &Paths, keep: &[&str]) {
     for slot in SLOTS {
-        if Some(slot) == keep {
+        if keep.contains(&slot) {
             continue;
         }
         let dir = paths.icons.join(slot);
@@ -846,6 +846,21 @@ pub fn generate(
     current: Option<&str>,
     progress: &(dyn Fn(usize, usize) + Sync),
 ) -> Result<String, String> {
+    generate_until(paths, request, current, progress, &|| false)
+}
+
+/// What [`generate_until`] answers when `cancelled` asked it to stop.
+pub const CANCELLED: &str = "Stopped for a newer style";
+
+/// [`generate`], stopping early once `cancelled` answers true. A stopped
+/// build leaves the slot as it was.
+pub fn generate_until(
+    paths: &Paths,
+    request: &Request,
+    current: Option<&str>,
+    progress: &(dyn Fn(usize, usize) + Sync),
+    cancelled: &(dyn Fn() -> bool + Sync),
+) -> Result<String, String> {
     use rayon::prelude::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     if !super::valid_id(&request.base) || is_overlay(&request.base) {
@@ -890,6 +905,9 @@ pub fn generate(
             .map_err(|error| error.to_string())?;
         pool.install(|| {
             jobs.par_iter().for_each(|job| {
+                if cancelled() {
+                    return;
+                }
                 if let Some(icon) = render(job, request, mask) {
                     let context = match job.context {
                         Context::Apps => "apps",
@@ -909,10 +927,16 @@ pub fn generate(
                 progress(done.fetch_add(1, Ordering::Relaxed) + 1, total);
             });
         });
+        if cancelled() {
+            return Err(CANCELLED.to_string());
+        }
         fs::write(staging.join("index.theme"), index_for(request))
             .map_err(|error| error.to_string())?;
         // On a pool thread, so a gtk-update-icon-cache it starts is niced too.
         pool.install(|| super::cache::write(&staging, &folders))?;
+        if cancelled() {
+            return Err(CANCELLED.to_string());
+        }
         if fs::symlink_metadata(&target).is_ok() {
             fs::remove_dir_all(&target).map_err(|error| error.to_string())?;
         }

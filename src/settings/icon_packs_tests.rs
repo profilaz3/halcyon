@@ -420,6 +420,7 @@ fn icon_packs_cards_browser_shape_and_folders() {
             .filter(|id| overlay::is_overlay(id))
             .collect::<Vec<_>>()
     };
+    let mut previous: Option<String> = None;
     for shape in [Shape::Circle, Shape::Squircle, Shape::Rounded] {
         let sent = press(&app, &format!("icon-shape-{}", shape.key()));
         assert!(
@@ -429,7 +430,16 @@ fn icon_packs_cards_browser_shape_and_folders() {
         send_settings(&mut app, Message::IconPacks(Packs::Shape(shape)));
         let theme = icon_theme_now(&app).unwrap();
         assert!(overlay::is_overlay(&theme), "{shape:?}: {theme}");
-        assert_eq!(overlays(&fixture), [theme.clone()]);
+        // The slot in use, and the one Undo would bring back.
+        let mut expected: Vec<String> = [Some(theme.clone()), previous.clone()]
+            .into_iter()
+            .flatten()
+            .collect();
+        expected.sort();
+        let mut found = overlays(&fixture);
+        found.sort();
+        assert_eq!(found, expected, "{shape:?}");
+        previous = Some(theme.clone());
         let index = std::fs::read_to_string(fixture.join("icons").join(&theme).join("index.theme"))
             .unwrap();
         assert!(
@@ -444,9 +454,30 @@ fn icon_packs_cards_browser_shape_and_folders() {
         );
         capture_icons(&mut app, "icon-shape", &format!("shape-{}", shape.key()));
     }
+    // Undo brings back the previous shape's overlay, which still exists.
+    let paths = app.icon_packs.paths.clone().unwrap();
+    send_settings(
+        &mut app,
+        Message::SystemAppearance(system_appearance::Message::Undo),
+    );
+    let restored = icon_theme_now(&app).unwrap();
+    assert!(overlay::is_overlay(&restored), "{restored}");
+    assert!(
+        fixture
+            .join("icons")
+            .join(&restored)
+            .join("index.theme")
+            .is_file(),
+        "Undo restored {restored}, which was deleted"
+    );
+    assert_eq!(
+        overlay::recorded(&paths, &restored).map(|record| record.shape),
+        Some(Shape::Squircle)
+    );
     send_settings(&mut app, Message::IconPacks(Packs::Shape(Shape::Original)));
     assert_eq!(icon_theme_now(&app).as_deref(), Some("Papirus-Fixture"));
-    assert!(overlays(&fixture).is_empty(), "{:?}", overlays(&fixture));
+    // Only the overlay Undo of Original would restore is kept.
+    assert_eq!(overlays(&fixture), [restored.clone()]);
     capture_icons(&mut app, "icon-shape", "shape-original");
     capture_icons(&mut app, "icon-folders", "folders-off");
 
@@ -476,7 +507,7 @@ fn icon_packs_cards_browser_shape_and_folders() {
     );
     send_settings(&mut app, Message::IconPacks(Packs::Tint(false)));
     assert_eq!(icon_theme_now(&app).as_deref(), Some("Papirus-Fixture"));
-    assert!(overlays(&fixture).is_empty());
+    assert_eq!(overlays(&fixture), [theme.clone()], "kept for Undo only");
 
     // Remove: never the theme in use, never one Halcyon did not install.
     send_settings(
@@ -493,10 +524,18 @@ fn icon_packs_cards_browser_shape_and_folders() {
         Message::IconPacks(Packs::ConfirmRemove(Some("Papirus-Fixture".into()))),
     );
     capture_icons(&mut app, "icon-theme-Papirus-Fixture", "cards-remove");
-    send_settings(
-        &mut app,
-        Message::IconPacks(Packs::Remove("Papirus-Fixture".into())),
+    // Deleting runs on the worker; the card says so meanwhile.
+    let task = app.update(Message::IconPacks(Packs::Remove("Papirus-Fixture".into())));
+    assert_eq!(app.icon_packs.removing.as_deref(), Some("Papirus-Fixture"));
+    assert!(
+        fixture.join("icons/Papirus-Fixture").is_dir(),
+        "not deleted on the interface thread"
     );
+    let mut native = crate::native_test::Native::new(Size::new(1280., 4000.));
+    assert!(!native.text_all(app.settings_view(), "Removing…").is_empty());
+    capture_icons(&mut app, "icon-theme-Papirus-Fixture", "cards-removing");
+    settle_settings(&mut app, task);
+    assert!(app.icon_packs.removing.is_none());
     assert!(!fixture.join("icons/Papirus-Fixture").exists());
     assert!(app.icon_packs.manifest.of_pack(papirus).is_empty());
     send_settings(&mut app, Message::IconPacks(Packs::Remove("Pop".into())));
@@ -507,4 +546,45 @@ fn icon_packs_cards_browser_shape_and_folders() {
             .try_bounds(app.settings_view(), "icon-theme-Papirus-Fixture")
             .is_none()
     );
+}
+
+/// Shapes chosen faster than an overlay builds: the desktop ends on the
+/// last one's artwork, never an earlier build's that finished later.
+#[test]
+fn icon_shapes_chosen_quickly_publish_the_latest_artwork() {
+    let name = "icon_shapes_chosen_quickly_publish_the_latest_artwork";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::desktop::icon_packs::overlay::{self, Shape};
+    use crate::settings::icon_packs::Message as Packs;
+    let (mut app, task) = Settings::init(Core::default(), Page::DesktopAppearance);
+    settle_settings(&mut app, task);
+    let paths = app.icon_packs.paths.clone().unwrap();
+    for (first, second) in [
+        (Shape::Circle, Shape::Squircle),
+        (Shape::Rounded, Shape::Circle),
+    ] {
+        let earlier = app.update(Message::IconPacks(Packs::Shape(first)));
+        let later = app.update(Message::IconPacks(Packs::Shape(second)));
+        // The later request's work finishes first, the earlier one after.
+        settle_settings(&mut app, later);
+        settle_settings(&mut app, earlier);
+        let theme = icon_theme_now(&app).unwrap();
+        assert!(overlay::is_overlay(&theme), "{theme}");
+        assert_eq!(
+            overlay::recorded(&paths, &theme).map(|record| record.shape),
+            Some(second),
+            "{first:?} then {second:?}"
+        );
+        assert!(app.icon_packs.build.is_none());
+        assert_eq!(app.icon_packs.style.shape, second);
+    }
 }

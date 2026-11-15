@@ -1234,7 +1234,8 @@ impl Applet {
             return Task::none();
         }
         self.popups = Some(take);
-        cosmic::task::future(async move { Message::PopupsSet(super::popups::set(take).await) })
+        let set = super::popups::set(&self.popup_holder, take);
+        cosmic::task::future(async move { Message::PopupsSet(set.await) })
     }
 }
 pub(super) const NOTE_REVEAL: Duration = Duration::from_secs(5);

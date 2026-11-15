@@ -20,8 +20,14 @@ pub(super) struct State {
     pub pixels: Option<std::sync::Arc<crate::desktop::wallpaper::media::Pixels>>,
     /// The picture being analysed, by content, and how to stop it.
     analysing: Option<(String, watch::Sender<bool>)>,
-    /// Pictures whose analysis failed; not tried again until restart.
-    failed: std::collections::HashSet<String>,
+    /// Pictures whose analysis failed, and when to try each again.
+    failed: std::collections::HashMap<String, Retry>,
+    /// The observation whose cut clock stays shown across a wallpaper
+    /// change, until the new picture's clock is drawn.
+    holding: Option<(u64, String)>,
+    /// The shown cut clock is the old wallpaper's, kept until the next
+    /// render for the new one completes.
+    held: bool,
     /// The request in flight: its picture's stamp and verdict basis.
     asked: Option<(u64, Asked)>,
     /// What the last answer found for its picture file, so the next
@@ -33,6 +39,27 @@ pub(super) struct State {
     shape: Option<Vec<u8>>,
     /// The wallpaper is being looked up.
     observing: bool,
+}
+
+/// How long a failed analysis waits before each new try. After the last,
+/// the picture is not tried again until restart.
+const RETRY_AFTER: [Duration; 3] = [
+    Duration::from_secs(60),
+    Duration::from_secs(5 * 60),
+    Duration::from_secs(30 * 60),
+];
+
+/// A picture whose analysis failed.
+#[derive(Clone, Copy, Debug)]
+struct Retry {
+    failures: usize,
+    /// When to try again; `None` is not again until restart.
+    next: Option<Instant>,
+}
+impl Retry {
+    fn due(&self, now: Instant) -> bool {
+        self.next.is_some_and(|next| now >= next)
+    }
 }
 
 /// The picture file a request named, by stamp, and its verdict basis.
@@ -101,6 +128,7 @@ impl State {
         if !keep {
             self.image = None;
             self.pixels = None;
+            self.held = false;
         }
     }
     pub fn invalidate(&mut self) {
@@ -108,6 +136,33 @@ impl State {
         self.observed = None;
         self.entry = None;
         self.observing = false;
+        self.holding = None;
+    }
+    /// The wallpaper changed: look it up again, but keep the cut clock
+    /// shown, so the plain clock never flashes in front of the scene. The
+    /// new picture's clock replaces it, or a plain one when it has none.
+    pub fn wallpaper_changed(&mut self) {
+        let holding = self.observed.take().filter(|_| self.image.is_some());
+        let kept = (self.image.take(), self.pixels.take());
+        self.invalidate();
+        if let Some(observation) = holding {
+            self.holding = Some(observation);
+            (self.image, self.pixels) = kept;
+        }
+    }
+    /// Starts looking up the wallpaper for `observation`. A clock held for
+    /// the same output and display layout stays until the new one is drawn.
+    fn start_observing(&mut self, observation: (u64, String)) {
+        let keep = self.holding.take().as_ref() == Some(&observation);
+        let kept = keep.then(|| (self.image.take(), self.pixels.take()));
+        self.invalidate();
+        if let Some((image, pixels)) = kept {
+            self.image = image;
+            self.pixels = pixels;
+            self.held = self.image.is_some();
+        }
+        self.observed = Some(observation);
+        self.observing = true;
     }
     /// Whether a cut clock is on its way and none is shown yet.
     pub fn waiting(&self) -> bool {
@@ -135,6 +190,14 @@ impl State {
         id: u64,
         rendered: Option<crate::depth::Rendered>,
     ) -> Option<String> {
+        self.complete_at(id, rendered, Instant::now())
+    }
+    fn complete_at(
+        &mut self,
+        id: u64,
+        rendered: Option<crate::depth::Rendered>,
+        now: Instant,
+    ) -> Option<String> {
         trace(format!(
             "ready {id}/{} pixels={}",
             self.id,
@@ -144,6 +207,7 @@ impl State {
             return None;
         }
         self.cancel = None;
+        self.held = false;
         if let (Some((asked_id, asked)), Some(rendered)) = (self.asked.take(), rendered.as_ref())
             && asked_id == id
         {
@@ -160,7 +224,7 @@ impl State {
             .map(|p| Handle::from_rgba(p.width, p.height, p.rgba.clone()));
         match rendered.found {
             crate::depth::Found::Unknown { key }
-                if !self.failed.contains(&key)
+                if self.failed.get(&key).is_none_or(|retry| retry.due(now))
                     && self.analysing.as_ref().is_none_or(|(k, _)| *k != key) =>
             {
                 Some(key)
@@ -176,18 +240,40 @@ impl State {
         }
     }
     /// An analysis ended. Returns whether the clock should be drawn again.
-    pub fn analysed(&mut self, key: &str, ok: bool) -> bool {
+    pub fn analysed(
+        &mut self,
+        key: &str,
+        result: Result<(), crate::depth::analyse::Failure>,
+    ) -> bool {
+        self.analysed_at(key, result, Instant::now())
+    }
+    /// A failure is tried again after a while (`RETRY_AFTER`), unless the
+    /// picture is one this can never read.
+    fn analysed_at(
+        &mut self,
+        key: &str,
+        result: Result<(), crate::depth::analyse::Failure>,
+        now: Instant,
+    ) -> bool {
         if self.analysing.as_ref().is_none_or(|(k, _)| k != key) {
             return false;
         }
         self.analysing = None;
-        if !ok {
-            if self.failed.len() >= 64 {
+        if let Err(failure) = result {
+            if self.failed.len() >= 64 && !self.failed.contains_key(key) {
                 self.failed.clear();
             }
-            self.failed.insert(key.to_owned());
+            let failures = self.failed.get(key).map_or(0, |retry| retry.failures) + 1;
+            let next = (failure != crate::depth::analyse::Failure::Picture)
+                .then(|| RETRY_AFTER.get(failures - 1).map(|wait| now + *wait))
+                .flatten();
+            trace(format!(
+                "analysis of {key} failed ({failure:?}), retry {next:?}"
+            ));
+            self.failed.insert(key.to_owned(), Retry { failures, next });
             return false;
         }
+        self.failed.remove(key);
         self.key = None;
         true
     }
@@ -223,9 +309,7 @@ impl Cards {
         };
         let observation = (self.display_generation, output.clone());
         if self.depth.observed.as_ref() != Some(&observation) {
-            self.depth.invalidate();
-            self.depth.observed = Some(observation);
-            self.depth.observing = true;
+            self.depth.start_observing(observation);
             let id = self.depth.id;
             return cosmic::task::future(async move {
                 let (send, receive) = tokio::sync::oneshot::channel();
@@ -316,7 +400,7 @@ impl Cards {
             ..asking
         })
         .ok();
-        let keep = shape.is_some() && self.depth.shape == shape;
+        let keep = (shape.is_some() && self.depth.shape == shape) || self.depth.held;
         if !needed {
             // Today's verdict for this picture, frame and style shows the
             // plain clock; nothing to draw until one of them changes.
@@ -356,10 +440,10 @@ impl Cards {
         self.depth.analysing = Some((key.clone(), send));
         trace(format!("analyse {key}"));
         cosmic::task::future(async move {
-            let ok = analyse::analyse_once(&key, &picture, &path, &source, root, cancel)
+            let result = analyse::analyse_once(&key, &picture, &path, &source, root, cancel)
                 .await
-                .is_ok();
-            Message::DepthAnalysed(key, ok)
+                .map(|_| ());
+            Message::DepthAnalysed(key, result)
         })
     }
     pub(super) fn depth_view(&self) -> Option<Element<'static, Message>> {
@@ -381,6 +465,7 @@ impl Cards {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::depth::analyse::Failure;
     fn lit() -> crate::depth::Rendered {
         crate::depth::Rendered {
             found: crate::depth::Found::Ridge,
@@ -413,20 +498,110 @@ mod tests {
         // Not again while it runs.
         assert_eq!(state.complete(state.id, unknown("a")), None);
         // An answer for a picture no longer analysed changes nothing.
-        assert!(!state.analysed("b", true));
+        assert!(!state.analysed("b", Ok(())));
         // Done: the clock is drawn again from the kept analysis.
         state.key = Some(vec![1]);
-        assert!(state.analysed("a", true));
+        assert!(state.analysed("a", Ok(())));
         assert!(state.key.is_none() && state.analysing.is_none());
         assert!(!*cancel.borrow());
-        // A failed picture is not tried again.
+        // A picture this can't read is not tried again.
         let (send, _cancel) = watch::channel(false);
         state.analysing = Some(("c".into(), send));
-        assert!(!state.analysed("c", false));
+        assert!(!state.analysed("c", Err(Failure::Picture)));
         assert_eq!(state.complete(state.id, unknown("c")), None);
         // Ridge and judged pictures never ask.
         assert_eq!(state.complete(state.id, Some(lit())), None);
         assert!(state.image.is_some());
+    }
+    #[test]
+    fn d4_a_failed_analysis_is_tried_again_with_bounded_backoff() {
+        let mut state = State::default();
+        let start = Instant::now();
+        let mut now = start;
+        let fail = |state: &mut State, now: Instant, failure: Failure| {
+            assert_eq!(
+                state.complete_at(state.id, unknown("a"), now),
+                Some("a".into()),
+                "asked to analyse again"
+            );
+            let (send, _cancel) = watch::channel(false);
+            state.analysing = Some(("a".into(), send));
+            assert!(!state.analysed_at("a", Err(failure), now));
+        };
+        for wait in RETRY_AFTER {
+            fail(&mut state, now, Failure::Stopped);
+            // Not before the wait is over.
+            now += wait - Duration::from_secs(1);
+            assert_eq!(state.complete_at(state.id, unknown("a"), now), None);
+            now += Duration::from_secs(1);
+        }
+        // The last try fails too: no more until restart.
+        fail(&mut state, now, Failure::Disk);
+        now += Duration::from_secs(24 * 3600);
+        assert_eq!(state.complete_at(state.id, unknown("a"), now), None);
+        // Success clears the record, so a later failure starts over.
+        let mut state = State::default();
+        fail(&mut state, start, Failure::Model);
+        let later = start + RETRY_AFTER[0];
+        assert_eq!(
+            state.complete_at(state.id, unknown("a"), later),
+            Some("a".into())
+        );
+        let (send, _cancel) = watch::channel(false);
+        state.analysing = Some(("a".into(), send));
+        assert!(state.analysed_at("a", Ok(()), later));
+        assert!(state.failed.is_empty());
+    }
+    #[test]
+    fn d3_a_wallpaper_change_keeps_the_cut_clock_until_the_new_one_is_drawn() {
+        let observation = (3, "DP-1".to_string());
+        let mut state = State::default();
+        state.start_observing(observation.clone());
+        state.observe(
+            state.id,
+            Some(BgEntry::new("all", BgSource::Path("mountains.png".into()))),
+        );
+        state.complete(state.id, Some(lit()));
+        assert!(state.image.is_some());
+        // The wallpaper file changes: the cut clock stays while the new
+        // picture is looked up and drawn, also behind the rain glass.
+        state.wallpaper_changed();
+        assert!(state.image.is_some() && state.pixels.is_some());
+        assert!(!state.waiting());
+        state.start_observing(observation.clone());
+        assert!(state.image.is_some() && state.held);
+        state.observe(
+            state.id,
+            Some(BgEntry::new("all", BgSource::Path("lake.png".into()))),
+        );
+        // The new render starts (a new request shape) and keeps it shown.
+        state.restart(state.held);
+        assert!(state.image.is_some());
+        // A stale answer changes nothing; the new one replaces it.
+        assert_eq!(state.complete(state.id.wrapping_sub(1), None), None);
+        assert!(state.image.is_some());
+        state.complete(state.id, unknown("lake"));
+        assert!(state.image.is_none() && !state.held);
+
+        // The clock moved to another output: nothing is held.
+        let mut state = State::default();
+        state.start_observing(observation.clone());
+        state.complete(state.id, Some(lit()));
+        state.wallpaper_changed();
+        state.start_observing((4, "DP-2".into()));
+        assert!(state.image.is_none());
+        // Depth turned off after the change: nothing is held either.
+        let mut state = State::default();
+        state.start_observing(observation.clone());
+        state.complete(state.id, Some(lit()));
+        state.wallpaper_changed();
+        state.invalidate();
+        state.start_observing(observation);
+        assert!(state.image.is_none());
+        // Without a cut clock there is nothing to hold.
+        let mut state = State::default();
+        state.wallpaper_changed();
+        assert!(state.holding.is_none());
     }
     #[test]
     fn fb14_arrange_retires_depth_without_changing_clock_input() {
@@ -797,6 +972,39 @@ mod tests {
         let next = settle(&mut cards);
         assert_eq!(next.seen.unwrap().found, Some(Found::Ridge));
         assert!(cards.depth.pixels.is_some() && cards.clock_behind_glass());
+    }
+    #[test]
+    fn d3_the_desktop_never_shows_the_uncut_clock_while_a_new_wallpaper_is_read() {
+        if crate::displays::test_support::isolated(
+            "app::depth::tests::d3_the_desktop_never_shows_the_uncut_clock_while_a_new_wallpaper_is_read",
+        ) {
+            return;
+        }
+        for effect in [crate::rain::Effect::Rain, crate::rain::Effect::Fog] {
+            let (mut cards, _wire) = ridge_desktop(effect);
+            settle(&mut cards);
+            assert!(cards.depth.pixels.is_some());
+            let old = cards.depth.pixels.clone();
+            // The wallpaper file is rewritten: through the lookup and the new
+            // render, the clock on screen stays the cut one.
+            let _ = cards.update(Message::WallpaperColorsChanged);
+            assert!(
+                cards.depth_view().is_some(),
+                "{effect:?}: uncut clock shown"
+            );
+            assert!(cards.depth.observing);
+            let id = cards.depth.id;
+            let _ = cards.update(Message::DepthObserved(id, crate::depth::observe("DP-1")));
+            assert!(cards.depth.cancel.is_some(), "the new clock is asked for");
+            assert!(
+                cards.depth_view().is_some(),
+                "{effect:?}: uncut clock shown"
+            );
+            settle(&mut cards);
+            let new = cards.depth.pixels.clone().expect("the new cut clock");
+            assert!(!std::sync::Arc::ptr_eq(old.as_ref().unwrap(), &new));
+            assert!(!cards.depth.held);
+        }
     }
     #[test]
     fn depth_ignores_cosmic_bg_rewriting_the_same_pictures() {

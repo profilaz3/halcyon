@@ -423,7 +423,10 @@ impl Settings {
             footer.push(label("Choose to use", CAPTION, MUTED));
         }
         footer.push(cosmic::widget::space().width(Length::Fill).into());
-        if installed.is_some() {
+        let removing = packs.removing.as_deref() == Some(theme.id.as_str());
+        if removing {
+            footer.push(label("Removing…", CAPTION, MUTED));
+        } else if installed.is_some() {
             if confirming {
                 footer.push(
                     button::text("Cancel")
@@ -432,7 +435,12 @@ impl Settings {
                 );
                 footer.push(
                     button::destructive("Remove")
-                        .on_press(edit(Edit::Remove(theme.id.clone())))
+                        .on_press_maybe(
+                            packs
+                                .removing
+                                .is_none()
+                                .then(|| edit(Edit::Remove(theme.id.clone()))),
+                        )
                         .into(),
                 );
             } else {
