@@ -55,6 +55,30 @@ Repeat for additional calendars. The switches beside their names select which
 feeds appear. Adding a subscription replaces an existing Google sign-in
 connection on this computer; the two connection types cannot be combined.
 
+## System accounts
+
+Halcyon can also show calendars from accounts you already added to the system,
+with no link and no sign-in in Halcyon. This is the way to get Google and
+Microsoft 365 or Outlook calendars without a subscription link, including work
+and school accounts that don't allow secret addresses. Exchange, Nextcloud and
+other CalDAV accounts, calendars kept on this computer, and birthdays from your
+contacts appear the same way.
+
+1. Add the account in **Online Accounts** (`gnome-online-accounts-gtk` on
+   Pop!_OS and COSMIC) and leave its **Calendar** switch on.
+2. In **Settings → Widgets → Calendar**, select **Add from system accounts…**
+   under **Calendars**.
+3. Turn on the calendars you want. The **Online Accounts…** button opens the
+   accounts app when it is installed.
+
+System calendars join the same list as calendar links: eight calendars in all,
+each with its switch, **Remove** and **Check connection**. Evolution Data Server
+keeps the accounts and syncs their events; Halcyon reads them from it on the
+usual refresh interval and only reads. If Evolution Data Server isn't running,
+Halcyon shows "System calendars are not available" and your link calendars keep
+updating. A calendar renamed or recolored in its account shows the new name or
+color after you switch it off and on again in the list.
+
 ## Updates and privacy
 
 Events refresh periodically while the widget is active. Change the interval in
