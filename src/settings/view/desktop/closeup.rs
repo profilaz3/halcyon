@@ -340,10 +340,12 @@ fn whole_bar<'a>(
     frame: [f32; 2],
     inset: f32,
     alpha: f32,
+    glass: f32,
     accent: Color,
     on_press: Option<Message>,
 ) -> Element<'a, Message> {
     let mut look = Look::of(draft);
+    look.opacity *= glass;
     let horizontal = look.horizontal();
     let major = if horizontal { frame[0] } else { frame[1] };
     // A faint bar is only a shape; icons can't fade with it.
@@ -449,6 +451,7 @@ fn islands<'a>(
     frame: [f32; 2],
     inset: f32,
     alpha: f32,
+    glass: f32,
     accent: Color,
     measured: Option<&dock_islands_core::Layout>,
     selected: Option<Section>,
@@ -456,7 +459,8 @@ fn islands<'a>(
     on_press: Option<Message>,
     selectable: bool,
 ) -> Vec<Element<'a, Message>> {
-    let look = Look::of(draft);
+    let mut look = Look::of(draft);
+    look.opacity *= glass;
     let horizontal = look.horizontal();
     let major = if horizontal { frame[0] } else { frame[1] };
     // Live measurements belong to the applied applets and size. Once those
@@ -583,6 +587,27 @@ fn wallpaper_band(
 }
 
 impl Settings {
+    /// How much of a bar's fill its glass material leaves, as the installed
+    /// panel draws it: the bar record's opacity under the current style.
+    /// 1 without a material or without the Islands panel.
+    fn bar_glass(&self, kind: PanelKind) -> f32 {
+        let target = match kind {
+            PanelKind::Dock => crate::materials::Target::Dock,
+            PanelKind::Panel => crate::materials::Target::Panel,
+        };
+        if !self.desktop.islands.installation.installed() {
+            return 1.;
+        }
+        self.config
+            .materials
+            .effective(target)
+            .map_or(1., |finish| {
+                let bar =
+                    crate::desktop::materials::bar_record(finish, self.config.appearance.family);
+                f32::from(bar.finish.opacity()) / 100.
+            })
+    }
+
     /// The picture's height: a band a little deeper than the bars on a top
     /// or bottom edge; taller for a side, so the bar has length to show.
     pub(super) fn bar_closeup_height(&self) -> f32 {
@@ -671,6 +696,7 @@ impl Settings {
                         frame,
                         inset,
                         alpha,
+                        self.bar_glass(draft.kind()),
                         accent,
                         subject
                             .then_some(editor.islands.geometry.as_ref())
@@ -687,6 +713,7 @@ impl Settings {
                         frame,
                         inset,
                         alpha,
+                        self.bar_glass(draft.kind()),
                         accent,
                         on_press,
                     ));
@@ -823,6 +850,7 @@ impl Settings {
                         frame,
                         inset,
                         alpha,
+                        self.bar_glass(draft.kind()),
                         accent,
                         None,
                         None,
@@ -837,6 +865,7 @@ impl Settings {
                         frame,
                         inset,
                         alpha,
+                        self.bar_glass(draft.kind()),
                         accent,
                         None,
                     ));
