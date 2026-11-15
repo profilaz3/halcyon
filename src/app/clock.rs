@@ -448,8 +448,16 @@ impl Presentation {
             font_size = (available * 0.9 * f32::from(self.preferences.scale) / 100.).min(available);
             date_size
         } else {
-            font_size = font_size.min((height - gap).max(1.) / height_per_em);
-            shape.date * font_size
+            let room = (height - gap).max(1.);
+            font_size = font_size.min(room / height_per_em);
+            // The date never draws smaller than META, so a small box gives
+            // the face what that floor leaves.
+            if below && shape.date * font_size < crate::widget_style::META {
+                font_size = font_size
+                    .min((room - crate::widget_style::META * 1.25) / shape.em)
+                    .max(1.);
+            }
+            (shape.date * font_size).max(crate::widget_style::META)
         };
         Frame {
             presentation: self,
@@ -745,6 +753,7 @@ pub(super) mod tests {
         for face in ClockFace::ALL {
             config.clock.face = Some(face);
             for size in [
+                [130., 78.],
                 [160., 100.],
                 [300., 120.],
                 [490., 200.],
@@ -768,6 +777,12 @@ pub(super) mod tests {
                                 config.clock.show_date = show_date;
                                 config.clock.alignment = alignment;
                                 config.clock.scale = scale;
+                                // Below the card's 160 by 100 minimum only
+                                // Settings' face tiles draw, and only Split
+                                // shows its date there.
+                                if size[0] < 160. && show_date && face != ClockFace::Split {
+                                    continue;
+                                }
                                 let pixels = native.render(view(&config, now, size), &theme);
                                 let bounds = ink(&pixels, size[0] as usize);
                                 assert!(
@@ -777,6 +792,23 @@ pub(super) mod tests {
                                         && bounds[3] < size[1] as usize - 1,
                                     "{face:?} {size:?} {hour}:{minute} 24h={format} date={show_date} {alignment:?} {scale}%: {bounds:?}"
                                 );
+                                // Split's date stays on its two lines.
+                                if face == ClockFace::Split && show_date {
+                                    let view = || view(&config, now, size);
+                                    let weekday = native.text_bounds(view(), "Wednesday");
+                                    let day = native.text_bounds(view(), "September 30");
+                                    assert!(
+                                        day.height <= weekday.height * 1.2
+                                            && day.x + day.width <= size[0],
+                                        "{size:?} {scale}% 24h={format}: {weekday:?} {day:?} time={:?} pm={:?} am={:?}",
+                                        native.text_all(
+                                            view(),
+                                            &ClockReading::at(now.time(), format).time
+                                        ),
+                                        native.text_all(view(), "PM"),
+                                        native.text_all(view(), "AM")
+                                    );
+                                }
                             }
                         }
                     }

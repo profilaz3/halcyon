@@ -97,14 +97,35 @@ pub(super) fn fit(p: &Presentation, face: ClockFace, width: f32, requested: f32)
     let needed = match face {
         ClockFace::Stacked => measure("00", requested, display) + period(requested),
         ClockFace::Words => widest_words(display) * requested / 100.,
-        ClockFace::Split => {
-            let time = measure("00:00", requested, display) + period(requested);
-            if p.preferences.show_date {
-                time + requested * SPLIT_GAP * 2. + 1. + widest_date(requested * SPLIT_DATE, body)
-            } else {
-                time
+        ClockFace::Split if p.preferences.show_date => {
+            // Text width grows in step with its size, but the date and AM
+            // or PM stop shrinking at the smallest readable size. Measure
+            // each once, then find the largest size whose row fits.
+            let meta = crate::widget_style::META;
+            let time = measure("00:00", 100., display) / 100.;
+            let date = widest_date(100., body) / 100.;
+            let pm = (!p.preferences.format_24h).then(|| measure("PM", 100., body) / 100.);
+            let needed = |size: f32| {
+                size * (time + SPLIT_GAP * 2.)
+                    + 1.
+                    + date * (size * SPLIT_DATE).max(meta)
+                    + pm.map_or(0., |pm| 6. + pm * period_size(size))
+            };
+            if needed(requested) <= width {
+                return requested;
             }
+            let (mut low, mut high) = (1f32, requested);
+            for _ in 0..24 {
+                let middle = (low + high) / 2.;
+                if needed(middle) <= width {
+                    low = middle;
+                } else {
+                    high = middle;
+                }
+            }
+            return low;
         }
+        ClockFace::Split => measure("00:00", requested, display) + period(requested),
         _ => measure("00:00", requested, display),
     };
     (requested * (width / needed.max(1.)).min(1.)).max(1.)
