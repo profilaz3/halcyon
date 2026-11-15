@@ -175,7 +175,9 @@ pub enum Message {
     /// A quiet scene finished fading out; its surfaces can go.
     RainRetired(u64),
     /// Rain surfaces whose frames stopped coming: re-arm them.
-    RainNudge(Vec<window::Id>),
+    RainNudge(rain::Look),
+    /// The note's Try again for a weather effect that stopped moving.
+    RainRetry,
     /// What hides the desktop changed.
     RainDesk(crate::rain::desk::Desk),
     /// cosmic-bg rewrote its state file.
@@ -1186,7 +1188,8 @@ impl Cards {
                 Task::none()
             }
             Message::RainRetired(generation) => self.rain.retired(generation),
-            Message::RainNudge(ids) => self.rain.nudge(ids),
+            Message::RainNudge(look) => self.rain_watched(look),
+            Message::RainRetry => self.rain.invalidate(),
             Message::RainDesk(desk) => {
                 self.rain.desk = desk;
                 Task::none()
