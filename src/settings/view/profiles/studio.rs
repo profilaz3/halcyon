@@ -1015,7 +1015,7 @@ impl Settings {
 
 fn line_text<'a>(text: String) -> Element<'a, Message> {
     text::caption(text)
-        .class(cosmic::theme::Text::Color(MUTED))
+        .class(super::super::text_style(MUTED))
         .wrapping(cosmic::iced::widget::text::Wrapping::None)
         .into()
 }

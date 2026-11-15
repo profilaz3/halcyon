@@ -225,3 +225,85 @@ fn wallpaper_offers_this_mode_or_both_with_separate_light_and_dark() {
     assert!(stored(DARK).contains(&new));
     assert!(stored(LIGHT).contains(&new));
 }
+
+/// WCAG contrast between the commonest color in `area` of an RGBA capture
+/// (the background) and the pixel that differs from it most (the ink).
+fn comfort_ink_contrast(pixels: &[u8], width: f32, area: cosmic::iced::Rectangle) -> f32 {
+    fn luminance([r, g, b]: [u8; 3]) -> f32 {
+        let channel = |c: u8| {
+            let c = c as f32 / 255.;
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+    }
+    let mut counts = std::collections::HashMap::<[u8; 3], usize>::new();
+    let mut seen = Vec::new();
+    for y in area.y.max(0.) as usize..(area.y + area.height) as usize {
+        for x in area.x.max(0.) as usize..(area.x + area.width) as usize {
+            let i = (y * width as usize + x) * 4;
+            let rgb = [pixels[i], pixels[i + 1], pixels[i + 2]];
+            *counts.entry(rgb).or_default() += 1;
+            seen.push(rgb);
+        }
+    }
+    let background = counts.into_iter().max_by_key(|(_, n)| *n).unwrap().0;
+    let back = luminance(background);
+    seen.into_iter()
+        .map(|rgb| {
+            let ink = luminance(rgb);
+            (back.max(ink) + 0.05) / (back.min(ink) + 0.05)
+        })
+        .fold(1., f32::max)
+}
+
+/// Look Studio's tile captions read in a light theme, not only a dark one.
+#[test]
+fn studio_tile_captions_are_readable_in_light_and_dark() {
+    use profiles::studio::{Edit as Studio, Start};
+    let name = "studio_tile_captions_are_readable_in_light_and_dark";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let root = isolated_root();
+    let mut app = looks_desktop(&root);
+    let size = Size::new(820., 800.);
+    send_settings(&mut app, Message::Resized(size));
+    let mut native = crate::native_test::Native::new(size);
+    looks_send(
+        &mut app,
+        profiles::Message::Select(profiles::Selection::Current),
+    );
+    studio_send(&mut app, Studio::Start(Start::Desktop));
+    for part in ["wallpaper", "panel", "windows"] {
+        let tile = native_reveal(&app, &mut native, &format!("studio-tile-{part}"));
+        // The caption is the tile's last line, inside its 8 px padding.
+        let caption = cosmic::iced::Rectangle {
+            x: tile.x + 10.,
+            y: tile.y + tile.height - 8. - 16.,
+            width: tile.width - 20.,
+            height: 16.,
+        };
+        for (theme, tone) in [
+            (cosmic::Theme::light(), "light"),
+            (cosmic::Theme::dark(), "dark"),
+        ] {
+            let pixels = native.render(app.settings_view(), &theme);
+            let contrast = comfort_ink_contrast(&pixels, size.width, caption);
+            assert!(
+                contrast >= 4.5,
+                "{part} caption in {tone}: {contrast:.2}:1 at {caption:?}"
+            );
+        }
+    }
+}
