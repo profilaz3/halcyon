@@ -105,7 +105,7 @@ and password, see [Links that need a password](#links-that-need-a-password).
 ## Add it to Halcyon
 
 1. Open **Settings → Widgets → Calendar**.
-2. Select **Add calendar link** under **Calendars & connection**.
+2. Select **Add calendar…** under **Calendars**, then **Calendar link**.
 3. Enter a name, paste the subscription link and select **Add calendar**.
 4. Unlock your system keyring if prompted. Halcyon checks the feed before saving it.
 5. Enable Calendar, or the Calendar section of **At a glance**, to show events
@@ -115,6 +115,12 @@ Repeat for additional calendars. The switches beside their names select which
 feeds appear. Adding a link, a CalDAV calendar or a file replaces an existing
 Google sign-in connection on this computer; Google sign-in cannot be combined
 with the other kinds.
+
+**Add calendar…** lists every kind of calendar Halcyon can show: Online
+Accounts (when the system has them), CalDAV account, Calendar link, Holidays,
+Calendar file and Calendar folder. Choosing one opens its form in place of the
+list, and **Cancel** goes back to the list. When Google sign-in is set up for
+this build, **Connect Google Calendar** stays beside it.
 
 ### Links that need a password
 
@@ -129,7 +135,7 @@ keyring with the link. If the server answers that they are wrong, Settings says
 CalDAV lets Halcyon read the calendars of an account directly, including ones
 that are not shared or published.
 
-1. Open **Settings → Widgets → Calendar** and select **Add CalDAV account**.
+1. Open **Settings → Widgets → Calendar** and select **Add calendar…**, then **CalDAV account**.
 2. Enter the server address, your username and your password. Use an app
    password if your provider offers one.
 3. Select **Find calendars**. Halcyon looks up the account's calendars, with
@@ -161,7 +167,7 @@ password once more.
 
 ## Calendar files
 
-**Add calendar file…** opens the file chooser for an `.ics` file on this
+**Add calendar…** then **Calendar file** opens the file chooser for an `.ics` file on this
 computer, such as an export or a file kept in sync by another app. Halcyon
 reads the file again on every refresh and whenever it changes on disk. Files go
 through the same size and recurrence limits as links. The file's path is kept
@@ -170,7 +176,7 @@ and is never part of usage reports.
 
 ## Calendar folders
 
-**Add calendar folder…** opens the folder chooser. It is meant for folders kept
+**Add calendar…** then **Calendar folder** opens the folder chooser. It is meant for folders kept
 in sync by tools such as vdirsyncer, and read by khal: one `.ics` file per
 event, or whole calendars in a file.
 
@@ -188,7 +194,7 @@ usage reports.
 
 ## Public holidays
 
-**Add holidays…** offers a list of countries. Halcyon adds that country's
+**Add calendar…** then **Holidays** offers a list of countries. Halcyon adds that country's
 holiday calendar from the public holiday calendars Thunderbird publishes at
 `thunderbird.net`. It is fetched like any calendar link, needs no account, and
 appears in a muted gray so it stays behind your own events. Remove it like any
@@ -207,6 +213,31 @@ connection is not encrypted." under such an address.
 
 Redirects are followed a few times at most. A redirect from https to http is
 refused, and the username and password are never sent to a different host.
+
+## System accounts
+
+Halcyon can also show calendars from accounts you already added to the system,
+with no link and no sign-in in Halcyon. This is the way to get Google and
+Microsoft 365 or Outlook calendars without a subscription link, including work
+and school accounts that don't allow secret addresses. Exchange, Nextcloud and
+other CalDAV accounts, calendars kept on this computer, and birthdays from your
+contacts appear the same way.
+
+1. Add the account in **Online Accounts** (`gnome-online-accounts-gtk` on
+   Pop!_OS and COSMIC) and leave its **Calendar** switch on.
+2. In **Settings → Widgets → Calendar**, select **Add calendar…**
+   under **Calendars**, then **Online Accounts**. That row is listed when
+   Evolution Data Server is available or the Online Accounts app is installed.
+3. Turn on the calendars you want. The **Online Accounts…** button opens the
+   accounts app when it is installed.
+
+System calendars join the same list as calendar links: eight calendars in all,
+each with its switch, **Remove** and **Check connection**. Evolution Data Server
+keeps the accounts and syncs their events; Halcyon reads them from it on the
+usual refresh interval and only reads. If Evolution Data Server isn't running,
+Halcyon shows "System calendars are not available" and your link calendars keep
+updating. A calendar renamed or recolored in its account shows the new name or
+color after you switch it off and on again in the list.
 
 ## Updates and privacy
 

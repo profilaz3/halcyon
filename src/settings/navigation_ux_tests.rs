@@ -386,7 +386,10 @@ fn explanations_open_from_question_mark_and_can_always_show() {
         &mut app,
         Message::AppSettingsPage(crate::settings::view::AppSettingsPage::Interface),
     );
-    let (title, line) = ("Animate settings", "Sections slide open when you expand them");
+    let (title, line) = (
+        "Animate settings",
+        "Sections slide open when you expand them",
+    );
     let key = explain::key(title);
     let id = format!("explain-{key:016x}");
     for width in [820., 1280.] {
@@ -394,10 +397,20 @@ fn explanations_open_from_question_mark_and_can_always_show() {
         send_settings(&mut app, Message::Resized(size));
         let mut native = Native::new(size);
         assert!(native.duplicate_ids(app.settings_view()).is_empty());
-        assert!(native.text_all(app.settings_view(), line).is_empty(), "hidden at first");
+        assert!(
+            native.text_all(app.settings_view(), line).is_empty(),
+            "hidden at first"
+        );
         assert_eq!(native.text_all(app.settings_view(), title).len(), 1);
-        for (theme, name) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
-            native.capture(app.settings_view(), &theme, &format!("explain-closed-{width}-{name}"));
+        for (theme, name) in [
+            (cosmic::Theme::light(), "light"),
+            (cosmic::Theme::dark(), "dark"),
+        ] {
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("explain-closed-{width}-{name}"),
+            );
             let mark = native.bounds(app.settings_view(), &id);
             native.capture_hover(
                 app.settings_view(),
@@ -408,13 +421,27 @@ fn explanations_open_from_question_mark_and_can_always_show() {
         }
         click(&mut app, &mut native, &id);
         assert_eq!(app.explained, Some((Page::General, key)));
-        assert_eq!(native.text_all(app.settings_view(), line).len(), 1, "shown after a click");
-        for (theme, name) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
-            native.capture(app.settings_view(), &theme, &format!("explain-open-{width}-{name}"));
+        assert_eq!(
+            native.text_all(app.settings_view(), line).len(),
+            1,
+            "shown after a click"
+        );
+        for (theme, name) in [
+            (cosmic::Theme::light(), "light"),
+            (cosmic::Theme::dark(), "dark"),
+        ] {
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("explain-open-{width}-{name}"),
+            );
         }
         click(&mut app, &mut native, &id);
         assert_eq!(app.explained, None);
-        assert!(native.text_all(app.settings_view(), line).is_empty(), "hidden again");
+        assert!(
+            native.text_all(app.settings_view(), line).is_empty(),
+            "hidden again"
+        );
     }
 
     // Opening another section closes the open explanation.
@@ -435,9 +462,16 @@ fn explanations_open_from_question_mark_and_can_always_show() {
     assert!(app.config.show_explanations);
     assert_eq!(Config::load().show_explanations, true);
     assert_eq!(native.text_all(app.settings_view(), line).len(), 1);
-    assert!(native.try_bounds(app.settings_view(), &id).is_none(), "no ? when shown");
+    assert!(
+        native.try_bounds(app.settings_view(), &id).is_none(),
+        "no ? when shown"
+    );
     assert!(native.duplicate_ids(app.settings_view()).is_empty());
-    native.capture(app.settings_view(), &cosmic::Theme::dark(), "explain-always-1280-dark");
+    native.capture(
+        app.settings_view(),
+        &cosmic::Theme::dark(),
+        "explain-always-1280-dark",
+    );
     send_settings(&mut app, Message::UndoPreferences);
     assert!(!Config::load().show_explanations);
 }
@@ -482,32 +516,75 @@ fn structure_accessibility_root_halcyon_and_one_owner_each() {
         click(&mut app, &mut native, "nav-desktop-motion");
         assert_eq!(app.page, Page::DesktopMotion);
         assert!(native.duplicate_ids(app.settings_view()).is_empty());
-        for (theme, name) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
-            native.capture(app.settings_view(), &theme, &format!("structure-accessibility-{width}-{name}"));
+        for (theme, name) in [
+            (cosmic::Theme::light(), "light"),
+            (cosmic::Theme::dark(), "dark"),
+        ] {
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("structure-accessibility-{width}-{name}"),
+            );
         }
         click(&mut app, &mut native, "nav-general");
         assert_eq!(app.page, Page::General);
         // The landing no longer repeats Accessibility.
-        assert!(native.try_bounds(app.settings_view(), "settings-accessibility").is_none());
-        assert!(native.try_bounds(app.settings_view(), "app-settings-interface").is_some());
-        for (theme, name) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
-            native.capture(app.settings_view(), &theme, &format!("structure-halcyon-{width}-{name}"));
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "settings-accessibility")
+                .is_none()
+        );
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "app-settings-interface")
+                .is_some()
+        );
+        for (theme, name) in [
+            (cosmic::Theme::light(), "light"),
+            (cosmic::Theme::dark(), "dark"),
+        ] {
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("structure-halcyon-{width}-{name}"),
+            );
         }
         // Startup: no second Show widgets and no second setup entry.
         click(&mut app, &mut native, "app-settings-operation");
         assert_eq!(app.app_settings_page, AppSettingsPage::Operation);
-        assert!(native.text_all(app.settings_view(), "Show widgets on the desktop").is_empty());
-        assert!(native.text_all(app.settings_view(), "Finish setting up").is_empty());
-        assert_eq!(native.text_all(app.settings_view(), "Set up again").len(), 1);
-        for (theme, name) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
-            native.capture(app.settings_view(), &theme, &format!("structure-startup-{width}-{name}"));
+        assert!(
+            native
+                .text_all(app.settings_view(), "Show widgets on the desktop")
+                .is_empty()
+        );
+        assert!(
+            native
+                .text_all(app.settings_view(), "Finish setting up")
+                .is_empty()
+        );
+        assert_eq!(
+            native.text_all(app.settings_view(), "Set up again").len(),
+            1
+        );
+        for (theme, name) in [
+            (cosmic::Theme::light(), "light"),
+            (cosmic::Theme::dark(), "dark"),
+        ] {
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("structure-startup-{width}-{name}"),
+            );
         }
         send_settings(&mut app, Message::AppSettingsPage(AppSettingsPage::Home));
     }
     // Show widgets has one home: the Widgets page.
     send_settings(&mut app, Message::Page(Page::Widgets));
     let mut native = Native::new(Size::new(1280., 800.));
-    assert_eq!(native.text_all(app.settings_view(), "Show widgets").len(), 1);
+    assert_eq!(
+        native.text_all(app.settings_view(), "Show widgets").len(),
+        1
+    );
     // Search speaks the new names and still understands the old ones.
     for (query, label) in [
         ("edge menu", "Widget controls"),
@@ -620,13 +697,27 @@ fn builder_first_visit_opens_widget_update_review_once() {
     assert!(!app.design.review);
     send_settings(&mut app, Message::Page(Page::Builder));
     assert!(!app.design.review, "offered once per session");
-    send_settings(&mut app, Message::Design(crate::settings::design::Message::Review));
+    send_settings(
+        &mut app,
+        Message::Design(crate::settings::design::Message::Review),
+    );
     let size = Size::new(1280., 800.);
     send_settings(&mut app, Message::Resized(size));
     let mut native = Native::new(size);
-    assert!(native.try_bounds(app.settings_view(), "design-migrate").is_some());
-    for (theme, name) in [(cosmic::Theme::light(), "light"), (cosmic::Theme::dark(), "dark")] {
-        native.capture(app.settings_view(), &theme, &format!("structure-builder-review-{name}"));
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "design-migrate")
+            .is_some()
+    );
+    for (theme, name) in [
+        (cosmic::Theme::light(), "light"),
+        (cosmic::Theme::dark(), "dark"),
+    ] {
+        native.capture(
+            app.settings_view(),
+            &theme,
+            &format!("structure-builder-review-{name}"),
+        );
     }
     // Cancel keeps it closed for the rest of the session; nothing migrated.
     click(&mut app, &mut native, "design-cancel");
@@ -635,7 +726,11 @@ fn builder_first_visit_opens_widget_update_review_once() {
     send_settings(&mut app, Message::Page(Page::Builder));
     assert!(!app.design.review);
     assert!(!app.design.managed);
-    assert!(native.try_bounds(app.settings_view(), "design-review").is_some());
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "design-review")
+            .is_some()
+    );
 }
 
 #[test]
@@ -656,7 +751,7 @@ fn on16_sample_events_say_they_are_samples() {
         let scene = native.bounds(app.settings_view(), "desktop-scene");
         let label = native.text_bounds(app.settings_view(), note);
         let connect = native.bounds(app.settings_view(), "calendar-sample-connect");
-        let add = native.bounds(app.settings_view(), "calendar-subscription-open");
+        let add = native.bounds(app.settings_view(), "calendar-add-open");
         assert!(scene.y + scene.height <= label.y, "{scene:?} {label:?}");
         assert!(connect.y < add.y, "{connect:?} {add:?}");
         assert!((connect.center().y - label.center().y).abs() < 20.);

@@ -815,7 +815,7 @@ fn added_sources_count_toward_the_eight_calendars() {
                 color: String::new(),
             }],
         ));
-    assert_eq!(result.unwrap_err(), Problem::FeedLimit);
+    assert_eq!(result.unwrap_err(), Problem::CalendarLimit);
 }
 
 /// A folder laid out the way vdirsyncer and khal keep calendars: events in

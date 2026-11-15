@@ -3,6 +3,7 @@
 //! recognized only for an existing installation with its own calendar cache.
 mod auth;
 mod caldav;
+mod eds;
 mod folder;
 mod google;
 pub mod holidays;
@@ -23,6 +24,12 @@ mod caldav_tests;
 #[cfg(test)]
 mod tests;
 pub use auth::{Authorization, begin_sign_in, finish_sign_in};
+pub use eds::{
+    SystemCalendar, is_system, online_accounts_app, open_online_accounts, set_system_calendar,
+    system_available, system_calendars,
+};
+/// Calendars of every kind share one list of at most eight.
+pub const MAX_CALENDARS: usize = 8;
 pub use google::CalendarChoice;
 pub use store::cached as store_cached;
 pub use store::{
@@ -97,6 +104,9 @@ pub enum SourceKind {
     File,
     /// A folder of .ics files, as vdirsyncer and khal keep them.
     Folder,
+    /// A calendar from a system account, read through Evolution Data
+    /// Server. Only its UID (in the calendar ID), name and color are kept.
+    System,
 }
 impl SourceKind {
     /// Whether this kind keeps its address and login in the keyring entry.
@@ -104,7 +114,7 @@ impl SourceKind {
     pub fn uses_keyring(&self) -> bool {
         match self {
             Self::Link | Self::CalDav | Self::Holidays => true,
-            Self::File | Self::Folder => false,
+            Self::File | Self::Folder | Self::System => false,
         }
     }
 }
@@ -141,7 +151,13 @@ impl Connection {
             .iter()
             .find(|s| s.id == id)
             .map(|s| s.kind.clone())
-            .unwrap_or_default()
+            .unwrap_or_else(|| {
+                if is_system(id) {
+                    SourceKind::System
+                } else {
+                    SourceKind::Link
+                }
+            })
     }
     /// Calendar files to watch for changes.
     pub fn calendar_files(&self) -> Vec<std::path::PathBuf> {
@@ -203,6 +219,8 @@ pub enum Problem {
     CalendarFile,
     Duplicate,
     EmptyFolder,
+    SystemUnavailable,
+    CalendarLimit,
 }
 impl Problem {
     pub fn message(&self) -> &'static str {
@@ -261,6 +279,8 @@ impl Problem {
             }
             Self::Duplicate => "This calendar is already in your list.",
             Self::EmptyFolder => "This folder has no .ics calendar files.",
+            Self::SystemUnavailable => "System calendars are not available.",
+            Self::CalendarLimit => "You can show up to eight calendars. Remove one to add another.",
         }
     }
 }

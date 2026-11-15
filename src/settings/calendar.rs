@@ -1,6 +1,8 @@
 //! Account setup is separate from widget appearance and saved profiles.
 use super::*;
 use crate::calendar as account;
+#[path = "calendar_system.rs"]
+pub mod system;
 
 #[derive(Clone, Debug)]
 pub enum Message {
@@ -59,6 +61,64 @@ pub enum Message {
     Picked(Result<Option<PathBuf>, String>),
     PublisherHelp(bool),
     OpenGuide,
+    /// The system-accounts picker.
+    System(system::Message),
+    /// Shows or hides the list of kinds of calendar to add.
+    Chooser(bool),
+    /// Whether Evolution Data Server answers on the session bus.
+    SystemProbed(bool),
+    /// Opens the form for one kind of calendar from the list.
+    Choose(AddSource),
+}
+/// The kinds of calendar "Add calendar…" offers, in the order listed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AddSource {
+    OnlineAccounts,
+    CalDav,
+    Link,
+    Holidays,
+    File,
+    Folder,
+}
+impl AddSource {
+    pub const ALL: [Self; 6] = [
+        Self::OnlineAccounts,
+        Self::CalDav,
+        Self::Link,
+        Self::Holidays,
+        Self::File,
+        Self::Folder,
+    ];
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::OnlineAccounts => "Online Accounts",
+            Self::CalDav => "CalDAV account",
+            Self::Link => "Calendar link",
+            Self::Holidays => "Holidays",
+            Self::File => "Calendar file",
+            Self::Folder => "Calendar folder",
+        }
+    }
+    pub fn line(self) -> &'static str {
+        match self {
+            Self::OnlineAccounts => "Google, Microsoft 365 and others you added to the system",
+            Self::CalDav => "iCloud, Fastmail, Nextcloud and other servers",
+            Self::Link => "A private or public iCal address",
+            Self::Holidays => "Public holidays for a country",
+            Self::File => "An .ics file on this computer",
+            Self::Folder => "A folder synced by vdirsyncer or khal",
+        }
+    }
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::OnlineAccounts => "calendar-add-online-accounts",
+            Self::CalDav => "calendar-add-caldav",
+            Self::Link => "calendar-add-link",
+            Self::Holidays => "calendar-add-holidays",
+            Self::File => "calendar-add-file",
+            Self::Folder => "calendar-add-folder",
+        }
+    }
 }
 /// Shown under an address that will be read over plain http.
 pub const PLAIN_HTTP: &str = "This server is on your network and the connection is not encrypted.";
@@ -158,6 +218,11 @@ pub struct Editor {
     pub folder_picked: Vec<bool>,
     pub holidays_form: bool,
     pub holidays_country: Option<usize>,
+    pub system: system::Picker,
+    /// The list of kinds of calendar to add is open.
+    pub chooser: bool,
+    /// Evolution Data Server answered the last time the list was opened.
+    pub system_available: bool,
     attempt: u64,
 }
 impl Default for Editor {
@@ -195,6 +260,9 @@ impl Default for Editor {
             folder_picked: vec![],
             holidays_form: false,
             holidays_country: None,
+            system: system::Picker::default(),
+            chooser: false,
+            system_available: false,
             attempt: 0,
         }
     }
@@ -223,6 +291,8 @@ impl Editor {
             || self.file_pending.is_some()
             || !self.folder_found.is_empty()
             || self.holidays_form
+            || self.chooser
+            || self.system.open
     }
     /// Closes every add form and forgets what was typed into it.
     fn close_forms(&mut self) {
@@ -246,6 +316,12 @@ impl Editor {
         self.folder_picked.clear();
         self.holidays_form = false;
         self.holidays_country = None;
+        self.chooser = false;
+    }
+    /// Whether "Add calendar…" lists Online Accounts: the system has
+    /// Evolution Data Server or the Online Accounts app.
+    pub fn offers_system(&self) -> bool {
+        self.system_available || self.system.online_accounts
     }
     fn caldav_login(&self) -> account::Login {
         account::Login {
@@ -470,6 +546,9 @@ impl Settings {
                 self.calendar.subscription_form = show;
                 if show {
                     self.calendar.subscription_name = name;
+                } else {
+                    // Cancel goes back to the list of kinds.
+                    self.calendar.chooser = true;
                 }
             }
             Message::SubscriptionLogin(on) => {
@@ -493,6 +572,7 @@ impl Settings {
                 }
                 self.calendar.close_forms();
                 self.calendar.caldav_form = show;
+                self.calendar.chooser = !show;
                 self.calendar.error = None;
             }
             Message::CalDavServer(value) => {
@@ -644,6 +724,7 @@ impl Settings {
             Message::CancelFolder => {
                 self.calendar.folder_found.clear();
                 self.calendar.folder_picked.clear();
+                self.calendar.chooser = true;
             }
             Message::HolidaysForm(show) => {
                 if self.calendar.busy {
@@ -651,6 +732,7 @@ impl Settings {
                 }
                 self.calendar.close_forms();
                 self.calendar.holidays_form = show;
+                self.calendar.chooser = !show;
                 self.calendar.error = None;
             }
             Message::HolidaysCountry(index) => {
@@ -660,6 +742,7 @@ impl Settings {
             Message::CancelFile => {
                 self.calendar.file_pending = None;
                 self.calendar.file_name.clear();
+                self.calendar.chooser = true;
             }
             Message::SubscriptionHelp(show) => {
                 self.calendar.subscription_help = show;
@@ -838,6 +921,41 @@ impl Settings {
                 }
             }
             Message::PublisherHelp(on) => self.calendar.publisher_help = on,
+            Message::System(message) => return self.update_calendar_system(message),
+            Message::Chooser(open) => {
+                if self.calendar.busy {
+                    return Task::none();
+                }
+                self.calendar.close_forms();
+                self.calendar.system.open = false;
+                self.calendar.chooser = open;
+                self.calendar.error = None;
+                if open {
+                    self.calendar.system.online_accounts = account::online_accounts_app().is_some();
+                    return cosmic::task::future(async {
+                        wrap(Message::SystemProbed(account::system_available().await))
+                    });
+                }
+            }
+            Message::SystemProbed(available) => self.calendar.system_available = available,
+            Message::Choose(source) => {
+                if self.calendar.busy || !self.calendar.chooser {
+                    return Task::none();
+                }
+                return match source {
+                    AddSource::OnlineAccounts => {
+                        self.calendar.chooser = false;
+                        self.update_calendar_system(system::Message::Open(true))
+                    }
+                    AddSource::CalDav => self.update_calendar(Message::CalDavForm(true)),
+                    AddSource::Link => self.update_calendar(Message::SubscriptionForm(true)),
+                    AddSource::Holidays => self.update_calendar(Message::HolidaysForm(true)),
+                    // The chooser stays until a file or folder is picked, so
+                    // cancelling the file chooser comes back to it.
+                    AddSource::File => self.update_calendar(Message::ChooseFile),
+                    AddSource::Folder => self.update_calendar(Message::ChooseFolder),
+                };
+            }
             Message::OpenGuide => {
                 let path = crate::paths::shared("google-calendar-setup.html").unwrap_or_default();
                 return run_command(
@@ -1036,7 +1154,8 @@ mod tests {
                 super::super::Message::Resized(Size::new(width, height)),
             );
             let mut native = crate::native_test::Native::new(Size::new(width, height));
-            click(&mut app, &mut native, "calendar-subscription-open");
+            click(&mut app, &mut native, "calendar-add-open");
+            click(&mut app, &mut native, "calendar-add-link");
             click(&mut app, &mut native, "calendar-link-help");
             assert!(app.calendar.subscription_help);
             for (index, provider) in SubscriptionProvider::ALL.into_iter().enumerate() {
@@ -1143,7 +1262,8 @@ mod tests {
             let theme = cosmic::Theme::dark();
 
             // CalDAV: address, login, then the calendars found there.
-            click(&mut app, &mut native, "calendar-caldav-open");
+            click(&mut app, &mut native, "calendar-add-open");
+            click(&mut app, &mut native, "calendar-add-caldav");
             assert!(app.calendar.caldav_form && !app.calendar.subscription_form);
             native_reveal(&app, &mut native, "calendar-caldav-server");
             let _ = app.update_calendar(Message::CalDavServer(account::SecretText(
@@ -1163,6 +1283,18 @@ mod tests {
             let _ = app.update_calendar(Message::CalDavPassword(account::SecretText(
                 password.into(),
             )));
+            // Labels on the left, inputs filling the right, notes under them.
+            let server = native_reveal(&app, &mut native, "calendar-caldav-password");
+            for id in ["calendar-caldav-server", "calendar-caldav-username"] {
+                let input = native.bounds(app.settings_view(), id);
+                assert_eq!((input.x, input.width), (server.x, server.width), "{id}");
+            }
+            for name in ["Server", "Username", "Password"] {
+                let label = native.text_bounds(app.settings_view(), name);
+                assert!(label.x + label.width < server.x, "{name}");
+            }
+            // Bring the password note and the buttons into view.
+            native_reveal(&app, &mut native, "calendar-caldav-find");
             native.capture(
                 app.settings_view(),
                 &theme,
@@ -1262,7 +1394,8 @@ mod tests {
             let _ = app.update_calendar(Message::ConfirmRemove(None));
 
             // A link that needs a password.
-            click(&mut app, &mut native, "calendar-subscription-open");
+            click(&mut app, &mut native, "calendar-add-open");
+            click(&mut app, &mut native, "calendar-add-link");
             assert!(app.calendar.subscription_form && !app.calendar.caldav_form);
             assert!(
                 native
@@ -1396,8 +1529,7 @@ mod tests {
             send_settings(&mut app, super::super::Message::Resized(size));
             let mut native = crate::native_test::Native::new(size);
             let theme = cosmic::Theme::dark();
-            visible(&mut native, &app, "calendar-folder-open", size);
-            visible(&mut native, &app, "calendar-holidays-open", size);
+            visible(&mut native, &app, "calendar-add-open", size);
             native.capture(
                 app.settings_view(),
                 &theme,
@@ -1500,10 +1632,11 @@ mod tests {
             let _ = app.update_calendar(Message::AddFolders);
             assert!(!app.calendar.busy, "more than fits is not sent");
             let _ = app.update_calendar(Message::CancelFolder);
+            assert!(app.calendar.chooser, "Cancel goes back to the list");
             app.calendar.connection = connection.clone();
 
             // Holidays: Add stays off until a country is chosen.
-            click(&mut app, &mut native, "calendar-holidays-open");
+            click(&mut app, &mut native, "calendar-add-holidays");
             assert!(app.calendar.holidays_form && app.calendar.holidays_country.is_none());
             click(&mut app, &mut native, "calendar-holidays-add");
             assert!(!app.calendar.busy);
@@ -1552,7 +1685,8 @@ mod tests {
             let _ = app.update_calendar(Message::ConfirmRemove(None));
 
             // The link guide names the providers whose links work today.
-            click(&mut app, &mut native, "calendar-subscription-open");
+            click(&mut app, &mut native, "calendar-add-open");
+            click(&mut app, &mut native, "calendar-add-link");
             click(&mut app, &mut native, "calendar-link-help");
             send_settings(
                 &mut app,
@@ -1572,6 +1706,220 @@ mod tests {
                 app.settings_view(),
                 &theme,
                 &format!("calendar-link-providers-{width}"),
+            );
+        }
+        assert_eq!(
+            std::fs::read(Config::path().unwrap()).unwrap(),
+            config_before
+        );
+        assert_eq!(std::fs::read(&account_path).ok(), account_before);
+    }
+
+    /// "Add calendar…" lists every kind; each row opens its form, Cancel
+    /// comes back to the list, and Online Accounts is listed only when the
+    /// system has it.
+    #[test]
+    fn add_calendar_lists_each_kind_and_cancel_returns_to_the_list() {
+        if crate::displays::test_support::isolated(
+            "settings::calendar::tests::add_calendar_lists_each_kind_and_cancel_returns_to_the_list",
+        ) {
+            return;
+        }
+        use crate::settings::tests::{native_reveal, send_settings};
+        use cosmic::iced::{Event, mouse};
+        fn click(app: &mut Settings, native: &mut crate::native_test::Native, id: &str) {
+            let bounds = native_reveal(app, native, id);
+            for event in [
+                mouse::Event::CursorMoved {
+                    position: bounds.center(),
+                },
+                mouse::Event::ButtonPressed(mouse::Button::Left),
+                mouse::Event::ButtonReleased(mouse::Button::Left),
+            ] {
+                for message in native
+                    .event(app.settings_view(), Event::Mouse(event), bounds.center())
+                    .0
+                {
+                    send_settings(app, message);
+                }
+            }
+        }
+        fn shown(native: &mut crate::native_test::Native, app: &Settings, id: &str) -> bool {
+            native.try_bounds(app.settings_view(), id).is_some()
+        }
+        seed_ridge();
+        let config_before = std::fs::read(Config::path().unwrap()).unwrap();
+        let account_path = account::account_path().unwrap();
+        let account_before = std::fs::read(&account_path).ok();
+        for (width, height) in [(820., 600.), (1280., 800.)] {
+            let size = Size::new(width, height);
+            let (mut app, _) = Settings::init(Core::default(), Page::Calendar);
+            app.calendar.client_ready = false;
+            send_settings(&mut app, super::super::Message::Resized(size));
+            let mut native = crate::native_test::Native::new(size);
+            let theme = cosmic::Theme::dark();
+            // One button instead of a row of them.
+            for old in ["calendar-subscription-open", "calendar-caldav-open"] {
+                assert!(!shown(&mut native, &app, old), "{old}");
+            }
+            click(&mut app, &mut native, "calendar-add-open");
+            assert!(app.calendar.chooser);
+            assert!(!shown(&mut native, &app, "calendar-add-open"));
+
+            // Without Evolution Data Server or the Online Accounts app,
+            // there is no Online Accounts row.
+            app.calendar.system.online_accounts = false;
+            let _ = app.update_calendar(Message::SystemProbed(false));
+            assert!(!shown(&mut native, &app, "calendar-add-online-accounts"));
+            for source in AddSource::ALL.into_iter().skip(1) {
+                let row = native_reveal(&app, &mut native, source.id());
+                assert!(
+                    row.x >= 0. && row.x + row.width <= width,
+                    "{source:?}: {row:?}"
+                );
+                assert_eq!(
+                    native.text_all(app.settings_view(), source.line()).len(),
+                    1,
+                    "{source:?}"
+                );
+            }
+            let _ = app.update_calendar(Message::SystemProbed(true));
+            native_reveal(&app, &mut native, "calendar-add-online-accounts");
+            // Listed in the order given, Online Accounts first.
+            let tops: Vec<f32> = AddSource::ALL
+                .iter()
+                .map(|source| native.bounds(app.settings_view(), source.id()).y)
+                .collect();
+            assert!(tops.windows(2).all(|pair| pair[0] < pair[1]), "{tops:?}");
+            native_reveal(&app, &mut native, "calendar-add-online-accounts");
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("calendar-chooser-{width}"),
+            );
+
+            // Each row opens its form; Cancel comes back to the list.
+            click(&mut app, &mut native, "calendar-add-caldav");
+            assert!(app.calendar.caldav_form && !app.calendar.chooser);
+            native_reveal(&app, &mut native, "calendar-caldav-password");
+            let _ = app.update_calendar(Message::CalDavForm(false));
+            assert!(app.calendar.chooser && !app.calendar.caldav_form);
+
+            click(&mut app, &mut native, "calendar-add-link");
+            assert!(app.calendar.subscription_form && !app.calendar.chooser);
+            let _ = app.update_calendar(Message::SubscriptionForm(false));
+            assert!(app.calendar.chooser);
+
+            click(&mut app, &mut native, "calendar-add-holidays");
+            assert!(app.calendar.holidays_form && !app.calendar.chooser);
+            let _ = app.update_calendar(Message::HolidaysForm(false));
+            assert!(app.calendar.chooser);
+
+            // Files and folders open the file chooser first; cancelling it
+            // leaves the list as it was.
+            click(&mut app, &mut native, "calendar-add-file");
+            assert!(app.calendar.chooser);
+            let _ = app.update_calendar(Message::FileChosen(Ok(None)));
+            assert!(app.calendar.chooser);
+            let _ = app.update_calendar(Message::FileChosen(Ok(Some(
+                std::env::temp_dir().join("Family.ics"),
+            ))));
+            assert!(app.calendar.file_pending.is_some() && !app.calendar.chooser);
+            let _ = app.update_calendar(Message::CancelFile);
+            assert!(app.calendar.chooser);
+
+            click(&mut app, &mut native, "calendar-add-folder");
+            assert!(app.calendar.chooser);
+            let _ = app.update_calendar(Message::FolderFound(Ok(Some(vec![
+                account::FolderCalendar {
+                    path: "/home/alex/.calendars/work".into(),
+                    name: "Work".into(),
+                    color: String::new(),
+                },
+            ]))));
+            assert!(!app.calendar.folder_found.is_empty() && !app.calendar.chooser);
+            let _ = app.update_calendar(Message::CancelFolder);
+            assert!(app.calendar.chooser);
+
+            click(&mut app, &mut native, "calendar-add-online-accounts");
+            assert!(app.calendar.system.open && !app.calendar.chooser);
+            native_reveal(&app, &mut native, "calendar-system-picker");
+            let _ = app.update_calendar(Message::System(system::Message::Open(false)));
+            assert!(!app.calendar.system.open);
+
+            // Cancel on the list itself closes it.
+            click(&mut app, &mut native, "calendar-add-open");
+            click(&mut app, &mut native, "calendar-add-cancel");
+            assert!(!app.calendar.chooser);
+            native_reveal(&app, &mut native, "calendar-add-open");
+
+            // A list mixing every kind, a system calendar among them.
+            let kinds = [
+                ("work", "Work", "#3a86ff", account::SourceKind::CalDav),
+                (
+                    "eds:team",
+                    "Team rota",
+                    "#2ec27e",
+                    account::SourceKind::System,
+                ),
+                (
+                    "club",
+                    "Climbing club",
+                    "#e66100",
+                    account::SourceKind::Link,
+                ),
+                (
+                    "holidays",
+                    "Germany holidays",
+                    account::holidays::COLOR,
+                    account::SourceKind::Holidays,
+                ),
+                ("family", "Family", "#c061cb", account::SourceKind::Folder),
+            ];
+            let choices: Vec<_> = kinds
+                .iter()
+                .map(|(id, name, color, _)| account::CalendarChoice {
+                    id: (*id).into(),
+                    name: (*name).into(),
+                    primary: false,
+                    color: (*color).into(),
+                })
+                .collect();
+            app.calendar.connection = account::Connection {
+                backend: account::Backend::Subscription,
+                account: "Calendar subscriptions".into(),
+                calendar_id: "work".into(),
+                calendar_name: "Work".into(),
+                revision: "mixed".into(),
+                credential: "opaque".into(),
+                selections: choices.clone(),
+                subscriptions: choices.clone(),
+                sources: kinds
+                    .iter()
+                    .map(|(id, _, _, kind)| account::Source {
+                        id: (*id).into(),
+                        kind: kind.clone(),
+                        path: (*kind == account::SourceKind::Folder)
+                            .then(|| PathBuf::from("/home/alex/.calendars/family")),
+                    })
+                    .collect(),
+            };
+            app.calendar.choices = choices;
+            native_reveal(&app, &mut native, "calendar-remove-1");
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("calendar-mixed-{width}"),
+            );
+            click(&mut app, &mut native, "calendar-remove-1");
+            assert_eq!(
+                native
+                    .text_all(
+                        app.settings_view(),
+                        "You can add it again from Online Accounts at any time."
+                    )
+                    .len(),
+                1
             );
         }
         assert_eq!(

@@ -32,10 +32,9 @@ pub(super) struct Feed {
 pub(super) struct Feeds {
     pub feeds: Vec<Feed>,
 }
-const MAX_BYTES: usize = http::MAX_BYTES;
+pub(super) const MAX_BYTES: usize = http::MAX_BYTES;
 const MAX_EVENTS: usize = 10000;
 /// Calendars of every kind together.
-const MAX_CALENDARS: usize = 8;
 
 fn url(value: &str) -> Result<reqwest::Url, Problem> {
     http::parse(value, false)
@@ -57,10 +56,34 @@ async fn download(value: &SecretText, login: Option<&Login>) -> Result<Vec<u8>, 
     }
 }
 /// Where a calendar's events come from: its keyring entry, or a path on
-/// this computer.
+/// this computer, or a system calendar's Evolution Data Server UID.
 pub(super) enum Origin<'a> {
     Feed(&'a Feed),
     Path(&'a Path),
+    Uid(&'a str),
+}
+/// Where a listed calendar's details are, by its kind.
+fn origin<'a>(
+    connection: &'a Connection,
+    feeds: &'a Feeds,
+    kind: &SourceKind,
+    id: &'a str,
+) -> Result<Origin<'a>, Problem> {
+    match kind {
+        SourceKind::System => eds::uid(id).map(Origin::Uid),
+        kind if kind.uses_keyring() => feeds
+            .feeds
+            .iter()
+            .find(|f| f.choice.id == id)
+            .map(Origin::Feed),
+        _ => connection
+            .sources
+            .iter()
+            .find(|s| s.id == id)
+            .and_then(|s| s.path.as_deref())
+            .map(Origin::Path),
+    }
+    .ok_or(Problem::Changed)
 }
 /// The one place each kind of calendar is read: refreshes, Check connection
 /// and the check before adding all come here. A new kind adds an arm here,
@@ -85,6 +108,10 @@ pub(super) async fn read_source(
         }
         (SourceKind::File, Origin::Path(path)) => local(path.to_path_buf(), read_file).await?,
         (SourceKind::Folder, Origin::Path(path)) => local(path.to_path_buf(), folder::read).await?,
+        // Evolution Data Server hands back calendar objects that need their
+        // time zones mapped first; eds.rs does that and parses them the same
+        // isolated way.
+        (SourceKind::System, Origin::Uid(uid)) => return eds::read(uid, choice, month).await,
         _ => return Err(Problem::Changed),
     };
     let on_disk = !kind.uses_keyring();
@@ -137,7 +164,7 @@ pub(super) async fn parsed_file(
 // A dropped refresh must stop the parser, including work inside rrule. One
 // worker at a time, with OS limits before reading untrusted input; no secrets
 // are passed in argv, written to disk, or emitted on stderr.
-async fn parse_isolated(
+pub(super) async fn parse_isolated(
     bytes: Vec<u8>,
     month: String,
     choice: CalendarChoice,
@@ -376,7 +403,7 @@ pub(super) async fn add(expected: Connection, added: Vec<Added>) -> Result<Conne
         vec![]
     };
     if current.len() + added.len() > MAX_CALENDARS {
-        return Err(Problem::FeedLimit);
+        return Err(Problem::CalendarLimit);
     }
     let new_feeds = added.iter().any(|a| matches!(a, Added::Feed(_)));
     let mut feeds = if new_feeds && subscribed && !expected.credential.is_empty() {
@@ -555,28 +582,37 @@ pub(super) async fn events(
         return Err(Problem::FeedLimit);
     }
     let mut events = vec![];
-    for choice in selected {
+    // The first problem with a system calendar. A refresh still shows the
+    // other calendars; Check connection, or a list of only system
+    // calendars, reports it.
+    let mut system_problem = None;
+    let only_system = selected
+        .iter()
+        .all(|c| connection.source_kind(&c.id) == SourceKind::System);
+    for choice in &selected {
         let kind = connection.source_kind(&choice.id);
-        let origin = if kind.uses_keyring() {
-            Origin::Feed(
-                feeds
-                    .feeds
-                    .iter()
-                    .find(|f| f.choice.id == choice.id)
-                    .ok_or(Problem::Changed)?,
+        // When Evolution Data Server is missing or hung, every other system
+        // calendar would wait out the same 10 s deadline: skip them.
+        if kind == SourceKind::System
+            && matches!(
+                system_problem,
+                Some(Problem::SystemUnavailable | Problem::TimedOut)
             )
-        } else {
-            Origin::Path(
-                connection
-                    .sources
-                    .iter()
-                    .find(|s| s.id == choice.id)
-                    .and_then(|s| s.path.as_deref())
-                    .ok_or(Problem::Changed)?,
-            )
-        };
+        {
+            continue;
+        }
+        let origin = origin(connection, &feeds, &kind, &choice.id)?;
         // The name and color shown are the ones in Settings.
-        events.extend(read_source(&kind, origin, &choice, month).await?);
+        match read_source(&kind, origin, choice, month).await {
+            Ok(found) => events.extend(found),
+            Err(problem) if kind == SourceKind::System => {
+                if unlock || only_system {
+                    return Err(problem);
+                }
+                system_problem.get_or_insert(problem);
+            }
+            Err(problem) => return Err(problem),
+        }
         if events.len() > MAX_EVENTS
             || events.iter().map(event_text_bytes).sum::<usize>() > EVENT_TEXT_BUDGET
         {

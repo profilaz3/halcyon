@@ -512,7 +512,7 @@ fn polish_primary_content_actions_fit_without_collapsing_or_scrolling() {
         // Notes save as you type; Save and Discard only appear for
         // edits restored from last time.
         (Page::Notes, vec!["note-editor"]),
-        (Page::Calendar, vec!["calendar-subscription-open"]),
+        (Page::Calendar, vec!["calendar-add-open"]),
         (Page::Weather, vec!["weather-city"]),
         // The folder chooser is the primary way in; typing a path is only
         // offered when the chooser cannot open.
@@ -633,7 +633,9 @@ fn polish_privacy_discloses_activity_and_opt_out_status_in_view() {
     // The opt-out switch sits beside what it shares, in the same view.
     let toggle = native.bounds(app.settings_view(), "share-usage-data");
     assert!(
-        toggle.y > 0. && toggle.y + toggle.height < size.height && toggle.x + toggle.width <= size.width,
+        toggle.y > 0.
+            && toggle.y + toggle.height < size.height
+            && toggle.x + toggle.width <= size.width,
         "{toggle:?}"
     );
 }
@@ -1192,14 +1194,32 @@ fn reactive_activity_preferences_are_reachable_saved_and_undoable() {
         send_settings(&mut app, Message::ActivityPreference("system", true));
         // Per-source and notification switches sit under their parent and
         // only while it is on.
-        for key in ["battery", "camera", "bluetooth", "updates", "replace_popups", "notification_text"] {
-            assert!(native.try_bounds(app.settings_view(), &format!("activity-preference-{key}")).is_some(), "{key}");
+        for key in [
+            "battery",
+            "camera",
+            "bluetooth",
+            "updates",
+            "replace_popups",
+            "notification_text",
+        ] {
+            assert!(
+                native
+                    .try_bounds(app.settings_view(), &format!("activity-preference-{key}"))
+                    .is_some(),
+                "{key}"
+            );
         }
         send_settings(&mut app, Message::ActivityPreference("network", false));
         assert!(!Config::load().activity_island.network && Config::load().activity_island.battery);
         send_settings(&mut app, Message::UndoDesktop);
-        assert!(Config::load().activity_island.network, "per-source choices undo");
-        send_settings(&mut app, Message::ActivityPreference("notifications", false));
+        assert!(
+            Config::load().activity_island.network,
+            "per-source choices undo"
+        );
+        send_settings(
+            &mut app,
+            Message::ActivityPreference("notifications", false),
+        );
         assert!(
             native
                 .try_bounds(app.settings_view(), "activity-preference-replace_popups")
@@ -1212,9 +1232,15 @@ fn reactive_activity_preferences_are_reachable_saved_and_undoable() {
         }
         send_settings(&mut app, Message::ActivityPreference("bluetooth", false));
         assert!(!Config::load().activity_island.bluetooth && Config::load().activity_island.camera);
-        assert!(Config::load().activity_island.shelf, "the file shelf starts on");
+        assert!(
+            Config::load().activity_island.shelf,
+            "the file shelf starts on"
+        );
         send_settings(&mut app, Message::ActivityPreference("shelf", false));
-        assert!(!Config::load().activity_island.shelf, "the file shelf switch saves");
+        assert!(
+            !Config::load().activity_island.shelf,
+            "the file shelf switch saves"
+        );
         send_settings(&mut app, Message::ActivityPreference("shelf", true));
         native.capture(
             app.settings_view(),
@@ -1260,7 +1286,10 @@ fn activity_island_style_is_chosen_saved_and_undone() {
     assert!(b.x >= 0. && b.x + b.width <= size.width && b.y >= 0. && b.y + b.height <= size.height);
     send_settings(&mut app, Message::ActivityStyle(1));
     assert_eq!(Config::load().activity_island.style, IslandStyle::Dark);
-    assert!(Config::load().activity_island.media, "other choices are kept");
+    assert!(
+        Config::load().activity_island.media,
+        "other choices are kept"
+    );
     let b = native_reveal(&app, &mut native, "activity-preference-style");
     assert!(b.width > 0. && b.y + b.height <= size.height);
     native.capture(
@@ -1269,7 +1298,11 @@ fn activity_island_style_is_chosen_saved_and_undone() {
         "activity-island-style",
     );
     send_settings(&mut app, Message::UndoDesktop);
-    assert_eq!(Config::load().activity_island.style, IslandStyle::Theme, "the style undoes");
+    assert_eq!(
+        Config::load().activity_island.style,
+        IslandStyle::Theme,
+        "the style undoes"
+    );
 }
 
 #[test]
@@ -1334,7 +1367,11 @@ fn activity_app_rules_list_changes_resets_and_undoes() {
     for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
         send_settings(&mut app, Message::Resized(size));
         let mut native = crate::native_test::Native::new(size);
-        for id in ["activity-app-rule-0", "activity-app-rule-reset-0", "activity-app-rule-1"] {
+        for id in [
+            "activity-app-rule-0",
+            "activity-app-rule-reset-0",
+            "activity-app-rule-1",
+        ] {
             let b = native_reveal(&app, &mut native, id);
             assert!(b.x >= 0. && b.x + b.width <= size.width, "{id} fits: {b:?}");
         }
@@ -1359,9 +1396,15 @@ fn activity_app_rules_list_changes_resets_and_undoes() {
     send_settings(&mut app, Message::ActivityAppRule(0, Some(AppRule::Always)));
     assert_eq!(
         rules(&Config::load()),
-        [("Slack".into(), AppRule::Always), ("Mail".into(), AppRule::ListOnly)]
+        [
+            ("Slack".into(), AppRule::Always),
+            ("Mail".into(), AppRule::ListOnly)
+        ]
     );
-    assert_eq!(Config::load().activity_island.app_rules[0].entry, "com.slack.Slack");
+    assert_eq!(
+        Config::load().activity_island.app_rules[0].entry,
+        "com.slack.Slack"
+    );
     send_settings(&mut app, Message::UndoDesktop);
     assert_eq!(rules(&Config::load())[0], ("Slack".into(), AppRule::Mute));
     // Reset removes the rule; the others and the other choices stay.
@@ -1430,13 +1473,29 @@ fn whats_new_opens_from_updates_and_each_note_leads_to_its_setting() {
         Message::AppSettingsPage(AppSettingsPage::Updates),
     );
     let away = cosmic::iced::Point::new(-1., -1.);
-    native.capture_hover(app.settings_view(), &cosmic::Theme::dark(), away, "whats-new-updates");
+    native.capture_hover(
+        app.settings_view(),
+        &cosmic::Theme::dark(),
+        away,
+        "whats-new-updates",
+    );
     click(&mut app, &mut native, "updates-whats-new");
     assert_eq!(app.app_settings_page, AppSettingsPage::WhatsNew);
     // Its way up names Updates, where it was opened.
-    assert_eq!(app.up_link().map(|(title, _)| title).as_deref(), Some("Updates"));
-    for (theme, name) in [(cosmic::Theme::dark(), "dark"), (cosmic::Theme::light(), "light")] {
-        native.capture_hover(app.settings_view(), &theme, away, &format!("whats-new-{name}"));
+    assert_eq!(
+        app.up_link().map(|(title, _)| title).as_deref(),
+        Some("Updates")
+    );
+    for (theme, name) in [
+        (cosmic::Theme::dark(), "dark"),
+        (cosmic::Theme::light(), "light"),
+    ] {
+        native.capture_hover(
+            app.settings_view(),
+            &theme,
+            away,
+            &format!("whats-new-{name}"),
+        );
     }
     let release = crate::settings::release_notes::current().unwrap();
     for (index, note) in release.notes.iter().enumerate() {
@@ -1454,7 +1513,11 @@ fn whats_new_opens_from_updates_and_each_note_leads_to_its_setting() {
         native_send(&mut app, &mut native, Message::RevealSearch(place));
         if place.anchor() != "page-start" {
             let bounds = native.bounds(app.settings_view(), place.anchor());
-            assert!(bounds.y >= 0. && bounds.y < 900., "{}: {bounds:?}", note.title);
+            assert!(
+                bounds.y >= 0. && bounds.y < 900.,
+                "{}: {bounds:?}",
+                note.title
+            );
         }
         native_send(&mut app, &mut native, Message::Back);
         assert_eq!(
@@ -1492,7 +1555,13 @@ fn islands_shape_shows_one_step_then_layout_controls() {
     use crate::desktop::islands::{CompatibilityStatus, Installation, Provenance};
     let root = isolated_root();
     let mut app = open_isolated_editor(&root);
-    let store = app.desktop.store().unwrap().fixture_root().unwrap().to_path_buf();
+    let store = app
+        .desktop
+        .store()
+        .unwrap()
+        .fixture_root()
+        .unwrap()
+        .to_path_buf();
     crate::desktop::islands::fixture_installed(&store);
     send_settings(
         &mut app,
@@ -1570,7 +1639,11 @@ fn islands_shape_shows_one_step_then_layout_controls() {
     app.desktop.islands.compatible = true;
     app.desktop.penumbra_supported = true;
     native_reveal(&app, &mut native, "islands-arrange");
-    assert!(native.try_bounds(app.settings_view(), "panel-host").is_none());
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "panel-host")
+            .is_none()
+    );
     native.text_bounds(app.settings_view(), "Keep islands together");
     native_reveal(&app, &mut native, "penumbra-gradient");
     native.capture(

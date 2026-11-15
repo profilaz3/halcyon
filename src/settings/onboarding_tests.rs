@@ -250,10 +250,10 @@ fn calendar_page_survives_google_sign_in_becoming_available() {
                 .try_bounds(app.settings_view(), "calendar-connect")
                 .is_none()
         );
-        let link = native.bounds(app.settings_view(), "calendar-subscription-open");
+        let link = native.bounds(app.settings_view(), "calendar-add-open");
         app.calendar.client_ready = true;
         let connect = native.bounds(app.settings_view(), "calendar-connect");
-        let moved = native.bounds(app.settings_view(), "calendar-subscription-open");
+        let moved = native.bounds(app.settings_view(), "calendar-add-open");
         assert!(
             connect.width > 0. && moved.width >= link.width,
             "{connect:?} {moved:?}"

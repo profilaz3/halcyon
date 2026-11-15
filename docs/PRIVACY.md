@@ -338,6 +338,11 @@ Do not post installation tokens, credentials or private widget contents there.
 - **Public holidays:** a holiday calendar is downloaded from `thunderbird.net`
   like any calendar link. Thunderbird's server receives a normal HTTPS request
   and the connection IP, and learns which country's calendar was asked for.
+- **System calendars:** calendars from Online Accounts and other local
+  Evolution Data Server calendars are read over the session bus from Evolution
+  Data Server, which owns those accounts and their sign-ins. Halcyon keeps only
+  each calendar's ID, name and color in its connection file, never changes
+  calendars or events there, and makes no network requests for them itself.
 - **Cached agenda:** event titles, times, descriptions, locations and links are
   cached in private local files for offline viewing. Disconnecting removes this
   cache. “Hide event details” displays Busy on the desktop and hides event/Join
