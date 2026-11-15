@@ -101,7 +101,7 @@ impl AddSource {
     }
     pub fn line(self) -> &'static str {
         match self {
-            Self::OnlineAccounts => "Google, Microsoft 365 and others you added to the system",
+            Self::OnlineAccounts => "Google, Nextcloud and others you added to the system",
             Self::CalDav => "iCloud, Fastmail, Nextcloud and other servers",
             Self::Link => "A private or public iCal address",
             Self::Holidays => "Public holidays for a country",

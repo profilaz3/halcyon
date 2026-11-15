@@ -9,7 +9,7 @@ impl Settings {
         let editor = &self.calendar;
         let message = |value| Message::Calendar(Account::System(value));
         let mut rows = vec![label(
-            "Calendars from accounts in Online Accounts, such as Google and Microsoft 365.",
+            "Calendars from accounts in Online Accounts, such as Google and Nextcloud.",
             12.,
             MUTED,
         )];
