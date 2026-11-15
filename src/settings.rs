@@ -783,6 +783,8 @@ pub enum Message {
     Tomorrow(bool),
     /// One of the Calendar display switches, by its configuration key.
     CalendarOption(&'static str, bool),
+    /// Which days the Calendar widget lists, by its place in `CALENDAR_DAY_LABELS`.
+    CalendarDays(usize),
     Notice(u16),
     SaveNotice,
     Theme(String),
@@ -4040,6 +4042,15 @@ impl Settings {
                     self.save(json!({ key: value }));
                 }
             }
+            Message::CalendarDays(index) => {
+                if let Some(&(today, tomorrow, week)) = CALENDAR_DAYS.get(index) {
+                    self.save(json!({
+                        "calendar_show_today": today,
+                        "calendar_show_tomorrow": tomorrow,
+                        "calendar_show_week": week,
+                    }));
+                }
+            }
             Message::WeatherFahrenheit(value) => {
                 match Config::save_weather(json!({"fahrenheit": value})) {
                     Ok(config) => {
@@ -4788,9 +4799,33 @@ impl Settings {
     }
 }
 
+/// The Calendar widget's day ranges, as the Days shown menu names them.
+pub(crate) const CALENDAR_DAY_LABELS: [&str; 4] =
+    ["Today", "Tomorrow", "Today and tomorrow", "Next 7 days"];
+/// The today, tomorrow and week settings each range writes together.
+pub(crate) const CALENDAR_DAYS: [(bool, bool, bool); 4] = [
+    (true, false, false),
+    (false, true, false),
+    (true, true, false),
+    (true, true, true),
+];
+
+/// Where the saved settings sit in `CALENDAR_DAYS`.
+pub(crate) fn calendar_days_index(config: &Config) -> usize {
+    match (
+        config.calendar_show_week,
+        config.calendar_show_today,
+        config.calendar_show_tomorrow,
+    ) {
+        (true, _, _) => 3,
+        (false, true, true) => 2,
+        (false, false, true) => 1,
+        _ => 0,
+    }
+}
+
 /// The Calendar display switches `Message::CalendarOption` may write.
-pub(crate) const CALENDAR_OPTIONS: [&str; 5] = [
-    "calendar_show_week",
+pub(crate) const CALENDAR_OPTIONS: [&str; 4] = [
     "calendar_all_day",
     "calendar_hide_finished",
     "calendar_colors",
@@ -10122,9 +10157,7 @@ mod tests {
         let shown = native.all_text(app.settings_view());
         for title in [
             "What to show",
-            "Today",
-            "Tomorrow",
-            "Next 7 days",
+            "Days shown",
             "All-day events",
             "Hide finished events",
             "Show event location",
@@ -10164,6 +10197,38 @@ mod tests {
         // Only the Calendar display switches are written this way.
         let bytes = std::fs::read(Config::path().unwrap()).unwrap();
         let _ = app.update(Message::CalendarOption("onboarded", true));
+        assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), bytes);
+        // One Days shown choice writes all three range settings, and one
+        // Undo puts all three back.
+        for (index, label) in CALENDAR_DAY_LABELS.into_iter().enumerate() {
+            let before = Config::try_load().unwrap();
+            let _ = app.update(Message::CalendarDays(index));
+            assert!(!app.error, "{label}: {}", app.status);
+            let saved = Config::try_load().unwrap();
+            assert_eq!(calendar_days_index(&saved), index, "{label}");
+            assert_eq!(
+                (saved.calendar_show_today, saved.calendar_show_tomorrow, saved.calendar_show_week),
+                CALENDAR_DAYS[index],
+                "{label}"
+            );
+            if calendar_days_index(&before) != index {
+                let _ = app.update(Message::UndoPreferences);
+                let undone = Config::try_load().unwrap();
+                assert_eq!(
+                    (undone.calendar_show_today, undone.calendar_show_tomorrow, undone.calendar_show_week),
+                    (before.calendar_show_today, before.calendar_show_tomorrow, before.calendar_show_week),
+                    "Undo restores the range before {label}"
+                );
+                let _ = app.update(Message::CalendarDays(index));
+            }
+        }
+        // Neither day on reads as Today, which the menu can then fix.
+        let mut neither = Config::default();
+        neither.calendar_show_today = false;
+        neither.calendar_show_tomorrow = false;
+        assert_eq!(calendar_days_index(&neither), 0);
+        let bytes = std::fs::read(Config::path().unwrap()).unwrap();
+        let _ = app.update(Message::CalendarDays(CALENDAR_DAYS.len()));
         assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), bytes);
     }
     #[test]

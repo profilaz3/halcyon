@@ -322,21 +322,19 @@ impl Settings {
                         .id(cosmic::widget::Id::new("glance-tomorrow")).into()),
             ]
         } else {
-            vec![
-                switch("Today", "", self.config.calendar_show_today, Message::Today),
-                switch(
-                    "Tomorrow",
-                    "",
-                    self.config.calendar_show_tomorrow,
-                    Message::Tomorrow,
-                ),
-                option(
-                    "Next 7 days",
-                    "Today and the six days after it, each under its own heading",
-                    "calendar_show_week",
-                    self.config.calendar_show_week,
-                ),
-            ]
+            vec![split(
+                detail("Days shown", ""),
+                container(
+                    cosmic::widget::dropdown(
+                        &crate::settings::CALENDAR_DAY_LABELS,
+                        Some(crate::settings::calendar_days_index(&self.config)),
+                        Message::CalendarDays,
+                    )
+                    .width(200),
+                )
+                .id(cosmic::widget::Id::new("calendar-days"))
+                .into(),
+            )]
         };
         show.extend([
             option(

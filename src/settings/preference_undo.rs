@@ -103,6 +103,11 @@ fn message_scope(config: &Config, message: &Message) -> Vec<String> {
         Message::Today(_) => add(&["calendar_show_today"]),
         Message::Tomorrow(_) => add(&["calendar_show_tomorrow"]),
         Message::CalendarOption(key, _) if super::CALENDAR_OPTIONS.contains(key) => add(&[key]),
+        Message::CalendarDays(_) => {
+            add(&["calendar_show_today"]);
+            add(&["calendar_show_tomorrow"]);
+            add(&["calendar_show_week"]);
+        }
         Message::ClockFormat(_) => add(&["clock", "format_24h"]),
         Message::ClockDate(_) => add(&["clock", "show_date"]),
         Message::WeatherDewPoint(_) => add(&["weather", "show_dew_point"]),

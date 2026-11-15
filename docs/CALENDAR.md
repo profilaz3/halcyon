@@ -59,7 +59,7 @@ connection on this computer; the two connection types cannot be combined.
 
 Calendar's **What to show** group chooses the days and events:
 
-- **Today**, **Tomorrow** or **Next 7 days**. The week starts today and puts
+- **Days shown**: Today, Tomorrow, Today and tomorrow, or Next 7 days. The week starts today and puts
   each day with events under its own heading, such as "Wednesday 18". Near a
   month's end Halcyon also fetches the next month.
 - **All-day events** can be left out.
