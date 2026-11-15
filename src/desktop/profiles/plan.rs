@@ -121,6 +121,9 @@ pub struct DomainPlan {
     pub blocked: Vec<String>,
     /// Good to know, not a problem (shown with the details).
     pub notes: Vec<String>,
+    /// Blocked only because Islands is on for a bar this look makes
+    /// vertical: [`PlanOptions::islands_off`] lifts it.
+    pub islands_conflict: bool,
 }
 
 impl DomainPlan {
@@ -131,8 +134,17 @@ impl DomainPlan {
             warnings: Vec::new(),
             blocked: Vec::new(),
             notes: Vec::new(),
+            islands_conflict: false,
         }
     }
+}
+
+/// Choices the person made in the review that a plan follows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PlanOptions {
+    /// Turn off Islands on a bar the look makes vertical, instead of
+    /// stopping there. Only ever set from an explicit choice.
+    pub islands_off: bool,
 }
 
 /// Where a wallpaper picture or folder came from, for its recheck and the
@@ -730,6 +742,17 @@ pub fn plan(
     profile: &Profile,
     selected: &BTreeSet<Domain>,
 ) -> ProfilePlan {
+    plan_with(store, installed, profile, selected, PlanOptions::default())
+}
+
+/// [`plan`], following the review's `options`.
+pub fn plan_with(
+    store: &DesktopStore,
+    installed: &Installed,
+    profile: &Profile,
+    selected: &BTreeSet<Domain>,
+    options: PlanOptions,
+) -> ProfilePlan {
     let mut selected = selected.clone();
     if profile.appearance_only
         && super::themes::selects_style(profile)
@@ -811,8 +834,8 @@ pub fn plan(
                     result.domains.push(part);
                     continue;
                 }
-                if let Some(patch) =
-                    look.and_then(|look| plan_panel(store, installed, kind, look, &mut part))
+                if let Some(patch) = look
+                    .and_then(|look| plan_panel(store, installed, kind, look, &mut part, options))
                 {
                     merge(&mut result, &mut part, patch);
                 }
@@ -1049,9 +1072,7 @@ pub fn plan(
                         .materials
                         .effective(target)
                         .map(|finish| {
-                            RawValue::encode(&dock_islands_core::material::BarMaterial::new(
-                                finish,
-                            ))
+                            RawValue::encode(&dock_islands_core::material::BarMaterial::new(finish))
                         })
                         .transpose()
                         .map_err(|e| e.to_string())?;
@@ -1119,6 +1140,7 @@ fn plan_panel(
     kind: PanelKind,
     look: &PanelLook,
     part: &mut DomainPlan,
+    options: PlanOptions,
 ) -> Option<DesktopPatch> {
     let mut draft = match PanelDraft::load(store, kind) {
         Ok(draft) => draft,
@@ -1143,19 +1165,29 @@ fn plan_panel(
     // Vertical Islands remains unqualified. A vertical setup never silently
     // turns off selected Islands intent; the user makes that choice explicitly.
     let vertical = look.anchor.is_some_and(|anchor| !anchor.horizontal());
+    let installed_islands = crate::desktop::islands::Installation::discover(store).installed();
     if vertical
         && draft
             .islands()
             .known()
             .is_none_or(|islands| islands.enabled)
     {
-        part.blocked.push(format!(
-            "{} uses a standard vertical bar. Turn off Islands for this bar, then check again.",
-            kind.title()
-        ));
-        return None;
+        match draft.islands().known().cloned() {
+            Some(mut islands) if installed_islands && options.islands_off => {
+                islands.enabled = false;
+                draft.set_islands(islands);
+                part.changes.push(format!("{} Islands off", kind.title()));
+            }
+            known => {
+                part.islands_conflict = known.is_some() && installed_islands;
+                part.blocked.push(format!(
+                    "{} uses a standard vertical bar. Turn off Islands for this bar, then check again.",
+                    kind.title()
+                ));
+                return None;
+            }
+        }
     }
-    let installed_islands = crate::desktop::islands::Installation::discover(store).installed();
     if let Some(gap) = look.island_gap.filter(|_| installed_islands) {
         if let Some(mut islands) = draft.islands().known().cloned() {
             islands.gap = gap;

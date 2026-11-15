@@ -873,6 +873,14 @@ pub struct WallpaperDraft {
     /// set cosmic-bg seeds can change what is shown.
     #[serde(default)]
     per_mode: bool,
+    /// Whether the light and dark modes show different backgrounds of
+    /// their own (`modes::separate`).
+    #[serde(default)]
+    separate: bool,
+    /// With separate backgrounds, whether Apply changes both modes; the
+    /// other mode keeps its own otherwise.
+    #[serde(default)]
+    both_modes: bool,
 }
 
 fn shared_namespace() -> String {
@@ -942,6 +950,7 @@ impl WallpaperDraft {
             draft.unreadable = unreadable;
             draft.namespace = namespace.into();
             draft.per_mode = modes::per_mode(store);
+            draft.separate = modes::separate(store);
             return Ok(draft);
         }
         Err(DesktopError::Io(
@@ -957,6 +966,8 @@ impl WallpaperDraft {
             conflicts: Vec::new(),
             namespace: shared_namespace(),
             per_mode: false,
+            separate: false,
+            both_modes: false,
         }
     }
     /// The fixed keys and `extra` (shared names) from the namespace
@@ -1026,6 +1037,29 @@ impl WallpaperDraft {
         self.unreadable = fresh.unreadable.clone();
         self.namespace = fresh.namespace.clone();
         self.per_mode = fresh.per_mode;
+        self.separate = fresh.separate;
+    }
+    /// The mode Apply changes alone, when the light and dark modes have
+    /// separate backgrounds: `Some(true)` for dark, `Some(false)` for light.
+    /// `None` when Apply changes every mode.
+    pub fn mode_only(&self) -> Option<bool> {
+        (self.separate && !self.both_modes && modes::is_mode(&self.namespace))
+            .then(|| self.namespace == modes::DARK)
+    }
+    /// Whether the light and dark modes have separate backgrounds, so Apply
+    /// can change one mode or both.
+    pub fn separate_modes(&self) -> bool {
+        self.separate && modes::is_mode(&self.namespace)
+    }
+    /// Whether the values are the dark mode's own.
+    pub fn shows_dark(&self) -> bool {
+        self.namespace == modes::DARK
+    }
+    pub fn both_modes(&self) -> bool {
+        self.both_modes
+    }
+    pub fn set_both_modes(&mut self, both: bool) {
+        self.both_modes = both;
     }
     pub fn snapshot(&self) -> &Snapshot {
         &self.base
@@ -1586,10 +1620,11 @@ impl WallpaperDraft {
         for key in self.depends_all() {
             patch.guard(key.clone(), user(&key));
         }
-        Plan {
-            patch: self.stored_patch(patch),
-            blocked,
-        }
+        let mut patch = self.stored_patch(patch);
+        // Separate light and dark backgrounds: only the shown mode changes,
+        // exactly as written, and Undo restores exactly that.
+        patch.exact_backgrounds = self.mode_only().is_some();
+        Plan { patch, blocked }
     }
     /// `patch` (shared names) with every key at its stored place.
     fn stored_patch(&self, patch: DesktopPatch) -> DesktopPatch {

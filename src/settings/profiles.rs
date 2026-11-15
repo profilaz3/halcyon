@@ -12,9 +12,7 @@ use crate::desktop::profiles::{
 use crate::desktop::store::{Journal, KeyEntry, Snapshot, widget};
 use crate::desktop::wallpaper::media::{self, Pixels};
 use crate::desktop::wallpaper::{self, BgEntry, BgSource};
-use crate::desktop::{
-    DesktopError, DesktopPatch, DesktopStore, LatestChange, Owner, UserMessage,
-};
+use crate::desktop::{DesktopError, DesktopPatch, DesktopStore, LatestChange, Owner, UserMessage};
 use crate::settings::desktop::Notice;
 use cosmic::widget::image::Handle;
 use std::collections::BTreeSet;
@@ -171,6 +169,8 @@ pub enum Message {
     /// A save chooser finished: request ID and the written file.
     Exported(u64, Result<Option<PathBuf>, String>),
     Apply,
+    /// Turns off Islands on the bar the look makes vertical, then applies.
+    ApplyWithoutIslands,
     Discard,
     Undo,
     /// Plans again after the desktop changed under the preview.
@@ -209,6 +209,7 @@ impl Message {
                 | Self::Imported(..)
                 | Self::Exported(..)
                 | Self::Apply
+                | Self::ApplyWithoutIslands
                 | Self::Undo
                 | Self::Recover
                 | Self::KeepRecovery
@@ -524,6 +525,9 @@ impl LookStyle {
 
 #[derive(Clone, Default)]
 pub struct ProfilesEditor {
+    /// The person chose to turn off Islands on a bar this look makes
+    /// vertical; cleared when another look is chosen.
+    islands_off: bool,
     /// The look last applied from Looks, read back from the store's state.
     last_applied: Option<Applied>,
     /// The screen the live review belongs to.
@@ -1392,6 +1396,7 @@ impl ProfilesEditor {
     }
 
     fn select(&mut self, selection: Selection) {
+        self.islands_off = false;
         self.preview_baseline = None;
         self.preview_source = None;
         self.color_options = colors::Options::default();
@@ -1774,7 +1779,8 @@ impl ProfilesEditor {
     /// Where the last applied look is kept, with the change that applied it
     /// and the clock and overview style it left.
     fn last_applied_path(&self) -> Option<std::path::PathBuf> {
-        self.store().map(|store| store.state_dir().join("looks-last-applied"))
+        self.store()
+            .map(|store| store.state_dir().join("looks-last-applied"))
     }
     /// The look last applied from Looks, when it is still offered here.
     pub fn last_applied(&self) -> Option<Selection> {
@@ -2114,6 +2120,11 @@ impl ProfilesEditor {
             Message::Imported(id, result) => return self.imported(id, result),
             Message::Exported(id, result) => self.exported(id, result),
             Message::Apply => return self.apply(),
+            Message::ApplyWithoutIslands => {
+                self.islands_off = true;
+                self.replan();
+                return self.apply();
+            }
             Message::Discard => {
                 self.forget_review();
                 self.select(Selection::Current);

@@ -42,8 +42,8 @@ pub use format::{
 };
 pub use library::{ProfileEntry, ProfileId, ProfileLibrary};
 pub use plan::{
-    Applied, Asset, DomainPlan, ISLANDS_LATER, Installed, ProfilePlan, apply, apply_as,
-    apply_noted, plan, planned_wallpaper_source,
+    Applied, Asset, DomainPlan, ISLANDS_LATER, Installed, PlanOptions, ProfilePlan, apply,
+    apply_as, apply_noted, plan, plan_with, planned_wallpaper_source,
 };
 #[cfg(test)]
 pub(crate) use presets::islands_composition;
