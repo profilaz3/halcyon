@@ -25,7 +25,7 @@ struct Feed {
 struct Feeds {
     feeds: Vec<Feed>,
 }
-const MAX_BYTES: usize = 4 * 1024 * 1024;
+pub(super) const MAX_BYTES: usize = 4 * 1024 * 1024;
 const MAX_EVENTS: usize = 10000;
 
 fn url(value: &str) -> Result<reqwest::Url, Problem> {
@@ -98,7 +98,7 @@ async fn parsed(feed: &Feed, month: &str) -> Result<Vec<CalendarEvent>, Problem>
 // A dropped refresh must stop the parser, including work inside rrule. One
 // worker at a time, with OS limits before reading untrusted input; no secrets
 // are passed in argv, written to disk, or emitted on stderr.
-async fn parse_isolated(
+pub(super) async fn parse_isolated(
     bytes: Vec<u8>,
     month: String,
     choice: CalendarChoice,
@@ -206,13 +206,18 @@ pub async fn add_subscription(
         return Err(Problem::Preview);
     }
     let normalized = SecretText(url(&secret.0)?.into());
-    let mut feeds = if expected.backend == Backend::Subscription {
+    let listed = expected.backend == Backend::Subscription;
+    // A list of only system calendars has no keyring item yet.
+    let mut feeds = if listed && !expected.credential.is_empty() {
         keyring::read::<Feeds>(&expected.credential, true).await?
     } else {
         Feeds { feeds: vec![] }
     };
     if feeds.feeds.len() >= 8 {
         return Err(Problem::FeedLimit);
+    }
+    if listed && expected.subscriptions.len() >= eds::MAX_CALENDARS {
+        return Err(Problem::CalendarLimit);
     }
     if feeds.feeds.iter().any(|f| f.url.0 == normalized.0) {
         return Err(Problem::InvalidFeed);
@@ -250,9 +255,23 @@ pub async fn add_subscription(
         revision: store::nonce()?,
         credential: store::nonce()?,
         selections,
-        subscriptions: feeds.feeds.iter().map(|f| f.choice.clone()).collect(),
+        subscriptions: listed_with(&expected, &feeds),
     };
     commit(&expected, connection, &feeds).await
+}
+/// Link calendars in keyring order, then the system calendars already listed.
+fn listed_with(expected: &Connection, feeds: &Feeds) -> Vec<CalendarChoice> {
+    let mut listed: Vec<_> = feeds.feeds.iter().map(|f| f.choice.clone()).collect();
+    if expected.backend == Backend::Subscription {
+        listed.extend(
+            expected
+                .subscriptions
+                .iter()
+                .filter(|c| eds::is_system(&c.id))
+                .cloned(),
+        );
+    }
+    listed
 }
 async fn commit(
     expected: &Connection,
@@ -275,17 +294,26 @@ pub async fn remove_subscription(expected: Connection, id: String) -> Result<Con
     if expected.backend != Backend::Subscription {
         return Err(Problem::Changed);
     }
-    let mut feeds: Feeds = keyring::read(&expected.credential, true).await?;
-    let old = feeds.feeds.len();
-    feeds.feeds.retain(|f| f.choice.id != id);
-    if feeds.feeds.len() == old {
+    if !expected.subscriptions.iter().any(|c| c.id == id) {
         return Err(Problem::Changed);
     }
-    if feeds.feeds.is_empty() {
+    if expected.subscriptions.len() == 1 {
         return super::disconnect(expected).await;
     }
+    // A system calendar has nothing in the keyring.
+    let feeds: Option<Feeds> = if eds::is_system(&id) {
+        None
+    } else {
+        let mut feeds: Feeds = keyring::read(&expected.credential, true).await?;
+        let old = feeds.feeds.len();
+        feeds.feeds.retain(|f| f.choice.id != id);
+        if feeds.feeds.len() == old {
+            return Err(Problem::Changed);
+        }
+        Some(feeds)
+    };
     let mut connection = expected.clone();
-    connection.subscriptions = feeds.feeds.iter().map(|f| f.choice.clone()).collect();
+    connection.subscriptions.retain(|c| c.id != id);
     connection.selections = expected
         .selected_calendars()
         .into_iter()
@@ -299,20 +327,57 @@ pub async fn remove_subscription(expected: Connection, id: String) -> Result<Con
     connection.calendar_id = connection.selections[0].id.clone();
     connection.calendar_name = connection.selections[0].name.clone();
     connection.revision = store::nonce()?;
-    connection.credential = store::nonce()?;
-    commit(&expected, connection, &feeds).await
+    match feeds {
+        Some(feeds) if !feeds.feeds.is_empty() => {
+            connection.credential = store::nonce()?;
+            commit(&expected, connection, &feeds).await
+        }
+        // The last link went and system calendars remain, or a system
+        // calendar went: no keyring item to write. replace() retires the
+        // previous one for cleanup.
+        feeds => {
+            if feeds.is_some() {
+                connection.credential = String::new();
+            }
+            store::replace(&expected, &connection)?;
+            if connection.credential != expected.credential {
+                super::schedule_cleanup();
+            }
+            Ok(connection)
+        }
+    }
 }
 pub(super) async fn events(
     connection: &Connection,
     month: &str,
     unlock: bool,
 ) -> Result<CalendarData, Problem> {
-    let feeds: Feeds = keyring::read(&connection.credential, unlock).await?;
+    let (system, links): (Vec<_>, Vec<_>) = connection
+        .selected_calendars()
+        .into_iter()
+        .partition(|c| eds::is_system(&c.id));
+    let feeds: Feeds = if links.is_empty() {
+        Feeds { feeds: vec![] }
+    } else {
+        keyring::read(&connection.credential, unlock).await?
+    };
     if feeds.feeds.len() > 8 {
         return Err(Problem::FeedLimit);
     }
-    let mut events = vec![];
-    for choice in connection.selected_calendars() {
+    // Unavailable system calendars don't hold back links during a refresh;
+    // an explicit check, or a list of only system calendars, reports them.
+    let (mut events, problem) = eds::events(&system, month).await;
+    if let Some(problem) = problem
+        && (unlock || links.is_empty())
+    {
+        return Err(problem);
+    }
+    if events.len() > MAX_EVENTS
+        || events.iter().map(event_text_bytes).sum::<usize>() > EVENT_TEXT_BUDGET
+    {
+        return Err(Problem::FeedLimit);
+    }
+    for choice in links {
         let feed = feeds
             .feeds
             .iter()

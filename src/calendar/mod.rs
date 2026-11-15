@@ -2,6 +2,7 @@
 //! configuration and profiles contain no credentials. A legacy connection is
 //! recognized only for an existing installation with its own calendar cache.
 mod auth;
+mod eds;
 mod google;
 mod keyring;
 mod store;
@@ -11,6 +12,10 @@ pub use subscription::{SecretText, add_subscription, remove_subscription};
 #[cfg(test)]
 mod tests;
 pub use auth::{Authorization, begin_sign_in, finish_sign_in};
+pub use eds::{
+    MAX_CALENDARS, SystemCalendar, is_system, online_accounts_app, open_online_accounts,
+    set_system_calendar, system_calendars,
+};
 pub use google::CalendarChoice;
 pub use store::cached as store_cached;
 pub use store::{
@@ -119,6 +124,8 @@ pub enum Problem {
     FeedUrl,
     FeedTimezone,
     FeedLimit,
+    SystemUnavailable,
+    CalendarLimit,
 }
 impl Problem {
     pub fn message(&self) -> &'static str {
@@ -161,6 +168,8 @@ impl Problem {
                 "This calendar is too large or has an unsupported recurrence. Your previous events were kept."
             }
             Self::Preview => "Account changes are unavailable in preview mode.",
+            Self::SystemUnavailable => "System calendars are not available.",
+            Self::CalendarLimit => "You can show up to eight calendars. Remove one to add another.",
         }
     }
 }
