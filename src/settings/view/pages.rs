@@ -1135,21 +1135,18 @@ impl Settings {
             );
             now.clock == look.clock && now.clock_font == look.clock_font
         };
-        let mut controls: Vec<Element<'_, Message>> = Vec::new();
-        if !follows {
-            controls.push(self.widget_font_row(
-                super::super::FontTarget::Clock,
-                "Font",
-                self.config.clock_font.as_deref(),
-                "Same as widgets",
-            ));
-        }
+        // The typefaces show even while following the look: choosing one
+        // gives the clock its own style.
+        let mut controls: Vec<Element<'_, Message>> = vec![
+            label("Font", 14., FG),
+            self.clock_font_strip(),
+        ];
         controls.extend([
             // A slider, like every other percentage in the app.
             column::with_children(vec![
                 split(
                     label(
-                        if clock.face == Some(ClockFace::Analog) {
+                        if clock.face.is_some_and(ClockFace::dial) {
                             "Face size"
                         } else {
                             "Text size"
@@ -1180,7 +1177,7 @@ impl Settings {
                 ),
                 container(
                     slider(50u16..=200, clock.scale.clamp(50, 200), Message::ClockScale)
-                        .name(if clock.face == Some(ClockFace::Analog) {
+                        .name(if clock.face.is_some_and(ClockFace::dial) {
                             "Face size"
                         } else {
                             "Text size"
@@ -1194,7 +1191,7 @@ impl Settings {
                 // stage corner grows it with the digits. This only fits
                 // the time or face inside that box.
                 label(
-                    if clock.face == Some(ClockFace::Analog) {
+                    if clock.face.is_some_and(ClockFace::dial) {
                         "Sizes the face inside its box. To make the whole clock bigger, drag its corner above."
                     } else {
                         "Sizes the time inside its box. To make the whole clock bigger, drag its corner above."
@@ -1321,13 +1318,9 @@ impl Settings {
                     .into(),
             ));
         }
+        face_rows.push(self.clock_face_gallery(follow));
         if !follows {
             face_rows.extend([
-                split(label("Type", 14., FG), segmented(
-                    [(follow, None), ("Digital", Some(ClockFace::Digital)), ("Analog", Some(ClockFace::Analog))]
-                        .into_iter().map(|(name, value)| (name.into(), clock.face == value,
-                            Some(self.clock_moment_edit(Message::ClockFace(value)))))
-                        .collect(), self.settings_accent())),
                 split(detail("Background", if self.config.glance.enabled {
                     "For the separate clock; Daily overview keeps its own"
                 } else {

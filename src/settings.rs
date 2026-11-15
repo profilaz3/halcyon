@@ -6964,6 +6964,7 @@ mod tests {
     include!("settings/search_label_tests.rs");
     include!("settings/corners_tests.rs");
     include!("settings/clock_stage_tests.rs");
+    include!("settings/clock_gallery_tests.rs");
     include!("settings/devices_tests.rs");
     include!("settings/icon_packs_tests.rs");
     include!("settings/glance_off_tests.rs");
