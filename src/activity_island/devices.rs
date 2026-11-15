@@ -33,6 +33,10 @@ pub(super) struct Island {
     seen: Vec<(String, i64, u8)>,
     /// The first snapshot only marks what is there.
     primed: bool,
+    /// Low battery alerts not shown yet, with the alert's time. One waits
+    /// through a fullscreen app, Do Not Disturb or another activity until
+    /// it shows, the device charges or leaves, or the alert is switched off.
+    waiting: Vec<(Banner, i64)>,
     /// What the open island announces.
     pub banner: Option<Banner>,
     /// The open island lists every device.
@@ -43,6 +47,11 @@ impl Island {
         self.banner = None;
         self.card = false;
     }
+    /// `banner` is on screen: its alert stops waiting.
+    pub fn shown(&mut self, banner: &Banner) {
+        self.waiting
+            .retain(|(w, _)| !(w.device.id == banner.device.id && w.event == banner.event));
+    }
 }
 #[derive(Debug, Clone)]
 pub enum Msg {
@@ -51,14 +60,16 @@ pub enum Msg {
 }
 
 /// The newest event in `list` not seen before, if the person wants it.
-/// Every fresh event is marked seen, shown or not, so none comes back.
+/// Every fresh event is marked seen so none comes back; a low battery
+/// alert that could not show waits in `Island::waiting` and is offered
+/// again until it does.
 pub(super) fn pick(
     island: &mut Island,
     list: &[Device],
     prefs: &preferences::Preferences,
     now_ms: i64,
 ) -> Option<Banner> {
-    let mut found: Vec<Banner> = Vec::new();
+    let mut found: Vec<(Banner, i64)> = Vec::new();
     for d in list {
         let fresh = |at: Option<i64>| at.filter(|at| now_ms.saturating_sub(*at) < FRESH_MS);
         let mut events = Vec::new();
@@ -74,31 +85,55 @@ pub(super) fn pick(
                 continue;
             }
             island.seen.push(key);
-            found.push(Banner {
-                device: d.clone(),
-                event,
-            });
+            found.push((
+                Banner {
+                    device: d.clone(),
+                    event,
+                },
+                at,
+            ));
         }
     }
     let overflow = island.seen.len().saturating_sub(SEEN);
     island.seen.drain(..overflow);
     if !std::mem::replace(&mut island.primed, true) || !prefs.system {
+        island.waiting.clear();
         return None;
     }
-    let wanted = |b: &&Banner| match b.event {
-        Event::Connected => prefs.device_banners,
-        Event::Low(_) => prefs.low_battery,
-    };
+    if prefs.low_battery {
+        for (banner, at) in found
+            .iter()
+            .filter(|(b, _)| matches!(b.event, Event::Low(_)))
+        {
+            // A newer alert for the same device takes the older one's place.
+            island
+                .waiting
+                .retain(|(w, _)| w.device.id != banner.device.id);
+            island.waiting.push((banner.clone(), *at));
+        }
+    } else {
+        island.waiting.clear();
+    }
+    // An alert stops waiting once the device charges or leaves.
+    island.waiting.retain(|(w, at)| {
+        list.iter()
+            .any(|d| d.id == w.device.id && d.alert_ms == Some(*at) && d.charging != Some(true))
+    });
     // A battery running low says more than a device arriving.
-    found
+    island
+        .waiting
         .iter()
-        .filter(wanted)
-        .filter(|b| matches!(b.event, Event::Low(_)))
-        .min_by_key(|b| match b.event {
+        .min_by_key(|(b, _)| match b.event {
             Event::Low(level) => level,
             Event::Connected => u8::MAX,
         })
-        .or_else(|| found.iter().find(|b| wanted(b)))
+        .map(|(b, _)| b)
+        .or_else(|| {
+            found
+                .iter()
+                .map(|(b, _)| b)
+                .find(|b| b.event == Event::Connected && prefs.device_banners)
+        })
         .cloned()
 }
 
@@ -176,7 +211,12 @@ impl Applet {
     pub(super) fn settle_device_banner(&mut self, now: Instant) {
         if self.kind != Kind::Devices || self.popup.is_none() {
             self.devices.banner = None;
-        } else if self.revealed && self.devices.banner.is_some() && !self.devices.card {
+            return;
+        }
+        if let Some(shown) = self.devices.banner.clone() {
+            self.devices.shown(&shown);
+        }
+        if self.revealed && self.devices.banner.is_some() && !self.devices.card {
             self.reveal_deadline = Some(now + SHOWN);
         }
     }
@@ -490,6 +530,12 @@ mod tests {
         e.alert_ms = Some(8_000);
         let b = pick(&mut island, &[d.clone(), e.clone()], &prefs(), 8_000).unwrap();
         assert_eq!(b.event, Event::Low(20));
+        // Until shown, the alert is offered again.
+        assert_eq!(
+            pick(&mut island, &[d.clone(), e.clone()], &prefs(), 8_500),
+            Some(b.clone())
+        );
+        island.shown(&b);
         assert_eq!(
             pick(&mut island, &[d.clone(), e.clone()], &prefs(), 9_000),
             None
@@ -707,6 +753,74 @@ mod tests {
         // the same alert stamp is never shown twice.
         feed(&mut app, &[mouse], |_| {});
         assert!(app.popup.is_none());
+    }
+
+    #[test]
+    fn d9_a_low_battery_alert_that_could_not_show_waits_until_it_does() {
+        let low = |battery: u8, at: i64| {
+            let mut mouse = device("bt:mouse", battery, false);
+            mouse.name = "MX Anywhere 3".into();
+            mouse.alert = Some(if battery <= 10 { 10 } else { 20 });
+            mouse.alert_ms = Some(at);
+            mouse
+        };
+        // A fullscreen app or Do Not Disturb holds the alert back.
+        let gates: [(&str, fn(&mut bridge::Snapshot)); 3] = [
+            ("fullscreen", |s| s.quiet = Some(true)),
+            ("dnd", |s| s.dnd = true),
+            ("reveals off", |s| s.preferences.reveals = false),
+        ];
+        for (name, gate) in gates {
+            let mut app = live();
+            feed(&mut app, &[device("bt:mouse", 30, false)], |_| {});
+            let mouse = low(19, now());
+            feed(&mut app, &[mouse.clone()], gate);
+            assert!(app.popup.is_none(), "{name}");
+            feed(&mut app, &[mouse.clone()], gate);
+            assert!(app.popup.is_none(), "{name}: still held");
+            // Long after the alert, once the person is back, it shows.
+            app.now_ms += 5 * 60_000;
+            feed(&mut app, &[mouse.clone()], |_| {});
+            assert!(app.popup.is_some(), "{name}: shown once possible");
+            assert_eq!(app.kind, Kind::Devices);
+            assert_eq!(app.content().meta, "Battery low · 19%");
+            gone(&mut app);
+            feed(&mut app, &[mouse], |_| {});
+            assert!(app.popup.is_none(), "{name}: shown once only");
+        }
+        // Another activity on screen: the alert shows when it closes.
+        let mut app = live();
+        feed(&mut app, &[device("bt:mouse", 30, false)], |_| {});
+        app.popup = Some(window::Id::unique());
+        app.kind = Kind::Music;
+        let mouse = low(9, now());
+        feed(&mut app, &[mouse.clone()], |_| {});
+        assert!(app.devices.banner.is_none());
+        gone(&mut app);
+        feed(&mut app, &[mouse.clone()], |_| {});
+        assert!(app.popup.is_some() && app.kind == Kind::Devices);
+        assert!(app.devices_urgent());
+        // Plugged in, or switched off, a waiting alert is let go.
+        for (name, settle) in [
+            (
+                "charging",
+                (|m: &mut Device, _: &mut bool| m.charging = Some(true))
+                    as fn(&mut Device, &mut bool),
+            ),
+            ("switched off", |_, on| *on = false),
+        ] {
+            let mut app = live();
+            feed(&mut app, &[device("bt:mouse", 30, false)], |_| {});
+            let mut mouse = low(18, now());
+            feed(&mut app, &[mouse.clone()], |s| s.dnd = true);
+            let mut on = true;
+            settle(&mut mouse, &mut on);
+            feed(&mut app, &[mouse.clone()], |s| {
+                s.preferences.low_battery = on
+            });
+            feed(&mut app, &[mouse], |_| {});
+            assert!(app.popup.is_none(), "{name}");
+        }
     }
 
     #[test]

@@ -10,6 +10,46 @@ fn short(value: &str, count: usize) -> String {
     }
 }
 
+/// The room kept for Projects before its first reading when no earlier
+/// reading is remembered: the card's cap, which two projects already fill.
+const FIRST_READING_HEIGHT: f32 = 300.;
+
+/// The height the Projects card took last time, for the same folders and
+/// width, kept while the first reading runs.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(super) struct Reserved {
+    roots: Vec<String>,
+    width: f32,
+    height: f32,
+}
+impl Reserved {
+    fn path() -> Option<std::path::PathBuf> {
+        // Tests outside a fixture home never remember. A preview keeps the
+        // file beside its own configuration.
+        if cfg!(test) && std::env::var_os("HALCYON_TEST_ROOT").is_none() {
+            return None;
+        }
+        crate::tools::state_path("projects-height.json")
+    }
+    pub(super) fn load() -> Option<Self> {
+        let bytes = crate::tools::read_bounded(&Self::path()?, 64 * 1024).ok()??;
+        serde_json::from_slice(&bytes).ok()
+    }
+    fn height(&self, roots: &[String], width: f32) -> Option<f32> {
+        (self.roots == roots && (self.width - width).abs() < 0.5 && self.height > 0.)
+            .then_some(self.height)
+    }
+    /// Owner-only: the file names the chosen project folders.
+    fn save_at(&self, path: &std::path::Path) {
+        let result = serde_json::to_vec(self)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| crate::tools::write_private(path, &bytes));
+        if let Err(error) = result {
+            eprintln!("Could not remember the Projects height: {error}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -24,6 +64,119 @@ mod tests {
             "error": false, "servers": [], "recent": 0.0
         }))
         .unwrap()
+    }
+
+    /// The right column with Weather, Devbox and Projects on a 1920 x 1080
+    /// desktop, for the layout evidence folder.
+    fn capture_column(cards: &Cards, name: &str) {
+        use cosmic::iced::widget::{pin, stack};
+        let black = cosmic::theme::Container::custom(|_| cosmic::iced::widget::container::Style {
+            background: Some(Background::Color(Color::BLACK)),
+            ..Default::default()
+        });
+        let mut layers: Vec<Element<'_, Message>> = vec![
+            container(cosmic::widget::Space::new())
+                .width(1920.)
+                .height(1080.)
+                .class(black)
+                .into(),
+        ];
+        for w in [Widget::Weather, Widget::Devbox, Widget::Projects] {
+            let size = cards.widget_size(w);
+            let at = cards.default_position(w);
+            let view = match w {
+                Widget::Weather => cards.weather_card(),
+                Widget::Devbox => cards.devbox(),
+                _ => cards.projects_card(),
+            };
+            layers.push(
+                pin(container(view).width(size[0]).height(size[1]))
+                    .position(cosmic::iced::Point::new(at[0], at[1]))
+                    .into(),
+            );
+        }
+        crate::native_test::Native::new(cosmic::iced::Size::new(1920., 1080.)).capture(
+            stack(layers).into(),
+            &cosmic::Theme::dark(),
+            name,
+        );
+    }
+
+    fn column(cards: &Cards) -> Vec<[f32; 4]> {
+        [Widget::Weather, Widget::Devbox, Widget::Projects]
+            .map(|w| {
+                let [x, y] = cards.default_position(w);
+                let [width, height] = cards.widget_size(w);
+                [x, y, width, height]
+            })
+            .to_vec()
+    }
+
+    fn loaded(count: usize) -> ProjectsData {
+        ProjectsData {
+            updated_at: String::new(),
+            projects: (0..count)
+                .map(|n| {
+                    project(
+                        &format!("/fixture/{n}"),
+                        &format!("Project {n}"),
+                        &format!("repo-{n}"),
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    fn column_cards() -> Cards {
+        let mut config = Config::load();
+        config.enabled_widgets = vec!["weather".into(), "devbox".into(), "projects".into()];
+        config.project_roots = vec!["/fixture/projects".into()];
+        let (mut cards, _) = Cards::init(Core::default(), config);
+        super::super::look_render_tests::sample_data(&mut cards);
+        cards.projects = None;
+        cards
+    }
+
+    #[test]
+    fn d2_the_right_column_keeps_its_place_when_projects_first_load() {
+        if crate::displays::test_support::isolated(
+            "app::projects::tests::d2_the_right_column_keeps_its_place_when_projects_first_load",
+        ) {
+            return;
+        }
+        // First start: nothing remembered, so the card keeps its full room.
+        let mut cards = column_cards();
+        let roots = cards.config.project_roots.clone();
+        let reading = column(&cards);
+        capture_column(&cards, "d2-projects-reading");
+        let _ = cards.update(Message::Projects(roots.clone(), Ok(loaded(3))));
+        capture_column(&cards, "d2-projects-loaded");
+        assert_eq!(
+            column(&cards),
+            reading,
+            "the column moved when Projects loaded"
+        );
+        // A failed first reading keeps the room as well.
+        let mut failed = column_cards();
+        let _ = failed.update(Message::Projects(roots.clone(), Err("busy".into())));
+        assert_eq!(column(&failed), reading);
+
+        // One project is shorter. The next start remembers its height.
+        let _ = cards.update(Message::Projects(roots.clone(), Ok(loaded(1))));
+        let one = column(&cards);
+        assert!(one[2][3] < reading[2][3]);
+        super::super::config_writes::flush();
+        let mut restarted = column_cards();
+        let remembered = column(&restarted);
+        capture_column(&restarted, "d2-projects-restart-reading");
+        assert_eq!(remembered, one, "a restart reserves the remembered height");
+        let _ = restarted.update(Message::Projects(roots.clone(), Ok(loaded(1))));
+        capture_column(&restarted, "d2-projects-restart-loaded");
+        assert_eq!(column(&restarted), remembered);
+        // Other folders don't borrow that height.
+        restarted.config.project_roots = vec!["/elsewhere".into()];
+        restarted.projects = None;
+        assert_eq!(restarted.widget_size(Widget::Projects)[1], reading[2][3]);
     }
 
     #[test]
@@ -1156,14 +1309,47 @@ impl Cards {
             expanded_projects: &self.expanded_projects,
         }
     }
-    pub(super) fn projects_natural_height(&self) -> f32 {
-        let width = self
-            .explicit_size(Widget::Projects)
+    fn projects_width(&self) -> f32 {
+        self.explicit_size(Widget::Projects)
             .map(|size| size[0])
-            .unwrap_or_else(|| {
-                360_f32.min((self.widget_screen(Widget::Projects)[0] - 48.).max(1.))
-            });
+            .unwrap_or_else(|| 360_f32.min((self.widget_screen(Widget::Projects)[0] - 48.).max(1.)))
+    }
+    pub(super) fn projects_natural_height(&self) -> f32 {
+        let width = self.projects_width();
+        if self.projects.is_none() {
+            // Until the first reading, keep the room the projects took last
+            // time, so the column doesn't jump when they arrive.
+            return self
+                .projects_reserved
+                .as_ref()
+                .and_then(|reserved| reserved.height(&self.config.project_roots, width))
+                .unwrap_or(FIRST_READING_HEIGHT);
+        }
         self.projects_presentation().natural_height(width)
+    }
+    /// Remembers the room the projects take in their first view, for the
+    /// next start. The file is written off the UI thread.
+    pub(super) fn remember_projects_height(&mut self) {
+        let width = self.projects_width();
+        let expanded = BTreeSet::new();
+        let height = Presentation {
+            all_projects: false,
+            expanded_projects: &expanded,
+            ..self.projects_presentation()
+        }
+        .natural_height(width);
+        let reserved = Reserved {
+            roots: self.config.project_roots.clone(),
+            width,
+            height,
+        };
+        if self.projects_reserved.as_ref() == Some(&reserved) {
+            return;
+        }
+        self.projects_reserved = Some(reserved.clone());
+        if let Some(path) = Reserved::path() {
+            super::config_writes::in_order(move || reserved.save_at(&path));
+        }
     }
     pub(super) fn projects_card(&self) -> Element<'_, Message> {
         self.projects_presentation().view(

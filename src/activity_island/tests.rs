@@ -412,6 +412,55 @@ fn compositor_dismissal_clears_pointer_state_and_old_deadlines() {
     );
 }
 
+/// While the island opens, its controls take the pointer as soon as they
+/// are drawn and the outline has reached them. Before, they showed from
+/// 45% of the way but ignored presses until 90%.
+#[test]
+fn d13_controls_answer_as_soon_as_they_show() {
+    use cosmic::iced::{Event, Size, mouse};
+    let mut app = app();
+    app.popup = Some(window::Id::unique());
+    app.held = true;
+    app.snapshot.music = Some(music());
+    app.kind = Kind::Music;
+    let mut ui = crate::native_test::Native::new(Size::new(WIDTH, HEIGHT));
+    app.motion.value = 1.;
+    let pause = ui.bounds(app.capsule(true), "activity-pause").center();
+    let press = |ui: &mut crate::native_test::Native, app: &Applet| {
+        let _ = ui.event(
+            app.capsule(true),
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            pause,
+        );
+        ui.event(
+            app.capsule(true),
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            pause,
+        )
+        .0
+        .into_iter()
+        .any(|m| matches!(m, Message::Control(Command::Pause { .. })))
+    };
+    // Not drawn yet: nothing to press.
+    app.motion.value = 0.3;
+    assert!(!press(&mut ui, &app));
+    // Drawn, but the outline has not grown down to it: still hidden.
+    app.motion.value = 0.5;
+    assert!(!press(&mut ui, &app), "pressed below the outline");
+    // Drawn and inside the outline, short of 90%: it answers.
+    app.motion.value = 0.8;
+    assert!(press(&mut ui, &app), "a control on screen at 80% ignored the press");
+    app.motion.value = 1.;
+    assert!(press(&mut ui, &app));
+    // Wherever presses reach a control, it is drawn.
+    for step in 0..=20 {
+        app.motion.value = step as f32 / 20.;
+        if press(&mut ui, &app) {
+            assert!(app.motion.value > 0.45, "pressed while hidden at {}", app.motion.value);
+        }
+    }
+}
+
 #[test]
 fn unavailable_music_and_elapsed_focus_have_no_stale_actions() {
     use cosmic::iced::{Event, Size, mouse};
@@ -4407,6 +4456,25 @@ fn shelf_fixture(name: &str) -> std::path::PathBuf {
     std::fs::write(dir.join("song.flac"), b"x").unwrap();
     dir
 }
+/// Waits for the shelf worker's answer in `task` and hands it to the island.
+/// What the answer asks for next (popups, thumbnails, phones) is dropped.
+fn shelf_answer(app: &mut Applet, task: Task<Message>) {
+    use cosmic::iced::futures::StreamExt;
+    use cosmic::iced::runtime::Action as RuntimeAction;
+    let mut stream = cosmic::iced::runtime::task::into_stream(task).expect("a shelf change");
+    let answer = cosmic::iced::futures::executor::block_on(async {
+        while let Some(action) = stream.next().await {
+            if let RuntimeAction::Output(cosmic::Action::App(Message::Shelf(msg))) = action
+                && matches!(msg, super::shelf::Msg::Changed(..))
+            {
+                return Some(msg);
+            }
+        }
+        None
+    })
+    .expect("the shelf worker answers");
+    let _ = app.update(Message::Shelf(answer));
+}
 fn shelve(app: &mut Applet, dir: &std::path::Path, more: bool) {
     use super::shelf::Target;
     let mut targets = vec![
@@ -4592,7 +4660,12 @@ fn shelf_drag_opens_a_drop_zone_and_a_drop_keeps_the_files() {
         dir.join("Quarterly report.pdf").display()
     )
     .replace(' ', "%20");
-    let _ = app.update(Message::Shelf(Msg::Dropped(list.into_bytes())));
+    let started = Instant::now();
+    let task = app.update(Message::Shelf(Msg::Dropped(list.into_bytes())));
+    assert!(started.elapsed() < Duration::from_millis(50));
+    // Nothing was looked at on the UI thread yet.
+    assert!(app.shelf.items.is_empty());
+    shelf_answer(&mut app, task);
     assert_eq!(app.shelf.items.len(), 2);
     assert_eq!(app.shelf.items[0].name, "Quarterly report.pdf");
     // Dropped, the island stays open in hand on the list.
@@ -4609,11 +4682,15 @@ fn shelf_drag_opens_a_drop_zone_and_a_drop_keeps_the_files() {
     assert!(pressed.iter().any(|m| matches!(m, Message::Shelf(Msg::Back))));
     let pressed = click(&mut ui, &app, "activity-shelf-remove-1");
     assert!(pressed.iter().any(|m| matches!(m, Message::Shelf(Msg::Remove(1)))));
-    let _ = app.update(Message::Shelf(Msg::Remove(1)));
+    let task = app.update(Message::Shelf(Msg::Remove(1)));
+    assert_eq!(app.shelf.items.len(), 1);
+    shelf_answer(&mut app, task);
     assert_eq!(app.shelf.items.len(), 1);
     let _ = app.update(Message::Shelf(Msg::Back));
     assert!(!app.shelf_shown());
-    let _ = app.update(Message::Shelf(Msg::Clear));
+    let task = app.update(Message::Shelf(Msg::Clear));
+    assert!(app.shelf.items.is_empty());
+    shelf_answer(&mut app, task);
     assert!(app.shelf.items.is_empty());
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -4640,6 +4717,34 @@ fn shelf_drop_of_nothing_usable_closes_and_switched_off_ignores_drags() {
 }
 
 #[test]
+fn d8_an_island_follows_and_keeps_what_another_monitor_shelved() {
+    use super::shelf::{Msg, Shelf};
+    let dir = shelf_fixture("d8-follow");
+    let store = dir.join("run").join("shelf.json");
+    let mut left = app();
+    left.kind = Kind::Idle;
+    left.shelf = Shelf::at(Some(store.clone()));
+    let mut right = app();
+    right.kind = Kind::Idle;
+    right.shelf = Shelf::at(Some(store.clone()));
+    // The left island watches the shared list while the shelf is on.
+    let palette_list = format!("file://{}", dir.join("Beach.png").display());
+    let task = left.update(Message::Shelf(Msg::Dropped(palette_list.into_bytes())));
+    shelf_answer(&mut left, task);
+    let report = format!("file://{}", dir.join("Quarterly report.pdf").display()).replace(' ', "%20");
+    let task = right.update(Message::Shelf(Msg::Dropped(report.into_bytes())));
+    shelf_answer(&mut right, task);
+    // The right island's write kept the left one's picture.
+    assert_eq!(right.shelf.items.len(), 2);
+    // The left island hears of the change and shows both.
+    let task = left.update(Message::Shelf(Msg::StoreChanged));
+    shelf_answer(&mut left, task);
+    let names: Vec<_> = left.shelf.items.iter().map(|i| i.name.as_str()).collect();
+    assert_eq!(names, ["Quarterly report.pdf", "Beach.png"]);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn shelf_shows_from_the_idle_card_and_forgets_vanished_files() {
     use super::shelf::Msg;
     let dir = shelf_fixture("show");
@@ -4656,8 +4761,11 @@ fn shelf_shows_from_the_idle_card_and_forgets_vanished_files() {
     let pressed = click(&mut ui, &app, "activity-shelf");
     assert!(pressed.iter().any(|m| matches!(m, Message::Shelf(Msg::Show))));
     std::fs::remove_file(dir.join("Quarterly report.pdf")).unwrap();
-    let _ = app.update(Message::Shelf(Msg::Show));
+    let task = app.update(Message::Shelf(Msg::Show));
     assert!(app.shelf_shown());
+    // Shown at once as last known; the worker's look drops the gone file.
+    assert_eq!(app.shelf.items.len(), 4);
+    shelf_answer(&mut app, task);
     assert_eq!(app.shelf.items.len(), 3);
     assert!(app.shelf.items.iter().all(|i| i.name != "Quarterly report.pdf"));
     // A closed island puts the shelf away.

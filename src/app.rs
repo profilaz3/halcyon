@@ -12,6 +12,7 @@ mod auditfix_tests;
 mod autoswitch;
 mod calendar_details;
 mod clock;
+mod config_writes;
 mod depth;
 #[cfg(test)]
 mod desktop_ux_tests;
@@ -174,7 +175,9 @@ pub enum Message {
     /// A quiet scene finished fading out; its surfaces can go.
     RainRetired(u64),
     /// Rain surfaces whose frames stopped coming: re-arm them.
-    RainNudge(Vec<window::Id>),
+    RainNudge(rain::Look),
+    /// The note's Try again for a weather effect that stopped moving.
+    RainRetry,
     /// What hides the desktop changed.
     RainDesk(crate::rain::desk::Desk),
     /// cosmic-bg rewrote its state file.
@@ -191,7 +194,7 @@ pub enum Message {
     /// The clock drawn for behind the rain glass, or nothing.
     GlassReady(u64, Option<crate::desktop::wallpaper::media::Pixels>),
     /// The picture with this content key was analysed, or failed.
-    DepthAnalysed(String, bool),
+    DepthAnalysed(String, Result<(), crate::depth::analyse::Failure>),
     WallpaperColorsReady(
         u64,
         Result<Option<crate::desktop::wallpaper::automatic::Prepared>, String>,
@@ -328,6 +331,8 @@ pub enum Message {
     WidgetSettings(Widget),
     SetWidgetVisible(Widget, bool),
     SaveOrder(Vec<Widget>),
+    /// A configuration write from the desktop finished off the UI thread.
+    ConfigSaved(Box<config_writes::Saved>),
     NoticeRetry,
     NoticeDismiss,
     NoticeDetails,
@@ -391,6 +396,8 @@ pub struct Cards {
     projects: Option<ProjectsData>,
     projects_fetching: bool,
     projects_error: bool,
+    /// The room Projects took last time, kept until its first reading.
+    projects_reserved: Option<projects::Reserved>,
     next_projects: Instant,
     all_projects: bool,
     expanded_projects: std::collections::BTreeSet<String>,
@@ -518,6 +525,7 @@ impl cosmic::Application for Cards {
             projects: config.project_roots.is_empty().then(ProjectsData::default),
             projects_fetching: false,
             projects_error: false,
+            projects_reserved: projects::Reserved::load(),
             next_projects: Instant::now(),
             all_projects: false,
             expanded_projects: Default::default(),
@@ -1180,7 +1188,8 @@ impl Cards {
                 Task::none()
             }
             Message::RainRetired(generation) => self.rain.retired(generation),
-            Message::RainNudge(ids) => self.rain.nudge(ids),
+            Message::RainNudge(look) => self.rain_watched(look),
+            Message::RainRetry => self.rain.invalidate(),
             Message::RainDesk(desk) => {
                 self.rain.desk = desk;
                 Task::none()
@@ -1277,7 +1286,7 @@ impl Cards {
                 self.capture_if_changed()
             }
             Message::WallpaperColorsChanged => {
-                self.depth.invalidate();
+                self.depth.wallpaper_changed();
                 let rain = self.rain.invalidate();
                 Task::batch([
                     rain,
@@ -1300,8 +1309,8 @@ impl Cards {
                 Some(key) => self.depth_analyse(key),
                 None => Task::none(),
             },
-            Message::DepthAnalysed(key, ok) => {
-                if self.depth.analysed(&key, ok) {
+            Message::DepthAnalysed(key, result) => {
+                if self.depth.analysed(&key, result) {
                     self.depth_sync()
                 } else {
                     Task::none()
@@ -1536,6 +1545,7 @@ impl Cards {
             }
             Message::SetWidgetVisible(widget, visible) => self.set_widget_visible(widget, visible),
             Message::SaveOrder(order) => self.save_widget_order(order),
+            Message::ConfigSaved(saved) => self.config_saved(*saved),
             Message::DrawerToggle => self.drawer_toggle(),
             Message::EdgeClick(id) => {
                 if !self.sidebar.visible {
@@ -1696,6 +1706,7 @@ impl Cards {
                     self.expanded_projects
                         .retain(|id| projects::has_group(&projects.projects, id));
                     self.projects = Some(projects);
+                    self.remember_projects_height();
                 }
                 self.next_projects =
                     Instant::now() + self.config.refresh_intervals.duration(Widget::Projects);

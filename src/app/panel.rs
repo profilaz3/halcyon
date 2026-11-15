@@ -1,3 +1,4 @@
+use super::config_writes::{Failure, Revert};
 use super::*;
 use cosmic::Application;
 use cosmic::iced::mouse;
@@ -10,19 +11,16 @@ use crate::config::edge_menu::ELSEWHERE;
 impl Cards {
     pub(super) fn set_widget_visible(&mut self, widget: Widget, visible: bool) -> Task<Message> {
         let mut config = self.config.clone();
-        if let Err(error) = crate::desktop::actions::in_action("Widget visibility", || {
-            config.save_widget(widget, visible)
-        }) {
-            eprintln!("Could not save widget selection: {error}");
-            self.raise_notice(
+        self.save_config_later(
+            "Widget visibility",
+            Failure::notice(
                 "Couldn’t save the widget list",
                 "Your change wasn’t kept.",
-                error.to_string(),
                 Some(Message::SetWidgetVisible(widget, visible)),
-            );
-            return Task::none();
-        }
-        self.apply_config(config)
+            ),
+            None,
+            move || config.save_widget(widget, visible).map(|()| config),
+        )
     }
     /// Shows a failed desktop change in the edge menu, opening it.
     pub(super) fn raise_notice(
@@ -41,19 +39,28 @@ impl Cards {
         });
         self.sidebar.show(Instant::now());
     }
+    /// Shows the new order at once and saves it behind any earlier write;
+    /// a failed save puts the order back.
     pub(super) fn save_widget_order(&mut self, order: Vec<Widget>) -> Task<Message> {
-        let original = self.config.ordered_right_cards();
-        if let Err(error) = self.config.save_order(&order) {
-            self.config.widget_order = original.iter().map(|w| w.key().into()).collect();
-            eprintln!("Could not save widget order: {error}");
-            self.raise_notice(
+        let original: Vec<String> = self
+            .config
+            .ordered_right_cards()
+            .iter()
+            .map(|w| w.key().into())
+            .collect();
+        self.config.widget_order = order.iter().map(|w| w.key().into()).collect();
+        let mut config = self.config.clone();
+        let retry = order.clone();
+        self.save_config_later(
+            "Widget order",
+            Failure::notice(
                 "Couldn’t save the widget order",
                 "The widgets are back in their saved order.",
-                error.to_string(),
-                Some(Message::SaveOrder(order)),
-            );
-        }
-        Task::none()
+                Some(Message::SaveOrder(retry)),
+            ),
+            Some(Revert::WidgetOrder(original)),
+            move || config.save_order(&order).map(|()| config),
+        )
     }
     /// Every place the keyboard can be in the edge menu, top down.
     pub(super) fn drawer_items(&self) -> Vec<DrawerItem> {
@@ -600,8 +607,8 @@ impl Cards {
                 }))
                 .into(),
             container(label(widget.title(), 13., p.foreground))
-            .width(Length::Fill)
-            .into(),
+                .width(Length::Fill)
+                .into(),
             switch(selected, color, p),
         ])
         .spacing(8)
@@ -669,12 +676,12 @@ impl Cards {
         };
         let right = self.config.ordered_right_cards();
         let count = right.len();
-        let rows = keyed_column(
-            right
-                .into_iter()
-                .enumerate()
-                .map(|(index, widget)| (widget, self.rail_button(widget, true, corners(index, count)))),
-        )
+        let rows = keyed_column(right.into_iter().enumerate().map(|(index, widget)| {
+            (
+                widget,
+                self.rail_button(widget, true, corners(index, count)),
+            )
+        }))
         .spacing(drawer::ROW_STEP - drawer::ROW_HEIGHT);
         let elsewhere = ELSEWHERE;
         let others = column::with_children(
@@ -694,10 +701,10 @@ impl Cards {
                     .font(cosmic::font::semibold())
                     .class(cosmic::theme::Text::Color(mix(p.foreground, p.muted, 0.5))),
             )
-                .padding([0, 4])
-                .height(Length::Fixed(drawer::SECTION_LABEL))
-                .align_y(Alignment::End)
-                .into()
+            .padding([0, 4])
+            .height(Length::Fixed(drawer::SECTION_LABEL))
+            .align_y(Alignment::End)
+            .into()
         };
         let gap = |height: f32| -> Element<'_, Message> {
             cosmic::iced::widget::space().height(height).into()
@@ -986,17 +993,9 @@ impl Cards {
                                 order.iter().map(|w| w.key().into()).collect()
                         }
                         DragResult::Reorder(order) => {
-                            if let Err(error) = self.config.save_order(&order) {
-                                self.config.widget_order =
-                                    original.iter().map(|w| w.key().into()).collect();
-                                eprintln!("Could not save widget order: {error}");
-                                self.raise_notice(
-                                    "Couldn’t save the widget order",
-                                    "The widgets are back in their saved order.",
-                                    error.to_string(),
-                                    Some(Message::SaveOrder(order)),
-                                );
-                            }
+                            self.config.widget_order =
+                                original.iter().map(|w| w.key().into()).collect();
+                            return self.save_widget_order(order);
                         }
                     }
                 }

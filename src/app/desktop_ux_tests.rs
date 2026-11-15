@@ -70,7 +70,9 @@ fn capture_rail(cards: &Cards, name: &str) {
 }
 
 fn press(cards: &mut Cards, key: Key, modifiers: Modifiers) {
-    let _ = cards.update(Message::KeyInput(cards.ids[2], key, modifiers));
+    // Settings are saved off the UI thread; let a save land.
+    let input = Message::KeyInput(cards.ids[2], key, modifiers);
+    super::config_writes::update_saved(cards, input);
 }
 
 #[test]
@@ -178,7 +180,8 @@ fn fb04_a_failed_save_explains_itself_and_try_again_finishes_it() {
     let path = Config::path().unwrap();
     let saved = std::fs::read(&path).unwrap();
     std::fs::write(&path, "{broken").unwrap();
-    let _ = cards.update(Message::SetWidgetVisible(Widget::Music, false));
+    let task = cards.update(Message::SetWidgetVisible(Widget::Music, false));
+    super::config_writes::finish(&mut cards, task);
     let notice = cards.notice.as_ref().expect("the failure is shown");
     assert_eq!(notice.title, "Couldn’t save the widget list");
     assert!(cards.sidebar.visible, "the edge menu opens to show it");
@@ -198,7 +201,8 @@ fn fb04_a_failed_save_explains_itself_and_try_again_finishes_it() {
     capture_rail(&cards, "fb04-notice-details");
     // Try again after the file is readable again.
     std::fs::write(&path, &saved).unwrap();
-    let _ = cards.update(Message::NoticeRetry);
+    let task = cards.update(Message::NoticeRetry);
+    super::config_writes::finish(&mut cards, task);
     assert!(cards.notice.is_none());
     assert!(!Config::load().widget_visible(Widget::Music));
     // Dismiss just clears it.
@@ -282,7 +286,10 @@ fn dt02_right_click_menu_hides_the_widget_it_was_opened_on() {
     ));
     assert!(cards.menu.is_none());
     let _ = cards.update(Message::WidgetMenu(Widget::Music));
-    let _ = cards.update(Message::WidgetMenuPick(layout::MenuPick::Hide));
+    super::config_writes::update_saved(
+        &mut cards,
+        Message::WidgetMenuPick(layout::MenuPick::Hide),
+    );
     assert!(cards.menu.is_none());
     assert!(!Config::load().widget_visible(Widget::Music));
     // Arranging turns the menu off so right clicks stay with the editor.

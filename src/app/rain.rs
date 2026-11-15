@@ -26,6 +26,21 @@ pub(super) struct State {
     pub desk: crate::rain::desk::Desk,
     /// The surfaces the frame watchdog looks after, shared with its stream.
     watchers: Watchers,
+    /// Outputs whose surface was made again after nudges could not bring
+    /// its frames back. A second such stall leaves a note instead.
+    recreated: std::collections::HashSet<String>,
+}
+/// One look of the watchdog: surfaces to re-arm, and surfaces that nudges
+/// did not bring back.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Look {
+    pub nudge: Vec<window::Id>,
+    pub gave_up: Vec<window::Id>,
+}
+impl Look {
+    fn is_empty(&self) -> bool {
+        self.nudge.is_empty() && self.gave_up.is_empty()
+    }
 }
 /// cosmic-bg's state file and the cosmic-bg process running when it was read.
 pub(super) type Seen = (Option<Vec<u8>>, Option<(u32, u64)>);
@@ -184,9 +199,15 @@ impl Watchers {
         self.lock().entries.is_empty()
     }
     /// One look: the surfaces to re-arm now. Logs once per stall.
+    #[cfg(test)]
     pub(super) fn look(&self, now: Instant) -> Vec<window::Id> {
+        self.look_all(now).nudge
+    }
+    /// One look: the surfaces to re-arm now, and those nudges did not
+    /// bring back. Logs once per stall.
+    pub(super) fn look_all(&self, now: Instant) -> Look {
         let mut watched = self.lock();
-        let mut nudge = Vec::new();
+        let mut look = Look::default();
         for (id, scene, dog) in &mut watched.entries {
             match dog.check(scene.flow(), now) {
                 Verdict::Quiet => {}
@@ -194,33 +215,31 @@ impl Watchers {
                     if first {
                         eprintln!("Rain surface {id:?} stopped drawing; re-arming its frames");
                     }
-                    nudge.push(*id);
+                    look.nudge.push(*id);
                 }
-                Verdict::GiveUp => eprintln!(
-                    "Rain surface {id:?} still not drawing after {TRIES} tries; \
-                     waiting for its output or scene to change"
-                ),
+                Verdict::GiveUp => {
+                    eprintln!("Rain surface {id:?} still not drawing after {TRIES} tries");
+                    look.gave_up.push(*id);
+                }
             }
         }
-        nudge
+        look
     }
 }
 /// Looks every `WATCH` and yields only the surfaces that need a nudge.
-fn watch_stream(
-    watchers: &Watchers,
-) -> impl cosmic::iced::futures::Stream<Item = Vec<window::Id>> + use<> {
+fn watch_stream(watchers: &Watchers) -> impl cosmic::iced::futures::Stream<Item = Look> + use<> {
     watch_every(watchers.clone(), WATCH)
 }
 fn watch_every(
     watchers: Watchers,
     period: Duration,
-) -> impl cosmic::iced::futures::Stream<Item = Vec<window::Id>> {
+) -> impl cosmic::iced::futures::Stream<Item = Look> {
     cosmic::iced::stream::channel(1, async move |mut out| {
         use cosmic::iced::futures::SinkExt;
         loop {
             tokio::time::sleep(period).await;
-            let nudge = watchers.look(Instant::now());
-            if !nudge.is_empty() && out.send(nudge).await.is_err() {
+            let look = watchers.look_all(Instant::now());
+            if !look.is_empty() && out.send(look).await.is_err() {
                 return;
             }
         }
@@ -238,6 +257,7 @@ impl State {
     pub fn invalidate(&mut self) -> Task<Message> {
         self.shown = None;
         self.retiring = None;
+        self.recreated.clear();
         if let Some((path, stamp)) = &mut self.native_state {
             *stamp = crate::watch::file_stamp(path);
         }
@@ -339,7 +359,7 @@ impl State {
         self.watchers.set(wanted, generation, now);
     }
     /// The watchdog's stream, while it has surfaces to look after.
-    pub fn watch(&self) -> Option<Subscription<Vec<window::Id>>> {
+    pub fn watch(&self) -> Option<Subscription<Look>> {
         (!self.watchers.is_empty())
             .then(|| Subscription::run_with(self.watchers.clone(), watch_stream))
     }
@@ -355,6 +375,31 @@ impl State {
         } else {
             Task::batch(tasks)
         }
+    }
+    /// Surfaces that nudges did not bring back are made again, once per
+    /// output; `rain_sync` adds the new one. Returns the outputs whose new
+    /// surface stalled too, for a note.
+    pub fn recreate(&mut self, ids: Vec<window::Id>) -> (Task<Message>, Vec<String>) {
+        let mut tasks = Vec::new();
+        let mut stuck = Vec::new();
+        for id in ids {
+            let Some(at) = self.surfaces.iter().position(|s| s.id == id) else {
+                continue;
+            };
+            let name = self.surfaces[at]
+                .output
+                .name()
+                .unwrap_or_default()
+                .to_owned();
+            if self.recreated.insert(name.clone()) {
+                eprintln!("Rain surface {id:?} on {name} is made again");
+                let surface = self.surfaces.remove(at);
+                tasks.push(destroy_layer_surface(surface.id));
+            } else {
+                stuck.push(name);
+            }
+        }
+        (Task::batch(tasks), stuck)
     }
     pub fn paths(&self) -> Vec<(std::path::PathBuf, Option<crate::watch::FileStamp>)> {
         self.surfaces
@@ -525,6 +570,27 @@ impl Cards {
                 Task::batch([rain, self.wallpaper_colors_changed()])
             }
         }
+    }
+    /// Re-arms stalled surfaces and makes again those nudges did not bring
+    /// back. When a new surface stalls too, the edge menu keeps a note.
+    pub(super) fn rain_watched(&mut self, look: Look) -> Task<Message> {
+        let nudge = self.rain.nudge(look.nudge);
+        let (recreate, stuck) = self.rain.recreate(look.gave_up);
+        if !stuck.is_empty() && self.notice.is_none() {
+            // Kept for the next time the edge menu opens; a stalled effect
+            // is no reason to open it.
+            self.notice = Some(Notice {
+                title: "The weather effect stopped moving",
+                body: "It starts again when the display or the effect changes.",
+                error: format!(
+                    "No frames on {} after {TRIES} tries and a new surface.",
+                    stuck.join(", ")
+                ),
+                retry: Some(Message::RainRetry),
+                details: false,
+            });
+        }
+        Task::batch([nudge, recreate])
     }
     pub(super) fn rain_sync(&mut self) -> Task<Message> {
         if !self.config.rain.wanted() {
@@ -873,6 +939,59 @@ mod tests {
         state.retiring = Some(9);
         state.watch_sync(2, give_up);
         assert!(state.watch().is_none());
+    }
+    #[test]
+    fn d5_a_surface_nudges_cannot_revive_is_made_again_once_then_noted() {
+        if crate::displays::test_support::isolated(
+            "app::rain::tests::d5_a_surface_nudges_cannot_revive_is_made_again_once_then_noted",
+        ) {
+            return;
+        }
+        let (mut app, _) = Cards::init(Core::default(), Config::default());
+        let (state, id, scene) = watched();
+        app.rain = state;
+        let now = Instant::now();
+        app.rain.watch_sync(1, now);
+        // Frames never come back: three nudges, then the watchdog gives up
+        // and says so, rather than going quiet.
+        let mut looks = Vec::new();
+        let mut at = now;
+        while at < now + Duration::from_secs(600) {
+            at += WATCH;
+            let look = app.rain.watchers.look_all(at);
+            if !look.nudge.is_empty() {
+                scene.mark_drawn_at(at + Duration::from_millis(20));
+            }
+            if !look.is_empty() {
+                looks.push(look);
+            }
+        }
+        assert_eq!(looks.len(), TRIES as usize + 1, "{looks:?}");
+        assert_eq!(looks.last().unwrap().gave_up, [id]);
+        // The first time, the surface is made again and nothing is shown.
+        let _ = app.handle_update(Message::RainNudge(looks.pop().unwrap()));
+        assert!(!app.rain.owns(id), "the stuck surface is gone");
+        assert!(app.notice.is_none());
+        // Its replacement on the same output stalls too: a note, kept for
+        // the edge menu without opening it.
+        let (fresh, again, _) = watched();
+        let output = fresh.surfaces.into_iter().next().unwrap();
+        let mut output = output;
+        output.id = again;
+        app.rain.surfaces.push(output);
+        let _ = app.handle_update(Message::RainNudge(Look {
+            nudge: Vec::new(),
+            gave_up: vec![again],
+        }));
+        assert!(app.rain.owns(again), "not made again a second time");
+        let notice = app.notice.as_ref().expect("a note says the effect stopped");
+        assert_eq!(notice.title, "The weather effect stopped moving");
+        assert!(notice.error.contains("Rain-test"));
+        assert!(matches!(notice.retry, Some(Message::RainRetry)));
+        assert!(!app.sidebar.visible, "the edge menu stays closed");
+        // Try again starts the effect over, with one more remake allowed.
+        let _ = app.handle_update(Message::RainRetry);
+        assert!(app.rain.surfaces.is_empty() && app.rain.recreated.is_empty());
     }
     #[test]
     fn rain_desk_messages_hold_the_effect_still_and_let_it_go() {
