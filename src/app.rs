@@ -646,6 +646,13 @@ impl cosmic::Application for Cards {
                 crate::watch::read_only_files(calendar_files).map(|_| Message::RefreshCalendar),
             );
         }
+        // Calendar folders, such as the ones vdirsyncer keeps in sync.
+        let calendar_folders = self.calendar_connection.calendar_folders();
+        if !calendar_folders.is_empty() && !self.calendar_preview {
+            subscriptions.push(
+                crate::watch::calendar_folders(calendar_folders).map(|_| Message::RefreshCalendar),
+            );
+        }
         // The same files Settings watches for Accessibility › Reduce motion.
         if let Some(dir) = dirs::config_dir() {
             subscriptions.push(

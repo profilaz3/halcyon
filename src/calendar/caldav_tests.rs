@@ -3,7 +3,9 @@
 //! network beyond loopback, the real keyring or the person's settings.
 use super::caldav::{self, CalDavCalendar};
 use super::http::Login;
-use super::subscription::{Added, Feed, SecretText, parsed, parsed_file};
+use super::subscription::{
+    Added, Feed, Origin, SecretText, holiday_feed, parsed, parsed_file, read_source,
+};
 use super::*;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -806,7 +808,292 @@ fn added_sources_count_toward_the_eight_calendars() {
         .unwrap()
         .block_on(subscription::add(
             connection,
-            vec![Added::File("/tmp/x.ics".into(), String::new())],
+            vec![Added::Path {
+                kind: SourceKind::File,
+                path: "/tmp/x.ics".into(),
+                name: String::new(),
+                color: String::new(),
+            }],
         ));
     assert_eq!(result.unwrap_err(), Problem::FeedLimit);
+}
+
+/// A folder laid out the way vdirsyncer and khal keep calendars: events in
+/// the chosen folder itself, and one subfolder per calendar with its
+/// `displayname` and `color` files.
+fn vdir() -> std::path::PathBuf {
+    let root = scratch("folder");
+    std::fs::write(root.join("loose.ics"), EVENT_A).unwrap();
+    let work = root.join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    std::fs::write(work.join("displayname"), "Work shifts\n").unwrap();
+    std::fs::write(work.join("color"), "#FF2968FF\n").unwrap();
+    std::fs::write(work.join("a.ics"), EVENT_A).unwrap();
+    std::fs::write(work.join("b.ICS"), EVENT_B).unwrap();
+    std::fs::write(work.join("notes.txt"), "not a calendar").unwrap();
+    // Deeper than one level is not read, nor are hidden folders and files.
+    std::fs::create_dir_all(work.join("archive")).unwrap();
+    std::fs::write(work.join("archive/old.ics"), EVENT_B).unwrap();
+    std::fs::create_dir_all(root.join(".hidden")).unwrap();
+    std::fs::write(root.join(".hidden/x.ics"), EVENT_A).unwrap();
+    std::fs::write(work.join(".partial.ics"), "BEGIN:VCALENDAR").unwrap();
+    std::fs::create_dir_all(root.join("empty")).unwrap();
+    root
+}
+
+#[tokio::test]
+async fn calendar_folders_are_found_and_read_like_vdirsyncer_keeps_them() {
+    let root = vdir();
+    let found = folder::discover(&root).unwrap();
+    let root_name = root.file_name().unwrap().to_string_lossy().into_owned();
+    assert_eq!(
+        found,
+        vec![
+            FolderCalendar {
+                path: root.clone(),
+                name: root_name,
+                color: String::new(),
+            },
+            FolderCalendar {
+                path: root.join("work"),
+                name: "Work shifts".into(),
+                color: "#ff2968".into(),
+            },
+        ]
+    );
+    // One event per file, merged into one calendar: one standup and two
+    // weekly holidays. The archive below it is not read.
+    let events = read_source(
+        &SourceKind::Folder,
+        Origin::Path(&root.join("work")),
+        &choice(),
+        "2026-10",
+    )
+    .await
+    .unwrap();
+    assert_eq!(events.len(), 3);
+    assert!(events.iter().all(|e| e.calendar_name == "Work"));
+    let loose = read_source(
+        &SourceKind::Folder,
+        Origin::Path(&root),
+        &choice(),
+        "2026-10",
+    )
+    .await
+    .unwrap();
+    assert_eq!(loose.len(), 1);
+    // A broken file makes the folder a calendar file problem, as for a file.
+    std::fs::write(root.join("work/c.ics"), "not a calendar").unwrap();
+    assert_eq!(
+        read_source(
+            &SourceKind::Folder,
+            Origin::Path(&root.join("work")),
+            &choice(),
+            "2026-10",
+        )
+        .await
+        .unwrap_err(),
+        Problem::CalendarFile
+    );
+    assert_eq!(
+        folder::discover(&root.join("empty")).unwrap_err(),
+        Problem::EmptyFolder
+    );
+    for path in [
+        root.join("missing"),
+        "relative".into(),
+        root.join("loose.ics"),
+    ] {
+        assert_eq!(folder::discover(&path).unwrap_err(), Problem::CalendarFile);
+        assert_eq!(folder::read(&path).unwrap_err(), Problem::CalendarFile);
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn calendar_folders_have_one_size_cap_for_all_their_files() {
+    let root = scratch("folder-cap");
+    // Each file is under the limit; together they are over it.
+    let part = super::http::MAX_BYTES / 4 + 1;
+    for index in 0..4 {
+        let mut body = EVENT_A.as_bytes().to_vec();
+        body.resize(part, b' ');
+        std::fs::write(root.join(format!("{index}.ics")), body).unwrap();
+    }
+    assert_eq!(folder::read(&root).unwrap_err(), Problem::FeedLimit);
+    std::fs::remove_file(root.join("3.ics")).unwrap();
+    assert!(folder::read(&root).is_ok(), "three quarters fit");
+    std::fs::write(root.join("big.ics"), vec![b'x'; super::http::MAX_BYTES + 1]).unwrap();
+    assert_eq!(folder::read(&root).unwrap_err(), Problem::FeedLimit);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn holidays_are_a_public_link_in_a_muted_color() {
+    let germany = holidays::COUNTRIES
+        .iter()
+        .position(|(label, _)| *label == "Germany")
+        .unwrap();
+    let feed = holiday_feed(germany).unwrap();
+    assert_eq!(feed.kind, SourceKind::Holidays);
+    assert!(feed.kind.uses_keyring(), "kept like any other link");
+    assert!(feed.login.is_none());
+    assert_eq!(feed.choice.name, "Germany holidays");
+    assert_eq!(feed.choice.color, holidays::COLOR);
+    assert_eq!(
+        feed.url.0,
+        "https://www.thunderbird.net/media/caldata/autogen/GermanHolidays.ics"
+    );
+    assert_eq!(
+        holiday_feed(holidays::COUNTRIES.len()).err(),
+        Some(Problem::FeedUrl)
+    );
+    // Saved feeds from before this kind existed still read as links.
+    let old: Feed = serde_json::from_str(
+        r#"{"choice":{"id":"a","name":"A","primary":false,"color":""},"url":"https://example.com/a.ics"}"#,
+    )
+    .unwrap();
+    assert_eq!(old.kind, SourceKind::Link);
+    let saved = serde_json::to_string(&feed).unwrap();
+    assert!(saved.contains(r#""kind":"holidays""#), "{saved}");
+}
+
+#[tokio::test]
+async fn holiday_feeds_are_read_through_the_link_path() {
+    let (port, seen) = serve(Arc::new(|seen: &Seen, _| {
+        if seen.method == "GET" && seen.path == "/GermanHolidays.ics" {
+            answer(200, EVENT_B)
+        } else {
+            answer(404, "")
+        }
+    }))
+    .await;
+    let feed = Feed {
+        url: SecretText(format!("http://127.0.0.1:{port}/GermanHolidays.ics")),
+        ..holiday_feed(0).unwrap()
+    };
+    let events = parsed(&feed, "2026-10").await.unwrap();
+    assert_eq!(events.len(), 2);
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 1);
+    assert!(seen[0].authorization.is_none(), "no login is sent");
+}
+
+#[test]
+fn every_source_kind_says_where_it_is_kept() {
+    // Kinds kept in the keyring are read through a feed, the rest through
+    // a path; the reader refuses a mismatch instead of guessing.
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let feed = holiday_feed(0).unwrap();
+    for kind in [
+        SourceKind::Link,
+        SourceKind::CalDav,
+        SourceKind::Holidays,
+        SourceKind::File,
+        SourceKind::Folder,
+    ] {
+        let wrong = if kind.uses_keyring() {
+            rt.block_on(read_source(
+                &kind,
+                Origin::Path(std::path::Path::new("/tmp")),
+                &choice(),
+                "2026-10",
+            ))
+        } else {
+            rt.block_on(read_source(
+                &kind,
+                Origin::Feed(&feed),
+                &choice(),
+                "2026-10",
+            ))
+        };
+        assert_eq!(wrong.unwrap_err(), Problem::Changed, "{kind:?}");
+    }
+}
+
+/// Adds, reads and removes calendar folders in an isolated home with no
+/// keyring: folders need none, and their names and colors carry over.
+#[test]
+fn calendar_folders_join_the_list_without_a_keyring() {
+    const CHILD: &str = "HALCYON_CALENDAR_FOLDER_TEST";
+    const NAME: &str = "calendar::caldav_tests::calendar_folders_join_the_list_without_a_keyring";
+    if std::env::var_os(CHILD).is_none() {
+        let root = scratch("folder-isolated");
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        crate::test_env::configure(&mut command, &root);
+        let result = command
+            .args(["--exact", NAME, "--nocapture"])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(
+            result.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        return;
+    }
+    let home = crate::test_env::assert_isolated();
+    assert!(!store::preview());
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let root = home.join("calendars");
+            std::fs::create_dir_all(root.join("work")).unwrap();
+            std::fs::create_dir_all(root.join("home")).unwrap();
+            std::fs::write(root.join("work/displayname"), "Work").unwrap();
+            std::fs::write(root.join("work/color"), "#3a86ff").unwrap();
+            std::fs::write(root.join("work/a.ics"), EVENT_A).unwrap();
+            std::fs::write(root.join("home/b.ics"), EVENT_B).unwrap();
+            let found = discover_folder(&root).unwrap();
+            assert_eq!(found.len(), 2);
+            let connection = add_folders(store::load_connection(), found.clone())
+                .await
+                .unwrap();
+            assert_eq!(connection.backend, Backend::Subscription);
+            assert!(connection.credential.is_empty(), "no keyring item");
+            let names: Vec<_> = connection
+                .subscriptions
+                .iter()
+                .map(|c| (c.name.as_str(), c.color.as_str()))
+                .collect();
+            assert_eq!(names, vec![("home", ""), ("Work", "#3a86ff")]);
+            assert_eq!(
+                connection.calendar_folders(),
+                vec![root.join("home"), root.join("work")]
+            );
+            assert!(connection.calendar_files().is_empty());
+            assert_eq!(store::load_connection(), connection);
+            assert_eq!(
+                add_folders(connection.clone(), found[..1].to_vec())
+                    .await
+                    .unwrap_err(),
+                Problem::Duplicate
+            );
+            assert_eq!(
+                calendars(connection.clone(), true).await.unwrap(),
+                connection.subscriptions
+            );
+            let data = subscription::events(&connection, "2026-10", false)
+                .await
+                .unwrap();
+            assert_eq!(data.events.len(), 3);
+            let id = connection.subscriptions[0].id.clone();
+            let one = remove_subscription(connection, id).await.unwrap();
+            assert_eq!(one.calendar_folders(), vec![root.join("work")]);
+            assert!(one.credential.is_empty());
+            // Nothing picked adds nothing and changes nothing.
+            assert_eq!(
+                add_folders(one.clone(), vec![]).await.unwrap_err(),
+                Problem::EmptyFolder
+            );
+            assert_eq!(store::load_connection(), one);
+        });
 }

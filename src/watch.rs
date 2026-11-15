@@ -156,6 +156,77 @@ fn image_changes(
     })
 }
 
+/// Watches calendar folders, such as the ones vdirsyncer keeps, without
+/// writing to them. It wakes when an .ics, `displayname` or `color` file in
+/// one of them is added, changed or removed; the listing it compares holds
+/// names and metadata only, never the events. The first listing is the
+/// starting point, so opening the watch is quiet.
+pub fn calendar_folders(dirs: Vec<PathBuf>) -> Subscription<()> {
+    Subscription::run_with(dirs, |dirs| folder_changes(dirs.clone()))
+}
+fn folder_changes(dirs: Vec<PathBuf>) -> impl cosmic::iced::futures::Stream<Item = ()> {
+    stream::channel(1, async move |mut output| {
+        let mut watch = DirWatch::new().ok();
+        if let Some(watch) = watch.as_mut() {
+            for dir in &dirs {
+                let _ = watch.watch(dir);
+            }
+        }
+        let mut previous = folder_listing(&dirs);
+        let mut fallback = tokio::time::interval(Duration::from_secs(60));
+        fallback.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        fallback.tick().await;
+        loop {
+            tokio::select! {
+                woke = async {
+                    match watch.as_mut() {
+                        Some(w) => w.changed(|path| calendar_entry(path)).await,
+                        None => std::future::pending().await,
+                    }
+                }, if watch.is_some() => {
+                    if woke.is_err() { watch = None; }
+                    // A sync writes many files in a row; wait for it to finish.
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+                _ = fallback.tick() => {}
+            }
+            let current = folder_listing(&dirs);
+            if current != previous {
+                previous = current;
+                if output.send(()).await.is_err() {
+                    break;
+                }
+            }
+        }
+    })
+}
+fn calendar_entry(path: &std::path::Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("ics"))
+        || path
+            .file_name()
+            .is_some_and(|n| n == "displayname" || n == "color")
+}
+/// Names and stamps of the calendar files in each folder, capped so a huge
+/// folder costs a bounded amount of memory per check.
+fn folder_listing(dirs: &[PathBuf]) -> Vec<Vec<(std::ffi::OsString, Option<FileStamp>)>> {
+    dirs.iter()
+        .map(|dir| {
+            let mut entries: Vec<_> = std::fs::read_dir(dir)
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .map(|e| e.path())
+                .filter(|p| calendar_entry(p))
+                .take(20_000)
+                .map(|p| (p.file_name().unwrap_or_default().to_owned(), file_stamp(&p)))
+                .collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            entries
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,6 +263,45 @@ mod tests {
                 .unwrap(),
             Some(()),
             "change between decode and watch cannot be missed"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn calendar_folder_watch_is_quiet_at_start_and_sees_new_events() {
+        let root =
+            std::env::temp_dir().join(format!("halcyon-calendar-folder-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.ics"), "BEGIN:VCALENDAR").unwrap();
+        let events = folder_changes(vec![root.clone()]);
+        pin_mut!(events);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), events.next())
+                .await
+                .is_err(),
+            "opening the watch does not refresh"
+        );
+        std::fs::write(root.join("notes.txt"), "not a calendar").unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(900), events.next())
+                .await
+                .is_err(),
+            "other files are ignored"
+        );
+        std::fs::write(root.join("b.ics"), "BEGIN:VCALENDAR").unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(3), events.next())
+                .await
+                .unwrap(),
+            Some(())
+        );
+        std::fs::write(root.join("color"), "#ff0000").unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(3), events.next())
+                .await
+                .unwrap(),
+            Some(())
         );
         std::fs::remove_dir_all(root).unwrap();
     }

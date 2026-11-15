@@ -56,9 +56,26 @@ async fn download(value: &SecretText, login: Option<&Login>) -> Result<Vec<u8>, 
         _ => Err(Problem::InvalidFeed),
     }
 }
-pub(super) async fn parsed(feed: &Feed, month: &str) -> Result<Vec<CalendarEvent>, Problem> {
-    let bytes = match feed.kind {
-        SourceKind::CalDav => {
+/// Where a calendar's events come from: its keyring entry, or a path on
+/// this computer.
+pub(super) enum Origin<'a> {
+    Feed(&'a Feed),
+    Path(&'a Path),
+}
+/// The one place each kind of calendar is read: refreshes, Check connection
+/// and the check before adding all come here. A new kind adds an arm here,
+/// and says in `SourceKind::uses_keyring` where its details are kept.
+pub(super) async fn read_source(
+    kind: &SourceKind,
+    origin: Origin<'_>,
+    choice: &CalendarChoice,
+    month: &str,
+) -> Result<Vec<CalendarEvent>, Problem> {
+    let bytes = match (kind, origin) {
+        (SourceKind::Link | SourceKind::Holidays, Origin::Feed(feed)) => {
+            download(&feed.url, feed.login.as_ref()).await?
+        }
+        (SourceKind::CalDav, Origin::Feed(feed)) => {
             caldav::month(
                 &feed.url,
                 feed.login.as_ref().ok_or(Problem::Changed)?,
@@ -66,41 +83,55 @@ pub(super) async fn parsed(feed: &Feed, month: &str) -> Result<Vec<CalendarEvent
             )
             .await?
         }
-        _ => download(&feed.url, feed.login.as_ref()).await?,
+        (SourceKind::File, Origin::Path(path)) => local(path.to_path_buf(), read_file).await?,
+        (SourceKind::Folder, Origin::Path(path)) => local(path.to_path_buf(), folder::read).await?,
+        _ => return Err(Problem::Changed),
     };
-    parse_isolated(bytes, month.to_string(), feed.choice.clone()).await
+    let on_disk = !kind.uses_keyring();
+    parse_isolated(bytes, month.to_string(), choice.clone())
+        .await
+        .map_err(|problem| match problem {
+            Problem::InvalidFeed if on_disk => Problem::CalendarFile,
+            other => other,
+        })
+}
+/// Reads a file or folder off the UI thread.
+async fn local(
+    path: PathBuf,
+    read: fn(&Path) -> Result<Vec<u8>, Problem>,
+) -> Result<Vec<u8>, Problem> {
+    tokio::task::spawn_blocking(move || read(&path))
+        .await
+        .map_err(|_| Problem::CalendarFile)?
 }
 /// A calendar file is read again on every refresh, with the same limits.
+fn read_file(path: &Path) -> Result<Vec<u8>, Problem> {
+    if !path.is_absolute() {
+        return Err(Problem::CalendarFile);
+    }
+    let meta = std::fs::metadata(path).map_err(|_| Problem::CalendarFile)?;
+    if !meta.is_file() {
+        return Err(Problem::CalendarFile);
+    }
+    if meta.len() > MAX_BYTES as u64 {
+        return Err(Problem::FeedLimit);
+    }
+    match crate::tools::read_bounded(path, MAX_BYTES) {
+        Ok(Some(bytes)) => Ok(bytes),
+        _ => Err(Problem::CalendarFile),
+    }
+}
+#[cfg(test)]
+pub(super) async fn parsed(feed: &Feed, month: &str) -> Result<Vec<CalendarEvent>, Problem> {
+    read_source(&feed.kind, Origin::Feed(feed), &feed.choice, month).await
+}
+#[cfg(test)]
 pub(super) async fn parsed_file(
     path: &Path,
     month: &str,
     choice: &CalendarChoice,
 ) -> Result<Vec<CalendarEvent>, Problem> {
-    let path = path.to_path_buf();
-    let bytes = tokio::task::spawn_blocking(move || {
-        if !path.is_absolute() {
-            return Err(Problem::CalendarFile);
-        }
-        let meta = std::fs::metadata(&path).map_err(|_| Problem::CalendarFile)?;
-        if !meta.is_file() {
-            return Err(Problem::CalendarFile);
-        }
-        if meta.len() > MAX_BYTES as u64 {
-            return Err(Problem::FeedLimit);
-        }
-        match crate::tools::read_bounded(&path, MAX_BYTES) {
-            Ok(Some(bytes)) => Ok(bytes),
-            _ => Err(Problem::CalendarFile),
-        }
-    })
-    .await
-    .map_err(|_| Problem::CalendarFile)??;
-    parse_isolated(bytes, month.to_string(), choice.clone())
-        .await
-        .map_err(|problem| match problem {
-            Problem::InvalidFeed => Problem::CalendarFile,
-            other => other,
-        })
+    read_source(&SourceKind::File, Origin::Path(path), choice, month).await
 }
 
 // A dropped refresh must stop the parser, including work inside rrule. One
@@ -205,11 +236,17 @@ pub(crate) fn parser_main() -> ! {
     std::process::exit(0);
 }
 
-/// One calendar to add: a link, a CalDAV calendar, or a file.
+/// One calendar to add: a feed kept in the keyring (link, holidays,
+/// CalDAV), or a file or folder on this computer.
 pub(super) enum Added {
     Feed(Feed),
-    /// A path and the name typed for it, if any.
-    File(PathBuf, String),
+    Path {
+        kind: SourceKind,
+        path: PathBuf,
+        /// The name typed or found for it; empty uses the file name.
+        name: String,
+        color: String,
+    },
 }
 fn choice(name: &str, color: &str) -> Result<CalendarChoice, Problem> {
     let name: String = name.trim().chars().take(80).collect();
@@ -278,7 +315,57 @@ pub async fn add_file(
     if !path.is_absolute() {
         return Err(Problem::CalendarFile);
     }
-    add(expected, vec![Added::File(path, name)]).await
+    add(
+        expected,
+        vec![Added::Path {
+            kind: SourceKind::File,
+            path,
+            name,
+            color: String::new(),
+        }],
+    )
+    .await
+}
+/// Adds public holidays for a country from the table in `holidays`. It is
+/// an ordinary public link, kept like any other, in a muted color.
+pub async fn add_holidays(expected: Connection, country: usize) -> Result<Connection, Problem> {
+    if store::preview() {
+        return Err(Problem::Preview);
+    }
+    add(expected, vec![Added::Feed(holiday_feed(country)?)]).await
+}
+/// The feed for a country's holidays: a public link with no login.
+pub(super) fn holiday_feed(country: usize) -> Result<Feed, Problem> {
+    let address = holidays::url(country).ok_or(Problem::FeedUrl)?;
+    let name = holidays::name(country).ok_or(Problem::FeedUrl)?;
+    Ok(Feed {
+        choice: choice(&name, holidays::COLOR)?,
+        url: SecretText(url(&address)?.into()),
+        kind: SourceKind::Holidays,
+        login: None,
+    })
+}
+/// Adds calendars found in a folder of .ics files. Paths need no keyring.
+pub async fn add_folders(
+    expected: Connection,
+    calendars: Vec<folder::FolderCalendar>,
+) -> Result<Connection, Problem> {
+    if store::preview() {
+        return Err(Problem::Preview);
+    }
+    if calendars.is_empty() {
+        return Err(Problem::EmptyFolder);
+    }
+    let added = calendars
+        .into_iter()
+        .map(|c| Added::Path {
+            kind: SourceKind::Folder,
+            path: c.path,
+            name: c.name,
+            color: c.color,
+        })
+        .collect();
+    add(expected, added).await
 }
 pub(super) async fn add(expected: Connection, added: Vec<Added>) -> Result<Connection, Problem> {
     // A Google sign-in is replaced, as before; other sources join the list.
@@ -314,7 +401,7 @@ pub(super) async fn add(expected: Connection, added: Vec<Added>) -> Result<Conne
                 {
                     return Err(Problem::Duplicate);
                 }
-                parsed(&feed, &month).await?;
+                read_source(&feed.kind, Origin::Feed(&feed), &feed.choice, &month).await?;
                 sources.push(Source {
                     id: feed.choice.id.clone(),
                     kind: feed.kind.clone(),
@@ -323,7 +410,15 @@ pub(super) async fn add(expected: Connection, added: Vec<Added>) -> Result<Conne
                 choices.push(feed.choice.clone());
                 feeds.feeds.push(feed);
             }
-            Added::File(path, name) => {
+            Added::Path {
+                kind,
+                path,
+                name,
+                color,
+            } => {
+                if !path.is_absolute() {
+                    return Err(Problem::CalendarFile);
+                }
                 if sources.iter().any(|s| s.path.as_ref() == Some(&path)) {
                     return Err(Problem::Duplicate);
                 }
@@ -334,11 +429,11 @@ pub(super) async fn add(expected: Connection, added: Vec<Added>) -> Result<Conne
                 } else {
                     name
                 };
-                let choice = choice(&name, "")?;
-                parsed_file(&path, &month, &choice).await?;
+                let choice = choice(&name, &color)?;
+                read_source(&kind, Origin::Path(&path), &choice, &month).await?;
                 sources.push(Source {
                     id: choice.id.clone(),
-                    kind: SourceKind::File,
+                    kind,
                     path: Some(path),
                 });
                 choices.push(choice);
@@ -362,7 +457,7 @@ pub(super) async fn add(expected: Connection, added: Vec<Added>) -> Result<Conne
         calendar_id: selections[0].id.clone(),
         calendar_name: selections[0].name.clone(),
         revision: store::nonce()?,
-        // Files alone need no keyring item; an unchanged one is kept.
+        // Files and folders alone need no keyring item; an unchanged one is kept.
         credential: if new_feeds {
             store::nonce()?
         } else if subscribed {
@@ -425,8 +520,8 @@ pub async fn remove_subscription(expected: Connection, id: String) -> Result<Con
     connection.calendar_id = connection.selections[0].id.clone();
     connection.calendar_name = connection.selections[0].name.clone();
     connection.revision = store::nonce()?;
-    // A file leaves the keyring item as it is.
-    if expected.source_kind(&id) == SourceKind::File {
+    // A file or folder leaves the keyring item as it is.
+    if !expected.source_kind(&id).uses_keyring() {
         return commit(&expected, connection, None).await;
     }
     let mut feeds: Feeds = keyring::read(&expected.credential, true).await?;
@@ -450,7 +545,7 @@ pub(super) async fn events(
     let selected = connection.selected_calendars();
     let feeds: Feeds = if selected
         .iter()
-        .any(|c| connection.source_kind(&c.id) != SourceKind::File)
+        .any(|c| connection.source_kind(&c.id).uses_keyring())
     {
         keyring::read(&connection.credential, unlock).await?
     } else {
@@ -461,25 +556,27 @@ pub(super) async fn events(
     }
     let mut events = vec![];
     for choice in selected {
-        if connection.source_kind(&choice.id) == SourceKind::File {
-            let path = connection
-                .sources
-                .iter()
-                .find(|s| s.id == choice.id)
-                .and_then(|s| s.path.as_ref())
-                .ok_or(Problem::Changed)?;
-            events.extend(parsed_file(path, month, &choice).await?);
+        let kind = connection.source_kind(&choice.id);
+        let origin = if kind.uses_keyring() {
+            Origin::Feed(
+                feeds
+                    .feeds
+                    .iter()
+                    .find(|f| f.choice.id == choice.id)
+                    .ok_or(Problem::Changed)?,
+            )
         } else {
-            let feed = feeds
-                .feeds
-                .iter()
-                .find(|f| f.choice.id == choice.id)
-                .ok_or(Problem::Changed)?;
-            // The name and color shown are the ones in Settings.
-            let mut feed = feed.clone();
-            feed.choice = choice.clone();
-            events.extend(parsed(&feed, month).await?);
-        }
+            Origin::Path(
+                connection
+                    .sources
+                    .iter()
+                    .find(|s| s.id == choice.id)
+                    .and_then(|s| s.path.as_deref())
+                    .ok_or(Problem::Changed)?,
+            )
+        };
+        // The name and color shown are the ones in Settings.
+        events.extend(read_source(&kind, origin, &choice, month).await?);
         if events.len() > MAX_EVENTS
             || events.iter().map(event_text_bytes).sum::<usize>() > EVENT_TEXT_BUDGET
         {

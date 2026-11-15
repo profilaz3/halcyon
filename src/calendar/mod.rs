@@ -3,15 +3,21 @@
 //! recognized only for an existing installation with its own calendar cache.
 mod auth;
 mod caldav;
+mod folder;
 mod google;
+pub mod holidays;
 mod http;
 mod keyring;
 mod store;
 mod subscription;
 pub use caldav::{CalDavCalendar, discover as discover_caldav};
+pub use folder::{FolderCalendar, discover as discover_folder};
 pub use http::{Login, plain_local};
 pub(crate) use subscription::parser_main;
-pub use subscription::{SecretText, add_caldav, add_file, add_subscription, remove_subscription};
+pub use subscription::{
+    SecretText, add_caldav, add_file, add_folders, add_holidays, add_subscription,
+    remove_subscription,
+};
 #[cfg(test)]
 mod caldav_tests;
 #[cfg(test)]
@@ -80,10 +86,27 @@ pub struct Connection {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
+    /// An iCalendar link, with or without a password.
     #[default]
     Link,
+    /// A calendar on a CalDAV account.
     CalDav,
+    /// A public holiday link, shown in a muted color.
+    Holidays,
+    /// One .ics file on this computer.
     File,
+    /// A folder of .ics files, as vdirsyncer and khal keep them.
+    Folder,
+}
+impl SourceKind {
+    /// Whether this kind keeps its address and login in the keyring entry.
+    /// Kinds that don't keep a path in `Source` instead.
+    pub fn uses_keyring(&self) -> bool {
+        match self {
+            Self::Link | Self::CalDav | Self::Holidays => true,
+            Self::File | Self::Folder => false,
+        }
+    }
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -122,10 +145,21 @@ impl Connection {
     }
     /// Calendar files to watch for changes.
     pub fn calendar_files(&self) -> Vec<std::path::PathBuf> {
+        self.paths(SourceKind::File)
+    }
+    /// Calendar folders to watch for changes.
+    pub fn calendar_folders(&self) -> Vec<std::path::PathBuf> {
+        self.paths(SourceKind::Folder)
+    }
+    fn paths(&self, kind: SourceKind) -> Vec<std::path::PathBuf> {
         if self.backend != Backend::Subscription {
             return vec![];
         }
-        self.sources.iter().filter_map(|s| s.path.clone()).collect()
+        self.sources
+            .iter()
+            .filter(|s| s.kind == kind)
+            .filter_map(|s| s.path.clone())
+            .collect()
     }
     pub fn web_url(&self) -> String {
         if self.backend == Backend::Subscription {
@@ -168,6 +202,7 @@ pub enum Problem {
     InsecureRedirect,
     CalendarFile,
     Duplicate,
+    EmptyFolder,
 }
 impl Problem {
     pub fn message(&self) -> &'static str {
@@ -225,6 +260,7 @@ impl Problem {
                 "Could not read this calendar file. Check that it still exists and is an .ics file."
             }
             Self::Duplicate => "This calendar is already in your list.",
+            Self::EmptyFolder => "This folder has no .ics calendar files.",
         }
     }
 }

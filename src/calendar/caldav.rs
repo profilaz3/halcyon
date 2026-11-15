@@ -110,7 +110,7 @@ pub(super) fn multistatus(bytes: &[u8]) -> Result<Vec<(String, Props)>, Problem>
     Ok(out)
 }
 /// Apple writes `#RRGGBB` or `#RRGGBBAA`; Halcyon keeps `#rrggbb`.
-fn color(value: &str) -> Option<String> {
+pub(super) fn color(value: &str) -> Option<String> {
     let hex = value.trim().strip_prefix('#')?;
     (matches!(hex.len(), 6 | 8) && hex.chars().all(|c| c.is_ascii_hexdigit()))
         .then(|| format!("#{}", hex[..6].to_ascii_lowercase()))
