@@ -100,6 +100,10 @@ impl Cards {
             ((READ_WIDTH * full[1] / full[0].max(1.)).round() as u32).clamp(1, 4096),
         ];
         cosmic::task::future(async move {
+            // The workers need the Tokio runtime the desktop runs on.
+            if tokio::runtime::Handle::try_current().is_err() {
+                return Message::ClockBackdrop(id, None);
+            }
             let (send, receive) = tokio::sync::oneshot::channel();
             worker::prepare_static(move || {
                 let _ = send.send(crate::depth::observe(&name));
