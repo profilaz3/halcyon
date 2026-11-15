@@ -235,7 +235,9 @@ const BARE: StyleSpec = StyleSpec {
     description: "Open and quiet",
     accent: [209, 199, 158],
     light: false,
-    surface: (0.282, 0.22, 0.026, (0., 0.)),
+    // Terminal's depth in Bare's own quiet tint (0.282 before; see
+    // `Family::earlier_window`).
+    surface: (0.16, 0.22, 0.026, (0., 0.)),
     geometry: (92, 24, 0),
     border_width: 1.,
     shadow: Shadow::None,
@@ -616,11 +618,20 @@ impl Family {
     /// Native surface in either mode. Keep the family's tint and its original
     /// polarity unchanged; the opposite variant uses a readable tonal range.
     pub fn surface_for(self, seed: [u8; 3], dark: bool) -> [u8; 3] {
-        let seed = tone::lch(seed);
-        let (mut l, share, most, (shift_a, shift_b)) = self.spec().surface;
+        self.surface_at(seed, self.surface_l(dark))
+    }
+    /// The native surface's own lightness in a variant, before any tone.
+    fn surface_l(self, dark: bool) -> f32 {
         if dark == self.light() {
-            l = if dark { 0.28 } else { 0.965 };
+            if dark { 0.28 } else { 0.965 }
+        } else {
+            self.spec().surface.0
         }
+    }
+    /// The family's tint at a given lightness.
+    fn surface_at(self, seed: [u8; 3], l: f32) -> [u8; 3] {
+        let seed = tone::lch(seed);
+        let (_, share, most, (shift_a, shift_b)) = self.spec().surface;
         let c = (seed.c * share).min(most);
         let (a, b) = (c * seed.h.cos() + shift_a, c * seed.h.sin() + shift_b);
         tone::rgb(Lch {
@@ -635,9 +646,151 @@ impl Family {
         self.container_for(seed, !self.light())
     }
     pub fn container_for(self, seed: [u8; 3], dark: bool) -> [u8; 3] {
-        let surface = self.surface_for(seed, dark);
+        self.window_container_for(seed, dark, 0)
+    }
+    /// The window background's lightness with a Window tone applied. The
+    /// tone stops where text or the container steps would suffer (see
+    /// `WINDOW_LIGHTNESS`); a style whose own default lies past that stop
+    /// keeps its default as the limit.
+    pub fn window_l(self, dark: bool, tone: i8) -> f32 {
+        let base = self.surface_l(dark);
+        let (low, high) = window_bounds(dark);
+        let l = base + f32::from(tone.clamp(-WindowTone::MAX, WindowTone::MAX)) / 100.;
+        l.clamp(low.min(base), high.max(base))
+    }
+    /// The tones that change this variant's background, in steps.
+    pub fn tone_range(self, dark: bool) -> (i8, i8) {
+        let base = self.surface_l(dark);
+        let (low, high) = window_bounds(dark);
+        let step = |room: f32| {
+            ((room * 100.) + 1e-4)
+                .floor()
+                .clamp(0., WindowTone::MAX.into()) as i8
+        };
+        (-step(base - low.min(base)), step(high.max(base) - base))
+    }
+    /// The window background (COSMIC `bg_color`) at a Window tone.
+    pub fn window_for(self, seed: [u8; 3], dark: bool, tone: i8) -> [u8; 3] {
+        self.surface_at(seed, self.window_l(dark, tone))
+    }
+    /// The primary container one step from the toned background, so the
+    /// tone moves background and containers together. Near black one step
+    /// no longer shows, so it steps on until the container is visible.
+    pub fn window_container_for(self, seed: [u8; 3], dark: bool, tone: i8) -> [u8; 3] {
+        let base = self.window_l(dark, tone);
+        let background = tone::color(self.surface_at(seed, base));
         let step = if dark { 0.038 } else { -0.032 };
-        tone::at(surface, tone::lch(surface).l + step)
+        let mut l = base + step;
+        let mut container = self.surface_at(seed, l);
+        while tone::contrast(tone::color(container), background) < CONTAINER_CONTRAST
+            && (0.0..=1.0).contains(&(l + step / 4.))
+        {
+            l += step / 4.;
+            container = self.surface_at(seed, l);
+        }
+        container
+    }
+    /// Window surfaces an earlier release derived: the background and the
+    /// primary container, one fixed step apart. They still count as
+    /// following the style, so a changed default replaces them instead of
+    /// reading as Custom.
+    pub fn earlier_window(self, seed: [u8; 3], dark: bool) -> ([u8; 3], [u8; 3]) {
+        let l = match self {
+            // Bare's windows were lighter before it took Terminal's depth.
+            Self::Bare if dark => 0.282,
+            _ => self.surface_l(dark),
+        };
+        let step = if dark { 0.038 } else { -0.032 };
+        (self.surface_at(seed, l), self.surface_at(seed, l + step))
+    }
+}
+
+/// The least contrast between a window background and its primary
+/// container, so the container still reads as a separate surface.
+pub const CONTAINER_CONTRAST: f32 = 1.06;
+
+/// How far a Window tone may move a background: dark windows stay dark
+/// enough for light text and keep visible container steps above near black;
+/// light windows stay light enough for dark text.
+pub const WINDOW_LIGHTNESS: [(f32, f32); 2] = [(0.84, 1.0), (0.10, 0.42)];
+fn window_bounds(dark: bool) -> (f32, f32) {
+    WINDOW_LIGHTNESS[usize::from(dark)]
+}
+
+/// Window tone per style: an offset of the window background's lightness,
+/// in hundredths of OKLCH L. Zero is the style's own default. Each style
+/// keeps its own value, so switching styles keeps each one's tone. Stored
+/// as `{"bare": -6}`, with defaults left out.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WindowTone([i8; Family::ALL.len()]);
+impl WindowTone {
+    /// The furthest step either way: 0.10 of OKLCH L.
+    pub const MAX: i8 = 10;
+    fn index(family: Family) -> usize {
+        Family::ALL
+            .iter()
+            .position(|f| *f == family)
+            .expect("every family is listed")
+    }
+    pub fn get(self, family: Family) -> i8 {
+        self.0[Self::index(family)]
+    }
+    pub fn with(mut self, family: Family, tone: i8) -> Self {
+        self.0[Self::index(family)] = tone.clamp(-Self::MAX, Self::MAX);
+        self
+    }
+    pub fn is_default(self) -> bool {
+        self.0.iter().all(|t| *t == 0)
+    }
+    /// For `skip_serializing_if`.
+    pub fn unset(tone: &Self) -> bool {
+        tone.is_default()
+    }
+    pub fn to_value(self) -> serde_json::Value {
+        serde_json::Value::Object(
+            Family::ALL
+                .into_iter()
+                .filter(|f| self.get(*f) != 0)
+                .map(|f| (f.id().to_string(), self.get(f).into()))
+                .collect(),
+        )
+    }
+    /// Lenient: unknown styles and invalid entries are skipped, and values
+    /// are kept within range, so a damaged entry never loses the rest.
+    pub fn from_value(value: &serde_json::Value) -> Self {
+        let mut tones = Self::default();
+        if let Some(object) = value.as_object() {
+            for (id, tone) in object {
+                if let (Some(family), Some(tone)) = (Family::parse(id), tone.as_i64()) {
+                    tones = tones.with(
+                        family,
+                        tone.clamp(-i64::from(Self::MAX), i64::from(Self::MAX)) as i8,
+                    );
+                }
+            }
+        }
+        tones
+    }
+    /// Strict, for imported looks and transactions.
+    pub fn accepts(value: &serde_json::Value) -> bool {
+        value.as_object().is_some_and(|object| {
+            object.iter().all(|(id, tone)| {
+                Family::parse(id).is_some_and(|f| f.id() == id)
+                    && tone.as_i64().is_some_and(|t| {
+                        (-i64::from(Self::MAX)..=i64::from(Self::MAX)).contains(&t)
+                    })
+            })
+        })
+    }
+}
+impl Serialize for WindowTone {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.to_value().serialize(serializer)
+    }
+}
+impl<'de> Deserialize<'de> for WindowTone {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        serde_json::Value::deserialize(deserializer).map(|value| Self::from_value(&value))
     }
 }
 

@@ -1167,6 +1167,14 @@ pub struct Appearance {
     pub match_cosmic_colors: bool,
     /// Choosing a widget style also styles the dock and panel.
     pub style_bars: bool,
+    /// Window background lightness per style (Appearance, Window tone).
+    /// Left out while every style is at its default, so older files and
+    /// saved looks stay as they were.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::desktop_theme::WindowTone::unset"
+    )]
+    pub window_tone: crate::desktop_theme::WindowTone,
 }
 impl Default for Appearance {
     fn default() -> Self {
@@ -1189,6 +1197,7 @@ impl Default for Appearance {
             match_wallpaper: true,
             match_cosmic_colors: false,
             style_bars: true,
+            window_tone: Default::default(),
         }
     }
 }
