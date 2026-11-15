@@ -103,6 +103,51 @@ fn fb16_native_migration_review_keyboard_apply_and_recovery_fit() {
             &format!("fb16-recovery-{width}"),
         );
     }
+    // Navigation stays: the sidebar is there and other pages open. A page
+    // that could write the design shows the guided restore instead; a
+    // COSMIC-only page works below a banner.
+    use super::super::Page;
+    let size = Size::new(1280., 800.);
+    send_settings(&mut app, super::super::Message::Resized(size));
+    let mut native = crate::native_test::Native::new(size);
+    let nav = format!("nav-{}", Page::DesktopWallpaper.key());
+    assert!(native.try_bounds(app.settings_view(), &nav).is_some());
+    send_settings(
+        &mut app,
+        super::super::Message::Page(Page::DesktopWallpaper),
+    );
+    assert_eq!(app.page, Page::DesktopWallpaper);
+    assert!(
+        !native
+            .text_all(app.settings_view(), "Restore it in three steps")
+            .is_empty()
+    );
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "design-recheck")
+            .is_some()
+    );
+    send_settings(&mut app, super::super::Message::Page(Page::DesktopWindows));
+    assert_eq!(app.page, Page::DesktopWindows);
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "design-banner-restore")
+            .is_some()
+    );
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "design-recheck")
+            .is_none()
+    );
+    native.capture(
+        app.settings_view(),
+        &cosmic::Theme::dark(),
+        "fb16-recovery-windows",
+    );
+    // Edits that could write the design still wait.
+    send_settings(&mut app, super::super::Message::ClockFormat(true));
+    assert_eq!(std::fs::read(&path).unwrap(), b"broken original");
+    assert_eq!(raw(), frozen);
 }
 #[test]
 fn fb16_invalid_design_startup_has_no_default_desktop_and_exports_exact_bytes() {

@@ -2006,7 +2006,30 @@ impl cosmic::Application for Settings {
                 | Message::NativeDone(_)
                 | Message::Window(_)
                 | Message::Resized(_)
-                | Message::FlushEdits => {}
+                | Message::FlushEdits
+                // Getting around, and the pages that only change COSMIC's
+                // own settings, keep working.
+                | Message::Page(_)
+                | Message::FlatPage(_)
+                | Message::OpenRoot(_)
+                | Message::NavSelected(_)
+                | Message::Back
+                | Message::Escape
+                | Message::ContentScrolled(_)
+                | Message::SearchSettings(_)
+                | Message::SearchFirst
+                | Message::SearchResult(_)
+                | Message::RevealSearch(_)
+                | Message::FocusSearch
+                | Message::KeyboardFocus(_)
+                | Message::ToggleHelp(_)
+                | Message::ToggleSection(_)
+                | Message::Explain(_)
+                | Message::DisplayOutput(..)
+                | Message::Windows(_)
+                | Message::Workspaces(_)
+                | Message::WindowRules(_)
+                | Message::Shortcuts(_) => {}
                 Message::Tick => return self.update_design(design::Message::Recheck),
                 _ => return Task::none(),
             }

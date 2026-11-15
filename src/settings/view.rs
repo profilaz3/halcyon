@@ -629,10 +629,9 @@ impl Settings {
                 .explained
                 .and_then(|(page, key)| (page == self.page).then_some(key)),
         });
-        if self.config.design_problem.is_some() {
-            return self.design_recovery_view();
-        }
-        if let Some(wizard) = &self.wizard {
+        if let Some(wizard) = &self.wizard
+            && self.config.design_problem.is_none()
+        {
             return self.wizard_view(wizard);
         }
         let accent = self.settings_accent();
@@ -717,6 +716,14 @@ impl Settings {
             Page::Builder => self.recipe_page(),
             Page::EdgeMenu => self.edge_menu_page(),
         };
+        // An unreadable widget design pauses only the pages that could
+        // write it; navigation and COSMIC-only pages keep working.
+        let design_problem = self.config.design_problem.is_some();
+        let page = if design_problem && !Self::design_safe(self.page) {
+            self.design_recovery_view()
+        } else {
+            page
+        };
         let pinned = !searching && self.page == Page::DesktopAppearance && self.appearance_pinned();
         // Unpinned, System appearance keeps a fixed strip above its scroll
         // area instead of the top padding: a hex field scrolled across the
@@ -727,6 +734,9 @@ impl Settings {
         // stays covered.
         let strip = !searching && !pinned;
         let mut page_parts = Vec::new();
+        if design_problem && Self::design_safe(self.page) {
+            page_parts.push(self.design_banner());
+        }
         if let Some(hit) = self.search_selected {
             page_parts.push(pill(
                 format!(
