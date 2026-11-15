@@ -236,6 +236,9 @@ impl SettingsSamples {
             calendar_today_error: false,
             calendar_preview: true,
             next_today_calendar: Instant::now() + calendar_refresh,
+            calendar_ahead: None,
+            ahead_fetching: None,
+            next_ahead_calendar: Instant::now() + calendar_refresh,
             calendar,
             calendar_connection: crate::calendar::Connection {
                 backend: crate::calendar::Backend::Google,
@@ -281,6 +284,11 @@ impl SettingsSamples {
                 all_day: false,
                 url: String::new(),
                 meeting_url: Some("https://meet.google.com/".into()),
+                location: if title == "Project planning" {
+                    "Studio 2".into()
+                } else {
+                    String::new()
+                },
                 ..Default::default()
             })
             .collect(),

@@ -124,6 +124,8 @@ pub(crate) use settings_preview::{
     SettingsSamples, settings_devbox_preview, settings_projects_preview, settings_weather_preview,
     settings_weather_preview_at, settings_weather_preview_sized,
 };
+#[cfg(test)]
+mod calendar_display_tests;
 mod glass;
 #[cfg(test)]
 mod look_render_tests;
@@ -424,6 +426,11 @@ pub struct Cards {
     calendar_today_error: bool,
     calendar_preview: bool,
     next_today_calendar: Instant,
+    /// The month after today's, for an agenda that reaches into it (Next
+    /// 7 days, or Tomorrow, near a month's end). Fetched only then.
+    calendar_ahead: Option<CalendarData>,
+    ahead_fetching: Option<String>,
+    next_ahead_calendar: Instant,
     calendar_error: bool,
     calendar_fetching: Option<String>,
     next_calendar: Instant,
@@ -546,6 +553,9 @@ impl cosmic::Application for Cards {
             calendar_today_error: false,
             calendar_preview: false,
             next_today_calendar: Instant::now() + calendar_refresh,
+            calendar_ahead: None,
+            ahead_fetching: None,
+            next_ahead_calendar: Instant::now(),
             calendar,
             calendar_connection: crate::calendar::load_connection(),
             calendar_error: false,
@@ -1721,6 +1731,15 @@ impl Cards {
                 if self.today_fetching.as_deref() == Some(&month) {
                     self.today_fetching = None;
                 }
+                let ahead = self.ahead_fetching.as_deref() == Some(&month)
+                    || self.calendar_ahead_month().as_ref() == Some(&month)
+                    || self
+                        .calendar_ahead
+                        .as_ref()
+                        .is_some_and(|c| c.month == month);
+                if self.ahead_fetching.as_deref() == Some(&month) {
+                    self.ahead_fetching = None;
+                }
                 let retry = Instant::now()
                     + if result.is_ok() {
                         self.config.refresh_intervals.duration(Widget::Calendar)
@@ -1735,6 +1754,12 @@ impl Cards {
                         self.calendar_today = Some(calendar.clone());
                     }
                     self.next_today_calendar = retry;
+                }
+                if ahead {
+                    if let Ok(calendar) = &result {
+                        self.calendar_ahead = Some(calendar.clone());
+                    }
+                    self.next_ahead_calendar = retry;
                 }
                 if month == self.month.format("%Y-%m").to_string() {
                     self.calendar_error = result.is_err();
@@ -1759,10 +1784,13 @@ impl Cards {
                 self.month = self.selected_day.with_day(1).unwrap();
                 self.calendar_fetching = None;
                 self.today_fetching = None;
+                self.calendar_ahead = None;
+                self.ahead_fetching = None;
                 self.calendar_error = false;
                 self.calendar_today_error = false;
                 self.next_calendar = Instant::now() + Duration::from_secs(3600);
                 self.next_today_calendar = self.next_calendar;
+                self.next_ahead_calendar = self.next_calendar;
                 self.sync_widget_surfaces()
             }
             Message::Week(delta) => {
@@ -1780,6 +1808,7 @@ impl Cards {
             Message::Today => self.calendar_overview(),
             Message::RefreshCalendar => {
                 self.next_today_calendar = Instant::now();
+                self.next_ahead_calendar = Instant::now();
                 self.next_calendar = Instant::now();
                 Task::none()
             }
@@ -1815,6 +1844,7 @@ impl Cards {
                             .calendar
                             .iter()
                             .chain(self.calendar_today.iter())
+                            .chain(self.calendar_ahead.iter())
                             .flat_map(|c| &c.events)
                             .any(|e| e.details_key() == url);
                         if exists {
@@ -1952,6 +1982,23 @@ fn empty_surface<'a>() -> Element<'a, Message> {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+/// The calendar card around its agenda: 100px header + 20px footer + two
+/// 10px gaps + 36px frame padding.
+const CALENDAR_CHROME_HEIGHT: f32 = 176.;
+/// The event location line under a title.
+const PLACE_SIZE: f32 = 11.;
+const PLACE_HEIGHT: f32 = PLACE_SIZE * 1.25;
+/// A day's heading in a several-day agenda: Today, Tomorrow, then the
+/// weekday and date ("Wednesday 18").
+fn day_heading(day: NaiveDate, today: NaiveDate) -> String {
+    if day == today {
+        "Today".into()
+    } else if day == today + Days::days(1) {
+        "Tomorrow".into()
+    } else {
+        day.format("%A %-d").to_string()
+    }
 }
 fn label<'a>(value: impl Into<String>, size: f32, color: Color) -> Element<'a, Message> {
     text::body(value.into())
@@ -2324,6 +2371,9 @@ impl Cards {
         if !self.calendar_home {
             return vec![self.selected_day];
         }
+        if self.config.calendar_show_week {
+            return (0..7).map(|offset| today + Days::days(offset)).collect();
+        }
         let mut days = Vec::new();
         if self.config.calendar_show_today {
             days.push(today);
@@ -2332,6 +2382,44 @@ impl Cards {
             days.push(today + Days::days(1));
         }
         days
+    }
+    /// The month after today's that a shown agenda reaches into, if any.
+    fn calendar_ahead_month(&self) -> Option<String> {
+        self.calendar_ahead_month_at(Local::now().date_naive())
+    }
+    fn calendar_ahead_month_at(&self, today: NaiveDate) -> Option<String> {
+        let mut days = Vec::new();
+        if self.calendar_home {
+            days.extend(self.calendar_days(today));
+        }
+        if self.config.glance.enabled {
+            days.extend(self.glance_days(today));
+        }
+        let this = today.with_day(1)?;
+        days.into_iter()
+            .filter_map(|day| day.with_day(1))
+            .filter(|month| *month > this && *month != self.month)
+            .min()
+            .map(|month| month.format("%Y-%m").to_string())
+    }
+    /// The fetched month that holds `day`.
+    fn calendar_month_data(&self, day: NaiveDate) -> Option<&CalendarData> {
+        let month = day.format("%Y-%m").to_string();
+        [&self.calendar, &self.calendar_today, &self.calendar_ahead]
+            .into_iter()
+            .flatten()
+            .find(|calendar| calendar.month == month)
+    }
+    pub(super) fn agenda_filter(&self) -> data::AgendaFilter {
+        data::AgendaFilter::new(&self.config, self.show_earlier)
+    }
+    /// An event's marker: its calendar's color, unless Calendar colors is off.
+    pub(super) fn event_marker_color(&self, event: &CalendarEvent, accent: Color) -> Color {
+        self.config
+            .calendar_colors
+            .then(|| event.source_color())
+            .flatten()
+            .unwrap_or(accent)
     }
     fn launch(&self, command: &str, args: Vec<String>) -> Task<Message> {
         let command = if command == crate::paths::CONTROLLER {
@@ -2378,14 +2466,18 @@ impl Cards {
         self.calendar_today_error = false;
         self.calendar_fetching = None;
         self.today_fetching = None;
+        self.calendar_ahead = None;
+        self.ahead_fetching = None;
         self.show_earlier = false;
         self.next_calendar = Instant::now();
         self.next_today_calendar = Instant::now();
+        self.next_ahead_calendar = Instant::now();
         self.sync_widget_surfaces()
     }
     fn calendar_month_pending(&self, month: &str) -> bool {
         self.calendar_fetching.as_deref() == Some(month)
             || self.today_fetching.as_deref() == Some(month)
+            || self.ahead_fetching.as_deref() == Some(month)
     }
     fn calendar_can_start(&self) -> bool {
         self.calendar_fetching.is_none()
@@ -2393,6 +2485,19 @@ impl Cards {
     }
     fn today_calendar_can_start(&self, month: &str) -> bool {
         self.today_fetching.is_none() && !self.calendar_month_pending(month)
+    }
+    fn ahead_calendar_can_start(&self, month: &str) -> bool {
+        self.ahead_fetching.is_none() && !self.calendar_month_pending(month)
+    }
+    /// Fetches the month after today's when a shown agenda reaches into it
+    /// and its refresh is due.
+    fn ahead_calendar_task(&mut self, today: NaiveDate, now: Instant) -> Option<Task<Message>> {
+        let month = self.calendar_ahead_month_at(today)?;
+        if !self.ahead_calendar_can_start(&month) || now < self.next_ahead_calendar {
+            return None;
+        }
+        self.ahead_fetching = Some(month.clone());
+        Some(self.calendar_month_task(month))
     }
     fn calendar_task(&mut self) -> Task<Message> {
         if !self.calendar_connection.connected() || !self.calendar_can_start() {
@@ -2452,9 +2557,14 @@ impl Cards {
         self.calendar_agenda(day).events
     }
     fn calendar_agenda(&self, day: NaiveDate) -> data::CalendarAgenda<'_> {
-        self.calendar
-            .as_ref()
-            .map(|calendar| calendar.agenda_at(day, Local::now(), self.show_earlier))
+        // The browsed month's own days read its data, as always; a range
+        // past its end reads the fetched month that holds the day.
+        let browsed = day.with_day(1) == Some(self.month);
+        (!browsed)
+            .then(|| self.calendar_month_data(day))
+            .flatten()
+            .or(self.calendar.as_ref())
+            .map(|calendar| calendar.agenda(day, Local::now(), self.agenda_filter()))
             .unwrap_or_default()
     }
     fn earlier_control(&self, count: usize, p: Palette) -> Element<'_, Message> {
@@ -2501,11 +2611,42 @@ impl Cards {
             event.meeting_state_at(Local::now(), self.config.meeting_notice_minutes),
             MeetingState::Soon(_) | MeetingState::Live
         );
-        (title + if status { 15. } else { 0. }).max(30.) + 12. + self.event_details_height(event)
+        let place = if self.calendar_place(event).is_some() {
+            PLACE_HEIGHT + 3.
+        } else {
+            0.
+        };
+        (title + if status { 15. } else { 0. } + place).max(30.)
+            + 12.
+            + self.event_details_height(event)
+    }
+    /// The place shown under an event's title: Show event location is on,
+    /// details are not hidden, and the card is not in its compact layout.
+    fn calendar_place<'a>(&self, event: &'a CalendarEvent) -> Option<&'a str> {
+        let height = self
+            .explicit_size(Widget::Calendar)
+            .map_or(self.calendar_height, |size| size[1]);
+        (self.config.calendar_show_location
+            && !self.config.calendar_private
+            && height >= CALENDAR_CHROME_HEIGHT + 44.)
+            .then(|| event.place())
+            .flatten()
+    }
+    /// The days the agenda lists. Next 7 days leaves out later days with
+    /// nothing on them; today stays, to say it is clear.
+    fn calendar_sections(&self, today: NaiveDate) -> Vec<NaiveDate> {
+        let days = self.calendar_days(today);
+        if !self.calendar_home || !self.config.calendar_show_week || self.calendar.is_none() {
+            return days;
+        }
+        days.into_iter()
+            .filter(|day| *day == today || !self.calendar_agenda(*day).events.is_empty())
+            .collect()
     }
     fn calendar_natural_height(&self) -> f32 {
         let now = Local::now();
-        let days = self.calendar_days(now.date_naive());
+        let headed = self.calendar_days(now.date_naive()).len() > 1;
+        let days = self.calendar_sections(now.date_naive());
         let width = self
             .explicit_size(Widget::Calendar)
             .map(|size| size[0])
@@ -2515,7 +2656,7 @@ impl Cards {
             rows.push(18.);
         }
         for day in &days {
-            if days.len() > 1 {
+            if headed {
                 rows.push(26.);
             }
             let agenda = self.calendar_agenda(*day);
@@ -2529,7 +2670,7 @@ impl Cards {
                     rows.push(self.calendar_event_height(event, width));
                 }
             }
-            if agenda.earlier > 0 && days.len() == 1 {
+            if agenda.earlier > 0 && !headed {
                 rows.push(22.);
             }
         }
@@ -2545,7 +2686,9 @@ impl Cards {
         let today = now.date_naive();
         let days = self.calendar_days(today);
         let display_day = days.first().copied().unwrap_or(self.selected_day);
-        let heading = if self.calendar_home && days.len() != 1 {
+        let heading = if self.calendar_home && self.config.calendar_show_week {
+            "Next 7 days".into()
+        } else if self.calendar_home && days.len() != 1 {
             "Calendar".into()
         } else if self.calendar_home && days.first() == Some(&(today + Days::days(1))) {
             "Tomorrow".into()
@@ -2562,7 +2705,10 @@ impl Cards {
             label(week_label(display_day), 11., p.muted),
             row::with_children(vec![
                 action(
-                    if self.config.calendar_show_today && !self.config.calendar_show_tomorrow {
+                    if self.config.calendar_show_today
+                        && !self.config.calendar_show_tomorrow
+                        && !self.config.calendar_show_week
+                    {
                         "Today"
                     } else {
                         "Overview"
@@ -2639,16 +2785,15 @@ impl Cards {
         if days.is_empty() {
             agenda.push(label("Choose a date above", 14., p.muted));
         }
+        // Several days: each under its own heading.
+        let headed = days.len() > 1;
+        let days = self.calendar_sections(today);
         for day in &days {
-            if days.len() > 1 {
+            if headed {
                 agenda.push(
                     container(spread(
                         {
-                            let name = label(
-                                if *day == today { "Today" } else { "Tomorrow" },
-                                11.,
-                                p.accent,
-                            );
+                            let name = label(day_heading(*day, today), 11., p.accent);
                             let earlier = self.calendar_agenda(*day).earlier;
                             if earlier > 0 {
                                 row::with_children(vec![name, self.earlier_inline(earlier, p)])
@@ -2659,7 +2804,15 @@ impl Cards {
                                 name
                             }
                         },
-                        label(day.format("%a, %b %-d").to_string(), 10., p.muted),
+                        label(
+                            if *day <= today + Days::days(1) {
+                                day.format("%a, %b %-d").to_string()
+                            } else {
+                                String::new()
+                            },
+                            10.,
+                            p.muted,
+                        ),
                     ))
                     .padding([8, 2, 4, 2])
                     .into(),
@@ -2686,7 +2839,7 @@ impl Cards {
             } else if events.is_empty() {
                 agenda.push(
                     container(label(
-                        if day_agenda.earlier > 0 {
+                        if day_agenda.finished > 0 {
                             "All done for today"
                         } else {
                             "No events"
@@ -2740,10 +2893,27 @@ impl Cards {
                         .on_link_click(Message::Open)
                         .into(),
                     ];
+                    if let Some(place) = self.calendar_place(event) {
+                        detail.push(
+                            text::body(place.to_owned())
+                                .size(PLACE_SIZE)
+                                .line_height(1.25)
+                                .font(crate::widget_style::font())
+                                .class(cosmic::theme::Text::Color(crate::widget_style::semantic(
+                                    p.muted,
+                                )))
+                                .width(Length::Fill)
+                                .wrapping(cosmic::iced::advanced::text::Wrapping::None)
+                                .ellipsize(cosmic::iced::advanced::text::Ellipsize::End(
+                                    cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
+                                ))
+                                .into(),
+                        );
+                    }
                     if !status.is_empty() {
                         detail.push(label(status, 9., color));
                     }
-                    let marker_color = event.source_color().unwrap_or(color);
+                    let marker_color = self.event_marker_color(event, color);
                     let marker = container(text::body(""))
                         .width(Length::Fixed(2.))
                         .height(Length::Fixed(26.))
@@ -2801,7 +2971,7 @@ impl Cards {
                 }
             }
             // With day headings, the toggle sits beside the day name.
-            if day_agenda.earlier > 0 && days.len() == 1 {
+            if day_agenda.earlier > 0 && !headed {
                 agenda.push(self.earlier_control(day_agenda.earlier, p));
             }
         }
@@ -2867,10 +3037,9 @@ impl Cards {
         let agenda = column::with_children(agenda).spacing(3).width(Length::Fill);
         let explicit = self.explicit_size(Widget::Calendar).is_some();
         let limit = self.card_height(Widget::Calendar);
-        // 100px header + 20px footer + two 10px gaps + 36px frame padding.
         // Shrink to the actual rendered rows, including wrapped titles. Only
         // the agenda is capped, so busy days keep the date and sync controls.
-        const CHROME_HEIGHT: f32 = 176.;
+        const CHROME_HEIGHT: f32 = CALENDAR_CHROME_HEIGHT;
         if limit < CHROME_HEIGHT + 44. {
             // On very short displays there isn't room for fixed controls and
             // an event; keep everything reachable in one compact scroller.

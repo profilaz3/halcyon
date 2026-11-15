@@ -292,8 +292,14 @@ impl Cards {
         self.glance_day_agenda(day).events
     }
     fn glance_day_agenda(&self, day: NaiveDate) -> data::CalendarAgenda<'_> {
-        self.glance_calendar()
-            .map(|calendar| calendar.agenda_at(day, Local::now(), self.show_earlier))
+        let month = day.format("%Y-%m").to_string();
+        // Today's month first: the standalone calendar may be browsing.
+        [&self.calendar_today, &self.calendar, &self.calendar_ahead]
+            .into_iter()
+            .flatten()
+            .find(|calendar| calendar.month == month)
+            .or_else(|| self.glance_calendar())
+            .map(|calendar| calendar.agenda(day, Local::now(), self.agenda_filter()))
             .unwrap_or_default()
     }
     fn glance_title_width(&self, _event: &CalendarEvent, width: f32) -> f32 {
@@ -848,7 +854,7 @@ impl Cards {
                 color,
             ));
         }
-        let marker_color = event.source_color().unwrap_or(color);
+        let marker_color = self.event_marker_color(event, color);
         let marker = container(text::body(""))
             .width(2.)
             .height(if self.glance_compact() { 20. } else { 26. })
@@ -941,7 +947,7 @@ impl Cards {
                     } else {
                         "Syncing your calendar…"
                     }
-                } else if agenda.earlier > 0 {
+                } else if agenda.finished > 0 {
                     "All done for today"
                 } else if *day == today {
                     "No events today"

@@ -211,6 +211,12 @@ impl Cards {
                 && self.month != Local::now().date_naive().with_day(1).unwrap()
                 && self.today_calendar_can_start(&Local::now().format("%Y-%m").to_string()))
             .then_some(self.next_today_calendar),
+            (visible(Widget::Calendar)
+                && self.calendar_connection.connected()
+                && self
+                    .calendar_ahead_month()
+                    .is_some_and(|month| self.ahead_calendar_can_start(&month)))
+            .then_some(self.next_ahead_calendar),
         ]
         .into_iter()
         .flatten()
@@ -254,6 +260,7 @@ impl Cards {
             &mut self.next_projects,
             &mut self.next_calendar,
             &mut self.next_today_calendar,
+            &mut self.next_ahead_calendar,
         ] {
             *deadline = deadline.checked_sub(lost).unwrap_or(now);
         }
@@ -326,6 +333,7 @@ impl Cards {
                     Widget::Calendar => {
                         self.next_calendar = now;
                         self.next_today_calendar = now;
+                        self.next_ahead_calendar = now;
                         self.next_calendar_view = now;
                     }
                     Widget::Projects => self.next_projects = now,
@@ -337,8 +345,11 @@ impl Cards {
         }
         if cfg.calendar_show_today != self.config.calendar_show_today
             || cfg.calendar_show_tomorrow != self.config.calendar_show_tomorrow
+            || cfg.calendar_show_week != self.config.calendar_show_week
         {
             tasks.push(self.calendar_overview());
+            // A longer range may reach into next month: fetch it now.
+            self.next_ahead_calendar = now;
         }
         self.histories
             .reconcile(&cfg.devbox_sampling(), cfg.widget_visible(Widget::Devbox));
@@ -475,6 +486,7 @@ impl Cards {
             if self.calendar_can_start() && now >= self.next_calendar {
                 tasks.push(self.calendar_task());
             }
+            tasks.extend(self.ahead_calendar_task(today, now));
         }
         tasks
     }

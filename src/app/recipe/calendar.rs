@@ -57,7 +57,8 @@ pub(in crate::app) fn reading(
             output.status = Some("Saved events · last refreshed over a day ago".into());
         }
         for day in days.iter().take(7) {
-            for event in data.agenda_at(*day, now, show_earlier).events {
+            let filter = data::AgendaFilter::new(config, show_earlier);
+            for event in data.agenda(*day, now, filter).events {
                 output.agenda_total += 1;
                 if output.agenda.len() >= 32 {
                     continue;
