@@ -226,7 +226,7 @@ mod tests {
         }
         use crate::settings::tests::{native_reveal, send_settings};
         const HELP: &str =
-            "Calendars from accounts in Online Accounts, such as Google and Microsoft 365.";
+            "Calendars from accounts in Online Accounts, such as Google and Nextcloud.";
         for (width, height) in [(820., 600.), (1280., 800.)] {
             let (mut app, _) = Settings::init(Core::default(), Page::Calendar);
             send_settings(

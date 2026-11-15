@@ -217,11 +217,16 @@ refused, and the username and password are never sent to a different host.
 ## System accounts
 
 Halcyon can also show calendars from accounts you already added to the system,
-with no link and no sign-in in Halcyon. This is the way to get Google and
-Microsoft 365 or Outlook calendars without a subscription link, including work
-and school accounts that don't allow secret addresses. Exchange, Nextcloud and
-other CalDAV accounts, calendars kept on this computer, and birthdays from your
-contacts appear the same way.
+with no link and no sign-in in Halcyon. This is the way to get Google calendars
+without a subscription link, including work and school accounts that don't allow
+secret addresses. Nextcloud, WebDAV and other CalDAV accounts, calendars kept on
+this computer, and birthdays from your contacts appear the same way.
+
+Microsoft 365, Outlook and Exchange calendars need Evolution's Microsoft support,
+which Pop!_OS does not install by default. Install it with
+`sudo apt install evolution-ews`, sign out and back in, and keep the account's
+**Calendar** switch on in Online Accounts. Without it those accounts give mail or
+files but no calendars, and they don't appear in Halcyon's list.
 
 1. Add the account in **Online Accounts** (`gnome-online-accounts-gtk` on
    Pop!_OS and COSMIC) and leave its **Calendar** switch on.
