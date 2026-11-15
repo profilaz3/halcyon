@@ -424,7 +424,11 @@ pub(in crate::settings) fn card_at<'a>(
             extra.iter().map(|line| (*line).to_string()).collect()
         };
         // Calendar lines are one list, so no break after the first.
-        let separator = if widget == Widget::Calendar { 0. } else { (12. * scale).max(3.) };
+        let separator = if widget == Widget::Calendar {
+            0.
+        } else {
+            (12. * scale).max(3.)
+        };
         let room = (available - used - gap - separator).max(0.);
         let count = (room / (gap + secondary_size * 1.25)).floor() as usize;
         if count > 0 && !extra.is_empty() {
@@ -522,8 +526,8 @@ pub(super) fn schematic_window_with<'a>(
     }
     title.push(block(dot, dot, color(preview.accent), dot / 2.));
     let title_bar = row::with_children(title)
-    .spacing(dot * 0.6)
-    .align_y(Alignment::Center);
+        .spacing(dot * 0.6)
+        .align_y(Alignment::Center);
     let inner = (width - 2. * pad - gap).max(2.);
     let side = inner * 0.4;
     let main = inner - side;
@@ -1123,7 +1127,7 @@ impl Settings {
                     }))
                     .width(screen[0])
                     .height(screen[1])
-                .into(),
+                    .into(),
             };
             let mut layers = vec![background];
             if starter {
@@ -2061,16 +2065,35 @@ impl Settings {
         if !blocked.is_empty() {
             // A part that can't be applied can be left out to apply the rest.
             let others = plan.domains.iter().any(|part| part.blocked.is_empty());
-            let actions = plan
-                .domains
-                .iter()
-                .filter(|part| !part.blocked.is_empty() && others)
-                .map(|part| {
-                    button::standard(format!("Leave out {}", part.domain.title()))
-                        .on_press(edit(Edit::Include(part.domain, false)))
-                        .into()
-                })
-                .collect();
+            let mut actions: Vec<Element<'_, Message>> = Vec::new();
+            // A vertical bar over Islands: one explicit choice turns
+            // Islands off for that bar and applies the look.
+            if plan.blocking.is_empty()
+                && plan
+                    .domains
+                    .iter()
+                    .filter(|part| !part.blocked.is_empty())
+                    .all(|part| part.islands_conflict)
+            {
+                actions.push(
+                    button::suggested(format!("Turn off Islands and apply {}", plan.name))
+                        .id(cosmic::widget::Id::new("looks-islands-off"))
+                        .on_press_maybe(
+                            (!self.native_busy).then_some(edit(Edit::ApplyWithoutIslands)),
+                        )
+                        .into(),
+                );
+            }
+            actions.extend(
+                plan.domains
+                    .iter()
+                    .filter(|part| !part.blocked.is_empty() && others)
+                    .map(|part| {
+                        button::standard(format!("Leave out {}", part.domain.title()))
+                            .on_press(edit(Edit::Include(part.domain, false)))
+                            .into()
+                    }),
+            );
             items.push(banner(reasons(&blocked), WARN, actions));
         }
         let warnings: Vec<String> = plan
@@ -2317,7 +2340,10 @@ impl Settings {
                 let (name, description) = match &entry.profile {
                     Ok(profile) if last => (profile.name.clone(), "Last applied"),
                     Ok(profile) => (profile.name.clone(), "Saved look"),
-                    Err(_) => ("Look that can’t be read".to_string(), "Open it to remove it"),
+                    Err(_) => (
+                        "Look that can’t be read".to_string(),
+                        "Open it to remove it",
+                    ),
                 };
                 button::custom(
                     row::with_children(vec![
@@ -2327,7 +2353,10 @@ impl Settings {
                     .spacing(12)
                     .align_y(Alignment::Center),
                 )
-                .id(cosmic::widget::Id::new(format!("saved-look-{}", entry.id.as_str())))
+                .id(cosmic::widget::Id::new(format!(
+                    "saved-look-{}",
+                    entry.id.as_str()
+                )))
                 .class(nav_style(false, self.settings_accent()))
                 .padding([4, 0])
                 .width(Length::Fill)
@@ -2387,7 +2416,10 @@ impl Settings {
                 )
                 .headline,
             ),
-            _ => ("Off", "Switch your look or widget style by morning, evening and night".into()),
+            _ => (
+                "Off",
+                "Switch your look or widget style by morning, evening and night".into(),
+            ),
         };
         group(
             None,
@@ -2395,7 +2427,9 @@ impl Settings {
                 button::custom(
                     row::with_children(vec![
                         icon::from_name("alarm-symbolic").size(20).icon().into(),
-                        container(detail_state("Time of day", line)).width(Length::Fill).into(),
+                        container(detail_state("Time of day", line))
+                            .width(Length::Fill)
+                            .into(),
                         label(schedule, 13., MUTED),
                         icon::from_name("go-next-symbolic").size(16).icon().into(),
                     ])
@@ -2517,9 +2551,9 @@ impl Settings {
             );
         }
         let apply = button::suggested(self.apply_label())
-        .id("profiles-confirm".into())
-        .on_press_maybe((editor.can_apply() && !self.native_busy).then_some(edit(Edit::Apply)))
-        .into();
+            .id("profiles-confirm".into())
+            .on_press_maybe((editor.can_apply() && !self.native_busy).then_some(edit(Edit::Apply)))
+            .into();
         let status = if self.page_error().is_some() {
             self.error_line(problem)
         } else {

@@ -1113,6 +1113,39 @@ mod tests {
                 .any(|s| s.contains("Turn off Islands"))
         );
         assert_eq!(fixture.tree(), before);
+        // The review offers to turn Islands off; only that choice does.
+        assert!(blocked.domains.iter().any(|part| part.islands_conflict));
+        let chosen = crate::desktop::profiles::plan_with(
+            &store,
+            &Installed::discover(&store),
+            &spine.profile,
+            &selected,
+            crate::desktop::profiles::PlanOptions { islands_off: true },
+        );
+        assert!(chosen.can_apply(), "{:?}", chosen.blocking_reasons());
+        assert!(
+            chosen.domains[0]
+                .changes
+                .iter()
+                .any(|change| change == "Panel Islands off"),
+            "{:?}",
+            chosen.domains[0].changes
+        );
+        let change = apply(&store, &chosen).unwrap();
+        let after = PanelDraft::load(&store, PanelKind::Panel).unwrap();
+        assert_eq!(after.anchor().known(), Some(&Anchor::Left));
+        assert_eq!(
+            after.islands().known().map(|islands| islands.enabled),
+            Some(false)
+        );
+        store.undo_latest(&change.id).unwrap();
+        let undone = PanelDraft::load(&store, PanelKind::Panel).unwrap();
+        assert_eq!(
+            undone.islands().known().map(|islands| islands.enabled),
+            Some(true),
+            "Undo brings Islands back"
+        );
+        assert_ne!(undone.anchor().known(), Some(&Anchor::Left));
         current.enabled = false;
         fixture.user(
             key.namespace(),

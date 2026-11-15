@@ -127,9 +127,8 @@ impl std::error::Error for ProfileError {}
 impl crate::desktop::UserMessage for ProfileError {
     fn user_message(&self) -> String {
         use crate::desktop::store::message::{leaks, plain};
-        let shown = |text: &str, fallback: &str| {
-            if leaks(text) { fallback } else { text }.to_string()
-        };
+        let shown =
+            |text: &str, fallback: &str| if leaks(text) { fallback } else { text }.to_string();
         match self {
             Self::Invalid(message) => {
                 shown(message, "This file isn’t a Halcyon look, or it’s damaged.")
