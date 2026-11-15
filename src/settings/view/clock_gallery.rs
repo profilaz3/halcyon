@@ -32,7 +32,10 @@ impl Settings {
             let tiles = choices
                 .iter()
                 .map(|(value, name, key)| {
-                    let picture = self.clock_face_picture(*value, [width - FRAME, PICTURE]);
+                    let picture =
+                        container(self.clock_face_picture(*value, [width - FRAME, PICTURE]))
+                            .id(cosmic::widget::Id::new(format!("clock-face-{key}-picture")))
+                            .into();
                     button::custom(
                         column::with_children(vec![picture, label(*name, 12., FG)]).spacing(6),
                     )
@@ -93,7 +96,9 @@ impl Settings {
             let tile = |id: String, picture, name: String, note: &str, selected, press| {
                 button::custom(
                     column::with_children(vec![
-                        picture,
+                        container(picture)
+                            .id(cosmic::widget::Id::new(format!("{id}-picture")))
+                            .into(),
                         column::with_children(vec![
                             label(name, 12., FG),
                             label(note.to_string(), 11., MUTED),
@@ -199,18 +204,25 @@ impl Settings {
         self.clock_tile_picture(&config, size)
     }
 
-    /// A clock drawn over a slice of this desktop's wallpaper.
+    /// A clock drawn over a slice of this desktop's wallpaper, inside the
+    /// tile's rounded rectangle.
     fn clock_tile_picture(
         &self,
         config: &crate::config::Config,
         size: [f32; 2],
     ) -> Element<'static, Message> {
-        let clock = crate::app::settings_clock_preview(config, size).map(|_| Message::Preview);
-        let background: Element<'static, Message> = match self.profiles.home_image() {
-            Some(handle) => cosmic::widget::image(handle.clone())
+        let clock = crate::app::settings_clock_tile(config, size).map(|_| Message::Preview);
+        let radius = cosmic::theme::active().cosmic().corner_radii.radius_s;
+        let background: Element<'static, Message> = match self
+            .profiles
+            .home_image()
+            .and_then(|h| tile_backdrop(h, size))
+        {
+            Some(handle) => cosmic::widget::image(handle)
                 .width(size[0])
                 .height(size[1])
-                .content_fit(cosmic::iced::ContentFit::Cover)
+                .content_fit(cosmic::iced::ContentFit::Fill)
+                .border_radius(radius)
                 .into(),
             None => {
                 let color = config.palette().background;
@@ -220,17 +232,97 @@ impl Settings {
                     .class(cosmic::theme::Container::custom(move |_| {
                         cosmic::iced::widget::container::Style {
                             background: Some(color.into()),
+                            border: cosmic::iced::Border {
+                                radius: radius.into(),
+                                ..Default::default()
+                            },
                             ..Default::default()
                         }
                     }))
                     .into()
             }
         };
-        cosmic::iced::widget::stack(vec![background, clock])
-            .width(size[0])
-            .height(size[1])
-            .into()
+        // Nothing the picture holds draws past it.
+        container(
+            cosmic::iced::widget::stack(vec![background, clock])
+                .width(size[0])
+                .height(size[1]),
+        )
+        .width(size[0])
+        .height(size[1])
+        .clip(true)
+        .into()
     }
+}
+
+/// The middle of a `picture` sized image with the shape of a `tile`, as a
+/// region of the image.
+fn cover(picture: [u32; 2], tile: [f32; 2]) -> cosmic::iced::Rectangle<u32> {
+    let [width, height] = picture.map(|side| side.max(1));
+    let shape = tile[0].max(1.) / tile[1].max(1.);
+    if width as f32 / height as f32 > shape {
+        let cut = ((height as f32 * shape).round() as u32).clamp(1, width);
+        cosmic::iced::Rectangle {
+            x: (width - cut) / 2,
+            y: 0,
+            width: cut,
+            height,
+        }
+    } else {
+        let cut = ((width as f32 / shape).round() as u32).clamp(1, height);
+        cosmic::iced::Rectangle {
+            x: 0,
+            y: (height - cut) / 2,
+            width,
+            height: cut,
+        }
+    }
+}
+
+/// The wallpaper cut to a tile's shape, so it draws exactly over the tile's
+/// picture and its corners round with the tile. Covering a tile by drawing
+/// the whole picture larger spills past it wherever the renderer does not
+/// clip. Cut once per picture and tile shape.
+fn tile_backdrop(
+    handle: &cosmic::widget::image::Handle,
+    tile: [f32; 2],
+) -> Option<cosmic::widget::image::Handle> {
+    use cosmic::widget::image::Handle;
+    thread_local! {
+        static CUT: std::cell::RefCell<Vec<((cosmic::iced::advanced::image::Id, [u32; 2]), Handle)>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+    let Handle::Rgba {
+        id,
+        width,
+        height,
+        pixels,
+    } = handle
+    else {
+        return None;
+    };
+    let key = (id.clone(), tile.map(|side| side.round() as u32));
+    CUT.with_borrow_mut(|cut| {
+        if let Some((_, handle)) = cut.iter().find(|(known, _)| *known == key) {
+            return Some(handle.clone());
+        }
+        let region = cover([*width, *height], tile);
+        let row = *width as usize * 4;
+        if pixels.len() < row * *height as usize {
+            return None;
+        }
+        let mut rgba = Vec::with_capacity(region.width as usize * region.height as usize * 4);
+        for y in region.y..region.y + region.height {
+            let start = y as usize * row + region.x as usize * 4;
+            rgba.extend_from_slice(&pixels[start..start + region.width as usize * 4]);
+        }
+        let handle = Handle::from_rgba(region.width, region.height, rgba);
+        if cut.len() >= 16 {
+            cut.remove(0);
+        }
+        cut.push((key, handle.clone()));
+        Some(handle)
+    })
 }
 
 /// The widest tile that keeps whole columns of at least `MIN_TILE`.
@@ -243,7 +335,19 @@ fn tile_width(available: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::tile_width;
+    use super::{cover, tile_width};
+
+    #[test]
+    fn a_tile_shows_the_middle_of_the_picture_in_its_shape() {
+        let wide = cover([1920, 1080], [118., 78.]);
+        assert_eq!((wide.y, wide.height), (0, 1080));
+        assert_eq!(wide.width, (1080. * 118. / 78f32).round() as u32);
+        assert_eq!(wide.x, (1920 - wide.width) / 2);
+        let tall = cover([600, 1200], [118., 78.]);
+        assert_eq!((tall.x, tall.width), (0, 600));
+        assert_eq!(tall.height, (600. * 78. / 118f32).round() as u32);
+        assert_eq!(tall.y, (1200 - tall.height) / 2);
+    }
 
     #[test]
     fn tiles_fill_whole_columns() {

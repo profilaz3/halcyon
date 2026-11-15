@@ -49,6 +49,15 @@ pub(crate) fn settings_clock_preview_at(
     )
 }
 
+/// A Clock page tile's picture of the clock: the face as a sample, a dial
+/// without its time caption.
+pub(crate) fn settings_clock_tile(
+    config: &Config,
+    size: [f32; 2],
+) -> cosmic::Element<'static, Message> {
+    clock::tile(config, chrono::Local::now().naive_local(), size)
+}
+
 pub(crate) fn settings_recipe_preview(
     config: &Config,
     recipe: &crate::recipes::Recipe,

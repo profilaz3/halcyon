@@ -666,6 +666,41 @@ pub(super) fn view_context(
     Presentation::new(config).frame(now, size).view()
 }
 
+/// The share of a Clock page tile's height a dial fills.
+pub(crate) const TILE_DIAL: f32 = 0.9;
+
+/// A Clock page tile's picture of `config`'s clock. A dial fills most of
+/// the tile's height with no time caption under it, so it reads at tile
+/// size; every other face is drawn as the desktop draws it.
+pub(super) fn tile(
+    config: &Config,
+    now: chrono::NaiveDateTime,
+    size: [f32; 2],
+) -> Element<'static, Message> {
+    let presentation = Presentation::new(config);
+    let face = presentation.style.clock_face.value;
+    if config.recipes.clock.is_some() || !face.dial() {
+        return view_context(
+            config,
+            now,
+            size,
+            crate::widget_presentation::Context::LocalPreview,
+        );
+    }
+    let diameter = (size[1] * TILE_DIAL).min(size[0]).max(1.);
+    container(analog::dial(
+        ClockReading::at(now.time(), config.clock.format_24h),
+        face,
+        diameter,
+        presentation.style.palette(),
+        presentation.style.display.value,
+        presentation.halo,
+    ))
+    .center_x(size[0])
+    .center_y(size[1])
+    .into()
+}
+
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
@@ -1012,6 +1047,42 @@ pub(super) mod tests {
                 );
             }
         }
+    }
+
+    /// In a Clock page tile a dial fills most of the tile's height and has
+    /// no time caption under it; on the desktop it keeps the caption.
+    #[test]
+    fn a_tile_dial_fills_the_tile_without_a_caption() {
+        use crate::widget_style::resolver::ClockFace;
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 9, 30)
+            .unwrap()
+            .and_hms_opt(6, 30, 0)
+            .unwrap();
+        let size = [118., 78.];
+        let mut native = Native::new(Size::new(size[0], size[1]));
+        let theme = cosmic::Theme::dark();
+        let mut config = Config::default();
+        config.clock.show_date = false;
+        for face in [ClockFace::Analog, ClockFace::Minimal, ClockFace::Numerals] {
+            config.clock.face = Some(face);
+            let bounds = ink(&native.render(tile(&config, now, size), &theme), 118);
+            let tall = (bounds[3] - bounds[1]) as f32;
+            assert!(
+                tall >= size[1] * 0.8,
+                "{face:?}: the dial is {tall} of {}",
+                size[1]
+            );
+            assert!(
+                native.all_text(tile(&config, now, size)).is_empty(),
+                "{face:?}: {:?}",
+                native.all_text(tile(&config, now, size))
+            );
+            Native::new(Size::new(490., 200.))
+                .text_bounds(view(&config, now, [490., 200.]), "06:30");
+        }
+        // Other faces draw as on the desktop.
+        config.clock.face = Some(ClockFace::Digital);
+        native.text_bounds(tile(&config, now, size), "06:30");
     }
 
     /// The typefaces Halcyon ships are there without installing anything,

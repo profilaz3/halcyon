@@ -58,6 +58,70 @@ fn clock_page_face_gallery_and_typefaces_choose_and_draw() {
             native.overflowing_text(app.settings_view())
         );
         assert!(native.duplicate_ids(app.settings_view()).is_empty());
+        // Each picture stays inside its tile: the line just above the tile
+        // and the line between picture and name show one plain color, not
+        // the wallpaper. The names sit on the tile under the picture, and a
+        // dial's picture says nothing but the dial.
+        let tiles = faces
+            .iter()
+            .map(|key| format!("clock-face-{key}"))
+            .chain(fonts.iter().map(|id| id.to_string()));
+        for id in tiles {
+            native_reveal(&app, &mut native, &id);
+            let tile = native.bounds(app.settings_view(), &id);
+            let picture = native.bounds(app.settings_view(), &format!("{id}-picture"));
+            assert!(
+                picture.x >= tile.x
+                    && picture.y >= tile.y
+                    && picture.x + picture.width <= tile.x + tile.width + 0.5
+                    && picture.y + picture.height <= tile.y + tile.height + 0.5,
+                "{id} at {width}: {picture:?} in {tile:?}"
+            );
+            let pixels = native.render(app.settings_view(), &cosmic::Theme::dark());
+            let shades = |y: f32| {
+                let y = y.round() as usize;
+                let mut seen: Vec<&[u8]> = Vec::new();
+                for x in picture.x.ceil() as usize..(picture.x + picture.width) as usize {
+                    let at = (y * width as usize + x) * 4;
+                    let pixel = &pixels[at..at + 4];
+                    if !seen.contains(&pixel) {
+                        seen.push(pixel);
+                    }
+                }
+                seen.len()
+            };
+            for (y, place) in [
+                (tile.y - 2., "above the tile"),
+                (picture.y + picture.height + 2., "under the picture"),
+            ] {
+                assert!(
+                    shades(y) <= 3,
+                    "{id} at {width}: the picture spills {place} ({} shades)",
+                    shades(y)
+                );
+            }
+            let texts: Vec<_> = native
+                .placed_text(app.settings_view())
+                .into_iter()
+                .filter(|(_, bounds)| tile.contains(bounds.center()))
+                .collect();
+            let dial = ["analog", "minimal", "numerals"]
+                .iter()
+                .any(|key| id == format!("clock-face-{key}"));
+            for (text, bounds) in &texts {
+                let named = bounds.y >= picture.y + picture.height;
+                assert!(
+                    named || (!dial && picture.contains(bounds.center())),
+                    "{id} at {width}: {text:?} at {bounds:?}, picture {picture:?}"
+                );
+            }
+            assert!(
+                texts
+                    .iter()
+                    .any(|(_, bounds)| bounds.y >= picture.y + picture.height),
+                "{id} is named under its picture: {texts:?}"
+            );
+        }
         for (theme, name) in [
             (cosmic::Theme::light(), "light"),
             (cosmic::Theme::dark(), "dark"),

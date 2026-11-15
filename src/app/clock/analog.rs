@@ -188,6 +188,27 @@ impl<Message> canvas::Program<Message, cosmic::Theme> for Dial {
     }
 }
 
+/// The dial alone, `diameter` across.
+pub(super) fn dial(
+    reading: ClockReading,
+    face: ClockFace,
+    diameter: f32,
+    p: Palette,
+    font: Font,
+    halo: Option<Color>,
+) -> Element<'static, Message> {
+    canvas::Canvas::new(Dial {
+        reading,
+        palette: p,
+        face,
+        font,
+        halo,
+    })
+    .width(diameter)
+    .height(diameter)
+    .into()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn view(
     reading: ClockReading,
@@ -207,16 +228,7 @@ pub(super) fn view(
     );
     container(
         column::with_children(vec![
-            canvas::Canvas::new(Dial {
-                reading,
-                palette: p,
-                face,
-                font,
-                halo,
-            })
-            .width(diameter)
-            .height(diameter)
-            .into(),
+            dial(reading, face, diameter, p, font, halo),
             clock_label(caption, caption_size, p.muted, font, halo),
         ])
         .align_x(Alignment::Center)
