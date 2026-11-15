@@ -955,8 +955,14 @@ impl Settings {
             let mut avoid = widget_areas.clone();
             avoid.extend(icon_area);
             if looks
-                && let Some((pair, area)) =
-                    looks::window_pair(&preview, insets, screen, scale, &avoid)
+                && let Some((pair, area)) = looks::window_pair(
+                    &preview,
+                    insets,
+                    screen,
+                    scale,
+                    &avoid,
+                    Some("looks-sample-windows"),
+                )
             {
                 layers.push(pair);
                 window_area = Some(area);

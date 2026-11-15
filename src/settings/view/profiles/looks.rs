@@ -431,13 +431,15 @@ pub(super) fn icon_layers<'a>(
 
 /// Two tiled windows in the planned theme: colors, corners, outline, the
 /// inner gap between them and, with the active hint on, the accent ring
-/// around the focused one. Title buttons follow the window settings.
+/// around the focused one. Title buttons follow the window settings. `id`
+/// names the pair where only one is drawn.
 pub(super) fn window_pair<'a>(
     preview: &ScenePreview,
     insets: [f32; 4],
     screen: [f32; 2],
     scale: f32,
     avoid: &[Rect],
+    id: Option<&'static str>,
 ) -> Option<(Element<'a, Message>, Rect)> {
     use crate::desktop::windows::Behavior;
     let appearance = preview.appearance.as_ref()?;
@@ -488,13 +490,15 @@ pub(super) fn window_pair<'a>(
         }
     }));
     let other = super::schematic_window_with(colors, [second, size[1]], buttons);
-    let pair = container(
+    let mut pair = container(
         row::with_children(vec![focused.into(), other])
             .spacing(gap)
             .width(size[0])
             .height(size[1]),
-    )
-    .id(cosmic::widget::Id::new("looks-sample-windows"));
+    );
+    if let Some(id) = id {
+        pair = pair.id(cosmic::widget::Id::new(id));
+    }
     Some((pin(pair).position(at).into(), (at, size)))
 }
 
