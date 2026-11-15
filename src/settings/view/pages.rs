@@ -1315,7 +1315,7 @@ impl Settings {
             face_rows.push(split(
                 detail(
                     "Match the desktop style",
-                    "Font, weight, letter style, type and background come from the look",
+                    "Face, font, weight, letter style and background come from the look",
                 ),
                 container(toggler(follows).on_toggle(Message::ClockFollowStyle))
                     .id(cosmic::widget::Id::new("clock-follow-style"))

@@ -14,19 +14,39 @@ const FRAME: f32 = 14.;
 const MIN_TILE: f32 = 132.;
 
 impl Settings {
-    /// Face tiles: the look's own face first, then every face.
+    /// Face tiles: every face, and for a time-of-day layer its usual face
+    /// first. The main clock has no tile of its own for the look's face:
+    /// the "Match the desktop style" switch above the gallery follows the
+    /// look's whole clock style, face included, so a second control for the
+    /// face alone could disagree with it. While the clock takes its face
+    /// from the style, that face's tile is the chosen one.
     pub(super) fn clock_face_gallery(&self, follow: &'static str) -> Element<'_, Message> {
         let target = self.clock_moment_target();
-        let current = self.config.clock_layer(target).face;
-        let accent = self.settings_accent();
-        let choices: Vec<(Option<ClockFace>, &'static str, String)> =
-            std::iter::once((None, follow, "match".to_string()))
-                .chain(
-                    ClockFace::ALL
-                        .into_iter()
-                        .map(|face| (Some(face), face.label(), face.key().to_string())),
+        let current = match self.config.clock_layer(target).face {
+            None if target.is_none() => {
+                let _scope = crate::widget_style::scope(&self.config);
+                Some(
+                    crate::widget_style::presentation(
+                        &self.config,
+                        self.config.wallpaper_palette(),
+                        true,
+                    )
+                    .clock_face
+                    .value,
                 )
-                .collect();
+            }
+            face => face,
+        };
+        let accent = self.settings_accent();
+        let choices: Vec<(Option<ClockFace>, &'static str, String)> = target
+            .map(|_| (None, follow, "match".to_string()))
+            .into_iter()
+            .chain(
+                ClockFace::ALL
+                    .into_iter()
+                    .map(|face| (Some(face), face.label(), face.key().to_string())),
+            )
+            .collect();
         let grid = cosmic::widget::responsive(move |bounds| {
             let width = tile_width(bounds.width);
             let tiles = choices

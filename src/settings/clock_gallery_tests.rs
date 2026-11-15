@@ -23,8 +23,9 @@ fn clock_page_face_gallery_and_typefaces_choose_and_draw() {
     let (mut app, initial) = Settings::init(Core::default(), Page::Clock);
     settle_settings(&mut app, initial);
     send_settings(&mut app, Message::ObjectTab(ObjectTab::Design));
-    let faces: Vec<String> = std::iter::once("match".to_string())
-        .chain(ClockFace::ALL.iter().map(|face| face.key().to_string()))
+    let faces: Vec<String> = ClockFace::ALL
+        .iter()
+        .map(|face| face.key().to_string())
         .collect();
     let fonts = [
         "clock-font-widgets",
@@ -147,8 +148,38 @@ fn clock_page_face_gallery_and_typefaces_choose_and_draw() {
         native_click(&mut app, &mut native, &format!("clock-face-{}", face.key()));
         assert_eq!(saved().clock.face, Some(face), "{}", app.status);
     }
-    native_click(&mut app, &mut native, "clock-face-match");
-    assert_eq!(saved().clock.face, None);
+    // One control matches the look: the switch, which a face of the
+    // clock's own turns off, and which brings back the look's whole clock
+    // style, face included. The gallery has no second match tile.
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "clock-face-match")
+            .is_none()
+    );
+    native_reveal(&app, &mut native, "clock-follow-style");
+    assert!(!native.text_all(app.settings_view(), "Weight").is_empty());
+    send_settings(&mut app, Message::ClockFollowStyle(true));
+    assert_eq!(
+        crate::settings::profiles::LookStyle::of(&saved()).clock,
+        app.profiles.applied_style().clock,
+        "{}",
+        app.status
+    );
+    assert!(native.text_all(app.settings_view(), "Weight").is_empty());
+    native_click(&mut app, &mut native, "clock-face-digital");
+    assert!(!native.text_all(app.settings_view(), "Weight").is_empty());
+    // A time-of-day layer has no switch, so its tile for the usual face
+    // stays.
+    let (active, base) = (app.config.moments.active, app.moment_base_clock);
+    app.config.moments.active = Some(crate::moments::Phase::Night);
+    app.moment_base_clock = false;
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "clock-follow-style")
+            .is_none()
+    );
+    native_reveal(&app, &mut native, "clock-face-match");
+    (app.config.moments.active, app.moment_base_clock) = (active, base);
 
     native_click(&mut app, &mut native, "clock-font-antonio");
     assert_eq!(saved().clock_font.as_deref(), Some("Antonio"));
