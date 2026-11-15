@@ -298,9 +298,11 @@ fn clock_page_previews_the_daily_overview_clock() {
                     && a.iter().zip(b.iter()).any(|(a, b)| a.abs_diff(*b) > 24)
             })
             .count();
-        // A thin dial at the stage's scale changes fewer pixels.
+        // A thin dial at the stage's scale changes fewer pixels, the fewer
+        // the closer its ink is to the picture under it.
+        let least = if face.dial() { 30 } else { 60 };
         assert!(
-            drawn > 60,
+            drawn > least,
             "{face:?}: the overview's clock is drawn ({drawn})"
         );
         assert!(native.overflowing_text(app.settings_view()).is_empty());
