@@ -9,6 +9,10 @@ use crate::widget_style::resolver::in_words;
 const STACK_LINE: f32 = 0.92;
 /// A Words line, as a share of the face size.
 const WORD_LINE: f32 = 1.12;
+/// Room around the two Words lines, as a share of the face size, so a
+/// font with long descenders ("past") stays inside a box that fits the
+/// face by height.
+const WORD_ROOM: f32 = 0.12;
 /// Split's date lines, as a share of the face size.
 const SPLIT_DATE: f32 = 0.24;
 /// The space either side of Split's rule, as a share of the face size.
@@ -32,7 +36,7 @@ pub(super) fn metrics(face: ClockFace) -> Metrics {
             requested: 1.,
         },
         ClockFace::Words => Metrics {
-            em: 2. * WORD_LINE,
+            em: 2. * WORD_LINE + WORD_ROOM,
             date: 0.4,
             requested: 0.5,
         },
@@ -280,7 +284,7 @@ pub(super) fn words(
                 .into()
             })
             .collect();
-    lines(p, rows, width, size * 2. * WORD_LINE)
+    lines(p, rows, width, size * (2. * WORD_LINE + WORD_ROOM))
 }
 
 /// The time, a thin rule, and the weekday over the day of the month.
