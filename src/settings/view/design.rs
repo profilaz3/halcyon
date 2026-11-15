@@ -133,13 +133,13 @@ impl Settings {
                     ),
                 ],
             ),
-            label(
-                "An older app's changes to the frozen widget settings need a review first.",
-                13.,
-                MUTED,
-            ),
         ];
         if self.design.source_conflict {
+            parts.push(label(
+                "An older Halcyon also changed your widget settings. Review those changes below first.",
+                13.,
+                MUTED,
+            ));
             if self.design.source_review {
                 parts.push(pages::section(vec![
                     detail_state("Keep the current widget design?", "Changes from the older app and its saved history are backed up first. The current design and unrelated app preferences are retained."),
