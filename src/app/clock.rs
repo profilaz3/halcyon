@@ -1091,7 +1091,16 @@ pub(super) mod tests {
     #[test]
     fn a_shipped_typeface_draws_the_clock_in_every_weight() {
         use crate::widget_style::resolver::ClockWeight;
-        crate::desktop_theme::load_installed_fonts();
+        // The font list is taken only when the font system is free, so a
+        // render on a parallel test can make one call pass it by.
+        for _ in 0..500 {
+            crate::desktop_theme::load_installed_fonts();
+            if crate::desktop_theme::font_installed(crate::widget_style::clock_fonts::ALL[0].family)
+            {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 4)
             .unwrap()
             .and_hms_opt(10, 8, 0)
