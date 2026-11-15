@@ -103,22 +103,29 @@ fn framed<'a>(
         layers.push(
             // Dimmed, with a quiet note, rather than a warning on every tile.
             // Light on the dark veil in either theme.
-            container(label("Not installed", CAPTION, Color { a: 0.9, ..Color::WHITE }))
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .align_x(Alignment::Center)
-                .align_y(Alignment::Center)
-                .class(cosmic::theme::Container::custom(|_| {
-                    cosmic::iced::widget::container::Style {
-                        background: Some(Background::Color(Color::from_rgba(0., 0., 0., 0.5))),
-                        border: Border {
-                            radius: 8.into(),
-                            ..Default::default()
-                        },
+            container(label(
+                "Not installed",
+                CAPTION,
+                Color {
+                    a: 0.9,
+                    ..Color::WHITE
+                },
+            ))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center)
+            .class(cosmic::theme::Container::custom(|_| {
+                cosmic::iced::widget::container::Style {
+                    background: Some(Background::Color(Color::from_rgba(0., 0., 0., 0.5))),
+                    border: Border {
+                        radius: 8.into(),
                         ..Default::default()
-                    }
-                }))
-                .into(),
+                    },
+                    ..Default::default()
+                }
+            }))
+            .into(),
         );
     }
     cosmic::iced::widget::Stack::with_children(layers).into()
@@ -152,7 +159,10 @@ impl Settings {
             None => container(label(
                 shown.note.unwrap_or("No preview"),
                 12.,
-                Color { a: 0.75, ..Color::WHITE },
+                Color {
+                    a: 0.75,
+                    ..Color::WHITE
+                },
             ))
             .center_x(Length::Fill)
             .center_y(Length::Fill)
@@ -269,6 +279,41 @@ impl Settings {
                 .align_y(Alignment::Center)
                 .into(),
         )];
+        // Light and dark modes with wallpapers of their own: Apply keeps
+        // the other mode's unless both are chosen.
+        if draft.separate_modes() {
+            let both = draft.both_modes();
+            let this = if draft.shows_dark() {
+                "Dark mode only"
+            } else {
+                "Light mode only"
+            };
+            rows.push(
+                column::with_children(vec![
+                    split(
+                        label("Apply to", 14., FG),
+                        segmented(
+                            vec![
+                                (this.to_string(), !both, Some(edit(Edit::BothModes(false)))),
+                                (
+                                    "Both modes".to_string(),
+                                    both,
+                                    Some(edit(Edit::BothModes(true))),
+                                ),
+                            ],
+                            accent,
+                        ),
+                    ),
+                    label(
+                        "Light and dark modes each have their own wallpaper.",
+                        CAPTION,
+                        MUTED,
+                    ),
+                ])
+                .spacing(4)
+                .into(),
+            );
+        }
         if !same {
             let mut chips = vec![(
                 "Shared".to_string(),
@@ -732,17 +777,16 @@ impl Settings {
         let available = self.content_width() - 2.;
         let outer = TILE_W + 4.;
         let columns = ((available + 6.) / (outer + 6.)).floor().max(2.);
-        let gap = ((available - columns * outer) / (columns - 1.)).floor().clamp(6., 24.);
-        let outer = ((available - gap * (columns - 1.)) / columns).floor().max(outer);
+        let gap = ((available - columns * outer) / (columns - 1.))
+            .floor()
+            .clamp(6., 24.);
+        let outer = ((available - gap * (columns - 1.)) / columns)
+            .floor()
+            .max(outer);
         let width = outer - 4.;
         let mut tiles: Vec<Element<'_, Message>> = Vec::new();
         if tab == Tab::Yours {
-            tiles.push(self.add_tile(
-                "Add folder",
-                "folder-new-symbolic",
-                Edit::AddFolder,
-                width,
-            ));
+            tiles.push(self.add_tile("Add folder", "folder-new-symbolic", Edit::AddFolder, width));
         }
         // Featured pictures that aren’t installed wait behind “Get more
         // pictures”; the one in use stays so its ring and warning show.

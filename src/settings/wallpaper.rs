@@ -130,6 +130,9 @@ pub enum Message {
     /// Letterbox colour text (`#RRGGBB`).
     FitColor(String),
     Same(bool),
+    /// With separate light and dark wallpapers: `true` applies to both
+    /// modes, `false` to the shown mode only.
+    BothModes(bool),
     Display(Target),
     Every(u64),
     Order(SamplingMethod),
@@ -1883,6 +1886,9 @@ impl WallpaperEditor {
                     });
                 }
                 self.fit_text.insert(self.target.clone(), text);
+            }
+            Message::BothModes(both) => {
+                self.core.edit(|draft| draft.set_both_modes(both));
             }
             Message::Same(same) => {
                 if let Some(colors) = &mut self.colors {

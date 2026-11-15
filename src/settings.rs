@@ -6969,6 +6969,7 @@ mod tests {
     include!("settings/glance_off_tests.rs");
     include!("settings/looks_tests.rs");
     include!("settings/edge_menu_tests.rs");
+    include!("settings/comfort_tests.rs");
 
     /// What Wallpaper & colors recommends for a solid color background.
     fn recommended_color(rgb: [f32; 3]) -> [u8; 3] {

@@ -93,6 +93,38 @@ pub fn current(store: &DesktopStore) -> &'static str {
     if seeded { mode } else { NAMESPACE }
 }
 
+/// Whether the light and dark modes each have a background of their own
+/// that differ: a person chose one for each. Only the user's own values
+/// count; COSMIC's defaults or a mode seeded from the shared background
+/// never make them separate.
+pub fn separate(store: &DesktopStore) -> bool {
+    if !per_mode(store) {
+        return false;
+    }
+    let read = |namespace| {
+        store
+            .read_user(&rehome(&super::shared_key(), namespace))
+            .ok()
+            .flatten()
+    };
+    match (read(DARK), read(LIGHT)) {
+        // The fade alone never makes them different.
+        (Some(dark), Some(light)) => {
+            match (
+                decode_exact::<BgEntry>(&dark),
+                decode_exact::<BgEntry>(&light),
+            ) {
+                (Ok(mut dark), Ok(light)) => {
+                    dark.transition_duration = light.transition_duration;
+                    dark != light
+                }
+                _ => dark != light,
+            }
+        }
+        _ => false,
+    }
+}
+
 /// `key` in `namespace` (same version and name).
 pub fn rehome(key: &ConfigKey, namespace: &str) -> ConfigKey {
     if key.namespace() == namespace {
@@ -253,8 +285,10 @@ mod tests {
         fixture.user(LIGHT, SHARED, &entry("/old/light.jpg", Some(750)));
         fixture
     }
+    /// A pick for both modes.
     fn plan(store: &DesktopStore, picture: &str) -> DesktopPatch {
         let mut draft = WallpaperDraft::load(store).unwrap();
+        draft.set_both_modes(true);
         draft.set_source(&Target::Shared, BgSource::Path(picture.into()));
         let plan = draft.plan();
         assert!(plan.blocked.is_empty(), "{:?}", plan.blocked);
@@ -439,6 +473,81 @@ mod tests {
             );
         }
         assert_eq!(stored(&fixture, LIGHT).transition_duration, Some(750));
+    }
+
+    #[test]
+    fn separate_light_and_dark_keep_the_other_mode_unless_both_are_chosen() {
+        let fixture = per_mode_fixture("modes-separate");
+        let store = fixture.store();
+        assert!(separate(&store));
+        let read = || -> Vec<_> {
+            NAMESPACES
+                .iter()
+                .map(|namespace| fixture.read(namespace, SHARED))
+                .collect()
+        };
+        let before = read();
+        // Dark is shown: Apply changes dark only, by default.
+        let mut draft = WallpaperDraft::load(&store).unwrap();
+        assert!(draft.separate_modes());
+        assert_eq!(draft.mode_only(), Some(true));
+        draft.set_source(&Target::Shared, BgSource::Path("/new/pick.jpg".into()));
+        let patch = draft.plan().patch;
+        let latest = store
+            .apply_action(&patch, None, Owner::Wallpaper, "Wallpaper", Source::Manual)
+            .unwrap();
+        assert_eq!(picture(&stored(&fixture, DARK)), "/new/pick.jpg");
+        assert_eq!(picture(&stored(&fixture, LIGHT)), "/old/light.jpg");
+        assert_eq!(picture(&stored(&fixture, NAMESPACE)), "/old/shared.jpg");
+        assert_eq!(stored(&fixture, LIGHT).transition_duration, Some(750));
+        // Undo is exact.
+        store.undo_latest(&latest.id).unwrap();
+        assert_eq!(read(), before);
+        // In light mode, only light changes.
+        fixture.user(MODE, "is_dark", "false");
+        let mut draft = WallpaperDraft::load(&store).unwrap();
+        assert_eq!(draft.mode_only(), Some(false));
+        draft.set_source(&Target::Shared, BgSource::Path("/new/light.jpg".into()));
+        let latest = store
+            .apply_action(
+                &draft.plan().patch,
+                None,
+                Owner::Wallpaper,
+                "Wallpaper",
+                Source::Manual,
+            )
+            .unwrap();
+        assert_eq!(picture(&stored(&fixture, LIGHT)), "/new/light.jpg");
+        assert_eq!(picture(&stored(&fixture, DARK)), "/old/dark.jpg");
+        store.undo_latest(&latest.id).unwrap();
+        assert_eq!(read(), before);
+        // Both modes, when chosen.
+        let mut draft = WallpaperDraft::load(&store).unwrap();
+        draft.set_both_modes(true);
+        assert_eq!(draft.mode_only(), None);
+        draft.set_source(&Target::Shared, BgSource::Path("/new/both.jpg".into()));
+        let latest = store
+            .apply_action(
+                &draft.plan().patch,
+                None,
+                Owner::Wallpaper,
+                "Wallpaper",
+                Source::Manual,
+            )
+            .unwrap();
+        for namespace in NAMESPACES {
+            assert_eq!(
+                picture(&stored(&fixture, namespace)),
+                "/new/both.jpg",
+                "{namespace}"
+            );
+        }
+        store.undo_latest(&latest.id).unwrap();
+        assert_eq!(read(), before);
+        // The same picture in both modes is not separate.
+        fixture.user(LIGHT, SHARED, &entry("/old/dark.jpg", Some(750)));
+        assert!(!separate(&store));
+        assert_eq!(WallpaperDraft::load(&store).unwrap().mode_only(), None);
     }
 
     #[test]
