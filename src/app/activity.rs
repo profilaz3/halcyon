@@ -307,15 +307,13 @@ impl Cards {
         if next.app_rules == self.config.activity_island.app_rules {
             return Task::none();
         }
-        match crate::config::Config::save_activity_preferences(
-            serde_json::json!({ "app_rules": next.app_rules }),
-        ) {
-            Ok(config) => self.apply_config(config),
-            Err(error) => {
-                eprintln!("Activity island rule not saved: {error}");
-                Task::none()
-            }
-        }
+        let changes = serde_json::json!({ "app_rules": next.app_rules });
+        self.save_config_later(
+            "Activity island rule",
+            super::config_writes::Failure::quiet("Activity island rule not saved"),
+            None,
+            move || crate::config::Config::save_activity_preferences(changes),
+        )
     }
 }
 /// What the player says it can do. Raising asks nothing of playback, as on

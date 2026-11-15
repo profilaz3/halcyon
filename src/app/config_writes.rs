@@ -1,0 +1,311 @@
+//! Desktop configuration writes, off the UI thread and in order.
+//!
+//! The edge menu, the tools and the island change settings from the desktop
+//! process. Each write takes the shared configuration lock, which another
+//! process (Settings, a Look, the controller) may hold for a while. Waiting
+//! for it on the UI thread froze the desktop, so these writes run one at a
+//! time on a writer thread. The UI keeps answering and applies the saved
+//! configuration, or shows the failure, when the write returns.
+use super::*;
+use std::sync::mpsc;
+
+type Job = Box<dyn FnOnce() + Send>;
+
+/// One writer thread for the process, so writes land in the order asked.
+fn writer() -> &'static std::sync::Mutex<mpsc::Sender<Job>> {
+    static WRITER: std::sync::OnceLock<std::sync::Mutex<mpsc::Sender<Job>>> =
+        std::sync::OnceLock::new();
+    WRITER.get_or_init(|| {
+        let (sender, jobs) = mpsc::channel::<Job>();
+        std::thread::Builder::new()
+            .name("halcyon-config-writer".into())
+            .spawn(move || {
+                for job in jobs {
+                    job();
+                }
+            })
+            .expect("spawn the configuration writer");
+        std::sync::Mutex::new(sender)
+    })
+}
+
+/// Runs `job` on the writer thread, after every write queued before it.
+pub(super) fn in_order(job: impl FnOnce() + Send + 'static) {
+    let sent = writer()
+        .lock()
+        .map_err(|_| ())
+        .and_then(|sender| sender.send(Box::new(job)).map_err(|_| ()));
+    if sent.is_err() {
+        eprintln!("The settings writer stopped");
+    }
+}
+
+/// What the desktop shows when a background write fails.
+#[derive(Debug, Clone)]
+pub struct Failure {
+    pub title: &'static str,
+    pub body: &'static str,
+    pub retry: Option<Box<Message>>,
+    /// Shown in the edge menu; when false, the failure is only logged.
+    pub notice: bool,
+}
+
+impl Failure {
+    pub fn notice(title: &'static str, body: &'static str, retry: Option<Message>) -> Self {
+        Self {
+            title,
+            body,
+            retry: retry.map(Box::new),
+            notice: true,
+        }
+    }
+    pub fn quiet(title: &'static str) -> Self {
+        Self {
+            title,
+            body: "",
+            retry: None,
+            notice: false,
+        }
+    }
+}
+
+/// A finished background write.
+#[derive(Debug, Clone)]
+pub struct Saved {
+    pub result: Result<Box<Config>, String>,
+    pub failure: Failure,
+    /// Runs on the UI thread before a failure is shown, to undo a change the
+    /// desktop already showed.
+    pub revert: Option<Revert>,
+}
+
+/// A change the desktop showed ahead of its write, put back on failure.
+#[derive(Debug, Clone)]
+pub enum Revert {
+    WidgetOrder(Vec<String>),
+}
+
+impl Cards {
+    /// Queues `write` behind earlier writes and answers with its result. The
+    /// action label and the caller's lock policy (Arrange refuses contended
+    /// locks) travel with the write.
+    pub(super) fn save_config_later(
+        &mut self,
+        label: &'static str,
+        failure: Failure,
+        revert: Option<Revert>,
+        write: impl FnOnce() -> Result<Config, String> + Send + 'static,
+    ) -> Task<Message> {
+        let nonblocking = crate::config::settings_lock_operation() & libc::LOCK_NB != 0;
+        let (reply, answer) = tokio::sync::oneshot::channel();
+        let job: Job = Box::new(move || {
+            let run = || crate::desktop::actions::in_action(label, write);
+            let result = if nonblocking {
+                crate::config::with_nonblocking_locks(run)
+            } else {
+                run()
+            };
+            let _ = reply.send(result);
+        });
+        // Queued now, not when the task first runs, so order is kept.
+        let queued = writer()
+            .lock()
+            .map_err(|_| "The settings writer stopped".to_string())
+            .and_then(|sender| {
+                sender
+                    .send(job)
+                    .map_err(|_| "The settings writer stopped".to_string())
+            });
+        cosmic::task::future(async move {
+            let result = match queued {
+                Ok(()) => answer
+                    .await
+                    .unwrap_or_else(|_| Err("The settings writer stopped".into())),
+                Err(error) => Err(error),
+            };
+            Message::ConfigSaved(Box::new(Saved {
+                result: result.map(Box::new),
+                failure,
+                revert,
+            }))
+        })
+    }
+
+    pub(super) fn config_saved(&mut self, saved: Saved) -> Task<Message> {
+        match saved.result {
+            Ok(config) => self.apply_config(*config),
+            Err(error) => {
+                match saved.revert {
+                    Some(Revert::WidgetOrder(order)) => self.config.widget_order = order,
+                    None => {}
+                }
+                eprintln!("{}: {error}", saved.failure.title);
+                if saved.failure.notice {
+                    self.raise_notice(
+                        saved.failure.title,
+                        saved.failure.body,
+                        error,
+                        saved.failure.retry.map(|message| *message),
+                    );
+                }
+                Task::none()
+            }
+        }
+    }
+}
+
+/// Waits for every queued write, in a test.
+#[cfg(test)]
+pub(crate) fn flush() {
+    let (done, wait) = mpsc::channel();
+    in_order(move || {
+        let _ = done.send(());
+    });
+    wait.recv().unwrap();
+}
+
+/// Runs a desktop task to the end in a test, feeding its messages back.
+#[cfg(test)]
+pub(crate) fn finish(cards: &mut Cards, task: Task<Message>) {
+    use cosmic::iced::futures::StreamExt;
+    use cosmic::iced::runtime::Action as RuntimeAction;
+    let mut pending = vec![task];
+    while let Some(task) = pending.pop() {
+        let Some(mut stream) = cosmic::iced::runtime::task::into_stream(task) else {
+            continue;
+        };
+        cosmic::iced::futures::executor::block_on(async {
+            while let Some(action) = stream.next().await {
+                if let RuntimeAction::Output(cosmic::Action::App(message)) = action {
+                    pending.push(cards.update(message));
+                }
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::displays::test_support::isolated;
+
+    fn cards() -> Cards {
+        let mut config = Config::load();
+        config.enabled_widgets = vec!["clock".into(), "weather".into(), "calendar".into()];
+        let (cards, _) = Cards::init(Core::default(), config);
+        cards
+    }
+
+    /// Holds the shared configuration lock from another thread.
+    struct Held(
+        Option<mpsc::Sender<()>>,
+        Option<std::thread::JoinHandle<()>>,
+    );
+    impl Held {
+        fn new() -> Self {
+            let path = Config::path().unwrap();
+            let (locked, ready) = mpsc::channel();
+            let (release, wait) = mpsc::channel::<()>();
+            let thread = std::thread::spawn(move || {
+                let lock = crate::config::lock_config(&path).unwrap();
+                locked.send(()).unwrap();
+                // Released by drop, or after a second so a blocking UI
+                // dispatch fails the timing check instead of hanging.
+                let _ = wait.recv_timeout(Duration::from_secs(1));
+                drop(lock);
+            });
+            ready.recv().unwrap();
+            Self(Some(release), Some(thread))
+        }
+    }
+    impl Drop for Held {
+        fn drop(&mut self) {
+            self.0.take();
+            if let Some(thread) = self.1.take() {
+                thread.join().unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn d1_edge_menu_writes_never_wait_on_the_ui_thread() {
+        if isolated("app::config_writes::tests::d1_edge_menu_writes_never_wait_on_the_ui_thread") {
+            return;
+        }
+        let mut cards = cards();
+        let held = Held::new();
+        let messages = [
+            Message::SetWidgetVisible(Widget::Weather, false),
+            Message::SetWidgetsVisible(false),
+            Message::SetWeatherEffect(true),
+            Message::SaveOrder(vec![Widget::Projects, Widget::Devbox, Widget::Weather]),
+            Message::Tool(crate::tools::cards::Action::FocusMinutes(40)),
+        ];
+        let mut tasks = Vec::new();
+        for message in messages {
+            let start = Instant::now();
+            tasks.push(cards.update(message));
+            assert!(
+                start.elapsed() < Duration::from_millis(100),
+                "the UI thread waited {:?} for another settings writer",
+                start.elapsed()
+            );
+        }
+        // The order shows at once and nothing was saved yet.
+        assert_eq!(
+            cards.config.ordered_right_cards(),
+            vec![Widget::Projects, Widget::Devbox, Widget::Weather]
+        );
+        assert!(cards.config.widget_visible(Widget::Weather));
+        drop(held);
+        for task in tasks {
+            finish(&mut cards, task);
+        }
+        let saved = Config::load();
+        assert!(!saved.widget_visible(Widget::Weather));
+        assert!(!saved.widgets_visible);
+        assert!(saved.rain.enabled);
+        assert_eq!(saved.focus.focus_minutes, 40);
+        assert!(!cards.config.widget_visible(Widget::Weather));
+        assert!(!cards.config.widgets_visible);
+        assert!(cards.notice.is_none());
+    }
+
+    #[test]
+    fn d1_writes_land_in_the_order_asked() {
+        if isolated("app::config_writes::tests::d1_writes_land_in_the_order_asked") {
+            return;
+        }
+        let mut cards = cards();
+        let held = Held::new();
+        let tasks: Vec<_> = [true, false, true, false]
+            .into_iter()
+            .map(|on| cards.update(Message::SetWidgetVisible(Widget::Calendar, on)))
+            .collect();
+        drop(held);
+        for task in tasks {
+            finish(&mut cards, task);
+        }
+        assert!(!Config::load().widget_visible(Widget::Calendar));
+        assert!(!cards.config.widget_visible(Widget::Calendar));
+    }
+
+    #[test]
+    fn d1_a_failed_reorder_puts_the_saved_order_back() {
+        if isolated("app::config_writes::tests::d1_a_failed_reorder_puts_the_saved_order_back") {
+            return;
+        }
+        let mut cards = cards();
+        let before = cards.config.ordered_right_cards();
+        let path = Config::path().unwrap();
+        std::fs::write(&path, "{broken").unwrap();
+        let mut order = before.clone();
+        order.reverse();
+        let task = cards.update(Message::SaveOrder(order.clone()));
+        assert_eq!(cards.config.ordered_right_cards(), order);
+        finish(&mut cards, task);
+        assert_eq!(cards.config.ordered_right_cards(), before);
+        let notice = cards.notice.as_ref().expect("the failure is shown");
+        assert_eq!(notice.title, "Couldn’t save the widget order");
+    }
+}

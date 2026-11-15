@@ -12,6 +12,7 @@ mod auditfix_tests;
 mod autoswitch;
 mod calendar_details;
 mod clock;
+mod config_writes;
 mod depth;
 #[cfg(test)]
 mod desktop_ux_tests;
@@ -328,6 +329,8 @@ pub enum Message {
     WidgetSettings(Widget),
     SetWidgetVisible(Widget, bool),
     SaveOrder(Vec<Widget>),
+    /// A configuration write from the desktop finished off the UI thread.
+    ConfigSaved(Box<config_writes::Saved>),
     NoticeRetry,
     NoticeDismiss,
     NoticeDetails,
@@ -1536,6 +1539,7 @@ impl Cards {
             }
             Message::SetWidgetVisible(widget, visible) => self.set_widget_visible(widget, visible),
             Message::SaveOrder(order) => self.save_widget_order(order),
+            Message::ConfigSaved(saved) => self.config_saved(*saved),
             Message::DrawerToggle => self.drawer_toggle(),
             Message::EdgeClick(id) => {
                 if !self.sidebar.visible {

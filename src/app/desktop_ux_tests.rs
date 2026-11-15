@@ -178,7 +178,8 @@ fn fb04_a_failed_save_explains_itself_and_try_again_finishes_it() {
     let path = Config::path().unwrap();
     let saved = std::fs::read(&path).unwrap();
     std::fs::write(&path, "{broken").unwrap();
-    let _ = cards.update(Message::SetWidgetVisible(Widget::Music, false));
+    let task = cards.update(Message::SetWidgetVisible(Widget::Music, false));
+    super::config_writes::finish(&mut cards, task);
     let notice = cards.notice.as_ref().expect("the failure is shown");
     assert_eq!(notice.title, "Couldn’t save the widget list");
     assert!(cards.sidebar.visible, "the edge menu opens to show it");
@@ -198,7 +199,8 @@ fn fb04_a_failed_save_explains_itself_and_try_again_finishes_it() {
     capture_rail(&cards, "fb04-notice-details");
     // Try again after the file is readable again.
     std::fs::write(&path, &saved).unwrap();
-    let _ = cards.update(Message::NoticeRetry);
+    let task = cards.update(Message::NoticeRetry);
+    super::config_writes::finish(&mut cards, task);
     assert!(cards.notice.is_none());
     assert!(!Config::load().widget_visible(Widget::Music));
     // Dismiss just clears it.
