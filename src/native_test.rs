@@ -21,6 +21,7 @@ impl Native {
         Self::with_text_size(size, backend, 14.)
     }
     pub fn with_text_size(size: Size, backend: &str, points: f32) -> Self {
+        crate::widget_style::clock_fonts::ensure_loaded();
         Self {
             renderer: cosmic::iced::futures::executor::block_on(
                 <cosmic::Renderer as Headless>::new(

@@ -258,6 +258,7 @@ impl SettingsSamples {
             depth: Default::default(),
             rain: Default::default(),
             glass: Default::default(),
+            clock_backdrop: Default::default(),
             wallpaper_color_generation: Default::default(),
             edge: Default::default(),
         };

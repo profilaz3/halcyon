@@ -9,6 +9,54 @@ use serde::{Deserialize, Serialize};
 pub enum ClockFace {
     Digital,
     Analog,
+    /// Hours over minutes, large.
+    Stacked,
+    /// A dial with hands and four marks, no numbers.
+    Minimal,
+    /// A dial with the twelve hours written around it.
+    Numerals,
+    /// The time in words, to the nearest five minutes: "half past nine".
+    Words,
+    /// The time with the date beside it.
+    Split,
+}
+impl ClockFace {
+    /// Every face, in the order the gallery shows them.
+    pub const ALL: [Self; 7] = [
+        Self::Digital,
+        Self::Stacked,
+        Self::Split,
+        Self::Words,
+        Self::Analog,
+        Self::Minimal,
+        Self::Numerals,
+    ];
+    /// A face drawn as a dial with hands.
+    pub fn dial(self) -> bool {
+        matches!(self, Self::Analog | Self::Minimal | Self::Numerals)
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Digital => "Digital",
+            Self::Analog => "Analog",
+            Self::Stacked => "Stacked",
+            Self::Minimal => "Minimal",
+            Self::Numerals => "Numbers",
+            Self::Words => "Words",
+            Self::Split => "Split",
+        }
+    }
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Digital => "digital",
+            Self::Analog => "analog",
+            Self::Stacked => "stacked",
+            Self::Minimal => "minimal",
+            Self::Numerals => "numerals",
+            Self::Words => "words",
+            Self::Split => "split",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -173,10 +221,21 @@ pub struct ClockReading {
     pub period: Option<String>,
     pub hour_turn: f32,
     pub minute_turn: f32,
+    /// The hour as the clock shows it: "09" or "21", or "9" on a 12-hour clock.
+    pub hours: String,
+    pub minutes: String,
+    /// The time in words, to the nearest five minutes, word by word.
+    pub words: Vec<String>,
+    /// Which of `words` is the hour.
+    pub hour_word: usize,
+    /// The weekday and the day of the month, for a face that shows the
+    /// date beside the time; `None` until a date is given.
+    pub date: Option<[String; 2]>,
 }
 impl ClockReading {
     pub fn at(now: chrono::NaiveTime, format_24h: bool) -> Self {
         use chrono::Timelike;
+        let (words, hour_word) = in_words(now.hour(), now.minute());
         Self {
             time: now
                 .format(if format_24h { "%H:%M" } else { "%-I:%M" })
@@ -184,8 +243,51 @@ impl ClockReading {
             period: (!format_24h).then(|| now.format("%p").to_string()),
             hour_turn: ((now.hour() % 12) as f32 + now.minute() as f32 / 60.) / 12.,
             minute_turn: now.minute() as f32 / 60.,
+            hours: now
+                .format(if format_24h { "%H" } else { "%-I" })
+                .to_string(),
+            minutes: now.format("%M").to_string(),
+            words,
+            hour_word,
+            date: None,
         }
     }
+    /// The same reading with the date it is on.
+    pub fn with_date(mut self, date: chrono::NaiveDate) -> Self {
+        self.date = Some([
+            date.format("%A").to_string(),
+            date.format("%B %-d").to_string(),
+        ]);
+        self
+    }
+}
+
+/// The hour names a words face uses, one to twelve.
+pub const HOUR_WORDS: [&str; 12] = [
+    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
+    "twelve",
+];
+/// The time in words, to the nearest five minutes, word by word ("twenty",
+/// "to", "ten"), and which word is the hour. Read the same on a 12 or
+/// 24-hour clock, as people say it. The face chooses where the line breaks.
+pub fn in_words(hour: u32, minute: u32) -> (Vec<String>, usize) {
+    let rounded = (hour % 24) * 60 + minute % 60 + 2;
+    let (mut hour, five) = (rounded / 60, (rounded % 60) / 5);
+    if five > 6 {
+        hour += 1;
+    }
+    let name = HOUR_WORDS[((hour + 11) % 12) as usize].to_string();
+    let phrase = match five {
+        0 => return (vec![name, "o’clock".into()], 0),
+        1 | 11 => "five",
+        2 | 10 => "ten",
+        3 | 9 => "quarter",
+        4 | 8 => "twenty",
+        5 | 7 => "twenty-five",
+        _ => "half",
+    };
+    let side = if five <= 6 { "past" } else { "to" };
+    (vec![phrase.into(), side.into(), name], 2)
 }
 
 #[cfg(test)]

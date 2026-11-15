@@ -6,6 +6,7 @@ use cosmic::iced::advanced::text::{self as advanced_text, Paragraph};
 use cosmic::iced::widget::{pin, stack};
 use cosmic::iced::{Point, Size};
 mod analog;
+mod faces;
 #[cfg(test)]
 mod foundation_tests;
 
@@ -52,15 +53,15 @@ pub(super) struct Frame {
 }
 impl Presentation {
     pub fn new(config: &Config) -> Self {
-        Self::project(config, config.wallpaper_palette(), false)
+        Self::project(config, config.wallpaper_palette(), false, BACKDROP.get())
     }
     pub fn part(config: &Config, palette: Palette) -> Self {
-        Self::project(config, palette, false)
+        Self::project(config, palette, false, None)
     }
     pub fn grouped(config: &Config, palette: Palette) -> Self {
-        Self::project(config, palette, true)
+        Self::project(config, palette, true, None)
     }
-    fn project(config: &Config, palette: Palette, grouped: bool) -> Self {
+    fn project(config: &Config, palette: Palette, grouped: bool, backdrop: Option<f32>) -> Self {
         let _scope = crate::widget_style::scope(config);
         let _fonts = grouped.then(|| {
             crate::widget_style::fonts(
@@ -74,6 +75,19 @@ impl Presentation {
             style.ink.value = palette.foreground;
             style.muted.value = palette.muted;
             style.accent.value = palette.accent;
+        }
+        // Straight on a picture whose brightness is known, ink too close to
+        // it turns to the tone that reads there.
+        if let Some(backdrop) =
+            backdrop.filter(|_| !grouped && style.surface.value == Surface::None)
+        {
+            for value in [
+                &mut style.ink.value,
+                &mut style.muted.value,
+                &mut style.accent.value,
+            ] {
+                *value = adapted_ink(*value, backdrop);
+            }
         }
         Self {
             preferences: config.clock,
@@ -90,8 +104,12 @@ impl Presentation {
         crate::widget_presentation::metrics(Widget::Clock)
     }
     pub fn fit(self, width: f32, requested: f32) -> f32 {
-        if self.style.clock_face.value == ClockFace::Analog {
+        let face = self.style.clock_face.value;
+        if face.dial() {
             return requested.min(width.max(1.) / 1.05);
+        }
+        if face != ClockFace::Digital {
+            return faces::fit(&self, face, width, requested);
         }
         fit_with(
             &self.preferences,
@@ -101,6 +119,79 @@ impl Presentation {
             self.style.body.value,
         )
     }
+}
+thread_local! {
+    static BACKDROP: std::cell::Cell<Option<f32>> = const { std::cell::Cell::new(None) };
+}
+/// Builds the clocks made inside `run` for a picture whose middle
+/// brightness under them is `luminance` (relative, 0 to 1), so a clock
+/// drawn straight on it picks ink that reads there.
+pub(crate) fn with_backdrop<T>(luminance: Option<f32>, run: impl FnOnce() -> T) -> T {
+    struct Restore(Option<f32>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            BACKDROP.set(self.0);
+        }
+    }
+    let _restore = Restore(BACKDROP.replace(luminance.filter(|l| l.is_finite())));
+    run()
+}
+/// The contrast ink needs with the picture behind it before it is left as
+/// it is; below it, the ink turns toward the tone that reads.
+pub(crate) const READABLE: f32 = 3.;
+fn contrast(a: f32, b: f32) -> f32 {
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+/// `ink`, or when it is too close to a picture of brightness `backdrop`,
+/// the nearest ink toward black or white that reads on it.
+pub(crate) fn adapted_ink(ink: Color, backdrop: f32) -> Color {
+    let backdrop = backdrop.clamp(0., 1.);
+    if contrast(crate::widget_style::luminance(ink), backdrop) >= READABLE {
+        return ink;
+    }
+    let tone = if backdrop <= 0.003_130_8 {
+        backdrop * 12.92
+    } else {
+        1.055 * backdrop.powf(1. / 2.4) - 0.055
+    };
+    let gray = Color::from_rgb(tone, tone, tone);
+    Color {
+        a: ink.a,
+        ..crate::widget_style::readable_ink(ink, gray)
+    }
+}
+/// The brightness of the picture under `area` (fractions of the picture:
+/// left, top, right, bottom), as its darker tenth, middle and lighter
+/// tenth, so a few bright or dark spots don't decide it. `None` when the
+/// area misses the picture.
+pub(crate) fn backdrop_brightness(rgba: &[u8], size: [u32; 2], area: [f32; 4]) -> Option<[f32; 3]> {
+    let [w, h] = size.map(|v| v as usize);
+    if w == 0 || h == 0 || rgba.len() < w * h * 4 {
+        return None;
+    }
+    let span = |from: f32, to: f32, n: usize| {
+        let from = (from.clamp(0., 1.) * n as f32).floor() as usize;
+        let to = ((to.clamp(0., 1.) * n as f32).ceil() as usize).min(n);
+        (from < to).then_some((from, to))
+    };
+    let (x0, x1) = span(area[0], area[2], w)?;
+    let (y0, y1) = span(area[1], area[3], h)?;
+    // About 64 samples a side is plenty.
+    let step = ((x1 - x0).max(y1 - y0) / 64).max(1);
+    let mut light: Vec<f32> = (y0..y1)
+        .step_by(step)
+        .flat_map(|y| (x0..x1).step_by(step).map(move |x| (y * w + x) * 4))
+        .map(|i| {
+            crate::widget_style::luminance(Color::from_rgb8(rgba[i], rgba[i + 1], rgba[i + 2]))
+        })
+        .collect();
+    light.sort_by(f32::total_cmp);
+    let at = |share: f32| {
+        light
+            .get(((light.len() - 1) as f32 * share).round() as usize)
+            .copied()
+    };
+    Some([at(0.1)?, at(0.5)?, at(0.9)?])
 }
 fn clock_label(
     value: impl Into<String>,
@@ -315,17 +406,35 @@ fn period_size(clock_size: f32) -> f32 {
 }
 
 impl Presentation {
+    /// The height the face takes at `size`, its date below not included.
+    pub fn face_height(self, size: f32) -> f32 {
+        faces::metrics(self.style.clock_face.value).em * size
+    }
+    /// Whether the face draws the date itself (beside the time), so the
+    /// date is not drawn again below it.
+    pub fn carries_date(self) -> bool {
+        self.style.clock_face.value == ClockFace::Split && self.preferences.show_date
+    }
     pub fn face(self, reading: ClockReading, width: f32, size: f32) -> Element<'static, Message> {
         let p = self.style.palette();
-        if self.style.clock_face.value == ClockFace::Analog {
+        let face = self.style.clock_face.value;
+        if face.dial() {
             return analog::view(
                 reading.clone(),
+                face,
                 width,
                 size * 1.05,
                 p,
                 self.style.display.value,
                 self.preferences.alignment,
+                self.halo,
             );
+        }
+        match face {
+            ClockFace::Stacked => return faces::stacked(&self, &reading, width, size),
+            ClockFace::Words => return faces::words(&self, &reading, width, size),
+            ClockFace::Split => return faces::split(&self, &reading, width, size),
+            _ => {}
         }
         let ClockReading { time, period, .. } = reading;
         let mut content_width = measure(&time, size, self.style.display.value);
@@ -398,44 +507,48 @@ impl Presentation {
             .clamp(0.1, 4.)
             * f32::from(self.preferences.scale)
             / 100.;
-        let mut font_size = self.fit(width, 104. * scale);
+        let face = self.style.clock_face.value;
+        let shape = faces::metrics(face);
+        let mut font_size = self.fit(width, 104. * scale * shape.requested);
         let date = now.format("%A, %B %-d").to_string();
-        let gap = if self.preferences.show_date {
+        // A date below the face; Split carries its date beside the time.
+        let below = self.preferences.show_date && !self.carries_date();
+        let gap = if below {
             f32::from(self.style.gap.value)
         } else {
             0.
         };
-        if self.preferences.show_date {
-            let date_width = measure(&date, 20. * font_size / 104., self.style.body.value);
+        if below && !face.dial() {
+            let date_width = measure(&date, shape.date * font_size, self.style.body.value);
             font_size *= (width / date_width.max(1.)).min(1.);
         }
-        let height_per_em = 1.05
-            + if self.preferences.show_date {
-                25. / 104.
-            } else {
-                0.
-            };
-        let date_size = if self.style.clock_face.value == ClockFace::Analog {
+        let height_per_em = shape.em + if below { shape.date * 1.25 } else { 0. };
+        let date_size = if face.dial() {
             // The dial owns the space; its date stays a readable caption rather
             // than inheriting the digital face's large-type proportions.
             let requested = (height * 0.08).clamp(9., 18.);
             let date_size = requested
                 * (width / measure(&date, requested, self.style.body.value).max(1.)).min(1.);
-            let date_height = if self.preferences.show_date {
-                date_size * 1.25
-            } else {
-                0.
-            };
+            let date_height = if below { date_size * 1.25 } else { 0. };
             let available = width.min((height - gap - date_height).max(1.)) / 1.05;
             font_size = (available * 0.9 * f32::from(self.preferences.scale) / 100.).min(available);
             date_size
         } else {
-            font_size = font_size.min((height - gap).max(1.) / height_per_em);
-            20. * font_size / 104.
+            let room = (height - gap).max(1.);
+            font_size = font_size.min(room / height_per_em);
+            // The date never draws smaller than META, so a small box gives
+            // the face what that floor leaves.
+            if below && shape.date * font_size < crate::widget_style::META {
+                font_size = font_size
+                    .min((room - crate::widget_style::META * 1.25) / shape.em)
+                    .max(1.);
+            }
+            (shape.date * font_size).max(crate::widget_style::META)
         };
         Frame {
             presentation: self,
-            reading: ClockReading::at(now.time(), self.preferences.format_24h),
+            reading: ClockReading::at(now.time(), self.preferences.format_24h)
+                .with_date(now.date()),
             date,
             geometry: Geometry {
                 viewport: size,
@@ -451,9 +564,9 @@ impl Presentation {
 impl Frame {
     pub(super) fn face_rows(&self) -> [f32; 2] {
         let g = self.geometry;
-        let face = g.face_size * 1.05;
+        let face = self.presentation.face_height(g.face_size);
         let content = face
-            + if self.presentation.preferences.show_date {
+            + if self.presentation.preferences.show_date && !self.presentation.carries_date() {
                 g.gap + g.date_size * 1.25
             } else {
                 0.
@@ -482,7 +595,7 @@ impl Frame {
             gap,
         } = geometry;
         let mut content = vec![presentation.face(reading, width, font_size)];
-        if presentation.preferences.show_date {
+        if presentation.preferences.show_date && !presentation.carries_date() {
             content.push(
                 container(clock_label(
                     date,
@@ -553,11 +666,46 @@ pub(super) fn view_context(
     Presentation::new(config).frame(now, size).view()
 }
 
+/// The share of a Clock page tile's height a dial fills.
+pub(crate) const TILE_DIAL: f32 = 0.9;
+
+/// A Clock page tile's picture of `config`'s clock. A dial fills most of
+/// the tile's height with no time caption under it, so it reads at tile
+/// size; every other face is drawn as the desktop draws it.
+pub(super) fn tile(
+    config: &Config,
+    now: chrono::NaiveDateTime,
+    size: [f32; 2],
+) -> Element<'static, Message> {
+    let presentation = Presentation::new(config);
+    let face = presentation.style.clock_face.value;
+    if config.recipes.clock.is_some() || !face.dial() {
+        return view_context(
+            config,
+            now,
+            size,
+            crate::widget_presentation::Context::LocalPreview,
+        );
+    }
+    let diameter = (size[1] * TILE_DIAL).min(size[0]).max(1.);
+    container(analog::dial(
+        ClockReading::at(now.time(), config.clock.format_24h),
+        face,
+        diameter,
+        presentation.style.palette(),
+        presentation.style.display.value,
+        presentation.halo,
+    ))
+    .center_x(size[0])
+    .center_y(size[1])
+    .into()
+}
+
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::native_test::Native;
-    pub(super) fn ink(pixels: &[u8], width: usize) -> [usize; 4] {
+    pub(in crate::app) fn ink(pixels: &[u8], width: usize) -> [usize; 4] {
         let mut result = [usize::MAX, usize::MAX, 0, 0];
         for (i, pixel) in pixels.chunks_exact(4).enumerate() {
             if pixel[3] > 40 {
@@ -710,6 +858,307 @@ mod tests {
         assert!(
             large[2] - large[0] > small[2] - small[0] + 40,
             "Text size changes visible glyphs"
+        );
+    }
+
+    /// Every face fits its box: at small, natural and large sizes, square
+    /// and wide, 12 and 24-hour, with and without the date, at each
+    /// alignment and text size, nothing is clipped.
+    #[test]
+    fn every_face_fits_its_box_everywhere() {
+        use crate::widget_style::resolver::ClockFace;
+        let theme = cosmic::Theme::dark();
+        let mut config = Config::default();
+        config.clock.center_vertically = true;
+        let times = [(23, 58), (9, 41), (12, 5)];
+        for face in ClockFace::ALL {
+            config.clock.face = Some(face);
+            for size in [
+                [130., 78.],
+                [160., 100.],
+                [300., 120.],
+                [490., 200.],
+                [260., 260.],
+                [620., 280.],
+            ] {
+                let mut native = Native::new(Size::new(size[0], size[1]));
+                for (hour, minute) in times {
+                    let now = chrono::NaiveDate::from_ymd_opt(2026, 9, 30)
+                        .unwrap()
+                        .and_hms_opt(hour, minute, 0)
+                        .unwrap();
+                    for format in [true, false] {
+                        for show_date in [true, false] {
+                            for (alignment, scale) in [
+                                (ClockAlignment::Left, 200),
+                                (ClockAlignment::Center, 100),
+                                (ClockAlignment::Right, 50),
+                            ] {
+                                config.clock.format_24h = format;
+                                config.clock.show_date = show_date;
+                                config.clock.alignment = alignment;
+                                config.clock.scale = scale;
+                                // Below the card's 160 by 100 minimum only
+                                // Settings' face tiles draw, and only Split
+                                // shows its date there.
+                                if size[0] < 160. && show_date && face != ClockFace::Split {
+                                    continue;
+                                }
+                                let pixels = native.render(view(&config, now, size), &theme);
+                                let bounds = ink(&pixels, size[0] as usize);
+                                assert!(
+                                    bounds[0] >= 1
+                                        && bounds[2] < size[0] as usize - 1
+                                        && bounds[1] >= 1
+                                        && bounds[3] < size[1] as usize - 1,
+                                    "{face:?} {size:?} {hour}:{minute} 24h={format} date={show_date} {alignment:?} {scale}%: {bounds:?}"
+                                );
+                                // Split's date stays on its two lines.
+                                if face == ClockFace::Split && show_date {
+                                    let view = || view(&config, now, size);
+                                    let weekday = native.text_bounds(view(), "Wednesday");
+                                    let day = native.text_bounds(view(), "September 30");
+                                    assert!(
+                                        day.height <= weekday.height * 1.2
+                                            && day.x + day.width <= size[0],
+                                        "{size:?} {scale}% 24h={format}: {weekday:?} {day:?} time={:?} pm={:?} am={:?}",
+                                        native.text_all(
+                                            view(),
+                                            &ClockReading::at(now.time(), format).time
+                                        ),
+                                        native.text_all(view(), "PM"),
+                                        native.text_all(view(), "AM")
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                config.clock.format_24h = false;
+                config.clock.show_date = true;
+                config.clock.alignment = ClockAlignment::Center;
+                config.clock.scale = 100;
+                native.capture(
+                    view(
+                        &config,
+                        chrono::NaiveDate::from_ymd_opt(2026, 9, 30)
+                            .unwrap()
+                            .and_hms_opt(21, 41, 0)
+                            .unwrap(),
+                        size,
+                    ),
+                    &theme,
+                    &format!("clock-face-{}-{}x{}", face.key(), size[0], size[1]),
+                );
+            }
+        }
+    }
+
+    /// The faces say the time: the digits, the words or the date are text
+    /// the renderer finds, so search and screen readers read them too.
+    #[test]
+    fn every_face_says_the_time_as_text() {
+        use crate::widget_style::resolver::ClockFace;
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 9, 30)
+            .unwrap()
+            .and_hms_opt(21, 31, 0)
+            .unwrap();
+        let mut native = Native::new(Size::new(490., 200.));
+        let mut config = Config::default();
+        for (face, said) in [
+            (ClockFace::Digital, vec!["21:31", "Wednesday, September 30"]),
+            (ClockFace::Stacked, vec!["21", "31"]),
+            (ClockFace::Words, vec!["half", "past", "nine"]),
+            (ClockFace::Split, vec!["21:31", "Wednesday", "September 30"]),
+            (ClockFace::Analog, vec!["21:31"]),
+            (ClockFace::Minimal, vec!["21:31"]),
+            (ClockFace::Numerals, vec!["21:31"]),
+        ] {
+            config.clock.face = Some(face);
+            for text in said {
+                native.text_bounds(view(&config, now, [490., 200.]), text);
+            }
+        }
+        // Split shows its date beside the time, once.
+        config.clock.face = Some(ClockFace::Split);
+        assert!(
+            native
+                .text_all(view(&config, now, [490., 200.]), "Wednesday, September 30")
+                .is_empty()
+        );
+        config.clock.show_date = false;
+        assert!(
+            native
+                .text_all(view(&config, now, [490., 200.]), "Wednesday")
+                .is_empty()
+        );
+        config.clock.format_24h = false;
+        config.clock.face = Some(ClockFace::Stacked);
+        native.text_bounds(view(&config, now, [490., 200.]), "9");
+        native.text_bounds(view(&config, now, [490., 200.]), "PM");
+    }
+
+    /// Words breaks between the parts of the phrase so no short word is
+    /// left alone on the last line: "twenty / to ten", not "twenty to /
+    /// ten".
+    #[test]
+    fn words_break_without_leaving_a_short_word_alone() {
+        use crate::widget_style::resolver::ClockFace;
+        let mut config = Config::default();
+        config.clock.face = Some(ClockFace::Words);
+        config.clock.show_date = false;
+        let said = |config: &Config, size: [f32; 2], hour: u32, minute: u32| {
+            let now = chrono::NaiveDate::from_ymd_opt(2026, 9, 30)
+                .unwrap()
+                .and_hms_opt(hour, minute, 0)
+                .unwrap();
+            let mut native = Native::new(Size::new(size[0], size[1]));
+            let mut placed = native.placed_text(view(config, now, size));
+            placed.sort_by(|a, b| a.1.y.total_cmp(&b.1.y).then(a.1.x.total_cmp(&b.1.x)));
+            placed.dedup_by(|a, b| a.0 == b.0 && (a.1.y - b.1.y).abs() < 1.);
+            // Texts whose middles are on one height are one line.
+            let mut lines: Vec<(f32, Vec<String>)> = Vec::new();
+            for (text, bounds) in placed {
+                let middle = bounds.center_y();
+                match lines.last_mut() {
+                    Some((y, line)) if (middle - *y).abs() < bounds.height / 2. => line.push(text),
+                    _ => lines.push((middle, vec![text])),
+                }
+            }
+            lines
+                .into_iter()
+                .map(|(_, line)| line.join(" "))
+                .collect::<Vec<_>>()
+        };
+        // The same break in a small card and a wide one.
+        for size in [[160., 100.], [490., 200.]] {
+            for (hour, minute, lines) in [
+                (18, 30, ["half", "past six"]),
+                (21, 40, ["twenty", "to ten"]),
+                (23, 15, ["quarter", "past eleven"]),
+                (11, 55, ["five", "to twelve"]),
+                (21, 30, ["half", "past nine"]),
+                (22, 0, ["ten", "o’clock"]),
+            ] {
+                assert_eq!(
+                    said(&config, size, hour, minute),
+                    lines,
+                    "{hour}:{minute:02} {size:?}"
+                );
+            }
+        }
+    }
+
+    /// In a Clock page tile a dial fills most of the tile's height and has
+    /// no time caption under it; on the desktop it keeps the caption.
+    #[test]
+    fn a_tile_dial_fills_the_tile_without_a_caption() {
+        use crate::widget_style::resolver::ClockFace;
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 9, 30)
+            .unwrap()
+            .and_hms_opt(6, 30, 0)
+            .unwrap();
+        let size = [118., 78.];
+        let mut native = Native::new(Size::new(size[0], size[1]));
+        let theme = cosmic::Theme::dark();
+        let mut config = Config::default();
+        config.clock.show_date = false;
+        for face in [ClockFace::Analog, ClockFace::Minimal, ClockFace::Numerals] {
+            config.clock.face = Some(face);
+            let bounds = ink(&native.render(tile(&config, now, size), &theme), 118);
+            let tall = (bounds[3] - bounds[1]) as f32;
+            assert!(
+                tall >= size[1] * 0.8,
+                "{face:?}: the dial is {tall} of {}",
+                size[1]
+            );
+            assert!(
+                native.all_text(tile(&config, now, size)).is_empty(),
+                "{face:?}: {:?}",
+                native.all_text(tile(&config, now, size))
+            );
+            Native::new(Size::new(490., 200.))
+                .text_bounds(view(&config, now, [490., 200.]), "06:30");
+        }
+        // Other faces draw as on the desktop.
+        config.clock.face = Some(ClockFace::Digital);
+        native.text_bounds(tile(&config, now, size), "06:30");
+    }
+
+    /// The typefaces Halcyon ships are there without installing anything,
+    /// draw the clock in their own shapes, and keep every weight their
+    /// axis has.
+    #[test]
+    fn a_shipped_typeface_draws_the_clock_in_every_weight() {
+        use crate::widget_style::resolver::ClockWeight;
+        // The font list is taken only when the font system is free, so a
+        // render on a parallel test can make one call pass it by.
+        for _ in 0..500 {
+            crate::desktop_theme::load_installed_fonts();
+            if crate::desktop_theme::font_installed(crate::widget_style::clock_fonts::ALL[0].family)
+            {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 4)
+            .unwrap()
+            .and_hms_opt(10, 8, 0)
+            .unwrap();
+        let theme = cosmic::Theme::dark();
+        let mut native = Native::new(Size::new(490., 200.));
+        let mut config = Config::default();
+        config.clock.show_date = false;
+        let width = |config: &Config, native: &mut Native| {
+            let bounds = ink(&native.render(view(config, now, [490., 200.]), &theme), 490);
+            bounds[2] - bounds[0]
+        };
+        let plain = width(&config, &mut native);
+        for font in &crate::widget_style::clock_fonts::ALL {
+            assert!(
+                crate::desktop_theme::font_installed(font.family),
+                "{}",
+                font.family
+            );
+            for weight in [ClockWeight::Light, ClockWeight::Normal, ClockWeight::Bold] {
+                let face = Font {
+                    family: cosmic::iced::font::Family::Name(font.family),
+                    weight: weight.native(),
+                    ..Font::DEFAULT
+                };
+                assert_eq!(
+                    crate::desktop_theme::font_style_available(face),
+                    font.weights.contains(&match weight {
+                        ClockWeight::Light => 300,
+                        ClockWeight::Normal => 400,
+                        ClockWeight::Bold => 700,
+                    }),
+                    "{} {weight:?}",
+                    font.family
+                );
+            }
+        }
+        config.clock_font = Some("Antonio".into());
+        let tall = width(&config, &mut native);
+        native.capture(
+            view(&config, now, [490., 200.]),
+            &theme,
+            "clock-font-antonio",
+        );
+        assert!(
+            (tall as f32) < plain as f32 * 0.9,
+            "Antonio is narrow: {tall} vs {plain}"
+        );
+        config.clock.weight = Some(ClockWeight::Light);
+        let light = native.render(view(&config, now, [490., 200.]), &theme);
+        config.clock.weight = Some(ClockWeight::Bold);
+        let bold = native.render(view(&config, now, [490., 200.]), &theme);
+        let inked = |pixels: &[u8]| pixels.chunks_exact(4).filter(|p| p[3] > 128).count();
+        assert!(
+            inked(&bold) as f32 > inked(&light) as f32 * 1.3,
+            "the weight axis is used: {} vs {}",
+            inked(&bold),
+            inked(&light)
         );
     }
 

@@ -7,7 +7,9 @@
 use super::*;
 use crate::desktop::wallpaper::BgEntry;
 use crate::desktop::wallpaper::media::{Pixels, SCENE};
-use cosmic::iced::{Color, Point};
+#[cfg(test)]
+use cosmic::iced::Color;
+use cosmic::iced::Point;
 use cosmic::widget::image::Handle;
 
 /// The widest the stage gets; a wider window only adds margin around it.
@@ -242,34 +244,14 @@ pub(super) const LOW_CONTRAST: f32 = 3.;
 /// picture: left, top, right, bottom): its contrast ratio with the middle
 /// brightness there, so a few bright or dark spots don't decide it. `None`
 /// when the area misses the picture.
+#[cfg(test)]
 pub(super) fn picture_contrast(
     ink: Color,
     rgba: &[u8],
     size: [u32; 2],
     area: [f32; 4],
 ) -> Option<f32> {
-    let [w, h] = size.map(|v| v as usize);
-    if w == 0 || h == 0 || rgba.len() < w * h * 4 {
-        return None;
-    }
-    let span = |from: f32, to: f32, n: usize| {
-        let from = (from.clamp(0., 1.) * n as f32).floor() as usize;
-        let to = ((to.clamp(0., 1.) * n as f32).ceil() as usize).min(n);
-        (from < to).then_some((from, to))
-    };
-    let (x0, x1) = span(area[0], area[2], w)?;
-    let (y0, y1) = span(area[1], area[3], h)?;
-    // About 64 samples a side is plenty to find the middle.
-    let step = ((x1 - x0).max(y1 - y0) / 64).max(1);
-    let mut light: Vec<f32> = (y0..y1)
-        .step_by(step)
-        .flat_map(|y| (x0..x1).step_by(step).map(move |x| (y * w + x) * 4))
-        .map(|i| {
-            crate::widget_style::luminance(Color::from_rgb8(rgba[i], rgba[i + 1], rgba[i + 2]))
-        })
-        .collect();
-    light.sort_by(f32::total_cmp);
-    let middle = *light.get(light.len() / 2)?;
+    let [_, middle, _] = crate::app::backdrop_brightness(rgba, size, area)?;
     let ink = crate::widget_style::luminance(ink);
     Some((ink.max(middle) + 0.05) / (ink.min(middle) + 0.05))
 }
@@ -353,6 +335,17 @@ impl Settings {
         Screen::of(self.placement.preview_snapshot())
     }
     /// The clock's place in the area widgets use: position and size.
+    /// Where Daily overview sits and its size, when it shows the time in
+    /// place of the clock.
+    pub(super) fn clock_stage_overview(&self) -> Option<([f32; 2], [f32; 2])> {
+        let key = Widget::Glance.key();
+        (self.config.glance.show_clock && self.config.widget_visible(Widget::Glance))
+            .then_some(())?;
+        Some((
+            self.placement.widget_position(key)?,
+            self.placement.display_size(key)?,
+        ))
+    }
     pub(super) fn clock_stage_place(&self) -> Option<([f32; 2], [f32; 2])> {
         Some((
             self.placement.widget_position(Widget::Clock.key())?,
@@ -360,9 +353,29 @@ impl Settings {
         ))
     }
     /// The clock's contrast with the picture behind it, when it is drawn
-    /// straight on the picture and the picture is loaded.
+    /// straight on the picture and the picture is loaded. The clock turns
+    /// its ink to suit the picture's middle, so this is how its ink stands
+    /// out from the picture's darker and lighter parts: low only where the
+    /// picture is busy under it.
     pub(super) fn clock_stage_contrast(&self) -> Option<f32> {
-        if !self.config.widget_visible(Widget::Clock) {
+        let [dark, middle, light] = self.clock_stage_brightness()?;
+        let style = {
+            let _scope = crate::widget_style::scope(&self.config);
+            crate::widget_style::presentation(&self.config, self.config.wallpaper_palette(), true)
+        };
+        let ink = crate::widget_style::luminance(crate::app::adapted_ink(style.ink.value, middle));
+        let contrast = |back: f32| (ink.max(back) + 0.05) / (ink.min(back) + 0.05);
+        Some(contrast(dark).min(contrast(light)))
+    }
+    /// The picture's middle brightness under a clock drawn straight on it,
+    /// which the desktop measures too to pick the clock's ink.
+    pub(super) fn clock_stage_backdrop(&self) -> Option<f32> {
+        self.clock_stage_brightness().map(|[_, middle, _]| middle)
+    }
+    /// The brightness of the picture under the clock, darker tenth, middle
+    /// and lighter tenth, when the clock is drawn straight on the picture.
+    fn clock_stage_brightness(&self) -> Option<[f32; 3]> {
+        if !self.config.widget_visible(Widget::Clock) || self.config.recipes.clock.is_some() {
             return None;
         }
         let style = {
@@ -391,7 +404,7 @@ impl Settings {
             (x + size[0]) / whole[0],
             (y + size[1]) / whole[1],
         ];
-        picture_contrast(style.ink.value, pixels, [*width, *height], area)
+        crate::app::backdrop_brightness(pixels, [*width, *height], area)
     }
     /// The stage edits the display the clock is on.
     fn clock_stage_display(&mut self) {
@@ -433,7 +446,10 @@ impl Settings {
             background,
             chrono::Local::now().naive_local(),
         )
-        .map(|request| request.with_scenes(crate::depth::cache::root()))
+        .map(|request| crate::depth::Request {
+            backdrop: self.clock_stage_backdrop(),
+            ..request.with_scenes(crate::depth::cache::root())
+        })
     }
     /// Keeps the stage's pictures in step: the wallpaper at the screen's
     /// shape, and the lit clock once a drag rests or ends.
@@ -716,6 +732,8 @@ pub(super) fn focus_check() -> Task<Message> {
 }
 
 pub(super) const CLOCK_ID: &str = "clock-stage-clock";
+/// Daily overview's clock on the stage, when it carries the time.
+pub(super) const OVERVIEW_ID: &str = "clock-stage-overview";
 /// The stage's picture of the whole output.
 pub(super) const SCREEN_ID: &str = "clock-stage-screen";
 

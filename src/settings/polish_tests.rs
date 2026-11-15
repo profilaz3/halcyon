@@ -700,12 +700,15 @@ fn polish_e_dock_shape_follow_style_and_looks_header() {
         let mut native = crate::native_test::Native::new(size);
         assert!(native.duplicate_ids(app.settings_view()).is_empty());
         native_reveal(&app, &mut native, "clock-follow-style");
-        assert!(native.try_bounds(app.settings_view(), "font-clock").is_none());
+        assert!(native.text_all(app.settings_view(), "Weight").is_empty());
+        // The typefaces stay on offer: choosing one gives the clock its own
+        // style.
+        assert!(native.try_bounds(app.settings_view(), "clock-font-gallery").is_some());
         capture(&app, &mut native, "polish-e-clock-follow");
     }
     let mut native = crate::native_test::Native::new(Size::new(1280., 800.));
     native_click(&mut app, &mut native, "clock-follow-style");
-    assert!(native.try_bounds(app.settings_view(), "font-clock").is_some());
+    assert!(!native.text_all(app.settings_view(), "Weight").is_empty());
     send_settings(
         &mut app,
         Message::ClockWeight(Some(crate::widget_style::resolver::ClockWeight::Bold)),
@@ -714,7 +717,7 @@ fn polish_e_dock_shape_follow_style_and_looks_header() {
     capture(&app, &mut native, "polish-e-clock-own");
     native_click(&mut app, &mut native, "clock-follow-style");
     assert_eq!(Config::load().clock.weight, None);
-    assert!(native.try_bounds(app.settings_view(), "font-clock").is_none());
+    assert!(native.text_all(app.settings_view(), "Weight").is_empty());
     // Looks: saving is the main action; Mix and Import wait behind ⋯.
     send_settings(&mut app, Message::Page(Page::DesktopProfiles));
     for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
@@ -754,18 +757,18 @@ fn polish_e_dock_shape_follow_style_and_looks_header() {
     capture(&app, &mut native, "polish-e-looks-last-applied");
     // Following the look puts back the look's own clock, not a blank one.
     send_settings(&mut app, Message::Page(Page::Clock));
-    assert!(native.try_bounds(app.settings_view(), "font-clock").is_some());
+    assert!(!native.text_all(app.settings_view(), "Weight").is_empty());
     native_reveal(&app, &mut native, "clock-follow-style");
     native_click(&mut app, &mut native, "clock-follow-style");
     assert_eq!(profiles::LookStyle::of(&Config::load()).clock, tidal);
-    assert!(native.try_bounds(app.settings_view(), "font-clock").is_none());
+    assert!(native.text_all(app.settings_view(), "Weight").is_empty());
     // Undoing that look forgets it; its clock then counts as the user's own.
     app.profiles.forget_applied("another-change");
     assert!(app.profiles.last_applied().is_some());
     app.profiles.forget_applied("tidal-change");
     assert_eq!(app.profiles.last_applied(), None);
     assert!(!state.exists());
-    assert!(native.try_bounds(app.settings_view(), "font-clock").is_some());
+    assert!(!native.text_all(app.settings_view(), "Weight").is_empty());
 }
 
 /// Phase F: widget setting changes name their widget in Changes, and any

@@ -241,9 +241,9 @@ fn fb14_fallbacks_reject_unsupported_frames_faces_and_surfaces() {
         request.frame.size = bad;
         assert!(request.frame.pixels().is_none());
     }
+    // Every face can stand behind the scene; a card behind it cannot.
     config.clock.face = Some(crate::widget_style::resolver::ClockFace::Analog);
-    assert!(!eligible(&config));
-    config.clock.face = Some(crate::widget_style::resolver::ClockFace::Digital);
+    assert!(eligible(&config));
     config.clock.surface = Some(crate::widget_style::resolver::ClockSurface::Panel);
     assert!(!eligible(&config));
     config.clock.surface = Some(crate::widget_style::resolver::ClockSurface::None);
@@ -764,3 +764,94 @@ fn ridge_matte_path_is_byte_identical() {
 }
 
 pub(crate) mod own;
+
+/// Every face stands behind the Ridge's foreground: somewhere on the
+/// picture the hills cut the face, the colors stay the clock's own, and the
+/// same style draws whole for behind the rain glass. In light and dark.
+#[test]
+fn every_face_stands_behind_the_scene_and_the_rain_glass() {
+    use crate::widget_style::resolver::ClockFace;
+    let (root, mut config, fixture_request) = fixture();
+    let now =
+        chrono::NaiveDateTime::parse_from_str(&fixture_request.time, "%Y-%m-%dT%H:%M:%S").unwrap();
+    let evidence = std::env::var_os("DESKTOP_CARDS_LAYOUT_EVIDENCE").map(std::path::PathBuf::from);
+    // Where each face is cut, found in the dark pass and kept for the light.
+    let mut spots: Vec<f32> = Vec::new();
+    for light in [false, true] {
+        config.appearance.wallpaper_light = light;
+        for (index, face) in ClockFace::ALL.into_iter().enumerate() {
+            config.clock.face = Some(face);
+            config.clock.show_date = face == ClockFace::Split;
+            assert!(eligible(&config), "{face:?}");
+            let plain = crate::native_test::Native::new(cosmic::iced::Size::new(800., 330.))
+                .render(
+                    crate::app::settings_clock_preview_at(&config, fixture_request.frame.size, now),
+                    &cosmic::Theme::dark(),
+                );
+            // Lower the clock down the sky until the hills cross its face.
+            let tops: Vec<f32> = match spots.get(index) {
+                Some(top) => vec![*top],
+                None => (0..40).map(|step| 100. + 10. * step as f32).collect(),
+            };
+            let found = tops.into_iter().find_map(|top| {
+                let mut frame = fixture_request.frame.clone();
+                frame.origin[1] = top;
+                let request = Request::new(
+                    &config,
+                    frame.clone(),
+                    fixture_request.background.clone(),
+                    now,
+                )
+                .unwrap();
+                let masked = render(&request)?;
+                let (mut cut, mut kept) = (0, 0);
+                for (a, b) in plain.chunks_exact(4).zip(masked.rgba.chunks_exact(4)) {
+                    assert!(b[3] <= a[3], "{face:?}: depth only takes ink away");
+                    cut += usize::from(b[3] < a[3]);
+                    kept += usize::from(b[3] > 0);
+                }
+                (cut > 300 && kept > 1000).then_some((frame, masked, kept))
+            });
+            let (frame, masked, kept) =
+                found.unwrap_or_else(|| panic!("{face:?} light={light}: never cut and readable"));
+            if !light {
+                spots.push(frame.origin[1]);
+            }
+            // Behind the rain glass: the same clock, drawn whole.
+            let glass = Request::plain(&config, frame.clone(), now).unwrap();
+            let whole = render_scene(&glass).unwrap();
+            assert_eq!(whole.found, Found::Plain);
+            let whole = whole.pixels.unwrap();
+            let drawn = whole.rgba.chunks_exact(4).filter(|p| p[3] > 0).count();
+            assert!(drawn >= kept, "{face:?}: glass keeps every glyph");
+            if let Some(dir) = &evidence {
+                let tone = if light { "light" } else { "dark" };
+                for (pixels, name) in [(&masked, "depth"), (&whole, "glass")] {
+                    let scene = compose_scene(pixels, frame.origin, frame.size);
+                    image::save_buffer(
+                        dir.join(format!("desktop-{name}-{}-{tone}.png", face.key())),
+                        &scene,
+                        1920,
+                        1080,
+                        image::ColorType::Rgba8,
+                    )
+                    .unwrap();
+                }
+            }
+        }
+    }
+    // Each line has to stay readable: with the hours clear and most of
+    // the minutes behind the hills, Stacked falls back to the plain clock.
+    config.appearance.wallpaper_light = false;
+    config.clock.face = Some(ClockFace::Stacked);
+    config.clock.show_date = false;
+    let request = Request::new(
+        &config,
+        fixture_request.frame.clone(),
+        fixture_request.background.clone(),
+        now,
+    )
+    .unwrap();
+    assert!(render(&request).is_none(), "the minutes are mostly hidden");
+    std::fs::remove_dir_all(root).unwrap();
+}

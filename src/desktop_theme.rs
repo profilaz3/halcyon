@@ -653,6 +653,8 @@ pub fn load_installed_fonts() {
     let Ok(mut system) = system.try_write() else {
         return;
     };
+    // Halcyon's own clock typefaces count as installed everywhere.
+    crate::widget_style::clock_fonts::load(&mut system);
     let mut names: Vec<String> = system
         .raw()
         .db()
@@ -675,6 +677,12 @@ pub fn font_installed(name: &str) -> bool {
 /// not run font discovery or load a file while building Settings controls.
 pub fn font_style_available(font: Font) -> bool {
     use cosmic::iced::advanced::graphics::text::{self, cosmic_text::fontdb};
+    // A shipped variable typeface draws every weight on its axis from one face.
+    if let cosmic::iced::font::Family::Name(name) = font.family
+        && let Some(drawn) = crate::widget_style::clock_fonts::draws(name, font)
+    {
+        return drawn;
+    }
     let attrs = text::to_attributes(font);
     let system = text::font_system().read().expect("Read font catalogue");
     let query = fontdb::Query {

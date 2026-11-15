@@ -14,6 +14,7 @@ mod automation;
 mod calendar;
 mod canvas;
 mod city_search;
+mod clock_scale;
 mod clock_stage;
 mod color_well;
 mod colors;
@@ -815,6 +816,11 @@ pub enum Message {
     ClockDate(bool),
     ClockAlignment(ClockAlignment),
     ClockScale(u16),
+    /// The size drag or arrow keys ended: save the size once.
+    ClockScaleCommit,
+    /// Back to 100%, saved at once.
+    ClockScaleReset,
+    ClockScaleSaved(Box<Result<Config, String>>),
     ClockVertical(bool),
     DepthPreviewReady(u64, Option<crate::desktop::wallpaper::media::Pixels>),
     /// The Clock page's stage: the clock on its screen, dragged to move it.
@@ -923,6 +929,7 @@ pub struct Settings {
     moment_base_clock: bool,
     /// The clock's own style controls are open although nothing is set yet.
     clock_custom: bool,
+    clock_scale: clock_scale::ScaleEdit,
     /// The same for Daily overview's own background and fonts.
     glance_custom: bool,
     updates: updates::Updates,
@@ -1235,6 +1242,7 @@ impl cosmic::Application for Settings {
             recipe_editor: recipes::Editor::loaded(),
             moment_base_clock: false,
             clock_custom: false,
+            clock_scale: Default::default(),
             glance_custom: false,
             updates: updates::Updates::default(),
             support: support::Support::default(),
@@ -4264,7 +4272,13 @@ impl Settings {
             Message::ClockFormat(value) => self.save_clock(json!({"format_24h": value})),
             Message::ClockDate(value) => self.save_clock(json!({"show_date": value})),
             Message::ClockAlignment(value) => self.save_clock(json!({"alignment": value})),
-            Message::ClockScale(value) => self.save_clock(json!({"scale": value})),
+            Message::ClockScale(value) => self.clock_scale_step(value),
+            Message::ClockScaleCommit => return self.clock_scale_commit(),
+            Message::ClockScaleReset => {
+                self.clock_scale_step(100);
+                return self.clock_scale_commit();
+            }
+            Message::ClockScaleSaved(result) => return self.clock_scale_saved(*result),
 
             Message::ClockVertical(value) => self.save_clock(json!({"center_vertically": value})),
             Message::DepthPreviewReady(id, pixels) => self.depth_preview.ready(id, pixels),
@@ -6993,6 +7007,7 @@ mod tests {
     include!("settings/search_label_tests.rs");
     include!("settings/corners_tests.rs");
     include!("settings/clock_stage_tests.rs");
+    include!("settings/clock_gallery_tests.rs");
     include!("settings/devices_tests.rs");
     include!("settings/icon_packs_tests.rs");
     include!("settings/glance_off_tests.rs");
@@ -7393,23 +7408,33 @@ mod tests {
                         Event::Mouse(mouse::Event::CursorMoved { position: point }),
                         point,
                     );
-                    for message in native
-                        .event(
-                            app.settings_view(),
-                            Event::Keyboard(keyboard::Event::KeyPressed {
-                                key: keyboard::Key::Named(key::Named::ArrowUp),
-                                modified_key: keyboard::Key::Named(key::Named::ArrowUp),
-                                physical_key: key::Physical::Code(key::Code::ArrowUp),
-                                location: keyboard::Location::Standard,
-                                modifiers: keyboard::Modifiers::empty(),
-                                text: None,
-                                repeat: false,
-                            }),
-                            point,
-                        )
-                        .0
-                    {
-                        let _ = app.update(message);
+                    let up = keyboard::Key::Named(key::Named::ArrowUp);
+                    let code = key::Physical::Code(key::Code::ArrowUp);
+                    // The step saves when the key comes up.
+                    for event in [
+                        keyboard::Event::KeyPressed {
+                            key: up.clone(),
+                            modified_key: up.clone(),
+                            physical_key: code,
+                            location: keyboard::Location::Standard,
+                            modifiers: keyboard::Modifiers::empty(),
+                            text: None,
+                            repeat: false,
+                        },
+                        keyboard::Event::KeyReleased {
+                            key: up.clone(),
+                            modified_key: up.clone(),
+                            physical_key: code,
+                            location: keyboard::Location::Standard,
+                            modifiers: keyboard::Modifiers::empty(),
+                        },
+                    ] {
+                        for message in native
+                            .event(app.settings_view(), Event::Keyboard(event), point)
+                            .0
+                        {
+                            send_settings(&mut app, message);
+                        }
                     }
                 }
                 assert_eq!(Config::load().clock.scale, 110);
@@ -11301,17 +11326,21 @@ mod tests {
         }
         send_settings(&mut app, Message::Resized(size));
 
+        // Every face stands behind the scene: none blocks it.
+        for face in ClockFace::ALL {
+            send_settings(&mut app, Message::ClockFace(Some(face)));
+            assert!(!app.error, "{}", app.status);
+            assert!(app.depth_block().is_none(), "{face:?}");
+            assert!(lighting(&app, &mut Native::new(size)), "{face:?}");
+        }
+        send_settings(&mut app, Message::ClockFace(Some(ClockFace::Digital)));
+
         // Each block names itself; its button removes exactly that block.
-        let cases: [(Message, &str, fn(&Config) -> bool); 4] = [
+        let cases: [(Message, &str, fn(&Config) -> bool); 3] = [
             (
                 Message::Widget(Widget::Glance, true),
                 "Daily overview shows the time instead",
                 |c| !c.glance.enabled,
-            ),
-            (
-                Message::ClockFace(Some(ClockFace::Analog)),
-                "Needs the digital type",
-                |c| c.clock.face == Some(ClockFace::Digital),
             ),
             (
                 Message::ClockSurface(Some(ClockSurface::Panel)),

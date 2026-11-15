@@ -126,7 +126,7 @@ impl Settings {
     /// [`crate::depth::eligible`]), with the one change that fixes it. The
     /// clock’s own settings come first, then the picture and its analysis.
     pub(super) fn depth_block(&self) -> Option<Block> {
-        use crate::widget_style::resolver::{ClockFace, ClockSurface, Surface};
+        use crate::widget_style::resolver::{ClockSurface, Surface};
         let config = &self.config;
         if config.recipes.clock.is_some() {
             return Some(Block::fix(
@@ -154,13 +154,6 @@ impl Settings {
             let _scope = crate::widget_style::scope(config);
             crate::widget_style::presentation(config, config.wallpaper_palette(), true)
         };
-        if style.clock_face.value != ClockFace::Digital {
-            return Some(Block::fix(
-                "Needs the digital type",
-                "Use digital",
-                self.clock_moment_edit(Message::ClockFace(Some(ClockFace::Digital))),
-            ));
-        }
         if style.surface.value != Surface::None {
             return Some(Block::fix(
                 "Needs no background card",

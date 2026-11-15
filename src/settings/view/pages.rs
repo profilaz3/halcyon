@@ -1135,21 +1135,18 @@ impl Settings {
             );
             now.clock == look.clock && now.clock_font == look.clock_font
         };
-        let mut controls: Vec<Element<'_, Message>> = Vec::new();
-        if !follows {
-            controls.push(self.widget_font_row(
-                super::super::FontTarget::Clock,
-                "Font",
-                self.config.clock_font.as_deref(),
-                "Same as widgets",
-            ));
-        }
+        // The typefaces show even while following the look: choosing one
+        // gives the clock its own style.
+        let mut controls: Vec<Element<'_, Message>> = vec![
+            label("Font", 14., FG),
+            self.clock_font_strip(),
+        ];
         controls.extend([
             // A slider, like every other percentage in the app.
             column::with_children(vec![
                 split(
                     label(
-                        if clock.face == Some(ClockFace::Analog) {
+                        if clock.face.is_some_and(ClockFace::dial) {
                             "Face size"
                         } else {
                             "Text size"
@@ -1163,7 +1160,7 @@ impl Settings {
                             .then(|| {
                                 button::text("Reset")
                                     .id(cosmic::widget::Id::new("clock-scale-reset"))
-                                    .on_press(Message::ClockScale(100))
+                                    .on_press(Message::ClockScaleReset)
                                     .into()
                             })
                             .into_iter()
@@ -1178,23 +1175,27 @@ impl Settings {
                     .align_y(Alignment::Center)
                     .into(),
                 ),
-                container(
+                // Live while dragging or stepping; saved once at the end.
+                container(completed_slider(
                     slider(50u16..=200, clock.scale.clamp(50, 200), Message::ClockScale)
-                        .name(if clock.face == Some(ClockFace::Analog) {
+                        .name(if clock.face.is_some_and(ClockFace::dial) {
                             "Face size"
                         } else {
                             "Text size"
                         })
                         .step(10u16)
-                        .width(Length::Fill),
-                )
+                        .on_release(Message::ClockScaleCommit)
+                        .width(Length::Fill)
+                        .into(),
+                    Message::ClockScaleCommit,
+                ))
                 .id(cosmic::widget::Id::new("clock-scale"))
                 .into(),
                 // One size model: the box is the clock's size, and the
                 // stage corner grows it with the digits. This only fits
                 // the time or face inside that box.
                 label(
-                    if clock.face == Some(ClockFace::Analog) {
+                    if clock.face.is_some_and(ClockFace::dial) {
                         "Sizes the face inside its box. To make the whole clock bigger, drag its corner above."
                     } else {
                         "Sizes the time inside its box. To make the whole clock bigger, drag its corner above."
@@ -1314,20 +1315,16 @@ impl Settings {
             face_rows.push(split(
                 detail(
                     "Match the desktop style",
-                    "Font, weight, letter style, type and background come from the look",
+                    "Face, font, weight, letter style and background come from the look",
                 ),
                 container(toggler(follows).on_toggle(Message::ClockFollowStyle))
                     .id(cosmic::widget::Id::new("clock-follow-style"))
                     .into(),
             ));
         }
+        face_rows.push(self.clock_face_gallery(follow));
         if !follows {
             face_rows.extend([
-                split(label("Type", 14., FG), segmented(
-                    [(follow, None), ("Digital", Some(ClockFace::Digital)), ("Analog", Some(ClockFace::Analog))]
-                        .into_iter().map(|(name, value)| (name.into(), clock.face == value,
-                            Some(self.clock_moment_edit(Message::ClockFace(value)))))
-                        .collect(), self.settings_accent())),
                 split(detail("Background", if self.config.glance.enabled {
                     "For the separate clock; Daily overview keeps its own"
                 } else {

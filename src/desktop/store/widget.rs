@@ -45,6 +45,11 @@ const DEVBOX_SECTIONS: [&str; 7] = [
 /// Bound on any single stored member value, serialized.
 const MAX_VALUE_BYTES: usize = 16 * 1024;
 
+/// A clock face this version draws, or `null` to follow the style.
+fn clock_face(value: &Value) -> bool {
+    value.is_null()
+        || serde_json::from_value::<crate::widget_style::resolver::ClockFace>(value.clone()).is_ok()
+}
 /// A font family name, or `null` for the widget style's own.
 fn font_family(value: &Value) -> bool {
     value.is_null()
@@ -172,12 +177,12 @@ pub static FIELDS: [WidgetField; 112] = fields![
     "/recipes/weather", "Weather recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Weather);
     "/moments/active", "Active moment", Style, |v| v.is_null() || matches!(v.as_str(), Some("day" | "night"));
     "/moments/day/family", "Day widget style", Style, |v| serde_json::from_value::<Option<crate::desktop_theme::Family>>(v.clone()).is_ok();
-    "/moments/day/clock/face", "Day clock face", Style, |v| v.is_null() || matches!(v.as_str(), Some("digital" | "analog"));
+    "/moments/day/clock/face", "Day clock face", Style, clock_face;
     "/moments/day/clock/weight", "Day clock weight", Style, |v| v.is_null() || matches!(v.as_str(), Some("light" | "normal" | "bold"));
     "/moments/day/clock/italic", "Day clock italic", Style, |v| v.is_null() || v.is_boolean();
     "/moments/day/clock/surface", "Day clock surface", Style, |v| v.is_null() || matches!(v.as_str(), Some("none" | "panel"));
     "/moments/night/family", "Night widget style", Style, |v| serde_json::from_value::<Option<crate::desktop_theme::Family>>(v.clone()).is_ok();
-    "/moments/night/clock/face", "Night clock face", Style, |v| v.is_null() || matches!(v.as_str(), Some("digital" | "analog"));
+    "/moments/night/clock/face", "Night clock face", Style, clock_face;
     "/moments/night/clock/weight", "Night clock weight", Style, |v| v.is_null() || matches!(v.as_str(), Some("light" | "normal" | "bold"));
     "/moments/night/clock/italic", "Night clock italic", Style, |v| v.is_null() || v.is_boolean();
     "/moments/night/clock/surface", "Night clock surface", Style, |v| v.is_null() || matches!(v.as_str(), Some("none" | "panel"));
@@ -209,7 +214,7 @@ pub static FIELDS: [WidgetField; 112] = fields![
     "/clock/scale", "Clock text size", Style, clock_scale;
     "/clock/depth", "Clock depth", Style, boolean;
     "/clock/lighting", "Clock scene lighting", Style, |v| matches!(v.as_str(), Some("off" | "soft" | "rich"));
-    "/clock/face", "Clock face", Style, |v| v.is_null() || matches!(v.as_str(), Some("digital" | "analog"));
+    "/clock/face", "Clock face", Style, clock_face;
     "/clock/weight", "Clock weight", Style, |v| v.is_null() || matches!(v.as_str(), Some("light" | "normal" | "bold"));
     "/clock/italic", "Clock italic", Style, |v| v.is_null() || v.is_boolean();
     "/clock/surface", "Clock surface", Style, |v| v.is_null() || matches!(v.as_str(), Some("none" | "panel"));

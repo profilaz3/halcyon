@@ -652,7 +652,7 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::Clock,
         "Face",
-        "clock face typography size scale alignment center analog digital weight italic surface design font depth landscape lighting light ridge hills follow look style",
+        "clock face typography size scale alignment center analog digital stacked split words minimal numbers numerals typeface weight italic surface design font depth landscape lighting light ridge hills follow look style",
         false,
     )
     .at("widget-design"),
@@ -1007,6 +1007,7 @@ const ROWS: &[SearchHit] = &[
     hit(Page::Calendar, "Tomorrow", "", false),
     hit(Page::Clock, "24-hour time", "", false),
     hit(Page::Clock, "Alignment", "", false),
+    hit(Page::Clock, "Font", "typeface clock font", false),
     SCENE_COVERS_CLOCK,
     hit(Page::Clock, "Match the desktop style", "", false),
     hit(Page::Clock, "Show the date", "", false),

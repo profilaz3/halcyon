@@ -12,6 +12,8 @@ mod auditfix_tests;
 mod autoswitch;
 mod calendar_details;
 mod clock;
+mod clock_backdrop;
+pub(crate) use clock::{adapted_ink, backdrop_brightness, with_backdrop};
 mod config_writes;
 mod depth;
 #[cfg(test)]
@@ -46,6 +48,15 @@ pub(crate) fn settings_clock_preview_at(
         size,
         crate::widget_presentation::Context::LocalPreview,
     )
+}
+
+/// A Clock page tile's picture of the clock: the face as a sample, a dial
+/// without its time caption.
+pub(crate) fn settings_clock_tile(
+    config: &Config,
+    size: [f32; 2],
+) -> cosmic::Element<'static, Message> {
+    clock::tile(config, chrono::Local::now().naive_local(), size)
 }
 
 pub(crate) fn settings_recipe_preview(
@@ -100,6 +111,15 @@ pub(crate) fn settings_recipe_preview(
     } else {
         settings_weather_preview_at(&config, size, now)
     }
+}
+
+/// Daily overview's clock and date, `width` wide, and its height.
+pub(crate) fn settings_overview_clock_at(
+    config: &Config,
+    width: f32,
+    now: chrono::NaiveDateTime,
+) -> (cosmic::Element<'static, Message>, f32) {
+    glance::overview_clock(config, width, now)
 }
 
 pub(crate) fn settings_clock_face_rows(
@@ -190,6 +210,8 @@ pub enum Message {
         Option<crate::watch::FileStamp>,
     ),
     DepthObserved(u64, Option<crate::desktop::wallpaper::BgEntry>),
+    /// The wallpaper's middle brightness under the clock, or nothing.
+    ClockBackdrop(u64, Option<f32>),
     DepthReady(u64, Option<crate::depth::Rendered>),
     /// The clock drawn for behind the rain glass, or nothing.
     GlassReady(u64, Option<crate::desktop::wallpaper::media::Pixels>),
@@ -449,6 +471,7 @@ pub struct Cards {
     depth: depth::State,
     rain: rain::State,
     glass: glass::State,
+    clock_backdrop: clock_backdrop::State,
     wallpaper_color_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// The edge menu's strip and the state of its customized list.
     edge: edge::EdgeState,
@@ -571,6 +594,7 @@ impl cosmic::Application for Cards {
             depth: Default::default(),
             rain: Default::default(),
             glass: Default::default(),
+            clock_backdrop: Default::default(),
             wallpaper_color_generation: Default::default(),
             edge: Default::default(),
             notice: None,
@@ -871,6 +895,7 @@ impl cosmic::Application for Cards {
             };
             Task::batch([cards, self.sync_controls_surface()])
         };
+        let backdrop = self.clock_backdrop_sync();
         let depth = self.depth_sync();
         let spectrum = self.sync_spectrum();
         let rain = self.rain_sync();
@@ -880,7 +905,7 @@ impl cosmic::Application for Cards {
         if activity_dirty {
             self.publish_activity();
         }
-        Task::batch([task, surfaces, depth, spectrum, rain, glass])
+        Task::batch([task, surfaces, backdrop, depth, spectrum, rain, glass])
     }
     fn style(&self) -> Option<cosmic::iced::theme::Style> {
         Some(cosmic::iced::theme::Style {
@@ -1287,6 +1312,7 @@ impl Cards {
             }
             Message::WallpaperColorsChanged => {
                 self.depth.wallpaper_changed();
+                self.clock_backdrop.invalidate();
                 let rain = self.rain.invalidate();
                 Task::batch([
                     rain,
@@ -1301,6 +1327,10 @@ impl Cards {
                 Task::none()
             }
             Message::GlassReady(id, pixels) => self.glass_ready(id, pixels),
+            Message::ClockBackdrop(id, luminance) => {
+                self.clock_backdrop.complete(id, luminance);
+                Task::none()
+            }
             Message::DepthObserved(id, entry) => {
                 self.depth.observe(id, entry);
                 Task::none()
@@ -2434,11 +2464,13 @@ impl Cards {
         if let Some(view) = self.depth_view() {
             return view;
         }
-        clock::view(
-            &self.config,
-            self.clock_at.naive_local(),
-            self.widget_size(Widget::Clock),
-        )
+        clock::with_backdrop(self.clock_backdrop.luminance, || {
+            clock::view(
+                &self.config,
+                self.clock_at.naive_local(),
+                self.widget_size(Widget::Clock),
+            )
+        })
     }
     fn weather_card(&self) -> Element<'_, Message> {
         weather::Presentation::new(

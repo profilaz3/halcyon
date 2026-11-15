@@ -224,10 +224,17 @@ impl Cards {
         }
     }
     fn glance_clock_height(&self) -> f32 {
-        self.glance_clock_size() * 1.05
+        super::clock::Presentation::grouped(&self.config, self.glance_palette())
+            .face_height(self.glance_clock_size())
+    }
+    /// The date has its own row unless the clock face shows it beside the time.
+    fn glance_date_row(&self) -> bool {
+        self.config.clock.show_date
+            && !super::clock::Presentation::grouped(&self.config, self.glance_palette())
+                .carries_date()
     }
     fn glance_date_height(&self) -> f32 {
-        if self.config.glance.show_clock && self.config.clock.show_date {
+        if self.config.glance.show_clock && self.glance_date_row() {
             if self.glance_compact() {
                 20.
             } else if self.glance_panel() {
@@ -252,7 +259,8 @@ impl Cards {
     fn glance_header_height_at_width(&self, width: f32) -> f32 {
         let preferences = &self.config.glance;
         let clock = if preferences.show_clock {
-            self.glance_clock_size_at_width(width) * 1.05
+            super::clock::Presentation::grouped(&self.config, self.glance_palette())
+                .face_height(self.glance_clock_size_at_width(width))
         } else {
             0.
         };
@@ -541,7 +549,8 @@ impl Cards {
             crate::widget_style::resolver::ClockReading::at(
                 self.clock_at.time(),
                 self.config.clock.format_24h,
-            ),
+            )
+            .with_date(self.clock_at.date_naive()),
             self.glance_clock_width(self.glance_width()),
             self.glance_clock_size(),
         )
@@ -727,7 +736,7 @@ impl Cards {
                 .height(self.glance_clock_row_height())
                 .into(),
             );
-            if self.config.clock.show_date {
+            if self.glance_date_row() {
                 let date = if !compact {
                     spread(
                         date(),
@@ -752,7 +761,7 @@ impl Cards {
             }
             if compact {
                 let mut sub = Vec::new();
-                if preferences.show_clock && self.config.clock.show_date {
+                if preferences.show_clock && self.glance_date_row() {
                     sub.push(date());
                 }
                 if preferences.show_weather {
@@ -775,7 +784,7 @@ impl Cards {
                     );
                 }
             } else {
-                if preferences.show_clock && self.config.clock.show_date {
+                if preferences.show_clock && self.glance_date_row() {
                     rows.push(
                         container(date())
                             .width(Length::Fill)
@@ -1180,6 +1189,102 @@ impl Cards {
     }
 }
 
+
+/// Daily overview's clock and date, `width` wide, drawn from `config` alone
+/// as the overview draws them: what the Clock page shows when Daily overview
+/// carries the time. Returns the drawing and its height.
+pub(super) fn overview_clock(
+    config: &Config,
+    width: f32,
+    now: chrono::NaiveDateTime,
+) -> (Element<'static, Message>, f32) {
+    let panel = config.glance_panel();
+    let compact = config.glance.density == GlanceDensity::Compact;
+    let palette = if !panel {
+        config.wallpaper_palette()
+    } else if config.transparent_widgets() {
+        let mut surface = config.surface_palette();
+        surface.background.a = config.palette().background.a.max(0.85);
+        surface
+    } else {
+        config.palette()
+    };
+    let padding = match (panel, compact) {
+        (true, true) => 16.,
+        (true, false) => 20.,
+        (false, _) => 4.,
+    };
+    let base = match (panel, compact) {
+        (true, true) => 60.,
+        (true, false) => 76.,
+        (false, true) => 72.,
+        (false, false) => 104.,
+    };
+    let clock = super::clock::Presentation::grouped(config, palette);
+    let inner = (width - padding * 2.).max(1.);
+    let size = clock.fit(inner, base * f32::from(config.clock.scale) / 100.);
+    let mut height = clock.face_height(size);
+    let mut rows = vec![
+        clock.face(
+            crate::widget_style::resolver::ClockReading::at(now.time(), config.clock.format_24h)
+                .with_date(now.date()),
+            inner,
+            size,
+        ),
+    ];
+    if config.clock.show_date && !clock.carries_date() {
+        let row = if compact {
+            20.
+        } else if panel {
+            21.
+        } else {
+            27.
+        };
+        rows.push(
+            container(label(
+                now.format(if compact { "%a, %b %-d" } else { "%A, %B %-d" })
+                    .to_string(),
+                if compact {
+                    16.
+                } else if panel {
+                    15.
+                } else {
+                    20.
+                },
+                palette.muted,
+            ))
+            .width(Length::Fill)
+            .align_x(config.clock.alignment.layout())
+            .height(row)
+            .into(),
+        );
+        height += row;
+    }
+    let height = height + padding * 2.;
+    let body = container(column::with_children(rows).width(Length::Fill))
+        .padding(padding)
+        .width(width)
+        .height(height);
+    let body: Element<'static, Message> = if panel {
+        let background = palette.background;
+        let radius = f32::from(config.appearance.corner_radius);
+        body.class(cosmic::theme::Container::custom(move |_| {
+            cosmic::iced::widget::container::Style {
+                background: Some(background.into()),
+                border: cosmic::iced::Border {
+                    radius: radius.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        }))
+        .into()
+    } else {
+        body.into()
+    };
+    (body, height)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1312,6 +1417,53 @@ mod tests {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /// Every clock face fits Daily overview's header: the taller faces get
+    /// their height, and Split's date beside the time isn't drawn again
+    /// below it.
+    #[test]
+    fn every_clock_face_fits_the_daily_overview() {
+        use crate::native_test::Native;
+        use crate::widget_style::resolver::ClockFace;
+        let mut cards = app();
+        cards.config.glance.show_calendar = false;
+        cards.config.glance.show_weather = false;
+        for face in ClockFace::ALL {
+            cards.config.clock.face = Some(face);
+            for density in [GlanceDensity::Compact, GlanceDensity::Comfortable] {
+                cards.config.glance.density = density;
+                for width in [260., 360.] {
+                    cards
+                        .config
+                        .widget_sizes
+                        .insert("glance".into(), [width, 300.]);
+                    let height = cards.glance_header_height();
+                    let presentation = super::super::clock::Presentation::grouped(
+                        &cards.config,
+                        cards.glance_palette(),
+                    );
+                    assert_eq!(
+                        cards.glance_clock_height(),
+                        presentation.face_height(cards.glance_clock_size())
+                    );
+                    assert_eq!(cards.glance_date_row(), face != ClockFace::Split);
+                    let mut native = Native::new(Size::new(width, height));
+                    let pixels = native.render(cards.glance_header(), &cosmic::Theme::dark());
+                    let bounds = super::super::clock::tests::ink(&pixels, width as usize);
+                    native.capture(
+                        cards.glance_header(),
+                        &cosmic::Theme::dark(),
+                        &format!("overview-face-{}-{density:?}-{width}", face.key()),
+                    );
+                    eprintln!("{face:?}/{density:?}/{width}: {bounds:?} in {height}");
+                    assert!(
+                        bounds[2] < width as usize && bounds[3] < height as usize - 1,
+                        "{face:?}/{density:?}/{width}: {bounds:?} in {height}"
+                    );
                 }
             }
         }

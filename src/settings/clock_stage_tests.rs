@@ -1037,8 +1037,10 @@ fn clock_stage_corner_resizes_the_clock_as_one_undo_step() {
     }
 }
 
-/// White digits straight on a white picture: the stage says so in words,
-/// and its button gives the clock a card, which settles it.
+/// A bare clock on a plain white picture turns its ink dark, as the
+/// desktop does, so the stage has nothing to warn about. On a busy picture,
+/// light and dark under the clock, no ink reads everywhere: the stage says
+/// so in words, and its button gives the clock a card, which settles it.
 #[test]
 fn clock_stage_warns_when_the_clock_is_hard_to_read_on_the_picture() {
     if desktop_test_child(
@@ -1056,35 +1058,74 @@ fn clock_stage_warns_when_the_clock_is_hard_to_read_on_the_picture() {
     use crate::native_test::Native;
     const LOW_CONTRAST_WARNING: &str =
         "Hard to read on this picture. Set Background to Card, or move the clock.";
+    use crate::settings::clock_stage as stage;
     use crate::widget_style::resolver::ClockSurface;
     use cosmic::iced::{Event, mouse};
     let root = isolated_root();
     let fixture = root.join("cosmic-root");
-    let picture = root.join("white.png");
-    image::RgbImage::from_pixel(64, 36, image::Rgb([250, 250, 250]))
-        .save(&picture)
-        .unwrap();
-    seed(
-        &fixture.join("config/cosmic"),
-        &[(
-            "com.system76.CosmicBackground",
-            "all",
-            &ron::to_string(&BgEntry::new("all", BgSource::Path(picture))).unwrap(),
-        )],
-    );
-    Config::save_clock(json!({"face": "digital", "surface": "none"})).unwrap();
-    let (mut app, initial) = Settings::init(Core::default(), Page::Clock);
-    settle_settings(&mut app, initial);
-    drive_wallpaper(&mut app);
     let size = Size::new(1280., 800.);
-    send_settings(&mut app, Message::Resized(size));
-    assert!(app.clock_stage_open());
+    let open = |name: &str, picture: image::RgbImage| {
+        let path = root.join(name);
+        picture.save(&path).unwrap();
+        seed(
+            &fixture.join("config/cosmic"),
+            &[(
+                "com.system76.CosmicBackground",
+                "all",
+                &ron::to_string(&BgEntry::new("all", BgSource::Path(path))).unwrap(),
+            )],
+        );
+        let (mut app, initial) = Settings::init(Core::default(), Page::Clock);
+        settle_settings(&mut app, initial);
+        drive_wallpaper(&mut app);
+        send_settings(&mut app, Message::Resized(size));
+        assert!(app.clock_stage_open());
+        assert!(
+            app.clock_stage
+                .backdrop()
+                .or(app.profiles.home_image())
+                .is_some(),
+            "the picture is on the stage"
+        );
+        app
+    };
+    Config::save_clock(json!({"face": "digital", "surface": "none"})).unwrap();
+
+    let app = open(
+        "white.png",
+        image::RgbImage::from_pixel(64, 36, image::Rgb([250, 250, 250])),
+    );
+    let backdrop = app.clock_stage_backdrop().expect("a clock on the picture");
+    assert!(backdrop > 0.9, "{backdrop}");
+    let ratio = app.clock_stage_contrast().unwrap();
     assert!(
-        app.clock_stage
-            .backdrop()
-            .or(app.profiles.home_image())
-            .is_some(),
-        "the picture is on the stage"
+        ratio >= stage::LOW_CONTRAST,
+        "dark ink reads on white: {ratio}"
+    );
+    let mut native = Native::new(size);
+    native_reveal(&app, &mut native, stage::CLOCK_ID);
+    assert!(
+        native
+            .text_all(app.settings_view(), LOW_CONTRAST_WARNING)
+            .is_empty()
+    );
+    for (theme, name) in [
+        (cosmic::Theme::light(), "light"),
+        (cosmic::Theme::dark(), "dark"),
+    ] {
+        native.capture(
+            app.settings_view(),
+            &theme,
+            &format!("clock-stage-white-picture-{name}-1280"),
+        );
+    }
+
+    // Wide black and white bands: the clock covers both.
+    let mut app = open(
+        "bands.png",
+        image::RgbImage::from_fn(64, 36, |x, _| {
+            image::Rgb([if (x / 4) % 2 == 0 { 250 } else { 5 }; 3])
+        }),
     );
     let ratio = app.clock_stage_contrast().expect("a clock on the picture");
     assert!(ratio < 1.5, "{ratio}");

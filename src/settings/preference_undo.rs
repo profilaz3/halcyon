@@ -107,7 +107,7 @@ fn message_scope(config: &Config, message: &Message) -> Vec<String> {
         Message::WeatherDewPoint(_) => add(&["weather", "show_dew_point"]),
         Message::WeatherFahrenheit(_) => add(&["weather", "fahrenheit"]),
         Message::ClockAlignment(_) => add(&["clock", "alignment"]),
-        Message::ClockScale(_) => add(&["clock", "scale"]),
+        Message::ClockScaleCommit | Message::ClockScaleReset => add(&["clock", "scale"]),
         Message::ClockVertical(_) => add(&["clock", "center_vertically"]),
         Message::ClockDepth(_) => add(&["clock", "depth"]),
         Message::ClockLighting(_) => add(&["clock", "lighting"]),
@@ -462,7 +462,11 @@ mod tests {
         let _ = app.update(Message::ClockAlignment(
             crate::config::ClockAlignment::Center,
         ));
+        // A size step is a draft until its gesture ends.
         let _ = app.update(Message::ClockScale(150));
+        assert_eq!(Config::load().clock.scale, 100);
+        assert_eq!(app.config.clock.scale, 150);
+        super::super::tests::send_settings(&mut app, Message::ClockScaleCommit);
         assert_eq!(Config::load().clock.scale, 150);
         assert_eq!(
             Config::load().clock.alignment,
@@ -477,9 +481,12 @@ mod tests {
         let _ = app.update(Message::ClockVertical(true));
         assert!(Config::load().clock.center_vertically);
         let before = std::fs::read(Config::path().unwrap()).unwrap();
-        let _ = app.update(Message::ClockScale(0));
-        assert!(app.error);
+        // Out of range sizes are clamped to the slider's range.
+        super::super::tests::send_settings(&mut app, Message::ClockScale(0));
         assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
+        super::super::tests::send_settings(&mut app, Message::ClockScaleCommit);
+        assert!(!app.error, "{}", app.status);
+        assert_eq!(Config::load().clock.scale, 50);
     }
 
     #[test]
