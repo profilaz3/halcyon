@@ -13,6 +13,30 @@ fn comfort_tones(native: &mut crate::native_test::Native, app: &Settings, name: 
     }
 }
 
+/// The bundled Ridge picture as every display's wallpaper, so the preview
+/// has a picture without cosmic-bg's fallback under /usr/share, which a
+/// machine without COSMIC (CI) does not have.
+fn comfort_ridge_wallpaper(root: &std::path::Path) {
+    let store = crate::desktop::actions::history_store().unwrap();
+    let ridge = crate::desktop::wallpaper::bundled_path(
+        &crate::desktop::wallpaper::bundled_dir(&store),
+        "halcyon-ridge",
+    );
+    assert!(ridge.is_file());
+    seed(
+        &root.join("cosmic-root/config/cosmic"),
+        &[(
+            "com.system76.CosmicBackground",
+            "all",
+            &ron::to_string(&crate::desktop::wallpaper::BgEntry::new(
+                "all",
+                crate::desktop::wallpaper::BgSource::Path(ridge),
+            ))
+            .unwrap(),
+        )],
+    );
+}
+
 /// A 5:4 display beside the default layout, as the only connected output.
 fn comfort_square_display(app: &mut Settings) {
     use crate::displays::{
@@ -424,6 +448,7 @@ fn wallpaper_preview_takes_the_display_shape_with_the_clock_in_place() {
     }
     let root = isolated_root();
     let mut app = looks_desktop(&root);
+    comfort_ridge_wallpaper(&root);
     comfort_square_display(&mut app);
     let size = Size::new(1024., 760.);
     send_settings(&mut app, Message::Resized(size));
