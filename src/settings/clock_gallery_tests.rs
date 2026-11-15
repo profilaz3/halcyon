@@ -146,7 +146,11 @@ fn clock_page_previews_the_daily_overview_clock() {
     let (mut app, initial) = Settings::init(Core::default(), Page::Clock);
     settle_settings(&mut app, initial);
     send_settings(&mut app, Message::Widget(Widget::Glance, true));
-    assert!(app.config.glance.enabled && app.config.glance.show_clock, "{}", app.status);
+    assert!(
+        app.config.glance.enabled && app.config.glance.show_clock,
+        "{}",
+        app.status
+    );
     let size = Size::new(1280., 800.);
     send_settings(&mut app, Message::Resized(size));
     let mut native = Native::new(size);
@@ -157,7 +161,11 @@ fn clock_page_previews_the_daily_overview_clock() {
         let with = native.render(app.settings_view(), &cosmic::Theme::dark());
         // The same stage with the overview's clock turned off, in memory only.
         app.config.glance.show_clock = false;
-        assert!(native.try_bounds(app.settings_view(), OVERVIEW_ID).is_none());
+        assert!(
+            native
+                .try_bounds(app.settings_view(), OVERVIEW_ID)
+                .is_none()
+        );
         let without = native.render(app.settings_view(), &cosmic::Theme::dark());
         app.config.glance.show_clock = true;
         let width = size.width as usize;
@@ -172,7 +180,10 @@ fn clock_page_previews_the_daily_overview_clock() {
             })
             .count();
         // A thin dial at the stage's scale changes fewer pixels.
-        assert!(drawn > 60, "{face:?}: the overview's clock is drawn ({drawn})");
+        assert!(
+            drawn > 60,
+            "{face:?}: the overview's clock is drawn ({drawn})"
+        );
         assert!(native.overflowing_text(app.settings_view()).is_empty());
         if face == ClockFace::Digital {
             native_reveal(&app, &mut native, "clock-stage");
@@ -188,4 +199,199 @@ fn clock_page_previews_the_daily_overview_clock() {
             }
         }
     }
+}
+
+/// A drag on the clock size slider, or a run of arrow keys, previews every
+/// step at once but saves once when the gesture ends, so one Undo returns
+/// to the size before it. Commits that arrive while a save is still running
+/// are coalesced into one more save of the latest size, and a step costs
+/// the interface thread no file work.
+#[test]
+fn clock_size_gestures_save_once_off_the_interface_thread() {
+    if desktop_test_child(
+        "clock_size_gestures_save_once_off_the_interface_thread",
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::native_test::Native;
+    use cosmic::iced::keyboard::{self, Key, key};
+    use cosmic::iced::{Event, Point, mouse};
+    let _root = isolated_root();
+    let (mut app, initial) = Settings::init(Core::default(), Page::Clock);
+    settle_settings(&mut app, initial);
+    let size = Size::new(1280., 800.);
+    send_settings(&mut app, Message::Resized(size));
+    let saved = || Config::try_load().unwrap().clock.scale;
+    assert_eq!(saved(), 100);
+
+    // A pointer drag across the slider.
+    let mut native = Native::new(size);
+    let track = native_reveal(&app, &mut native, "clock-scale");
+    let at = |share: f32| Point::new(track.x + track.width * share, track.center_y());
+    let mut steps = 0;
+    let mut commits = 0;
+    let mut send = |app: &mut Settings, native: &mut Native, event: mouse::Event, point: Point| {
+        for message in native
+            .event(app.settings_view(), Event::Mouse(event), point)
+            .0
+        {
+            match message {
+                Message::ClockScale(_) => steps += 1,
+                Message::ClockScaleCommit => commits += 1,
+                _ => {}
+            }
+            send_settings(app, message);
+        }
+    };
+    send(
+        &mut app,
+        &mut native,
+        mouse::Event::CursorMoved { position: at(0.4) },
+        at(0.4),
+    );
+    send(
+        &mut app,
+        &mut native,
+        mouse::Event::ButtonPressed(mouse::Button::Left),
+        at(0.4),
+    );
+    for share in [0.5, 0.6, 0.7, 0.8] {
+        send(
+            &mut app,
+            &mut native,
+            mouse::Event::CursorMoved {
+                position: at(share),
+            },
+            at(share),
+        );
+        // The preview follows the pointer; nothing is written yet.
+        assert_eq!(saved(), 100, "a drag sample saved");
+    }
+    let dragged = app.config.clock.scale;
+    assert!(dragged >= 150, "the preview follows the drag: {dragged}");
+    assert_eq!(app.clock_scale.saves, 0);
+    send(
+        &mut app,
+        &mut native,
+        mouse::Event::ButtonReleased(mouse::Button::Left),
+        at(0.8),
+    );
+    assert!(steps >= 4, "{steps} live steps");
+    assert_eq!(commits, 1);
+    assert_eq!(app.clock_scale.saves, 1);
+    assert_eq!(saved(), dragged);
+    assert!(!app.error, "{}", app.status);
+    send_settings(&mut app, Message::UndoPreferences);
+    assert!(!app.error, "{}", app.status);
+    assert_eq!(saved(), 100, "one Undo undoes the whole drag");
+    assert_eq!(app.config.clock.scale, 100);
+
+    // Arrow keys: each press steps, the key coming up saves once.
+    let reached = (0..80).any(|_| {
+        native.operate(
+            app.settings_view(),
+            Box::new(cosmic::iced::advanced::widget::operation::focusable::focus_next::<()>()),
+        );
+        native.operate(
+            app.settings_view(),
+            Box::new(navigation::FocusReveal::default()),
+        );
+        let slider = native.bounds(app.settings_view(), "clock-scale");
+        native
+            .focused(app.settings_view())
+            .is_some_and(|focus| slider.intersects(&focus))
+    });
+    assert!(reached, "Tab reaches the clock size slider");
+    let right = |pressed: bool| {
+        let key = Key::Named(key::Named::ArrowRight);
+        let physical_key = key::Physical::Code(key::Code::ArrowRight);
+        Event::Keyboard(if pressed {
+            keyboard::Event::KeyPressed {
+                key: key.clone(),
+                modified_key: key,
+                physical_key,
+                location: keyboard::Location::Standard,
+                modifiers: keyboard::Modifiers::empty(),
+                text: None,
+                repeat: false,
+            }
+        } else {
+            keyboard::Event::KeyReleased {
+                key: key.clone(),
+                modified_key: key,
+                physical_key,
+                location: keyboard::Location::Standard,
+                modifiers: keyboard::Modifiers::empty(),
+            }
+        })
+    };
+    let saves = app.clock_scale.saves;
+    for event in [right(true), right(true), right(true), right(false)] {
+        let release = matches!(event, Event::Keyboard(keyboard::Event::KeyReleased { .. }));
+        if release {
+            assert_eq!(app.config.clock.scale, 130, "three steps preview at once");
+            assert_eq!(saved(), 100, "a held arrow key saved");
+        }
+        for message in native
+            .event(app.settings_view(), event, Point::new(1., 1.))
+            .0
+        {
+            send_settings(&mut app, message);
+        }
+    }
+    assert_eq!(app.clock_scale.saves, saves + 1);
+    assert_eq!(saved(), 130);
+    send_settings(&mut app, Message::UndoPreferences);
+    assert_eq!(saved(), 100, "one Undo undoes the key presses");
+
+    // Commits while a save runs: the first save is held back, the next two
+    // commits wait, and only the latest of them is saved after it.
+    let saves = app.clock_scale.saves;
+    let _ = app.update(Message::ClockScale(120));
+    let first = app.update(Message::ClockScaleCommit);
+    for value in [130, 140] {
+        let _ = app.update(Message::ClockScale(value));
+        let waiting = app.update(Message::ClockScaleCommit);
+        settle_settings(&mut app, waiting);
+    }
+    assert_eq!(saved(), 100);
+    assert_eq!(app.config.clock.scale, 140);
+    settle_settings(&mut app, first);
+    assert_eq!(app.clock_scale.saves, saves + 2, "coalesced into two saves");
+    assert_eq!(saved(), 140);
+    assert_eq!(app.config.clock.scale, 140);
+    assert!(!app.error, "{}", app.status);
+    // Reset is one change too.
+    send_settings(&mut app, Message::ClockScaleReset);
+    assert_eq!(saved(), 100);
+    assert_eq!(app.clock_scale.saves, saves + 3);
+
+    // Interface thread time per drag sample: a step now, against a clock
+    // edit that still saves and refreshes on the interface thread, as each
+    // size sample used to.
+    let samples = 20u32;
+    let started = std::time::Instant::now();
+    for i in 0..samples {
+        let _ = app.update(Message::ClockScale(60 + (i as u16 % 10) * 10));
+    }
+    let step = started.elapsed() / samples;
+    let started = std::time::Instant::now();
+    for i in 0..samples {
+        let alignment = if i % 2 == 0 {
+            crate::config::ClockAlignment::Center
+        } else {
+            crate::config::ClockAlignment::Left
+        };
+        let _ = app.update(Message::ClockAlignment(alignment));
+    }
+    let synchronous = started.elapsed() / samples;
+    eprintln!(
+        "clock size sample on the interface thread: {step:?} now, {synchronous:?} saving in place"
+    );
+    assert!(step < synchronous, "{step:?} against {synchronous:?}");
 }

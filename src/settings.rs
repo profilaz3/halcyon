@@ -14,6 +14,7 @@ mod automation;
 mod calendar;
 mod canvas;
 mod city_search;
+mod clock_scale;
 mod clock_stage;
 mod color_well;
 mod colors;
@@ -815,6 +816,11 @@ pub enum Message {
     ClockDate(bool),
     ClockAlignment(ClockAlignment),
     ClockScale(u16),
+    /// The size drag or arrow keys ended: save the size once.
+    ClockScaleCommit,
+    /// Back to 100%, saved at once.
+    ClockScaleReset,
+    ClockScaleSaved(Box<Result<Config, String>>),
     ClockVertical(bool),
     DepthPreviewReady(u64, Option<crate::desktop::wallpaper::media::Pixels>),
     /// The Clock page's stage: the clock on its screen, dragged to move it.
@@ -923,6 +929,7 @@ pub struct Settings {
     moment_base_clock: bool,
     /// The clock's own style controls are open although nothing is set yet.
     clock_custom: bool,
+    clock_scale: clock_scale::ScaleEdit,
     /// The same for Daily overview's own background and fonts.
     glance_custom: bool,
     updates: updates::Updates,
@@ -1229,6 +1236,7 @@ impl cosmic::Application for Settings {
             recipe_editor: recipes::Editor::loaded(),
             moment_base_clock: false,
             clock_custom: false,
+            clock_scale: Default::default(),
             glance_custom: false,
             updates: updates::Updates::default(),
             support: support::Support::default(),
@@ -4235,7 +4243,13 @@ impl Settings {
             Message::ClockFormat(value) => self.save_clock(json!({"format_24h": value})),
             Message::ClockDate(value) => self.save_clock(json!({"show_date": value})),
             Message::ClockAlignment(value) => self.save_clock(json!({"alignment": value})),
-            Message::ClockScale(value) => self.save_clock(json!({"scale": value})),
+            Message::ClockScale(value) => self.clock_scale_step(value),
+            Message::ClockScaleCommit => return self.clock_scale_commit(),
+            Message::ClockScaleReset => {
+                self.clock_scale_step(100);
+                return self.clock_scale_commit();
+            }
+            Message::ClockScaleSaved(result) => return self.clock_scale_saved(*result),
 
             Message::ClockVertical(value) => self.save_clock(json!({"center_vertically": value})),
             Message::DepthPreviewReady(id, pixels) => self.depth_preview.ready(id, pixels),
@@ -7364,23 +7378,33 @@ mod tests {
                         Event::Mouse(mouse::Event::CursorMoved { position: point }),
                         point,
                     );
-                    for message in native
-                        .event(
-                            app.settings_view(),
-                            Event::Keyboard(keyboard::Event::KeyPressed {
-                                key: keyboard::Key::Named(key::Named::ArrowUp),
-                                modified_key: keyboard::Key::Named(key::Named::ArrowUp),
-                                physical_key: key::Physical::Code(key::Code::ArrowUp),
-                                location: keyboard::Location::Standard,
-                                modifiers: keyboard::Modifiers::empty(),
-                                text: None,
-                                repeat: false,
-                            }),
-                            point,
-                        )
-                        .0
-                    {
-                        let _ = app.update(message);
+                    let up = keyboard::Key::Named(key::Named::ArrowUp);
+                    let code = key::Physical::Code(key::Code::ArrowUp);
+                    // The step saves when the key comes up.
+                    for event in [
+                        keyboard::Event::KeyPressed {
+                            key: up.clone(),
+                            modified_key: up.clone(),
+                            physical_key: code,
+                            location: keyboard::Location::Standard,
+                            modifiers: keyboard::Modifiers::empty(),
+                            text: None,
+                            repeat: false,
+                        },
+                        keyboard::Event::KeyReleased {
+                            key: up.clone(),
+                            modified_key: up.clone(),
+                            physical_key: code,
+                            location: keyboard::Location::Standard,
+                            modifiers: keyboard::Modifiers::empty(),
+                        },
+                    ] {
+                        for message in native
+                            .event(app.settings_view(), Event::Keyboard(event), point)
+                            .0
+                        {
+                            send_settings(&mut app, message);
+                        }
                     }
                 }
                 assert_eq!(Config::load().clock.scale, 110);

@@ -216,6 +216,8 @@ pub(super) fn label(message: &Message) -> String {
         Message::ChooseCity(_) => "Weather city",
         Message::AppearanceValue(_, _) | Message::SaveAppearance => "Widget style",
         Message::ClockScale(_)
+        | Message::ClockScaleCommit
+        | Message::ClockScaleReset
         | Message::ClockAlignment(_)
         | Message::ClockFormat(_)
         | Message::ClockDate(_)

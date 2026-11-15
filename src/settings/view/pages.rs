@@ -1160,7 +1160,7 @@ impl Settings {
                             .then(|| {
                                 button::text("Reset")
                                     .id(cosmic::widget::Id::new("clock-scale-reset"))
-                                    .on_press(Message::ClockScale(100))
+                                    .on_press(Message::ClockScaleReset)
                                     .into()
                             })
                             .into_iter()
@@ -1175,7 +1175,8 @@ impl Settings {
                     .align_y(Alignment::Center)
                     .into(),
                 ),
-                container(
+                // Live while dragging or stepping; saved once at the end.
+                container(completed_slider(
                     slider(50u16..=200, clock.scale.clamp(50, 200), Message::ClockScale)
                         .name(if clock.face.is_some_and(ClockFace::dial) {
                             "Face size"
@@ -1183,8 +1184,11 @@ impl Settings {
                             "Text size"
                         })
                         .step(10u16)
-                        .width(Length::Fill),
-                )
+                        .on_release(Message::ClockScaleCommit)
+                        .width(Length::Fill)
+                        .into(),
+                    Message::ClockScaleCommit,
+                ))
                 .id(cosmic::widget::Id::new("clock-scale"))
                 .into(),
                 // One size model: the box is the clock's size, and the
