@@ -332,9 +332,12 @@ Do not post installation tokens, credentials or private widget contents there.
   authentication; a redirect to another host drops them, and a redirect from
   https to http is refused. Plain http is used only for servers on your own
   network, after checking every address the name resolves to.
-- **Calendar files:** the path of an added `.ics` file is kept in the
-  private calendar account file so the widget can read and watch it. It is not
-  sent anywhere and is not part of usage reports.
+- **Calendar files and folders:** the path of an added `.ics` file or calendar
+  folder is kept in the private calendar account file so the widget can read
+  and watch it. It is not sent anywhere and is not part of usage reports.
+- **Public holidays:** a holiday calendar is downloaded from `thunderbird.net`
+  like any calendar link. Thunderbird's server receives a normal HTTPS request
+  and the connection IP, and learns which country's calendar was asked for.
 - **Cached agenda:** event titles, times, descriptions, locations and links are
   cached in private local files for offline viewing. Disconnecting removes this
   cache. “Hide event details” displays Busy on the desktop and hides event/Join

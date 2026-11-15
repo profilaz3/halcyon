@@ -1,8 +1,8 @@
 # Calendar setup
 
-Halcyon reads events from iCal subscription links, CalDAV accounts and local
-`.ics` files. You can add up to eight calendars, mixing these kinds freely, and
-choose which ones appear. Event editing stays in your calendar app. None of them
+Halcyon reads events from iCal subscription links, CalDAV accounts, local
+`.ics` files and folders, and public holiday calendars. You can add up to eight
+calendars, mixing these kinds freely, and choose which ones appear. Event editing stays in your calendar app. None of them
 needs a Google API key or OAuth client configuration.
 
 ## Get a subscription link
@@ -38,6 +38,65 @@ Enable **Public Calendar**, then copy its link. This makes the calendar readable
 by anyone with that link; private invitation-only sharing does not provide the
 subscription Halcyon needs.
 [Apple's instructions](https://support.apple.com/en-gb/guide/icloud/-mm6b1a9479/icloud).
+
+### Proton Calendar
+
+1. In Proton Calendar, open **Settings → Calendars** and choose your calendar.
+2. Under **Share with anyone**, select **Create link**, and choose limited or
+   full view.
+3. Copy the link.
+
+Anyone with the link can read the calendar at the level you chose.
+[Proton's instructions](https://proton.me/support/share-calendar-via-link).
+
+### Fastmail
+
+1. Open **Settings → Calendars** and select **Edit & share** beside the calendar.
+2. Turn on the public link and copy its ICS address.
+
+Fastmail accounts can also be added as a [CalDAV account](#caldav-accounts),
+which needs no public link. [Fastmail's instructions](https://www.fastmail.help/hc/en-us/articles/360060590793).
+
+### Nextcloud
+
+1. In the Calendar app, open the pencil button beside the calendar.
+2. Select the plus button beside **Share link**, then the three dots beside the
+   new link, and **Copy subscription link**.
+
+Use the subscription link, not the public page link. Unsharing and sharing again
+makes a new address. A Nextcloud account can also be added as a
+[CalDAV account](#caldav-accounts).
+
+### Zoho Calendar
+
+1. Open **Settings → Calendar → Calendars → My Calendars** and select the
+   calendar.
+2. Under **Private URL**, select **iCal** to copy the address.
+
+[Zoho's instructions](https://www.zoho.com/calendar/help/ways-to-share-calendars.html).
+
+### Yahoo Calendar
+
+1. Open the calendar in full view, then choose **Actions → Share**.
+2. Turn on the shareable link and copy the ICS link under importing into a
+   calendar app, not the HTML link.
+
+### Teamup
+
+1. Open Teamup in a browser and choose the menu at the top right, then
+   **Preferences → iCalendar feeds**.
+2. Copy the feed address for one sub calendar, or the one for all of them at
+   the bottom of the list.
+
+A feed with several sub calendars arrives as one calendar with one color.
+[Teamup's instructions](https://calendar.teamup.com/kb/how-to-use-icalendar-feeds/).
+
+### Tuta
+
+Tuta (Tutanota) shares calendars only with other Tuta users and does not publish
+an iCal link, so it can't be added today.
+
+### Other providers
 
 Other providers work if they supply a compatible iCal subscription. Feeds that
 need a browser sign-in are not supported; for a feed that asks for a username
@@ -109,6 +168,32 @@ through the same size and recurrence limits as links. The file's path is kept
 in Halcyon's private calendar settings; it is not a secret, needs no keyring
 and is never part of usage reports.
 
+## Calendar folders
+
+**Add calendar folder…** opens the folder chooser. It is meant for folders kept
+in sync by tools such as vdirsyncer, and read by khal: one `.ics` file per
+event, or whole calendars in a file.
+
+- `.ics` files in the chosen folder make one calendar, named after the folder.
+- Each subfolder holding `.ics` files is a calendar of its own. Its `displayname`
+  and `color` files, as vdirsyncer writes them, set its name and color.
+- Folders deeper than one level, hidden files and other files are not read.
+
+Settings lists the calendars it found, with a switch for each. Halcyon reads a
+folder again on every refresh and whenever one of its calendar files changes.
+All files in one folder count toward the same size limit as one link (4 MB), so
+a very large folder reports that it is too large instead of slowing the desktop.
+Like a calendar file, the folder's path needs no keyring and is never part of
+usage reports.
+
+## Public holidays
+
+**Add holidays…** offers a list of countries. Halcyon adds that country's
+holiday calendar from the public holiday calendars Thunderbird publishes at
+`thunderbird.net`. It is fetched like any calendar link, needs no account, and
+appears in a muted gray so it stays behind your own events. Remove it like any
+other calendar.
+
 ## Plain http on your network
 
 Links and CalDAV servers normally use HTTPS. Plain `http://` addresses are
@@ -154,6 +239,8 @@ or unpublish it at the provider. [Privacy details](PRIVACY.md#widget-connections
   keyring such as GNOME Keyring or KWallet, then retry.
 - **Cannot reach the provider:** check the connection and whether the provider
   still publishes the feed. Previous cached events remain available.
+- **No .ics calendar files in a folder:** choose the folder that holds the
+  `.ics` files, or the folder right above the calendars' own folders.
 - **Unsupported or oversized calendar:** Halcyon limits feed size and recurrence
   processing. Custom time-zone definitions and some recurrence features are not
   supported; use a smaller compatible feed when available.
