@@ -217,10 +217,24 @@ impl Settings {
                             .into(),
                     );
                 }
-                rows.push(split(
-                    label(choice.name.clone(), 14., FG),
-                    row::with_children(controls).spacing(8).into(),
-                ));
+                // Where each calendar comes from, once kinds can be mixed.
+                let name = if editor.connection.backend == Backend::Subscription {
+                    use crate::calendar::SourceKind as Kind;
+                    detail_state(
+                        choice.name.clone(),
+                        match editor.connection.source_kind(&choice.id) {
+                            Kind::Link => "Calendar link",
+                            Kind::CalDav => "CalDAV account",
+                            Kind::Holidays => "Holidays",
+                            Kind::File => "Calendar file",
+                            Kind::Folder => "Calendar folder",
+                            Kind::System => "Online Accounts",
+                        },
+                    )
+                } else {
+                    label(choice.name.clone(), 14., FG)
+                };
+                rows.push(split(name, row::with_children(controls).spacing(8).into()));
             }
             let mut actions = vec![
                 button::text(if editor.loading {
