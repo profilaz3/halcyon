@@ -55,6 +55,24 @@ Repeat for additional calendars. The switches beside their names select which
 feeds appear. Adding a subscription replaces an existing Google sign-in
 connection on this computer; the two connection types cannot be combined.
 
+## What the agenda shows
+
+Calendar's **What to show** group chooses the days and events:
+
+- **Today**, **Tomorrow** or **Next 7 days**. The week starts today and puts
+  each day with events under its own heading, such as "Wednesday 18". Near a
+  month's end Halcyon also fetches the next month.
+- **All-day events** can be left out.
+- **Hide finished events** removes today's events once they end, instead of
+  folding them under **Earlier**.
+- **Show event location** adds the place under each title. Links to calls are
+  left out; they are offered as **Join**.
+- **Hide event details** shows Busy instead of titles and places.
+
+**How it looks** has **Calendar colors**, which marks each event in its
+calendar's color (off, every event uses the widget accent), and **Highlight
+meetings**.
+
 ## Updates and privacy
 
 Events refresh periodically while the widget is active. Change the interval in
