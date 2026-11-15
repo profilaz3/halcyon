@@ -331,6 +331,11 @@ pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/activity_island/style", "Activity island style", Style, |v| matches!(v.as_str(), Some("theme" | "dark"));
     "/activity_island/app_rules", "Activity app rules", Style, app_rules;
     "/calendar_private", "Calendar privacy", Style, boolean;
+    "/calendar_show_week", "Calendar next 7 days", Style, boolean;
+    "/calendar_all_day", "Calendar all-day events", Style, boolean;
+    "/calendar_hide_finished", "Calendar finished events", Style, boolean;
+    "/calendar_colors", "Calendar colors", Style, boolean;
+    "/calendar_show_location", "Calendar event location", Style, boolean;
     "/widget_monitors/clock/display", "Widget display", Layout, |v| v.is_null() || v.as_str().is_some_and(crate::displays::valid_name);
     "/widget_monitors/clock/hide_disconnected", "Disconnected widget", Layout, boolean;
     "/monitor_layouts/clock", "Display layout", Layout, monitor_layout;

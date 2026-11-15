@@ -1070,23 +1070,68 @@ pub struct CalendarData {
 #[derive(Default)]
 pub struct CalendarAgenda<'a> {
     pub events: Vec<&'a CalendarEvent>,
+    /// Today's finished events folded under Earlier, which can show them.
     pub earlier: usize,
+    /// Today's finished events, folded or left out.
+    pub finished: usize,
+}
+/// Which events a day's agenda lists (Calendar › What to show).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AgendaFilter {
+    /// Earlier is open: today's finished events are listed.
+    pub show_earlier: bool,
+    pub all_day: bool,
+    /// Today's finished events are left out, with no Earlier to open.
+    pub hide_finished: bool,
+}
+impl AgendaFilter {
+    pub fn new(config: &crate::config::Config, show_earlier: bool) -> Self {
+        Self {
+            show_earlier,
+            all_day: config.calendar_all_day,
+            hide_finished: config.calendar_hide_finished,
+        }
+    }
 }
 
 impl CalendarData {
     /// Hide completed timed events only when looking at today. Historical
     /// dates remain browsable, and all-day events stay visible all day.
+    #[cfg(test)]
     pub fn agenda_at(
         &self,
         day: chrono::NaiveDate,
         now: chrono::DateTime<chrono::Local>,
         show_earlier: bool,
     ) -> CalendarAgenda<'_> {
+        self.agenda(
+            day,
+            now,
+            AgendaFilter {
+                show_earlier,
+                all_day: true,
+                hide_finished: false,
+            },
+        )
+    }
+    /// `agenda_at` with the person's choices of what to list.
+    pub fn agenda(
+        &self,
+        day: chrono::NaiveDate,
+        now: chrono::DateTime<chrono::Local>,
+        filter: AgendaFilter,
+    ) -> CalendarAgenda<'_> {
         let mut agenda = CalendarAgenda::default();
-        for event in self.events.iter().filter(|event| event.on_date(day)) {
-            let earlier = day == now.date_naive() && event.finished_at(now);
-            agenda.earlier += usize::from(earlier);
-            if !earlier || show_earlier {
+        let listed =
+            |event: &&CalendarEvent| event.on_date(day) && (filter.all_day || !event.all_day);
+        for event in self.events.iter().filter(listed) {
+            let finished = day == now.date_naive() && event.finished_at(now);
+            agenda.finished += usize::from(finished);
+            if finished && filter.hide_finished {
+                continue;
+            }
+            agenda.earlier += usize::from(finished);
+            if !finished || filter.show_earlier {
                 agenda.events.push(event);
             }
         }
@@ -1271,6 +1316,20 @@ impl CalendarEvent {
     }
     pub fn finished(&self) -> bool {
         self.finished_at(chrono::Local::now())
+    }
+    /// Where it happens, on one line: the location's first line that is
+    /// not only a web address (a call link is offered as Join instead).
+    pub fn place(&self) -> Option<&str> {
+        let web = |line: &str| {
+            ["http://", "https://"].iter().any(|scheme| {
+                line.get(..scheme.len())
+                    .is_some_and(|start| start.eq_ignore_ascii_case(scheme))
+            })
+        };
+        self.location
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty() && !web(line))
     }
     pub fn finished_at(&self, now: chrono::DateTime<chrono::Local>) -> bool {
         !self.all_day && chrono::DateTime::parse_from_rfc3339(&self.end).is_ok_and(|d| d <= now)

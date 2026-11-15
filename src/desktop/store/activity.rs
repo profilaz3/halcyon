@@ -238,7 +238,14 @@ pub fn widget_group(pointer: &str) -> Option<&'static str> {
         "clock" | "clock_font" => "Clock",
         "glance" => "Daily overview",
         "weather" | "location" => "Weather",
-        "calendar_private" | "calendar_show_today" | "calendar_show_tomorrow"
+        "calendar_private"
+        | "calendar_show_today"
+        | "calendar_show_tomorrow"
+        | "calendar_show_week"
+        | "calendar_all_day"
+        | "calendar_hide_finished"
+        | "calendar_colors"
+        | "calendar_show_location"
         | "meeting_notice_minutes" => "Calendar",
         "devbox" => "System monitor",
         "music" => "Music",
