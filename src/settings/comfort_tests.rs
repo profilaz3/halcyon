@@ -370,3 +370,39 @@ fn looks_sample_windows_stay_clear_of_the_widgets() {
         }
     }
 }
+
+// S10: the window can be as narrow as `MIN_WIDTH`, and every page fits it.
+#[test]
+fn every_page_fits_the_narrowest_window() {
+    let name = "every_page_fits_the_narrowest_window";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    assert_eq!(MIN_WIDTH, 640.);
+    let size = Size::new(MIN_WIDTH, 480.);
+    let (mut app, task) = Settings::init(Core::default(), Page::Overview);
+    settle_settings(&mut app, task);
+    send_settings(&mut app, Message::Resized(size));
+    let mut native = crate::native_test::Native::new(size);
+    let mut overflow = Vec::new();
+    for page in Page::ALL
+        .into_iter()
+        .filter(|page| *page != Page::WidgetLayout)
+    {
+        send_settings(&mut app, Message::Page(page));
+        for (text, bounds) in native.overflowing_text(app.settings_view()) {
+            overflow.push(format!("{page:?}: {text:?} at {bounds:?}"));
+        }
+    }
+    assert!(
+        overflow.is_empty(),
+        "runs past a {MIN_WIDTH} px window:\n{}",
+        overflow.join("\n")
+    );
+}

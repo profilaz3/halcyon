@@ -3,19 +3,30 @@ use crate::drawer::Widget;
 use cosmic::iced::widget::{pin, stack};
 use cosmic::widget::{dropdown, responsive};
 
-/// The Weather city row, its title in line with the widget titles above.
+/// The Weather city row, its title in line with the widget titles above
+/// and its field on the line below, at the title's indent, so neither the
+/// title nor the field is squeezed in a narrow window.
 fn split_row<'a>(
     title: &'static str,
     description: &'static str,
     control: Element<'a, Message>,
 ) -> Element<'a, Message> {
-    row::with_children(vec![
-        icon::from_name("mark-location-symbolic").size(16).into(),
-        container(detail(title, description)).width(Length::Fill).into(),
-        control,
+    column::with_children(vec![
+        row::with_children(vec![
+            icon::from_name("mark-location-symbolic").size(16).into(),
+            container(detail(title, description))
+                .width(Length::Fill)
+                .into(),
+        ])
+        .spacing(12)
+        .align_y(Alignment::Center)
+        .into(),
+        container(control)
+            .padding([0, 0, 0, 28])
+            .max_width(360.)
+            .into(),
     ])
-    .spacing(12)
-    .align_y(Alignment::Center)
+    .spacing(8)
     .into()
 }
 
@@ -213,7 +224,7 @@ impl Settings {
                                 .on_input(Message::CityInput)
                                 .on_submit(|_| Message::SearchCity),
                         )
-                        .width(190.)
+                        .width(Length::Fill)
                         .into(),
                     ));
                     if let Some(results) = self.wizard_city_results() {

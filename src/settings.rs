@@ -1072,13 +1072,17 @@ pub struct Settings {
     window: Size,
 }
 
+/// The narrowest Settings window. Every page fits it without running past
+/// the right edge (`every_page_fits_the_narrowest_window`).
+const MIN_WIDTH: f32 = 640.;
+
 fn initial_size() -> Size {
     capture_dir()
         .and_then(|_| std::env::var("DESKTOP_CARDS_SETTINGS_SIZE").ok())
         .and_then(|value| {
             value.split_once('x').and_then(|(w, h)| {
                 Some(Size::new(
-                    w.parse::<f32>().ok()?.clamp(820., 3840.),
+                    w.parse::<f32>().ok()?.clamp(MIN_WIDTH, 3840.),
                     h.parse::<f32>().ok()?.clamp(600., 2160.),
                 ))
             })
@@ -1168,7 +1172,9 @@ pub fn run(page: &str) -> cosmic::iced::Result {
             .min_height(size.height)
             .max_height(size.height)
     } else {
-        cosmic::iced::Limits::NONE.min_width(820.).min_height(480.)
+        cosmic::iced::Limits::NONE
+            .min_width(MIN_WIDTH)
+            .min_height(480.)
     };
     let settings = cosmic::app::Settings::default()
         .size(size)

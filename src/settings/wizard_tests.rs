@@ -2281,3 +2281,44 @@ fn on15_crowded_widgets_say_so_once(size: Size) {
             .is_empty()
     );
 }
+
+#[test]
+fn the_weather_city_row_fits_a_narrow_window() {
+    if child("the_weather_city_row_fits_a_narrow_window") {
+        return;
+    }
+    Config::save_changes(json!({"enabled_widgets":["clock","weather"],"glance":{"enabled":false}}))
+        .unwrap();
+    for size in [Size::new(640., 600.), Size::new(820., 600.)] {
+        let (mut app, mut native) = open(size);
+        let _ = app.update(Message::Wizard(wizard::Message::Show(
+            wizard::Step::Widgets,
+        )));
+        assert!(app.config.location.is_none());
+        reveal(&mut app, &mut native, "wizard-city");
+        if std::env::var_os("DESKTOP_CARDS_LAYOUT_EVIDENCE").is_some() {
+            native.capture(
+                app.settings_view(),
+                &cosmic::Theme::light(),
+                &format!("s10-wizard-city-{}", size.width),
+            );
+        }
+        let title = native.text_bounds(app.settings_view(), "Weather city");
+        let note = native.text_bounds(app.settings_view(), "Used for your forecast");
+        let field = native.bounds(app.settings_view(), "wizard-city");
+        for (text, bounds) in [("title", title), ("description", note)] {
+            assert!(
+                bounds.height < 24.,
+                "{size:?}: the city {text} wraps: {bounds:?}"
+            );
+        }
+        assert!(
+            field.width >= 160.,
+            "{size:?}: room to type a city: {field:?}"
+        );
+        assert!(
+            field.x + field.width <= size.width,
+            "{size:?}: the field stays on screen: {field:?}"
+        );
+    }
+}
