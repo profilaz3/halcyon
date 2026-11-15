@@ -342,6 +342,8 @@ pub struct Applet {
     notes_ready: bool,
     /// What was last asked of COSMIC's popups: `Some(true)` while taken.
     popups: Option<bool>,
+    /// This island's hold on COSMIC's popup limit.
+    popup_holder: popups::Holder,
     /// Notifications that arrived while a reveal could not show, oldest
     /// first. They show once the way is clear: fullscreen ended, the screen
     /// unlocked or the island closed.
@@ -515,6 +517,7 @@ impl Application for Applet {
                 notes: Vec::new(),
                 notes_ready: false,
                 popups: None,
+                popup_holder: Default::default(),
                 pending: Vec::new(),
                 pending_at: None,
                 batch: Vec::new(),
