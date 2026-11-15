@@ -899,7 +899,7 @@ impl Settings {
                 } else {
                     card(widget, size, &config, scale)
                 };
-                let sample = if own(super::home::widget_page(widget)) {
+                let sample: Element<'_, Message> = if own(super::home::widget_page(widget)) {
                     button::custom(sample)
                         .class(super::home::hotspot(accent, 6.))
                         .id(cosmic::widget::Id::new(format!(
@@ -911,7 +911,12 @@ impl Settings {
                         .on_press(Message::Page(super::home::widget_page(widget)))
                         .into()
                 } else {
-                    sample
+                    container(sample)
+                        .id(cosmic::widget::Id::new(format!(
+                            "scene-card-{}",
+                            widget.key()
+                        )))
+                        .into()
                 };
                 layers.push(
                     pin(sample)
@@ -947,7 +952,11 @@ impl Settings {
                         .into(),
                 );
             }
-            if looks && let Some((pair, area)) = looks::window_pair(&preview, insets, screen, scale)
+            let mut avoid = widget_areas.clone();
+            avoid.extend(icon_area);
+            if looks
+                && let Some((pair, area)) =
+                    looks::window_pair(&preview, insets, screen, scale, &avoid)
             {
                 layers.push(pair);
                 window_area = Some(area);

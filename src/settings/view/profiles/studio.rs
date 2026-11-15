@@ -207,8 +207,8 @@ impl Settings {
             }
             Part::Windows => {
                 layers.push(picture(base, size));
-                if let Some((pair, _)) =
-                    planned.and_then(|preview| looks::window_pair(preview, [0.; 4], size, scale))
+                if let Some((pair, _)) = planned
+                    .and_then(|preview| looks::window_pair(preview, [0.; 4], size, scale, &[]))
                 {
                     layers.push(pair);
                 }

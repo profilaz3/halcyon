@@ -307,3 +307,66 @@ fn studio_tile_captions_are_readable_in_light_and_dark() {
         }
     }
 }
+
+/// The Looks preview's sample windows stay clear of each look's widgets,
+/// the big clock of Ridge and Rainy Lake most of all.
+#[test]
+fn looks_sample_windows_stay_clear_of_the_widgets() {
+    let name = "looks_sample_windows_stay_clear_of_the_widgets";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let root = isolated_root();
+    let mut app = looks_desktop(&root);
+    for size in [Size::new(1280., 800.), Size::new(820., 800.)] {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        for look in [
+            "ridge",
+            "rainy-lake",
+            "halcyon",
+            "tidal",
+            "carbon",
+            "harbor",
+        ] {
+            looks_select(&mut app, look);
+            native.scroll(app.settings_view(), "settings-content", 0.);
+            let Some(windows) = native.try_bounds(app.settings_view(), "looks-sample-windows")
+            else {
+                continue;
+            };
+            assert!(
+                windows.width > 20. && windows.height > 20.,
+                "{look}: {windows:?}"
+            );
+            let scene = native.bounds(app.settings_view(), "profile-scene-candidate");
+            assert!(
+                windows.x >= scene.x - 0.5
+                    && windows.x + windows.width <= scene.x + scene.width + 0.5,
+                "{look}: windows stay on the picture"
+            );
+            for widget in [
+                "clock", "weather", "calendar", "devbox", "glance", "notes", "music",
+            ] {
+                if let Some(card) =
+                    native.try_bounds(app.settings_view(), &format!("scene-card-{widget}"))
+                {
+                    assert!(
+                        windows
+                            .intersection(&card)
+                            .is_none_or(|area| area.width * area.height < 1.),
+                        "{look} at {}: the windows cover the {widget}: {windows:?} {card:?}",
+                        size.width
+                    );
+                }
+            }
+        }
+    }
+}
