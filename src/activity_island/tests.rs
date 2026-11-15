@@ -412,6 +412,55 @@ fn compositor_dismissal_clears_pointer_state_and_old_deadlines() {
     );
 }
 
+/// While the island opens, its controls take the pointer as soon as they
+/// are drawn and the outline has reached them. Before, they showed from
+/// 45% of the way but ignored presses until 90%.
+#[test]
+fn d13_controls_answer_as_soon_as_they_show() {
+    use cosmic::iced::{Event, Size, mouse};
+    let mut app = app();
+    app.popup = Some(window::Id::unique());
+    app.held = true;
+    app.snapshot.music = Some(music());
+    app.kind = Kind::Music;
+    let mut ui = crate::native_test::Native::new(Size::new(WIDTH, HEIGHT));
+    app.motion.value = 1.;
+    let pause = ui.bounds(app.capsule(true), "activity-pause").center();
+    let press = |ui: &mut crate::native_test::Native, app: &Applet| {
+        let _ = ui.event(
+            app.capsule(true),
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            pause,
+        );
+        ui.event(
+            app.capsule(true),
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            pause,
+        )
+        .0
+        .into_iter()
+        .any(|m| matches!(m, Message::Control(Command::Pause { .. })))
+    };
+    // Not drawn yet: nothing to press.
+    app.motion.value = 0.3;
+    assert!(!press(&mut ui, &app));
+    // Drawn, but the outline has not grown down to it: still hidden.
+    app.motion.value = 0.5;
+    assert!(!press(&mut ui, &app), "pressed below the outline");
+    // Drawn and inside the outline, short of 90%: it answers.
+    app.motion.value = 0.8;
+    assert!(press(&mut ui, &app), "a control on screen at 80% ignored the press");
+    app.motion.value = 1.;
+    assert!(press(&mut ui, &app));
+    // Wherever presses reach a control, it is drawn.
+    for step in 0..=20 {
+        app.motion.value = step as f32 / 20.;
+        if press(&mut ui, &app) {
+            assert!(app.motion.value > 0.45, "pressed while hidden at {}", app.motion.value);
+        }
+    }
+}
+
 #[test]
 fn unavailable_music_and_elapsed_focus_have_no_stale_actions() {
     use cosmic::iced::{Event, Size, mouse};

@@ -48,6 +48,13 @@ pub(super) const PILL: f32 = 28.;
 const PILL_OPEN_TOP: f32 = 18.;
 /// A very clear bar would leave the details unreadable over the wallpaper.
 const MIN_OPACITY: f32 = 0.7;
+/// How far the island has opened before what is below the title shows.
+/// From then on it also takes the pointer, where the outline has reached:
+/// a control that can be seen can be pressed.
+const CONTENT_FROM: f32 = 0.45;
+fn shown_at(progress: f32, i: usize) -> bool {
+    i == 0 || i == 4 || progress > CONTENT_FROM
+}
 
 #[derive(Default)]
 struct State {
@@ -206,6 +213,11 @@ impl Surface<'_> {
     }
     fn lift(&self) -> f32 {
         if self.tight && !self.chooser { TIGHT } else { 0. }
+    }
+    /// Child `i` is drawn: the title line always, the rest once the island
+    /// has opened far enough.
+    fn content_shown(&self, i: usize) -> bool {
+        shown_at(self.progress, i)
     }
 }
 impl Widget<Message, Theme, Renderer> for Surface<'_> {
@@ -373,6 +385,7 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
         if !self.show_content {
             return;
         }
+        let progress = self.progress;
         for (i, ((c, t), l)) in self
             .children
             .iter_mut()
@@ -380,7 +393,7 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
             .zip(l.children())
             .enumerate()
         {
-            if self.show_content && (i == 0 || i == 4 || self.progress > 0.9) {
+            if shown_at(progress, i) {
                 c.as_widget_mut().operate(t, l, r, o)
             }
         }
@@ -450,6 +463,8 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
             }
             shell.request_redraw_at(state.last_frame.unwrap_or(*at) + cadence);
         }
+        let in_outline = self.contains(l.bounds(), cursor);
+        let (show, progress) = (self.show_content, self.progress);
         for (i, ((c, t), l)) in self
             .children
             .iter_mut()
@@ -457,7 +472,14 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
             .zip(l.children())
             .enumerate()
         {
-            if self.show_content && (i == 0 || i == 4 || self.progress > 0.9) {
+            if show && shown_at(progress, i) {
+                // Outside the outline it has grown to, a control is still
+                // hidden: the pointer does not reach it there.
+                let cursor = if i == 0 || i == 4 || in_outline {
+                    cursor
+                } else {
+                    mouse::Cursor::Unavailable
+                };
                 c.as_widget_mut()
                     .update(t, event, l, cursor, r, clip, shell, viewport)
             }
@@ -522,13 +544,21 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
         } else {
             cursor
         };
+        let in_outline = self.contains(l.bounds(), cursor);
         self.children
             .iter()
             .zip(&t.children)
             .zip(l.children())
             .enumerate()
-            .filter(|(i, _)| *i == 0 || *i == 4 || self.progress > 0.9)
-            .map(|(_, ((c, t), l))| c.as_widget().mouse_interaction(t, l, cursor, v, r))
+            .filter(|(i, _)| self.content_shown(*i))
+            .map(|(i, ((c, t), l))| {
+                let cursor = if i == 0 || i == 4 || in_outline {
+                    cursor
+                } else {
+                    mouse::Cursor::Unavailable
+                };
+                c.as_widget().mouse_interaction(t, l, cursor, v, r)
+            })
             .max()
             .unwrap_or_default()
     }
@@ -543,7 +573,7 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
         if !self.show_content {
             return None;
         }
-        if self.progress <= 0.9 {
+        if self.progress <= CONTENT_FROM {
             return None;
         }
         overlay::from_children(
@@ -624,9 +654,7 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
                     .zip(l.children())
                     .enumerate()
                 {
-                    if !(self.chooser && matches!(i, 2 | 5 | 6))
-                        && (i == 0 || i == 4 || self.progress > 0.45)
-                    {
+                    if !(self.chooser && matches!(i, 2 | 5 | 6)) && self.content_shown(i) {
                         c.as_widget().draw(t, r, theme, style, l, cursor, &clip)
                     }
                 }
@@ -790,7 +818,7 @@ impl Surface<'_> {
         let children = self.children.iter().zip(&t.children).zip(l.children());
         for (i, ((c, t), l)) in children.enumerate() {
             // The title line belongs to the bar and is never clipped by the card.
-            if i == 0 || i == 4 || (i == 1 && p > 0.45) {
+            if i == 0 || i == 4 || (i == 1 && self.content_shown(i)) {
                 c.as_widget().draw(t, r, theme, style, l, cursor, v)
             }
         }
@@ -800,7 +828,7 @@ impl Surface<'_> {
                 for (i, ((c, t), l)) in children.enumerate() {
                     if matches!(i, 2 | 3 | 5 | 6)
                         && !(self.chooser && matches!(i, 2 | 5 | 6))
-                        && p > 0.45
+                        && self.content_shown(i)
                     {
                         c.as_widget().draw(t, r, theme, style, l, cursor, &clip)
                     }
