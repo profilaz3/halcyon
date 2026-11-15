@@ -101,6 +101,11 @@ pub struct BarSpec {
     pub island_gap: u16,
     /// Float away from the screen edge (round styles) or stay attached.
     pub floating: bool,
+    /// The least opacity (%) a glass material may give the dock and panel.
+    /// A see-through finish on a solid style's bar shows the wallpaper
+    /// through it as a pale haze, so solid styles keep their bars solid
+    /// while glass styles allow the panel's own floor.
+    pub glass_floor: u8,
 }
 
 /// Everything one style decides, in one place. Adding a style is adding a
@@ -162,6 +167,7 @@ const SOFT: StyleSpec = StyleSpec {
         spacing: 6,
         island_gap: 12,
         floating: true,
+        glass_floor: 85,
     },
     wallpaper: ([18, 27, 29], [40, 73, 67]),
 };
@@ -194,6 +200,7 @@ const OUTLINE: StyleSpec = StyleSpec {
         spacing: 4,
         island_gap: 8,
         floating: false,
+        glass_floor: 90,
     },
     wallpaper: ([12, 16, 21], [32, 40, 51]),
 };
@@ -226,6 +233,7 @@ const PAPER: StyleSpec = StyleSpec {
         spacing: 6,
         island_gap: 12,
         floating: false,
+        glass_floor: 90,
     },
     wallpaper: ([223, 222, 208], [240, 235, 223]),
 };
@@ -258,6 +266,7 @@ const BARE: StyleSpec = StyleSpec {
         spacing: 8,
         island_gap: 16,
         floating: true,
+        glass_floor: 60,
     },
     wallpaper: ([21, 29, 26], [61, 68, 51]),
 };
@@ -290,6 +299,7 @@ const GLASS: StyleSpec = StyleSpec {
         spacing: 6,
         island_gap: 12,
         floating: true,
+        glass_floor: 45,
     },
     wallpaper: ([29, 43, 74], [91, 75, 138]),
 };
@@ -331,6 +341,7 @@ const MIDNIGHT: StyleSpec = StyleSpec {
         spacing: 6,
         island_gap: 8,
         floating: false,
+        glass_floor: 100,
     },
     wallpaper: ([0, 0, 0], [10, 10, 16]),
 };
@@ -363,6 +374,7 @@ const TERMINAL: StyleSpec = StyleSpec {
         spacing: 4,
         island_gap: 6,
         floating: false,
+        glass_floor: 100,
     },
     wallpaper: ([4, 12, 7], [10, 32, 18]),
 };
@@ -395,6 +407,7 @@ const NEON: StyleSpec = StyleSpec {
         spacing: 6,
         island_gap: 10,
         floating: true,
+        glass_floor: 90,
     },
     wallpaper: ([11, 10, 20], [44, 14, 52]),
 };
@@ -427,6 +440,7 @@ const EDITORIAL: StyleSpec = StyleSpec {
         spacing: 6,
         island_gap: 8,
         floating: false,
+        glass_floor: 95,
     },
     wallpaper: ([242, 240, 234], [222, 218, 208]),
 };
@@ -459,6 +473,7 @@ const RETRO: StyleSpec = StyleSpec {
         spacing: 6,
         island_gap: 10,
         floating: true,
+        glass_floor: 95,
     },
     wallpaper: ([246, 227, 200], [232, 199, 154]),
 };
@@ -491,6 +506,7 @@ const PASTEL: StyleSpec = StyleSpec {
         spacing: 8,
         island_gap: 14,
         floating: true,
+        glass_floor: 80,
     },
     wallpaper: ([253, 238, 243], [233, 240, 255]),
 };
@@ -523,6 +539,7 @@ const BAUHAUS: StyleSpec = StyleSpec {
         spacing: 6,
         island_gap: 8,
         floating: false,
+        glass_floor: 100,
     },
     wallpaper: ([233, 228, 216], [214, 206, 190]),
 };

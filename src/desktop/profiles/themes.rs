@@ -1040,6 +1040,10 @@ mod frosted_tests {
 mod color_tests;
 
 #[cfg(test)]
+#[path = "bar_style_tests.rs"]
+mod bar_style_tests;
+
+#[cfg(test)]
 pub(crate) mod tests {
     use super::*;
     use crate::desktop::store::tests::Fixture;
