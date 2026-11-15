@@ -192,7 +192,7 @@ pub enum Message {
     /// The clock drawn for behind the rain glass, or nothing.
     GlassReady(u64, Option<crate::desktop::wallpaper::media::Pixels>),
     /// The picture with this content key was analysed, or failed.
-    DepthAnalysed(String, bool),
+    DepthAnalysed(String, Result<(), crate::depth::analyse::Failure>),
     WallpaperColorsReady(
         u64,
         Result<Option<crate::desktop::wallpaper::automatic::Prepared>, String>,
@@ -1283,7 +1283,7 @@ impl Cards {
                 self.capture_if_changed()
             }
             Message::WallpaperColorsChanged => {
-                self.depth.invalidate();
+                self.depth.wallpaper_changed();
                 let rain = self.rain.invalidate();
                 Task::batch([
                     rain,
@@ -1306,8 +1306,8 @@ impl Cards {
                 Some(key) => self.depth_analyse(key),
                 None => Task::none(),
             },
-            Message::DepthAnalysed(key, ok) => {
-                if self.depth.analysed(&key, ok) {
+            Message::DepthAnalysed(key, result) => {
+                if self.depth.analysed(&key, result) {
                     self.depth_sync()
                 } else {
                     Task::none()
