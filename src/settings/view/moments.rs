@@ -81,9 +81,8 @@ impl Settings {
             } else {
                 ((bounds.width - 24.) / 2.).min(360.)
             };
-            let clock =
-                crate::app::settings_clock_preview_at(&preview, [width, 132.], clock_time)
-                    .map(|_| Message::Preview);
+            let clock = crate::app::settings_clock_preview_at(&preview, [width, 132.], clock_time)
+                .map(|_| Message::Preview);
             let weather = super::sample::thumbnail(
                 crate::app::settings_weather_preview_at(&preview, [360., 180.], now)
                     .map(|_| Message::Preview),
@@ -95,7 +94,11 @@ impl Settings {
                 container(weather).width(width).into(),
             ];
             container(if narrow {
-                Element::from(column::with_children(cards).spacing(10).align_x(Alignment::Center))
+                Element::from(
+                    column::with_children(cards)
+                        .spacing(10)
+                        .align_x(Alignment::Center),
+                )
             } else {
                 row::with_children(cards)
                     .spacing(24)
@@ -214,10 +217,8 @@ impl Settings {
                         "Clock type",
                         "face",
                         serde_json::json!(look.clock.face),
-                        &[
-                            ("Digital", serde_json::json!("digital")),
-                            ("Analog", serde_json::json!("analog")),
-                        ],
+                        &crate::widget_style::resolver::ClockFace::ALL
+                            .map(|face| (face.label(), serde_json::json!(face))),
                     ),
                     choice(
                         "Clock background",

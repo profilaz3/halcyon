@@ -200,3 +200,94 @@ fn foundation_invalid_clock_choices_are_rejected_by_config_and_owned_store() {
         );
     }
 }
+
+#[test]
+fn words_say_the_time_to_the_nearest_five_minutes() {
+    let said = |hour, minute| in_words(hour, minute).join(" ");
+    assert_eq!(said(9, 0), "nine o’clock");
+    assert_eq!(said(9, 2), "nine o’clock");
+    assert_eq!(said(9, 3), "five past nine");
+    assert_eq!(said(9, 15), "quarter past nine");
+    assert_eq!(said(9, 23), "twenty-five past nine");
+    assert_eq!(said(21, 30), "half past nine");
+    assert_eq!(said(9, 33), "twenty-five to ten");
+    assert_eq!(said(9, 45), "quarter to ten");
+    assert_eq!(said(9, 58), "ten o’clock");
+    assert_eq!(said(0, 0), "twelve o’clock");
+    assert_eq!(said(12, 40), "twenty to one");
+    assert_eq!(said(23, 59), "twelve o’clock");
+    // Every line it can say is one the face is fitted to.
+    for hour in 0..24 {
+        for minute in 0..60 {
+            for line in in_words(hour, minute) {
+                assert!(
+                    PHRASES.contains(&line.as_str())
+                        || HOUR_WORDS.contains(&line.as_str())
+                        || line == "o’clock",
+                    "{hour}:{minute} {line}"
+                );
+            }
+        }
+    }
+    let reading = ClockReading::at(chrono::NaiveTime::from_hms_opt(7, 5, 0).unwrap(), false);
+    assert_eq!((&*reading.hours, &*reading.minutes), ("7", "05"));
+    let reading = ClockReading::at(chrono::NaiveTime::from_hms_opt(7, 5, 0).unwrap(), true);
+    assert_eq!(reading.hours, "07");
+    assert_eq!(reading.date, None);
+    let dated = reading.with_date(chrono::NaiveDate::from_ymd_opt(2026, 9, 30).unwrap());
+    assert_eq!(
+        dated.date,
+        Some(["Wednesday".to_string(), "September 30".to_string()])
+    );
+}
+
+/// Every face is saved by its name and read back; the shared store
+/// accepts each one; an old file keeps its face; a face from a newer
+/// version falls back to the style's own and keeps the rest of the file.
+#[test]
+fn every_face_round_trips_and_an_unknown_face_falls_back() {
+    for face in ClockFace::ALL {
+        let value = serde_json::json!(face);
+        assert_eq!(value, serde_json::json!(face.key()));
+        let config = Config::from_bytes(
+            serde_json::to_string(&serde_json::json!({"clock": {"face": value}}))
+                .unwrap()
+                .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(config.clock.face, Some(face));
+        assert!(config.repaired.is_empty());
+        for pointer in [
+            "/clock/face",
+            "/moments/day/clock/face",
+            "/moments/night/clock/face",
+        ] {
+            assert!(
+                crate::desktop::store::widget::field(pointer)
+                    .unwrap()
+                    .accepts(&value),
+                "{pointer} {face:?}"
+            );
+        }
+    }
+    let old = Config::from_bytes(br#"{"clock":{"face":"analog","scale":120}}"#).unwrap();
+    assert_eq!(old.clock.face, Some(ClockFace::Analog));
+    let none = Config::from_bytes(br#"{"clock":{"scale":120}}"#).unwrap();
+    assert_eq!(none.clock.face, None);
+    let newer = Config::from_bytes(br#"{"clock":{"face":"flip","scale":120}}"#).unwrap();
+    assert_eq!(newer.clock.face, None);
+    assert_eq!(newer.clock.scale, 120);
+    assert_eq!(
+        newer
+            .repaired
+            .iter()
+            .map(|r| r.pointer.as_str())
+            .collect::<Vec<_>>(),
+        ["/clock/face"]
+    );
+    assert!(
+        !crate::desktop::store::widget::field("/clock/face")
+            .unwrap()
+            .accepts(&serde_json::json!("flip"))
+    );
+}
