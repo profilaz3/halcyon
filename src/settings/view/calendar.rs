@@ -16,6 +16,15 @@ impl Settings {
                 .into(),
             detail_state(
                 match editor.connection.backend {
+                    Backend::Subscription
+                        if editor
+                            .connection
+                            .subscriptions
+                            .iter()
+                            .any(|c| crate::calendar::is_system(&c.id)) =>
+                    {
+                        "Your calendars"
+                    }
                     Backend::Subscription => "Calendar links",
                     Backend::Disconnected => "Connect a calendar",
                     _ => "Google Calendar",
@@ -128,7 +137,11 @@ impl Settings {
                 if editor.confirm_remove.as_ref() == Some(&choice.id) {
                     rows.push(detail_state(
                         format!("Remove “{}”?", choice.name),
-                        "You’ll need its private link to add it again.",
+                        if crate::calendar::is_system(&choice.id) {
+                            "You can add it again from system accounts."
+                        } else {
+                            "You’ll need its private link to add it again."
+                        },
                     ));
                     rows.push(
                         row::with_children(vec![
@@ -323,6 +336,14 @@ impl Settings {
                     .on_press(message(Account::SubscriptionForm(true)))
                     .into(),
                 ));
+                actions.push(slot(
+                    button::standard("Add from system accounts…")
+                        .id(cosmic::widget::Id::new("calendar-system-open"))
+                        .on_press(message(Account::System(
+                            crate::settings::calendar::system::Message::Open(!editor.system.open),
+                        )))
+                        .into(),
+                ));
                 let actions = row::with_children(actions).spacing(8).wrap();
                 if editor.connection.connected() {
                     rows.push(actions.into());
@@ -340,6 +361,9 @@ impl Settings {
                         ),
                         actions.into(),
                     ));
+                }
+                if editor.system.open {
+                    rows.push(self.calendar_system_picker());
                 }
             }
         }

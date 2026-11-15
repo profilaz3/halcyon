@@ -1,6 +1,8 @@
 //! Account setup is separate from widget appearance and saved profiles.
 use super::*;
 use crate::calendar as account;
+#[path = "calendar_system.rs"]
+pub mod system;
 
 #[derive(Clone, Debug)]
 pub enum Message {
@@ -33,6 +35,8 @@ pub enum Message {
     Picked(Result<Option<PathBuf>, String>),
     PublisherHelp(bool),
     OpenGuide,
+    /// The system-accounts picker.
+    System(system::Message),
 }
 /// Read-only subscription instructions. No account state or credentials are
 /// involved in choosing a provider here.
@@ -110,6 +114,7 @@ pub struct Editor {
     pub subscription_provider: SubscriptionProvider,
     pub subscription_name: String,
     pub subscription_url: account::SecretText,
+    pub system: system::Picker,
     attempt: u64,
 }
 impl Default for Editor {
@@ -131,6 +136,7 @@ impl Default for Editor {
             subscription_provider: SubscriptionProvider::default(),
             subscription_name: String::new(),
             subscription_url: account::SecretText::default(),
+            system: system::Picker::default(),
             attempt: 0,
         }
     }
@@ -466,6 +472,7 @@ impl Settings {
                 }
             }
             Message::PublisherHelp(on) => self.calendar.publisher_help = on,
+            Message::System(message) => return self.update_calendar_system(message),
             Message::OpenGuide => {
                 let path = crate::paths::shared("google-calendar-setup.html").unwrap_or_default();
                 return run_command(
