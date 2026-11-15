@@ -1317,6 +1317,11 @@ pub(super) const UNCHECKED_LABELS: &[(&str, &str)] = &[
     ("Hide event details", "in Calendar, shown once a calendar is connected"),
     ("Calendar colors", "in Calendar, shown once a calendar is connected"),
     ("Highlight meetings", "in Calendar, shown once a calendar is connected"),
+    (
+        "Window tone",
+        "on Appearance under Mode, shown once a style is applied; \
+         window_tone_native_captures reveals it",
+    ),
 ];
 
 const fn hit(page: Page, label: &'static str, terms: &'static str, advanced: bool) -> SearchHit {
