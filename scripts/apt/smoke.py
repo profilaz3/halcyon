@@ -17,6 +17,30 @@ import live
 from test_archive import Apt, enrollment
 
 
+def check_versions(apt, releases):
+    """Every pinned artifact must exist; only the newest is the candidate."""
+    newest = {}
+    for release in releases:
+        version = release['release']
+        for record in release['assets'].values():
+            if record['kind'] not in ('main-deb', 'islands-deb', 'transition-deb'):
+                continue
+            package = 'cosmic-ext-halcyon' if record['kind'] == 'main-deb' else 'cosmic-ext-halcyon-islands'
+            metadata = apt.cmd('show', f'{package}={version}', tool='apt-cache')
+            records = [dict(line.split(': ', 1) for line in block.splitlines() if ': ' in line)
+                       for block in metadata.strip().split('\n\n')]
+            if not any(r.get('Version') == version and r.get('SHA256') == record['sha256']
+                       for r in records):
+                raise ValueError('public_pinned_release_mismatch')
+            if package not in newest or archive.compare(version, 'gt', newest[package][0]):
+                newest[package] = (version, record['sha256'])
+    for package, (version, _) in newest.items():
+        policy = apt.cmd('policy', package, tool='apt-cache')
+        if f'Candidate: {version}' not in [line.strip() for line in policy.splitlines()]:
+            raise ValueError('public_candidate_mismatch')
+    return {package: digest for package, (_, digest) in newest.items()}
+
+
 def check(uri, inputs, public):
     mapping = Path('/proc/self/uid_map').read_text().split()
     if os.geteuid() != 0 or mapping[:1] != ['0'] or mapping[1] == '0' or mapping[2] != '1':
@@ -40,15 +64,7 @@ def check(uri, inputs, public):
         # repository URI and four-package Origin preferences remain unchanged.
         apt.source.write_text(apt.source.read_text().replace(enrollment.KEY, str(apt.public)).replace(enrollment.URI, uri))
         apt.cmd('update')
-        expected = {}
-        for release in data['releases']:
-            for name, record in release['assets'].items():
-                if record['kind'] in ('main-deb', 'islands-deb', 'transition-deb'):
-                    package_name = 'cosmic-ext-halcyon' if record['kind'] == 'main-deb' else 'cosmic-ext-halcyon-islands'
-                    policy = apt.cmd('policy', package_name, tool='apt-cache')
-                    if f'Candidate: {release["release"]}' not in policy:
-                        raise ValueError('public_candidate_mismatch')
-                    expected[package_name] = record['sha256']
+        expected = check_versions(apt, data['releases'])
         # Real authenticated APT package download, without application install.
         old_cwd = Path.cwd()
         try:
