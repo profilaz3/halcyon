@@ -556,6 +556,15 @@ impl Application for Applet {
             return Subscription::batch(all);
         }
         all.push(bridge::client().map(Message::Backend));
+        if self.shelf_enabled()
+            && let Some(store) = self.shelf.store()
+        {
+            // Islands on other monitors change the same list.
+            all.push(
+                crate::watch::read_only_files(vec![store.to_owned()])
+                    .map(|()| Message::Shelf(shelf::Msg::StoreChanged)),
+            );
+        }
         all.push(notifications::subscription().map(Message::Notes));
         all.push(transfers::subscription().map(|u| Message::Live(live::Msg::Transfer(u))));
         all.push(downloads::subscription().map(|u| Message::Live(live::Msg::Transfer(u))));

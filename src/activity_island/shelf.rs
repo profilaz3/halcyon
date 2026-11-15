@@ -3,6 +3,12 @@
 //! The list lives in `$XDG_RUNTIME_DIR/halcyon/shelf.json`, so it outlives the
 //! applet restarting into an update but not the session. Files are looked at
 //! only when the shelf is shown or something lands on it: nothing polls.
+//!
+//! Islands on several monitors share that one list. Every change reads the
+//! list, changes it and writes it back under a lock beside it, so islands
+//! merge rather than overwrite each other, and each island follows the file
+//! for changes made by the others. File checks and writes run on a worker
+//! thread, one change at a time, never on the UI thread.
 use super::*;
 use cosmic::iced::clipboard::dnd::DndAction;
 use cosmic::iced::clipboard::mime::AsMimeTypes;
@@ -66,7 +72,9 @@ impl Item {
             modified: None,
         }
     }
-    /// Reads the file's size and kind. False once the file is gone.
+    /// Reads the file's size and kind. False only once the file is gone:
+    /// a file that can't be looked at just now (no permission for a while,
+    /// a slow or busy disk) stays, with what was known about it.
     fn stat(&mut self) -> bool {
         let Target::Path(path) = &self.target else {
             return true;
@@ -78,7 +86,7 @@ impl Item {
                 self.modified = meta.modified().ok();
                 true
             }
-            Err(_) => false,
+            Err(error) => !gone(&error),
         }
     }
     pub fn path(&self) -> Option<&Path> {
@@ -135,6 +143,13 @@ impl Item {
             Target::Path(_) => self.size.map(downloads::bytes_text).unwrap_or_default(),
         }
     }
+}
+/// Whether a failed look at a file means it is no longer there.
+fn gone(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+    ) || error.raw_os_error() == Some(libc::ENOTDIR)
 }
 /// A link's site, as people say it.
 fn link_host(url: &str) -> Option<&str> {
@@ -469,14 +484,38 @@ pub(super) struct Shelf {
     /// Where the list is kept; nowhere in tests unless one asks.
     store: Option<PathBuf>,
 }
+/// A change to the shared list, made on the worker.
+#[derive(Debug, Clone)]
+pub enum Change {
+    Add(Vec<Target>),
+    Remove(Target),
+    Clear,
+    /// Read the list again and drop files that are gone.
+    Refresh,
+}
+/// The list after a change, and how many items the change added or moved.
+#[derive(Debug, Clone)]
+pub struct Changed {
+    pub(super) items: Vec<Item>,
+    pub(super) added: usize,
+}
+/// What the island does once a change is back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum After {
+    Nothing,
+    /// Open on the list when something was added, as after a drop.
+    Grow,
+    /// Fetch thumbnails and phones for the list, if it is shown.
+    Look,
+}
 #[derive(Serialize, Deserialize, Default)]
 struct Stored {
     #[serde(default)]
     items: Vec<Target>,
 }
 impl Shelf {
-    /// The session's shelf, as the last run of the island left it.
-    pub fn load() -> Self {
+    /// Where the session's shelf is kept.
+    pub fn session_store() -> Option<PathBuf> {
         #[cfg(not(test))]
         let store = std::env::var_os("XDG_RUNTIME_DIR")
             .map(PathBuf::from)
@@ -484,59 +523,49 @@ impl Shelf {
             .map(|dir| dir.join("halcyon").join("shelf.json"));
         #[cfg(test)]
         let store = None;
-        Self::at(store)
+        store
     }
+    /// The session's shelf, not read yet: a `Change::Refresh` on the
+    /// worker fills it, so starting never waits on a file.
+    pub fn load() -> Self {
+        Self {
+            store: Self::session_store(),
+            ..Default::default()
+        }
+    }
+    pub fn store(&self) -> Option<&Path> {
+        self.store.as_deref()
+    }
+    /// The list kept at `store`, read now. Blocks on file checks.
+    #[cfg(test)]
     pub fn at(store: Option<PathBuf>) -> Self {
         let mut shelf = Self {
             store,
             ..Default::default()
         };
-        let stored = shelf
-            .store
-            .as_deref()
-            .and_then(read_stored)
-            .unwrap_or_default();
-        shelf.items = stored
-            .items
-            .into_iter()
-            .filter(|t| !matches!(t, Target::Path(p) if !p.is_absolute()))
-            .take(MAX_ITEMS)
-            .map(Item::new)
-            .filter_map(|mut item| item.stat().then_some(item))
-            .collect();
+        if let Some(Ok(stored)) = shelf.store.as_deref().map(read_stored) {
+            shelf.items = items_of(stored);
+        }
         shelf
     }
     /// Keeps the list: what each item points at, nothing more.
     pub fn save(&self) -> std::io::Result<()> {
-        use std::io::Write;
-        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
         let Some(store) = &self.store else {
             return Ok(());
         };
-        let dir = store.parent().ok_or(std::io::ErrorKind::NotFound)?;
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(dir)?;
         let stored = Stored {
             items: self.items.iter().map(|i| i.target.clone()).collect(),
         };
         let json = serde_json::to_vec(&stored).map_err(std::io::Error::other)?;
-        let next = store.with_extension("json.next");
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&next)?;
-        file.write_all(&json)?;
-        drop(file);
-        std::fs::rename(&next, store)
+        // A new temporary file each time, so two islands writing at once
+        // never share one.
+        crate::tools::write_private(store, &json).map_err(std::io::Error::other)
     }
-    fn persist(&self) {
-        if let Err(error) = self.save() {
-            eprintln!("Activity island shelf: could not keep the list: {error}");
-        }
+    /// Takes a change back from the worker.
+    pub fn changed(&mut self, changed: Changed) {
+        self.items = changed.items;
+        self.selected = self.selected.min(self.items.len().saturating_sub(1));
+        self.forget_thumbs();
     }
     /// Puts dropped files and links first, in the order they came. One
     /// already on the shelf moves up; files that are gone are skipped.
@@ -633,12 +662,155 @@ impl Shelf {
         });
     }
 }
-fn read_stored(path: &Path) -> Option<Stored> {
-    let meta = std::fs::metadata(path).ok()?;
+/// The stored list. A missing, damaged or oversized one reads as empty; a
+/// list that can't be read just now is an error, so it is never written
+/// over.
+fn read_stored(path: &Path) -> std::io::Result<Stored> {
+    let meta = match std::fs::metadata(path) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Stored::default()),
+        Err(error) => return Err(error),
+    };
     if !meta.is_file() || meta.len() > STORE_MAX {
-        return None;
+        return Ok(Stored::default());
     }
-    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+    let bytes = std::fs::read(path)?;
+    Ok(serde_json::from_slice(&bytes).unwrap_or_default())
+}
+/// Items for stored targets, without files that are gone.
+fn items_of(stored: Stored) -> Vec<Item> {
+    stored
+        .items
+        .into_iter()
+        .filter(|t| !matches!(t, Target::Path(p) if !p.is_absolute()))
+        .take(MAX_ITEMS)
+        .map(Item::new)
+        .filter_map(|mut item| item.stat().then_some(item))
+        .collect()
+}
+/// Runs `change` on the list: the one kept at `store`, read, changed and
+/// written back under its lock, or `current` when nothing is kept. Blocks
+/// on file checks; the island calls it through [`change_later`].
+pub(super) fn change_stored(
+    store: Option<&Path>,
+    current: Vec<Item>,
+    change: Change,
+) -> Result<Changed, String> {
+    let _lock = match store {
+        Some(store) => Some(lock_store(store)?),
+        None => None,
+    };
+    let (mut shelf, before) = match store {
+        Some(store) => {
+            let stored =
+                read_stored(store).map_err(|error| format!("could not read the list: {error}"))?;
+            let before = stored.items.clone();
+            (
+                Shelf {
+                    items: items_of(stored),
+                    ..Default::default()
+                },
+                Some(before),
+            )
+        }
+        None => (
+            Shelf {
+                items: current,
+                ..Default::default()
+            },
+            None,
+        ),
+    };
+    let added = match change {
+        Change::Add(targets) => shelf.add(targets),
+        Change::Remove(target) => {
+            shelf.items.retain(|item| item.target != target);
+            0
+        }
+        Change::Clear => {
+            shelf.items.clear();
+            0
+        }
+        Change::Refresh => 0,
+    };
+    shelf.prune();
+    if let (Some(store), Some(before)) = (store, before) {
+        let after: Vec<Target> = shelf.items.iter().map(|i| i.target.clone()).collect();
+        if after != before {
+            shelf.store = Some(store.to_owned());
+            shelf
+                .save()
+                .map_err(|error| format!("could not keep the list: {error}"))?;
+        }
+    }
+    Ok(Changed {
+        items: shelf.items,
+        added,
+    })
+}
+/// The lock beside the list that every island takes to change it.
+fn lock_store(store: &Path) -> Result<std::fs::File, String> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::DirBuilderExt;
+    if let Some(dir) = store.parent() {
+        let _ = std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir);
+    }
+    let lock = crate::desktop::recovery::open_lock_file(&store.with_extension("json.lock"))
+        .map_err(|error| format!("could not lock the list: {error}"))?;
+    loop {
+        // SAFETY: lock owns a valid descriptor for as long as it is held.
+        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) } == 0 {
+            return Ok(lock);
+        }
+        let error = std::io::Error::last_os_error();
+        if error.kind() != std::io::ErrorKind::Interrupted {
+            return Err(format!("could not lock the list: {error}"));
+        }
+    }
+}
+/// One worker thread per island process, so changes run in the order made.
+fn worker() -> &'static std::sync::Mutex<std::sync::mpsc::Sender<Box<dyn FnOnce() + Send>>> {
+    static WORKER: std::sync::OnceLock<
+        std::sync::Mutex<std::sync::mpsc::Sender<Box<dyn FnOnce() + Send>>>,
+    > = std::sync::OnceLock::new();
+    WORKER.get_or_init(|| {
+        let (sender, jobs) = std::sync::mpsc::channel::<Box<dyn FnOnce() + Send>>();
+        std::thread::Builder::new()
+            .name("halcyon-shelf".into())
+            .spawn(move || {
+                for job in jobs {
+                    job();
+                }
+            })
+            .expect("spawn the shelf worker");
+        std::sync::Mutex::new(sender)
+    })
+}
+/// [`change_stored`] on the worker, queued now behind earlier changes.
+pub(super) fn change_later(
+    store: Option<PathBuf>,
+    current: Vec<Item>,
+    change: Change,
+) -> impl std::future::Future<Output = Result<Changed, String>> {
+    let (reply, answer) = tokio::sync::oneshot::channel();
+    let queued = worker().lock().map_err(|_| ()).and_then(|sender| {
+        sender
+            .send(Box::new(move || {
+                let _ = reply.send(change_stored(store.as_deref(), current, change));
+            }))
+            .map_err(|_| ())
+    });
+    async move {
+        match queued {
+            Ok(()) => answer
+                .await
+                .unwrap_or_else(|_| Err("the shelf worker stopped".into())),
+            Err(()) => Err("the shelf worker stopped".into()),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -662,6 +834,10 @@ pub enum Msg {
     Clear,
     Devices(Vec<Device>),
     Thumbs(Vec<Thumb>),
+    /// A change came back from the worker.
+    Changed(Result<Changed, String>, After),
+    /// Another island changed the list.
+    StoreChanged,
 }
 
 impl Applet {
@@ -776,6 +952,33 @@ impl Applet {
             cosmic::task::future(async { Message::Shelf(Msg::Devices(devices().await)) });
         Task::batch([thumbs, phones])
     }
+    /// Sends `change` to the worker; its answer comes back as `Changed`.
+    fn shelf_change(&self, change: Change, after: After) -> Task<Message> {
+        let store = self.shelf.store.clone();
+        let current = self.shelf.items.clone();
+        let answer = change_later(store, current, change);
+        cosmic::task::future(async move { Message::Shelf(Msg::Changed(answer.await, after)) })
+    }
+    /// Makes the open island tall enough again when the list grew under it.
+    fn shelf_fit(&mut self) -> Task<Message> {
+        let Some(id) = self.popup else {
+            return Task::none();
+        };
+        if self.shelf.open && self.held && self.popup_extra + 0.5 < self.shelf_extra() {
+            self.promote_popup = Some(id);
+            return self.update(Message::Surface(cosmic::surface::action::destroy_popup(id)));
+        }
+        Task::none()
+    }
+    /// A drop that brought nothing the shelf keeps: an island opened only
+    /// for the drag closes again.
+    fn shelf_dropped_nothing(&mut self) -> Task<Message> {
+        if self.shelf.items.is_empty() && !self.held {
+            self.shelf.open = false;
+            return self.update(Message::Close);
+        }
+        Task::none()
+    }
     /// The open island has closed: the shelf is put away with it.
     pub(super) fn shelf_closed(&mut self) {
         self.shelf.open = false;
@@ -790,11 +993,10 @@ impl Applet {
         match msg {
             Msg::Show => {
                 self.shelf.over = false;
-                if self.shelf.prune() {
-                    self.shelf.persist();
-                }
+                // Opens on the list as last known; the worker checks the
+                // files and the island follows its answer.
                 let grow = self.shelf_grow(now);
-                Task::batch([grow, self.shelf_look()])
+                Task::batch([grow, self.shelf_change(Change::Refresh, After::Look)])
             }
             Msg::Back => {
                 self.shelf.open = false;
@@ -838,17 +1040,11 @@ impl Applet {
             }
             Msg::Dropped(data) => {
                 self.shelf.over = false;
-                let added = self.shelf.add(parse_uri_list(&data));
-                if added == 0 {
-                    if self.shelf.items.is_empty() && !self.held {
-                        self.shelf.open = false;
-                        return self.update(Message::Close);
-                    }
-                    return Task::none();
+                let targets = parse_uri_list(&data);
+                if targets.is_empty() {
+                    return self.shelf_dropped_nothing();
                 }
-                self.shelf.persist();
-                let grow = self.shelf_grow(now);
-                Task::batch([grow, self.shelf_look()])
+                self.shelf_change(Change::Add(targets), After::Grow)
             }
             Msg::Select(index) => {
                 if index < self.shelf.items.len() {
@@ -899,16 +1095,38 @@ impl Applet {
                 })
             }
             Msg::Remove(index) => {
-                if self.shelf.remove(index) {
-                    self.shelf.persist();
-                }
-                Task::none()
+                let Some(target) = item(self, index).map(|i| i.target) else {
+                    return Task::none();
+                };
+                self.shelf.remove(index);
+                self.shelf_change(Change::Remove(target), After::Nothing)
             }
             Msg::Clear => {
                 self.shelf.clear();
-                self.shelf.persist();
+                self.shelf_change(Change::Clear, After::Nothing)
+            }
+            Msg::Changed(Err(error), _) => {
+                eprintln!("Activity island shelf: {error}");
                 Task::none()
             }
+            Msg::Changed(Ok(changed), after) => {
+                let added = changed.added;
+                self.shelf.changed(changed);
+                match after {
+                    After::Grow if added == 0 => self.shelf_dropped_nothing(),
+                    After::Grow => {
+                        self.shelf.selected = 0;
+                        let grow = self.shelf_grow(now);
+                        Task::batch([grow, self.shelf_look()])
+                    }
+                    After::Look | After::Nothing if self.shelf.open => {
+                        let fit = self.shelf_fit();
+                        Task::batch([fit, self.shelf_look()])
+                    }
+                    After::Look | After::Nothing => Task::none(),
+                }
+            }
+            Msg::StoreChanged => self.shelf_change(Change::Refresh, After::Look),
             Msg::Devices(devices) => {
                 self.shelf.devices = devices;
                 Task::none()
@@ -1479,5 +1697,168 @@ mod tests {
         assert!(link.as_bytes("x-special/gnome-copied-files").is_none());
         assert_eq!(item.icon(), "image-x-generic-symbolic");
         assert!(valid_id("a1_b2") && !valid_id("../x") && !valid_id(""));
+    }
+
+    fn targets(changed: &Changed) -> Vec<Target> {
+        changed.items.iter().map(|i| i.target.clone()).collect()
+    }
+
+    #[test]
+    fn d8_islands_on_two_monitors_merge_into_one_list() {
+        let dir = temp("d8-merge");
+        let store = dir.join("run").join("shelf.json");
+        let a = file(&dir, "a.txt", 1);
+        let b = file(&dir, "b.txt", 2);
+        // Each island starts from what it last saw: nothing.
+        let left = change_stored(
+            Some(&store),
+            Vec::new(),
+            Change::Add(vec![Target::Path(a.clone())]),
+        )
+        .unwrap();
+        assert_eq!(left.added, 1);
+        let right = change_stored(
+            Some(&store),
+            Vec::new(),
+            Change::Add(vec![Target::Path(b.clone())]),
+        )
+        .unwrap();
+        // The second write kept the first island's file instead of replacing it.
+        assert_eq!(
+            targets(&right),
+            vec![Target::Path(b.clone()), Target::Path(a.clone())]
+        );
+        // Removing on one monitor leaves what the other added.
+        let left = change_stored(
+            Some(&store),
+            left.items,
+            Change::Remove(Target::Path(a.clone())),
+        )
+        .unwrap();
+        assert_eq!(targets(&left), vec![Target::Path(b.clone())]);
+        assert_eq!(
+            targets(&change_stored(Some(&store), Vec::new(), Change::Refresh).unwrap()),
+            vec![Target::Path(b)]
+        );
+        // No temporary files are left beside the list.
+        let names: Vec<_> = std::fs::read_dir(store.parent().unwrap())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert!(
+            names
+                .iter()
+                .all(|n| n == "shelf.json" || n == "shelf.json.lock"),
+            "{names:?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn d8_changes_made_at_the_same_time_all_land() {
+        let dir = temp("d8-race");
+        let store = dir.join("shelf.json");
+        let files: Vec<_> = (0..12)
+            .map(|i| file(&dir, &format!("{i}.txt"), i + 1))
+            .collect();
+        let threads: Vec<_> = files
+            .iter()
+            .cloned()
+            .map(|path| {
+                let store = store.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..3 {
+                        change_stored(
+                            Some(&store),
+                            Vec::new(),
+                            Change::Add(vec![Target::Path(path.clone())]),
+                        )
+                        .unwrap();
+                    }
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        let kept = targets(&change_stored(Some(&store), Vec::new(), Change::Refresh).unwrap());
+        assert_eq!(kept.len(), files.len());
+        for path in files {
+            assert!(kept.contains(&Target::Path(path)));
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn d11_a_file_that_cannot_be_looked_at_now_stays_on_the_shelf() {
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp("d11-unsure");
+        let store = dir.join("shelf.json");
+        let locked = dir.join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        let inside = file(&locked, "inside.txt", 5);
+        let gone = dir.join("gone.txt");
+        let kept = change_stored(
+            Some(&store),
+            Vec::new(),
+            Change::Add(vec![Target::Path(inside.clone()), Target::Path(gone)]),
+        )
+        .unwrap();
+        assert_eq!(targets(&kept), vec![Target::Path(inside.clone())]);
+        // The folder is shut for a moment: the file is not gone.
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let shut = change_stored(Some(&store), Vec::new(), Change::Refresh);
+        let reopened = Shelf::at(Some(store.clone()));
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(targets(&shut.unwrap()), vec![Target::Path(inside.clone())]);
+        assert_eq!(reopened.items.len(), 1);
+        // A list that can't be read just now is never written over.
+        std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let refused = change_stored(Some(&store), Vec::new(), Change::Clear);
+        std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(refused.is_err());
+        assert_eq!(Shelf::at(Some(store)).items.len(), 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn d11_changes_run_off_the_calling_thread_in_order() {
+        let dir = temp("d11-worker");
+        let store = dir.join("shelf.json");
+        let a = file(&dir, "a.txt", 1);
+        let b = file(&dir, "b.txt", 1);
+        let caller = std::thread::current().id();
+        let (seen, ran_on) = std::sync::mpsc::channel();
+        worker()
+            .lock()
+            .unwrap()
+            .send(Box::new(move || {
+                let _ = seen.send(std::thread::current().id());
+            }))
+            .unwrap();
+        assert_ne!(ran_on.recv().unwrap(), caller);
+        let first = change_later(
+            Some(store.clone()),
+            Vec::new(),
+            Change::Add(vec![Target::Path(a.clone())]),
+        );
+        let second = change_later(
+            Some(store.clone()),
+            Vec::new(),
+            Change::Add(vec![Target::Path(b.clone())]),
+        );
+        let third = change_later(
+            Some(store.clone()),
+            Vec::new(),
+            Change::Remove(Target::Path(a)),
+        );
+        let (_, _, last) = cosmic::iced::futures::executor::block_on(async {
+            (first.await, second.await, third.await.unwrap())
+        });
+        assert_eq!(targets(&last), vec![Target::Path(b)]);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
