@@ -2008,3 +2008,82 @@ fn stored_file(desk: &Desk, id: &ProfileId) -> String {
         .and_then(|(_, bytes)| String::from_utf8(bytes?).ok())
         .expect("the stored look")
 }
+
+/// A Look keeps the clock's face and its own typeface: capture, export,
+/// import, apply and Undo all carry every face, an older Look without them
+/// leaves the clock's own, and a face from a newer version is refused
+/// rather than drawn wrong.
+#[test]
+fn looks_carry_every_clock_face_and_typeface_through_apply_and_undo() {
+    use crate::widget_style::resolver::ClockFace;
+    let desk = desk(
+        "profile-clock-faces",
+        Srgb::new(0.2, 0.6, 0.4),
+        Srgb::new(0.8, 0.3, 0.2),
+        "teal",
+    );
+    let original: Value = serde_json::from_str(&fs::read_to_string(&desk.config).unwrap()).unwrap();
+    for face in ClockFace::ALL {
+        let mut config = original.clone();
+        config["clock"]["face"] = json!(face.key());
+        config["clock"]["weight"] = json!("light");
+        config["clock_font"] = json!("Bodoni Moda");
+        fs::write(&desk.config, config.to_string()).unwrap();
+        let captured = capture(&desk.store(), "Faces").unwrap().profile;
+        let imported = import(&export(&captured).unwrap().bytes).unwrap();
+        assert_eq!(imported.widget_style, captured.widget_style, "{face:?}");
+
+        // Another face and the style's own typeface, then the Look again.
+        let other = if face == ClockFace::Digital {
+            ClockFace::Words
+        } else {
+            ClockFace::Digital
+        };
+        config["clock"]["face"] = json!(other.key());
+        config["clock_font"] = Value::Null;
+        fs::write(&desk.config, config.to_string()).unwrap();
+        let planned = plan(
+            &desk.store(),
+            &desk.installed(),
+            &imported,
+            &[Domain::WidgetStyle].into(),
+        );
+        let change = apply(&desk.store(), &planned).unwrap();
+        let raw: Value = serde_json::from_str(&fs::read_to_string(&desk.config).unwrap()).unwrap();
+        assert_eq!(raw["clock"]["face"], json!(face.key()), "{face:?}");
+        assert_eq!(raw["clock_font"], json!("Bodoni Moda"), "{face:?}");
+        assert_eq!(raw["clock"]["weight"], json!("light"), "{face:?}");
+        desk.store().undo_latest(&change.id).unwrap();
+        let raw: Value = serde_json::from_str(&fs::read_to_string(&desk.config).unwrap()).unwrap();
+        assert_eq!(raw["clock"]["face"], json!(other.key()), "{face:?}");
+        assert!(raw["clock_font"].is_null(), "{face:?}");
+    }
+
+    // An older Look names no face or typeface: the clock keeps its own.
+    let mut config = original.clone();
+    config["clock"]["face"] = json!("split");
+    config["clock_font"] = json!("Antonio");
+    fs::write(&desk.config, config.to_string()).unwrap();
+    let old = import(
+        br#"{"format":"desktop-cards-profile","version":4,"name":"Old","widget_style":{"clock":{"show_date":true}}}"#,
+    )
+    .unwrap();
+    let planned = plan(
+        &desk.store(),
+        &desk.installed(),
+        &old,
+        &[Domain::WidgetStyle].into(),
+    );
+    // Applying it changes the date at most, never the face or typeface.
+    let applied = apply(&desk.store(), &planned);
+    let raw: Value = serde_json::from_str(&fs::read_to_string(&desk.config).unwrap()).unwrap();
+    assert_eq!(raw["clock"]["face"], json!("split"), "{applied:?}");
+    assert_eq!(raw["clock_font"], json!("Antonio"));
+    // A face this version does not draw is refused.
+    assert!(
+        import(
+            br#"{"format":"desktop-cards-profile","version":4,"name":"New","widget_style":{"clock":{"face":"neon"}}}"#,
+        )
+        .is_err()
+    );
+}
