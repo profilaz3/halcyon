@@ -72,7 +72,7 @@ pub struct Connection {
     /// Non-secret subscription labels and opaque IDs; URLs live in the keyring.
     pub subscriptions: Vec<CalendarChoice>,
     /// What each subscription is. Missing entries, as in connections saved
-    /// before 0.8, are calendar links. Only file paths are kept here.
+    /// before CalDAV support, are calendar links. Only file paths are kept here.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<Source>,
 }

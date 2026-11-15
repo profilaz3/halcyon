@@ -325,6 +325,16 @@ Do not post installation tokens, credentials or private widget contents there.
   preferences, exported setups or logs. The provider receives normal HTTPS
   requests and the connection IP. Redirects do not send the private link as a
   Referer header. Halcyon does not send feeds through its own server.
+- **CalDAV accounts and password protected links:** the server address,
+  username and password stay in the system keyring with the calendar addresses,
+  not in preferences, exported setups, logs or error messages, and never in a
+  command line. They are sent only to that server with HTTP Basic
+  authentication; a redirect to another host drops them, and a redirect from
+  https to http is refused. Plain http is used only for servers on your own
+  network, after checking every address the name resolves to.
+- **Calendar files:** the path of an added `.ics` file is kept in the
+  private calendar account file so the widget can read and watch it. It is not
+  sent anywhere and is not part of usage reports.
 - **Cached agenda:** event titles, times, descriptions, locations and links are
   cached in private local files for offline viewing. Disconnecting removes this
   cache. “Hide event details” displays Busy on the desktop and hides event/Join
