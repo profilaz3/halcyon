@@ -22,7 +22,24 @@ pub enum Message {
     SubscriptionProvider(SubscriptionProvider),
     SubscriptionName(String),
     SubscriptionUrl(account::SecretText),
+    /// "This link needs a password".
+    SubscriptionLogin(bool),
+    SubscriptionUsername(account::SecretText),
+    SubscriptionPassword(account::SecretText),
     AddSubscription,
+    CalDavForm(bool),
+    CalDavServer(account::SecretText),
+    CalDavUsername(account::SecretText),
+    CalDavPassword(account::SecretText),
+    FindCalendars,
+    Found(u64, Result<Vec<account::CalDavCalendar>, account::Problem>),
+    PickCalendar(usize, bool),
+    AddCalDav,
+    ChooseFile,
+    FileChosen(Result<Option<PathBuf>, String>),
+    FileName(String),
+    AddFile,
+    CancelFile,
     /// Asks before removing a subscription: its private link isn't kept.
     ConfirmRemove(Option<String>),
     RemoveSubscription(String),
@@ -34,6 +51,8 @@ pub enum Message {
     PublisherHelp(bool),
     OpenGuide,
 }
+/// Shown under an address that will be read over plain http.
+pub const PLAIN_HTTP: &str = "This server is on your network and the connection is not encrypted.";
 /// Read-only subscription instructions. No account state or credentials are
 /// involved in choosing a provider here.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -70,7 +89,7 @@ impl SubscriptionProvider {
             Self::Other => &[
                 "1. Find Subscribe, Export or Share in your calendar provider.",
                 "2. Copy its iCal or ICS subscription link, then paste it below.",
-                "Use an HTTPS or webcal link. Calendar webpages, local files and links needing a browser login will not work.",
+                "Use an HTTPS or webcal link. Calendar webpages and links needing a browser login will not work. For a local file, use Add calendar file.",
             ],
         }
     }
@@ -110,6 +129,20 @@ pub struct Editor {
     pub subscription_provider: SubscriptionProvider,
     pub subscription_name: String,
     pub subscription_url: account::SecretText,
+    pub subscription_login: bool,
+    pub subscription_username: account::SecretText,
+    pub subscription_password: account::SecretText,
+    pub caldav_form: bool,
+    pub caldav_server: account::SecretText,
+    pub caldav_username: account::SecretText,
+    pub caldav_password: account::SecretText,
+    /// Calendars found on the account, and which of them to add.
+    pub caldav_found: Vec<account::CalDavCalendar>,
+    pub caldav_picked: Vec<bool>,
+    pub caldav_searching: bool,
+    /// A chosen calendar file waiting for Add calendar.
+    pub file_pending: Option<PathBuf>,
+    pub file_name: String,
     attempt: u64,
 }
 impl Default for Editor {
@@ -131,6 +164,18 @@ impl Default for Editor {
             subscription_provider: SubscriptionProvider::default(),
             subscription_name: String::new(),
             subscription_url: account::SecretText::default(),
+            subscription_login: false,
+            subscription_username: account::SecretText::default(),
+            subscription_password: account::SecretText::default(),
+            caldav_form: false,
+            caldav_server: account::SecretText::default(),
+            caldav_username: account::SecretText::default(),
+            caldav_password: account::SecretText::default(),
+            caldav_found: vec![],
+            caldav_picked: vec![],
+            caldav_searching: false,
+            file_pending: None,
+            file_name: String::new(),
             attempt: 0,
         }
     }
@@ -143,6 +188,44 @@ impl Drop for Editor {
     }
 }
 impl Editor {
+    /// Room left in the eight-calendar list.
+    pub fn free_slots(&self) -> usize {
+        let used = if self.connection.backend == account::Backend::Subscription {
+            self.connection.subscriptions.len()
+        } else {
+            0
+        };
+        8usize.saturating_sub(used)
+    }
+    /// Whether any way of adding a calendar is open.
+    pub fn adding(&self) -> bool {
+        self.subscription_form || self.caldav_form || self.file_pending.is_some()
+    }
+    /// Closes every add form and forgets what was typed into it.
+    fn close_forms(&mut self) {
+        self.subscription_form = false;
+        self.subscription_help = false;
+        self.subscription_name.clear();
+        self.subscription_url.0.clear();
+        self.subscription_login = false;
+        self.subscription_username.0.clear();
+        self.subscription_password.0.clear();
+        self.caldav_form = false;
+        self.caldav_server.0.clear();
+        self.caldav_username.0.clear();
+        self.caldav_password.0.clear();
+        self.caldav_found.clear();
+        self.caldav_picked.clear();
+        self.caldav_searching = false;
+        self.file_pending = None;
+        self.file_name.clear();
+    }
+    fn caldav_login(&self) -> account::Login {
+        account::Login {
+            username: account::SecretText(self.caldav_username.0.trim().to_string()),
+            password: self.caldav_password.clone(),
+        }
+    }
     pub fn refresh(&mut self) {
         let connection = account::load_connection();
         if self.connection != connection {
@@ -169,6 +252,13 @@ impl Editor {
             ))
         })
     }
+}
+/// One change to the calendar list, taken from the open form.
+enum Change {
+    Remove(String),
+    Link(String, account::SecretText, Option<account::Login>),
+    CalDav(account::Login, Vec<account::CalDavCalendar>),
+    File(String, PathBuf),
 }
 fn wrap(message: Message) -> super::Message {
     super::Message::Calendar(message)
@@ -249,10 +339,7 @@ impl Settings {
                 self.calendar.refresh();
                 match result {
                     Ok(connection) => {
-                        self.calendar.subscription_form = false;
-                        self.calendar.subscription_help = false;
-                        self.calendar.subscription_name.clear();
-                        self.calendar.subscription_url.0.clear();
+                        self.calendar.close_forms();
                         self.calendar.connection = connection;
                         self.calendar.error = None;
                         return self.calendar.check(false);
@@ -348,11 +435,141 @@ impl Settings {
                 if self.calendar.busy {
                     return Task::none();
                 }
+                // One add form at a time; closing one forgets its secrets.
+                let name = std::mem::take(&mut self.calendar.subscription_name);
+                self.calendar.close_forms();
                 self.calendar.subscription_form = show;
-                if !show {
-                    self.calendar.subscription_url.0.clear();
-                    self.calendar.subscription_help = false;
+                if show {
+                    self.calendar.subscription_name = name;
                 }
+            }
+            Message::SubscriptionLogin(on) => {
+                self.calendar.subscription_login = on;
+                if !on {
+                    self.calendar.subscription_username.0.clear();
+                    self.calendar.subscription_password.0.clear();
+                }
+            }
+            Message::SubscriptionUsername(value) => {
+                self.calendar.subscription_username =
+                    account::SecretText(value.0.chars().take(256).collect())
+            }
+            Message::SubscriptionPassword(value) => {
+                self.calendar.subscription_password =
+                    account::SecretText(value.0.chars().take(1024).collect())
+            }
+            Message::CalDavForm(show) => {
+                if self.calendar.busy {
+                    return Task::none();
+                }
+                self.calendar.close_forms();
+                self.calendar.caldav_form = show;
+                self.calendar.error = None;
+            }
+            Message::CalDavServer(value) => {
+                self.calendar.caldav_server =
+                    account::SecretText(value.0.chars().take(2048).collect());
+                // A new address or login needs a new search.
+                self.calendar.caldav_found.clear();
+                self.calendar.caldav_picked.clear();
+            }
+            Message::CalDavUsername(value) => {
+                self.calendar.caldav_username =
+                    account::SecretText(value.0.chars().take(256).collect());
+                self.calendar.caldav_found.clear();
+                self.calendar.caldav_picked.clear();
+            }
+            Message::CalDavPassword(value) => {
+                self.calendar.caldav_password =
+                    account::SecretText(value.0.chars().take(1024).collect());
+                self.calendar.caldav_found.clear();
+                self.calendar.caldav_picked.clear();
+            }
+            Message::FindCalendars => {
+                let editor = &mut self.calendar;
+                if editor.busy
+                    || editor.caldav_searching
+                    || editor.caldav_server.0.trim().is_empty()
+                    || editor.caldav_username.0.trim().is_empty()
+                    || editor.caldav_password.0.is_empty()
+                {
+                    return Task::none();
+                }
+                editor.caldav_searching = true;
+                editor.error = None;
+                editor.attempt = editor.attempt.wrapping_add(1);
+                let attempt = editor.attempt;
+                let server = editor.caldav_server.clone();
+                let login = editor.caldav_login();
+                return cosmic::task::future(async move {
+                    let result = tokio::time::timeout(
+                        Duration::from_secs(60),
+                        account::discover_caldav(&server, &login),
+                    )
+                    .await
+                    .unwrap_or(Err(account::Problem::TimedOut));
+                    wrap(Message::Found(attempt, result))
+                });
+            }
+            Message::Found(attempt, result) => {
+                if attempt != self.calendar.attempt || !self.calendar.caldav_form {
+                    return Task::none();
+                }
+                self.calendar.caldav_searching = false;
+                match result {
+                    Ok(found) => {
+                        let free = self.calendar.free_slots();
+                        self.calendar.caldav_picked =
+                            (0..found.len()).map(|index| index < free).collect();
+                        self.calendar.caldav_found = found;
+                    }
+                    Err(problem) => self.calendar.error = Some(problem.to_string()),
+                }
+            }
+            Message::PickCalendar(index, on) => {
+                if let Some(picked) = self.calendar.caldav_picked.get_mut(index) {
+                    *picked = on;
+                }
+            }
+            Message::ChooseFile => {
+                if self.calendar.busy {
+                    return Task::none();
+                }
+                return cosmic::task::future(async {
+                    use cosmic::dialog::file_chooser::{self, FileFilter, open::Dialog};
+                    let result =
+                        match Dialog::new()
+                            .title("Calendar file")
+                            .filter(FileFilter::new("iCalendar").glob("*.ics"))
+                            .open_file()
+                            .await
+                        {
+                            Ok(response) => response.url().to_file_path().map(Some).map_err(|_| {
+                                "Choose a calendar file on this computer.".to_string()
+                            }),
+                            Err(file_chooser::Error::Cancelled) => Ok(None),
+                            Err(_) => Err("Could not open the file chooser.".into()),
+                        };
+                    wrap(Message::FileChosen(result))
+                });
+            }
+            Message::FileChosen(result) => match result {
+                Ok(Some(path)) if !self.calendar.busy => {
+                    self.calendar.close_forms();
+                    self.calendar.error = None;
+                    self.calendar.file_name = path
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().chars().take(80).collect())
+                        .unwrap_or_default();
+                    self.calendar.file_pending = Some(path);
+                }
+                Ok(_) => {}
+                Err(error) => self.calendar.error = Some(error),
+            },
+            Message::FileName(name) => self.calendar.file_name = name.chars().take(80).collect(),
+            Message::CancelFile => {
+                self.calendar.file_pending = None;
+                self.calendar.file_name.clear();
             }
             Message::SubscriptionHelp(show) => {
                 self.calendar.subscription_help = show;
@@ -368,7 +585,10 @@ impl Settings {
                     account::SecretText(secret.0.chars().take(8192).collect())
             }
             Message::ConfirmRemove(id) => self.calendar.confirm_remove = id,
-            Message::AddSubscription | Message::RemoveSubscription(_) => {
+            Message::AddSubscription
+            | Message::RemoveSubscription(_)
+            | Message::AddCalDav
+            | Message::AddFile => {
                 if self.calendar.busy || self.calendar.connection.cleanup_pending() {
                     return Task::none();
                 }
@@ -383,19 +603,54 @@ impl Settings {
                 self.calendar.attempt = self.calendar.attempt.wrapping_add(1);
                 let attempt = self.calendar.attempt;
                 let expected = self.calendar.connection.clone();
-                let name = self.calendar.subscription_name.clone();
-                let secret = self.calendar.subscription_url.clone();
-                let remove = if let Message::RemoveSubscription(id) = message {
-                    Some(id)
-                } else {
-                    None
+                let editor = &self.calendar;
+                let change = match message {
+                    Message::RemoveSubscription(id) => Change::Remove(id),
+                    Message::AddCalDav => {
+                        let picked: Vec<_> = editor
+                            .caldav_found
+                            .iter()
+                            .zip(&editor.caldav_picked)
+                            .filter(|(_, on)| **on)
+                            .map(|(calendar, _)| calendar.clone())
+                            .collect();
+                        if picked.is_empty() || picked.len() > editor.free_slots() {
+                            self.calendar.busy = false;
+                            return Task::none();
+                        }
+                        Change::CalDav(editor.caldav_login(), picked)
+                    }
+                    Message::AddFile => match editor.file_pending.clone() {
+                        Some(path) => Change::File(editor.file_name.clone(), path),
+                        None => {
+                            self.calendar.busy = false;
+                            return Task::none();
+                        }
+                    },
+                    _ => Change::Link(
+                        editor.subscription_name.clone(),
+                        editor.subscription_url.clone(),
+                        editor.subscription_login.then(|| account::Login {
+                            username: account::SecretText(
+                                editor.subscription_username.0.trim().to_string(),
+                            ),
+                            password: editor.subscription_password.clone(),
+                        }),
+                    ),
                 };
                 return cosmic::task::future(async move {
-                    let result = tokio::time::timeout(Duration::from_secs(60), async move {
-                        if let Some(id) = remove {
-                            account::remove_subscription(expected, id).await
-                        } else {
-                            account::add_subscription(expected, name, secret, None).await
+                    let result = tokio::time::timeout(Duration::from_secs(90), async move {
+                        match change {
+                            Change::Remove(id) => account::remove_subscription(expected, id).await,
+                            Change::Link(name, secret, login) => {
+                                account::add_subscription(expected, name, secret, login).await
+                            }
+                            Change::CalDav(login, picked) => {
+                                account::add_caldav(expected, login, picked).await
+                            }
+                            Change::File(name, path) => {
+                                account::add_file(expected, name, path).await
+                            }
                         }
                     })
                     .await
@@ -693,5 +948,259 @@ mod tests {
             );
             native_reveal(&app, &mut native, "calendar-subscription-add");
         }
+    }
+
+    /// Seeds the bundled Ridge picture as the desktop wallpaper of the
+    /// isolated fixture, so captures never show another default.
+    fn seed_ridge() {
+        use crate::desktop::wallpaper::{BgEntry, BgSource, bundled_dir, bundled_path};
+        let root = PathBuf::from(std::env::var_os("DESKTOP_CARDS_DESKTOP_ROOT").unwrap());
+        assert!(root.starts_with(std::env::temp_dir()));
+        let (probe, _) = Settings::init(Core::default(), Page::DesktopWallpaper);
+        let bundled = bundled_dir(probe.wallpaper.store().unwrap());
+        drop(probe);
+        std::fs::create_dir_all(&bundled).unwrap();
+        let ridge = bundled_path(&bundled, "halcyon-ridge");
+        std::fs::copy(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("assets/wallpapers/halcyon-ridge.png"),
+            &ridge,
+        )
+        .unwrap();
+        let folder = root.join("config/cosmic/com.system76.CosmicBackground/v1");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("all"),
+            ron::to_string(&BgEntry::new("all", BgSource::Path(ridge))).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn caldav_account_password_link_and_file_flows() {
+        if crate::displays::test_support::isolated(
+            "settings::calendar::tests::caldav_account_password_link_and_file_flows",
+        ) {
+            return;
+        }
+        use crate::settings::tests::{native_reveal, send_settings};
+        use cosmic::iced::{Event, mouse};
+        fn click(app: &mut Settings, native: &mut crate::native_test::Native, id: &str) {
+            let bounds = native_reveal(app, native, id);
+            for event in [
+                mouse::Event::CursorMoved {
+                    position: bounds.center(),
+                },
+                mouse::Event::ButtonPressed(mouse::Button::Left),
+                mouse::Event::ButtonReleased(mouse::Button::Left),
+            ] {
+                for message in native
+                    .event(app.settings_view(), Event::Mouse(event), bounds.center())
+                    .0
+                {
+                    send_settings(app, message);
+                }
+            }
+        }
+        fn visible(native: &mut crate::native_test::Native, app: &Settings, id: &str, size: Size) {
+            let bounds = native_reveal(app, native, id);
+            assert!(
+                bounds.x >= 0.
+                    && bounds.x + bounds.width <= size.width
+                    && bounds.y >= 0.
+                    && bounds.y + bounds.height <= size.height,
+                "{id}: {bounds:?}"
+            );
+        }
+        seed_ridge();
+        let config_before = std::fs::read(Config::path().unwrap()).unwrap();
+        let account_path = account::account_path().unwrap();
+        let account_before = std::fs::read(&account_path).ok();
+        let password = "app-password-1234";
+        for (width, height) in [(820., 600.), (1280., 800.)] {
+            let size = Size::new(width, height);
+            let (mut app, _) = Settings::init(Core::default(), Page::Calendar);
+            app.calendar.client_ready = false;
+            send_settings(&mut app, super::super::Message::Resized(size));
+            let mut native = crate::native_test::Native::new(size);
+            let theme = cosmic::Theme::dark();
+
+            // CalDAV: address, login, then the calendars found there.
+            click(&mut app, &mut native, "calendar-caldav-open");
+            assert!(app.calendar.caldav_form && !app.calendar.subscription_form);
+            native_reveal(&app, &mut native, "calendar-caldav-server");
+            let _ = app.update_calendar(Message::CalDavServer(account::SecretText(
+                "http://192.168.1.5:5232".into(),
+            )));
+            assert!(
+                native.text_all(app.settings_view(), PLAIN_HTTP).len() == 1,
+                "plain http on the local network is pointed out"
+            );
+            let _ = app.update_calendar(Message::CalDavServer(account::SecretText(
+                "caldav.fastmail.com".into(),
+            )));
+            assert!(native.text_all(app.settings_view(), PLAIN_HTTP).is_empty());
+            let _ = app.update_calendar(Message::CalDavUsername(account::SecretText(
+                "alex@fastmail.com".into(),
+            )));
+            let _ = app.update_calendar(Message::CalDavPassword(account::SecretText(
+                password.into(),
+            )));
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("caldav-account-{width}"),
+            );
+            // The search runs in a task that this test drops: no network.
+            let _ = app.update_calendar(Message::FindCalendars);
+            assert!(app.calendar.caldav_searching);
+            let attempt = app.calendar.attempt;
+            let _ =
+                app.update_calendar(Message::Found(attempt, Err(account::Problem::Credentials)));
+            assert!(!app.calendar.caldav_searching);
+            assert_eq!(
+                native
+                    .text_all(
+                        app.settings_view(),
+                        "The server did not accept the username or password."
+                    )
+                    .len(),
+                1
+            );
+            let _ = app.update_calendar(Message::FindCalendars);
+            let found = vec![
+                account::CalDavCalendar {
+                    url: account::SecretText(
+                        "https://caldav.fastmail.com/dav/calendars/user/alex/work/".into(),
+                    ),
+                    name: "Work".into(),
+                    color: "#ff2968".into(),
+                },
+                account::CalDavCalendar {
+                    url: account::SecretText(
+                        "https://caldav.fastmail.com/dav/calendars/user/alex/home/".into(),
+                    ),
+                    name: "Home".into(),
+                    color: String::new(),
+                },
+            ];
+            // A stale answer is ignored.
+            let _ = app.update_calendar(Message::Found(attempt, Ok(found.clone())));
+            assert!(app.calendar.caldav_found.is_empty());
+            let _ = app.update_calendar(Message::Found(app.calendar.attempt, Ok(found)));
+            assert_eq!(app.calendar.caldav_picked, [true, true]);
+            visible(&mut native, &app, "calendar-caldav-add", size);
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("caldav-calendars-{width}"),
+            );
+            click(&mut app, &mut native, "calendar-caldav-pick-1");
+            assert_eq!(app.calendar.caldav_picked, [true, false]);
+            let _ = app.update_calendar(Message::AddCalDav);
+            assert!(app.calendar.busy);
+            let added = account::CalendarChoice {
+                id: "work-id".into(),
+                name: "Work".into(),
+                primary: false,
+                color: "#ff2968".into(),
+            };
+            let connection = account::Connection {
+                backend: account::Backend::Subscription,
+                account: "Calendar subscriptions".into(),
+                calendar_id: added.id.clone(),
+                calendar_name: added.name.clone(),
+                revision: "after-caldav".into(),
+                credential: "opaque".into(),
+                selections: vec![added.clone()],
+                subscriptions: vec![added.clone()],
+                sources: vec![account::Source {
+                    id: added.id.clone(),
+                    kind: account::SourceKind::CalDav,
+                    path: None,
+                }],
+            };
+            let _ = app.update_calendar(Message::Finished(
+                app.calendar.attempt,
+                Ok(connection.clone()),
+            ));
+            assert!(!app.calendar.busy && !app.calendar.caldav_form);
+            assert!(app.calendar.caldav_password.0.is_empty());
+            assert!(app.calendar.caldav_username.0.is_empty());
+            assert!(app.calendar.caldav_found.is_empty());
+            let _ = app.update_calendar(Message::Loaded(
+                connection.revision.clone(),
+                Ok(vec![added.clone()]),
+            ));
+            click(&mut app, &mut native, "calendar-remove-0");
+            assert_eq!(
+                native
+                    .text_all(
+                        app.settings_view(),
+                        "You can add it again from your CalDAV account at any time."
+                    )
+                    .len(),
+                1
+            );
+            let _ = app.update_calendar(Message::ConfirmRemove(None));
+
+            // A link that needs a password.
+            click(&mut app, &mut native, "calendar-subscription-open");
+            assert!(app.calendar.subscription_form && !app.calendar.caldav_form);
+            assert!(
+                native
+                    .try_bounds(app.settings_view(), "calendar-link-username")
+                    .is_none()
+            );
+            click(&mut app, &mut native, "calendar-link-login");
+            assert!(app.calendar.subscription_login);
+            native_reveal(&app, &mut native, "calendar-link-username");
+            let _ = app.update_calendar(Message::SubscriptionUrl(account::SecretText(
+                "https://cal.example.com/private.ics".into(),
+            )));
+            let _ = app.update_calendar(Message::SubscriptionUsername(account::SecretText(
+                "alex".into(),
+            )));
+            let _ = app.update_calendar(Message::SubscriptionPassword(account::SecretText(
+                password.into(),
+            )));
+            visible(&mut native, &app, "calendar-subscription-add", size);
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("calendar-password-link-{width}"),
+            );
+            let _ = app.update_calendar(Message::SubscriptionForm(false));
+            assert!(app.calendar.subscription_password.0.is_empty());
+            assert!(!app.calendar.subscription_login);
+
+            // A calendar file, after the file chooser.
+            let file = std::env::temp_dir().join("Family.ics");
+            let _ = app.update_calendar(Message::FileChosen(Ok(Some(file.clone()))));
+            assert_eq!(app.calendar.file_pending.as_ref(), Some(&file));
+            assert_eq!(app.calendar.file_name, "Family");
+            visible(&mut native, &app, "calendar-file-add", size);
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("calendar-file-{width}"),
+            );
+            let _ = app.update_calendar(Message::CancelFile);
+            assert!(app.calendar.file_pending.is_none());
+
+            // Nothing typed was saved to settings or shows up in a message.
+            assert!(
+                !format!(
+                    "{:?}",
+                    Message::CalDavPassword(account::SecretText(password.into()))
+                )
+                .contains(password)
+            );
+        }
+        assert_eq!(
+            std::fs::read(Config::path().unwrap()).unwrap(),
+            config_before
+        );
+        assert_eq!(std::fs::read(&account_path).ok(), account_before);
     }
 }

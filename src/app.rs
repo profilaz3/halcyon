@@ -639,6 +639,13 @@ impl cosmic::Application for Cards {
             .chain(self.automator.paths())
             .collect();
         subscriptions.push(crate::watch::files(paths).map(|_| Message::FilesChanged));
+        // Calendar files are read again when they change on disk.
+        let calendar_files = self.calendar_connection.calendar_files();
+        if !calendar_files.is_empty() && !self.calendar_preview {
+            subscriptions.push(
+                crate::watch::read_only_files(calendar_files).map(|_| Message::RefreshCalendar),
+            );
+        }
         // The same files Settings watches for Accessibility › Reduce motion.
         if let Some(dir) = dirs::config_dir() {
             subscriptions.push(
