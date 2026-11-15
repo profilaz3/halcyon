@@ -13,6 +13,7 @@ use crate::desktop::icon_packs::ocs::{CatalogPage, Pack, Sort};
 use crate::desktop::icon_packs::overlay::{self, Shape, Style};
 use crate::desktop::icon_packs::source::Source;
 use crate::desktop::icon_packs::{Paths, archive};
+use crate::desktop::store::DesktopStore;
 use cosmic::widget::image::Handle;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -136,6 +137,8 @@ pub enum Message {
     Tint(bool),
     Building(u64, usize, usize),
     Built(u64, Result<String, String>),
+    /// A pack's removal finished on the worker.
+    Removed(String, Result<(), String>),
     Dismiss,
 }
 
@@ -151,6 +154,7 @@ impl Message {
                 | Self::Shape(_)
                 | Self::Tint(_)
                 | Self::Built(..)
+                | Self::Removed(..)
                 | Self::Installed(..)
         )
     }
@@ -239,6 +243,13 @@ pub struct IconPacks {
     pub thumbs: HashMap<String, Thumb>,
     pub installs: HashMap<u64, Install>,
     pub build: Option<Build>,
+    /// The build on the worker, asked to stop when a newer style arrives.
+    /// One build runs at a time: both would write the same slot.
+    running: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// The newest style asked for while a build was running.
+    queued: Option<Style>,
+    /// The pack being removed on the worker.
+    pub removing: Option<String>,
     pub confirm: Option<String>,
     /// A built overlay to apply when the page opens again.
     pending: Option<String>,
@@ -297,6 +308,17 @@ fn blocking<T: Send + 'static>(
             None => Message::Dismiss,
         },
     )
+}
+
+/// The overlay slot the desktop's latest change would restore on Undo.
+fn undo_overlay(store: &DesktopStore) -> Option<String> {
+    let latest = store.latest_change().ok()??;
+    let entry = latest.change.entries().iter().find(|entry| {
+        entry.key.namespace() == crate::desktop::appearance::TOOLKIT
+            && entry.key.key() == "icon_theme"
+    })?;
+    let before: String = entry.before.as_ref()?.decode().ok()?;
+    overlay::is_overlay(&before).then_some(before)
 }
 
 fn handle(picture: image::RgbaImage) -> Handle {
@@ -427,6 +449,14 @@ impl IconPacks {
         self.builds += 1;
         let generation = self.builds;
         self.build = Some(Build { done: 0, total: 0 });
+        if let Some(cancel) = &self.running {
+            // Built when the running one has stopped, into the same slot.
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            self.queued = Some(style.clone());
+            return cosmic::iced::Task::none();
+        }
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.running = Some(cancel.clone());
         let request = overlay::Request {
             base: style.base.clone().unwrap_or_else(|| "Cosmic".into()),
             shape: style.shape,
@@ -435,10 +465,13 @@ impl IconPacks {
             apps: self.scan.names.clone(),
         };
         let current = context.icon_theme.clone();
-        cosmic::iced::Task::run(build(paths, request, current), move |event| match event {
-            Ok((done, total)) => Message::Building(generation, done, total),
-            Err(result) => Message::Built(generation, result),
-        })
+        cosmic::iced::Task::run(
+            build(paths, request, current, cancel),
+            move |event| match event {
+                Ok((done, total)) => Message::Building(generation, done, total),
+                Err(result) => Message::Built(generation, result),
+            },
+        )
     }
 
     /// Saves `style` and makes the desktop follow it: the base alone, or a
@@ -458,6 +491,10 @@ impl IconPacks {
         // Nothing to adjust: the base itself, and no overlay left behind.
         self.builds += 1;
         self.build = None;
+        self.queued = None;
+        if let Some(cancel) = &self.running {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         let base = style.base.unwrap_or_else(|| "Cosmic".into());
         Outcome2 {
             icon_theme: (context.icon_theme.as_deref() != Some(base.as_str())).then_some(base),
@@ -466,17 +503,22 @@ impl IconPacks {
     }
 
     /// Called after the desktop's `icon_theme` was written: an overlay slot
-    /// no longer in use is removed.
-    pub fn applied(&mut self, icon_theme: Option<&str>) {
-        if let Some(paths) = &self.paths {
-            match icon_theme {
-                Some(theme) if overlay::is_overlay(theme) => {
-                    overlay::remove_all(paths, Some(theme));
-                }
-                Some(_) => overlay::remove_all(paths, None),
-                None => {}
-            }
-        }
+    /// no longer in use is removed. A slot the latest change's Undo would
+    /// bring back is kept, so Undo never names a theme that is gone.
+    pub fn applied(&mut self, icon_theme: Option<&str>, store: Option<&DesktopStore>) {
+        let Some(paths) = &self.paths else {
+            return;
+        };
+        let Some(theme) = icon_theme else {
+            return;
+        };
+        let undo = store.and_then(undo_overlay);
+        let keep: Vec<&str> = [Some(theme), undo.as_deref()]
+            .into_iter()
+            .flatten()
+            .filter(|slot| overlay::is_overlay(slot))
+            .collect();
+        overlay::remove_all(paths, &keep);
     }
 
     pub fn update(&mut self, message: Message, context: &Context) -> Outcome2 {
@@ -536,6 +578,11 @@ impl IconPacks {
                 }
             }
             Message::Built(generation, result) => {
+                // The one running build has ended; a newer style waits.
+                self.running = None;
+                if let Some(style) = self.queued.take() {
+                    return Outcome2::task(self.start_build(&style, context));
+                }
                 if generation != self.builds {
                     return Outcome2::default();
                 }
@@ -561,16 +608,34 @@ impl IconPacks {
             }
             Message::Remove(id) => {
                 self.confirm = None;
-                let Some(paths) = &self.paths else {
+                let Some(paths) = self.paths.clone() else {
                     return Outcome2::default();
                 };
+                if self.removing.is_some() {
+                    return Outcome2::default();
+                }
                 if self.shown(context).as_deref() == Some(id.as_str()) {
                     self.notice = Some(Notice::Error(
                         "Choose another theme before removing the one in use.".into(),
                     ));
                     return Outcome2::default();
                 }
-                match install::remove(paths, &id) {
+                // A large pack takes a while to delete: on the worker, with
+                // the card saying so meanwhile.
+                self.removing = Some(id.clone());
+                self.notice = None;
+                let target = id.clone();
+                return Outcome2::task(blocking(
+                    move || install::remove(&paths, &target),
+                    move |result| Message::Removed(id, result),
+                ));
+            }
+            Message::Removed(id, result) => {
+                self.removing = None;
+                let Some(paths) = &self.paths else {
+                    return Outcome2::default();
+                };
+                match result {
                     Ok(()) => {
                         self.manifest = Manifest::load(paths);
                         self.installs.retain(|_, install| {
@@ -963,20 +1028,27 @@ fn build(
     paths: Paths,
     request: overlay::Request,
     current: Option<String>,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> impl cosmic::iced::futures::Stream<Item = Result<(usize, usize), Result<String, String>>> {
     use cosmic::iced::futures::SinkExt;
     cosmic::iced::stream::channel(8, async move |mut out| {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let work = tokio::task::spawn_blocking(move || {
             let step = std::sync::atomic::AtomicUsize::new(0);
-            overlay::generate(&paths, &request, current.as_deref(), &|done, total| {
-                // About fifty updates, whatever the count.
-                let every = (total / 50).max(1);
-                if done == total || done >= step.load(std::sync::atomic::Ordering::Relaxed) {
-                    step.store(done + every, std::sync::atomic::Ordering::Relaxed);
-                    let _ = tx.send((done, total));
-                }
-            })
+            overlay::generate_until(
+                &paths,
+                &request,
+                current.as_deref(),
+                &|done, total| {
+                    // About fifty updates, whatever the count.
+                    let every = (total / 50).max(1);
+                    if done == total || done >= step.load(std::sync::atomic::Ordering::Relaxed) {
+                        step.store(done + every, std::sync::atomic::Ordering::Relaxed);
+                        let _ = tx.send((done, total));
+                    }
+                },
+                &|| cancel.load(std::sync::atomic::Ordering::Relaxed),
+            )
         });
         tokio::pin!(work);
         let result = loop {
@@ -1192,7 +1264,8 @@ impl super::Settings {
                 && !draft.edited(Control::IconTheme)
         });
         if applied {
-            self.icon_packs.applied(Some(&theme));
+            let store = self.system_appearance.store().cloned();
+            self.icon_packs.applied(Some(&theme), store.as_ref());
         }
         task
     }
