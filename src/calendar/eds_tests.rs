@@ -421,6 +421,102 @@ fn a_system_only_calendar_list_without_eds_fails_its_refresh_plainly() {
     assert!(store::cached(&connection, "2026-10").is_none());
 }
 
+/// A list mixing system calendars with a calendar file, against a session
+/// bus with no EDS on it: the refresh still shows the file's events, while
+/// Check connection reports the missing service.
+#[test]
+fn a_missing_eds_does_not_hold_back_other_calendars() {
+    const CHILD: &str = "DESKTOP_CARDS_EDS_MIXED_TEST";
+    if std::env::var_os(CHILD).is_none() {
+        let daemon = Daemon::new();
+        let root = std::env::temp_dir().join(format!("cards-eds-{}", store::nonce().unwrap()));
+        std::fs::create_dir_all(&root).unwrap();
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "calendar::eds::tests::a_missing_eds_does_not_hold_back_other_calendars",
+            ])
+            .env(CHILD, &root)
+            .env("DESKTOP_CARDS_CONFIG", root.join("config.json"))
+            .env("XDG_CACHE_HOME", root.join("cache"))
+            .env("DBUS_SESSION_BUS_ADDRESS", &daemon.address)
+            .output()
+            .unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stdout)
+        );
+        return;
+    }
+    assert!(
+        !std::env::var("DBUS_SESSION_BUS_ADDRESS")
+            .unwrap()
+            .contains("/run/user/")
+    );
+    let root = std::path::PathBuf::from(std::env::var_os(CHILD).unwrap());
+    let file = root.join("family.ics");
+    std::fs::write(
+        &file,
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:picnic\r\n\
+         DTSTART:20261010T120000Z\r\nDTEND:20261010T140000Z\r\nSUMMARY:Picnic\r\n\
+         END:VEVENT\r\nEND:VCALENDAR\r\n",
+    )
+    .unwrap();
+    let calendar = |uid: &str| SystemCalendar {
+        uid: uid.into(),
+        name: format!("Calendar {uid}"),
+        color: "#3465a4".into(),
+        account: "alex@example.com".into(),
+    };
+    let mut connection = with_system(&Connection::default(), &calendar("a")).unwrap();
+    connection = with_system(&connection, &calendar("b")).unwrap();
+    let family = CalendarChoice {
+        id: "family".into(),
+        name: "Family".into(),
+        primary: false,
+        color: String::new(),
+    };
+    connection.subscriptions.push(family.clone());
+    connection.selections.push(family);
+    connection.sources.push(crate::calendar::Source {
+        id: "family".into(),
+        kind: SourceKind::File,
+        path: Some(file),
+    });
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let started = std::time::Instant::now();
+    let data = runtime
+        .block_on(super::super::subscription::events(
+            &connection,
+            "2026-10",
+            false,
+        ))
+        .unwrap();
+    assert_eq!(
+        data.events
+            .iter()
+            .map(|e| e.title.as_str())
+            .collect::<Vec<_>>(),
+        ["Picnic"]
+    );
+    assert!(started.elapsed() < Duration::from_secs(10));
+    assert_eq!(
+        runtime
+            .block_on(super::super::subscription::events(
+                &connection,
+                "2026-10",
+                true
+            ))
+            .err(),
+        Some(Problem::SystemUnavailable)
+    );
+}
+
 #[test]
 fn system_calendars_join_the_list_with_only_uid_name_and_color() {
     let calendar = |uid: &str| SystemCalendar {
