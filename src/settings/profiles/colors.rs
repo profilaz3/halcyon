@@ -10,6 +10,9 @@ use serde_json::json;
 #[cfg(test)]
 #[path = "colors_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "window_tone_tests.rs"]
+mod window_tone_tests;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -244,6 +247,22 @@ impl ProfilesEditor {
         self.custom = None;
         self.theme_override = Some(profile);
         self.queue_theme_colors();
+        self.replan();
+    }
+
+    /// Window tone for the look's style: background and containers move
+    /// together; surfaces chosen in Advanced theme colors stay.
+    pub(super) fn window_tone(&mut self, tone: i8) {
+        if !self.ensure_color_preview() {
+            return;
+        }
+        let Some(store) = self.store() else { return };
+        let Ok((_, config)) = wallpaper::automatic::read_config(store) else {
+            return;
+        };
+        let mut profile = self.profile().unwrap().clone();
+        profiles::themes::set_tone(&mut profile, tone, config.appearance.window_tone);
+        self.theme_override = Some(profile);
         self.replan();
     }
 

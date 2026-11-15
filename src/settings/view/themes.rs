@@ -276,6 +276,9 @@ impl Settings {
                 accent,
             )),
         )));
+        if let Some(row) = self.window_tone_row(look) {
+            rows.push(self.search_target("appearance-window-tone", row));
+        }
         if self.config.appearance.family.is_some()
             && self.config.appearance.native_mode_palettes == 0
         {
@@ -297,6 +300,178 @@ impl Settings {
                 .into(),
         ));
         group(Some("Color"), rows)
+    }
+
+    /// The variant whose windows the Window tone row shows: the one in use.
+    fn tone_variant(&self, family: Family) -> crate::desktop::appearance::ThemeVariant {
+        use crate::desktop::appearance::ThemeVariant;
+        match self.system_appearance.draft() {
+            Some(draft) => draft.active_variant(),
+            None if family.light() => ThemeVariant::Light,
+            None => ThemeVariant::Dark,
+        }
+    }
+    /// The Window tone the look shows for `family`: held on the slider,
+    /// else the previewed or applied one.
+    pub(in crate::settings) fn shown_tone(&self, family: Family) -> i8 {
+        let saved = self
+            .profiles
+            .color_preferences(&self.config)
+            .window_tone
+            .get(family);
+        match self.window_tone_drag {
+            Some(held) if self.look().family == Some(family) => held,
+            _ => saved,
+        }
+    }
+    /// The preview's window while the Window tone slider is held: the
+    /// style's surfaces at the held tone, before it applies. A background
+    /// that does not follow the style stays as it is.
+    pub(super) fn held_tone(
+        &self,
+        preview: crate::desktop::appearance::Preview,
+        variant: crate::desktop::appearance::ThemeVariant,
+    ) -> crate::desktop::appearance::Preview {
+        use cosmic::cosmic_theme::palette::Srgba;
+        let (Some(held), Some(family)) = (
+            self.window_tone_drag.filter(|_| self.page == Page::Themes),
+            self.look().family,
+        ) else {
+            return preview;
+        };
+        if self.system_appearance.draft().is_some_and(|draft| {
+            matches!(
+                themes::tone_state(draft, self.config.appearance, variant),
+                themes::ToneState::Explicit | themes::ToneState::Custom
+            )
+        }) {
+            return preview;
+        }
+        let a = self.profiles.color_preferences(&self.config);
+        let seed = a.accent.unwrap_or_else(|| family.accent());
+        let dark = variant == crate::desktop::appearance::ThemeVariant::Dark;
+        let srgba = |[r, g, b]: [u8; 3]| {
+            Srgba::new(
+                f32::from(r) / 255.,
+                f32::from(g) / 255.,
+                f32::from(b) / 255.,
+                1.,
+            )
+        };
+        let rgb = |c: Srgba| tone::bytes(Color::from_rgb(c.red, c.green, c.blue));
+        let background = family.window_for(seed, dark, held);
+        // COSMIC derives the rest from the background: move them with it.
+        let shift = tone::lch(background).l - tone::lch(rgb(preview.background)).l;
+        let moved = |c: Srgba| {
+            let Srgba { alpha, .. } = c;
+            let rgb = rgb(c);
+            Srgba {
+                alpha,
+                ..srgba(tone::at(rgb, tone::lch(rgb).l + shift))
+            }
+        };
+        crate::desktop::appearance::Preview {
+            background: srgba(background),
+            primary: srgba(family.window_container_for(seed, dark, held)),
+            secondary: moved(preview.secondary),
+            divider: moved(preview.divider),
+            ..preview
+        }
+    }
+    /// Window tone: darker or lighter windows for the look's style, saved
+    /// per style. A Background chosen in Advanced theme colors wins, and the
+    /// row says so instead of offering a slider that would do nothing.
+    fn window_tone_row(&self, look: &Look) -> Option<Element<'_, Message>> {
+        let family = look.family?;
+        let accent = self.settings_accent();
+        let variant = self.tone_variant(family);
+        let dark = variant == crate::desktop::appearance::ThemeVariant::Dark;
+        let state = self
+            .system_appearance
+            .draft()
+            .map_or(themes::ToneState::Follows, |draft| {
+                themes::tone_state(draft, self.config.appearance, variant)
+            });
+        if matches!(
+            state,
+            themes::ToneState::Explicit | themes::ToneState::Custom
+        ) {
+            return Some(group_row_state(
+                "Window tone",
+                if state == themes::ToneState::Explicit {
+                    "Background color set in Advanced theme colors"
+                } else {
+                    "Background color set outside this style"
+                },
+                container(button::text("Open").on_press(Message::Page(Page::DesktopAppearance)))
+                    .id(cosmic::widget::Id::new("window-tone-open"))
+                    .into(),
+            ));
+        }
+        let (low, high) = family.tone_range(dark);
+        let tone = self.shown_tone(family).clamp(low, high);
+        let value = match tone {
+            0 => "Style default".to_string(),
+            1 => "1 step lighter".into(),
+            -1 => "1 step darker".into(),
+            t if t > 0 => format!("{t} steps lighter"),
+            t => format!("{} steps darker", -t),
+        };
+        let mut heading = vec![
+            container(detail(
+                "Window tone",
+                "Background and panels in apps, kept for each style",
+            ))
+            .width(Length::Fill)
+            .into(),
+            label(value, 13., accent),
+        ];
+        if tone != 0 || state == themes::ToneState::Earlier {
+            heading.push(
+                button::text(if tone == 0 { "Update" } else { "Default" })
+                    .id(cosmic::widget::Id::new("window-tone-default"))
+                    .on_press(Message::Profiles(Edit::WindowTone(0)))
+                    .apply(|control| {
+                        super::tip::tip(
+                            control,
+                            if tone == 0 {
+                                "Use this style’s current window background"
+                            } else {
+                                "Back to this style’s own window background"
+                            },
+                        )
+                    }),
+            );
+        }
+        let mut items = vec![
+            row::with_children(heading)
+                .spacing(12)
+                .align_y(Alignment::Center)
+                .into(),
+            container(
+                slider(i16::from(low)..=i16::from(high), i16::from(tone), |value| {
+                    Message::WindowTone(value.clamp(-10, 10) as i8)
+                })
+                .on_release(Message::WindowToneSave)
+                .step(1i16)
+                .width(Length::Fill)
+                .apply(|control| completed_slider(control.into(), Message::WindowToneSave)),
+            )
+            .id(cosmic::widget::Id::new("window-tone"))
+            .into(),
+            split(label("Darker", 11., MUTED), label("Lighter", 11., MUTED)),
+        ];
+        if state == themes::ToneState::Earlier && tone == 0 {
+            items.push(label(
+                format!(
+                    "Windows still use an earlier {} background.",
+                    family.title()
+                ),
+                11.,
+                MUTED,
+            ));
+        }
+        Some(column::with_children(items).spacing(6).into())
     }
 
     /// The shared material and corners; details open on a subpage.
@@ -535,8 +710,10 @@ impl Settings {
     /// dock and panel in the style's own color (see `themes::record`).
     fn style_specimen(&self, family: Family, look: &Look, width: f32) -> Element<'_, Message> {
         let spec = family.spec();
+        // The bars paint the window background, at the style's own tone.
         let tone = {
-            let [r, g, b] = family.surface(family.accent());
+            let [r, g, b] =
+                family.window_for(family.accent(), !family.light(), self.shown_tone(family));
             Color::from_rgba8(r, g, b, spec.bar.opacity)
         };
         self.specimen(

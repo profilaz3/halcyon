@@ -798,6 +798,10 @@ pub enum Message {
     MaterialAdjust(bool),
     MaterialValue(bool, u8),
     MaterialSave,
+    /// Window tone while the slider is held: view state only, drawn in the
+    /// preview. Release applies it (see `WindowToneSave`).
+    WindowTone(i8),
+    WindowToneSave,
     /// Widget corner radius, chosen on Appearance; applies directly.
     WidgetCorners(u16),
     /// One Corners step for windows, widgets and both bars.
@@ -1026,6 +1030,8 @@ pub struct Settings {
     material_target: crate::materials::Target,
     material_adjust: bool,
     material_draft: Option<crate::materials::Finish>,
+    /// The Window tone the slider is held at, before it applies.
+    window_tone_drag: Option<i8>,
     /// The Corners step every surface reads as; `None` when they differ.
     corner_step: Option<corners::Step>,
     material_baseline: Option<crate::materials::Materials>,
@@ -1302,6 +1308,7 @@ impl cosmic::Application for Settings {
             material_target: Default::default(),
             material_adjust: false,
             material_draft: None,
+            window_tone_drag: None,
             corner_step: None,
             material_baseline: None,
             material_native: false,
@@ -2368,6 +2375,7 @@ fn instant_theme_edit(edit: &profiles::Message) -> bool {
             | Edit::Color(_)
             | Edit::ThemeScope(_)
             | Edit::ThemeWallpaper(_)
+            | Edit::WindowTone(_)
             | Edit::RepairThemeMatching
             // Settling the last conflict lets the waiting choice apply;
             // there is no Apply button on Appearance to finish it.
@@ -4162,6 +4170,15 @@ impl Settings {
                 }
             }
             Message::MaterialSave => self.save_material_draft(),
+            Message::WindowTone(tone) => self.window_tone_drag = Some(tone),
+            // One applied change per gesture, undone from the footer.
+            Message::WindowToneSave => {
+                if let Some(tone) = self.window_tone_drag {
+                    return Task::done(cosmic::Action::App(Message::Profiles(
+                        profiles::Message::WindowTone(tone),
+                    )));
+                }
+            }
             Message::WidgetCorners(radius) => {
                 self.flush_edits();
                 self.save_appearance(json!({"corner_radius": radius}));
@@ -5025,6 +5042,9 @@ impl Settings {
     }
     fn update_profiles(&mut self, message: profiles::Message) -> Task<Message> {
         use profiles::Message as Edit;
+        if matches!(message, Edit::WindowTone(_)) {
+            self.window_tone_drag = None;
+        }
         // A dialog result returns to the request that started it, whatever
         // page is showing; everything else belongs to the page.
         let result = matches!(

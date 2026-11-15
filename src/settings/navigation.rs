@@ -466,6 +466,13 @@ const SEARCH: &[SearchHit] = &[
     .at("appearance-mode"),
     hit(
         Page::Themes,
+        "Window tone",
+        "window background darker lighter dark light tone brightness apps panels",
+        false,
+    )
+    .at("appearance-window-tone"),
+    hit(
+        Page::Themes,
         "Style",
         "shared desktop themes theme look soft outline paper bare frosted widgets save share",
         false,

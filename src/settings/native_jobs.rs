@@ -81,6 +81,7 @@ impl Settings {
         if matches!(
             message,
             Message::ToggleScene
+                | Message::WindowTone(_)
                 | Message::ToggleHelp(_)
                 | Message::ToggleSection(_)
                 | Message::ContentScrolled(_)
