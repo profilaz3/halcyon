@@ -22,7 +22,6 @@
 //! session's runtime folder; each further upgrade within `WINDOW` waits
 //! longer, and after `MAX_RESTARTS` the process stays on what it runs.
 use cosmic::iced::{Subscription, futures::SinkExt, stream};
-use notify::{RecursiveMode, Watcher};
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::MetadataExt;
@@ -117,21 +116,20 @@ fn replacements() -> impl cosmic::iced::futures::Stream<Item = Program> {
 /// answers `--version`. `None` when its folder cannot be watched.
 async fn replaced(running: &Program, settle: Duration) -> Option<Program> {
     let folder = running.path.parent()?.to_path_buf();
-    let (sender, mut changes) = tokio::sync::mpsc::channel(1);
-    let path = running.path.clone();
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        // A lost event (queue overflow) may have been the program.
-        if event.map_or(true, |event| event.paths.iter().any(|p| *p == path)) {
-            let _ = sender.try_send(());
-        }
-    })
-    .ok()?;
-    watcher.watch(&folder, RecursiveMode::NonRecursive).ok()?;
+    let mut watcher = crate::watch::dir::DirWatch::new().ok()?;
+    watcher.watch(&folder).ok()?;
+    // Check after registration too: the replacement may predate the watch.
+    let mut initial = true;
     loop {
-        changes.recv().await?;
+        if !initial {
+            watcher.changed(|path| path == running.path).await.ok()?;
+        }
+        initial = false;
         // Let the package manager finish: wait for a quiet `settle`.
-        while let Ok(change) = tokio::time::timeout(settle, changes.recv()).await {
-            change?;
+        while let Ok(change) =
+            tokio::time::timeout(settle, watcher.changed(|path| path == running.path)).await
+        {
+            change.ok()?;
         }
         let Some(new) = running.replacement() else {
             continue;
@@ -290,6 +288,26 @@ mod tests {
             dev: dev.parse().unwrap(),
             ino: ino.parse().unwrap(),
         }
+    }
+
+    #[tokio::test]
+    async fn replacement_before_watch_is_reported() {
+        let dir =
+            std::env::temp_dir().join(format!("halcyon-upgrade-before-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("halcyon");
+        install(&path, "echo 'halcyon 1'");
+        let running = Program::at(&path).unwrap();
+        install(&path, "echo 'halcyon 2'");
+        let found = tokio::time::timeout(
+            Duration::from_secs(2),
+            replaced(&running, Duration::from_millis(20)),
+        )
+        .await
+        .expect("replacement before registration must be found")
+        .unwrap();
+        assert_eq!(found, Program::at(&path).unwrap());
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

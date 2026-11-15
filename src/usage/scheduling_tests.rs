@@ -144,6 +144,38 @@ async fn kernel_realtime_timer_fires_once_and_future_deadlines_do_not_poll() {
 }
 
 #[tokio::test]
+async fn state_watch_does_not_subscribe_to_file_reads() {
+    use std::os::unix::fs::MetadataExt;
+    let folder = fixture();
+    let root = folder.root();
+    let path = root.join("usage.json");
+    let ready = Arc::new(Notify::new());
+    let mut watch = StateWatch::new(path, ready);
+    assert!(watch.refresh());
+    let inode = format!("ino:{:x}", std::fs::metadata(root).unwrap().ino());
+    let mut found = false;
+    for entry in std::fs::read_dir("/proc/self/fdinfo").unwrap().flatten() {
+        let info = std::fs::read_to_string(entry.path()).unwrap_or_default();
+        for line in info.lines().filter(|l| l.starts_with("inotify ")) {
+            if !line.split_whitespace().any(|field| field == inode) {
+                continue;
+            }
+            found = true;
+            let mask = line
+                .split_whitespace()
+                .find_map(|field| field.strip_prefix("mask:"))
+                .unwrap();
+            let mask = u32::from_str_radix(mask, 16).unwrap();
+            assert_eq!(
+                mask & (libc::IN_OPEN | libc::IN_ACCESS | libc::IN_CLOSE_NOWRITE | libc::IN_MODIFY),
+                0
+            );
+        }
+    }
+    assert!(found, "the fixture directory must be watched");
+}
+
+#[tokio::test]
 async fn cross_process_atomic_replacement_wakes_a_disabled_worker() {
     let path = fixture();
     let ready = Arc::new(Notify::new());

@@ -136,8 +136,9 @@ def install(binary, home, *, systemd=True, google_client=None, run=system_run):
             shutil.copy2(path, backup / path.name)
         prune_backups(backup.parent, keep=backup)
     first = not (prefix / 'bin/halcyon').exists()
+    changed = False
     for path, data, mode in planned:
-        place(path, data, mode)
+        changed |= place(path, data, mode)
     unit_changed = place(home / '.config/systemd/user' / SERVICE, unit(prefix).encode(), 0o644)
 
     # Take over an install from before the rename.
@@ -150,12 +151,16 @@ def install(binary, home, *, systemd=True, google_client=None, run=system_run):
             run(['systemctl', '--user', 'disable', '--now', LEGACY_SERVICE])
         legacy_unit.unlink()
         unit_changed = True
-    (home / '.local/share/applications' / LEGACY_LAUNCHER).unlink(missing_ok=True)
+    legacy_launcher = home / '.local/share/applications' / LEGACY_LAUNCHER
+    if legacy_launcher.exists():
+        legacy_launcher.unlink()
+        changed = True
     shim = prefix / 'bin/desktop-cards'
     if shim.exists() and not shim.is_symlink():
         shim.unlink()
     if not shim.exists():
         shim.symlink_to('halcyon-ctl')
+        changed = True
 
     if systemd:
         if unit_changed:
@@ -164,10 +169,11 @@ def install(binary, home, *, systemd=True, google_client=None, run=system_run):
             run(['systemctl', '--user', 'enable', SERVICE], check=True)
         if was_running:
             run(['systemctl', '--user', 'restart', SERVICE], check=True)
-        elif run(['systemctl', '--user', 'is-active', '--quiet', SERVICE]).returncode == 0:
+        elif (changed or unit_changed) and run(['systemctl', '--user', 'is-active', '--quiet', SERVICE]).returncode == 0:
             run(['systemctl', '--user', 'try-restart', SERVICE], check=True)
         run(['update-desktop-database', str(prefix / 'share/applications')])
-    return {'first': first, 'backup': backup, 'took_over': was_enabled or was_running}
+    return {'first': first, 'backup': backup, 'took_over': was_enabled or was_running,
+            'changed': changed or unit_changed}
 
 
 def main():
@@ -182,6 +188,8 @@ def main():
     result = install(args.binary, args.home, systemd=not args.no_systemd,
                      google_client=args.google_oauth_client)
     print(f'Installed Halcyon in {args.home / ".local"}')
+    if not result['changed']:
+        print('No files changed; service restart skipped.')
     if result['backup']:
         print(f'Previous version kept in {result["backup"]}')
     if result['took_over']:

@@ -1,7 +1,6 @@
 //! Event-driven reporting: state-file changes or a real wall-clock deadline.
 use super::{MAX_ATTEMPTS, PAUSED, STATUS_LIFETIME, State};
 use chrono::Utc;
-use notify::{EventKind, RecursiveMode, Watcher};
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
@@ -53,7 +52,7 @@ pub(super) fn deadline(state: &State, activity: bool, warmup: Duration, now: i64
 pub(super) struct StateWatch {
     path: PathBuf,
     directory: Option<PathBuf>,
-    watcher: Option<notify::RecommendedWatcher>,
+    watcher: Option<tokio::task::JoinHandle<()>>,
     failed: Arc<AtomicBool>,
     ready: Arc<Notify>,
 }
@@ -82,57 +81,39 @@ impl StateWatch {
         {
             return true;
         }
-        self.watcher = None;
+        if let Some(task) = self.watcher.take() {
+            task.abort();
+        }
         self.directory = directory.clone();
         self.failed.store(false, Ordering::Relaxed);
         let path = self.path.clone();
         let ready = self.ready.clone();
         let failed = self.failed.clone();
-        let Ok(mut watcher) =
-            notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-                let relevant = match event {
-                    Ok(event) => {
-                        // A directory can be removed and recreated at the same
-                        // path before this worker runs. The old inode's watch
-                        // is then dead even though is_dir() is true again.
-                        if event
-                            .paths
-                            .iter()
-                            .any(|changed| changed != &path && path.starts_with(changed))
-                        {
-                            failed.store(true, Ordering::Relaxed);
-                        }
-                        matches!(
-                            event.kind,
-                            EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
-                        ) && event
-                            .paths
-                            .iter()
-                            .any(|changed| changed == &path || path.starts_with(changed))
-                    }
-                    Err(_) => {
-                        failed.store(true, Ordering::Relaxed);
-                        true
-                    }
-                };
-                if relevant {
-                    ready.notify_one();
-                }
-            })
-        else {
-            return false;
-        };
         let Some(directory) = directory else {
             return false;
         };
-        if watcher
-            .watch(&directory, RecursiveMode::NonRecursive)
-            .is_err()
-        {
+        let Ok(mut watcher) = crate::watch::dir::DirWatch::new() else {
+            return false;
+        };
+        if watcher.watch(&directory).is_err() {
             return false;
         }
-        self.watcher = Some(watcher);
+        self.watcher = Some(tokio::spawn(async move {
+            // Rebind after each relevant event, including invalidated watches.
+            // Notify coalesces bursts until the worker reads the latest state.
+            let _ = watcher.changed(|changed| path.starts_with(changed)).await;
+            failed.store(true, Ordering::Relaxed);
+            ready.notify_one();
+        }));
         true
+    }
+}
+
+impl Drop for StateWatch {
+    fn drop(&mut self) {
+        if let Some(task) = self.watcher.take() {
+            task.abort();
+        }
     }
 }
 

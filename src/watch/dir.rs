@@ -221,6 +221,7 @@ mod tests {
         new.watch(&dir).unwrap();
         for i in 0..1000 {
             std::fs::read(dir.join(format!("key{}", i % 10))).unwrap();
+            tokio::time::sleep(Duration::from_millis(1)).await;
         }
         tokio::time::sleep(Duration::from_millis(300)).await;
         let _ = tokio::time::timeout(Duration::from_millis(100), new.changed(|_| true)).await;
@@ -229,6 +230,8 @@ mod tests {
             calls.load(std::sync::atomic::Ordering::Relaxed),
             new.wakes
         );
+        assert!(calls.load(std::sync::atomic::Ordering::Relaxed) > 0);
+        assert_eq!(new.wakes, 0);
         drop(old);
         std::fs::remove_dir_all(&dir).unwrap();
     }

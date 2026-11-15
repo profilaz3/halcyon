@@ -38,6 +38,25 @@ class InstallTests(unittest.TestCase):
     def install(self, **options):
         return installer.install(self.binary, self.home, run=self.runner, **options)
 
+    def test_noop_install_does_not_restart_an_active_service(self):
+        self.install()
+        self.ok = {('is-active', 'halcyon.service')}
+        self.calls.clear()
+        result = self.install()
+        self.assertFalse(any('try-restart' in c or 'restart' in c for c in self.calls))
+        self.assertFalse(result['changed'])
+        self.build(b'release two')
+        self.assertTrue(self.install()['changed'])
+        self.assertIn(['systemctl', '--user', 'try-restart', 'halcyon.service'], self.calls)
+
+    def test_changed_helper_restarts_an_active_service(self):
+        self.install()
+        (self.home / '.local/bin/halcyon-ctl').write_text('outdated helper')
+        self.ok = {('is-active', 'halcyon.service')}
+        self.calls.clear()
+        self.assertTrue(self.install()['changed'])
+        self.assertIn(['systemctl', '--user', 'try-restart', 'halcyon.service'], self.calls)
+
     def test_first_install_places_the_package_layout_under_local(self):
         result = self.install()
         self.assertTrue(result['first'])

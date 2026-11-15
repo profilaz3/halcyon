@@ -8,12 +8,42 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('projects', Path(__file__).with_name('project-status.py'))
 projects = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(projects)
+
+
+class ProjectBudget(unittest.TestCase):
+    def test_slow_repositories_share_budget_and_preserve_fast_results(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / name for name in ['fast', *[f'slow{i}' for i in range(12)]]]
+            for path in paths:
+                path.mkdir()
+            def status(path, deadline=None):
+                if path.name != 'fast':
+                    projects.command([sys.executable, '-c', 'import time; time.sleep(5)'],
+                                     deadline=deadline)
+                return b'# branch.head main\0', path
+            started = time.monotonic()
+            with patch.object(projects, 'discover', return_value=paths), \
+                 patch.object(projects, 'listeners', return_value=[]), \
+                 patch.object(projects, 'git_command', side_effect=ValueError('no identity')), \
+                 patch.object(projects, 'status', side_effect=status):
+                rows = projects.scan([], budget=0.3)['projects']
+            self.assertLess(time.monotonic() - started, 1.5)
+            self.assertEqual(len(rows), len(paths))
+            self.assertEqual([r['name'] for r in rows if not r['error']], ['Fast'])
+            self.assertEqual(sum(r['error'] for r in rows), 12)
+
+    def test_exhausted_budget_does_not_launch_more_git_commands(self):
+        with patch.object(projects.subprocess, 'run') as run:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                projects.git_command(Path('/unused'), ['status'], deadline=time.monotonic() - 1)
+            run.assert_not_called()
 
 
 class ProjectRequestInputs(unittest.TestCase):
@@ -27,7 +57,8 @@ class ProjectRequestInputs(unittest.TestCase):
                      patch.object(projects, 'discover', return_value=[]) as discover, \
                      patch.object(projects, 'listeners', side_effect=AssertionError('No process scan')):
                     self.assertEqual(projects.scan(requested)['projects'], [])
-                    discover.assert_called_once_with(requested)
+                    self.assertEqual(discover.call_args.args, (requested,))
+                    self.assertIsInstance(discover.call_args.kwargs["deadline"], float)
 
     def test_app_wire_uses_snapshot_and_echoes_its_identity(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -218,11 +249,11 @@ print(m.project_title(pathlib.Path(sys.argv[2])))
     def test_config_change_after_snapshot_cannot_enable_a_filter(self):
         self.configure_helpers()
         real = projects.git_command
-        def command(path, args):
+        def command(path, args, deadline=None):
             if 'status' in args:
                 self.git('config', 'filter.evil.process', str(self.helper))
                 self.git('config', 'filter.evil.clean', str(self.helper))
-            return real(path, args)
+            return real(path, args, deadline=deadline)
         with patch.object(projects, 'git_command', command):
             result = self.scan()[0]
         self.assertFalse(result['error'])
