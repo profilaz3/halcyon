@@ -1119,10 +1119,11 @@ impl Applet {
                         let grow = self.shelf_grow(now);
                         Task::batch([grow, self.shelf_look()])
                     }
-                    After::Look | After::Nothing if self.shelf.open => {
+                    After::Look if self.shelf.open => {
                         let fit = self.shelf_fit();
                         Task::batch([fit, self.shelf_look()])
                     }
+                    After::Nothing if self.shelf.open => self.shelf_fit(),
                     After::Look | After::Nothing => Task::none(),
                 }
             }
