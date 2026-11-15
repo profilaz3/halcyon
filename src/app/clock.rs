@@ -933,7 +933,7 @@ pub(super) mod tests {
         for (face, said) in [
             (ClockFace::Digital, vec!["21:31", "Wednesday, September 30"]),
             (ClockFace::Stacked, vec!["21", "31"]),
-            (ClockFace::Words, vec!["half past", "nine"]),
+            (ClockFace::Words, vec!["half", "past", "nine"]),
             (ClockFace::Split, vec!["21:31", "Wednesday", "September 30"]),
             (ClockFace::Analog, vec!["21:31"]),
             (ClockFace::Minimal, vec!["21:31"]),
@@ -961,6 +961,57 @@ pub(super) mod tests {
         config.clock.face = Some(ClockFace::Stacked);
         native.text_bounds(view(&config, now, [490., 200.]), "9");
         native.text_bounds(view(&config, now, [490., 200.]), "PM");
+    }
+
+    /// Words breaks between the parts of the phrase so no short word is
+    /// left alone on the last line: "twenty / to ten", not "twenty to /
+    /// ten".
+    #[test]
+    fn words_break_without_leaving_a_short_word_alone() {
+        use crate::widget_style::resolver::ClockFace;
+        let mut config = Config::default();
+        config.clock.face = Some(ClockFace::Words);
+        config.clock.show_date = false;
+        let said = |config: &Config, size: [f32; 2], hour: u32, minute: u32| {
+            let now = chrono::NaiveDate::from_ymd_opt(2026, 9, 30)
+                .unwrap()
+                .and_hms_opt(hour, minute, 0)
+                .unwrap();
+            let mut native = Native::new(Size::new(size[0], size[1]));
+            let mut placed = native.placed_text(view(config, now, size));
+            placed.sort_by(|a, b| a.1.y.total_cmp(&b.1.y).then(a.1.x.total_cmp(&b.1.x)));
+            placed.dedup_by(|a, b| a.0 == b.0 && (a.1.y - b.1.y).abs() < 1.);
+            // Texts whose middles are on one height are one line.
+            let mut lines: Vec<(f32, Vec<String>)> = Vec::new();
+            for (text, bounds) in placed {
+                let middle = bounds.center_y();
+                match lines.last_mut() {
+                    Some((y, line)) if (middle - *y).abs() < bounds.height / 2. => line.push(text),
+                    _ => lines.push((middle, vec![text])),
+                }
+            }
+            lines
+                .into_iter()
+                .map(|(_, line)| line.join(" "))
+                .collect::<Vec<_>>()
+        };
+        // The same break in a small card and a wide one.
+        for size in [[160., 100.], [490., 200.]] {
+            for (hour, minute, lines) in [
+                (18, 30, ["half", "past six"]),
+                (21, 40, ["twenty", "to ten"]),
+                (23, 15, ["quarter", "past eleven"]),
+                (11, 55, ["five", "to twelve"]),
+                (21, 30, ["half", "past nine"]),
+                (22, 0, ["ten", "o’clock"]),
+            ] {
+                assert_eq!(
+                    said(&config, size, hour, minute),
+                    lines,
+                    "{hour}:{minute:02} {size:?}"
+                );
+            }
+        }
     }
 
     /// The typefaces Halcyon ships are there without installing anything,

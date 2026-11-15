@@ -3,7 +3,7 @@
 //! native text in the clock's own font and ink, with the same soft edge as
 //! the digital time, so search and screen readers find the time.
 use super::*;
-use crate::widget_style::resolver::{HOUR_WORDS, PHRASES};
+use crate::widget_style::resolver::in_words;
 
 /// A Stacked line, as a share of the face size: the digits sit close.
 const STACK_LINE: f32 = 0.92;
@@ -49,9 +49,25 @@ pub(super) fn metrics(face: ClockFace) -> Metrics {
     }
 }
 
-/// The widest thing a Words face can say, at 100 pixels in `font`. Words
-/// are fitted to this, not to the current time, so the size holds still as
-/// the minutes pass. Measured once per font.
+/// The width of `words` set on one line, at 100 pixels in `font`.
+fn words_width(words: &[String], font: Font) -> f32 {
+    measure(&words.join(" "), 100., font)
+}
+
+/// The two lines `words` are set on, as ranges of words: the first word
+/// ("twenty", "half", the hour before "o’clock") above, and the hour with
+/// the word that ties it to the phrase ("to ten", "past six") below. A
+/// short hour is never left alone on the last line, and the break does not
+/// move as the minutes pass.
+pub(super) fn word_lines(words: &[String]) -> [std::ops::Range<usize>; 2] {
+    let at = 1.min(words.len());
+    [0..at, at..words.len()]
+}
+
+/// The widest line a Words face can say, at 100 pixels in `font`, over
+/// every five minutes of the day. Words are fitted to this, not to the
+/// current time, so the size holds still as the minutes pass. Measured once
+/// per font.
 fn widest_words(font: Font) -> f32 {
     thread_local! {
         static WIDEST: std::cell::RefCell<Vec<(Font, f32)>> = const { std::cell::RefCell::new(Vec::new()) };
@@ -60,11 +76,9 @@ fn widest_words(font: Font) -> f32 {
         if let Some((_, width)) = known.iter().find(|(f, _)| *f == font) {
             return *width;
         }
-        let width = PHRASES
-            .iter()
-            .chain(HOUR_WORDS.iter())
-            .chain(["o’clock"].iter())
-            .map(|line| measure(line, 100., font))
+        let width = (0..12)
+            .flat_map(|hour| (0..12).map(move |five| in_words(hour, five * 5).0))
+            .flat_map(|words| word_lines(&words).map(|line| words_width(&words[line], font)))
             .fold(0., f32::max);
         if known.len() >= 16 {
             known.clear();
@@ -193,6 +207,7 @@ fn lines(
     .width(width)
     .height(height)
     .align_x(p.preferences.alignment.layout())
+    .align_y(Alignment::Center)
     .into()
 }
 
@@ -233,8 +248,8 @@ pub(super) fn stacked(
     )
 }
 
-/// The time in words on two lines: the hour in the ink, what goes with it
-/// ("half past", "o’clock") quieter.
+/// The time in words on two lines, broken by `word_lines`: the hour in
+/// the ink, what goes with it ("half past", "o’clock") quieter.
 pub(super) fn words(
     p: &Presentation,
     reading: &ClockReading,
@@ -242,20 +257,29 @@ pub(super) fn words(
     size: f32,
 ) -> Element<'static, Message> {
     let ink = p.style.palette().foreground;
-    let rows = reading
-        .words
-        .iter()
-        .map(|words| {
-            let hour = HOUR_WORDS.contains(&words.as_str());
-            line(
-                p,
-                words.clone(),
-                size,
-                WORD_LINE,
-                if hour { ink } else { p.body_ink },
-            )
-        })
-        .collect();
+    let font = p.style.display.value;
+    let space = measure(" ", size, font);
+    let rows =
+        word_lines(&reading.words)
+            .into_iter()
+            .map(|range| {
+                // The words before the hour, the hour, and the words after it,
+                // each one text so a screen reader reads the phrase.
+                let clamp = |at: usize| at.clamp(range.start, range.end);
+                let hour = reading.hour_word;
+                let runs = [
+                    (range.start..clamp(hour), p.body_ink),
+                    (clamp(hour)..clamp(hour + 1), ink),
+                    (clamp(hour + 1)..range.end, p.body_ink),
+                ];
+                let runs = runs.into_iter().filter(|(run, _)| !run.is_empty());
+                row::with_children(runs.map(|(run, color)| {
+                    line(p, reading.words[run].join(" "), size, WORD_LINE, color)
+                }))
+                .spacing(space)
+                .into()
+            })
+            .collect();
     lines(p, rows, width, size * 2. * WORD_LINE)
 }
 

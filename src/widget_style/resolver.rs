@@ -224,8 +224,10 @@ pub struct ClockReading {
     /// The hour as the clock shows it: "09" or "21", or "9" on a 12-hour clock.
     pub hours: String,
     pub minutes: String,
-    /// The time in words, to the nearest five minutes.
-    pub words: [String; 2],
+    /// The time in words, to the nearest five minutes, word by word.
+    pub words: Vec<String>,
+    /// Which of `words` is the hour.
+    pub hour_word: usize,
     /// The weekday and the day of the month, for a face that shows the
     /// date beside the time; `None` until a date is given.
     pub date: Option<[String; 2]>,
@@ -233,6 +235,7 @@ pub struct ClockReading {
 impl ClockReading {
     pub fn at(now: chrono::NaiveTime, format_24h: bool) -> Self {
         use chrono::Timelike;
+        let (words, hour_word) = in_words(now.hour(), now.minute());
         Self {
             time: now
                 .format(if format_24h { "%H:%M" } else { "%-I:%M" })
@@ -244,7 +247,8 @@ impl ClockReading {
                 .format(if format_24h { "%H" } else { "%-I" })
                 .to_string(),
             minutes: now.format("%M").to_string(),
-            words: in_words(now.hour(), now.minute()),
+            words,
+            hour_word,
             date: None,
         }
     }
@@ -263,25 +267,10 @@ pub const HOUR_WORDS: [&str; 12] = [
     "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
     "twelve",
 ];
-/// Everything a words face says before the hour.
-pub const PHRASES: [&str; 11] = [
-    "five past",
-    "ten past",
-    "quarter past",
-    "twenty past",
-    "twenty-five past",
-    "half past",
-    "twenty-five to",
-    "twenty to",
-    "quarter to",
-    "ten to",
-    "five to",
-];
-
-/// The time in words on two lines, to the nearest five minutes: "half past"
-/// over "nine", or "nine" over "o’clock". Read the same on a 12 or 24-hour
-/// clock, as people say it.
-pub fn in_words(hour: u32, minute: u32) -> [String; 2] {
+/// The time in words, to the nearest five minutes, word by word ("twenty",
+/// "to", "ten"), and which word is the hour. Read the same on a 12 or
+/// 24-hour clock, as people say it. The face chooses where the line breaks.
+pub fn in_words(hour: u32, minute: u32) -> (Vec<String>, usize) {
     let rounded = (hour % 24) * 60 + minute % 60 + 2;
     let (mut hour, five) = (rounded / 60, (rounded % 60) / 5);
     if five > 6 {
@@ -289,16 +278,16 @@ pub fn in_words(hour: u32, minute: u32) -> [String; 2] {
     }
     let name = HOUR_WORDS[((hour + 11) % 12) as usize].to_string();
     let phrase = match five {
-        0 => return [name, "o’clock".into()],
+        0 => return (vec![name, "o’clock".into()], 0),
         1 | 11 => "five",
         2 | 10 => "ten",
         3 | 9 => "quarter",
         4 | 8 => "twenty",
         5 | 7 => "twenty-five",
-        _ => return ["half past".into(), name],
+        _ => "half",
     };
-    let side = if five < 6 { "past" } else { "to" };
-    [format!("{phrase} {side}"), name]
+    let side = if five <= 6 { "past" } else { "to" };
+    (vec![phrase.into(), side.into(), name], 2)
 }
 
 #[cfg(test)]

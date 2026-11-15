@@ -203,7 +203,7 @@ fn foundation_invalid_clock_choices_are_rejected_by_config_and_owned_store() {
 
 #[test]
 fn words_say_the_time_to_the_nearest_five_minutes() {
-    let said = |hour, minute| in_words(hour, minute).join(" ");
+    let said = |hour, minute| in_words(hour, minute).0.join(" ");
     assert_eq!(said(9, 0), "nine o’clock");
     assert_eq!(said(9, 2), "nine o’clock");
     assert_eq!(said(9, 3), "five past nine");
@@ -216,15 +216,19 @@ fn words_say_the_time_to_the_nearest_five_minutes() {
     assert_eq!(said(0, 0), "twelve o’clock");
     assert_eq!(said(12, 40), "twenty to one");
     assert_eq!(said(23, 59), "twelve o’clock");
-    // Every line it can say is one the face is fitted to.
+    // Every word it says is one the face is fitted to, and the hour is
+    // the hour.
+    let before = ["five", "ten", "quarter", "twenty", "twenty-five", "half"];
     for hour in 0..24 {
         for minute in 0..60 {
-            for line in in_words(hour, minute) {
+            let (words, at) = in_words(hour, minute);
+            assert!(HOUR_WORDS.contains(&words[at].as_str()), "{hour}:{minute}");
+            for word in &words {
                 assert!(
-                    PHRASES.contains(&line.as_str())
-                        || HOUR_WORDS.contains(&line.as_str())
-                        || line == "o’clock",
-                    "{hour}:{minute} {line}"
+                    before.contains(&word.as_str())
+                        || HOUR_WORDS.contains(&word.as_str())
+                        || ["past", "to", "o’clock"].contains(&word.as_str()),
+                    "{hour}:{minute} {word}"
                 );
             }
         }
