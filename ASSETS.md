@@ -19,7 +19,7 @@ provided by the maintainer on 2026-10-23. App icons and media artwork visible
 in them retain their respective owners' rights. See the
 [source and capture notes](docs/presentation/README.md).
 
-No fonts are bundled: widget styles name system fonts and fall back when one isn't installed.
+Widget styles name system fonts and fall back when one isn't installed. The clock also ships four typefaces of its own, under the SIL Open Font License: see `THIRD_PARTY.md` and `assets/fonts/clock/`.
 
 Earlier explorations (icon rounds, wallpaper drafts, mockups) and the reference images used for them are not part of the repository.
 # Ridge prepared wallpaper

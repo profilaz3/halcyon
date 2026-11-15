@@ -2,6 +2,7 @@
 //! uses a worst-case wallpaper range, so it needs no sampling or background work.
 use crate::config::Palette;
 use cosmic::iced::{Color, Font};
+pub mod clock_fonts;
 pub mod resolver;
 
 pub const PADDING: u16 = 18;

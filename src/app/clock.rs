@@ -713,6 +713,66 @@ mod tests {
         );
     }
 
+    /// The typefaces Halcyon ships are there without installing anything,
+    /// draw the clock in their own shapes, and keep every weight their
+    /// axis has.
+    #[test]
+    fn a_shipped_typeface_draws_the_clock_in_every_weight() {
+        use crate::widget_style::resolver::ClockWeight;
+        crate::desktop_theme::load_installed_fonts();
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 4)
+            .unwrap()
+            .and_hms_opt(10, 8, 0)
+            .unwrap();
+        let theme = cosmic::Theme::dark();
+        let mut native = Native::new(Size::new(490., 200.));
+        let mut config = Config::default();
+        config.clock.show_date = false;
+        let width = |config: &Config, native: &mut Native| {
+            let bounds = ink(&native.render(view(config, now, [490., 200.]), &theme), 490);
+            bounds[2] - bounds[0]
+        };
+        let plain = width(&config, &mut native);
+        for font in &crate::widget_style::clock_fonts::ALL {
+            assert!(crate::desktop_theme::font_installed(font.family), "{}", font.family);
+            for weight in [ClockWeight::Light, ClockWeight::Normal, ClockWeight::Bold] {
+                let face = Font {
+                    family: cosmic::iced::font::Family::Name(font.family),
+                    weight: weight.native(),
+                    ..Font::DEFAULT
+                };
+                assert_eq!(
+                    crate::desktop_theme::font_style_available(face),
+                    font.weights.contains(&match weight {
+                        ClockWeight::Light => 300,
+                        ClockWeight::Normal => 400,
+                        ClockWeight::Bold => 700,
+                    }),
+                    "{} {weight:?}",
+                    font.family
+                );
+            }
+        }
+        config.clock_font = Some("Antonio".into());
+        let tall = width(&config, &mut native);
+        native.capture(view(&config, now, [490., 200.]), &theme, "clock-font-antonio");
+        assert!(
+            (tall as f32) < plain as f32 * 0.9,
+            "Antonio is narrow: {tall} vs {plain}"
+        );
+        config.clock.weight = Some(ClockWeight::Light);
+        let light = native.render(view(&config, now, [490., 200.]), &theme);
+        config.clock.weight = Some(ClockWeight::Bold);
+        let bold = native.render(view(&config, now, [490., 200.]), &theme);
+        let inked = |pixels: &[u8]| pixels.chunks_exact(4).filter(|p| p[3] > 128).count();
+        assert!(
+            inked(&bold) as f32 > inked(&light) as f32 * 1.3,
+            "the weight axis is used: {} vs {}",
+            inked(&bold),
+            inked(&light)
+        );
+    }
+
     /// One size model: the box is the clock's size. Growing it at the
     /// same shape, as the Clock stage corner and + do, grows the digits and
     /// the dial with it; the Text size slider only fits them inside it.
