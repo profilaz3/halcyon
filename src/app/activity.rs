@@ -21,6 +21,9 @@ fn key(value: &str) -> String {
 /// How long COSMIC's popups stay with an island that left, in case the panel
 /// is only restarting it.
 const POPUPS_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
+/// When the panel is looked at again after its island left: a panel going
+/// down may close its islands a moment before it is gone itself.
+const HOST_RECHECK: std::time::Duration = std::time::Duration::from_secs(1);
 impl Cards {
     pub(super) fn publish_activity(&mut self) {
         let next = self.config.activity_island.clone();
@@ -32,6 +35,11 @@ impl Cards {
         }
         self.activity.preferences = next;
         self.activity.publish(self.activity_snapshot());
+    }
+    /// The panel the last island ran in has stopped, so no island is on
+    /// its way back from it.
+    fn island_host_gone(&self) -> bool {
+        self.activity.left_host.is_some_and(|host| !host.alive())
     }
     fn activity_snapshot(&self) -> Snapshot {
         let focus = &self.tools.focus;
@@ -209,6 +217,7 @@ impl Cards {
             Event::System(state) => {
                 self.activity.system = state;
             }
+            Event::Left(host) => self.activity.left_host = host,
             Event::Clients(n) => {
                 let before = self.activity.clients;
                 self.activity.clients = n;
@@ -223,12 +232,23 @@ impl Cards {
                     // panel is restarting it. Give it back only if no island
                     // returns in time: restoring and retaking within a
                     // restart rewrote COSMIC's setting twice and let popups
-                    // flash in between.
+                    // flash in between. A panel that is gone itself is not
+                    // restarting its island: notifications come back now.
+                    if self.island_host_gone() {
+                        crate::activity_island::popups::restore_soon();
+                        return Task::none();
+                    }
                     let departure = self.activity.departures;
-                    return cosmic::task::future(async move {
-                        tokio::time::sleep(POPUPS_GRACE).await;
-                        Message::Activity(Event::Released(departure))
-                    });
+                    return Task::batch([
+                        cosmic::task::future(async move {
+                            tokio::time::sleep(HOST_RECHECK).await;
+                            Message::Activity(Event::CheckHost(departure))
+                        }),
+                        cosmic::task::future(async move {
+                            tokio::time::sleep(POPUPS_GRACE).await;
+                            Message::Activity(Event::Released(departure))
+                        }),
+                    ]);
                 }
                 if before == 0 && n > 0 {
                     return Task::batch(self.refresh_visible_data());
@@ -236,6 +256,16 @@ impl Cards {
             }
             Event::Released(departure) => {
                 if departure == self.activity.departures && self.activity.clients == 0 {
+                    crate::activity_island::popups::restore_soon();
+                }
+            }
+            Event::CheckHost(departure) => {
+                if departure == self.activity.departures
+                    && self.activity.clients == 0
+                    && self.island_host_gone()
+                {
+                    // Nothing waits for the grace now.
+                    self.activity.departures += 1;
                     crate::activity_island::popups::restore_soon();
                 }
             }
@@ -480,6 +510,79 @@ mod tests {
         cards.activity.preferences.replace_popups = true;
         cards.config.activity_island.replace_popups = false;
         cards.publish_activity();
+        assert_eq!(restores() - start, 2);
+    }
+    /// A panel that stops for good takes its island with it. Waiting out
+    /// the grace lost ten seconds of notifications for nothing.
+    #[test]
+    fn d12_popups_return_at_once_when_the_panel_itself_is_gone() {
+        if crate::displays::test_support::isolated(
+            "app::activity::tests::d12_popups_return_at_once_when_the_panel_itself_is_gone",
+        ) {
+            return;
+        }
+        use crate::activity_island::bridge::Host;
+        let (mut cards, _) = Cards::init(
+            Core::default(),
+            Config {
+                widgets_visible: false,
+                ..Default::default()
+            },
+        );
+        let restores = || crate::activity_island::popups::RESTORES.with(|count| count.get());
+        // A panel that ran an island: a child of this test, the island its
+        // own child, read the way the bridge reads a connecting island.
+        let mut panel = std::process::Command::new("sh")
+            .args(["-c", "sleep 30 & echo $!; wait"])
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut line = String::new();
+        std::io::BufRead::read_line(
+            &mut std::io::BufReader::new(panel.stdout.as_mut().unwrap()),
+            &mut line,
+        )
+        .unwrap();
+        let island: u32 = line.trim().parse().unwrap();
+        let host = Host::parent_of(island).expect("the island's panel");
+        assert_eq!(Some(host), Host::parent_of(island));
+        assert!(host.alive());
+        // The panel is still there: it may be restarting the island.
+        let start = restores();
+        let _ = cards.activity_message(Event::Clients(1));
+        let _ = cards.activity_message(Event::Left(Some(host)));
+        let _ = cards.activity_message(Event::Clients(0));
+        let departure = cards.activity.departures;
+        let _ = cards.activity_message(Event::CheckHost(departure));
+        assert_eq!(restores() - start, 0, "the panel is restarting its island");
+        // The panel stops, and its island goes with it.
+        let _ = cards.activity_message(Event::Clients(1));
+        unsafe { libc::kill(island as i32, libc::SIGKILL) };
+        unsafe { libc::kill(panel.id() as i32, libc::SIGKILL) };
+        // Not reaped yet: a panel that exited is gone even so.
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert!(!host.alive());
+        let _ = cards.activity_message(Event::Left(Some(host)));
+        let _ = cards.activity_message(Event::Clients(0));
+        assert_eq!(restores() - start, 1, "restored at once");
+        let _ = panel.wait();
+        assert!(!host.alive());
+        // Gone a moment after its island, the check after a second sees it,
+        // and the grace that follows restores nothing twice.
+        let _ = cards.activity_message(Event::Clients(1));
+        let _ = cards.activity_message(Event::Left(None));
+        let _ = cards.activity_message(Event::Clients(0));
+        let departure = cards.activity.departures;
+        let _ = cards.activity_message(Event::CheckHost(departure));
+        assert_eq!(restores() - start, 1, "no panel known: the grace decides");
+        cards.activity.left_host = Some(host);
+        let _ = cards.activity_message(Event::CheckHost(departure));
+        assert_eq!(
+            restores() - start,
+            2,
+            "the panel went down after its island"
+        );
+        let _ = cards.activity_message(Event::Released(departure));
         assert_eq!(restores() - start, 2);
     }
     #[test]
