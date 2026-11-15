@@ -51,6 +51,18 @@ pub struct Config {
     pub calendar_show_today: bool,
     pub calendar_show_tomorrow: bool,
     pub calendar_private: bool,
+    /// The agenda shows the next seven days, today first, with a heading
+    /// for each day. Today and Tomorrow are then part of it.
+    pub calendar_show_week: bool,
+    /// All-day events are listed; off, the agenda shows timed events only.
+    pub calendar_all_day: bool,
+    /// Today's events that have ended leave the agenda instead of folding
+    /// under Earlier.
+    pub calendar_hide_finished: bool,
+    /// Each event's marker uses its calendar's own color; off, the accent.
+    pub calendar_colors: bool,
+    /// The event's place is shown under its title where the card has room.
+    pub calendar_show_location: bool,
     pub project_roots: Vec<String>,
     pub refresh_intervals: RefreshIntervals,
     pub appearance: Appearance,
@@ -121,6 +133,11 @@ impl Default for Config {
             calendar_show_today: true,
             calendar_show_tomorrow: false,
             calendar_private: false,
+            calendar_show_week: false,
+            calendar_all_day: true,
+            calendar_hide_finished: false,
+            calendar_colors: true,
+            calendar_show_location: false,
             project_roots: vec![],
             refresh_intervals: RefreshIntervals::default(),
             appearance: Appearance::default(),
@@ -3084,6 +3101,59 @@ mod tests {
             serde_json::json!({"meeting_notice_minutes": 61}),
         ] {
             assert!(Config::save_changes_at(&file.0, invalid).is_err());
+            assert_eq!(std::fs::read(&file.0).unwrap(), bytes);
+        }
+    }
+    #[test]
+    fn calendar_display_choices_default_round_trip_and_reject_non_booleans() {
+        let keys = crate::settings::CALENDAR_OPTIONS;
+        let read = |c: &Config| {
+            [
+                c.calendar_show_week,
+                c.calendar_all_day,
+                c.calendar_hide_finished,
+                c.calendar_colors,
+                c.calendar_show_location,
+            ]
+        };
+        let file = TestFile::new();
+        // A file from before these choices existed reads as the defaults.
+        std::fs::write(&file.0, br#"{"theme":"teal","future_setting":{"keep":1}}"#).unwrap();
+        let old = Config::read_at(&file.0).unwrap();
+        assert_eq!(read(&old), [false, true, false, true, false]);
+        assert_eq!(read(&old), read(&Config::default()));
+        let flipped = serde_json::json!({
+            "calendar_show_week": true, "calendar_all_day": false,
+            "calendar_hide_finished": true, "calendar_colors": false,
+            "calendar_show_location": true
+        });
+        let saved = Config::save_changes_at(&file.0, flipped.clone()).unwrap();
+        assert_eq!(read(&saved), [true, false, true, false, true]);
+        let reread = Config::read_at(&file.0).unwrap();
+        assert_eq!(read(&reread), read(&saved));
+        assert_eq!(reread.theme, "teal");
+        let raw: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&file.0).unwrap()).unwrap();
+        assert_eq!(raw["future_setting"]["keep"], 1);
+        let written = serde_json::to_value(&reread).unwrap();
+        for key in keys {
+            assert_eq!(raw[key], flipped[key], "{key}");
+            assert_eq!(written[key], flipped[key], "{key}");
+            // Writable through the store, with Undo, but never in a profile.
+            let field = crate::desktop::store::widget::field(&format!("/{key}")).unwrap();
+            assert!(field.accepts(&serde_json::json!(false)));
+            assert!(!field.accepts(&serde_json::json!("yes")));
+            assert!(
+                !crate::desktop::store::widget::FIELDS
+                    .iter()
+                    .any(|f| f.pointer == field.pointer)
+            );
+        }
+        let again: Config = serde_json::from_value(written).unwrap();
+        assert_eq!(read(&again), read(&saved));
+        let bytes = std::fs::read(&file.0).unwrap();
+        for key in keys {
+            assert!(Config::save_changes_at(&file.0, serde_json::json!({ key: "yes" })).is_err());
             assert_eq!(std::fs::read(&file.0).unwrap(), bytes);
         }
     }

@@ -309,7 +309,13 @@ impl Settings {
         ])
         .spacing(12)
         .align_y(Alignment::Center);
-        let mut events = if self.config.glance.enabled {
+        let option =
+            |title: &'static str, description: &'static str, key: &'static str, on: bool| {
+                switch(title, description, on, move |value| {
+                    Message::CalendarOption(key, value)
+                })
+            };
+        let mut show = if self.config.glance.enabled {
             vec![
                 split(detail("Tomorrow", "Today is always shown"),
                     container(toggler(self.config.glance.show_tomorrow).on_toggle(Message::GlanceTomorrow))
@@ -324,22 +330,54 @@ impl Settings {
                     self.config.calendar_show_tomorrow,
                     Message::Tomorrow,
                 ),
+                option(
+                    "Next 7 days",
+                    "Today and the six days after it, each under its own heading",
+                    "calendar_show_week",
+                    self.config.calendar_show_week,
+                ),
             ]
         };
-        events.push(switch(
-            "Hide event details",
-            "Show Busy instead of titles",
-            self.config.calendar_private,
-            Message::CalendarPrivacy,
-        ));
-        events.push(
+        show.extend([
+            option(
+                "All-day events",
+                "",
+                "calendar_all_day",
+                self.config.calendar_all_day,
+            ),
+            option(
+                "Hide finished events",
+                "Events that have ended leave the list instead of folding under Earlier",
+                "calendar_hide_finished",
+                self.config.calendar_hide_finished,
+            ),
+            option(
+                "Show event location",
+                "Under the title, when the card has room",
+                "calendar_show_location",
+                self.config.calendar_show_location,
+            ),
+            switch(
+                "Hide event details",
+                "Show Busy instead of titles",
+                self.config.calendar_private,
+                Message::CalendarPrivacy,
+            ),
+        ]);
+        let looks = vec![
+            option(
+                "Calendar colors",
+                "Each event is marked in its calendar’s color. Off, all use the accent",
+                "calendar_colors",
+                self.config.calendar_colors,
+            ),
             column::with_children(vec![
                 detail("Highlight meetings", "Starts this many minutes before each one"),
                 notice.into(),
             ])
             .spacing(6)
             .into(),
-        );
+        ];
         let connected = self.calendar.connection.connected();
         let mut sections = Vec::new();
         if !connected {
@@ -370,7 +408,8 @@ impl Settings {
         }
         sections.push(self.calendar_connection());
         if connected {
-            sections.push(group(Some("Agenda"), events));
+            sections.push(group(Some("What to show"), show));
+            sections.push(group(Some("How it looks"), looks));
         }
         sections.push(self.page_settings_advanced(
             Page::Calendar,

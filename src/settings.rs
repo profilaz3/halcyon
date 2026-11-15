@@ -781,6 +781,8 @@ pub enum Message {
     CalendarPrivacy(bool),
     Today(bool),
     Tomorrow(bool),
+    /// One of the Calendar display switches, by its configuration key.
+    CalendarOption(&'static str, bool),
     Notice(u16),
     SaveNotice,
     Theme(String),
@@ -4033,6 +4035,11 @@ impl Settings {
             Message::CalendarPrivacy(value) => self.save(json!({"calendar_private": value})),
             Message::Today(value) => self.save(json!({"calendar_show_today": value})),
             Message::Tomorrow(value) => self.save(json!({"calendar_show_tomorrow": value})),
+            Message::CalendarOption(key, value) => {
+                if CALENDAR_OPTIONS.contains(&key) {
+                    self.save(json!({ key: value }));
+                }
+            }
             Message::WeatherFahrenheit(value) => {
                 match Config::save_weather(json!({"fahrenheit": value})) {
                     Ok(config) => {
@@ -4780,6 +4787,15 @@ impl Settings {
         Task::none()
     }
 }
+
+/// The Calendar display switches `Message::CalendarOption` may write.
+pub(crate) const CALENDAR_OPTIONS: [&str; 5] = [
+    "calendar_show_week",
+    "calendar_all_day",
+    "calendar_hide_finished",
+    "calendar_colors",
+    "calendar_show_location",
+];
 
 fn desktop_write_message(message: &Message) -> bool {
     match message {
@@ -10082,6 +10098,73 @@ mod tests {
             app.config.calendar_show_tomorrow,
             before.calendar_show_tomorrow
         );
+    }
+    #[test]
+    fn calendar_display_switches_show_save_and_undo_one_at_a_time() {
+        if desktop_test_child(
+            "calendar_display_switches_show_save_and_undo_one_at_a_time",
+            DesktopEnv {
+                app_config: true,
+                fixture: true,
+                ..Default::default()
+            },
+        ) {
+            return;
+        }
+        let (mut app, _) = Settings::init(Core::default(), Page::Calendar);
+        // Tall enough to show both groups in the capture.
+        let size = Size::new(1024., 1500.);
+        let _ = app.update(Message::Resized(size));
+        app.calendar.connection.backend = crate::calendar::Backend::Google;
+        app.calendar.connection.account = "demo@example.com".into();
+        app.calendar.loading = false;
+        let mut native = crate::native_test::Native::new(size);
+        let shown = native.all_text(app.settings_view());
+        for title in [
+            "What to show",
+            "Today",
+            "Tomorrow",
+            "Next 7 days",
+            "All-day events",
+            "Hide finished events",
+            "Show event location",
+            "Hide event details",
+            "How it looks",
+            "Calendar colors",
+            "Highlight meetings",
+        ] {
+            assert!(
+                shown.iter().any(|t| t == title),
+                "{title} on the Calendar page"
+            );
+        }
+        native.capture(
+            app.settings_view(),
+            &controls_theme(&app.config),
+            "calendar-display-settings",
+        );
+        let value = |c: &Config, key: &str| -> bool {
+            serde_json::to_value(c).unwrap()[key].as_bool().unwrap()
+        };
+        for (n, key) in CALENDAR_OPTIONS.into_iter().enumerate() {
+            let before = value(&Config::try_load().unwrap(), key);
+            let _ = app.update(Message::CalendarOption(key, !before));
+            assert!(!app.error, "{key}: {}", app.status);
+            assert_eq!(value(&app.config, key), !before, "{key}");
+            assert_eq!(value(&Config::try_load().unwrap(), key), !before, "{key}");
+            // A later change elsewhere is not this switch's to undo.
+            let notice = 20 + n as i64;
+            Config::save_changes(json!({ "meeting_notice_minutes": notice })).unwrap();
+            let _ = app.update(Message::UndoPreferences);
+            assert!(!app.error, "{key}: {}", app.status);
+            let saved = Config::try_load().unwrap();
+            assert_eq!(value(&saved, key), before, "Undo restores {key}");
+            assert_eq!(saved.meeting_notice_minutes, notice, "{key}");
+        }
+        // Only the Calendar display switches are written this way.
+        let bytes = std::fs::read(Config::path().unwrap()).unwrap();
+        let _ = app.update(Message::CalendarOption("onboarded", true));
+        assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), bytes);
     }
     #[test]
     fn compact_tomorrow_native_controls_persist_from_both_settings_pages() {

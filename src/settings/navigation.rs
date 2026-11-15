@@ -1001,8 +1001,13 @@ const ROWS: &[SearchHit] = &[
     hit(Page::Builder, "Size", "", false),
     hit(Page::Builder, "Type", "", false),
     hit(Page::Calendar, "Add a calendar", "", false),
+    hit(Page::Calendar, "All-day events", "", false),
+    hit(Page::Calendar, "Calendar colors", "", false),
     hit(Page::Calendar, "Hide event details", "", false),
+    hit(Page::Calendar, "Hide finished events", "", false),
     hit(Page::Calendar, "Highlight meetings", "", false),
+    hit(Page::Calendar, "Next 7 days", "week", false),
+    hit(Page::Calendar, "Show event location", "place", false),
     hit(Page::Calendar, "Sync and sign-in setup", "", false),
     hit(Page::Calendar, "Tomorrow", "", false),
     hit(Page::Clock, "24-hour time", "", false),
@@ -1296,9 +1301,14 @@ pub(super) const UNCHECKED_LABELS: &[(&str, &str)] = &[
         "named by its item in the panel’s Contents or by the Add Activity pill button, \
          and the fixture has no Halcyon panel to offer either",
     ),
-    ("Tomorrow", "in Calendar’s Agenda, shown once a calendar is connected"),
-    ("Hide event details", "in Calendar’s Agenda, shown once a calendar is connected"),
-    ("Highlight meetings", "in Calendar’s Agenda, shown once a calendar is connected"),
+    ("Tomorrow", "in Calendar, shown once a calendar is connected"),
+    ("Next 7 days", "in Calendar, shown once a calendar is connected"),
+    ("All-day events", "in Calendar, shown once a calendar is connected"),
+    ("Hide finished events", "in Calendar, shown once a calendar is connected"),
+    ("Show event location", "in Calendar, shown once a calendar is connected"),
+    ("Hide event details", "in Calendar, shown once a calendar is connected"),
+    ("Calendar colors", "in Calendar, shown once a calendar is connected"),
+    ("Highlight meetings", "in Calendar, shown once a calendar is connected"),
 ];
 
 const fn hit(page: Page, label: &'static str, terms: &'static str, advanced: bool) -> SearchHit {

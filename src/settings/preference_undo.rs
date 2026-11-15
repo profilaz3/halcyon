@@ -102,6 +102,7 @@ fn message_scope(config: &Config, message: &Message) -> Vec<String> {
         Message::CalendarPrivacy(_) => add(&["calendar_private"]),
         Message::Today(_) => add(&["calendar_show_today"]),
         Message::Tomorrow(_) => add(&["calendar_show_tomorrow"]),
+        Message::CalendarOption(key, _) if super::CALENDAR_OPTIONS.contains(key) => add(&[key]),
         Message::ClockFormat(_) => add(&["clock", "format_24h"]),
         Message::ClockDate(_) => add(&["clock", "show_date"]),
         Message::WeatherDewPoint(_) => add(&["weather", "show_dew_point"]),
@@ -406,6 +407,31 @@ mod tests {
             ["/music/player"]
         );
         assert!(message_scope(&config, &Message::Tools(tools::Message::Refresh)).is_empty());
+    }
+
+    #[test]
+    fn each_calendar_display_switch_owns_only_its_own_member() {
+        let config = Config::default();
+        for key in super::super::CALENDAR_OPTIONS {
+            assert_eq!(
+                message_scope(&config, &Message::CalendarOption(key, true)),
+                [format!("/{key}")]
+            );
+        }
+        assert!(message_scope(&config, &Message::CalendarOption("theme", true)).is_empty());
+        let fixture = Fixture::new("calendar-display");
+        let before = Config::default();
+        let mut after = before.clone();
+        after.calendar_colors = false;
+        // Another writer turns on the week while Colors is being changed.
+        after.calendar_show_week = true;
+        let scope = message_scope(&before, &Message::CalendarOption("calendar_colors", false));
+        let undo = PreferenceUndo::between_scoped(&before, &after, &scope).unwrap();
+        let path = fixture.config(&after);
+        undo.apply(&path).unwrap();
+        let raw: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(raw["calendar_colors"], true);
+        assert_eq!(raw["calendar_show_week"], true);
     }
 
     fn isolated(name: &str) -> bool {
