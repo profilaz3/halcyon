@@ -972,7 +972,18 @@ impl Applet {
                     let reveal = timer_due.then_some(Kind::Timer).or(system_reveal);
                     let reveal = self.consider_reveal(reveal, now);
                     self.settle_device_banner(now);
-                    return Task::batch([popups, reveal]);
+                    // Keep the way back visible as devices arrive or the list empties.
+                    let devices = if self.popup.is_some()
+                        && self.kind == Kind::Devices
+                        && self.devices.card
+                        && !self.chooser
+                        && self.devices_extra() > self.popup_extra + 0.5
+                    {
+                        self.regrow(now)
+                    } else {
+                        Task::none()
+                    };
+                    return Task::batch([popups, reveal, devices]);
                 }
             },
             Message::Enter(popup) => {
