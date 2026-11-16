@@ -65,14 +65,19 @@ const LIST_WIDTH: f32 = 380.;
 const LIST_ROWS: usize = 5;
 const ROW_HEIGHT: f32 = 44.;
 const ROW_GAP: f32 = 4.;
-/// Clear all beneath the rows, with a little air above it.
+/// Clear all beneath the rows on a Standard bar, with a little air above it.
 const LIST_FOOTER: f32 = 40.;
+/// "and N more" beneath the rows on an island, when some do not fit.
+const MORE_LINE: f32 = ROW_GAP + 22.;
+/// Clear all on an island's list title line, and its gap before Collapse.
+const CLEAR_WIDTH: f32 = 76.;
+const CLEAR_ROOM: f32 = CLEAR_WIDTH + 4.;
 /// The room a card has below its title line, as the chooser uses it.
 const LIST_ROOM: f32 = HEIGHT - 50.;
-/// The height of a list of `rows` notifications and its footer.
+/// The height of a list of `rows` notifications and what follows them.
 #[cfg(test)]
-fn list_height(rows: usize) -> f32 {
-    rows as f32 * (ROW_HEIGHT + ROW_GAP) - ROW_GAP + LIST_FOOTER
+fn list_height(rows: usize, footer: f32) -> f32 {
+    rows as f32 * (ROW_HEIGHT + ROW_GAP) - ROW_GAP + footer
 }
 /// How long ago a notification arrived, as a list row says it.
 fn note_age(at_ms: i64, now_ms: i64, format_24h: bool) -> String {
@@ -2510,6 +2515,11 @@ impl Applet {
         }
         // Open on the list, the title line names it.
         let heading = listing && p >= 0.5;
+        // On an island, Clear all sits beside Collapse while notifications
+        // are listed.
+        let clear =
+            heading && self.menu.is_none() && !self.notes.is_empty() && self.clear_on_title();
+        let tools = if clear { CLEAR_ROOM } else { 0. };
         if heading {
             title = match (&self.menu, self.notes.len()) {
                 (Some(target), _) => target.app.clone(),
@@ -2586,7 +2596,7 @@ impl Applet {
             compact - 24.
         } else {
             compact + (WIDTH + card_width - compact) * p - 2. * (12. + 2. * p)
-        } - 32. * p
+        } - (32. + tools) * p
             - balance * (1. - p)
             - others_width
             - if others > 0 { 8. } else { 0. };
@@ -2818,7 +2828,7 @@ impl Applet {
             }
             _ => Message::Hold,
         });
-        let pin = self.tip(
+        let collapse = self.tip(
             palette,
             widget::button::icon(widget::icon::from_name("go-up-symbolic").symbolic(true))
                 .id("activity-collapse".into())
@@ -2831,6 +2841,29 @@ impl Applet {
             "Collapse (Esc)",
             widget::tooltip::Position::Bottom,
         );
+        let pin = if clear {
+            widget::row([
+                widget::button::custom(
+                    widget::container(self.text("Clear all", 13., alpha(palette.ink, reveal)))
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .align_x(cosmic::iced::Alignment::Center)
+                        .align_y(cosmic::iced::Alignment::Center),
+                )
+                .id("activity-note-clear".into())
+                .width(CLEAR_WIDTH)
+                .height(28)
+                .padding(0)
+                .class(capsule_button(palette, accent, reveal, Role::Quiet))
+                .on_press(Message::NotesClear)
+                .into(),
+                collapse,
+            ])
+            .spacing(CLEAR_ROOM - CLEAR_WIDTH)
+            .into()
+        } else {
+            collapse
+        };
         let note = live && !self.chooser && !listing && !shelf && matches!(self.kind, Kind::Notification(_));
         let meta = if note {
             // A notification's message may take a second line. Clipped, not
@@ -2999,6 +3032,7 @@ impl Applet {
             extra,
             extra_width: if popup { self.popup_wide } else { 0. },
             card_width,
+            tools,
             card_extra: if listing {
                 self.list_card_extra(extra)
             } else if panel {

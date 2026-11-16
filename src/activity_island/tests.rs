@@ -2224,10 +2224,22 @@ fn notification_list_shows_every_notification_newest_first() {
     }
     let _ = app.update(Message::RowHover(inbox::RowId::Note(1), false));
     assert!(app.hover_row.is_none());
+    // Clear all sits on the title line, just before Collapse, so the rows
+    // end the card when they all fit.
     let clear = ui.bounds(app.capsule(true), "activity-note-clear");
+    let collapse = ui.bounds(app.capsule(true), "activity-collapse");
+    let first = ui.bounds(app.capsule(true), "activity-note-row-3");
     assert!(
-        clear.y > last && clear.y + clear.height <= height,
-        "{clear:?}"
+        clear.x + clear.width <= collapse.x
+            && collapse.x - (clear.x + clear.width) < 6.
+            && (clear.center_y() - collapse.center_y()).abs() < 0.5
+            && clear.y + clear.height <= first.y,
+        "{clear:?} {collapse:?} {first:?}"
+    );
+    let end = ui.bounds(app.capsule(true), "activity-note-row-1");
+    assert!(
+        height - (end.y + end.height) < 24.,
+        "no row below the last notification: {end:?} {height}"
     );
     // One card at a time is gone, and so is the count.
     for id in [
@@ -2346,7 +2358,8 @@ fn notification_list_caps_its_rows_and_counts_the_rest() {
         };
         let mut ui = open_list(&mut app);
         assert_eq!(app.list_rows(), LIST_ROWS);
-        assert_eq!(app.popup_extra, list_height(LIST_ROWS) - LIST_ROOM);
+        let footer = if attached { LIST_FOOTER } else { MORE_LINE };
+        assert_eq!(app.popup_extra, list_height(LIST_ROWS, footer) - LIST_ROOM);
         let height = app.popup_height();
         for id in 3..=7 {
             let row = ui.bounds(app.capsule(true), &format!("activity-note-row-{id}"));
@@ -2359,14 +2372,39 @@ fn notification_list_caps_its_rows_and_counts_the_rest() {
                 "{shape}: {row}"
             );
         }
+        // The rest are counted under the last row. Clear all is on an
+        // island's title line, and beside the count on a bar.
         let more = ui.text_bounds(app.capsule(true), "and 2 more");
+        let last = ui.bounds(app.capsule(true), "activity-note-row-3");
         let clear = ui.bounds(app.capsule(true), "activity-note-clear");
+        let first = ui.bounds(app.capsule(true), "activity-note-row-7");
         assert!(
-            (more.center_y() - clear.center_y()).abs() < 2.,
-            "{shape}: {more:?} {clear:?}"
+            more.y >= last.y + last.height && more.y + more.height <= height,
+            "{shape}: {more:?} {last:?}"
         );
-        assert!(clear.y + clear.height <= height, "{shape}: {clear:?}");
+        if attached {
+            assert!(
+                (more.center_y() - clear.center_y()).abs() < 2. && clear.y + clear.height <= height,
+                "{shape}: {more:?} {clear:?}"
+            );
+        } else {
+            assert!(clear.y + clear.height <= first.y, "{shape}: {clear:?}");
+        }
         assert!(ui.text_bounds(app.capsule(true), "7 notifications").width > 0.);
+        if let Some(root) = std::env::var_os("HALCYON_ACTIVITY_EVIDENCE") {
+            let scale = 2f32;
+            let wide = app.popup_width();
+            let pixels = ui.render_scaled(app.capsule(true), &cosmic::Theme::dark(), scale as f64);
+            save_scene(
+                &std::path::PathBuf::from(root).join(format!("inbox-more-{shape}.png")),
+                &pixels,
+                ((wide * scale) as usize, (height * scale) as usize),
+                &app.frame(),
+                app.palette().surface,
+                ([46., 58., 74.], [96., 84., 110.]),
+                scale,
+            );
+        }
         close(&mut app);
     }
     // Never more than the panel keeps.
@@ -2390,6 +2428,8 @@ fn notification_list_follows_the_keyboard() {
     )));
     assert!(app.keyed);
     let targets: Vec<(String, cosmic::iced::Rectangle)> = [
+        "activity-note-clear",
+        "activity-collapse",
         "activity-note-row-3",
         "activity-note-row-more-3",
         "activity-note-row-dismiss-3",
@@ -2399,7 +2439,6 @@ fn notification_list_follows_the_keyboard() {
         "activity-note-row-1",
         "activity-note-row-more-1",
         "activity-note-row-dismiss-1",
-        "activity-note-clear",
     ]
     .into_iter()
     .map(|id| (id.to_owned(), ui.bounds(app.capsule(true), id)))
@@ -3549,8 +3588,13 @@ fn notification_list_long_messages_render_for_review() {
     let root = std::env::var_os("HALCYON_ACTIVITY_EVIDENCE").map(std::path::PathBuf::from);
     let scale = 2f32;
     type Setup = fn(&mut Applet);
-    let states: [(&str, Setup); 4] = [
+    let states: [(&str, Setup); 5] = [
         ("long", |_| {}),
+        // The title line at its most crowded: Do Not Disturb and music.
+        ("long-busy", |app| {
+            app.snapshot.dnd = true;
+            app.snapshot.music = Some(music());
+        }),
         ("long-hover", |app| hover(app, inbox::RowId::Note(1))),
         ("long-opened", |app| {
             let _ = app.update(Message::NoteExpand(1));

@@ -87,6 +87,9 @@ pub(super) struct Surface<'a> {
     pub card_width: f32,
     /// How much of `extra` the card grows into; the list's rows decide.
     pub card_extra: f32,
+    /// Buttons the open title line keeps before Collapse: the list's Clear
+    /// all, 0 for other cards.
+    pub tools: f32,
     /// The badge or icon row beside the title, 0 when there is none.
     pub others_width: f32,
     /// How much of it the resting title mirrors on its left to stay centred.
@@ -345,20 +348,20 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
             },
         );
         let width = actions.size().width;
-        let (others, balance) = (self.others_width, self.balance);
+        let (others, balance, tools) = (self.others_width, self.balance, self.tools);
         let nodes = vec![
             place(
                 0,
                 left + balance * (1. - p),
                 2. + rise,
-                inner - (PIN_WIDTH + 4.) * p - balance * (1. - p) - others,
+                inner - (PIN_WIDTH + 4. + tools) * p - balance * (1. - p) - others,
                 TITLE_HEIGHT,
             ),
             place(
                 1,
-                right - PIN_WIDTH,
+                right - PIN_WIDTH - tools,
                 if attached { 2. } else { 8. },
-                PIN_WIDTH,
+                PIN_WIDTH + tools,
                 28.,
             ),
             place(2, meta.0, meta.1, meta.2, meta_height),
@@ -368,7 +371,7 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
             )),
             place(
                 4,
-                right - others - (PIN_WIDTH + 4.) * p,
+                right - others - (PIN_WIDTH + 4. + tools) * p,
                 // Centred on the title line.
                 6. + rise,
                 others,

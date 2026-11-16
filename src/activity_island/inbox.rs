@@ -50,7 +50,7 @@ const ROW_INDENT: f32 = 10. + 20. + 10.;
 /// A row's button: icon, widget id, tooltip and what it does.
 type Control = (&'static str, String, &'static str, Message);
 /// The most the list asks of the card below its title line: five rows of
-/// two lines, Clear all, and an open Recent section.
+/// two lines, Clear all on a bar, and an open Recent section.
 pub(super) const LIST_MAX: f32 = LIST_ROWS as f32 * (TALL_ROW + ROW_GAP) - ROW_GAP
     + LIST_FOOTER
     + ROW_GAP
@@ -245,7 +245,11 @@ impl Applet {
             };
         }
         let live = !self.notes.is_empty();
-        let mut fixed = if live { LIST_FOOTER } else { 0. };
+        let mut fixed = if live && !self.clear_on_title() {
+            LIST_FOOTER
+        } else {
+            0.
+        };
         if self.has_recent() {
             fixed += RECENT_HEAD + if live { ROW_GAP } else { 0. };
             if self.recent_open {
@@ -279,10 +283,9 @@ impl Applet {
                     self.titled_height(&self.group_message(n), false)
                 }),
         };
-        let budget = room - fixed;
         // Up to five lines, with an open group's own rows beyond them, as
         // far as the room goes; always one.
-        let take = |start: usize| {
+        let take = |start: usize, budget: f32| {
             let (mut used, mut lines, mut rows) = (0., 0, Vec::new());
             for row in &all[start..] {
                 let lead = !matches!(row, Row::Member(_));
@@ -296,37 +299,57 @@ impl Applet {
             }
             (rows, used)
         };
-        let (mut rows, mut used) = take(0);
         // An open group, or a notification opened in place, that would run
         // out of room moves to the top.
-        if let Some(head) = all.iter().position(|row| match row {
+        let head = all.iter().position(|row| match row {
             Row::Group(key, _) => self.open_group.as_deref() == Some(key.as_str()),
             Row::Note(id) => self.expanded == Some(*id),
             Row::Member(_) => false,
-        }) {
-            let members = all[head + 1..]
-                .iter()
-                .take_while(|row| matches!(row, Row::Member(_)))
-                .count();
-            if head > 0 && rows.len() < head + 1 + members {
-                (rows, used) = take(head);
-            }
-        }
-        let shown: usize = rows
-            .iter()
-            .map(|row| match row {
-                Row::Note(_) | Row::Member(_) => 1,
-                Row::Group(key, ids) if self.open_group.as_deref() != Some(key.as_str()) => {
-                    ids.len()
+        });
+        let pick = |budget: f32| {
+            let (rows, used) = take(0, budget);
+            if let Some(head) = head {
+                let members = all[head + 1..]
+                    .iter()
+                    .take_while(|row| matches!(row, Row::Member(_)))
+                    .count();
+                if head > 0 && rows.len() < head + 1 + members {
+                    return take(head, budget);
                 }
-                Row::Group(..) => 0,
-            })
-            .sum();
+            }
+            (rows, used)
+        };
+        let hidden = |rows: &[Row]| {
+            let shown: usize = rows
+                .iter()
+                .map(|row| match row {
+                    Row::Note(_) | Row::Member(_) => 1,
+                    Row::Group(key, ids) if self.open_group.as_deref() != Some(key.as_str()) => {
+                        ids.len()
+                    }
+                    Row::Group(..) => 0,
+                })
+                .sum();
+            self.notes.len().saturating_sub(shown)
+        };
+        let (mut rows, mut used) = pick(room - fixed);
+        // On an island, those that do not fit are counted on a line of
+        // their own; on a bar, beside Clear all.
+        if hidden(&rows) > 0 && self.clear_on_title() {
+            fixed += MORE_LINE;
+            (rows, used) = pick(room - fixed);
+        }
         Layout {
+            hidden: hidden(&rows),
             rows,
-            hidden: self.notes.len().saturating_sub(shown),
             height: used + fixed,
         }
+    }
+    /// Clear all is on the title line, beside Collapse. A Standard bar's
+    /// title line keeps the panel's width, too narrow for it beside the
+    /// title, so there it closes the list instead.
+    pub(super) fn clear_on_title(&self) -> bool {
+        !self.frame().attached
     }
     /// The list's width inside the open card.
     fn list_inner(&self) -> f32 {
@@ -1359,8 +1382,9 @@ impl Applet {
         list.width(Length::Fill).into()
     }
     /// The notifications, newest first with urgent ones on top: a row opens
-    /// one, a group opens in place, and Clear all closes them together.
-    /// Lines beyond the popup's room are counted rather than scrolled.
+    /// one and a group opens in place. Clear all closes them together, on
+    /// the title line or, on a bar, under the rows. Lines beyond the
+    /// popup's room are counted rather than scrolled.
     /// Recent sits underneath.
     pub(super) fn list_view(
         &self,
@@ -1385,21 +1409,29 @@ impl Applet {
                 Row::Group(key, ids) => self.group_row(palette, tint, reveal, key, ids),
             });
         }
-        if !self.notes.is_empty() {
-            let more = layout.hidden;
+        let more = (layout.hidden > 0).then(|| {
+            self.text(
+                format!("and {} more", layout.hidden),
+                12.,
+                alpha(palette.quiet, reveal),
+            )
+        });
+        if self.clear_on_title() || self.notes.is_empty() {
+            if let Some(more) = more {
+                list = list.push(
+                    widget::container(more)
+                        .width(Length::Fill)
+                        .height(MORE_LINE - ROW_GAP)
+                        .padding([0, 10])
+                        .align_y(cosmic::iced::Alignment::End),
+                );
+            }
+        } else {
             let footer = widget::row([
-                widget::container(if more > 0 {
-                    self.text(
-                        format!("and {more} more"),
-                        12.,
-                        alpha(palette.quiet, reveal),
-                    )
-                } else {
-                    widget::Space::new().into()
-                })
-                .width(Length::Fill)
-                .padding([0, 10])
-                .into(),
+                widget::container(more.unwrap_or_else(|| widget::Space::new().into()))
+                    .width(Length::Fill)
+                    .padding([0, 10])
+                    .into(),
                 self.label_button(
                     palette,
                     "activity-note-clear",
