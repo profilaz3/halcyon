@@ -113,8 +113,9 @@ pub fn background(color: Color, finish: Option<Finish>) -> Background {
         .into()
 }
 
+mod dark_glass;
 mod sheen;
-pub use sheen::sheen;
+pub use sheen::{dark_glass, sheen};
 
 #[cfg(test)]
 mod tests {

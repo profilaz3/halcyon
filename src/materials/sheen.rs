@@ -8,11 +8,35 @@ pub fn sheen<'a, Message: 'a>(
     content: Element<'a, Message>,
     animate: bool,
 ) -> Element<'a, Message> {
-    Element::new(Sheen { content, animate })
+    Element::new(Sheen {
+        content,
+        animate,
+        glass: None,
+    })
+}
+pub fn dark_glass<'a, Message: 'a>(
+    content: Element<'a, Message>,
+    accent: cosmic::iced::Color,
+    radius: f32,
+    animate: bool,
+) -> Element<'a, Message> {
+    Element::new(Sheen {
+        content,
+        animate: false,
+        glass: Some(
+            cosmic::iced::widget::shader(super::dark_glass::Program {
+                accent,
+                radius,
+                animate,
+            })
+            .into(),
+        ),
+    })
 }
 struct Sheen<'a, Message> {
     content: Element<'a, Message>,
     animate: bool,
+    glass: Option<Element<'a, Message>>,
 }
 #[derive(Default)]
 struct State {
@@ -34,10 +58,23 @@ impl<Message> Widget<Message, Theme, Renderer> for Sheen<'_, Message> {
         tree::State::new(State::default())
     }
     fn children(&self) -> Vec<Tree> {
-        vec![Tree::new(&self.content)]
+        let mut children = vec![Tree::new(&self.content)];
+        if let Some(glass) = &self.glass {
+            children.push(Tree::new(glass));
+        }
+        children
     }
     fn diff(&mut self, tree: &mut Tree) {
-        tree.diff_children(std::slice::from_mut(&mut self.content));
+        tree.children[0].diff(self.content.as_widget_mut());
+        if let Some(glass) = &mut self.glass {
+            if tree.children.len() == 1 {
+                tree.children.push(Tree::new(&*glass));
+            } else {
+                tree.children[1].diff(glass.as_widget_mut());
+            }
+        } else {
+            tree.children.truncate(1);
+        }
     }
     fn size(&self) -> Size<Length> {
         self.content.as_widget().size()
@@ -77,6 +114,18 @@ impl<Message> Widget<Message, Theme, Renderer> for Sheen<'_, Message> {
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        if let Some(glass) = &mut self.glass {
+            glass.as_widget_mut().update(
+                &mut tree.children[1],
+                event,
+                layout,
+                cursor,
+                renderer,
+                clipboard,
+                shell,
+                viewport,
+            );
+        }
         self.content.as_widget_mut().update(
             &mut tree.children[0],
             event,
@@ -118,6 +167,18 @@ impl<Message> Widget<Message, Theme, Renderer> for Sheen<'_, Message> {
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
+        // Decoration is behind the card and its fully opaque text and controls.
+        if let Some(glass) = &self.glass {
+            glass.as_widget().draw(
+                &tree.children[1],
+                renderer,
+                theme,
+                style,
+                layout,
+                cursor,
+                viewport,
+            );
+        }
         self.content.as_widget().draw(
             &tree.children[0],
             renderer,

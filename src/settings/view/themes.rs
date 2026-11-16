@@ -301,7 +301,7 @@ impl Settings {
             split(
                 section_title(
                     "Style",
-                    "How widget cards are shaped: corners, borders and type",
+                    "The shape, type and finish of your widget cards",
                 ),
                 button::text(if all {
                     "Show fewer".to_string()

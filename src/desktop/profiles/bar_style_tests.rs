@@ -17,12 +17,13 @@ const RAIN_BARS: Finish = Finish {
 
 /// Bar opacity, radius, padding, spacing, island gap, floating and the
 /// least opacity a glass material may give the bars, per style.
-const EXPECTED: [(Family, f32, u32, u32, u32, u16, bool, u8); 13] = [
+const EXPECTED: [(Family, f32, u32, u32, u32, u16, bool, u8); 14] = [
     (Family::Soft, 0.94, 20, 8, 6, 12, true, 85),
     (Family::Outline, 0.98, 5, 6, 4, 8, false, 90),
     (Family::Paper, 1., 12, 8, 6, 12, false, 90),
     (Family::Bare, 0.90, 24, 6, 8, 16, true, 60),
     (Family::Glass, 0.72, 18, 8, 6, 12, true, 45),
+    (Family::DarkGlass, 0.72, 18, 8, 6, 12, true, 45),
     (Family::Frosted, 0.72, 18, 8, 6, 12, true, 45),
     (Family::Midnight, 1., 10, 6, 6, 8, false, 100),
     (Family::Terminal, 1., 0, 4, 4, 6, false, 100),
