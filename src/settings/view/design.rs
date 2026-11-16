@@ -7,6 +7,12 @@ impl Settings {
         let action = |edit| Message::Design(edit);
         let mut rows = Vec::new();
         if self.design.review {
+            // Asked from Apply design, it sits by the builder's own buttons.
+            let (cancel, update) = if self.design.apply_after {
+                ("recipe-not-now", "recipe-update")
+            } else {
+                ("design-cancel", "design-migrate")
+            };
             rows.push(detail_state(
                 "Update your widgets?",
                 "Every widget comes along, hidden ones too. Notes, accounts and your weather city stay as they are, and Undo keeps working. Older Halcyon versions can't edit widgets afterwards, so save a copy first if you might go back.",
@@ -17,14 +23,18 @@ impl Settings {
                         .on_press(action(Edit::Export(true)))
                         .into(),
                     cosmic::widget::space().width(Length::Fill).into(),
-                    button::text("Cancel")
-                        .id("design-cancel".into())
+                    button::text("Not now")
+                        .id(cancel.into())
                         .on_press(action(Edit::Cancel))
                         .into(),
-                    button::suggested("Update widgets")
-                        .id("design-migrate".into())
-                        .on_press_maybe((!self.native_busy).then_some(action(Edit::Migrate)))
-                        .into(),
+                    button::suggested(if self.design.apply_after {
+                        "Update and apply"
+                    } else {
+                        "Update widgets"
+                    })
+                    .id(update.into())
+                    .on_press_maybe((!self.native_busy).then_some(action(Edit::Migrate)))
+                    .into(),
                 ])
                 .spacing(8)
                 .align_y(Alignment::Center)

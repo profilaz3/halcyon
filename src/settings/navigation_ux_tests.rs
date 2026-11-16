@@ -697,23 +697,29 @@ fn builder_first_visit_opens_widget_update_review_once() {
     let mut app = app(Page::Overview);
     assert!(!app.design.managed, "an existing profile starts unmigrated");
     assert!(!app.design.review);
+    // The first visit asks nothing, and the builder offers no update of
+    // its own: Apply design is ready to press.
     send_settings(&mut app, Message::Page(Page::Builder));
-    assert!(app.design.review, "the first visit opens the review");
-    // Leaving closes a review the person didn't open: Updates stays calm.
-    send_settings(&mut app, Message::Page(Page::General));
-    assert!(!app.design.review);
-    send_settings(&mut app, Message::Page(Page::Builder));
-    assert!(!app.design.review, "offered once per session");
-    send_settings(
-        &mut app,
-        Message::Design(crate::settings::design::Message::Review),
-    );
+    assert!(!app.design.review, "the first visit opens no review");
     let size = Size::new(1280., 800.);
     send_settings(&mut app, Message::Resized(size));
     let mut native = Native::new(size);
     assert!(
         native
+            .try_bounds(app.settings_view(), "design-review")
+            .is_none()
+    );
+    assert!(
+        native
             .try_bounds(app.settings_view(), "design-migrate")
+            .is_none()
+    );
+    // Apply design asks about the update, in one place, with Not now.
+    click(&mut app, &mut native, "recipe-apply");
+    assert!(app.design.review && app.design.apply_after);
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "recipe-update")
             .is_some()
     );
     for (theme, name) in [
@@ -726,18 +732,18 @@ fn builder_first_visit_opens_widget_update_review_once() {
             &format!("structure-builder-review-{name}"),
         );
     }
-    // Cancel keeps it closed for the rest of the session; nothing migrated.
-    click(&mut app, &mut native, "design-cancel");
+    // Not now closes it; nothing migrated.
+    click(&mut app, &mut native, "recipe-not-now");
     assert!(!app.design.review);
-    send_settings(&mut app, Message::Page(Page::Overview));
+    assert!(!app.design.managed);
+    // Leaving closes a question the builder asked: Updates stays calm.
+    click(&mut app, &mut native, "recipe-apply");
+    assert!(app.design.review);
+    send_settings(&mut app, Message::Page(Page::General));
+    assert!(!app.design.review);
     send_settings(&mut app, Message::Page(Page::Builder));
     assert!(!app.design.review);
     assert!(!app.design.managed);
-    assert!(
-        native
-            .try_bounds(app.settings_view(), "design-review")
-            .is_some()
-    );
 }
 
 #[test]

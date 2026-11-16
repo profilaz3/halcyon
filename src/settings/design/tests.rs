@@ -285,37 +285,90 @@ fn polish050_builder_migration_review_stays_with_unsaved_recipe() {
     );
     let before = raw();
     let draft = app.recipe_editor.draft.clone();
-    // The first visit opens the review by itself; dismissing it means no.
-    assert!(app.design.review && app.design.automatic);
+    // The first visit asks nothing: the builder is ready to use, and Apply
+    // design can be pressed.
+    assert!(!app.design.review);
+    let size = Size::new(1280., 800.);
+    send_settings(&mut app, super::super::Message::Resized(size));
+    let mut native = crate::native_test::Native::new(size);
+    for id in ["design-migrate", "design-review", "recipe-update"] {
+        assert!(native.try_bounds(app.settings_view(), id).is_none(), "{id}");
+    }
+    // This file predates the update, so Apply design asks, once, with Not
+    // now beside the update and the builder's own Cancel below.
+    send_settings(&mut app, super::super::Message::Design(Message::Prepare));
+    assert!(app.design.review && app.design.apply_after);
+    assert!(!app.design.managed);
+    let text = native.all_text(app.settings_view());
+    assert_eq!(
+        text.iter().filter(|t| *t == "Cancel").count(),
+        1,
+        "{text:?}"
+    );
+    assert!(text.iter().any(|t| t == "Not now"), "{text:?}");
+    assert!(text.iter().any(|t| t == "Update and apply"), "{text:?}");
+    // Not now closes it and changes nothing.
     send_settings(&mut app, super::super::Message::Design(Message::Cancel));
+    assert!(!app.design.review && !app.design.apply_after);
     send_settings(&mut app, super::super::Message::Design(Message::Migrate));
     assert!(!app.design.managed, "migration requires explicit review");
-    send_settings(&mut app, super::super::Message::Design(Message::Review));
     assert_eq!(app.page, Page::Builder);
     assert_eq!(raw(), before);
+    send_settings(&mut app, super::super::Message::Design(Message::Prepare));
     for (width, height) in [(820., 600.), (1280., 800.)] {
         send_settings(
             &mut app,
             super::super::Message::Resized(Size::new(width, height)),
         );
         let mut native = crate::native_test::Native::new(Size::new(width, height));
-        crate::settings::tests::native_reveal(&app, &mut native, "design-migrate");
+        crate::settings::tests::native_reveal(&app, &mut native, "recipe-update");
+        crate::settings::tests::native_reveal(&app, &mut native, "recipe-not-now");
         native.capture(
             app.settings_view(),
             &cosmic::Theme::dark(),
             &format!("polish050-builder-migration-{width}"),
         );
     }
-    send_settings(&mut app, super::super::Message::Design(Message::Cancel));
     assert_eq!(app.page, Page::Builder);
     assert!(!app.design.managed);
     assert_eq!(raw(), before);
     assert_eq!(app.recipe_editor.draft, draft);
-    send_settings(&mut app, super::super::Message::Design(Message::Review));
+    // Update and apply: the widgets update, then the design applies.
     send_settings(&mut app, super::super::Message::Design(Message::Migrate));
     assert_eq!(app.page, Page::Builder);
     assert!(app.design.managed);
-    assert_eq!(app.recipe_editor.draft, draft);
+    assert!(!app.design.review);
+    assert_eq!(app.config.recipes.get(draft.kind), Some(&draft));
     assert_eq!(app.config.theme, "teal");
     assert_eq!(app.config.location.as_ref().unwrap().name, "PRIVATE");
+}
+
+// Widget settings this release started have no older widgets to protect:
+// Apply design updates them without a question and applies.
+#[test]
+fn builder_updates_quietly_when_nothing_older_needs_protecting() {
+    if isolated(
+        "settings::design::tests::builder_updates_quietly_when_nothing_older_needs_protecting",
+    ) {
+        return;
+    }
+    let mut app = fixture();
+    crate::design::commands::record_started_here(
+        &crate::desktop::actions::history_store().unwrap(),
+    )
+    .unwrap();
+    send_settings(&mut app, super::super::Message::Page(Page::Builder));
+    send_settings(
+        &mut app,
+        super::super::Message::Recipe(crate::settings::recipes::Message::Name(
+            "My clock draft".into(),
+        )),
+    );
+    let draft = app.recipe_editor.draft.clone();
+    assert!(!app.design.review && !app.design.managed);
+    send_settings(&mut app, super::super::Message::Design(Message::Prepare));
+    assert!(app.design.managed);
+    assert!(!app.design.review);
+    assert_eq!(app.config.recipes.get(draft.kind), Some(&draft));
+    assert_eq!(app.config.theme, "teal");
 }

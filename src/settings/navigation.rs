@@ -1305,7 +1305,7 @@ pub(super) const NOT_INDEXED: &[(&str, &str)] = &[
     ("Nothing waiting", "shown only when there is nothing to list"),
     ("No shortcuts of your own yet", "shown only when there is nothing to list"),
     ("Tiling is off", "a notice, not a setting"),
-    ("Update your widgets?", "a confirmation that opens from “Get ready…”"),
+    ("Update your widgets?", "a question that opens from Apply design in the widget builder"),
     ("Displays", "a status row on Help that opens the setting it’s about"),
     ("Islands panel", "a status row on Help that opens the setting it’s about; Updates has the group"),
     ("Set up your desktop", "a card shown until setup is finished; Home has it in search"),

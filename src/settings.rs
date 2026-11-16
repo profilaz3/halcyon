@@ -1269,10 +1269,7 @@ impl cosmic::Application for Settings {
             page = Page::Changes;
             navigation::remember_app_destination(AppSettingsPage::Home);
         }
-        let (config, mut design) = design::State::initialize();
-        if page == Page::Builder {
-            design.offer(config.design_problem.is_some());
-        }
+        let (config, design) = design::State::initialize();
         let wizard = OPEN_WIZARD
             .swap(false, std::sync::atomic::Ordering::Relaxed)
             .then_some(())
@@ -3234,7 +3231,7 @@ impl Settings {
                             .is_some_and(crate::design::storage::managed) =>
                     {
                         self.config.design_problem = Some(error);
-                        self.design = design::State::load().offered(self.design.offered);
+                        self.design = design::State::load();
                         return Task::none();
                     }
                     // A file that became damaged: its repair, not defaults.
@@ -3245,7 +3242,7 @@ impl Settings {
                         {
                             self.config.design_problem = Some(damage);
                             self.config.settings_damaged = true;
-                            self.design = design::State::load().offered(self.design.offered);
+                            self.design = design::State::load();
                             return Task::none();
                         }
                     }
@@ -3742,15 +3739,11 @@ impl Settings {
                     self.refresh_corners();
                 }
                 self.desktop.drag.cancel();
-                // The builder needs the one-time widget update: its first
-                // visit opens the review instead of waiting for a click.
-                // Updating stays an explicit choice; Cancel keeps it closed.
-                if page == Page::Builder {
-                    self.design.offer(self.config.design_problem.is_some());
-                } else if from == Page::Builder && self.design.automatic {
-                    // A review the person never asked for stays with the builder.
+                // The builder asks about the one-time widget update only
+                // when Apply design needs it; that question stays with it.
+                if from == Page::Builder && page != Page::Builder && self.design.apply_after {
                     self.design.review = false;
-                    self.design.automatic = false;
+                    self.design.apply_after = false;
                 }
                 if matches!(
                     page,
@@ -13078,6 +13071,8 @@ mod tests {
                     | "preview-undo"
                     | "mix-save"
                     | "recipe-apply"
+                    | "recipe-update"
+                    | "recipe-not-now"
                     | "recipe-save"
                     | "recipe-discard"
                     | "wallpaper-discard"

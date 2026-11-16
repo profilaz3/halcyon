@@ -17,9 +17,6 @@ impl Settings {
             "Widget builder",
             "Make your own version of a widget from parts.",
         )];
-        if !self.design.managed {
-            content.push(self.design_section(None));
-        }
         if let Some(notice) = &editor.notice {
             content.push(label(
                 notice,
@@ -400,10 +397,6 @@ impl Settings {
             label(
                 if applied {
                     format!("Your {} uses this design", recipe.kind.title())
-                } else if !self.design.managed && self.design.review {
-                    "Update widgets above to use this design".into()
-                } else if !self.design.managed {
-                    "Press Get ready… above to use this design".into()
                 } else {
                     format!("Not on your {} yet", recipe.kind.title())
                 },
@@ -415,8 +408,16 @@ impl Settings {
             ],
             edit(Edit::Discard),
             "recipe-discard",
+            // Before the one-time widget update, Apply design asks about it
+            // (or updates at once when there's nothing older to protect).
             apply
-                .on_press_maybe((!busy && self.design.managed && !applied).then(|| edit(Edit::Apply)))
+                .on_press_maybe((!busy && !applied).then(|| {
+                    if self.design.managed {
+                        edit(Edit::Apply)
+                    } else {
+                        Message::Design(crate::settings::design::Message::Prepare)
+                    }
+                }))
                 .into(),
         );
         let mut content = Vec::new();
@@ -428,6 +429,9 @@ impl Settings {
             .or_else(|| self.page_error())
         {
             content.push(self.error_line(error));
+        }
+        if !self.design.managed && self.design.review {
+            content.push(self.design_section(None));
         }
         content.push(actions);
         column::with_children(content).spacing(6).into()
