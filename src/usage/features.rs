@@ -8,6 +8,11 @@ use crate::drawer::Widget;
 use serde::Serialize;
 use std::time::Duration;
 
+/// Widgets newer than the report's schema, left out of `widgets`: naming one
+/// would change what usage sharing sends, and the collector refuses keys it
+/// doesn't know.
+pub const UNREPORTED: [Widget; 1] = [Widget::Messages];
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub(crate) struct Features {
     pub wallpaper_effect: Option<&'static str>,
@@ -92,7 +97,7 @@ pub(crate) fn snapshot(
         widgets: config.map(|c| {
             Widget::ALL
                 .into_iter()
-                .filter(|w| c.widget_visible(*w))
+                .filter(|w| c.widget_visible(*w) && !UNREPORTED.contains(w))
                 .map(Widget::key)
                 .collect()
         }),
@@ -153,6 +158,21 @@ mod tests {
             .map(|kind| PanelDraft::load(&store, kind).unwrap())
             .collect();
         out
+    }
+
+    #[test]
+    fn a_shown_messages_widget_is_not_reported() {
+        let mut config = Config {
+            widgets_visible: true,
+            location: None,
+            ..Default::default()
+        };
+        config.devices.enabled = true;
+        config.messages.enabled = true;
+        assert!(config.widget_visible(Widget::Messages));
+        let widgets = snapshot(Some(&config), None, None).widgets.unwrap();
+        assert!(widgets.contains(&"devices"));
+        assert!(!widgets.contains(&"messages"));
     }
 
     #[test]

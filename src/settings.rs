@@ -92,6 +92,7 @@ pub enum Page {
     Notes,
     Focus,
     Devices,
+    Messages,
     General,
     Desktop,
     /// The dock's editor. The panel's is the same page on the other bar.
@@ -159,7 +160,7 @@ impl Page {
     ];
     /// Pinned below the roots, at the bottom of the sidebar.
     const PINNED: Self = Self::Changes;
-    const ALL: [Self; 38] = [
+    const ALL: [Self; 39] = [
         Self::Home,
         Self::Overview,
         Self::WidgetLayout,
@@ -176,6 +177,7 @@ impl Page {
         Self::Notes,
         Self::Focus,
         Self::Devices,
+        Self::Messages,
         Self::General,
         Self::Desktop,
         Self::DesktopDock,
@@ -337,6 +339,7 @@ impl Page {
             Self::Notes => Some(Widget::Notes),
             Self::Focus => Some(Widget::Focus),
             Self::Devices => Some(Widget::Devices),
+            Self::Messages => Some(Widget::Messages),
             _ => None,
         }
     }
@@ -358,6 +361,7 @@ impl Page {
             Self::Notes => "notes",
             Self::Focus => "focus",
             Self::Devices => "devices",
+            Self::Messages => "messages",
             Self::General => "general",
             Self::Desktop => "desktop",
             Self::DesktopDock => "desktop-dock",
@@ -400,6 +404,7 @@ impl Page {
             Self::Notes => "Notes",
             Self::Focus => "Focus timer",
             Self::Devices => "Devices",
+            Self::Messages => "Messages",
             Self::General => "Halcyon",
             Self::Desktop => "Desktop",
             Self::DesktopDock => "Dock",
@@ -532,6 +537,7 @@ impl Page {
             Self::Notes => "accessories-text-editor-symbolic",
             Self::Focus => "alarm-symbolic",
             Self::Devices => "bluetooth-symbolic",
+            Self::Messages => "chat-symbolic",
             Self::General => "preferences-system-symbolic",
             Self::DesktopWallpaper => "preferences-desktop-wallpaper-symbolic",
             Self::WeatherEffects => "weather-showers-symbolic",
@@ -7652,6 +7658,7 @@ mod tests {
     include!("settings/clock_stage_tests.rs");
     include!("settings/clock_gallery_tests.rs");
     include!("settings/devices_tests.rs");
+    include!("settings/messages_tests.rs");
     include!("settings/icon_packs_tests.rs");
     include!("settings/glance_off_tests.rs");
     include!("settings/looks_tests.rs");

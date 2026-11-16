@@ -45,6 +45,8 @@ pub enum Message {
     /// After a conflict: load the newer note, dropping this text.
     NoteUseSaved,
     Done(Result<(), String>),
+    /// Open KDE Connect, to pair a phone for Messages.
+    OpenKdeConnect,
 }
 
 pub struct ToolsEditor {
@@ -456,6 +458,16 @@ impl ToolsEditor {
             Message::Option(widget, key, value) => {
                 return (Task::none(), Some(Saved::Tool(widget, key, value)));
             }
+            Message::OpenKdeConnect => {
+                return (
+                    crate::settings::run_command(
+                        "gtk-launch".into(),
+                        vec!["org.kde.kdeconnect.app".into()],
+                        "KDE Connect opened",
+                    ),
+                    None,
+                );
+            }
             Message::Note(action) => {
                 if !matches!(self.note, Err(_)) {
                     let edit = action.is_edit();
@@ -597,7 +609,9 @@ impl ToolsEditor {
             | Action::NoteCancel
             | Action::NoteUndo
             | Action::NoteUndoExpired(_)
-            | Action::NoteAction(_) => Task::none(),
+            | Action::NoteAction(_)
+            // The preview's conversations are samples; nothing to open.
+            | Action::MessagesOpen => Task::none(),
         }
     }
 }

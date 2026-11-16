@@ -283,6 +283,7 @@ fn widget_page(group: Option<&str>) -> Page {
         Some("Notes") => Page::Notes,
         Some("Focus") => Page::Focus,
         Some("Devices") => Page::Devices,
+        Some("Messages") => Page::Messages,
         Some("Projects") => Page::Projects,
         Some("Activity") => Page::ActivityIsland,
         Some("Time of day") => Page::DesktopAutomation,

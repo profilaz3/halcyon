@@ -459,7 +459,7 @@ impl Tracker {
     }
 }
 
-async fn owner(c: &Connection, service: &str) -> bool {
+pub(crate) async fn owner(c: &Connection, service: &str) -> bool {
     tokio::time::timeout(Duration::from_secs(2), async {
         let p = Proxy::new(
             c,
@@ -476,7 +476,7 @@ async fn owner(c: &Connection, service: &str) -> bool {
     .flatten()
     .unwrap_or(false)
 }
-async fn call<R>(
+pub(crate) async fn call<R>(
     c: &Connection,
     service: &str,
     path: &str,
@@ -500,7 +500,12 @@ where
     .ok()
     .flatten()
 }
-async fn props(c: &Connection, service: &str, path: &str, interface: &str) -> Option<Props> {
+pub(crate) async fn props(
+    c: &Connection,
+    service: &str,
+    path: &str,
+    interface: &str,
+) -> Option<Props> {
     call(
         c,
         service,

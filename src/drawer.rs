@@ -17,9 +17,11 @@ pub enum Widget {
     Notes,
     Focus,
     Devices,
+    /// The phone's latest text messages, through KDE Connect.
+    Messages,
 }
 impl Widget {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Calendar,
         Self::Projects,
         Self::Devbox,
@@ -30,6 +32,7 @@ impl Widget {
         Self::Notes,
         Self::Focus,
         Self::Devices,
+        Self::Messages,
     ];
     /// The widgets that existed before desktop tools; their surfaces share
     /// one geometry and are recreated together.
@@ -44,16 +47,23 @@ impl Widget {
     pub const CARDS: [Self; 4] = [Self::Calendar, Self::Projects, Self::Devbox, Self::Weather];
     /// Tools keep their visibility in their own config section (like Glance)
     /// and have a surface of their own while shown, placed freely.
-    pub const TOOLS: [Self; 4] = [Self::Music, Self::Notes, Self::Focus, Self::Devices];
+    pub const TOOLS: [Self; 5] = [
+        Self::Music,
+        Self::Notes,
+        Self::Focus,
+        Self::Devices,
+        Self::Messages,
+    ];
     /// Every widget past the daily ones, as Settings lists them under More
     /// widgets: on the Widgets page and in setup.
-    pub const MORE: [Self; 6] = [
+    pub const MORE: [Self; 7] = [
         Self::Devbox,
         Self::Projects,
         Self::Music,
         Self::Notes,
         Self::Focus,
         Self::Devices,
+        Self::Messages,
     ];
     pub fn is_tool(self) -> bool {
         Self::TOOLS.contains(&self)
@@ -75,6 +85,7 @@ impl Widget {
             Self::Notes => "notes",
             Self::Focus => "focus",
             Self::Devices => "devices",
+            Self::Messages => "messages",
         }
     }
     pub fn title(self) -> &'static str {
@@ -89,6 +100,7 @@ impl Widget {
             Self::Notes => "Notes",
             Self::Focus => "Focus timer",
             Self::Devices => "Devices",
+            Self::Messages => "Messages",
         }
     }
     pub fn icon(self) -> &'static str {
@@ -103,6 +115,7 @@ impl Widget {
             Self::Notes => "accessories-text-editor-symbolic",
             Self::Focus => "alarm-symbolic",
             Self::Devices => "bluetooth-symbolic",
+            Self::Messages => "chat-symbolic",
         }
     }
     pub fn parse(key: &str) -> Option<Self> {
@@ -111,9 +124,9 @@ impl Widget {
 }
 
 pub const SIDEBAR_WIDTH: u32 = 212;
-/// Room for the built-in menu: three right column rows and the seven other
-/// widgets, Devices included.
-pub const SIDEBAR_HEIGHT: u32 = 660;
+/// Room for the built-in menu: three right column rows and the eight other
+/// widgets, Devices and Messages included.
+pub const SIDEBAR_HEIGHT: u32 = 702;
 /// The rail's layout, top down; `FIRST_ROW` is where the draggable rows
 /// start, so a pointer position maps to a row.
 pub const RAIL_PADDING: f32 = 12.;

@@ -300,6 +300,8 @@ pub enum Message {
     MusicFeed(crate::tools::music::Feed),
     /// Connected devices, from `crate::devices`.
     Devices(Vec<crate::devices::Device>),
+    /// The phone's conversations, from `crate::messages`.
+    Messages(crate::messages::State),
     MusicArt(String, Result<crate::tools::music::Art, String>),
     ToolDone(Result<(), String>),
     MusicControlDone(Result<Vec<crate::tools::music::Player>, String>),
@@ -405,7 +407,7 @@ static POINTER: std::sync::Mutex<Option<(window::Id, cosmic::iced::Point)>> =
 pub struct Cards {
     activity: crate::activity_island::bridge::Owner,
     core: Core,
-    ids: [window::Id; 14],
+    ids: [window::Id; 15],
     layout_editor: layout::LayoutEditor,
     surface_geometry: Option<layout::SurfaceGeometry>,
     displays: crate::displays::Registry,
@@ -701,6 +703,9 @@ impl cosmic::Application for Cards {
         }
         if self.devices_demand() {
             subscriptions.push(crate::devices::subscription().map(Message::Devices));
+        }
+        if self.messages_demand() {
+            subscriptions.push(crate::messages::subscription().map(Message::Messages));
         }
         if self.visualizer_demand() {
             subscriptions.push(crate::tools::visualizer::watch().map(Message::Audio));
@@ -2067,6 +2072,10 @@ impl Cards {
                 self.tools.devices = devices;
                 Task::none()
             }
+            Message::Messages(state) => {
+                self.tools.messages = state;
+                self.capture_if_changed()
+            }
             Message::MusicArt(url, result) => {
                 let task = self.music_art(url, result);
                 Task::batch([task, self.capture_if_changed()])
@@ -2352,7 +2361,7 @@ fn program_path(name: &str) -> Option<std::path::PathBuf> {
         .find(|path| path.is_file())
 }
 /// The file of the desktop entry `id`, where the launcher would find it.
-fn desktop_entry(id: &str) -> Option<std::path::PathBuf> {
+pub(crate) fn desktop_entry(id: &str) -> Option<std::path::PathBuf> {
     if id.contains('/') {
         return None;
     }

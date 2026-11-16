@@ -353,6 +353,13 @@ Do not post installation tokens, credentials or private widget contents there.
   at home or on this computer, over HTTP or HTTPS, and a local server's own
   certificate is accepted. For a web browser, where the page picked the
   address, only public HTTPS addresses are fetched.
+- **Messages:** read from KDE Connect on this computer over local D-Bus, only
+  while the Messages widget is shown. Halcyon asks KDE Connect for each
+  conversation's newest message and reads names from the contacts KDE Connect
+  already copied from the phone. Message text, numbers and names stay in memory:
+  they are never written to disk, sent anywhere or included in activity
+  reports, and the widget itself is left out of the reported widget list.
+  Nothing is sent, paired or started.
 - **Projects, notes and settings:** remain local; activity reports do not include
   their contents.
 

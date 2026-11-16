@@ -16,6 +16,7 @@ mod instance;
 mod layout;
 mod layout_state;
 mod materials;
+mod messages;
 mod moments;
 #[cfg(test)]
 mod native_test;

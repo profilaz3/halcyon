@@ -77,6 +77,8 @@ pub(super) struct Tools {
     pub audio_bins: [f32; crate::tools::visualizer::BINS],
     /// Connected devices and their battery, while someone shows them.
     pub devices: Vec<crate::devices::Device>,
+    /// The phone's conversations, while the Messages card shows.
+    pub messages: crate::messages::State,
 }
 
 impl Tools {
@@ -101,6 +103,7 @@ impl Tools {
             spectrum_key: None,
             audio_bins: [0.; crate::tools::visualizer::BINS],
             devices: Vec::new(),
+            messages: crate::messages::State::default(),
         }
     }
     pub(super) fn sample() -> Self {
@@ -124,6 +127,7 @@ impl Tools {
             spectrum_key: None,
             audio_bins: [0.; crate::tools::visualizer::BINS],
             devices: Vec::new(),
+            messages: crate::messages::State::default(),
         }
     }
     /// No note being written, saved, checked or waiting for Undo.
@@ -263,6 +267,12 @@ impl Cards {
             Widget::Devices => cards::devices(
                 &self.tools.devices,
                 &self.config,
+                Some(self.widget_size(widget)),
+            ),
+            Widget::Messages => cards::messages(
+                &self.tools.messages,
+                &self.config,
+                Some(on_desktop as fn(Action) -> Message),
                 Some(self.widget_size(widget)),
             ),
             _ => cards::focus(
@@ -595,6 +605,7 @@ impl Cards {
                 }
                 return self.music_art_task();
             }
+            Action::MessagesOpen => return self.open_messages(),
             Action::NoteCopy => {
                 if let Ok(note) = &self.tools.note {
                     let text = note.text.clone();
@@ -742,6 +753,24 @@ impl Cards {
             }
         }
         Task::none()
+    }
+
+    /// The conversations in KDE Connect's own app while the phone is ready,
+    /// else KDE Connect to pair it or turn on SMS, else Settings › Messages
+    /// to say how to set it up.
+    fn open_messages(&mut self) -> Task<Message> {
+        use crate::messages::State;
+        let entry = match self.tools.messages {
+            State::Ready { .. } | State::Away { .. } | State::Asking { .. } => {
+                "org.kde.kdeconnect.sms"
+            }
+            State::Stopped | State::NoPhone | State::NoSms { .. } => "org.kde.kdeconnect.app",
+            State::Starting | State::NoService => "",
+        };
+        if !entry.is_empty() && super::desktop_entry(entry).is_some() {
+            return self.launch("gtk-launch", vec![entry.into()]);
+        }
+        self.update(Message::SettingsPage("messages"))
     }
 
     pub(super) fn note_checked(

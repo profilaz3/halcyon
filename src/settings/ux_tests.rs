@@ -2319,6 +2319,7 @@ fn ux_native_nine_roots_and_every_old_route_resolves() {
         (Page::Notes, Page::Overview),
         (Page::Focus, Page::Overview),
         (Page::Devices, Page::Overview),
+        (Page::Messages, Page::Overview),
         (Page::EdgeMenu, Page::Overview),
         (Page::Builder, Page::Overview),
         (Page::DesktopWallpaper, Page::DesktopWallpaper),
@@ -2347,7 +2348,7 @@ fn ux_native_nine_roots_and_every_old_route_resolves() {
         assert_eq!(page.sidebar(), root, "{page:?}");
         assert_eq!(Page::parse(page.key()).sidebar(), root, "{page:?}");
     }
-    assert_eq!(Page::ALL.len(), 38, "a new route must be mapped here too");
+    assert_eq!(Page::ALL.len(), 39, "a new route must be mapped here too");
     for (alias, page) in [
         ("home", Page::Home),
         ("panel", Page::DesktopPanel),

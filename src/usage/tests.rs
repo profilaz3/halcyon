@@ -939,7 +939,11 @@ fn widget_and_page_keys_are_accepted_by_the_collector_and_documented() {
     let start = details.find("export const PAGES = {").unwrap();
     let pages = &details[start..start + details[start..].find("};").unwrap()];
     let privacy = read("docs/PRIVACY.md");
-    for widget in crate::drawer::Widget::ALL.map(crate::drawer::Widget::key) {
+    for widget in crate::drawer::Widget::ALL
+        .into_iter()
+        .filter(|w| !super::features::UNREPORTED.contains(w))
+        .map(crate::drawer::Widget::key)
+    {
         assert!(
             widgets.contains(&format!("'{widget}'")),
             "collector widget list lacks {widget}"

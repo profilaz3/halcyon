@@ -545,7 +545,69 @@ impl Settings {
         let note = self.sample_note("devices-sample-note", Some(DEVICES_SAMPLE));
         self.widget_template(Widget::Devices, "Devices", Some(preview), vec![note])
     }
+
+    /// Messages: the card with example conversations, whether it shows
+    /// their text, and how to connect a phone through KDE Connect.
+    pub(super) fn messages_page(&self) -> Element<'_, Message> {
+        let preview = cards::messages(
+            &cards::sample_messages(),
+            &self.config,
+            None,
+            Some(self.tool_preview_size(Widget::Messages)),
+        );
+        let note = self.sample_note("messages-sample-note", Some(MESSAGES_SAMPLE));
+        let installed = crate::app::desktop_entry("org.kde.kdeconnect.app").is_some();
+        let connect: Element<'_, Message> = if installed {
+            button::text("Open KDE Connect")
+                .on_press(edit(Edit::OpenKdeConnect))
+                .into()
+        } else {
+            cosmic::iced::widget::space().into()
+        };
+        let items = vec![
+            note,
+            group(
+                Some("Card"),
+                vec![switch(
+                    "Show message text",
+                    "Off shows only who wrote and when",
+                    self.config.messages.show_text,
+                    |value| option(Widget::Messages, "show_text", value),
+                )],
+            ),
+            group(
+                Some("Your phone"),
+                vec![
+                    group_row_state(
+                        "KDE Connect",
+                        if installed {
+                            "Pair your phone in KDE Connect. Then, in KDE Connect on the phone, turn on SMS and allow it to read messages."
+                        } else {
+                            "Install KDE Connect on this computer (the kdeconnect package) and on your phone, then pair them."
+                        },
+                        connect,
+                    ),
+                    group_row_state(
+                        "Names",
+                        "Names come from the contacts KDE Connect copies from your phone. Without them, numbers show.",
+                        cosmic::iced::widget::space().into(),
+                    ),
+                    group_row_state(
+                        "Privacy",
+                        "Messages stay on this computer. Halcyon reads them from KDE Connect only while the card shows, and never saves them.",
+                        cosmic::iced::widget::space().into(),
+                    ),
+                ],
+            ),
+        ];
+        self.widget_template(Widget::Messages, "Messages", Some(preview), items)
+    }
 }
+
+/// Under the Messages preview: what it shows and where real messages come
+/// from.
+const MESSAGES_SAMPLE: &str = "your phone’s newest conversations show here, \
+     through KDE Connect.";
 
 /// Under the Devices preview: what it shows and where real readings come from.
 const DEVICES_SAMPLE: &str = "your Bluetooth and wireless \

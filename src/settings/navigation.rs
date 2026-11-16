@@ -458,6 +458,19 @@ pub(super) const DEVICES: SearchHit = hit(
     false,
 )
 .names_page();
+pub(super) const MESSAGES: SearchHit = hit(
+    Page::Messages,
+    "Messages",
+    "messages texts text sms chat conversations phone android kde connect",
+    false,
+)
+.names_page();
+pub(super) const MESSAGES_TEXT: SearchHit = hit(
+    Page::Messages,
+    "Show message text",
+    "hide message text privacy preview",
+    false,
+);
 pub(super) const GET_MORE_ICONS: SearchHit = hit(
     Page::DesktopAppearance,
     "Get more icons",
@@ -753,6 +766,8 @@ const SEARCH: &[SearchHit] = &[
     )
     .names_page(),
     DEVICES,
+    MESSAGES,
+    MESSAGES_TEXT,
     DOCK_SEE_THROUGH,
     hit(
         Page::DesktopPanel,
@@ -1272,6 +1287,10 @@ const ROWS: &[SearchHit] = &[
     hit(Page::Music, "Album art", "", false),
     hit(Page::Music, "Around the cover", "", false),
     hit(Page::Music, "Card", "", false),
+    hit(Page::Messages, "Card", "", false),
+    hit(Page::Messages, "Your phone", "kde connect pair", false),
+    hit(Page::Messages, "KDE Connect", "pair phone install", false),
+    hit(Page::Messages, "Names", "contacts", false),
     hit(Page::Music, "Progress bar", "", false),
     hit(Page::Notes, "Card size", "", false),
     hit(Page::Notes, "Your note", "", false),
@@ -2585,6 +2604,7 @@ pub(super) fn widget_of(page: Page) -> Option<crate::drawer::Widget> {
         Page::Notes => Widget::Notes,
         Page::Focus => Widget::Focus,
         Page::Devices => Widget::Devices,
+        Page::Messages => Widget::Messages,
         _ => return None,
     })
 }
@@ -2601,6 +2621,7 @@ pub(super) fn widget_page(widget: crate::drawer::Widget) -> Page {
         Widget::Notes => Page::Notes,
         Widget::Focus => Page::Focus,
         Widget::Devices => Page::Devices,
+        Widget::Messages => Page::Messages,
     }
 }
 
