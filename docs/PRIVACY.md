@@ -349,7 +349,10 @@ Do not post installation tokens, credentials or private widget contents there.
   links; it does not erase the local cache. Calendar contents never go to the
   activity collector.
 - **Music:** controls use local MPRIS over D-Bus. Artwork may be fetched from the
-  public HTTPS URL supplied by the player.
+  address the player supplies. For a music app that can be its own server,
+  at home or on this computer, over HTTP or HTTPS, and a local server's own
+  certificate is accepted. For a web browser, where the page picked the
+  address, only public HTTPS addresses are fetched.
 - **Projects, notes and settings:** remain local; activity reports do not include
   their contents.
 

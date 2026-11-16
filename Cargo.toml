@@ -50,7 +50,7 @@ regex = "=1.12.3"
 xkbcommon = "=0.8.0"
 # Wallpaper thumbnails and colour suggestions: PNG and JPEG only, the
 # version libcosmic already locks.
-image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
 # Music controls talk MPRIS on the session bus; the same zbus libcosmic
 # already builds (with its tokio support), so no new crates are compiled.
 # `p2p` speaks to the notification daemon over the panel's applet socket; it

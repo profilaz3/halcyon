@@ -308,9 +308,9 @@ impl Cards {
         if !self.config.music_artwork() || self.tools.art_loading.is_some() {
             return Task::none();
         }
-        let Some(url) = self
+        let Some((url, reach)) = self
             .current_player()
-            .and_then(|player| player.art_url.clone())
+            .and_then(|player| Some((player.art_url.clone()?, player.art_reach())))
         else {
             return Task::none();
         };
@@ -327,7 +327,7 @@ impl Cards {
         }
         self.tools.art_loading = Some(url.clone());
         cosmic::task::future(async move {
-            let result = music::load_art(url.clone()).await;
+            let result = music::load_art(url.clone(), reach).await;
             Message::MusicArt(url, result)
         })
     }

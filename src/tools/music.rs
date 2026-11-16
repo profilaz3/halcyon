@@ -879,37 +879,108 @@ pub struct Art {
     pub rgba: Vec<u8>,
 }
 
-/// Loads `url` (a local `file://` picture, or `https://` as streaming
-/// players give) into a thumbnail. PNG and JPEG only, bounded in size.
-pub async fn load_art(url: String) -> Result<Art, String> {
+/// Where a player's artwork may come from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArtReach {
+    /// A web browser, where the page picked the address: the public internet
+    /// over HTTPS only, so no website reaches this computer or the local
+    /// network through it.
+    Public,
+    /// A music app: also its own server, at home or on this computer, over
+    /// HTTP or HTTPS, as Feishin gives for Navidrome or Jellyfin.
+    Anywhere,
+}
+
+/// Browsers' MPRIS names, which pass on whatever artwork a page names.
+const BROWSERS: &[&str] = &[
+    "brave",
+    "chrome",
+    "chromium",
+    "epiphany",
+    "falkon",
+    "firefox",
+    "floorp",
+    "google-chrome",
+    "librewolf",
+    "microsoft-edge",
+    "msedge",
+    "mullvadbrowser",
+    "opera",
+    "plasma-browser-integration",
+    "qutebrowser",
+    "thorium",
+    "torbrowser",
+    "vivaldi",
+    "waterfox",
+    "yandex",
+    "zen",
+];
+
+impl Player {
+    /// Where this player's artwork may be fetched from.
+    pub fn art_reach(&self) -> ArtReach {
+        let app = self.app().to_ascii_lowercase();
+        let name = app.split('.').next().unwrap_or(&app);
+        if BROWSERS.contains(&name) {
+            ArtReach::Public
+        } else {
+            ArtReach::Anywhere
+        }
+    }
+}
+
+/// Loads `url` (a local `file://` picture, or an `http(s)://` address as
+/// `reach` allows) into a thumbnail. PNG, JPEG and WebP only, bounded in size.
+pub async fn load_art(url: String, reach: ArtReach) -> Result<Art, String> {
     let bytes = if let Some(path) = url.strip_prefix("file://") {
         let path = std::path::PathBuf::from(percent_decode(path)?);
         tokio::task::spawn_blocking(move || super::read_bounded(&path, MAX_ART_BYTES))
             .await
             .map_err(|error| error.to_string())??
             .ok_or("The artwork file is gone")?
-    } else if url.starts_with("https://") {
-        // A player names any address it likes. Artwork comes from the public
-        // internet over HTTPS only, through every redirect, and never from
-        // this computer or the local network.
-        if !public_https(&reqwest::Url::parse(&url).map_err(|error| error.to_string())?) {
+    } else {
+        let parsed = reqwest::Url::parse(&url).map_err(|error| error.to_string())?;
+        if !art_address(&parsed, reach) {
             return Err("Unsupported artwork address".into());
         }
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(8))
-            .https_only(true)
-            .dns_resolver(std::sync::Arc::new(PublicOnly))
-            .redirect(reqwest::redirect::Policy::custom(|attempt| {
-                if attempt.previous().len() >= 5 || !public_https(attempt.url()) {
-                    attempt.stop()
-                } else {
-                    attempt.follow()
-                }
-            }))
-            .build()
-            .map_err(|error| error.to_string())?;
+        let client = match reach {
+            // A player names any address it likes. Artwork comes from the
+            // public internet over HTTPS only, through every redirect, and
+            // never from this computer or the local network.
+            ArtReach::Public => reqwest::Client::builder()
+                .https_only(true)
+                .dns_resolver(std::sync::Arc::new(PublicOnly))
+                .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                    if attempt.previous().len() >= 5 || !public_https(attempt.url()) {
+                        attempt.stop()
+                    } else {
+                        attempt.follow()
+                    }
+                })),
+            ArtReach::Anywhere => {
+                // A home server often has its own certificate, which no
+                // authority signed. On this computer and the local network
+                // that is accepted, and then redirects stay on that server.
+                let own = own_certificate_ok(&parsed).await;
+                let host = parsed.host_str().map(str::to_owned);
+                reqwest::Client::builder()
+                    .danger_accept_invalid_certs(own)
+                    .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+                        let onward = art_address(attempt.url(), ArtReach::Anywhere)
+                            && (!own || attempt.url().host_str() == host.as_deref());
+                        if attempt.previous().len() >= 5 || !onward {
+                            attempt.stop()
+                        } else {
+                            attempt.follow()
+                        }
+                    }))
+            }
+        }
+        .timeout(Duration::from_secs(8))
+        .build()
+        .map_err(|error| error.to_string())?;
         let mut response = client
-            .get(&url)
+            .get(parsed)
             .send()
             .await
             .and_then(reqwest::Response::error_for_status)
@@ -922,12 +993,44 @@ pub async fn load_art(url: String) -> Result<Art, String> {
             bytes.extend_from_slice(&chunk);
         }
         bytes
-    } else {
-        return Err("Unsupported artwork address".into());
     };
     tokio::task::spawn_blocking(move || thumbnail(&bytes))
         .await
         .map_err(|error| error.to_string())?
+}
+
+/// An address `reach` lets artwork come from.
+fn art_address(url: &reqwest::Url, reach: ArtReach) -> bool {
+    match reach {
+        ArtReach::Public => public_https(url),
+        ArtReach::Anywhere => matches!(url.scheme(), "http" | "https") && url.host_str().is_some(),
+    }
+}
+
+/// Whether `url`'s server is on this computer or the local network, where a
+/// certificate of its own is fine: a local address, or a name that resolves
+/// only to local addresses.
+async fn own_certificate_ok(url: &reqwest::Url) -> bool {
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return !public_ip(ip);
+    }
+    let port = url.port_or_known_default().unwrap_or(443);
+    match tokio::time::timeout(
+        Duration::from_secs(3),
+        tokio::net::lookup_host((host, port)),
+    )
+    .await
+    {
+        Ok(Ok(addresses)) => {
+            let addresses: Vec<_> = addresses.collect();
+            !addresses.is_empty() && addresses.iter().all(|address| !public_ip(address.ip()))
+        }
+        _ => false,
+    }
 }
 
 /// An HTTPS address whose host isn't a local or private IP address (names
@@ -997,7 +1100,10 @@ impl reqwest::dns::Resolve for PublicOnly {
 
 pub(super) fn thumbnail(bytes: &[u8]) -> Result<Art, String> {
     let format = image::guess_format(bytes).map_err(|error| error.to_string())?;
-    if !matches!(format, image::ImageFormat::Png | image::ImageFormat::Jpeg) {
+    if !matches!(
+        format,
+        image::ImageFormat::Png | image::ImageFormat::Jpeg | image::ImageFormat::WebP
+    ) {
         return Err("Unsupported artwork format".into());
     }
     let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
@@ -1686,6 +1792,116 @@ mod tests {
         });
         drop(bus);
         result.unwrap();
+    }
+
+    #[test]
+    fn browsers_keep_public_artwork_and_music_apps_reach_their_servers() {
+        for browser in [
+            "firefox",
+            "firefox.instance_1_84",
+            "chromium.instance42",
+            "chrome.instance7",
+            "brave.instance3",
+            "plasma-browser-integration",
+        ] {
+            let reach = player(browser, Playback::Playing, "").art_reach();
+            assert_eq!(reach, ArtReach::Public, "{browser}");
+        }
+        for app in [
+            "Feishin",
+            "spotify",
+            "vlc.instance7389",
+            "elisa",
+            "supersonic",
+        ] {
+            let reach = player(app, Playback::Playing, "").art_reach();
+            assert_eq!(reach, ArtReach::Anywhere, "{app}");
+        }
+        let at = |url: &str, reach| art_address(&reqwest::Url::parse(url).unwrap(), reach);
+        for url in [
+            "http://192.168.1.10:4533/rest/getCoverArt.view?id=1&size=300",
+            "https://navidrome.home.arpa/rest/getCoverArt?id=1",
+            "http://localhost:8096/Items/1/Images/Primary",
+            "https://music.example.com/Items/1/Images/Primary",
+        ] {
+            assert!(at(url, ArtReach::Anywhere), "{url}");
+        }
+        assert!(!at("ftp://192.168.1.10/a.png", ArtReach::Anywhere));
+        assert!(!at("http://192.168.1.10:4533/a.png", ArtReach::Public));
+        assert!(!at("http://music.example.com/a.png", ArtReach::Public));
+    }
+
+    #[test]
+    fn music_apps_load_webp_covers_from_a_server_on_this_computer() {
+        use std::io::{Read, Write};
+        let mut cover = Vec::new();
+        image::codecs::webp::WebPEncoder::new_lossless(&mut cover)
+            .encode(
+                &[200, 40, 40, 255].repeat(32 * 32),
+                32,
+                32,
+                image::ExtendedColorType::Rgba8,
+            )
+            .unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!(
+            "http://{}/rest/getCoverArt.view?id=al-1&size=300",
+            listener.local_addr().unwrap()
+        );
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 2048];
+            let read = stream.read(&mut request).unwrap();
+            let line = String::from_utf8_lossy(&request[..read])
+                .lines()
+                .next()
+                .unwrap()
+                .to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: image/webp\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                cover.len()
+            )
+            .unwrap();
+            stream.write_all(&cover).unwrap();
+            line
+        });
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        // A browser may not reach this computer, and asks for nothing.
+        let refused = runtime.block_on(load_art(url.clone(), ArtReach::Public));
+        assert_eq!(refused.unwrap_err(), "Unsupported artwork address");
+        let art = runtime.block_on(load_art(url, ArtReach::Anywhere)).unwrap();
+        assert_eq!((art.width, art.height), (ART_SIZE, ART_SIZE));
+        assert_eq!(&art.rgba[..4], &[200, 40, 40, 255]);
+        assert_eq!(
+            server.join().unwrap(),
+            "GET /rest/getCoverArt.view?id=al-1&size=300 HTTP/1.1"
+        );
+    }
+
+    #[test]
+    fn only_a_local_server_may_use_its_own_certificate() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let own =
+            |url: &str| runtime.block_on(own_certificate_ok(&reqwest::Url::parse(url).unwrap()));
+        for local in [
+            "https://192.168.1.10:4533/a.png",
+            "https://10.0.0.2/a.png",
+            "https://[fd00::1]/a.png",
+            "https://127.0.0.1:8920/a.png",
+            "https://localhost:8920/a.png",
+        ] {
+            assert!(own(local), "{local}");
+        }
+        for public in ["https://1.1.1.1/a.png", "https://[2606:4700::1111]/a.png"] {
+            assert!(!own(public), "{public}");
+        }
     }
 
     #[test]
