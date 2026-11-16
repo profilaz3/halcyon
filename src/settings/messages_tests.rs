@@ -67,6 +67,11 @@ fn messages_widget_is_off_until_chosen_and_says_what_to_do() {
             );
         }
     }
+    send_settings(&mut app, Message::ActivityPreference("messages", true));
+    assert!(Config::load().activity_island.messages);
+    assert!(!Config::load().messages.enabled, "island is independent of the desktop card");
+    send_settings(&mut app, Message::ActivityPreference("messages", false));
+    assert!(!Config::load().activity_island.messages);
     // The switches save like every other tool's.
     send_settings(&mut app, Message::Widget(Widget::Messages, true));
     assert!(Config::load().widget_enabled(Widget::Messages));
@@ -149,6 +154,14 @@ fn messages_widget_is_off_until_chosen_and_says_what_to_do() {
         }
         assert!(drawn.contains(&"2 unread".to_string()), "{drawn:?}");
         assert!(drawn.contains(&"You: Sounds good, see you Friday".to_string()));
+        let many = State::Ready {
+            phone: "Phone".into(),
+            threads: sample.threads().iter().cycle().take(24).cloned().collect(),
+        };
+        let texts = native.all_text(card(&many));
+        let more = texts.iter().find(|t| t.ends_with("more in KDE Connect")).unwrap();
+        let footer = native.text_bounds(card(&many), more);
+        assert!(footer.y + footer.height <= dims[1], "{label} footer {footer:?}");
         // Every state that isn't messages says what to do, inside the card.
         for (name, state) in &states {
             if let Some((title, hint)) = crate::tools::cards::messages_status(state) {

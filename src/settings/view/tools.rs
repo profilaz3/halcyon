@@ -567,13 +567,21 @@ impl Settings {
         let items = vec![
             note,
             group(
-                Some("Card"),
-                vec![switch(
-                    "Show message text",
-                    "Off shows only who wrote and when",
-                    self.config.messages.show_text,
-                    |value| option(Widget::Messages, "show_text", value),
-                )],
+                Some("Messages"),
+                vec![
+                    switch(
+                        "Show in activity island",
+                        "Read conversations in the island, even when the desktop widget is off",
+                        self.config.activity_island.messages,
+                        |value| Message::ActivityPreference("messages", value),
+                    ),
+                    switch(
+                        "Show message text",
+                        "Off hides message text in both the widget and the activity island",
+                        self.config.messages.show_text,
+                        |value| option(Widget::Messages, "show_text", value),
+                    ),
+                ],
             ),
             group(
                 Some("Your phone"),
@@ -594,7 +602,7 @@ impl Settings {
                     ),
                     group_row_state(
                         "Privacy",
-                        "Messages stay on this computer. Halcyon reads them from KDE Connect only while the card shows, and never saves them.",
+                        "Messages stay on this computer. Halcyon reads them from KDE Connect only while the widget or activity island needs them, and never saves them.",
                         cosmic::iced::widget::space().into(),
                     ),
                 ],

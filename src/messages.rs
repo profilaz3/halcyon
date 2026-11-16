@@ -26,7 +26,7 @@ const SMS_PLUGIN: &str = "kdeconnect_sms";
 const MOST: usize = 24;
 /// A message's text is cut to this many characters; a card shows one line.
 const MOST_TEXT: usize = 280;
-/// The phone is asked again this often while the card shows, for a phone
+/// The phone is asked again this often while either surface needs it, for a phone
 /// that doesn't send new messages by itself.
 const ASK_AGAIN: Duration = Duration::from_secs(600);
 /// How long the phone may take to answer before an empty list is believed.

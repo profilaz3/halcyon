@@ -285,3 +285,32 @@ fn architecture_output_demand_preserves_background_consumers() {
     assert!(!cards.music_demand() && !cards.calendar_demand());
     assert!(cards.tools_wake().is_some());
 }
+
+#[test]
+fn messages_follow_either_surface_and_release_private_cache() {
+    if isolated("app::providers::tests::messages_follow_either_surface_and_release_private_cache") {
+        return;
+    }
+    let (mut cards, _) = Cards::init(Core::default(), config());
+    assert!(!cards.messages_demand());
+    cards.config.activity_island.messages = true;
+    assert!(!cards.messages_demand(), "a disconnected island creates no demand");
+    cards.activity.clients = 1;
+    assert!(cards.messages_demand());
+    let _ = cards.update(Message::Messages(crate::messages::sample()));
+    assert!(cards.activity_snapshot().messages.is_some());
+    cards.config.messages.show_text = false;
+    let projected = serde_json::to_string(&cards.activity_snapshot().messages).unwrap();
+    assert!(!projected.contains("save me a seat"));
+    let _ = cards.update(Message::Activity(crate::activity_island::bridge::Event::Clients(0)));
+    assert!(!cards.messages_demand());
+    assert_eq!(cards.tools.messages, crate::messages::State::Starting);
+    assert!(cards.activity_snapshot().messages.is_none());
+    // A queued delivery from the subscription cannot bring private data back.
+    let _ = cards.update(Message::Messages(crate::messages::sample()));
+    assert!(cards.tools.messages.threads().is_empty());
+    cards.config.messages.enabled = true;
+    assert!(cards.messages_demand());
+    let _ = cards.update(Message::Messages(crate::messages::sample()));
+    assert!(!cards.tools.messages.threads().is_empty());
+}

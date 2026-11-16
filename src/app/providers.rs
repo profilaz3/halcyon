@@ -34,11 +34,10 @@ impl Cards {
             || (self.activity.clients > 0 && self.config.activity_island.media))
             && !self.layout_editor.active
     }
-    /// Devices are followed while the island is connected or the Devices
-    /// widget is shown.
-    /// The phone's messages are followed only while the Messages card shows.
+    /// Messages are followed while either opted-in surface needs them.
     pub(super) fn messages_demand(&self) -> bool {
         self.provider_visible(Widget::Messages)
+            || (self.activity.clients > 0 && self.config.activity_island.messages)
     }
     pub(super) fn devices_demand(&self) -> bool {
         self.provider_visible(Widget::Devices)

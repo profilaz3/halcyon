@@ -59,7 +59,7 @@ pub(crate) fn preview(thread: &Thread, show_text: bool) -> String {
     } else {
         thread.body.clone()
     };
-    if thread.mine {
+    if thread.mine && show_text {
         format!("You: {what}")
     } else {
         what
@@ -247,13 +247,24 @@ pub fn messages<'a, M: Clone + 'a>(
             } else {
                 p
             };
+            let total = state.threads().len();
+            let overflow = total > rows_fitting(height);
+            let visible = rows_fitting(height - if overflow { 22. } else { 0. });
             let rows = state
                 .threads()
                 .iter()
-                .take(rows_fitting(height))
+                .take(visible)
                 .map(|thread| thread_row(thread, p, show_text, now, format_24h))
                 .collect::<Vec<_>>();
-            container(column::with_children(rows).spacing(GAP))
+            let mut list = column::with_children(rows).spacing(GAP);
+            if total > visible {
+                list = list.push(label(
+                    format!("{} more in KDE Connect", total - visible),
+                    crate::widget_style::META,
+                    p.muted,
+                ));
+            }
+            container(list)
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into()

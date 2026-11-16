@@ -321,6 +321,7 @@ pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/activity_island/shelf", "Activity file shelf", Style, boolean;
     "/activity_island/lead_minutes", "Activity reminder", Style, |v| matches!(v.as_u64(),Some(5|10|15));
     "/activity_island/notifications", "Activity notifications", Style, boolean;
+    "/activity_island/messages", "Activity phone messages", Style, boolean;
     "/activity_island/notification_text", "Activity message text", Style, boolean;
     "/activity_island/replace_popups", "Activity notification popups", Style, boolean;
     "/activity_island/battery", "Activity battery", Style, boolean;

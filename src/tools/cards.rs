@@ -3,7 +3,7 @@
 //! configuration, like every other widget, and an optional action mapper:
 //! without one the card is drawn without controls that respond.
 mod devices;
-mod messages;
+pub(crate) mod messages;
 pub(crate) mod recipe;
 use super::{focus, music, notes};
 use crate::config::{Config, Palette};

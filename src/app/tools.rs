@@ -77,7 +77,7 @@ pub(super) struct Tools {
     pub audio_bins: [f32; crate::tools::visualizer::BINS],
     /// Connected devices and their battery, while someone shows them.
     pub devices: Vec<crate::devices::Device>,
-    /// The phone's conversations, while the Messages card shows.
+    /// The phone's conversations, while the widget or island needs them.
     pub messages: crate::messages::State,
 }
 

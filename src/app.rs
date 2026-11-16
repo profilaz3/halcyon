@@ -918,6 +918,7 @@ impl cosmic::Application for Cards {
             Message::Activity(_)
                 | Message::MusicFeed(_)
                 | Message::Devices(_)
+                | Message::Messages(_)
                 | Message::MusicControlDone(_)
                 | Message::FocusCommand(_)
                 | Message::MusicArt(..)
@@ -964,6 +965,9 @@ impl cosmic::Application for Cards {
         self.rain
             .watch_sync(self.display_generation, Instant::now());
         let glass = self.glass_sync();
+        if !self.messages_demand() {
+            self.tools.messages = crate::messages::State::default();
+        }
         if activity_dirty {
             self.publish_activity();
         }
@@ -2073,7 +2077,11 @@ impl Cards {
                 Task::none()
             }
             Message::Messages(state) => {
-                self.tools.messages = state;
+                self.tools.messages = if self.messages_demand() {
+                    state
+                } else {
+                    crate::messages::State::default()
+                };
                 self.capture_if_changed()
             }
             Message::MusicArt(url, result) => {

@@ -354,12 +354,16 @@ Do not post installation tokens, credentials or private widget contents there.
   certificate is accepted. For a web browser, where the page picked the
   address, only public HTTPS addresses are fetched.
 - **Messages:** read from KDE Connect on this computer over local D-Bus, only
-  while the Messages widget is shown. Halcyon asks KDE Connect for each
+  while the Messages widget is shown or a connected Activity island has
+  Phone messages enabled (off by default). Halcyon asks KDE Connect for each
   conversation's newest message and reads names from the contacts KDE Connect
   already copied from the phone. Message text, numbers and names stay in memory:
   they are never written to disk, sent anywhere or included in activity
   reports, and the widget itself is left out of the reported widget list.
-  Nothing is sent, paired or started.
+  The island receives at most four conversations over an owner-only local
+  socket. Turning off Show message text removes message bodies from that
+  snapshot. The cache is cleared when neither surface needs messages.
+  Nothing is sent to the phone, paired or started by the reader.
 - **Projects, notes and settings:** remain local; activity reports do not include
   their contents.
 

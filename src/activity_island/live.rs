@@ -410,6 +410,7 @@ impl Applet {
         self.live()
             && !self.chooser
             && (self.ui.view != View::Card
+                || self.kind == Kind::Messages
                 || (self.kind == Kind::Devices && self.devices.card)
                 || (self.kind == Kind::Timer && self.timer_live())
                 || (self.kind == Kind::Focus && self.focus_live()))
@@ -422,6 +423,7 @@ impl Applet {
         match self.ui.view {
             View::Picker => Some("New timer".into()),
             View::Outputs => Some("Output".into()),
+            View::Card if self.kind == Kind::Messages => Some(self.messages_heading()),
             View::Card if self.kind == Kind::Devices && self.devices.card => Some("Devices".into()),
             // The ring holds the time, so the title says what it is.
             View::Card if self.kind == Kind::Timer && self.timer_live() => Some("Timer".into()),
@@ -466,6 +468,7 @@ impl Applet {
     /// Height the live view needs beyond the card.
     pub(super) fn live_extra(&self) -> f32 {
         match self.ui.view {
+            View::Card if self.kind == Kind::Messages => self.messages_extra(),
             View::Card if self.kind == Kind::Devices && self.devices.card => self.devices_extra(),
             View::Card => 0.,
             View::Picker => PICKER_EXTRA,
@@ -956,6 +959,7 @@ impl Applet {
         match self.ui.view {
             View::Picker => self.picker_view(palette, accent, reveal),
             View::Outputs => self.outputs_view(palette, accent, reveal),
+            View::Card if self.kind == Kind::Messages => self.messages_view(palette, accent, reveal),
             View::Card if self.kind == Kind::Devices => self.devices_view(palette, accent, reveal),
             View::Card if self.kind == Kind::Focus => self.focus_view(palette, accent, reveal),
             View::Card => self.timer_view(palette, accent, reveal),
