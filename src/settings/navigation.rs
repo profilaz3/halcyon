@@ -33,7 +33,7 @@ impl Area {
             Self::Appearance => "Appearance",
             Self::Fonts => "Fonts and icons",
             Self::Wallpaper => "Wallpaper",
-            Self::Effects => "Effects",
+            Self::Effects => "Weather effects",
             Self::Widgets => "Widgets",
             Self::Panel => "Panel",
             Self::Dock => "Dock",
@@ -344,14 +344,14 @@ pub(super) const WIDGET_READABILITY: SearchHit = hit(
 pub(super) const LOOKS: SearchHit = hit(
     Page::DesktopProfiles,
     "Looks",
-    "setups profiles presets starter looks saved calm evening focus workbench paper rose clean desktop presentation welcome rain snow fog weather mix combine import share file save current",
+    "setups profiles presets starter looks saved calm evening focus workbench paper rose clean desktop presentation welcome rain snow fog weather mix combine import share file save current export backup",
     false,
 )
 .names_page();
 pub(super) const STARTUP: SearchHit = hit(
     Page::General,
     "Running and startup",
-    "general halcyon app settings startup login sign in background service running stopped stop start on off setup again",
+    "general halcyon app settings startup login sign in background service running stopped stop start on off setup again uninstall remove",
     false,
 )
 .names_page();
@@ -434,7 +434,7 @@ pub(super) const GET_MORE_ICONS: SearchHit = hit(
 .at("appearance-icons");
 pub(super) const WEATHER_EFFECTS: SearchHit = hit(
     Page::WeatherEffects,
-    "Effects",
+    "Weather effects",
     "weather effects wallpaper effects rain snow fog clouds cloud shadows living animated wallpaper",
     false,
 )
@@ -705,7 +705,7 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::Widgets,
         "Widgets",
-        "widgets show hide turn on off add cards my widgets display monitor screen second external output",
+        "widgets show hide turn on off add remove delete cards my widgets display monitor screen second external output",
         false,
     )
     .names_page()
@@ -1249,6 +1249,14 @@ const ROWS: &[SearchHit] = &[
 #[cfg(test)]
 pub(super) fn all_search_hits() -> &'static [SearchHit] {
     index()
+}
+/// The Weather page's city search, as its search result opens it: the
+/// field shown, scrolled to and focused.
+pub(super) fn city_hit() -> SearchHit {
+    *SEARCH
+        .iter()
+        .find(|hit| hit.open == SearchOpen::City)
+        .expect("a search result opens the city search")
 }
 /// A result that opens one page, tab and fold, for tests that walk every
 /// screen.
@@ -1925,7 +1933,9 @@ mod tests {
         let hits = search("weather effects");
         assert!(hits.iter().all(|hit| hit.page == Page::WeatherEffects), "{hits:?}");
         assert!(
-            hits.iter().take(2).any(|hit| hit.names_page_result() && hit.label == "Effects"),
+            hits.iter()
+                .take(2)
+                .any(|hit| hit.names_page_result() && hit.label == "Weather effects"),
             "{hits:?}"
         );
         assert_eq!(search("moving effect")[0].anchor(), "rain-controls");
@@ -1935,7 +1945,9 @@ mod tests {
         assert_eq!(Page::WeatherEffects.parent(), None);
         assert_eq!(Page::WeatherEffects.sidebar(), Page::WeatherEffects);
         assert_eq!(Page::WeatherEffects.usage_key(), "desktop-wallpaper");
-        assert_eq!(Page::WeatherEffects.nav_title(), "Effects");
+        assert_eq!(Page::WeatherEffects.nav_title(), "Weather effects");
+        // The narrow rail keeps it to one short word.
+        assert_eq!(Page::WeatherEffects.rail_title(), "Effects");
     }
 
     #[test]
@@ -2212,6 +2224,25 @@ mod tests {
             "{:?}",
             search("icloud")
         );
+    }
+
+    // NAV-10: common words for saving a copy, taking things away and
+    // removing Halcyon reach the page that has them.
+    #[test]
+    fn search_finds_export_remove_and_uninstall() {
+        for (query, label) in [
+            ("export", "Looks"),
+            ("backup", "Looks"),
+            ("remove widget", "Widgets"),
+            ("delete widget", "Widgets"),
+            ("uninstall", "Running and startup"),
+        ] {
+            let hits = search(query);
+            assert!(
+                hits.iter().take(3).any(|hit| hit.label == label),
+                "{query}: {hits:?}"
+            );
+        }
     }
 
     #[test]

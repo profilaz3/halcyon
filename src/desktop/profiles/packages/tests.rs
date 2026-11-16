@@ -257,7 +257,7 @@ fn fb18_embedded_manifest_is_bounded_before_building_json_trees() {
     assert!(
         Package::parse(&bytes)
             .unwrap_err()
-            .contains("Embedded profile is too large")
+            .contains("The look in this file is too large")
     );
 }
 #[test]

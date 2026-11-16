@@ -44,6 +44,10 @@ impl Settings {
                     percent => format!("{sky}: {name} at {percent}% of your {setting}"),
                 }
             }
+            // No reading can arrive: the Weather widget has no city.
+            Source::NoReading if self.config.location.is_none() => {
+                "The Weather widget needs a city first".into()
+            }
             Source::NoReading if !self.config.data_visible(Widget::Weather) => {
                 "Turn on the Weather widget to use this".into()
             }
@@ -124,6 +128,17 @@ impl Settings {
             .id(cosmic::widget::Id::new("rain-weather"))
             .into(),
         ));
+        if p.weather && self.config.location.is_none() {
+            // The Weather page's city search, shown and focused.
+            rows.push(
+                button::standard("Choose a city")
+                    .id(cosmic::widget::Id::new("rain-weather-city"))
+                    .on_press(Message::SearchResult(
+                        crate::settings::navigation::city_hit(),
+                    ))
+                    .into(),
+            );
+        }
         if p.weather {
             let strength = segmented(
                 weather::Strength::ALL

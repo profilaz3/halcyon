@@ -1197,7 +1197,7 @@ impl Applet {
             .height(32)
             .id("activity-preferences".into())
             .class(capsule_button(palette, tint, reveal, Role::Quiet))
-            .on_press(Message::Settings("panel")),
+            .on_press(Message::Settings(SETTINGS_PAGE)),
             "Activity settings",
             widget::tooltip::Position::Top,
         )

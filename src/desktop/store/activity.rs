@@ -69,9 +69,11 @@ pub enum Applied {
     Style,
 }
 impl Applied {
-    /// From the record's Undo label (see `ProfilePlan::label`).
+    /// From the record's Undo label (see `ProfilePlan::label`, and
+    /// `automation::run` for a look applied automatically or from the edge
+    /// menu).
     pub fn of_label(label: &str) -> Option<Self> {
-        if label.starts_with("Profile “") {
+        if label.starts_with("Profile “") || label.starts_with("Look “") {
             Some(Self::Look)
         } else if label.starts_with("Style") {
             Some(Self::Style)

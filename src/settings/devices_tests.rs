@@ -49,6 +49,13 @@ fn devices_widget_is_off_until_chosen_and_renders_full_and_empty() {
             scene.width > 0. && scene.x >= 0. && scene.x + scene.width <= size.width,
             "{scene:?}"
         );
+        // The preview's devices are said to be samples, with where real
+        // readings come from.
+        native.text_bounds(
+            app.settings_view(),
+            "Sample · your Bluetooth and wireless devices show here, and phones paired \
+             with KDE Connect or GSConnect.",
+        );
         // Each name whole in the preview, on one line or broken onto two.
         let shown = native.all_text(app.settings_view());
         for device in ["Sony WH-1000XM5", "MX Anywhere 3", "Pixel 8"] {
@@ -128,6 +135,19 @@ fn devices_widget_is_off_until_chosen_and_renders_full_and_empty() {
             };
             let none = native.text_bounds(card(&empty), "No devices connected");
             assert!(none.width > 0. && none.x + none.width <= dims[0]);
+            // The empty card says where devices come from, inside the card.
+            let sources = native.text_bounds(
+                card(&empty),
+                "Shows Bluetooth and wireless devices, and phones paired with KDE Connect or \
+                 GSConnect",
+            );
+            assert!(
+                sources.x >= 0.
+                    && sources.x + sources.width <= dims[0]
+                    && sources.y > none.y
+                    && sources.y + sources.height <= dims[1],
+                "{label} {sources:?}"
+            );
             for list in [&full, &four] {
                 // Each name whole, on one line or two, never cut short:
                 // measured in the card's own fonts, as the card measures.
@@ -172,4 +192,44 @@ fn devices_widget_is_off_until_chosen_and_renders_full_and_empty() {
     }
     // A larger card grows its rings.
     assert!(ring[1] > ring[0] + 20., "{ring:?}");
+}
+
+/// Every widget with a Settings page has a row on the Widgets page, with
+/// Daily overview on or off, and the Devices row opens its page.
+#[test]
+fn every_widget_page_has_a_row_on_the_widgets_page() {
+    let name = "every_widget_page_has_a_row_on_the_widgets_page";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let _root = isolated_root();
+    let (mut app, task) = Settings::init(Core::default(), Page::Overview);
+    settle_settings(&mut app, task);
+    let size = Size::new(1280., 800.);
+    send_settings(&mut app, Message::Resized(size));
+    let mut native = crate::native_test::Native::new(size);
+    let widgets: Vec<_> = Page::ALL
+        .into_iter()
+        .filter_map(navigation::widget_of)
+        .collect();
+    assert!(widgets.contains(&crate::drawer::Widget::Devices));
+    for glance in [false, true] {
+        app.config.glance.enabled = glance;
+        for widget in &widgets {
+            let id = format!("widget-open-{}", widget.key());
+            assert!(
+                native.try_bounds(app.settings_view(), &id).is_some(),
+                "{widget:?} has a row, Daily overview {glance}"
+            );
+        }
+    }
+    native_click(&mut app, &mut native, "widget-open-devices");
+    assert_eq!(app.page, Page::Devices);
 }

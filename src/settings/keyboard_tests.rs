@@ -620,8 +620,8 @@ fn ax07_arrange_buttons_keep_their_words_on_one_line() {
     }
 }
 
-// Home: Tab reaches the tiles, Space picks one and Enter on it again opens
-// its page; every part and tile has a name.
+// Home: Tab reaches the tiles, and Space or Enter on one opens its page;
+// every part and tile has a name.
 #[test]
 fn home_tiles_take_tab_space_and_enter() {
     if child("home_tiles_take_tab_space_and_enter") {
@@ -650,23 +650,21 @@ fn home_tiles_take_tab_space_and_enter() {
             .is_some_and(|focus| tile.intersects(&focus))
     });
     assert!(reached, "Tab reaches the Accessibility tile");
+    // Space opens the tile's page, as a press does.
     let (messages, status) = key_on(&app, &mut native, space());
     assert_eq!(status, Status::Captured);
     assert!(
-        matches!(&messages[..], [Message::HomePart(Page::DesktopMotion)]),
+        matches!(&messages[..], [Message::Page(Page::DesktopMotion)]),
         "{messages:?}"
     );
-    for message in messages {
-        send_settings(&mut app, message);
-    }
-    assert_eq!((app.page, app.home_part), (Page::Home, Some(Page::DesktopMotion)));
+    // So does Enter.
     let (messages, _) = key_on(
         &app,
         &mut native,
         named(key::Named::Enter, key::Code::Enter),
     );
     assert!(
-        matches!(&messages[..], [Message::HomePart(Page::DesktopMotion)]),
+        matches!(&messages[..], [Message::Page(Page::DesktopMotion)]),
         "{messages:?}"
     );
     for message in messages {

@@ -163,16 +163,7 @@ impl Settings {
             group("Daily", &[Widget::Glance, Widget::Clock, Widget::Weather, Widget::Calendar])
         };
         // One column of widgets: the daily trio, then everything else.
-        let more = group(
-            "More widgets",
-            &[
-                Widget::Devbox,
-                Widget::Projects,
-                Widget::Music,
-                Widget::Notes,
-                Widget::Focus,
-            ],
-        );
+        let more = group("More widgets", &Widget::MORE);
         let visibility = super::group(
             None,
             vec![split(

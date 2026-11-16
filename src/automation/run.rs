@@ -84,9 +84,7 @@ pub fn load(store: &DesktopStore, target: &ProfileRef, name: &str) -> Result<Pro
                 .load(&id)
                 .map_err(|error| match error {
                     profiles::ProfileError::NotFound(_) => {
-                        format!(
-                            "The profile “{name}” was deleted. Choose another one for this rule."
-                        )
+                        format!("The look “{name}” was deleted. Choose another one for this rule.")
                     }
                     error => format!("“{name}” can’t be read: {error}"),
                 })
@@ -158,7 +156,7 @@ fn run_labelled(
         Ok(None) => {}
         Ok(Some(_)) => {
             return Ran::Failed(
-                "An interrupted change needs a decision on the Profiles page first.".into(),
+                "An interrupted change needs a decision on the Looks page first.".into(),
             );
         }
         Err(error) => return Ran::Failed(error.to_string()),
@@ -234,7 +232,7 @@ pub fn chosen_label(name: &str) -> String {
 }
 /// The Undo label of an automatic switch.
 pub fn label(name: &str) -> String {
-    format!("Profile “{name}” (automatic)")
+    format!("Look “{name}” (automatic)")
         .chars()
         .take(120)
         .collect()

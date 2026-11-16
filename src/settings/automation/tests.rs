@@ -77,7 +77,7 @@ fn the_first_rule_turns_automation_on_and_later_edits_restart_it() {
     assert_eq!(editor.draft.as_ref().unwrap().time, "19:00");
     // Save waits for a profile, with a reason, and writes nothing.
     editor.update(Message::Save, true);
-    assert!(matches!(&editor.notice, Some(Notice::Error(text)) if text == "Choose a profile."));
+    assert!(matches!(&editor.notice, Some(Notice::Error(text)) if text == "Choose a look."));
     assert!(!fixture.0.join("state").exists());
     editor.update(Message::Draft(DraftEdit::Time("7 pm".into())), true);
     editor.update(Message::Draft(DraftEdit::Days(Days::WEEKDAYS)), true);

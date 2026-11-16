@@ -40,7 +40,8 @@ fn home_click_at(app: &mut Settings, native: &mut crate::native_test::Native, at
 }
 
 // Home: the picture shows every part where it is, a click picks one and a
-// second click opens its page. Captured in light and dark at both sizes.
+// second click opens its page; a tile opens its page at once. Captured in
+// light and dark at both sizes.
 #[test]
 fn home_picture_picks_parts_and_opens_their_pages() {
     use crate::desktop::panels::PanelKind;
@@ -57,6 +58,13 @@ fn home_picture_picks_parts_and_opens_their_pages() {
     ) {
         return;
     }
+    // A tile for every sidebar root after Home, in sidebar order.
+    let roots: Vec<Page> = Page::SIDEBAR
+        .iter()
+        .flat_map(|(_, pages)| pages.iter().copied())
+        .filter(|page| *page != Page::Home)
+        .collect();
+    assert_eq!(PARTS.to_vec(), roots);
     let root = isolated_root();
     seed_island(&root);
     let mut app = open_isolated_editor(&root);
@@ -92,7 +100,10 @@ fn home_picture_picks_parts_and_opens_their_pages() {
             assert!(b.width > 40. && b.x + b.width <= size.width, "{tag} {id}: {b:?}");
         }
         let text = native.all_text(app.settings_view());
-        assert!(text.iter().any(|t| t == "Pick a part of the picture, or a tile below."));
+        assert!(text.iter().any(|t| t == "Pick a part of the picture to see how it is set."));
+        // Fonts and icons says which font and icon theme are in use.
+        let fonts = app.part_state(Page::DesktopAppearance);
+        assert!(!fonts.is_empty() && text.contains(&fonts), "{fonts:?}: {text:?}");
         for (theme_name, theme) in home_themes() {
             native.capture(
                 app.settings_view(),
@@ -151,18 +162,25 @@ fn home_picture_picks_parts_and_opens_their_pages() {
         ),
     );
     assert_eq!(app.home_part, Some(Page::DesktopWallpaper));
-    // A tile picks its part, even one the picture has no place for, and
-    // Open goes there.
-    native_click(&mut app, &mut native, "home-tile-desktop-motion");
-    assert_eq!((app.page, app.home_part), (Page::Home, Some(Page::DesktopMotion)));
+    // Open goes to the picked part's page.
     native_click(&mut app, &mut native, "home-open");
-    assert_eq!(app.page, Page::DesktopMotion);
-    // The dock opens on its own bar.
-    send_settings(&mut app, Message::Page(Page::Home));
-    native_click(&mut app, &mut native, "home-tile-desktop-dock");
-    native_click(&mut app, &mut native, "home-tile-desktop-dock");
-    assert_eq!(app.page, Page::DesktopDock);
-    assert_eq!(app.desktop.selected, PanelKind::Dock);
+    assert_eq!(app.page, Page::DesktopWallpaper);
+    // A tile opens its page on one press, even one the picture has no place
+    // for, at the small window size where the picture is scrolled away.
+    for size in HOME_SIZES {
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::new(size);
+        for page in [Page::DesktopMotion, Page::DesktopAppearance] {
+            send_settings(&mut app, Message::Page(Page::Home));
+            native_click(&mut app, &mut native, &format!("home-tile-{}", page.key()));
+            assert_eq!(app.page, page, "{size:?}");
+        }
+        // The dock opens on its own bar.
+        send_settings(&mut app, Message::Page(Page::Home));
+        native_click(&mut app, &mut native, "home-tile-desktop-dock");
+        assert_eq!(app.page, Page::DesktopDock);
+        assert_eq!(app.desktop.selected, PanelKind::Dock);
+    }
 }
 
 // Panel, Dock and Activity island: three sidebar entries, each opening on its
@@ -656,6 +674,13 @@ fn fonts_and_icons_is_a_sidebar_root_after_appearance() {
             "{query}"
         );
     }
+
+    // Its Icons section leads to Icons on the desktop, and Back returns.
+    send_settings(&mut app, Message::Page(Page::DesktopAppearance));
+    native_click(&mut app, &mut native, "appearance-open-desktop-icons");
+    assert_eq!(app.page, Page::DesktopIcons);
+    send_settings(&mut app, Message::Back);
+    assert_eq!(app.page, Page::DesktopAppearance);
 }
 
 // A saved file with a value this version can't use: Settings opens with

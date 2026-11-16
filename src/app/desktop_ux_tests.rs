@@ -787,6 +787,39 @@ fn default_edge_menu_matches_the_built_in_one_on_either_side() {
     capture_rail(&cards, "edge-menu-left");
 }
 
+/// The built-in menu has room for every widget, Devices included, with all
+/// three right column cards shown.
+#[test]
+fn built_in_edge_menu_fits_every_widget() {
+    if isolated("built_in_edge_menu_fits_every_widget") {
+        return;
+    }
+    let mut cards = cards();
+    let mut config = cards.config.clone();
+    config.glance.enabled = false;
+    let _ = cards.apply_config(config);
+    assert!(cards.config.edge_menu.classic());
+    assert_eq!(cards.config.ordered_right_cards().len(), 3);
+    let _ = cards.update(Message::DrawerToggle);
+    let mut rail = rail();
+    let devices = rail.text_bounds(cards.control_rail(), "Devices");
+    let customize = rail.bounds(cards.control_rail(), "edge-customize");
+    assert!(
+        devices.y + devices.height < customize.y,
+        "{devices:?} {customize:?}"
+    );
+    assert!(
+        customize.y + customize.height <= drawer::SIDEBAR_HEIGHT as f32 - drawer::RAIL_PADDING,
+        "{customize:?}"
+    );
+    assert!(
+        cards
+            .drawer_items()
+            .contains(&drawer::DrawerItem::Widget(Widget::Devices))
+    );
+    capture_rail(&cards, "edge-menu-every-widget");
+}
+
 /// The open menu at its surface's own size, room for names included.
 fn surface_for(cards: &Cards) -> Native {
     Native::new(Size::new(
