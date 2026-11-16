@@ -50,6 +50,9 @@ pub struct Snapshot {
     /// Connected devices with their battery, at most `DEVICES`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub devices: Vec<crate::devices::Device>,
+    /// Bounded phone conversations, with hidden text removed by the owner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub messages: Option<super::messages::Messages>,
 }
 /// The most devices a snapshot carries.
 pub const DEVICES: usize = 8;
@@ -129,6 +132,7 @@ pub enum Command {
     TimerCancel,
     /// Try the calendar again now.
     RefreshCalendar,
+    OpenMessages,
 }
 #[derive(Clone, Debug)]
 pub enum Event {

@@ -61,6 +61,8 @@ pub const RULE_ENTRY: usize = 96;
 pub struct Preferences {
     pub system: bool,
     pub media: bool,
+    /// Phone conversations through KDE Connect; independently opt-in.
+    pub messages: bool,
     pub calendar: bool,
     pub reveals: bool,
     /// Files dropped on the island, kept on its shelf.
@@ -115,6 +117,7 @@ impl Default for Preferences {
         Self {
             system: true,
             media: true,
+            messages: false,
             calendar: true,
             reveals: true,
             shelf: true,

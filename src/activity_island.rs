@@ -6,6 +6,7 @@ mod downloads;
 mod host;
 mod inbox;
 mod live;
+pub(crate) mod messages;
 mod motion;
 mod notifications;
 mod outputs;
@@ -278,6 +279,7 @@ pub enum Kind {
     Transfer,
     /// A device connecting or running low, or the list of devices.
     Devices,
+    Messages,
 }
 impl Kind {
     fn label(self) -> &'static str {
@@ -291,6 +293,7 @@ impl Kind {
             Self::Timer => "Timer",
             Self::Transfer => "Transfers",
             Self::Devices => "Devices",
+            Self::Messages => "Messages",
         }
     }
     fn icon(self) -> &'static str {
@@ -304,6 +307,7 @@ impl Kind {
             Self::Timer => "alarm-symbolic",
             Self::Transfer => "folder-download-symbolic",
             Self::Devices => "bluetooth-symbolic",
+            Self::Messages => "mail-unread-symbolic",
         }
     }
     fn accent(self) -> Color {
@@ -317,6 +321,7 @@ impl Kind {
             Self::Timer => accent::TIMER,
             Self::Transfer => accent::JOB,
             Self::Devices => accent::SYSTEM,
+            Self::Messages => accent::NOTIFICATION,
         }
     }
     /// A stable widget id fragment.
@@ -331,6 +336,7 @@ impl Kind {
             Self::Timer => "timer".into(),
             Self::Transfer => "transfer".into(),
             Self::Devices => "devices".into(),
+            Self::Messages => "messages".into(),
         }
     }
 }
@@ -935,7 +941,11 @@ impl Applet {
                     let popups = self.sync_popups();
                     self.refresh_deadline(now);
                     self.problem = None;
-                    if self.popup.is_none() {
+                    if self.popup.is_none()
+                        || (self.kind == Kind::Messages
+                            && (!self.snapshot.preferences.messages
+                                || self.snapshot.messages.is_none()))
+                    {
                         self.kind = self.automatic_kind();
                     }
                     if self.snapshot.reduced_motion {
@@ -962,7 +972,18 @@ impl Applet {
                     let reveal = timer_due.then_some(Kind::Timer).or(system_reveal);
                     let reveal = self.consider_reveal(reveal, now);
                     self.settle_device_banner(now);
-                    return Task::batch([popups, reveal]);
+                    // Keep the way back visible as devices arrive or the list empties.
+                    let devices = if self.popup.is_some()
+                        && self.kind == Kind::Devices
+                        && self.devices.card
+                        && !self.chooser
+                        && self.devices_extra() > self.popup_extra + 0.5
+                    {
+                        self.regrow(now)
+                    } else {
+                        Task::none()
+                    };
+                    return Task::batch([popups, reveal, devices]);
                 }
             },
             Message::Enter(popup) => {
@@ -2017,6 +2038,7 @@ impl Applet {
             Kind::Timer => self.timer_content(),
             Kind::Transfer => self.transfer_content(),
             Kind::Devices => self.devices_content(),
+            Kind::Messages => self.messages_content(),
         };
         if let Some(problem) = &self.problem {
             content.meta.clone_from(problem);
@@ -2400,7 +2422,18 @@ impl Applet {
                         .is_some_and(|b| b.device.id.starts_with("bt:"));
                 return self.devices_actions(palette, tint, reveal, settings);
             }
-            // The open list has no buttons of its own.
+            Kind::Messages => {
+                return self.label_button(
+                    palette,
+                    "activity-messages-open",
+                    "Open messages",
+                    tint,
+                    reveal,
+                    Role::Primary,
+                    Some(Message::Control(Command::OpenMessages)),
+                );
+            }
+            // The open device list has no buttons of its own.
             Kind::Devices => {}
             Kind::System(source) => {
                 return self.label_button(

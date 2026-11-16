@@ -54,6 +54,13 @@ impl Settings {
                 false,
             ))
             .push(toggle(
+                "Phone messages",
+                "Your KDE Connect conversations. Message text follows the Messages page’s privacy switch.",
+                "messages",
+                p.messages,
+                false,
+            ))
+            .push(toggle(
                 "Upcoming meetings",
                 "Your next meeting from your calendar, shortly before it starts.",
                 "calendar",

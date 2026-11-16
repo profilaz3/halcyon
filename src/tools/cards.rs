@@ -3,6 +3,7 @@
 //! configuration, like every other widget, and an optional action mapper:
 //! without one the card is drawn without controls that respond.
 mod devices;
+pub(crate) mod messages;
 pub(crate) mod recipe;
 use super::{focus, music, notes};
 use crate::config::{Config, Palette};
@@ -14,6 +15,11 @@ use cosmic::widget::image::Handle;
 use cosmic::widget::{column, container, icon, mouse_area, row, scrollable, text, text_editor};
 pub(crate) use devices::charging_icon;
 pub use devices::{devices, sample as sample_devices};
+pub use messages::{messages, sample as sample_messages};
+#[cfg(test)]
+pub(crate) use messages::{
+    rows_fitting as messages_rows, status as messages_status, when as messages_when,
+};
 #[cfg(test)]
 pub(crate) use devices::{fitted as devices_fitted, grid as devices_grid};
 use std::time::Instant;
@@ -41,6 +47,8 @@ pub enum Action {
     FocusReset,
     FocusSkip,
     FocusMinutes(u16),
+    /// Open the phone's conversations, or KDE Connect to set it up.
+    MessagesOpen,
 }
 
 pub const NOTE_EDITOR: &str = "desktop-cards-note-editor";
@@ -72,6 +80,8 @@ pub fn size(widget: Widget, config: &Config) -> [f32; 2] {
             },
         ],
         Widget::Notes => config.notes.size.card(),
+        // Room for the four newest conversations.
+        Widget::Messages => [320., 260.],
         _ => [280., 160.],
     }
 }

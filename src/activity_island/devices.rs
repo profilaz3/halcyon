@@ -13,6 +13,8 @@ const SEEN: usize = 32;
 const SHOWN: Duration = Duration::from_secs(4);
 const ROW: f32 = 34.;
 const ROW_GAP: f32 = 2.;
+const BACK_GAP: f32 = 8.;
+const BACK_HEIGHT: f32 = 32.;
 /// The room the chooser layout gives below the title line.
 const ROOM: f32 = HEIGHT - 50.;
 
@@ -57,6 +59,8 @@ impl Island {
 pub enum Msg {
     /// Open the island on the list of devices.
     Open,
+    /// Return to the main activities card without collapsing the island.
+    Back,
 }
 
 /// The newest event in `list` not seen before, if the person wants it.
@@ -222,6 +226,16 @@ impl Applet {
     }
     pub(super) fn devices_update(&mut self, msg: Msg, now: Instant) -> Task<Message> {
         match msg {
+            Msg::Back => {
+                self.devices.close();
+                self.kind = Kind::Idle;
+                self.ui.view = live::View::Card;
+                self.selected_source = None;
+                self.batch.clear();
+                self.shelf.open = false;
+                self.menu = None;
+                self.regrow(now)
+            }
             Msg::Open => {
                 if !self.live() {
                     return Task::none();
@@ -308,11 +322,38 @@ impl Applet {
         if shows { 14. + 8. } else { 0. }
     }
     pub(super) fn devices_extra(&self) -> f32 {
-        let rows = self.snapshot.devices.len().max(1) as f32;
-        (rows * (ROW + ROW_GAP) - ROW_GAP - ROOM).max(0.)
+        let list = if self.snapshot.devices.is_empty() {
+            ROOM
+        } else {
+            self.snapshot.devices.len() as f32 * (ROW + ROW_GAP) - ROW_GAP
+        };
+        (list + BACK_GAP + BACK_HEIGHT - ROOM).max(0.)
     }
-    /// The open card: a row per device, with its battery.
+    /// The open list always has a way back, including when every device left.
     pub(super) fn devices_view<'a>(
+        &'a self,
+        palette: Palette,
+        accent: Color,
+        reveal: f32,
+    ) -> Element<'a, Message> {
+        widget::column([
+            self.devices_list(palette, accent, reveal),
+            self.label_button(
+                palette,
+                "activity-devices-back",
+                "Back to activities",
+                accent,
+                reveal,
+                Role::Quiet,
+                Some(Message::Devices(Msg::Back)),
+            ),
+        ])
+        .spacing(BACK_GAP)
+        .width(Length::Fill)
+        .into()
+    }
+    /// A row per device, with its battery.
+    fn devices_list<'a>(
         &'a self,
         palette: Palette,
         accent: Color,
@@ -837,6 +878,92 @@ mod tests {
         assert_eq!(app.kind, Kind::Devices, "one banner, not two");
         assert_eq!(app.content().title, "Buds");
         assert_eq!(app.content().meta, "Connected · 70%");
+    }
+
+    #[test]
+    fn devices_have_a_way_home_with_no_other_activity_or_connected_device() {
+        use cosmic::iced::{Event, Size, mouse};
+        for attached in [false, true] {
+            for count in [0, 1, 8] {
+                let mut app = live();
+                app.supported = attached;
+                if attached {
+                    app.panel_frame = host::Frame {
+                        height: 32., padding: 4., radius: 8., attached: true, opacity: 0.85,
+                    };
+                }
+                app.snapshot.devices = (0..count)
+                    .map(|i| device(&format!("bt:{i}"), 80, false))
+                    .collect();
+                app.devices.card = true;
+                app.kind = Kind::Devices;
+                app.popup = Some(window::Id::unique());
+                app.held = true;
+                app.popup_extra = app.devices_extra();
+                app.motion.retarget(1., false, Instant::now());
+                assert_eq!(app.eligible_kinds(), vec![Kind::Devices]);
+                let size = Size::new(app.frame().popup_width(), app.popup_height());
+                let mut ui = crate::native_test::Native::new(size);
+                let button = ui.bounds(app.capsule(true), "activity-devices-back");
+                assert!(button.width > 0. && button.height > 0.
+                    && button.x >= 0. && button.y >= 0.
+                    && button.x + button.width <= size.width + 0.5
+                    && button.y + button.height <= size.height + 0.5,
+                    "attached={attached}, count={count}: {button:?} outside {size:?}");
+                let _ = ui.event(app.capsule(true),
+                    Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)), button.center());
+                let clicks = ui.event(app.capsule(true),
+                    Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)), button.center()).0;
+                assert!(matches!(clicks.as_slice(), [Message::Devices(Msg::Back)]));
+                for click in clicks { let _ = app.update(click); }
+                assert_eq!(app.kind, Kind::Idle);
+                assert!(!app.devices.card && app.devices.banner.is_none());
+                assert!(app.popup.is_some() && app.held);
+                assert_eq!(app.motion.target(), 1.);
+                assert!(!app.live_panel());
+                assert!(app.eligible_kinds().is_empty());
+                assert!(ui.bounds(app.capsule(true), "activity-timer").width > 0.);
+                if count > 0 {
+                    assert!(ui.bounds(app.capsule(true), "activity-devices").width > 0.);
+                    let _ = app.update(Message::Devices(Msg::Open));
+                    assert!(app.devices.card && app.kind == Kind::Devices);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn devices_back_stays_visible_when_the_open_list_changes() {
+        use cosmic::iced::Size;
+        let mut app = live();
+        app.devices.card = true;
+        app.kind = Kind::Devices;
+        app.snapshot.devices = vec![device("bt:1", 80, false)];
+        app.popup = Some(window::Id::unique());
+        app.held = true;
+        app.popup_extra = app.devices_extra();
+        app.motion.retarget(1., false, Instant::now());
+        for count in [0, 8, 1] {
+            let devices = (0..count).map(|i| device(&format!("bt:{i}"), 80, false)).collect::<Vec<_>>();
+            feed(&mut app, &devices, |s| {
+                s.focus.running = true;
+                s.focus.ends_at_ms = Some(now() + 60_000);
+            });
+            if let Some(id) = app.promote_popup {
+                let _ = app.update(Message::PopupGone(id));
+            }
+            assert!(app.devices.card && app.kind == Kind::Devices);
+            let size = Size::new(app.frame().popup_width(), app.popup_height());
+            let mut ui = crate::native_test::Native::new(size);
+            let back = ui.bounds(app.capsule(true), "activity-devices-back");
+            assert!(back.y + back.height <= size.height + 0.5, "{count}: {back:?} {size:?}");
+        }
+        let _ = app.update(Message::Devices(Msg::Back));
+        assert_eq!(app.kind, Kind::Idle);
+        assert!(app.snapshot.focus.running);
+        assert!(app.eligible_kinds().contains(&Kind::Focus));
+        let _ = app.update(Message::Select(Kind::Focus));
+        assert_eq!(app.kind, Kind::Focus);
     }
 
     #[test]

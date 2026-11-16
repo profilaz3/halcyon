@@ -168,7 +168,7 @@ macro_rules! fields {
 }
 
 /// Every member a profile, its Undo or its recovery may write.
-pub static FIELDS: [WidgetField; 113] = fields![
+pub static FIELDS: [WidgetField; 116] = fields![
     "/recipes/music", "Music recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Music);
     "/recipes/focus", "Focus recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Focus);
     "/recipes/devbox", "System recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::System);
@@ -269,10 +269,12 @@ pub static FIELDS: [WidgetField; 113] = fields![
     "/notes/enabled", "Notes", Layout, boolean;
     "/focus/enabled", "Focus timer", Layout, boolean;
     "/devices/enabled", "Devices", Layout, boolean;
+    "/messages/enabled", "Messages", Layout, boolean;
     "/widget_positions/music", "Music position", Layout, position;
     "/widget_positions/notes", "Notes position", Layout, position;
     "/widget_positions/focus", "Focus position", Layout, position;
     "/widget_positions/devices", "Devices position", Layout, position;
+    "/widget_positions/messages", "Messages position", Layout, position;
     "/widget_sizes/clock", "Clock size", Layout, size;
     "/widget_sizes/weather", "Weather size", Layout, size;
     "/widget_sizes/calendar", "Calendar size", Layout, size;
@@ -283,6 +285,7 @@ pub static FIELDS: [WidgetField; 113] = fields![
     "/widget_sizes/notes", "Notes size", Layout, size;
     "/widget_sizes/focus", "Focus size", Layout, size;
     "/widget_sizes/devices", "Devices size", Layout, size;
+    "/widget_sizes/messages", "Messages size", Layout, size;
 ];
 
 // Local preferences participate in transactions and Undo but are never
@@ -318,6 +321,7 @@ pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/activity_island/shelf", "Activity file shelf", Style, boolean;
     "/activity_island/lead_minutes", "Activity reminder", Style, |v| matches!(v.as_u64(),Some(5|10|15));
     "/activity_island/notifications", "Activity notifications", Style, boolean;
+    "/activity_island/messages", "Activity phone messages", Style, boolean;
     "/activity_island/notification_text", "Activity message text", Style, boolean;
     "/activity_island/replace_popups", "Activity notification popups", Style, boolean;
     "/activity_island/battery", "Activity battery", Style, boolean;
@@ -367,6 +371,9 @@ pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/widget_monitors/devices/display", "Widget display", Layout, |v| v.is_null() || v.as_str().is_some_and(crate::displays::valid_name);
     "/widget_monitors/devices/hide_disconnected", "Disconnected widget", Layout, boolean;
     "/monitor_layouts/devices", "Display layout", Layout, monitor_layout;
+    "/widget_monitors/messages/display", "Widget display", Layout, |v| v.is_null() || v.as_str().is_some_and(crate::displays::valid_name);
+    "/widget_monitors/messages/hide_disconnected", "Disconnected widget", Layout, boolean;
+    "/monitor_layouts/messages", "Display layout", Layout, monitor_layout;
     "/widget_display", "Widget display", Layout, |v| v.is_null() || v.as_str().is_some_and(crate::displays::valid_name);
     "/appearance/match_wallpaper", "Matching wallpaper", Style, boolean;
     "/appearance/match_cosmic_colors", "Follow COSMIC colors", Style, boolean;
@@ -397,10 +404,11 @@ pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/focus/long_break_every", "Long break frequency", Style, |v| int_in(v,0,12);
     "/focus/auto_start_breaks", "Automatic breaks", Style, boolean;
     "/focus/notify", "Focus notifications", Style, boolean;
+    "/messages/show_text", "Message text", Style, boolean;
 ];
 
 /// The desktop tool a member belongs to (`music`, `notes`, `focus`,
-/// `devices`), if any. Tool members are version 4 profile members, and are captured only
+/// `devices`, `messages`), if any. Tool members are version 4 profile members, and are captured only
 /// once that tool has been set up.
 pub fn tool_of(pointer: &str) -> Option<&'static str> {
     let rest = pointer
@@ -408,7 +416,7 @@ pub fn tool_of(pointer: &str) -> Option<&'static str> {
         .or_else(|| pointer.strip_prefix("/widget_sizes/"))
         .or_else(|| pointer.strip_prefix('/'))?;
     let name = rest.split('/').next()?;
-    ["music", "notes", "focus", "devices"]
+    ["music", "notes", "focus", "devices", "messages"]
         .into_iter()
         .find(|tool| {
             *tool == name

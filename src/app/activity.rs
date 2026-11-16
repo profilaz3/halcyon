@@ -165,6 +165,13 @@ impl Cards {
             music_seek: playing.is_some_and(|p| p.seek_request(0.).is_some()),
             music_tint: art.and_then(|(_, tint, _)| *tint),
             music_art: art.and_then(|(_, _, thumb)| thumb.clone()),
+            messages: (self.config.activity_island.messages && self.activity.clients > 0)
+                .then(|| {
+                    crate::activity_island::messages::project(
+                        &self.tools.messages,
+                        self.config.messages.show_text,
+                    )
+                }),
             devices: if self.config.activity_island.system {
                 self.tools
                     .devices
@@ -275,6 +282,11 @@ impl Cards {
             }
             // The island's Try again on a calendar that couldn't refresh.
             Event::Command(Command::RefreshCalendar) => self.retry_calendar_now(),
+            Event::Command(Command::OpenMessages) => {
+                if self.config.activity_island.messages {
+                    return self.update_tool(crate::tools::cards::Action::MessagesOpen);
+                }
+            }
             Event::Command(Command::NoteRule { app, entry, rule }) => {
                 return self.save_note_rule(&app, &entry, rule);
             }

@@ -47,6 +47,10 @@ pub const PAGES: &[&str] = &[
     "builder",
     "changes",
 ];
+/// Settings pages newer than the report's schema. Their visits are dropped
+/// rather than counted: naming one would change what usage sharing sends,
+/// and the collector refuses keys it doesn't know.
+pub const UNCOUNTED_PAGES: &[&str] = &["messages"];
 /// Update and Islands failures share one list of kinds.
 pub const FAILURES: &[&str] = &[
     "missing_packagekit",

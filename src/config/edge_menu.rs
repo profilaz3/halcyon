@@ -601,7 +601,7 @@ impl<'de> Deserialize<'de> for Item {
 
 /// The edge menu's second group: every widget outside the right column.
 /// A customized menu keeps its own saved list.
-pub const ELSEWHERE: [Widget; 7] = [
+pub const ELSEWHERE: [Widget; 8] = [
     Widget::Calendar,
     Widget::Clock,
     Widget::Glance,
@@ -609,6 +609,7 @@ pub const ELSEWHERE: [Widget; 7] = [
     Widget::Notes,
     Widget::Focus,
     Widget::Devices,
+    Widget::Messages,
 ];
 
 /// The built-in menu as a list: where a customized menu starts. `right` is
@@ -700,7 +701,7 @@ mod tests {
         assert_eq!(widgets[3..], ELSEWHERE);
         let actions: Vec<_> = items.iter().filter_map(Item::as_action).collect();
         assert_eq!(actions, [Action::Arrange, Action::Settings]);
-        assert_eq!(items.iter().filter(|item| item.focusable()).count(), 12);
+        assert_eq!(items.iter().filter(|item| item.focusable()).count(), 13);
     }
 
     #[test]

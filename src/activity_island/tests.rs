@@ -1,7 +1,7 @@
 // Native and state regressions for Activity island.
 use super::*;
 use super::reactive::NOTE_GAP;
-fn app() -> Applet {
+pub(super) fn app() -> Applet {
     let (mut app, _) = Applet::init(Core::default(), ());
     let (tx, _) = tokio::sync::mpsc::channel(4);
     app.commands = Some(tx);

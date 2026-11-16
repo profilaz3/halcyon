@@ -42,6 +42,7 @@ fn description(widget: Widget) -> &'static str {
         Widget::Projects => "Your recent folders",
         Widget::Glance => "Clock, weather and calendar",
         Widget::Devices => "Battery of connected devices",
+        Widget::Messages => "Your phone’s texts",
     }
 }
 impl Settings {

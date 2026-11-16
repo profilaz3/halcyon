@@ -166,6 +166,9 @@ impl Applet {
         if !self.ui.jobs.is_empty() {
             kinds.push(Kind::Transfer);
         }
+        if self.snapshot.preferences.messages && self.snapshot.messages.is_some() {
+            kinds.push(Kind::Messages);
+        }
         if self.devices_eligible() {
             kinds.push(Kind::Devices);
         }

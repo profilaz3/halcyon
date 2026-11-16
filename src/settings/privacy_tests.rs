@@ -185,11 +185,15 @@ fn usage_checkbox_native_save_restart_setup_undo_export_and_failure() {
 
 #[test]
 fn every_settings_page_is_a_known_usage_count() {
+    use crate::usage::counts::{PAGES, UNCOUNTED_PAGES};
     for page in Page::ALL {
+        let key = page.usage_key();
         assert!(
-            crate::usage::counts::PAGES.contains(&page.usage_key()),
+            PAGES.contains(&key) || UNCOUNTED_PAGES.contains(&key),
             "{}",
             page.key()
         );
     }
+    // A page left out is never also counted.
+    assert!(UNCOUNTED_PAGES.iter().all(|key| !PAGES.contains(key)));
 }

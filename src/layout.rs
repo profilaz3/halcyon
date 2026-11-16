@@ -141,6 +141,7 @@ pub fn minimum_size(widget: crate::drawer::Widget) -> Size {
         Notes => [260., 180.],
         Focus => [280., 160.],
         Devices => [260., 140.],
+        Messages => [300., 220.],
         Weather | Devbox | Projects => [300., 180.],
     }
 }

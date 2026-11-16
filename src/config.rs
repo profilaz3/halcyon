@@ -100,6 +100,7 @@ pub struct Config {
     pub notes: NotesPreferences,
     pub focus: FocusPreferences,
     pub devices: DevicesPreferences,
+    pub messages: MessagesPreferences,
     /// The edge sidebar slides in and out; off, it appears and hides at
     /// once (Pop!_OS › Motion).
     pub sidebar_slide: bool,
@@ -167,6 +168,7 @@ impl Default for Config {
             notes: NotesPreferences::default(),
             focus: FocusPreferences::default(),
             devices: DevicesPreferences::default(),
+            messages: MessagesPreferences::default(),
             sidebar_slide: true,
             edge_menu: edge_menu::EdgeMenu::default(),
             settings_animations: true,
@@ -404,6 +406,7 @@ impl Config {
             Widget::Notes => return self.notes.enabled,
             Widget::Focus => return self.focus.enabled,
             Widget::Devices => return self.devices.enabled,
+            Widget::Messages => return self.messages.enabled,
             _ => {}
         }
         self.enabled_widgets.iter().any(|key| key == widget.key())
@@ -1718,6 +1721,23 @@ pub struct NotesPreferences {
 pub struct DevicesPreferences {
     pub enabled: bool,
 }
+/// The Messages widget: the phone's newest conversations through KDE
+/// Connect. Off until chosen.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct MessagesPreferences {
+    pub enabled: bool,
+    /// Each conversation's newest text; off shows only who wrote and when.
+    pub show_text: bool,
+}
+impl Default for MessagesPreferences {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            show_text: true,
+        }
+    }
+}
 /// Focus timer durations and behavior. The running session (phase, end
 /// time, completed rounds) is runtime state in its own file.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -1800,7 +1820,8 @@ impl RefreshIntervals {
             | Widget::Music
             | Widget::Notes
             | Widget::Focus
-            | Widget::Devices => self.clock,
+            | Widget::Devices
+            | Widget::Messages => self.clock,
         }
     }
     pub fn duration(&self, widget: Widget) -> std::time::Duration {
@@ -1815,7 +1836,8 @@ impl RefreshIntervals {
             | Widget::Music
             | Widget::Notes
             | Widget::Focus
-            | Widget::Devices => (1, 60),
+            | Widget::Devices
+            | Widget::Messages => (1, 60),
             Widget::Weather => (300, 10800),
             Widget::Calendar => (60, 3600),
             Widget::Projects => (10, 600),
@@ -1832,7 +1854,8 @@ impl RefreshIntervals {
             | Widget::Music
             | Widget::Notes
             | Widget::Focus
-            | Widget::Devices => &[1, 15, 30, 60],
+            | Widget::Devices
+            | Widget::Messages => &[1, 15, 30, 60],
         }
     }
     pub fn label(seconds: u64) -> String {
