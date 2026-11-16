@@ -334,7 +334,8 @@ pub enum Message {
     AskLeave(bool),
     /// Writes every choice as one desktop change.
     ApplyAll,
-    /// Undoes that one change and returns to Review.
+    /// Undoes that one change. The ending then says so, with the choices
+    /// kept for another try.
     UndoSetup,
     /// Back to the desktop as it is: no starter look.
     KeepCurrent,
@@ -470,6 +471,9 @@ pub struct Wizard {
     returning: bool,
     /// What Apply did, for the ending.
     pub applied: Option<Applied>,
+    /// Undo setup just put the desktop back: the ending says so, and the
+    /// choices stay for Change choices.
+    pub undone: bool,
     pub widgets: widgets::Draft,
     pub displays: Registry,
     geometry: Snapshot,
@@ -517,6 +521,7 @@ impl Wizard {
             leaving: false,
             returning: false,
             applied: None,
+            undone: false,
         }
     }
 
@@ -858,7 +863,7 @@ impl Wizard {
                 if self.error.is_none() {
                     crate::usage::counts::setup("undone");
                     self.applied = None;
-                    self.go(Step::Ready);
+                    self.undone = true;
                 }
                 return changed;
             }
@@ -1038,6 +1043,7 @@ impl Wizard {
 
     fn go(&mut self, step: Step) {
         self.widgets.cancel_drag();
+        self.undone &= step == Step::Done;
         if self.step != step {
             crate::usage::counts::setup(&format!("reached.{}", step.key()));
             self.visited.push(self.step);
@@ -1422,12 +1428,11 @@ impl Wizard {
             }
             self.changes.pop();
         }
-        if self.changes.is_empty() {
-            self.look = None;
-        }
+        // The chosen look stays in the draft, for another try.
         self.bars = Bars::current(store, self.islands_available);
         self.applied_bars = self.bars;
         self.touched = Touched::default();
+        self.bars = self.look_bars();
         if any { Outcome::Changed } else { Outcome::None }
     }
 }
