@@ -69,9 +69,8 @@ const ROW_GAP: f32 = 4.;
 const LIST_FOOTER: f32 = 40.;
 /// "and N more" beneath the rows on an island, when some do not fit.
 const MORE_LINE: f32 = ROW_GAP + 22.;
-/// Clear all on an island's list title line, and its gap before Collapse.
-const CLEAR_WIDTH: f32 = 76.;
-const CLEAR_ROOM: f32 = CLEAR_WIDTH + 4.;
+/// Clear all on an island's list title line, a ✕ beside Collapse.
+const CLEAR_ROOM: f32 = 28. + 2.;
 /// The room a card has below its title line, as the chooser uses it.
 const LIST_ROOM: f32 = HEIGHT - 50.;
 /// The height of a list of `rows` notifications and what follows them.
@@ -2828,38 +2827,40 @@ impl Applet {
             }
             _ => Message::Hold,
         });
-        let collapse = self.tip(
-            palette,
-            widget::button::icon(widget::icon::from_name("go-up-symbolic").symbolic(true))
-                .id("activity-collapse".into())
-                .icon_size(16)
-                .padding(6)
-                .width(28)
-                .height(28)
-                .class(capsule_button(palette, accent, reveal, Role::Ghost))
-                .on_press(Message::Close),
+        // Round glyphs on the title line: Collapse, and the list's Clear
+        // all, the same ✕ a row dismisses with.
+        let round = |icon: &'static str, id: &'static str, press: Message, tip: &str| {
+            self.tip(
+                palette,
+                widget::button::icon(widget::icon::from_name(icon).symbolic(true))
+                    .id(id.into())
+                    .icon_size(16)
+                    .padding(6)
+                    .width(28)
+                    .height(28)
+                    .class(capsule_button(palette, accent, reveal, Role::Ghost))
+                    .on_press(press),
+                tip,
+                widget::tooltip::Position::Bottom,
+            )
+        };
+        let collapse = round(
+            "go-up-symbolic",
+            "activity-collapse",
+            Message::Close,
             "Collapse (Esc)",
-            widget::tooltip::Position::Bottom,
         );
         let pin = if clear {
             widget::row([
-                widget::button::custom(
-                    widget::container(self.text("Clear all", 13., alpha(palette.ink, reveal)))
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .align_x(cosmic::iced::Alignment::Center)
-                        .align_y(cosmic::iced::Alignment::Center),
-                )
-                .id("activity-note-clear".into())
-                .width(CLEAR_WIDTH)
-                .height(28)
-                .padding(0)
-                .class(capsule_button(palette, accent, reveal, Role::Quiet))
-                .on_press(Message::NotesClear)
-                .into(),
+                round(
+                    "window-close-symbolic",
+                    "activity-note-clear",
+                    Message::NotesClear,
+                    "Clear all",
+                ),
                 collapse,
             ])
-            .spacing(CLEAR_ROOM - CLEAR_WIDTH)
+            .spacing(CLEAR_ROOM - 28.)
             .into()
         } else {
             collapse
