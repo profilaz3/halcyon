@@ -1,3 +1,14 @@
+cosmic-ext-halcyon (0.7.5) unstable; urgency=medium
+
+  * Add phone messages through KDE Connect as a widget, an island activity, or both.
+  * Add transparent Dark glass widgets with a subtle shader and hover glint.
+  * Add five clock faces, bundled typefaces and clearer clock placement controls.
+  * Add CalDAV, calendar files, folders, holiday feeds and system account calendars.
+  * Improve navigation, setup recovery, Arrange, Undo and error explanations.
+  * Restore navigation from Devices to activities and load more music cover formats.
+
+ -- profilaz3 <261673162+profilaz3@users.noreply.github.com>  Mon, 16 Nov 2026 22:00:00 +0000
+
 cosmic-ext-halcyon (0.7.0) unstable; urgency=medium
 
   * Apply looks part by part and make your own in the Look studio.

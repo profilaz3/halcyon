@@ -43,6 +43,15 @@
   </provides>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.7.5" date="2026-11-16">
+      <description><ul>
+        <li>Phone messages through KDE Connect as a desktop widget, an Activity island entry, or both.</li>
+        <li>Dark glass widgets with true low opacity, subtle grain and a brief hover glint.</li>
+        <li>Five new clock faces, bundled typefaces and clearer clock placement controls.</li>
+        <li>CalDAV accounts, calendar files and folders, holiday feeds and system account calendars.</li>
+        <li>Clearer navigation and errors, safer Arrange and Undo, and a way back from Devices to activities.</li>
+      </ul></description>
+    </release>
     <release version="0.7.0" date="2026-11-14">
       <description><ul>
         <li>Apply only the parts of a look you want, or make your own in the Look studio.</li>

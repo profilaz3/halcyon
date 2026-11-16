@@ -19,6 +19,41 @@ pub(super) struct Release {
 
 pub(super) const RELEASES: &[Release] = &[
     Release {
+        version: "0.7.5",
+        notes: &[
+            Note {
+                title: "Phone messages",
+                body: "Show your phone's KDE Connect conversations as a widget, an Activity island entry, or both.",
+                place: Some(navigation::MESSAGES),
+                link: None,
+            },
+            Note {
+                title: "Dark glass widgets",
+                body: "Try transparent dark cards with a fine edge, subtle grain and a brief hover glint.",
+                place: None,
+                link: None,
+            },
+            Note {
+                title: "More clock faces",
+                body: "Try five new clock faces, four bundled typefaces and clearer clock placement controls.",
+                place: None,
+                link: None,
+            },
+            Note {
+                title: "More ways to add calendars",
+                body: "Add CalDAV, calendar files and folders, holiday feeds and calendars from system accounts.",
+                place: None,
+                link: None,
+            },
+            Note {
+                title: "Clearer navigation and recovery",
+                body: "Return from Devices to activities, undo Clear all, and find clearer next steps in Settings.",
+                place: None,
+                link: None,
+            },
+        ],
+    },
+    Release {
         version: "0.7.0",
         notes: &[
             Note {
