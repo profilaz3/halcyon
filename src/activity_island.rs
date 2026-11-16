@@ -100,6 +100,13 @@ const LEAVE_GRACE: Duration = Duration::from_millis(300);
 const UNENTERED_GRACE: Duration = Duration::from_secs(5);
 /// How long a Do Not Disturb switch made here waits for the desktop.
 const DND_SETTLE: Duration = Duration::from_secs(3);
+/// How long Clear all can be undone, with the island open on it.
+const CLEAR_UNDO: Duration = Duration::from_secs(5);
+#[cfg(test)]
+thread_local! {
+    /// The notifications Clear all had COSMIC dismiss, in a test.
+    static DISMISSED: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
+}
 /// Escape with the pointer still on the capsule must not reopen it on the next
 /// small motion. Leaving the capsule ends this sooner.
 const ESCAPE_HOVER_BLOCK: Duration = Duration::from_secs(10);
@@ -400,6 +407,8 @@ pub struct Applet {
     menu: Option<inbox::MenuTarget>,
     /// App rules as just chosen here, until the desktop reports them.
     rules_wish: Option<(Vec<preferences::AppRuleEntry>, Instant)>,
+    /// What Clear all took while Undo can still bring it back.
+    cleared: Option<Cleared>,
     /// When the next notification's own timeout ends.
     expiry_at: Option<Instant>,
     /// The timer, transfers, scrubber and outputs.
@@ -413,6 +422,17 @@ pub struct Applet {
     updated: Option<(crate::upgrade::Program, Instant)>,
     /// When to restart into the update. Armed only while nothing is in use.
     restart_at: Option<Instant>,
+}
+/// Notifications Clear all took. They stay open on the server, actions and
+/// all, until Undo's time runs out or the island closes; only then does
+/// COSMIC hear of the dismissal and do they move to Recent.
+struct Cleared {
+    notes: Vec<notifications::Note>,
+    /// How many were cleared, for the card that says so.
+    count: usize,
+    until: Instant,
+    /// Dismissed already: the closing card still says what happened.
+    done: bool,
 }
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -448,6 +468,8 @@ pub enum Message {
     NoteAction(u32, String),
     NoteDismiss(u32),
     NotesClear,
+    /// Bring back what Clear all just took.
+    ClearUndo,
     /// Open the island on the list of notifications.
     ShowNotes,
     /// Switch COSMIC's Do Not Disturb.
@@ -564,6 +586,7 @@ impl Application for Applet {
                 fits: Default::default(),
                 menu: None,
                 rules_wish: None,
+                cleared: None,
                 expiry_at: None,
                 ui: live::Ui::default(),
                 devices: devices::Island::default(),
@@ -629,6 +652,7 @@ impl Application for Applet {
             .chain(self.reveal_deadline)
             .chain(self.pending_at)
             .chain(self.expiry_at)
+            .chain(self.cleared.as_ref().filter(|c| !c.done).map(|c| c.until))
             .chain(self.ui.jobs.deadline())
             .chain(clock.then_some(self.next_clock))
             .min()
@@ -730,6 +754,7 @@ impl Applet {
                     | Message::NoteAction(..)
                     | Message::NoteDismiss(_)
                     | Message::NotesClear
+                    | Message::ClearUndo
                     | Message::ShowNotes
                     | Message::GroupToggle(_)
                     | Message::GroupDismiss(_)
@@ -986,6 +1011,8 @@ impl Applet {
                 return self.update(Message::Close);
             }
             Message::Close => {
+                // Closing finishes a Clear all that could still be undone.
+                let cleared = self.finish_clear();
                 self.promote_popup = None;
                 self.reveal_deadline = None;
                 self.held = false;
@@ -993,8 +1020,9 @@ impl Applet {
                 self.leave_deadline = None;
                 self.motion.retarget(0., self.animates(), now);
                 if !self.motion.active() {
-                    return self.destroy_popup();
+                    return Task::batch([cleared, self.destroy_popup()]);
                 }
+                return cleared;
             }
             Message::FocusLost(id) => {
                 if self.promote_popup == Some(id) {
@@ -1017,6 +1045,8 @@ impl Applet {
                     return open;
                 }
                 if self.popup == Some(id) {
+                    let cleared = self.finish_clear();
+                    self.cleared = None;
                     self.popup = None;
                     self.devices.close();
                     self.held = false;
@@ -1036,6 +1066,7 @@ impl Applet {
                     self.revealed = false;
                     self.motion.retarget(0., false, now);
                     self.arm_pending(now + PENDING_PAUSE);
+                    return cleared;
                 }
             }
             Message::Frame(at) => {
@@ -1060,6 +1091,13 @@ impl Applet {
                 .flatten()
                 {
                     *at = at.checked_sub(early).unwrap_or(now);
+                }
+                if let Some(cleared) = self.cleared.as_mut().filter(|c| !c.done) {
+                    cleared.until = cleared.until.checked_sub(early).unwrap_or(now);
+                    if cleared.until <= now {
+                        // Undo's time is up: the clear is final and the island closes.
+                        return self.update(Message::Close);
+                    }
                 }
                 self.now_ms = chrono::Utc::now().timestamp_millis();
                 if self.ui.jobs.tick(now + early) && self.popup.is_none() {
@@ -1181,22 +1219,34 @@ impl Applet {
             }
             Message::NotesClear => {
                 let notes: Vec<notifications::Note> = self.notes.drain(..).collect();
-                let ids: Vec<u32> = notes.iter().map(|n| n.id).collect();
-                // Oldest first, so Recent keeps them newest first.
-                for note in notes.into_iter().rev() {
-                    self.remember(note, false);
-                }
                 self.open_group = None;
                 // The closing card keeps its heading, not Recent's.
                 self.list = false;
                 self.pending.clear();
                 self.batch.clear();
-                let close = self.update(Message::Close);
-                let dismiss = cosmic::task::future(async move {
-                    Message::SettingsOpened(notifications::dismiss(ids).await)
+                // An earlier clear still waiting is final now.
+                let earlier = self.finish_clear();
+                let Some(first) = notes.first().map(|n| n.id).filter(|_| self.popup.is_some())
+                else {
+                    let dismiss = self.dismiss_cleared(notes);
+                    return Task::batch([earlier, self.update(Message::Close), dismiss]);
+                };
+                // The open island says what went, with Undo, for a few
+                // seconds. COSMIC hears of it only then, so Undo brings the
+                // notifications back with their actions.
+                self.cleared = Some(Cleared {
+                    count: notes.len(),
+                    notes,
+                    until: now + CLEAR_UNDO,
+                    done: false,
                 });
-                return Task::batch([close, dismiss]);
+                self.kind = Kind::Notification(first);
+                self.chooser = false;
+                self.menu = None;
+                self.ui.view = live::View::Card;
+                return Task::batch([earlier, self.hold_cleared()]);
             }
+            Message::ClearUndo => return self.undo_clear(),
             Message::ShowNotes => {
                 if !self.notes_shown() || (self.notes.is_empty() && !self.has_recent()) {
                     return Task::none();
@@ -1662,6 +1712,8 @@ impl Applet {
         ))
     }
     fn destroy_popup(&mut self) -> Task<Message> {
+        let cleared = self.finish_clear();
+        self.cleared = None;
         self.promote_popup = None;
         self.held = false;
         self.chooser = false;
@@ -1682,9 +1734,87 @@ impl Applet {
             self.arm_pending(Instant::now() + PENDING_PAUSE);
         }
         if let Some(id) = self.popup.take() {
-            return self.update(Message::Surface(cosmic::surface::action::destroy_popup(id)));
+            return Task::batch([
+                cleared,
+                self.update(Message::Surface(cosmic::surface::action::destroy_popup(id))),
+            ]);
         }
-        Task::none()
+        cleared
+    }
+    /// Clear all keeps the island open, in hand and at a card's size, while
+    /// Undo can still bring the notifications back.
+    fn hold_cleared(&mut self) -> Task<Message> {
+        let fits = self.popup_wide == 0. && self.popup_extra <= self.live_extra() + 0.5;
+        if !self.held {
+            // Reopened in hand, at the size of what it shows now.
+            return self.hold_popup();
+        }
+        self.reveal_deadline = None;
+        self.revealed = false;
+        self.leave_deadline = None;
+        match self.popup {
+            Some(id) if !fits => {
+                self.promote_popup = Some(id);
+                self.update(Message::Surface(cosmic::surface::action::destroy_popup(id)))
+            }
+            _ => Task::none(),
+        }
+    }
+    /// Makes a Clear all final: COSMIC dismisses the notifications and they
+    /// move to Recent. The card keeps saying what happened until it closes.
+    fn finish_clear(&mut self) -> Task<Message> {
+        let Some(cleared) = self.cleared.as_mut().filter(|c| !c.done) else {
+            return Task::none();
+        };
+        cleared.done = true;
+        let notes = std::mem::take(&mut cleared.notes);
+        self.dismiss_cleared(notes)
+    }
+    /// Moves cleared notifications to Recent and has COSMIC dismiss them.
+    fn dismiss_cleared(&mut self, notes: Vec<notifications::Note>) -> Task<Message> {
+        let ids: Vec<u32> = notes.iter().map(|n| n.id).collect();
+        // Oldest first, so Recent keeps them newest first.
+        for note in notes.into_iter().rev() {
+            self.remember(note, false);
+        }
+        if ids.is_empty() {
+            return Task::none();
+        }
+        #[cfg(test)]
+        DISMISSED.with(|dismissed| dismissed.borrow_mut().extend(&ids));
+        cosmic::task::future(
+            async move { Message::SettingsOpened(notifications::dismiss(ids).await) },
+        )
+    }
+    /// Undo after Clear all: the notifications are back in the list, after
+    /// any that came meanwhile, and the island stays open on them.
+    fn undo_clear(&mut self) -> Task<Message> {
+        let Some(cleared) = self.cleared.take_if(|c| !c.done) else {
+            return Task::none();
+        };
+        let notes: Vec<notifications::Note> = cleared
+            .notes
+            .into_iter()
+            .filter(|n| self.rule(n) != Some(preferences::AppRule::Mute))
+            .collect();
+        if !self.notes_shown() {
+            // Notifications were turned off meanwhile: the clear stands.
+            let dismiss = self.dismiss_cleared(notes);
+            return Task::batch([dismiss, self.update(Message::Close)]);
+        }
+        self.notes.extend(notes);
+        // The oldest give way to Recent, still open on the server.
+        while self.notes.len() > notifications::LIMIT {
+            let old = self.notes.pop().expect("more than the limit");
+            self.remember(old, true);
+        }
+        self.arm_expiry();
+        let Some(first) = self.notes.iter().find(|n| n.urgent).or(self.notes.first()) else {
+            return self.update(Message::Close);
+        };
+        self.kind = Kind::Notification(first.id);
+        self.list = self.notes.len() > 1;
+        self.fit_list()
     }
     fn text<'a>(&self, value: impl Into<String>, size: f32, color: Color) -> Element<'a, Message> {
         widget::text(value.into())
@@ -1740,6 +1870,15 @@ impl Applet {
             return Content {
                 title,
                 meta: meta.into(),
+                ..Default::default()
+            };
+        }
+        if let Some(cleared) = self.cleared.as_ref().filter(|_| self.popup.is_some()) {
+            return Content {
+                title: match cleared.count {
+                    1 => "Cleared 1 notification".into(),
+                    count => format!("Cleared {count} notifications"),
+                },
                 ..Default::default()
             };
         }
@@ -2107,6 +2246,20 @@ impl Applet {
                     reveal,
                     Role::Primary,
                     Some(Message::Start),
+                ));
+            }
+            return row.into();
+        }
+        if let Some(cleared) = &self.cleared {
+            if !cleared.done {
+                row = row.push(self.label_button(
+                    palette,
+                    "activity-clear-undo",
+                    "Undo",
+                    tint,
+                    reveal,
+                    Role::Primary,
+                    Some(Message::ClearUndo),
                 ));
             }
             return row.into();

@@ -410,22 +410,62 @@ impl Settings {
             );
             lines.push(
                 row::with_children(vec![
-                    button::text("Keep today’s values")
+                    button::text("Not now")
+                        .id("undo-not-now".into())
+                        .on_press(Message::UndoReviewLater)
+                        .into(),
+                    button::text("Don’t undo anything")
                         .id("undo-keep-current".into())
                         .on_press(Message::ResolveUndoShown(review.clone(), false))
                         .into(),
-                    button::suggested("Undo the rest anyway")
+                    button::suggested("Undo the rest, keep the changed ones")
                         .id("undo-reviewed".into())
                         .on_press(Message::ResolveUndoShown(review.clone(), true))
                         .into(),
                 ])
                 .spacing(8)
+                .wrap()
                 .into(),
             );
+            // Keeping everything settles the Undo; Not now leaves it.
+            lines.push(label(
+                "Don’t undo anything also removes this Undo.",
+                CAPTION,
+                Color::from_rgb8(170, 175, 184),
+            ));
             return container(column::with_children(lines).spacing(6))
                 .padding([8, 22])
                 .width(Length::Fill)
                 .into();
+        }
+        if let Some((id, page)) = self.undo_elsewhere_shown() {
+            // Ctrl+Z on a page that didn't make the latest change.
+            return container(
+                row::with_children(vec![
+                    container(label(
+                        &format!("The latest change was on {}", page.title()),
+                        12.,
+                        MUTED,
+                    ))
+                    .id("settings-undo-elsewhere")
+                    .width(Length::Fill)
+                    .into(),
+                    button::text("Open Changes")
+                        .id("undo-elsewhere-changes".into())
+                        .on_press(Message::OpenRoot(Page::Changes))
+                        .into(),
+                    button::text("Undo it")
+                        .id("undo-elsewhere".into())
+                        .leading_icon(icon::from_name("edit-undo-symbolic").size(14))
+                        .on_press(Message::UndoDesktopShown(Some(id)))
+                        .into(),
+                ])
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .padding([8, 22])
+            .width(Length::Fill)
+            .into();
         }
         if self.native_busy {
             // The rendered target stays visible while a write finishes; it is
@@ -576,23 +616,44 @@ impl Settings {
             .as_ref()
             .is_some_and(|(_, _, id)| self.undo_baseline.as_ref() != Some(id))
     }
-    /// Whether this page made the latest change: made here since it opened,
-    /// or recorded for this page. Only here do Ctrl+Z and the footer undo
-    /// it; elsewhere Changes does.
-    pub(in crate::settings) fn owns_latest_change(&self) -> bool {
-        let Some((owner, label, _)) = &self.last_desktop_change else {
-            return false;
-        };
-        if self.latest_change_fresh() {
-            return true;
-        }
-        let page = match self.latest_summary() {
+    /// The page the latest change belongs to, as Changes files it.
+    fn latest_change_page(&self) -> Option<Page> {
+        let (owner, label, _) = self.last_desktop_change.as_ref()?;
+        Some(match self.latest_summary() {
             Some(summary) => crate::settings::support::change_page(summary),
             None => crate::settings::support::owner_page(
                 Some(*owner),
                 crate::desktop::store::activity::Applied::of_label(label),
                 None,
             ),
+        })
+    }
+    /// After Ctrl+Z on a page that didn't make the latest change: that
+    /// change and its page, while it is still the latest and nothing more
+    /// pressing fills the footer.
+    pub(in crate::settings) fn undo_elsewhere_shown(&self) -> Option<(String, Page)> {
+        let (_, _, id) = self.last_desktop_change.as_ref()?;
+        if self.undo_elsewhere.as_ref() != Some(id)
+            || self.owns_latest_change()
+            || self.native_busy
+            || self.page_error().is_some()
+        {
+            return None;
+        }
+        Some((id.clone(), self.latest_change_page()?))
+    }
+    /// Whether this page made the latest change: made here since it opened,
+    /// or recorded for this page. Only here do Ctrl+Z and the footer undo
+    /// it; elsewhere Changes does.
+    pub(in crate::settings) fn owns_latest_change(&self) -> bool {
+        if self.last_desktop_change.is_none() {
+            return false;
+        }
+        if self.latest_change_fresh() {
+            return true;
+        }
+        let Some(page) = self.latest_change_page() else {
+            return false;
         };
         // Widget pages share the Widgets root but are pages of their own.
         // Wallpaper and Weather apply one draft, so either undoes it.

@@ -256,11 +256,15 @@ fn onboarding_full_display_explains_and_recovers_without_discarding_choices() {
         assert!(Config::load().notes.enabled);
         assert!(!Config::load().widget_visible(Widget::Clock));
         click(&mut app, &mut native, "wizard-undo");
-        assert_eq!(step(&app), wizard::Step::Ready);
+        assert_eq!(step(&app), wizard::Step::Done);
+        assert!(app.wizard.as_ref().unwrap().undone);
         assert_eq!(Config::load().widget_sizes["clock"], [730., 430.]);
         assert!(!Config::load().notes.enabled);
-        let _ = app.update(Message::Wizard(wizard::Message::Cancel));
+        // Close setup leaves the desktop as it is and keeps the choices.
+        click(&mut app, &mut native, "wizard-close");
         assert!(app.wizard.is_none());
+        assert!(app.setup_kept);
+        assert!(!Config::load().notes.enabled);
     }
 }
 
@@ -529,7 +533,18 @@ fn every_screen_fits_and_cancel_puts_the_desktop_back() {
         assert_eq!(user(PANEL, "plugins_wings"), None);
         shot(&app, &mut native, "6-done");
         click_worker(&mut app, &mut native, "wizard-undo");
-        assert_eq!(step(&app), wizard::Step::Ready);
+        // The ending says the undo worked, and the choices stay.
+        assert_eq!(step(&app), wizard::Step::Done);
+        assert!(app.wizard.as_ref().unwrap().undone);
+        native.text_bounds(app.settings_view(), "Setup undone");
+        native.text_bounds(app.settings_view(), "Your desktop is back as it was");
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "wizard-undo")
+                .is_none()
+        );
+        native.bounds(app.settings_view(), "wizard-close");
+        shot(&app, &mut native, "7-undone");
         let config = Config::load();
         assert_eq!(
             config.appearance.family, None,
@@ -538,6 +553,20 @@ fn every_screen_fits_and_cancel_puts_the_desktop_back() {
         for key in ["autohide", "border_radius"] {
             assert!(user(DOCK, key).is_none(), "{key}: {:?}", user(DOCK, key));
         }
+        assert_eq!(app.wizard.as_ref().unwrap().look, Some("evening"));
+        // Change choices goes back to Review with the look still chosen.
+        click(&mut app, &mut native, "wizard-change-choices");
+        assert_eq!(step(&app), wizard::Step::Ready);
+        assert!(!app.wizard.as_ref().unwrap().undone);
+        assert!(
+            app.wizard
+                .as_ref()
+                .unwrap()
+                .summary_lines(&app.config)
+                .iter()
+                .any(|line| line.starts_with("Look: ")),
+            "the look is not My current desktop"
+        );
         let task = app.update(Message::Wizard(wizard::Message::Cancel));
         super::tests::settle_settings(&mut app, task);
         assert!(

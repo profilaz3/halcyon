@@ -2338,7 +2338,114 @@ fn notification_list_dismisses_one_and_clears_all() {
     ));
     let _ = app.update(Message::NotesClear);
     assert!(app.notes.is_empty() && !app.listing());
+    // It stays open for Undo, then closes by itself.
+    assert_eq!(app.motion.target(), 1.);
+    let _ = app.update(Message::Wake(super::CLEAR_UNDO));
     assert_eq!(app.motion.target(), 0.);
+}
+/// What Clear all had COSMIC dismiss since the last look.
+fn dismissed() -> Vec<u32> {
+    super::DISMISSED.with(|d| std::mem::take(&mut *d.borrow_mut()))
+}
+#[test]
+fn clear_all_waits_to_dismiss_and_undo_brings_everything_back() {
+    let mut app = listed();
+    let mut reply = note(4, "Mail", "mail-mark-read-symbolic", "Ana Ruiz", "Lunch?");
+    reply.actions = vec![("reply".into(), "Reply".into())];
+    notify(&mut app, reply.clone());
+    let before: Vec<u32> = app.notes.iter().map(|n| n.id).collect();
+    let recent = app.recent.len();
+    let mut ui = open_list(&mut app);
+    dismissed();
+    assert!(matches!(
+        click(&mut ui, &app, "activity-note-clear").as_slice(),
+        [Message::NotesClear]
+    ));
+    let _ = app.update(Message::NotesClear);
+    // The list empties, but COSMIC hears nothing and Recent waits.
+    assert!(app.notes.is_empty() && !app.listing());
+    assert!(dismissed().is_empty());
+    assert_eq!(app.recent.len(), recent);
+    assert!(app.popup.is_some() && app.held && app.motion.target() == 1.);
+    // The list-sized popup reopens in hand at a card's size.
+    let old = app.popup.unwrap();
+    assert_eq!(app.promote_popup, Some(old));
+    let _ = app.update(Message::PopupGone(old));
+    assert!(app.popup.is_some_and(|id| id != old) && app.popup_wide == 0.);
+    app.motion.retarget(1., false, Instant::now());
+    let mut ui = crate::native_test::Native::new(cosmic::iced::Size::new(
+        app.popup_width(),
+        app.popup_height(),
+    ));
+    assert_eq!(app.content().title, "Cleared 4 notifications");
+    assert!(
+        ui.text_bounds(app.capsule(true), "Cleared 4 notifications")
+            .width
+            > 0.
+    );
+    assert!(matches!(
+        click(&mut ui, &app, "activity-clear-undo").as_slice(),
+        [Message::ClearUndo]
+    ));
+    // Undo: every one is back, in order and with its actions, still open.
+    let _ = app.update(Message::ClearUndo);
+    assert_eq!(app.notes.iter().map(|n| n.id).collect::<Vec<_>>(), before);
+    assert_eq!(app.note(4).unwrap().actions, reply.actions);
+    assert!(app.listing() && app.popup.is_some() && app.held);
+    assert!(app.cleared.is_none() && dismissed().is_empty());
+    assert_eq!(app.recent.len(), recent);
+
+    // Left alone, the clear is final when its time runs out.
+    let _ = app.update(Message::NotesClear);
+    let _ = app.update(Message::Wake(super::CLEAR_UNDO));
+    let mut gone = dismissed();
+    gone.sort();
+    assert_eq!(gone, [1, 2, 3, 4]);
+    assert_eq!(
+        app.recent
+            .iter()
+            .take(4)
+            .map(|r| r.note.id)
+            .collect::<Vec<_>>(),
+        before,
+        "Recent keeps them newest first"
+    );
+    assert!(app.recent.iter().take(4).all(|r| !r.alive));
+    assert_eq!(app.motion.target(), 0.);
+    // The closing card still says what happened; Undo is gone.
+    assert_eq!(app.content().title, "Cleared 4 notifications");
+    let _ = app.update(Message::ClearUndo);
+    assert!(app.notes.is_empty());
+    close(&mut app);
+    assert!(app.cleared.is_none() && app.popup.is_none());
+}
+#[test]
+fn clear_all_is_final_when_the_island_closes_and_follows_cosmic_meanwhile() {
+    let mut app = listed();
+    let _ = open_list(&mut app);
+    dismissed();
+    let _ = app.update(Message::NotesClear);
+    // Its app closes one and replaces another while Undo is offered.
+    let _ = app.update(Message::Notes(notifications::Event::Closed(1)));
+    assert_eq!(app.recent[0].note.id, 1);
+    notify(&mut app, note(2, "Mail", "", "Ana Ruiz", "Moved to one"));
+    assert_eq!(app.notes.len(), 1, "a replacement is live again");
+    assert!(dismissed().is_empty());
+    // Collapse or Escape makes the clear final at once.
+    let _ = app.update(Message::Key(keyboard::Key::Named(
+        keyboard::key::Named::Escape,
+    )));
+    assert_eq!(dismissed(), [3], "only the one still held");
+    assert!(app.note(2).is_some(), "the replacement stays");
+    // Without an open island there is nothing to show Undo in.
+    close(&mut app);
+    notify(&mut app, note(7, "Chat", "", "Later", ""));
+    assert!(app.popup.is_none());
+    let _ = app.update(Message::NotesClear);
+    let mut gone = dismissed();
+    gone.sort();
+    assert_eq!(gone, [2, 7]);
+    assert!(app.cleared.is_none());
 }
 #[test]
 fn notification_list_caps_its_rows_and_counts_the_rest() {

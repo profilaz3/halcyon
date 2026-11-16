@@ -580,14 +580,15 @@ impl Cards {
             // Kept for the next time the edge menu opens; a stalled effect
             // is no reason to open it.
             self.notice = Some(Notice {
-                title: "The weather effect stopped moving",
-                body: "It starts again when the display or the effect changes.",
+                title: "The weather effect stopped moving".into(),
+                body: "It starts again when the display or the effect changes.".into(),
                 error: format!(
                     "No frames on {} after {TRIES} tries and a new surface.",
                     stuck.join(", ")
                 ),
                 retry: Some(Message::RainRetry),
                 details: false,
+                brief: false,
             });
         }
         Task::batch([nudge, recreate])

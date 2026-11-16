@@ -969,6 +969,17 @@ impl Applet {
             }
             notifications::Event::Closed(id) | notifications::Event::Expired(id) => {
                 let alive = matches!(event, notifications::Event::Expired(_));
+                // One Clear all is holding was closed by its app meanwhile:
+                // nothing is left to undo or dismiss for it.
+                if let Some(cleared) = self.cleared.as_mut().filter(|c| !c.done) {
+                    if let Some(at) = cleared.notes.iter().position(|n| n.id == id) {
+                        if !alive {
+                            let note = cleared.notes.remove(at);
+                            self.remember(note, false);
+                        }
+                        return Task::none();
+                    }
+                }
                 let shown = self.kind == Kind::Notification(id) && self.popup.is_some();
                 if let Some(note) = self.note(id).cloned() {
                     self.remember(note, alive);
@@ -998,8 +1009,12 @@ impl Applet {
                 }
                 note.at_ms = chrono::Utc::now().timestamp_millis();
                 let id = note.id;
-                // A replaced notification is live again, not recent.
+                // A replaced notification is live again, not recent, nor
+                // one Clear all is holding.
                 self.recent.retain(|r| r.note.id != id);
+                if let Some(cleared) = self.cleared.as_mut() {
+                    cleared.notes.retain(|n| n.id != id);
+                }
                 if self.rule(&note) == Some(preferences::AppRule::Mute) {
                     self.forget_note(id);
                     self.muted += 1;

@@ -318,6 +318,7 @@ fn time_of_day_one_page_switches_whole_look_or_widget_style() {
             days: crate::automation::Days::WEEKDAYS,
             source: crate::automation::solar::Source::Manual,
         },
+        also: Default::default(),
     });
     assert!(!app.automation.widget_style(&mixed), "daily looks decide the mode");
     // Looks opens Time of day from a card at the top.

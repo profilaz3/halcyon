@@ -43,28 +43,21 @@ pub(super) fn in_order(job: impl FnOnce() + Send + 'static) {
 /// What the desktop shows when a background write fails.
 #[derive(Debug, Clone)]
 pub struct Failure {
-    pub title: &'static str,
-    pub body: &'static str,
+    pub title: std::borrow::Cow<'static, str>,
+    pub body: std::borrow::Cow<'static, str>,
     pub retry: Option<Box<Message>>,
-    /// Shown in the edge menu; when false, the failure is only logged.
-    pub notice: bool,
 }
 
 impl Failure {
-    pub fn notice(title: &'static str, body: &'static str, retry: Option<Message>) -> Self {
+    pub fn notice(
+        title: impl Into<std::borrow::Cow<'static, str>>,
+        body: impl Into<std::borrow::Cow<'static, str>>,
+        retry: Option<Message>,
+    ) -> Self {
         Self {
-            title,
-            body,
+            title: title.into(),
+            body: body.into(),
             retry: retry.map(Box::new),
-            notice: true,
-        }
-    }
-    pub fn quiet(title: &'static str) -> Self {
-        Self {
-            title,
-            body: "",
-            retry: None,
-            notice: false,
         }
     }
 }
@@ -142,14 +135,12 @@ impl Cards {
                     None => {}
                 }
                 eprintln!("{}: {error}", saved.failure.title);
-                if saved.failure.notice {
-                    self.raise_notice(
-                        saved.failure.title,
-                        saved.failure.body,
-                        error,
-                        saved.failure.retry.map(|message| *message),
-                    );
-                }
+                self.raise_notice(
+                    saved.failure.title,
+                    saved.failure.body,
+                    error,
+                    saved.failure.retry.map(|message| *message),
+                );
                 Task::none()
             }
         }
@@ -344,5 +335,45 @@ mod tests {
         assert_eq!(cards.config.ordered_right_cards(), before);
         let notice = cards.notice.as_ref().expect("the failure is shown");
         assert_eq!(notice.title, "Couldn’t save the widget order");
+    }
+
+    #[test]
+    fn fail08_a_mute_that_isnt_saved_says_so_with_try_again() {
+        if isolated(
+            "app::config_writes::tests::fail08_a_mute_that_isnt_saved_says_so_with_try_again",
+        ) {
+            return;
+        }
+        use crate::activity_island::bridge::{Command, Event};
+        use crate::activity_island::preferences::AppRule;
+        let mut cards = cards();
+        let path = Config::path().unwrap();
+        let saved = std::fs::read(&path).unwrap();
+        std::fs::write(&path, "{broken").unwrap();
+        let mute = Command::NoteRule {
+            app: "Firefox".into(),
+            entry: "firefox".into(),
+            rule: Some(AppRule::Mute),
+        };
+        let task = cards.update(Message::Activity(Event::Command(mute)));
+        finish(&mut cards, task);
+        // The island stops waiting for the rule; the edge menu says why the
+        // notifications keep coming.
+        let notice = cards.notice.as_ref().expect("the failure is shown");
+        assert_eq!(notice.title, "Couldn’t mute Firefox");
+        assert_eq!(notice.body, "Notifications from Firefox will still show.");
+        assert!(notice.retry.is_some() && !notice.brief);
+        assert!(cards.sidebar.visible);
+        // Try again saves it once the settings can be written.
+        std::fs::write(&path, &saved).unwrap();
+        let task = cards.update(Message::NoticeRetry);
+        finish(&mut cards, task);
+        assert!(cards.notice.is_none());
+        assert_eq!(
+            Config::load()
+                .activity_island
+                .rule_for("Firefox", "firefox"),
+            Some(AppRule::Mute)
+        );
     }
 }

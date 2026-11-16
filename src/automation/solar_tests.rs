@@ -37,6 +37,7 @@ fn setup() -> (Automation, Context) {
             days: Days::EVERY,
             source: Source::Manual,
         },
+        also: Default::default(),
     });
     settings.version = settings.written_version();
     let context = Context::from_config(&Config::default(), &settings);
@@ -349,6 +350,7 @@ fn solar_saved_setup_changes_only_appearance_and_records_recovery() {
                 &Default::default(),
                 false,
                 Some((&context, Source::Weather)),
+                None,
             )
         },
     );

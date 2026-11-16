@@ -59,6 +59,21 @@ pub fn project(input: &Profile) -> Result<Profile, String> {
     Ok(output)
 }
 
+/// What a switch at a set time applies: the whole look, except that the
+/// widget layout stays and the dock and panel only take the look's colors
+/// and shape, unless the rule asks for them too.
+pub fn timed(input: &Profile, also: super::Also) -> Profile {
+    let mut output = input.clone();
+    if !also.layout {
+        output.widget_layout = None;
+    }
+    if !also.bars {
+        output.dock = input.dock.as_ref().map(bar);
+        output.panel = input.panel.as_ref().map(bar);
+    }
+    output
+}
+
 fn colors(v: &crate::desktop::profiles::VariantLook) -> crate::desktop::profiles::VariantLook {
     crate::desktop::profiles::VariantLook {
         accent: v.accent.clone(),

@@ -30,7 +30,9 @@ pub mod status;
 
 #[cfg_attr(not(test), allow(unused_imports))]
 pub use decide::{Cause, Due, Effect, Outcome, State, decide, next_check, next_switch};
-pub use rules::{Automation, Change, Days, DisplayWhen, Pause, ProfileRef, Rule, Time, Trigger};
+pub use rules::{
+    Also, Automation, Change, Days, DisplayWhen, Pause, ProfileRef, Rule, Time, Trigger,
+};
 
 use crate::desktop::DesktopStore;
 use crate::desktop::profiles::Domain;

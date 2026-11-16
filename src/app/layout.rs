@@ -191,6 +191,15 @@ pub(super) struct LayoutEditor {
     pub(super) selected: Option<Widget>,
     error: Option<String>,
     pub(super) exit_failed: bool,
+    // Esc with changes asks before Cancel undoes them.
+    pub(super) confirm_discard: bool,
+    // The recovery card: Cancel, not Done, failed to finish.
+    pub(super) cancel_failed: bool,
+    // The recovery card: Put everything back was tried and failed.
+    pub(super) retry_failed: bool,
+    // A plain sentence for the recovery card's body, when one fits better
+    // than the generic one. `error` keeps the details.
+    reason: Option<&'static str>,
 }
 
 impl LayoutEditor {
@@ -200,6 +209,11 @@ impl LayoutEditor {
             || self.sizes != self.baseline_sizes
             || self.grid != self.saved_grid
             || self.shown != self.baseline_shown
+    }
+
+    /// Whether this session changed anything, saved as it went or not.
+    fn has_session_changes(&self) -> bool {
+        !self.session_actions.is_empty() || self.has_unsaved_changes()
     }
 
     pub(super) fn pause_for_output_change(&mut self) {
@@ -245,6 +259,20 @@ impl LayoutEditor {
 
     pub(super) fn positions(&self) -> &BTreeMap<String, [f32; 2]> {
         &self.draft
+    }
+}
+
+#[cfg(test)]
+impl LayoutEditor {
+    /// A session that couldn't finish, as the recovery card shows it.
+    pub(super) fn failed(cancel: bool, error: Option<&str>, reason: Option<&'static str>) -> Self {
+        Self {
+            exit_failed: true,
+            cancel_failed: cancel,
+            error: error.map(Into::into),
+            reason,
+            ..Default::default()
+        }
     }
 }
 
@@ -993,6 +1021,9 @@ impl Cards {
         draft.pending_resume = None;
         draft.aside = false;
         draft.adding = false;
+        draft.confirm_discard = false;
+        draft.retry_failed = false;
+        draft.reason = None;
         draft.output_handles = self.layout_output_handles();
         draft.editing_output = self.selected_output.clone();
         draft.editing_display = self
@@ -1171,9 +1202,13 @@ impl Cards {
         let reload = !editor.session_actions.is_empty() || result.is_err();
         editor.active = false;
         editor.drag = None;
+        editor.confirm_discard = false;
         if let Err(error) = result {
             editor.error = Some(error);
             editor.exit_failed = true;
+            editor.cancel_failed = !save;
+            editor.retry_failed = false;
+            editor.reason = None;
             self.paused_layout = Some(editor);
             self.sidebar.show(Instant::now());
         }
@@ -1200,6 +1235,8 @@ impl Cards {
                 Ok(()) => self.clear_arrange_recovery(),
                 Err(error) => {
                     editor.error = Some(error);
+                    editor.retry_failed = true;
+                    editor.reason = None;
                     if was_resuming {
                         self.pending_arrange = None;
                         self.arrange_display = None;
@@ -1232,7 +1269,9 @@ impl Cards {
                     .find(|output| output.handle == original.handle)
             });
         if editor.contexts != contexts || output.is_none() {
-            editor.error = Some("Displays changed. Reconnect the original displays to keep arranging, or choose another option.".into());
+            editor.reason = Some(
+                "Displays changed. Reconnect the original displays to keep arranging, or choose another option.",
+            );
             return Task::none();
         }
         let display = output.and_then(|output| self.displays.key(output));
@@ -1240,7 +1279,9 @@ impl Cards {
             && output.map(|output| &output.handle)
                 != self.selected_output.as_ref().map(|output| &output.handle)
         {
-            editor.error = Some("The original editing display is unavailable.".into());
+            editor.reason = Some(
+                "The display you were arranging isn’t available. Reconnect it to keep arranging, or choose another option.",
+            );
             return Task::none();
         }
         editor.pending_resume = output.cloned();
@@ -1273,7 +1314,9 @@ impl Cards {
         }
         editor.pending_resume = None;
         editor.exit_failed = true;
-        editor.error = Some("Displays changed while resuming. Reconnect the original displays to keep arranging, or choose another option.".into());
+        editor.reason = Some(
+            "Displays changed while resuming. Reconnect the original displays to keep arranging, or choose another option.",
+        );
         self.pending_arrange = None;
         self.arrange_display = None;
         self.sidebar.show(Instant::now());
@@ -1323,44 +1366,64 @@ impl Cards {
 
     pub(super) fn arrange_recovery_view(&self) -> Option<Element<'_, Message>> {
         let editor = self.paused_layout.as_ref().filter(|e| e.exit_failed)?;
-        let mut content: Vec<Element<'_, Message>> = vec![
-            text::heading("Your arrangement wasn’t saved").into(),
-            text::body("Your desktop works normally. Choose what to do with your changes.").into(),
+        let (heading, body) = recovery_text(editor);
+        // A button with a short line under it saying what it does.
+        let choice = |button: Element<'static, Message>, line: String| -> Element<'_, Message> {
+            column::with_children(vec![button, text::caption(line).into()])
+                .spacing(4)
+                .into()
+        };
+        let mut content: Vec<Element<'_, Message>> =
+            vec![text::heading(heading).into(), text::body(body).into()];
+        content.extend([
             cosmic::widget::button::suggested("Keep arranging")
                 .width(Length::Fill)
+                .height(Length::Shrink)
+                .padding([6, 12])
                 .id("arrange-resume".into())
                 .on_press(Message::LayoutResume)
                 .into(),
-            cosmic::widget::button::standard("Discard changes")
-                .width(Length::Fill)
-                .id("arrange-keep".into())
-                .on_press(Message::LayoutKeepSaved)
-                .into(),
-            cosmic::widget::button::standard("Undo all of Arrange")
-                .width(Length::Fill)
-                .id("arrange-retry".into())
-                .on_press(Message::LayoutRetryCancel)
-                .into(),
-            cosmic::widget::button::link(if self.recovery_details {
-                "Hide details"
-            } else {
-                "Details"
-            })
-            .id("arrange-details".into())
-            .on_press(Message::RecoveryDetails)
-            .into(),
-        ];
-        if self.recovery_details {
+            choice(
+                cosmic::widget::button::standard("Keep what’s on the desktop")
+                    .width(Length::Fill)
+                    // A long label wraps in the narrow menu.
+                    .height(Length::Shrink)
+                    .padding([6, 12])
+                    .id("arrange-keep".into())
+                    .on_press(Message::LayoutKeepSaved)
+                    .into(),
+                keep_line(editor.session_actions.len(), editor.has_unsaved_changes()),
+            ),
+            choice(
+                cosmic::widget::button::standard("Put everything back")
+                    .width(Length::Fill)
+                    // A long label wraps in the narrow menu.
+                    .height(Length::Shrink)
+                    .padding([6, 12])
+                    .id("arrange-retry".into())
+                    .on_press(Message::LayoutRetryCancel)
+                    .into(),
+                "Undoes every change you made while arranging.".into(),
+            ),
+        ]);
+        if let Some(error) = editor.error.as_deref() {
             content.push(
-                cosmic::widget::scrollable(text::caption(
-                    editor
-                        .error
-                        .as_deref()
-                        .unwrap_or("Could not finish arrangement"),
-                ))
-                .height(Length::Fill)
+                cosmic::widget::button::link(if self.recovery_details {
+                    "Hide details"
+                } else {
+                    "Details"
+                })
+                .id("arrange-details".into())
+                .on_press(Message::RecoveryDetails)
                 .into(),
             );
+            if self.recovery_details {
+                content.push(
+                    cosmic::widget::scrollable(text::caption(error))
+                        .height(Length::Fill)
+                        .into(),
+                );
+            }
         }
         let content = column::with_children(content).spacing(10);
         Some(
@@ -1881,11 +1944,22 @@ impl Cards {
         }
         use keyboard::key::Named;
         match key {
+            // Asking whether to discard: Esc again is the safe answer.
+            keyboard::Key::Named(Named::Escape) if self.layout_editor.confirm_discard => {
+                self.layout_editor.confirm_discard = false
+            }
+            _ if self.layout_editor.confirm_discard => {}
             keyboard::Key::Named(Named::Escape) if self.layout_editor.drag.is_some() => {
                 self.cancel_layout_drag()
             }
             keyboard::Key::Named(Named::Escape) if self.layout_editor.adding => {
                 self.layout_editor.adding = false
+            }
+            keyboard::Key::Named(Named::Escape) if self.layout_editor.selected.is_some() => {
+                self.layout_editor.selected = None
+            }
+            keyboard::Key::Named(Named::Escape) if self.layout_editor.has_session_changes() => {
+                self.layout_editor.confirm_discard = true
             }
             keyboard::Key::Named(Named::Escape) => return self.finish_arrange(false),
             keyboard::Key::Character(ref value) if value.as_str() == "r" => {
@@ -2023,7 +2097,7 @@ impl Cards {
         let next = self.update(match pick {
             MenuPick::Settings => Message::WidgetSettings(widget),
             MenuPick::Arrange => Message::Arrange,
-            MenuPick::Hide => Message::SetWidgetVisible(widget, false),
+            MenuPick::Hide => return Task::batch([close, self.hide_from_menu(widget)]),
         });
         Task::batch([close, next])
     }
@@ -2298,6 +2372,11 @@ impl Cards {
                 11.,
                 p.muted,
             ),
+            label(
+                arrange_keys_hint(self.layout_editor.selected.is_some()),
+                11.,
+                p.muted,
+            ),
         ])
         .spacing(3);
         let addable = self.addable_widgets();
@@ -2450,7 +2529,7 @@ impl Cards {
                     )
                     .on_press(Message::WidgetSettings(widget))
                     .into(),
-                cosmic::widget::button::destructive("Remove")
+                cosmic::widget::button::text("Hide")
                     .id(cosmic::widget::Id::new("arrange-inspector-remove"))
                     .on_press(Message::LayoutShow(widget, false))
                     .into(),
@@ -2534,6 +2613,59 @@ impl Cards {
                             .center_y(Length::Fill),
                     )
                     .on_press(Message::LayoutFront),
+                )
+                .into(),
+            );
+        }
+        if self.layout_editor.confirm_discard {
+            // Esc with changes: Cancel would undo them, so it asks first.
+            // The rest of the overlay waits behind, without taking clicks.
+            let ask = container(
+                column::with_children(vec![
+                    label("Discard your changes?", 17., p.foreground),
+                    label(
+                        "Your widgets go back to how they were before you started arranging.",
+                        13.,
+                        p.muted,
+                    ),
+                    row::with_children(vec![
+                        cosmic::widget::button::standard("Discard")
+                            .id(cosmic::widget::Id::new("arrange-discard"))
+                            .on_press(Message::LayoutFinish(false))
+                            .into(),
+                        cosmic::widget::button::suggested("Keep arranging")
+                            .id(cosmic::widget::Id::new("arrange-keep-arranging"))
+                            .on_press(Message::LayoutKeepArranging)
+                            .into(),
+                    ])
+                    .spacing(8)
+                    .into(),
+                ])
+                .spacing(12)
+                .max_width(360.),
+            )
+            .padding([16, 20])
+            .class(cosmic::theme::Container::custom(move |_| {
+                cosmic::iced::widget::container::Style {
+                    background: Some(Background::Color(Color {
+                        a: 1.,
+                        ..p.background
+                    })),
+                    border: Border {
+                        radius: 16.into(),
+                        color: Color { a: 0.6, ..p.accent },
+                        width: 1.,
+                    },
+                    ..Default::default()
+                }
+            }));
+            layers.push(
+                opaque(
+                    container(ask)
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill),
                 )
                 .into(),
             );
@@ -2803,7 +2935,12 @@ mod tests {
         cards.layout_resize_mode();
         let _ = cards.layout_key(keyboard::Key::Named(keyboard::key::Named::ArrowDown), false);
         assert_eq!(cards.widget_size(Widget::Music)[1], wanted["music"][1] + 8.);
+        // Esc lets go of the widget, then asks before discarding the resize.
         let _ = cards.layout_key(keyboard::Key::Named(keyboard::key::Named::Escape), false);
+        assert!(cards.layout_editor.active && cards.layout_editor.selected.is_none());
+        let _ = cards.layout_key(keyboard::Key::Named(keyboard::key::Named::Escape), false);
+        assert!(cards.layout_editor.confirm_discard);
+        let _ = cards.finish_arrange(false);
         assert_eq!(Config::load().widget_sizes, wanted);
         let _ = cards.arrange();
         cards.layout_defaults();
@@ -3255,6 +3392,56 @@ mod review030_tests {
         assert_eq!(restored.widget_positions, before.widget_positions);
         assert_eq!(restored.widget_sizes, before.widget_sizes);
         assert_eq!(restored.monitor_layouts, before.monitor_layouts);
+    }
+}
+
+/// The recovery card's heading and body. A failed Cancel left the saved
+/// changes on the desktop; a failed Done kept some of them back.
+fn recovery_text(editor: &LayoutEditor) -> (&'static str, &'static str) {
+    let heading = if editor.cancel_failed {
+        "Couldn’t put everything back"
+    } else {
+        "Your arrangement wasn’t saved"
+    };
+    // A failed Put everything back says so where it was clicked.
+    let reason = match (editor.retry_failed, editor.cancel_failed) {
+        (true, true) => Some("That didn’t work either. Try again, or keep what’s on the desktop."),
+        (true, false) => {
+            Some("Couldn’t put everything back. Try again, or keep what’s on the desktop.")
+        }
+        _ => editor.reason,
+    };
+    let body = reason.unwrap_or(if editor.cancel_failed {
+        "Your desktop works normally, with the changes you made while arranging."
+    } else {
+        "Your desktop works normally. Choose what to do with your changes."
+    });
+    (heading, body)
+}
+
+/// What Keep what's on the desktop keeps: the changes Arrange saved as it
+/// went, and not the ones it couldn't save.
+pub(super) fn keep_line(saved: usize, unsaved: bool) -> String {
+    let saved = match saved {
+        0 => None,
+        1 => Some("Keeps your saved change".to_string()),
+        n => Some(format!("Keeps your {n} saved changes")),
+    };
+    match (saved, unsaved) {
+        (Some(saved), true) => format!("{saved} and drops the unsaved ones."),
+        (Some(saved), false) => format!("{saved}."),
+        (None, true) => "Drops the changes that weren’t saved.".into(),
+        (None, false) => "Leaves the desktop as it is now.".into(),
+    }
+}
+
+/// The keys that leave Arrange, or let go of the selected widget. Esc
+/// asks first when Cancel would undo changes.
+pub(super) fn arrange_keys_hint(selected: bool) -> &'static str {
+    if selected {
+        "Esc: deselect · Enter: done"
+    } else {
+        "Esc: cancel · Enter: done"
     }
 }
 

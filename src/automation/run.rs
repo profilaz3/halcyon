@@ -105,7 +105,7 @@ pub fn run(
     name: &str,
     held: &BTreeSet<Domain>,
 ) -> Ran {
-    run_for_cause(store, installed, target, name, held, false, None)
+    run_for_cause(store, installed, target, name, held, false, None, None)
 }
 /// Applies a Look chosen in the edge menu: the same engine and checks as an
 /// automatic switch, recorded in Undo under its own name.
@@ -124,9 +124,12 @@ pub fn run_chosen(
         held,
         false,
         None,
+        None,
         chosen_label,
     )
 }
+/// `timed`: a switch at a set time, with what its rule also switches.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn run_for_cause(
     store: &DesktopStore,
     installed: &Installed,
@@ -135,8 +138,11 @@ pub(super) fn run_for_cause(
     held: &BTreeSet<Domain>,
     display: bool,
     solar: Option<(&super::solar::Context, super::solar::Source)>,
+    timed: Option<super::Also>,
 ) -> Ran {
-    run_labelled(store, installed, target, name, held, display, solar, label)
+    run_labelled(
+        store, installed, target, name, held, display, solar, timed, label,
+    )
 }
 #[allow(clippy::too_many_arguments)]
 fn run_labelled(
@@ -147,6 +153,7 @@ fn run_labelled(
     held: &BTreeSet<Domain>,
     display: bool,
     solar: Option<(&super::solar::Context, super::solar::Source)>,
+    timed: Option<super::Also>,
     label: fn(&str) -> String,
 ) -> Ran {
     if !store.writable() {
@@ -167,6 +174,8 @@ fn run_labelled(
         let profile = match load(store, target, name).and_then(|profile| {
             if solar.is_some() && !matches!(target, ProfileRef::Moment(_)) {
                 super::appearance::project(&profile)
+            } else if let Some(also) = timed {
+                Ok(super::appearance::timed(&profile, also))
             } else {
                 Ok(profile)
             }

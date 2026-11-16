@@ -7,7 +7,7 @@ use super::windows::store_pill;
 use super::*;
 use crate::automation::solar::{self, Event, Source};
 use crate::automation::status::{self as words, Tone};
-use crate::automation::{Change, Days, Effect, Rule, Trigger};
+use crate::automation::{Also, Change, Days, Effect, ProfileRef, Rule, Trigger};
 use crate::settings::automation::{DraftEdit, Kind, Message as Edit, PauseFor, RuleDraft};
 use chrono::Local;
 use cosmic::Apply;
@@ -193,7 +193,7 @@ impl Settings {
             None,
             vec![group_row(
                 "What changes",
-                "Whole look switches wallpaper, colors and widgets. Widget style only switches between the day and night widget styles; wallpaper and colors stay.",
+                "Whole look switches the wallpaper, colors and the look of widgets, dock and panel. Your widget layout and the dock and panel layout stay. Widget style only switches between the day and night widget styles; wallpaper and colors stay.",
                 container(segmented(
                     vec![
                         (
@@ -886,7 +886,39 @@ impl Settings {
             items.push(label("The chosen look is unavailable", 12., WARN));
         }
         if let Some(profile) = &draft.profile {
-            items.push(label(editor.profile_scope(profile, draft.kind), 12., MUTED));
+            items.push(label(
+                editor.profile_scope(profile, draft.kind, draft.also),
+                12.,
+                MUTED,
+            ));
+            // A set time keeps what was arranged during the day, unless
+            // the rule asks to switch that too.
+            if draft.kind == Kind::Schedule && !matches!(profile, ProfileRef::Moment(_)) {
+                let also = draft.also;
+                for (title, id, on, switched) in [
+                    (
+                        "Also switch widget layout",
+                        "rule-also-layout",
+                        also.layout,
+                        (|also: Also, on| Also { layout: on, ..also }) as fn(Also, bool) -> Also,
+                    ),
+                    (
+                        "Also switch dock and panel",
+                        "rule-also-bars",
+                        also.bars,
+                        |also: Also, on| Also { bars: on, ..also },
+                    ),
+                ] {
+                    items.push(split(
+                        label(title, 12., MUTED),
+                        container(toggler(on).on_toggle(move |on| {
+                            edit(Edit::Draft(DraftEdit::Also(switched(also, on))))
+                        }))
+                        .id(cosmic::widget::Id::new(id))
+                        .into(),
+                    ));
+                }
+            }
         }
         if draft.id.is_none() {
             items.push(split(
@@ -1047,6 +1079,7 @@ impl Settings {
                             time,
                             days: draft.days,
                         },
+                        also: Default::default(),
                     }],
                     ..Default::default()
                 };

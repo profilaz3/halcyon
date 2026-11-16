@@ -91,6 +91,8 @@ fn at(y: i32, m: u32, d: u32, h: u32, min: u32) -> DateTime<Utc> {
 fn utc(y: i32, m: u32, d: u32, h: u32, min: u32) -> DateTime<Utc> {
     Utc.from_utc_datetime(&day(y, m, d).and_hms_opt(h, min, 0).unwrap())
 }
+/// A rule that switches the whole look at a set time, layout, dock and
+/// panel included: looks such as Presentation are mostly layout.
 fn schedule(id: &str, h: u32, m: u32, days: Days, name: &str) -> Rule {
     Rule {
         id: id.into(),
@@ -101,6 +103,10 @@ fn schedule(id: &str, h: u32, m: u32, days: Days, name: &str) -> Rule {
         when: Trigger::Schedule {
             time: Time::new(h, m).unwrap(),
             days,
+        },
+        also: Also {
+            layout: true,
+            bars: true,
         },
     }
 }
@@ -116,6 +122,7 @@ fn display(id: &str, change: Change, name: Option<&str>, profile: &str) -> Rule 
             display: name.map(String::from),
             label: None,
         }),
+        also: Default::default(),
     }
 }
 fn on(rules: Vec<Rule>) -> Automation {
@@ -1558,6 +1565,44 @@ mod runtime_loop {
     }
 
     #[test]
+    fn look02_a_set_time_rule_leaves_the_layout_unless_it_asks() {
+        let (fixture, store) = desk("runtime-schedule-parts");
+        let mut rule = schedule("r1", 19, 0, Days::EVERY, "Presentation");
+        rule.also = Also::default();
+        configure(&store, vec![rule.clone()]);
+        let mut automator = Automator::with_store(Some(
+            fixture
+                .store()
+                .with_app_config(fixture.0.join("app/config.json")),
+        ));
+        let now = Instant::now();
+        automator.evaluate_with(&utc0(), utc(2026, 10, 18, 18, 59), now, Vec::new);
+        let before = config_text(&fixture);
+        let job = automator.evaluate_with(&utc0(), utc(2026, 10, 18, 19, 0), now, Vec::new);
+        assert_eq!(names(&job), ["Presentation"]);
+        let results = job.unwrap().run(&store);
+        // Presentation is all layout, so nothing else was left to switch.
+        assert_eq!(results[0].1, Ran::AlreadySet, "{results:?}");
+        assert_eq!(config_text(&fixture), before);
+        automator.finished(results, utc(2026, 10, 18, 19, 0).timestamp(), now);
+
+        // The same rule asking for the layout switches it the next day.
+        rule.also.layout = true;
+        rule.since = utc(2026, 10, 18, 20, 0).timestamp();
+        configure(&store, vec![rule]);
+        let mut automator = Automator::with_store(Some(
+            fixture
+                .store()
+                .with_app_config(fixture.0.join("app/config.json")),
+        ));
+        automator.evaluate_with(&utc0(), utc(2026, 10, 19, 18, 59), now, Vec::new);
+        let job = automator.evaluate_with(&utc0(), utc(2026, 10, 19, 19, 0), now, Vec::new);
+        let results = job.unwrap().run(&store);
+        assert!(matches!(results[0].1, Ran::Applied { .. }), "{results:?}");
+        assert_ne!(config_text(&fixture), before);
+    }
+
+    #[test]
     fn a_scheduled_switch_runs_once_and_survives_a_restart() {
         let (fixture, store) = desk("runtime-schedule");
         configure(
@@ -2509,4 +2554,121 @@ fn adaptive_actual_switch_preserves_content_placement_and_native_mode() {
             Ran::AlreadySet
         );
     }
+}
+
+#[test]
+fn look02_a_set_time_switch_keeps_the_arrangement_unless_the_rule_asks() {
+    use serde_json::json;
+    let (fixture, store) = desk("automation-timed-parts");
+    let mut profile = Profile::new("Evening").unwrap();
+    profile.widget_style = Some(json!({"appearance":{"opacity":80}}));
+    profile.widget_layout = Some(json!({
+        "enabled_widgets":["clock"],
+        "widget_positions":{"clock":[0.9,0.8]}
+    }));
+    profile.version = profile.written_version();
+    let id = ProfileLibrary::new(&store).create(&profile).unwrap();
+    let target = ProfileRef::Saved(id.as_str().into());
+    let installed = Installed::discover(&store);
+    let switch = |also: Also| {
+        crate::desktop::actions::scheduled_epoch(
+            store.restore_epoch().unwrap(),
+            store.manual_at(),
+            || {
+                super::run::run_for_cause(
+                    &store,
+                    &installed,
+                    &target,
+                    "Evening",
+                    &Default::default(),
+                    false,
+                    None,
+                    Some(also),
+                )
+            },
+        )
+    };
+    let config = || -> serde_json::Value { serde_json::from_str(&config_text(&fixture)).unwrap() };
+    // By default the style switches and the arrangement stays.
+    let ran = switch(Also::default());
+    let Ran::Applied { change, .. } = &ran else {
+        panic!("{ran:?}");
+    };
+    assert_eq!(config()["appearance"]["opacity"], 80);
+    assert_eq!(config()["enabled_widgets"], json!(["clock", "weather"]));
+    assert!(config().get("widget_positions").is_none());
+    // Still an automatic switch with its own Undo record.
+    let record: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(store.state_dir().join("desktop-undo.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(record["id"], change.as_str());
+    assert_eq!(record["source"], "scheduled");
+    assert_eq!(switch(Also::default()), Ran::AlreadySet);
+    // A rule that asks switches the layout too.
+    let ran = switch(Also {
+        layout: true,
+        bars: false,
+    });
+    assert!(matches!(ran, Ran::Applied { .. }), "{ran:?}");
+    assert_eq!(config()["enabled_widgets"], json!(["clock"]));
+    assert_eq!(config()["widget_positions"]["clock"], json!([0.9, 0.8]));
+}
+
+#[test]
+fn look02_a_set_time_switch_restyles_the_dock_and_panel_but_keeps_their_layout() {
+    use crate::desktop::profiles::PanelLook;
+    let mut profile = Profile::new("Evening").unwrap();
+    let panel = PanelLook {
+        floating: Some(true),
+        margin: Some(12),
+        opacity: Some(0.6),
+        border_radius: Some(8),
+        ..Default::default()
+    };
+    profile.panel = Some(panel.clone());
+    profile.dock = Some(panel.clone());
+    profile.widget_layout = Some(serde_json::json!({"enabled_widgets":["clock"]}));
+    profile.widget_style = Some(serde_json::json!({"appearance":{"opacity":80}}));
+    let kept = super::appearance::timed(&profile, Also::default());
+    assert!(kept.widget_layout.is_none());
+    assert_eq!(kept.widget_style, profile.widget_style);
+    for bar in [kept.panel.unwrap(), kept.dock.unwrap()] {
+        assert_eq!((bar.opacity, bar.border_radius), (Some(0.6), Some(8)));
+        assert_eq!((bar.floating, bar.margin), (None, None));
+    }
+    let all = super::appearance::timed(
+        &profile,
+        Also {
+            layout: true,
+            bars: true,
+        },
+    );
+    assert_eq!(all, profile);
+}
+
+#[test]
+fn look02_rules_saved_before_the_choice_switch_style_only() {
+    // A rule as older versions wrote it: no `also`.
+    let mut older =
+        serde_json::to_value(on(vec![schedule("r1", 19, 0, Days::EVERY, "Tidal")])).unwrap();
+    older["rules"][0].as_object_mut().unwrap().remove("also");
+    let parsed = Automation::parse(older.to_string().as_bytes()).unwrap();
+    assert_eq!(parsed.rules[0].also, Also::default());
+    assert!(
+        !serde_json::to_string(&parsed).unwrap().contains("also"),
+        "nothing new is written until a rule asks for more"
+    );
+    // A rule that asks for more keeps it, and the file still reads.
+    let mut asked = parsed.clone();
+    asked.rules[0].also.bars = true;
+    let written = serde_json::to_value(&asked).unwrap();
+    assert_eq!(
+        written["rules"][0]["also"],
+        serde_json::json!({"bars": true})
+    );
+    assert_eq!(
+        Automation::parse(written.to_string().as_bytes()).unwrap(),
+        asked
+    );
 }

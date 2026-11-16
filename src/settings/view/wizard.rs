@@ -429,13 +429,16 @@ impl Settings {
             Screen::Widgets | Screen::Weather => self.wizard_widgets(wizard, false),
             Screen::Arrange => self.wizard_widgets(wizard, true),
             Screen::Ready => self.wizard_ready(wizard),
+            Screen::Done if wizard.undone => cosmic::iced::widget::space().into(),
             Screen::Done => self.wizard_done(wizard),
             Screen::Welcome => cosmic::iced::widget::space().into(),
         };
         let mut parts = vec![
             row::with_children(vec![
                 container(words(
-                    if step == Screen::Done {
+                    if step == Screen::Done && wizard.undone {
+                        "Setup undone".to_string()
+                    } else if step == Screen::Done {
                         "Setup finished".to_string()
                     } else {
                         format!("Step {} of 4", step.index().min(4))
@@ -455,6 +458,7 @@ impl Settings {
                     Screen::Bars => "Dock and panel",
                     Screen::Widgets | Screen::Arrange | Screen::Weather => "Your widgets",
                     Screen::Ready => "Review",
+                    Screen::Done if wizard.undone => "Your desktop is back as it was",
                     Screen::Done => "Your desktop is ready",
                     Screen::Welcome => "Welcome",
                 },
@@ -471,6 +475,9 @@ impl Settings {
                     }
                     Screen::Ready => {
                         "Nothing changes until you press Apply, and one Undo puts it all back."
+                    }
+                    Screen::Done if wizard.undone => {
+                        "Your choices are still here. Change them and apply again, or close setup and pick them up later."
                     }
                     Screen::Done => "Applied as one change. Undo setup puts it all back.",
                     Screen::Welcome => "Make yourself at home.",
@@ -529,6 +536,19 @@ impl Settings {
             );
         }
         let (left, right): (Vec<Element<'a, Message>>, Element<'a, Message>) = match step {
+            // Closing keeps the choices for later, as Set up later does.
+            Screen::Done if wizard.undone => (
+                vec![secondary(
+                    "Change choices",
+                    "wizard-change-choices",
+                    go(Step::Show(Screen::Ready)),
+                )],
+                primary(
+                    "Close setup",
+                    "wizard-close",
+                    (!self.native_busy).then_some(go(Step::KeepForLater)),
+                ),
+            ),
             Screen::Done => {
                 let mut left = Vec::new();
                 if wizard.has_changes() {

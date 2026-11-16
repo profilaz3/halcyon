@@ -246,6 +246,8 @@ pub enum Message {
     /// Arrange: back in front after a widget's Settings.
     LayoutFront,
     LayoutFinish(bool),
+    /// Arrange: answer "Keep arranging" to Esc's question about discarding.
+    LayoutKeepArranging,
     LayoutRetryCancel,
     LayoutResume,
     LayoutKeepSaved,
@@ -371,11 +373,14 @@ pub enum Message {
 /// A change made on the desktop that couldn't be saved, shown in the edge
 /// menu (where Arrange explains its own failures) until dismissed.
 pub struct Notice {
-    pub title: &'static str,
-    pub body: &'static str,
+    pub title: std::borrow::Cow<'static, str>,
+    pub body: std::borrow::Cow<'static, str>,
     pub error: String,
     pub retry: Option<Message>,
     pub details: bool,
+    /// A confirmation, not a failure: its button is Undo, and it lasts
+    /// only until the edge menu closes.
+    pub brief: bool,
 }
 
 /// Where the pointer last moved, so the widget menu opens under it. Kept
@@ -1415,6 +1420,9 @@ impl Cards {
             }
             Message::Animate => {
                 self.sidebar.tick(Instant::now(), self.config.sidebar_slide);
+                if !self.sidebar.needs_surface() && self.notice.as_ref().is_some_and(|n| n.brief) {
+                    self.notice = None;
+                }
                 self.slide_controls()
             }
             Message::Hover(edge, entered) => {
@@ -1563,6 +1571,10 @@ impl Cards {
             }
             Message::LayoutFront => self.layout_front(),
             Message::LayoutFinish(save) => self.finish_arrange(save),
+            Message::LayoutKeepArranging => {
+                self.layout_editor.confirm_discard = false;
+                Task::none()
+            }
             Message::LayoutRetryCancel => self.retry_arrange_cancel(),
             Message::LayoutResume => self.resume_arrange(),
             Message::LayoutKeepSaved => self.keep_arrange_saved(),
@@ -3300,6 +3312,7 @@ mod tests {
                     display: None,
                     label: None,
                 }),
+                also: Default::default(),
             });
             Ok(())
         })

@@ -333,6 +333,29 @@ pub struct Rule {
     /// The profile's name when the rule was saved, shown if it goes missing.
     pub name: String,
     pub when: Trigger,
+    /// What a switch at a set time changes besides wallpaper, colors and
+    /// style. Rules saved before this existed read as nothing more.
+    #[serde(default, skip_serializing_if = "Also::is_empty")]
+    pub also: Also,
+}
+
+/// The parts of a look a switch at a set time leaves alone unless its rule
+/// asks for them: what someone arranges during the day stays.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Also {
+    /// Which widgets show, where they are and how big.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub layout: bool,
+    /// The dock and panel's size, place and applets. Without it they only
+    /// take the look's colors and shape.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bars: bool,
+}
+
+impl Also {
+    pub fn is_empty(&self) -> bool {
+        !self.layout && !self.bars
+    }
 }
 
 /// Automation stops acting from `since` until `until` (`None`: until the

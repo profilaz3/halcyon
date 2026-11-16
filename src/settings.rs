@@ -703,6 +703,8 @@ pub enum Message {
     /// Puts back what one older change replaced, from Changes.
     PutBackChange(String),
     ResolveUndoShown(crate::desktop::store::UndoReview, bool),
+    /// Closes the review of an Undo that hit newer changes; the Undo stays.
+    UndoReviewLater,
     RecoverySelect(usize, bool),
     RecoveryUseProposed(usize),
     RecoveryOpen(usize),
@@ -992,6 +994,9 @@ pub struct Settings {
     /// The latest change when this window opened; the Undo bar offers only
     /// changes made since, so an old change doesn't follow you around.
     undo_baseline: Option<String>,
+    /// The latest change, when Ctrl+Z was pressed on a page that didn't
+    /// make it: the footer says where it was instead of doing nothing.
+    undo_elsewhere: Option<String>,
     /// The change that kept an unfinished layout on reopening, so the
     /// footer can say so beside its Undo.
     layout_kept: Option<String>,
@@ -1281,6 +1286,7 @@ impl cosmic::Application for Settings {
             last_desktop_change: None,
             last_desktop_summary: None,
             undo_baseline: navigation::latest_desktop_change().map(|(_, _, id)| id),
+            undo_elsewhere: None,
             layout_kept: None,
             color_well: None,
             font_menu: None,
@@ -2096,6 +2102,7 @@ impl cosmic::Application for Settings {
                 (navigation::UndoTarget::Preview(_), false) => self.undo_preview_step(),
                 // Like the footer's Undo: only the page that made the latest
                 // change undoes it. Elsewhere it stays, for Changes to undo.
+                // It says where that change was, with a way to undo it.
                 (navigation::UndoTarget::Desktop(..), false)
                     if !self.owns_latest_change()
                         && !self
@@ -2103,6 +2110,10 @@ impl cosmic::Application for Settings {
                             .as_ref()
                             .is_some_and(|w| w.step == wizard::Step::Arrange) =>
                 {
+                    self.undo_elsewhere = self
+                        .last_desktop_change
+                        .as_ref()
+                        .map(|(_, _, id)| id.clone());
                     Task::none()
                 }
                 (_, false) => self.update(Message::UndoDesktop),
@@ -2802,6 +2813,9 @@ impl Settings {
             }
             Message::ResolveUndoShown(review, restore) => {
                 return self.resolve_undo_review(review, restore);
+            }
+            Message::UndoReviewLater => {
+                self.undo_review = None;
             }
             Message::RecoveryText(index, field, text) => {
                 if let Some(row) = self.recovery_sheet.rows.get_mut(index) {
@@ -3640,6 +3654,7 @@ impl Settings {
                     // A previous page's change stays available in Recent
                     // changes and keyboard Undo, not as this task's footer.
                     self.undo_baseline = navigation::latest_desktop_change().map(|(_, _, id)| id);
+                    self.undo_elsewhere = None;
                     if !self.quiet_navigation {
                         self.remember_route();
                     }
@@ -12834,6 +12849,11 @@ mod tests {
                 "settings-search"
                     | "settings-back"
                     | "settings-undo"
+                    | "undo-not-now"
+                    | "undo-keep-current"
+                    | "undo-reviewed"
+                    | "undo-elsewhere"
+                    | "undo-elsewhere-changes"
                     | "wallpaper-apply"
                     | "review-preview-conflicts"
                     | "profiles-confirm"
