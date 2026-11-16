@@ -12,9 +12,15 @@ const SEARCH_FROM: usize = 8;
 impl Settings {
     pub(in crate::settings) fn activity_preferences(&self) -> Element<'_, Message> {
         let p = &self.config.activity_island;
-        let toggle = |name: &'static str, key: &'static str, on: bool, nested: bool| {
+        // Each option says what it changes behind its "?", like every
+        // other page.
+        let toggle = |name: &'static str,
+                      description: &'static str,
+                      key: &'static str,
+                      on: bool,
+                      nested: bool| {
             let row = split(
-                label(name, if nested { 13. } else { 14. }, FG),
+                detail(name, description),
                 container(
                     toggler(on)
                         .width(Length::Shrink)
@@ -40,45 +46,128 @@ impl Settings {
         .align_y(Alignment::Center);
         let mut controls = cosmic::widget::column::with_children([heading.into()]).spacing(12);
         controls = controls
-            .push(toggle("Playing media", "media", p.media, false))
-            .push(toggle("Upcoming meetings", "calendar", p.calendar, false))
-            .push(toggle("Notifications", "notifications", p.notifications, false));
+            .push(toggle(
+                "Playing media",
+                "The song or video playing now, with its controls.",
+                "media",
+                p.media,
+                false,
+            ))
+            .push(toggle(
+                "Upcoming meetings",
+                "Your next meeting from your calendar, shortly before it starts.",
+                "calendar",
+                p.calendar,
+                false,
+            ))
+            .push(toggle(
+                "Notifications",
+                "Desktop notifications, listed in the island.",
+                "notifications",
+                p.notifications,
+                false,
+            ));
         if p.notifications {
             controls = controls
                 .push(toggle(
                     "Use the island instead of popups",
+                    POPUPS_NOTE,
                     "replace_popups",
                     p.replace_popups,
                     true,
                 ))
                 .push(toggle(
                     "Show message text",
+                    "The message itself, not only the app and its title.",
                     "notification_text",
                     p.notification_text,
                     true,
                 ))
                 .push(self.activity_app_rules());
         }
-        controls = controls.push(toggle("System activities", "system", p.system, false));
+        controls = controls.push(toggle(
+            "System activities",
+            "Changes on this computer, chosen below.",
+            "system",
+            p.system,
+            false,
+        ));
         if p.system {
-            for (name, key, on) in [
-                ("Battery", "battery", p.battery),
-                ("Sound output", "sound", p.sound),
-                ("Microphone in use", "microphone", p.microphone),
-                ("Camera in use", "camera", p.camera),
-                ("Network", "network", p.network),
-                ("Bluetooth devices", "bluetooth", p.bluetooth),
-                ("Device connected", "device_banners", p.device_banners),
-                ("Low battery", "low_battery", p.low_battery),
-                ("Software updates", "updates", p.updates),
+            for (name, description, key, on) in [
+                (
+                    "Battery",
+                    "This computer charging, full or running low.",
+                    "battery",
+                    p.battery,
+                ),
+                (
+                    "Sound output",
+                    "When sound moves to other speakers or headphones.",
+                    "sound",
+                    p.sound,
+                ),
+                (
+                    "Microphone in use",
+                    "A dot while an app uses the microphone.",
+                    "microphone",
+                    p.microphone,
+                ),
+                (
+                    "Camera in use",
+                    "A dot while a camera is on.",
+                    "camera",
+                    p.camera,
+                ),
+                (
+                    "Network",
+                    "Connecting, disconnecting and VPN changes.",
+                    "network",
+                    p.network,
+                ),
+                (
+                    "Bluetooth devices",
+                    "Connected devices and their battery, listed in the island.",
+                    "bluetooth",
+                    p.bluetooth,
+                ),
+                (
+                    "Device connected",
+                    "Opens briefly when a device connects, with its battery.",
+                    "device_banners",
+                    p.device_banners,
+                ),
+                (
+                    "Low battery",
+                    "Opens when a connected device falls to 20% and to 10%.",
+                    "low_battery",
+                    p.low_battery,
+                ),
+                (
+                    "Software updates",
+                    "Downloads and installs while they run.",
+                    "updates",
+                    p.updates,
+                ),
             ] {
-                controls = controls.push(toggle(name, key, on, true));
+                controls = controls.push(toggle(name, description, key, on, true));
             }
         }
-        controls = controls.push(toggle("Brief automatic reveals", "reveals", p.reveals, false));
-        controls = controls.push(toggle("File shelf", "shelf", p.shelf, false));
+        controls = controls.push(toggle(
+            "Brief automatic reveals",
+            "Opens by itself for a few seconds when something new happens.",
+            "reveals",
+            p.reveals,
+            false,
+        ));
+        controls = controls.push(toggle(
+            "File shelf",
+            "Keeps files you drop on the island, ready to drag into an app.",
+            "shelf",
+            p.shelf,
+            false,
+        ));
         controls = controls.push(split(
-            label("Island style", 14., FG),
+            detail("Island style", "Follow the panel’s theme, or always dark."),
             container(cosmic::widget::dropdown(
                 &["Follow the theme", "Dark"],
                 Some(p.style.index()),
@@ -88,7 +177,10 @@ impl Settings {
             .into(),
         ));
         controls = controls.push(split(
-            label("Meeting reminder", 14., FG),
+            detail(
+                "Meeting reminder",
+                "How long before a meeting the island shows it.",
+            ),
             cosmic::widget::dropdown(
                 &["5 minutes", "10 minutes", "15 minutes"],
                 Some(match p.lead_minutes {
@@ -101,6 +193,18 @@ impl Settings {
             .into(),
         ));
         container(controls).id("activity-preferences").into()
+    }
+    /// What each click and key does on the island, checked against its
+    /// handlers: hovering and a click open it, right-click and a swipe
+    /// close a brief reveal, middle-click plays or pauses, Esc closes.
+    pub(in crate::settings) fn activity_gestures(&self) -> Element<'_, Message> {
+        let rows = GESTURES
+            .iter()
+            .map(|(gesture, effect)| detail_state(*gesture, *effect))
+            .collect();
+        container(group(Some("Using the island"), rows))
+            .id("activity-gestures")
+            .into()
     }
     /// Per-app notification rules chosen in the island. A muted app can
     /// always be unmuted here.
@@ -193,10 +297,21 @@ impl Settings {
             .anchor()
             .known()
             .is_none_or(|anchor| anchor.horizontal());
-        // Adding, removing or moving an item rebuilds the bar.
+        // Adding, removing or moving an item rebuilds the bar, once for
+        // edits made close together.
         let header: Element<'_, Message> = column::with_children(vec![
             text::heading(items::HEADING).into(),
-            label(super::restarts(draft.kind()), CAPTION, MUTED),
+            container(label(
+                if editor.items_held() {
+                    items::held(draft.kind())
+                } else {
+                    items::restarts(draft.kind())
+                },
+                CAPTION,
+                MUTED,
+            ))
+            .id(cosmic::widget::Id::new("bar-items-status"))
+            .into(),
         ])
         .spacing(3)
         .into();
@@ -293,7 +408,7 @@ impl Settings {
             let mut rows: Vec<Element<'_, Message>> = Vec::new();
             for (index, id) in list.iter().enumerate() {
                 let slot = Slot { region, index };
-                rows.push(self.item_row(id, slot, &regions, accent));
+                rows.push(self.item_row(id, slot, &regions, horizontal, accent));
                 if editor.focus == Some(slot) && !dragging {
                     rows.push(self.item_details(id, slot, screen));
                 }
@@ -380,10 +495,11 @@ impl Settings {
             .into()
     }
 
-    /// The panel's starter layout, previewed before it replaces the items.
+    /// The panel's starter layout, previewed before it replaces the items,
+    /// with what it keeps and what it takes away.
     fn panel_starter(&self, horizontal: bool, idle: bool) -> Vec<Element<'_, Message>> {
         let editor = &self.desktop;
-        let starter = editor.catalog.starter(editor.has_battery);
+        let starter = editor.starter();
         let mut blocks = vec![separator(), label("A quiet starting point", 14., FG)];
         for region in Region::ALL {
             let names = starter
@@ -405,8 +521,36 @@ impl Settings {
                 MUTED,
             ));
         }
+        let current = editor
+            .current()
+            .and_then(|draft| draft.applets().known().cloned())
+            .unwrap_or_default();
+        let kept: Vec<&String> = Region::ALL
+            .iter()
+            .flat_map(|region| starter.list(*region))
+            .collect();
+        let mut removed: Vec<String> = Vec::new();
+        for id in Region::ALL.iter().flat_map(|region| current.list(*region)) {
+            let name = editor.catalog.panel_label(id);
+            if !kept.contains(&id) && !removed.contains(&name) {
+                removed.push(name);
+            }
+        }
+        if kept
+            .iter()
+            .any(|id| id.as_str() == crate::activity_island::APPLET_ID)
+        {
+            blocks.push(label("Keeps the Activity island.", 12., MUTED));
+        }
+        if !removed.is_empty() {
+            blocks.push(
+                container(label(format!("Removes {}.", removed.join(", ")), 12., WARN))
+                    .id(cosmic::widget::Id::new("panel-starter-removes"))
+                    .into(),
+            );
+        }
         blocks.push(label(
-            "Choose a layout to replace this panel’s items. Undo restores your previous layout.",
+            "Replaces this panel’s items. Undo restores your previous layout.",
             11.,
             MUTED,
         ));
@@ -432,6 +576,7 @@ impl Settings {
         id: &str,
         slot: Slot,
         regions: &Regions,
+        horizontal: bool,
         accent: Color,
     ) -> Element<'_, Message> {
         let editor = &self.desktop;
@@ -512,17 +657,32 @@ impl Settings {
                 cosmic::widget::tooltip::Position::Bottom,
             )
             .into(),
-            // Stable per-occurrence ids let focus follow a keyboard move.
-            button::icon(icon::from_name("go-up-symbolic"))
-                .padding(6)
-                .id(control_id(slot, AppletControl::Up))
-                .on_press_maybe((!first && idle).then_some(edit(Edit::Step(slot, -1))))
-                .apply(|control| super::super::tip::tip(control, "Move up")),
-            button::icon(icon::from_name("go-down-symbolic"))
-                .padding(6)
-                .id(control_id(slot, AppletControl::Down))
-                .on_press_maybe((!last && idle).then_some(edit(Edit::Step(slot, 1))))
-                .apply(|control| super::super::tip::tip(control, "Move down")),
+            // Another region is a visible choice, not only a press on the
+            // name.
+            button::text(items::MOVE_TO)
+                .id(control_id(slot, AppletControl::MoveTo))
+                .on_press_maybe(idle.then(|| edit(Edit::SelectApplet((!focused).then_some(slot)))))
+                .into(),
+            // Stable per-occurrence ids let focus follow a keyboard move. A
+            // bar along the top or bottom moves items left and right.
+            button::icon(icon::from_name(if horizontal {
+                "go-previous-symbolic"
+            } else {
+                "go-up-symbolic"
+            }))
+            .padding(6)
+            .id(control_id(slot, AppletControl::Up))
+            .on_press_maybe((!first && idle).then_some(edit(Edit::Step(slot, -1))))
+            .apply(|control| super::super::tip::tip(control, items::arrows(horizontal)[0])),
+            button::icon(icon::from_name(if horizontal {
+                "go-next-symbolic"
+            } else {
+                "go-down-symbolic"
+            }))
+            .padding(6)
+            .id(control_id(slot, AppletControl::Down))
+            .on_press_maybe((!last && idle).then_some(edit(Edit::Step(slot, 1))))
+            .apply(|control| super::super::tip::tip(control, items::arrows(horizontal)[1])),
             button::icon(icon::from_name("window-close-symbolic"))
                 .padding(6)
                 .id(control_id(slot, AppletControl::Remove))
@@ -761,6 +921,28 @@ impl Settings {
     }
 }
 
+/// Said for “Use the island instead of popups”: the island sets COSMIC’s
+/// popup limit to 0 while it shows notifications, and Halcyon puts it back
+/// when the option is off or the island or Halcyon stops (see
+/// `activity_island::popups`).
+pub(in crate::settings) const POPUPS_NOTE: &str =
+    "COSMIC’s own popups are off while this is on, and come back if Halcyon stops.";
+
+/// How the island responds, as `activity_island` handles it.
+pub(in crate::settings) const GESTURES: [(&str, &str); 5] = [
+    (
+        "Point or click",
+        "Pointing opens it. A click keeps it open, and another click closes it.",
+    ),
+    (
+        "Right-click",
+        "Closes a brief reveal, opens a notification’s app rules, or brings the playing app forward.",
+    ),
+    ("Middle-click", "Plays or pauses what’s playing."),
+    ("Swipe on a touchpad", "Closes a brief reveal."),
+    ("Esc", "Closes the open island."),
+];
+
 /// The words both bars’ item editors use, kept in one place so they match.
 mod items {
     pub(super) const HEADING: &str = "Items";
@@ -768,6 +950,40 @@ mod items {
     pub(super) const CLOSE: &str = "Close";
     pub(super) const EMPTY: &str = "Empty. Drag an item here or use Add";
     pub(super) const DROP: &str = "Drop here";
+    pub(super) const MOVE_TO: &str = "Move to…";
+
+    /// The arrows' words: along a bar at the top or bottom an item moves
+    /// left and right, down the side up and down.
+    pub(super) fn arrows(horizontal: bool) -> [&'static str; 2] {
+        if horizontal {
+            ["Move left", "Move right"]
+        } else {
+            ["Move up", "Move down"]
+        }
+    }
+
+    /// Under the heading: what an item edit does to the bar.
+    pub(super) fn restarts(kind: crate::desktop::panels::PanelKind) -> &'static str {
+        match kind {
+            crate::desktop::panels::PanelKind::Dock => {
+                "Changes apply after a short pause. This restarts the dock."
+            }
+            crate::desktop::panels::PanelKind::Panel => {
+                "Changes apply after a short pause. This restarts the panel."
+            }
+        }
+    }
+    /// The same while edits wait for that pause.
+    pub(super) fn held(kind: crate::desktop::panels::PanelKind) -> &'static str {
+        match kind {
+            crate::desktop::panels::PanelKind::Dock => {
+                "Applying when you pause. The dock restarts once."
+            }
+            crate::desktop::panels::PanelKind::Panel => {
+                "Applying when you pause. The panel restarts once."
+            }
+        }
+    }
 
     /// The line at the foot of the editor.
     pub(super) fn hint(dragging: bool, empty: bool) -> &'static str {
@@ -776,7 +992,17 @@ mod items {
         } else if empty {
             "Nothing here yet. Use Add to put items on this bar."
         } else {
-            "Drag to reorder. Press a name to move it to another region."
+            "Drag or use the arrows to reorder. Move to… puts an item in another region."
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// BAR-09: the arrows say the way an item moves on its bar.
+    #[test]
+    fn arrows_say_left_and_right_along_the_top() {
+        assert_eq!(super::items::arrows(true), ["Move left", "Move right"]);
+        assert_eq!(super::items::arrows(false), ["Move up", "Move down"]);
     }
 }

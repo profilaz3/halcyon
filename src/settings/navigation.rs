@@ -1002,6 +1002,38 @@ const SEARCH: &[SearchHit] = &[
 /// names. `search_finds_every_title_the_pages_draw` fails when a page draws
 /// a title that neither this table nor the results above hold.
 const ROWS: &[SearchHit] = &[
+    hit(Page::ActivityIsland, "Battery", "", false).bar(PanelKind::Panel),
+    hit(Page::ActivityIsland, "Bluetooth devices", "", false).bar(PanelKind::Panel),
+    hit(Page::ActivityIsland, "Brief automatic reveals", "", false).bar(PanelKind::Panel),
+    hit(Page::ActivityIsland, "Camera in use", "", false).bar(PanelKind::Panel),
+    hit(Page::ActivityIsland, "Device connected", "", false).bar(PanelKind::Panel),
+    hit(Page::ActivityIsland, "File shelf", "", false).bar(PanelKind::Panel),
+    hit(Page::ActivityIsland, "Island style", "", false).bar(PanelKind::Panel),
+    hit(Page::ActivityIsland, "Low battery", "", false).bar(PanelKind::Panel),
+    hit(Page::ActivityIsland, "Meeting reminder", "", false).bar(PanelKind::Panel),
+    hit(Page::ActivityIsland, "Microphone in use", "", false).bar(PanelKind::Panel),
+    hit(Page::ActivityIsland, "Network", "", false).bar(PanelKind::Panel),
+    hit(Page::ActivityIsland, "Notifications", "", false).bar(PanelKind::Panel),
+    hit(Page::ActivityIsland, "Playing media", "", false).bar(PanelKind::Panel),
+    hit(Page::ActivityIsland, "Show message text", "", false).bar(PanelKind::Panel),
+    hit(Page::ActivityIsland, "Software updates", "", false).bar(PanelKind::Panel),
+    hit(Page::ActivityIsland, "Sound output", "", false).bar(PanelKind::Panel),
+    hit(Page::ActivityIsland, "System activities", "", false).bar(PanelKind::Panel),
+    hit(Page::ActivityIsland, "Upcoming meetings", "", false).bar(PanelKind::Panel),
+    hit(
+        Page::ActivityIsland,
+        "Use the island instead of popups",
+        "",
+        false,
+    )
+    .bar(PanelKind::Panel),
+    hit(
+        Page::ActivityIsland,
+        "Using the island",
+        "gestures click right-click middle-click swipe touchpad esc play pause",
+        false,
+    )
+    .bar(PanelKind::Panel),
     hit(Page::Appearance, "Clear glass", "", false),
     hit(Page::Appearance, "Frosted", "", false),
     hit(Page::Appearance, "Liquid", "", false),
@@ -1185,6 +1217,7 @@ const ROWS: &[SearchHit] = &[
     hit(Page::DesktopWindows, "Title bar and outline", "", false),
     hit(Page::DesktopWindows, "When you start typing", "", false),
     hit(Page::DesktopWindows, "Wrap around", "", false),
+    hit(Page::DesktopWindowRules, "Your apps", "", false),
     hit(Page::Devbox, "Background services", "", false),
     hit(Page::Devbox, "How often it updates", "", false),
     hit(
@@ -1336,6 +1369,23 @@ pub(super) const NOT_INDEXED: &[(&str, &str)] = &[
     ("Dock and panel", "Appearance's link to the bars' See-through; “see-through” finds it"),
     ("Dock and panel hide timing", "Accessibility's link to the dock's Hide timing, which search opens itself"),
     ("Not on your panel", "the Activity island page's empty state; “island” finds the page"),
+    (
+        "Point or click",
+        "a line under Using the island, which search finds",
+    ),
+    (
+        "Right-click",
+        "a line under Using the island, which search finds",
+    ),
+    (
+        "Middle-click",
+        "a line under Using the island, which search finds",
+    ),
+    (
+        "Swipe on a touchpad",
+        "a line under Using the island, which search finds",
+    ),
+    ("Esc", "a line under Using the island, which search finds"),
     ("Before Halcyon", "a group in the Changes list, which follows your history"),
     ("Changed Daily overview", "an entry in the Changes list"),
     ("Wallpaper from before Halcyon", "an entry in the Changes list"),
@@ -3037,12 +3087,23 @@ impl Settings {
         if self.canvas_visible() {
             return UndoTarget::Canvas;
         }
+        // Item edits waiting to apply are the latest change: Undo puts the
+        // items back without writing anything.
+        if self.page.edits_bars() && self.desktop.items_held() {
+            return UndoTarget::Preview(Some("item change"));
+        }
         match &self.last_desktop_change {
             Some((_, label, id)) => UndoTarget::Desktop(id.clone(), label.clone()),
             None => UndoTarget::None,
         }
     }
     pub(super) fn undo_preview_step(&mut self) -> Task<Message> {
+        if self.page.edits_bars() && self.desktop.items_held() {
+            self.desktop.update(super::desktop::Message::Discard);
+            self.status = "Undid the item change".into();
+            self.error = false;
+            return Task::none();
+        }
         if self.page == Page::Builder {
             self.status = if self.recipe_editor.undo_step() {
                 "Widget design edit undone"

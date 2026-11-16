@@ -25,6 +25,9 @@ pub(super) fn theme_preview(message: &Message) -> Option<profiles::Message> {
     })
 }
 
+/// Completed controls apply at once. Item edits (Add, Remove, the arrows,
+/// Move to and drops) are held instead and apply together after a pause, or
+/// when the row or page is left (`desktop::ITEMS_HOLD`).
 pub(super) fn completion(message: &Message) -> Option<Message> {
     use desktop::Message as Dock;
     use system_appearance::Message as Appearance;
@@ -44,15 +47,8 @@ pub(super) fn completion(message: &Message) -> Option<Message> {
                     | Dock::Output(_)
                     | Dock::Background(_)
                     | Dock::KeepStyle(_)
-                    | Dock::MoveTo(..)
                     | Dock::UseStarter
                     | Dock::PanelStyle(_)
-                    | Dock::Add(..)
-                    | Dock::AddToBar(_)
-                    | Dock::Remove(_)
-                    | Dock::Step(..)
-                    | Dock::Drop
-                    | Dock::DropAt(_)
                     | Dock::Islands(
                         desktop::islands::Edit::Enabled(_)
                             | desktop::islands::Edit::Placement(_)

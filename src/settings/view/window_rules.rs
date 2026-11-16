@@ -33,13 +33,23 @@ fn field<'a>(
     .into()
 }
 
-/// “Any app”, the exact ID, “contains …” or “Pattern”, for one line.
+/// “Any app”, the exact ID, “contains …” or the pattern itself, for one
+/// line. A pattern is shown as written, so rows can be told apart.
 fn app_text(pattern: &str) -> String {
     match classify(pattern) {
         Match::Any => "Any app".into(),
         Match::Exact(id) => id,
         Match::Contains(text) => format!("App ID contains “{text}”"),
-        Match::Pattern(_) => "App ID pattern".into(),
+        Match::Pattern(pattern) => pattern,
+    }
+}
+/// The app-ID condition under an app's name, when the name alone doesn't
+/// say it: a contains or other pattern that names one installed app.
+fn app_condition(pattern: &str) -> Option<String> {
+    match classify(pattern) {
+        Match::Any | Match::Exact(_) => None,
+        Match::Contains(text) => Some(format!("App ID contains “{text}”")),
+        Match::Pattern(pattern) => Some(format!("App ID matches “{pattern}”")),
     }
 }
 fn title_text(pattern: &str) -> String {
@@ -47,7 +57,7 @@ fn title_text(pattern: &str) -> String {
         Match::Any => "Any title".into(),
         Match::Exact(text) => format!("Title is “{text}”"),
         Match::Contains(text) => format!("Title contains “{text}”"),
-        Match::Pattern(_) => "Title pattern".into(),
+        Match::Pattern(pattern) => format!("Title matches “{pattern}”"),
     }
 }
 fn is_pattern(row: &RuleRow) -> bool {
@@ -85,22 +95,9 @@ impl Settings {
         let rows = draft.rows();
         items.push(
             column::with_children(vec![
-                // The main action sits top right, beside the title.
                 split(
                     heading("Apps that don’t tile", ""),
-                    row::with_children(vec![
-                        store_pill(editor.store(), accent),
-                        button::standard("Add app")
-                            .leading_icon(icon::from_name("list-add-symbolic").size(14))
-                            .on_press_maybe(
-                                (editor.form.is_none() && draft.editable())
-                                    .then_some(edit(Edit::Add)),
-                            )
-                            .into(),
-                    ])
-                    .spacing(10)
-                    .align_y(Alignment::Center)
-                    .into(),
+                    store_pill(editor.store(), accent),
                 ),
                 label(
                     "When tiling is on, these apps still open as normal windows you can move and resize.",
@@ -238,7 +235,13 @@ impl Settings {
                 .into(),
             );
             if form.picker {
-                items.push(self.app_picker(form, accent));
+                items.push(installed_app_picker(
+                    self.window_rules.apps(),
+                    &form.picker_search,
+                    |text| edit(Edit::PickerSearch(text)),
+                    |id| edit(Edit::Pick(id)),
+                    accent,
+                ));
             }
             items.push(field(
                 "App ID",
@@ -289,79 +292,28 @@ impl Settings {
         )
     }
 
-    fn app_picker<'a>(&'a self, form: &'a RuleForm, accent: Color) -> Element<'a, Message> {
-        let query = form.picker_search.to_lowercase();
-        let mut rows: Vec<Element<'a, Message>> = Vec::new();
-        if let Some(apps) = self.window_rules.apps() {
-            for app in apps.sorted().into_iter().filter(|app| {
-                query.is_empty()
-                    || app.name.to_lowercase().contains(&query)
-                    || app.app_id.to_lowercase().contains(&query)
-            }) {
-                let symbol = if app.icon.is_empty() || app.icon.contains('/') {
-                    APP_ICON.to_string()
-                } else {
-                    app.icon.clone()
-                };
-                rows.push(
-                    button::custom(
-                        row::with_children(vec![
-                            icon::from_name(symbol).size(20).icon().into(),
-                            column::with_children(vec![
-                                line(app.name.clone(), 13., FG),
-                                line(app.app_id.clone(), CAPTION, MUTED),
-                            ])
-                            .spacing(1)
-                            .width(Length::Fill)
-                            .into(),
-                        ])
-                        .spacing(10)
-                        .align_y(Alignment::Center),
-                    )
-                    .class(nav_style(false, accent))
-                    .padding([4, 6])
-                    .width(Length::Fill)
-                    .on_press(edit(Edit::Pick(app.id.clone())))
-                    .into(),
-                );
-            }
-        }
-        if rows.is_empty() {
-            rows.push(label("No installed apps match.", CAPTION, MUTED));
-        }
-        fill(
-            column::with_children(vec![
-                text_input("Search installed apps", form.picker_search.clone())
-                    .on_input(|text| edit(Edit::PickerSearch(text)))
-                    .width(Length::Fill)
-                    .into(),
-                scrollable(column::with_children(rows).spacing(2))
-                    .height(Length::Fixed(168.))
-                    .into(),
-            ])
-            .spacing(8)
-            .into(),
-            BASE,
-            LINE,
-            1.,
-            12.,
-        )
-        .padding(10)
-        .width(Length::Fill)
-        .into()
-    }
-
+    /// Your own rules first, with Add, then COSMIC's defaults folded under
+    /// their count. Only the view groups them: the saved list keeps its
+    /// order, which COSMIC doesn't depend on (any rule that matches floats
+    /// the window).
     fn rule_list<'a>(&'a self, rows: &[RuleRow], accent: Color) -> Element<'a, Message> {
         let editor = &self.window_rules;
         let query = editor.search.to_lowercase();
-        let editable = editor.draft().is_some_and(WindowRulesDraft::editable);
-        let apps = editor.apps();
-        let mut items: Vec<Element<'a, Message>> = Vec::new();
+        let draft = editor.draft();
+        let editable = draft.is_some_and(WindowRulesDraft::editable);
+        let mut own: Vec<Element<'a, Message>> = Vec::new();
+        let mut defaults: Vec<Element<'a, Message>> = Vec::new();
+        let total = rows.iter().filter(|row| row.default).count();
+        let changed = rows
+            .iter()
+            .filter(|row| row.default && row.overridden)
+            .count();
+        let open = editor.defaults_open || !query.is_empty();
         for row in rows {
-            let app = match classify(&row.appid) {
-                Match::Exact(id) => apps.and_then(|apps| apps.for_app_id(&id)),
-                _ => None,
-            };
+            if row.default && !open {
+                continue;
+            }
+            let app = editor.app_for(&row.appid);
             let name = app
                 .map(|app| app.name.clone())
                 .unwrap_or_else(|| app_text(&row.appid));
@@ -372,16 +324,92 @@ impl Settings {
             {
                 continue;
             }
-            items.push(self.rule_row(row, name, app.map(|app| app.icon.clone()), editable, accent));
-        }
-        if items.is_empty() {
-            items.push(if rows.is_empty() {
-                detail_state("No apps yet", "Use Add app to pick one.")
+            let shown = self.rule_row(
+                row,
+                name,
+                app.map(|app| app.icon.clone()),
+                app.and_then(|_| app_condition(&row.appid)),
+                editable,
+                accent,
+            );
+            if row.default {
+                defaults.push(shown);
             } else {
-                label(format!("No apps match “{}”.", editor.search), 12., MUTED)
-            });
+                own.push(shown);
+            }
         }
-        group(None, items)
+        let add = button::standard("Add app")
+            .id(cosmic::widget::Id::new("window-rules-add"))
+            .leading_icon(icon::from_name("list-add-symbolic").size(14))
+            .on_press_maybe((editor.form.is_none() && editable).then_some(edit(Edit::Add)))
+            .into();
+        let mine = rows.iter().any(|row| !row.default);
+        own.push(if !mine {
+            split(
+                detail_state("No apps yet", "Add an app to keep it out of tiling."),
+                add,
+            )
+        } else if own.is_empty() {
+            split(
+                label(
+                    format!("None of your apps match “{}”.", editor.search),
+                    12.,
+                    MUTED,
+                ),
+                add,
+            )
+        } else {
+            row::with_children(vec![
+                container(text::body("")).width(Length::Fill).into(),
+                add,
+            ])
+            .align_y(Alignment::Center)
+            .into()
+        });
+        let mut groups = vec![
+            container(group(Some("Your apps"), own))
+                .id(cosmic::widget::Id::new("window-rules-yours"))
+                .into(),
+        ];
+        if total > 0 {
+            let mut items = vec![split(
+                button::text(format!("COSMIC defaults ({total})"))
+                    .id(cosmic::widget::Id::new("window-rules-defaults"))
+                    .leading_icon(
+                        icon::from_name(if open {
+                            "go-down-symbolic"
+                        } else {
+                            "go-next-symbolic"
+                        })
+                        .size(14),
+                    )
+                    .on_press_maybe(
+                        query
+                            .is_empty()
+                            .then_some(edit(Edit::Defaults(!editor.defaults_open))),
+                    )
+                    .into(),
+                label(
+                    if changed > 0 {
+                        format!("{changed} switched off or changed")
+                    } else {
+                        "Apps COSMIC keeps floating".to_string()
+                    },
+                    11.,
+                    MUTED,
+                ),
+            )];
+            if open && defaults.is_empty() {
+                items.push(label(
+                    format!("No defaults match “{}”.", editor.search),
+                    12.,
+                    MUTED,
+                ));
+            }
+            items.extend(defaults);
+            groups.push(group(None, items));
+        }
+        column::with_children(groups).spacing(16).into()
     }
 
     fn rule_row<'a>(
@@ -389,6 +417,7 @@ impl Settings {
         row: &RuleRow,
         name: String,
         app_icon: Option<String>,
+        app_condition: Option<String>,
         editable: bool,
         accent: Color,
     ) -> Element<'a, Message> {
@@ -403,7 +432,10 @@ impl Settings {
             (true, false) => ("Default", MUTED),
             (false, _) => ("Custom", accent),
         };
-        let mut condition = title_text(&row.title);
+        let mut condition = match app_condition {
+            Some(app) => format!("{app} · {}", title_text(&row.title)),
+            None => title_text(&row.title),
+        };
         if row.copies > 1 {
             condition.push_str(&format!(" · listed {}×", row.copies));
         }
@@ -528,4 +560,75 @@ fn editor_blocked(editor: &crate::settings::window_rules::WindowRulesEditor) -> 
         .dirty()
         .then(|| draft.plan().blocked.first().map(|b| b.reason.clone()))
         .flatten()
+}
+
+/// Installed apps to pick from, with a search: shared by Floating apps and
+/// Keyboard shortcuts. `pick` gets the app's desktop entry ID.
+pub(super) fn installed_app_picker<'a>(
+    apps: Option<&'a crate::desktop::apps::AppCatalog>,
+    search: &str,
+    on_search: impl Fn(String) -> Message + 'a,
+    pick: impl Fn(String) -> Message,
+    accent: Color,
+) -> Element<'a, Message> {
+    let query = search.to_lowercase();
+    let mut rows: Vec<Element<'a, Message>> = Vec::new();
+    if let Some(apps) = apps {
+        for app in apps.sorted().into_iter().filter(|app| {
+            query.is_empty()
+                || app.name.to_lowercase().contains(&query)
+                || app.app_id.to_lowercase().contains(&query)
+        }) {
+            let symbol = if app.icon.is_empty() || app.icon.contains('/') {
+                APP_ICON.to_string()
+            } else {
+                app.icon.clone()
+            };
+            rows.push(
+                button::custom(
+                    row::with_children(vec![
+                        icon::from_name(symbol).size(20).icon().into(),
+                        column::with_children(vec![
+                            line(app.name.clone(), 13., FG),
+                            line(app.app_id.clone(), CAPTION, MUTED),
+                        ])
+                        .spacing(1)
+                        .width(Length::Fill)
+                        .into(),
+                    ])
+                    .spacing(10)
+                    .align_y(Alignment::Center),
+                )
+                .id(cosmic::widget::Id::new(format!("app-pick-{}", app.id)))
+                .class(nav_style(false, accent))
+                .padding([4, 6])
+                .width(Length::Fill)
+                .on_press(pick(app.id.clone()))
+                .into(),
+            );
+        }
+    }
+    if rows.is_empty() {
+        rows.push(label("No installed apps match.", CAPTION, MUTED));
+    }
+    fill(
+        column::with_children(vec![
+            text_input("Search installed apps", search.to_string())
+                .on_input(on_search)
+                .width(Length::Fill)
+                .into(),
+            scrollable(column::with_children(rows).spacing(2))
+                .height(Length::Fixed(168.))
+                .into(),
+        ])
+        .spacing(8)
+        .into(),
+        BASE,
+        LINE,
+        1.,
+        12.,
+    )
+    .padding(10)
+    .width(Length::Fill)
+    .into()
 }

@@ -1,7 +1,7 @@
 //! Floating apps editor state: one draft of the custom tiling-exception
 //! list, a search, and at most one add/edit form. The form edits only
 //! itself; Save puts the rule into the draft and Apply writes the draft.
-use crate::desktop::apps::AppCatalog;
+use crate::desktop::apps::{AppCatalog, AppInfo};
 use crate::desktop::store::{DesktopStore, Journal, Owner};
 use crate::desktop::window_rules::{
     CustomRule, Match, RuleRow, WindowRulesDraft, classify, exact_app, title_contains, validate,
@@ -102,6 +102,8 @@ pub enum Message {
     Toggle(String, String, bool),
     Remove(String, String),
     Expand(Option<(String, String)>),
+    /// Unfold or fold COSMIC's default rules.
+    Defaults(bool),
     Apply,
     Discard,
     Undo,
@@ -134,7 +136,11 @@ pub struct WindowRulesEditor {
     pub search: String,
     pub form: Option<RuleForm>,
     pub expanded: Option<(String, String)>,
+    /// COSMIC's default rules are unfolded.
+    pub defaults_open: bool,
     apps: Option<AppCatalog>,
+    /// The installed app each app-ID pattern stands for, looked up once.
+    matched: std::cell::RefCell<std::collections::BTreeMap<String, Option<String>>>,
 }
 
 impl Default for WindowRulesEditor {
@@ -144,7 +150,9 @@ impl Default for WindowRulesEditor {
             search: String::new(),
             form: None,
             expanded: None,
+            defaults_open: false,
             apps: None,
+            matched: Default::default(),
         }
     }
 }
@@ -223,6 +231,24 @@ impl WindowRulesEditor {
     pub fn apps(&self) -> Option<&AppCatalog> {
         self.apps.as_ref()
     }
+    /// The installed app a rule's app-ID pattern stands for, when one
+    /// clearly does: the app with that exact ID, or the one app a contains
+    /// or other pattern matches.
+    pub fn app_for(&self, pattern: &str) -> Option<&AppInfo> {
+        let apps = self.apps.as_ref()?;
+        if let Some(id) = self.matched.borrow().get(pattern) {
+            return id.as_deref().and_then(|id| apps.get(id));
+        }
+        let found = match classify(pattern) {
+            Match::Any => None,
+            Match::Exact(id) => apps.for_app_id(&id),
+            Match::Contains(_) | Match::Pattern(_) => apps.for_pattern(pattern),
+        };
+        self.matched
+            .borrow_mut()
+            .insert(pattern.to_string(), found.map(|app| app.id.clone()));
+        found
+    }
     pub fn notice(&self) -> Option<&Notice> {
         self.core.notice.as_ref()
     }
@@ -257,12 +283,13 @@ impl WindowRulesEditor {
     }
     pub fn state_key(&self) -> String {
         format!(
-            "{}:{:?}:{:?}:{}:{:?}",
+            "{}:{:?}:{:?}:{}:{:?}:{}",
             self.core.state_key(),
             self.draft().map(|draft| draft.custom().ok()),
             self.form,
             self.search,
             self.expanded,
+            self.defaults_open,
         )
     }
     pub fn refresh(&mut self) {
@@ -337,6 +364,7 @@ impl WindowRulesEditor {
                 self.finish(result);
             }
             Message::Expand(pair) => self.expanded = pair,
+            Message::Defaults(open) => self.defaults_open = open,
             Message::Apply => {
                 if self.can_apply() {
                     self.core.apply();

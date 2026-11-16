@@ -557,6 +557,14 @@ impl Entry {
             action_raw,
         })
     }
+    /// The same action, its text kept exactly, on other keys.
+    pub fn with_binding(&self, binding: Binding) -> Result<Self, String> {
+        Ok(Self {
+            binding_raw: ron::to_string(&binding).map_err(|error| error.to_string())?,
+            binding,
+            ..self.clone()
+        })
+    }
     /// The same binding text with another action.
     pub fn with_action(&self, action: Action) -> Result<Self, String> {
         Ok(Self {

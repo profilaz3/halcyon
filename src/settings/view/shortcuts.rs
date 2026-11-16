@@ -248,7 +248,7 @@ impl Settings {
         if let Some(form) = &editor.form {
             items.push(self.inspector_layout(
                 self.shortcut_list(&rows),
-                command_form(form, editor.recording(), editor.recording_error.as_deref()),
+                command_form(form, editor, accent),
                 "shortcuts",
             ));
         } else {
@@ -260,13 +260,14 @@ impl Settings {
     fn shortcut_list<'a>(&'a self, rows: &[Row]) -> Element<'a, Message> {
         let editor = &self.shortcuts;
         let query = editor.search.trim().to_lowercase();
+        let mine = rows.iter().any(|row| !row.builtin());
         // Search is global within shortcuts, even when the custom tab is
         // selected; built-ins should remain easy to find from the default view.
-        // With none of your own yet, the built-in ones show under the empty
-        // note, so the page never opens on nothing.
-        let filter = if !query.is_empty()
-            || (editor.filter == Filter::Custom && rows.iter().all(|row| row.builtin()))
-        {
+        // With none of your own yet, the tab says so first, and the
+        // built-in ones follow under their own heading, so the page never
+        // opens on nothing and never passes them off as yours.
+        let empty = query.is_empty() && editor.filter == Filter::Custom && !mine;
+        let filter = if !query.is_empty() || empty {
             Filter::All
         } else {
             editor.filter
@@ -279,6 +280,32 @@ impl Settings {
         if !query.is_empty() {
             items.push(label("Results across all shortcuts", CAPTION, MUTED));
         }
+        if empty {
+            items.push(
+                container(group(
+                    None,
+                    vec![split(
+                        detail_state(
+                            "No shortcuts of your own yet",
+                            "Open an app or run a command with keys you choose.",
+                        ),
+                        button::standard("Add shortcut")
+                            .id(cosmic::widget::Id::new("shortcuts-add-first"))
+                            .leading_icon(icon::from_name("list-add-symbolic").size(14))
+                            .on_press_maybe(
+                                (!editor.busy()
+                                    && editor
+                                        .draft()
+                                        .is_some_and(|draft| draft.custom_problem().is_none()))
+                                .then_some(edit(Edit::Add)),
+                            )
+                            .into(),
+                    )],
+                ))
+                .id(cosmic::widget::Id::new("shortcuts-empty"))
+                .into(),
+            );
+        }
         let custom: Vec<&Row> = matching
             .iter()
             .copied()
@@ -290,6 +317,16 @@ impl Settings {
                 custom_items.push(self.shortcut_row(row));
             }
             items.push(group(Some("Your shortcuts"), custom_items));
+        }
+        // The built-in ones under a heading of their own, except on their
+        // own tab, which already says so.
+        if filter != Filter::Builtin && matching.iter().any(|row| row.builtin()) {
+            items.push(
+                container(text::heading("Built-in shortcuts"))
+                    .id(cosmic::widget::Id::new("shortcuts-builtin-heading"))
+                    .padding([6, 0, 0, 0])
+                    .into(),
+            );
         }
         for category in Category::ALL {
             let grouped: Vec<&Row> = matching
@@ -331,24 +368,23 @@ impl Settings {
             }
             items.push(group(None, group_items));
         }
-        if matching.is_empty() {
+        if matching.is_empty() && !empty {
             // One empty state: what is missing and what to do about it.
-            items.push(group(None, vec![detail_state(
-                if query.is_empty() && editor.filter == Filter::Custom {
-                    "No shortcuts of your own yet".to_string()
-                } else if query.is_empty() {
-                    "COSMIC’s shortcuts couldn’t be read".to_string()
-                } else {
-                    format!("No shortcuts match “{}”", editor.search.trim())
-                },
-                if query.is_empty() && editor.filter == Filter::Custom {
-                    "Use Add shortcut to open an app or run a command with keys you choose."
-                } else if query.is_empty() {
-                    "They still work; they just can’t be listed here."
-                } else {
-                    "Try an action name, command or key combination."
-                },
-            )]));
+            items.push(group(
+                None,
+                vec![detail_state(
+                    if query.is_empty() {
+                        "COSMIC’s shortcuts couldn’t be read".to_string()
+                    } else {
+                        format!("No shortcuts match “{}”", editor.search.trim())
+                    },
+                    if query.is_empty() {
+                        "They still work; they just can’t be listed here."
+                    } else {
+                        "Try an action name, command or key combination."
+                    },
+                )],
+            ));
         }
         column::with_children(items).spacing(10).into()
     }
@@ -413,6 +449,18 @@ impl Settings {
                 } else {
                     "Built-in".into()
                 });
+                // Its action can move to other keys, as in COSMIC Settings.
+                if !row.unused && !row.custom && *state && !row.keycode() {
+                    controls.push(
+                        button::text("Change keys")
+                            .id(cosmic::widget::Id::new(format!(
+                                "shortcut-change-{}",
+                                row.binding.label()
+                            )))
+                            .on_press_maybe(free.then_some(edit(Edit::ChangeKeys(ident))))
+                            .into(),
+                    );
+                }
                 if !row.unused {
                     let state = *state;
                     controls.push(
@@ -534,10 +582,12 @@ impl Settings {
 
 fn command_form<'a>(
     form: &'a CommandForm,
-    recording: bool,
-    recording_error: Option<&str>,
+    editor: &'a crate::settings::shortcuts::ShortcutsEditor,
+    accent: Color,
 ) -> Element<'a, Message> {
+    let recording = editor.recording();
     let editing = form.editing.is_some();
+    let rebinding = form.rebinding.is_some();
     // Enter in a field does what the Add or Save button does, when it can.
     let save = (!recording && form.ask.is_none()).then_some(edit(Edit::Save));
     let mut items = Vec::new();
@@ -547,13 +597,45 @@ fn command_form<'a>(
     {
         items.push(question);
     }
-    items.push(field(
-        "Name",
-        "Open notes",
-        &form.name,
-        Edit::Name,
-        save.clone(),
-    ));
+    if rebinding {
+        items.push(label(
+            format!(
+                "New keys for “{}”. Its current keys turn off, and Undo puts them back.",
+                form.name
+            ),
+            12.,
+            MUTED,
+        ));
+    } else {
+        // An app to open fills in the command and a name.
+        items.push(
+            button::text(if form.picker {
+                "Hide installed apps"
+            } else {
+                "Choose an installed app…"
+            })
+            .id(cosmic::widget::Id::new("shortcut-pick-app"))
+            .leading_icon(icon::from_name("view-app-grid-symbolic").size(14))
+            .on_press_maybe((!recording).then_some(edit(Edit::Picker(!form.picker))))
+            .into(),
+        );
+        if form.picker {
+            items.push(super::window_rules::installed_app_picker(
+                editor.apps(),
+                &form.picker_search,
+                |text| edit(Edit::PickerSearch(text)),
+                |id| edit(Edit::Pick(id)),
+                accent,
+            ));
+        }
+        items.push(field(
+            "Name",
+            "Open notes",
+            &form.name,
+            Edit::Name,
+            save.clone(),
+        ));
+    }
     let mut combination_input = text_input("Super+Shift+K", form.combo.clone()).width(Length::Fill);
     if !recording {
         combination_input = combination_input
@@ -567,10 +649,12 @@ fn command_form<'a>(
                 combination_input.into(),
                 if recording {
                     button::standard("Cancel recording")
+                        .id(cosmic::widget::Id::new("shortcut-record"))
                         .on_press(edit(Edit::CancelRecording))
                         .into()
                 } else {
                     button::standard("Record keys")
+                        .id(cosmic::widget::Id::new("shortcut-record"))
                         .leading_icon(icon::from_name("input-keyboard-symbolic").size(14))
                         .on_press_maybe(form.ask.is_none().then_some(edit(Edit::Record)))
                         .into()
@@ -585,12 +669,18 @@ fn command_form<'a>(
     );
     if recording {
         items.push(label("Press a combination · Esc cancels", 13., FG));
+        // The desktop holds its own shortcuts back while this window
+        // records, when it supports that; otherwise typing still works.
         items.push(label(
-            "If the desktop uses those keys, cancel and type the combination instead.",
+            if editor.inhibited {
+                "Desktop shortcuts are paused while you record."
+            } else {
+                "If the desktop uses those keys, cancel and type the combination instead."
+            },
             11.,
             MUTED,
         ));
-        if let Some(error) = recording_error {
+        if let Some(error) = editor.recording_error.as_deref() {
             items.push(label(error.to_owned(), CAPTION, ERROR));
         }
     }
@@ -600,18 +690,20 @@ fn command_form<'a>(
             Err(error) => label(error, CAPTION, ERROR),
         });
     }
-    items.push(field(
-        "Command",
-        "notes --new",
-        &form.command,
-        Edit::Command,
-        save.clone(),
-    ));
-    items.push(label(
-        "Runs when you press the combination after saving.",
-        11.,
-        MUTED,
-    ));
+    if !rebinding {
+        items.push(field(
+            "Command",
+            "notes --new",
+            &form.command,
+            Edit::Command,
+            save.clone(),
+        ));
+        items.push(label(
+            "Runs when you press the combination after saving.",
+            11.,
+            MUTED,
+        ));
+    }
     if let Some(error) = &form.error {
         items.push(label(error.clone(), CAPTION, ERROR));
     }
@@ -619,7 +711,8 @@ fn command_form<'a>(
         row::with_children(vec![
             container(text::body("")).width(Length::Fill).into(),
             button::text("Cancel").on_press(edit(Edit::Cancel)).into(),
-            button::suggested(if editing { "Save" } else { "Add" })
+            button::suggested(if editing || rebinding { "Save" } else { "Add" })
+                .id(cosmic::widget::Id::new("shortcut-save"))
                 .on_press_maybe(save)
                 .into(),
         ])
@@ -628,10 +721,12 @@ fn command_form<'a>(
         .into(),
     );
     group(
-        Some(if editing {
+        Some(if rebinding {
+            "Change keys"
+        } else if editing {
             "Edit command"
         } else {
-            "Add command"
+            "Add shortcut"
         }),
         items,
     )
