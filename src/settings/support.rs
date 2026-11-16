@@ -208,16 +208,17 @@ pub(in crate::settings) fn change_name(
     label: &str,
 ) -> String {
     use crate::desktop::store::activity::Summary;
+    // A name in quotes, then how it was applied, if not by hand:
+    // "Profile “Calm”", "Look “Calm” (automatic)", "Look “Calm” (edge menu)".
     let quoted = |prefix: &str| {
-        label
-            .strip_prefix(prefix)
-            .and_then(|name| name.strip_suffix('”'))
+        let (name, how) = label.strip_prefix(prefix)?.rsplit_once('”')?;
+        matches!(how, "" | " (automatic)" | " (edge menu)").then_some((name, how))
     };
-    if let Some(name) = quoted("Profile “") {
-        return format!("look “{name}”");
+    if let Some((name, how)) = quoted("Profile “").or_else(|| quoted("Look “")) {
+        return format!("look “{name}”{how}");
     }
-    if let Some(name) = quoted("Style “") {
-        return format!("style “{name}”");
+    if let Some((name, how)) = quoted("Style “") {
+        return format!("style “{name}”{how}");
     }
     if label == "Style changes" {
         return "style changes".into();

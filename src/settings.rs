@@ -285,7 +285,7 @@ impl Page {
             Self::Appearance => "Glass and transparency",
             Self::DesktopAppearance => "Fonts and icons",
             Self::DesktopWallpaper => "Wallpaper",
-            Self::WeatherEffects => "Effects",
+            Self::WeatherEffects => "Weather effects",
             Self::Themes => "Appearance",
             Self::DesktopProfiles => "Looks",
             Self::DesktopWindows => "Windows",
@@ -300,6 +300,7 @@ impl Page {
         match self.sidebar() {
             Self::ActivityIsland => "Island",
             Self::DesktopAppearance => "Fonts",
+            Self::WeatherEffects => "Effects",
             page => page.nav_title(),
         }
     }
@@ -405,7 +406,7 @@ impl Page {
             Self::ActivityIsland => "Activity island",
             Self::DesktopAppearance => "Fonts and icons",
             Self::DesktopWallpaper => "Wallpaper",
-            Self::WeatherEffects => "Effects",
+            Self::WeatherEffects => "Weather effects",
             Self::DesktopIcons => "Icons on the desktop",
             Self::DesktopProfiles => "Looks",
             Self::Themes => "Appearance",
@@ -1869,10 +1870,8 @@ impl cosmic::Application for Settings {
                 );
             }
         }
-        if self.page == Page::General {
-            subscriptions.push(
-                cosmic::iced::time::every(Duration::from_secs(30)).map(|_| Message::RefreshService),
-            );
+        if let Some(every) = self.service_refresh() {
+            subscriptions.push(cosmic::iced::time::every(every).map(|_| Message::RefreshService));
         }
         // The preview uses the same seek notifications as the desktop card.
         if self.page == Page::Music {
@@ -2656,6 +2655,15 @@ impl Settings {
             }
             Message::RevealSearch(hit) => {
                 if self.search_selected == Some(hit) && self.search_query.trim().is_empty() {
+                    // The city search is typed into at once.
+                    if hit.open == navigation::SearchOpen::City && self.page == Page::Weather {
+                        return Task::batch([
+                            navigation::reveal("weather-city"),
+                            cosmic::widget::text_input::focus(cosmic::widget::Id::new(
+                                "weather-city",
+                            )),
+                        ]);
+                    }
                     return navigation::reveal(hit.anchor());
                 }
             }
@@ -4549,13 +4557,17 @@ impl Settings {
                     return Task::none();
                 }
                 self.working(if running {
-                    "Starting background operation…"
+                    "Starting widgets…"
                 } else {
-                    "Stopping background operation…"
+                    "Stopping widgets…"
                 });
                 return systemctl(
                     vec![if running { "start" } else { "stop" }],
-                    "Background operation updated",
+                    if running {
+                        WIDGETS_STARTED
+                    } else {
+                        WIDGETS_STOPPED
+                    },
                 );
             }
             Message::Startup(enabled) => {
@@ -4587,6 +4599,11 @@ impl Settings {
             },
             Message::CommandDone(status, result) => {
                 self.busy = false;
+                // A start or stop is read back on any page, so the "Widgets
+                // aren't running" banner follows at once.
+                let service = matches!(self.page, Page::General | Page::Overview)
+                    || status == WIDGETS_STARTED
+                    || status == WIDGETS_STOPPED;
                 if let Ok(config) = Config::try_load() {
                     self.config = config;
                 }
@@ -4604,7 +4621,7 @@ impl Settings {
                     }
                     Err(error) => self.failed(error),
                 }
-                if matches!(self.page, Page::General | Page::Overview) {
+                if service {
                     return Task::batch([service_task(), media]);
                 }
                 return media;
@@ -5814,6 +5831,17 @@ impl Settings {
         self.status = error;
         self.error = true;
     }
+    /// How often the widgets service is read again: on General, and soon
+    /// while a "Widgets aren't running" banner shows.
+    fn service_refresh(&self) -> Option<Duration> {
+        if self.widgets_stopped() && matches!(self.page, Page::Overview | Page::DesktopProfiles) {
+            Some(Duration::from_secs(5))
+        } else if self.page == Page::General {
+            Some(Duration::from_secs(30))
+        } else {
+            None
+        }
+    }
     fn working(&mut self, status: &str) {
         self.status = status.into();
         self.busy = true;
@@ -6033,7 +6061,7 @@ fn profile_dialog(request: profiles::Request) -> Task<Message> {
     use cosmic::dialog::ashpd::desktop::ResponseError;
     use cosmic::dialog::file_chooser::{self, FileFilter};
     let filter = || {
-        FileFilter::new("Halcyon look or profile")
+        FileFilter::new("Halcyon look")
             .glob("*.json")
             .glob("*.halcyon")
     };
@@ -6049,7 +6077,7 @@ fn profile_dialog(request: profiles::Request) -> Task<Message> {
     match request {
         profiles::Request::Import { id } => cosmic::task::future(async move {
             let result = match file_chooser::open::Dialog::new()
-                .title("Import a profile")
+                .title("Import a look")
                 .filter(filter())
                 .open_file()
                 .await
@@ -6070,7 +6098,7 @@ fn profile_dialog(request: profiles::Request) -> Task<Message> {
             confine,
         } => cosmic::task::future(async move {
             let result = match file_chooser::save::Dialog::new()
-                .title("Export profile".to_string())
+                .title("Export look".to_string())
                 .file_name(file_name)
                 .filter(filter())
                 .save_file()
@@ -7020,6 +7048,9 @@ fn run_command(command: PathBuf, args: Vec<String>, status: &'static str) -> Tas
 fn controller(args: Vec<String>, status: &'static str) -> Task<Message> {
     run_command(crate::paths::controller(), args, status)
 }
+/// What the footer says once Start or Stop for the widgets is done.
+const WIDGETS_STARTED: &str = "Widgets started";
+const WIDGETS_STOPPED: &str = "Widgets stopped";
 fn systemctl(args: Vec<&'static str>, status: &'static str) -> Task<Message> {
     let mut command = vec!["--user".into()];
     command.extend(args.into_iter().map(String::from));
@@ -11196,6 +11227,81 @@ mod tests {
                 raw_before.get("future_field")
             );
         }
+    }
+
+    /// Match the weather with no city says the Weather widget needs one,
+    /// and Choose a city opens the Weather page's city search, focused.
+    #[test]
+    fn match_the_weather_without_a_city_leads_to_the_city_search() {
+        if desktop_test_child(
+            "match_the_weather_without_a_city_leads_to_the_city_search",
+            DesktopEnv {
+                app_config: true,
+                fixture: true,
+                ..Default::default()
+            },
+        ) {
+            return;
+        }
+        use cosmic::iced::{Event, mouse};
+        weather_fixture();
+        Config::save_changes(json!({ "location": null })).unwrap();
+        let size = Size::new(820., 600.);
+        let (mut app, initial) = Settings::init(Core::default(), Page::WeatherEffects);
+        settle_settings(&mut app, initial);
+        drive_wallpaper(&mut app);
+        send_settings(&mut app, Message::Resized(size));
+        assert!(app.config.location.is_none());
+        let mut native = crate::native_test::Native::new(size);
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "rain-weather-city")
+                .is_none(),
+            "only while Match the weather is on"
+        );
+        native_click(&mut app, &mut native, "rain-weather");
+        drive_wallpaper(&mut app);
+        assert!(Config::load().rain.weather);
+        native_reveal(&app, &mut native, "rain-weather");
+        native.text_bounds(app.settings_view(), "The Weather widget needs a city first");
+        // Choose a city is the Weather page's city search result.
+        let button = native_reveal(&app, &mut native, "rain-weather-city").center();
+        let mut sent = Vec::new();
+        for event in [
+            mouse::Event::CursorMoved { position: button },
+            mouse::Event::ButtonPressed(mouse::Button::Left),
+            mouse::Event::ButtonReleased(mouse::Button::Left),
+        ] {
+            sent.extend(
+                native
+                    .event(app.settings_view(), Event::Mouse(event), button)
+                    .0,
+            );
+        }
+        let hit = navigation::city_hit();
+        assert!(
+            matches!(&sent[..], [Message::SearchResult(found)] if *found == hit),
+            "{sent:?}"
+        );
+        native_send(&mut app, &mut native, Message::SearchResult(hit));
+        assert_eq!(app.page, Page::Weather);
+        // The search field is in view and has the keyboard.
+        let field = native.bounds(app.settings_view(), "weather-city");
+        let viewport = native.bounds(app.settings_view(), "settings-viewport");
+        assert!(
+            field.y >= viewport.y && field.y + field.height <= viewport.y + viewport.height,
+            "{field:?} in {viewport:?}"
+        );
+        assert!(
+            native
+                .focused(app.settings_view())
+                .is_some_and(|focus| focus.intersects(&field)),
+            "{:?}",
+            native.focused(app.settings_view())
+        );
+        // Back returns to the effects.
+        send_settings(&mut app, Message::Back);
+        assert_eq!(app.page, Page::WeatherEffects);
     }
 
     #[test]

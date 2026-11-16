@@ -1,6 +1,9 @@
 use super::*;
 use cosmic::Apply;
 
+/// How strongly a found row is tinted with the accent.
+const SEARCH_TINT: f32 = 0.1;
+
 impl Settings {
     pub(super) fn search_target<'a>(
         &'a self,
@@ -9,14 +12,19 @@ impl Settings {
     ) -> Element<'a, Message> {
         let selected = self.search_selected.is_some_and(|hit| hit.anchor() == id);
         let accent = self.settings_accent();
+        // The found row stands out: a 2 px accent ring on a light accent tint.
         container(content)
             .id(cosmic::widget::Id::new(id.to_owned()))
             .width(Length::Fill)
             .class(cosmic::theme::Container::custom(move |_| {
                 cosmic::iced::widget::container::Style {
+                    background: selected.then_some(Background::Color(Color {
+                        a: SEARCH_TINT,
+                        ..accent
+                    })),
                     border: Border {
                         color: if selected { accent } else { Color::TRANSPARENT },
-                        width: if selected { 1. } else { 0. },
+                        width: if selected { 2. } else { 0. },
                         radius: 12.into(),
                     },
                     ..Default::default()
@@ -692,7 +700,11 @@ impl Settings {
     fn page_notice(&self) -> Option<&crate::settings::desktop::Notice> {
         use crate::settings::desktop::Notice;
         let notices = match self.page {
-            Page::DesktopDock => [self.desktop.notice.as_ref(), None, None],
+            // The bars save together: Panel's Islands gap and the island's
+            // Add Activity pill report here as the Dock's edits do.
+            Page::DesktopDock | Page::DesktopPanel | Page::ActivityIsland => {
+                [self.desktop.notice.as_ref(), None, None]
+            }
             Page::DesktopAppearance => [self.system_appearance.notice.as_ref(), None, None],
             Page::DesktopWindows => [self.windows.notice(), self.workspaces.notice(), None],
             Page::DesktopWorkspaces => [self.workspaces.notice(), None, None],

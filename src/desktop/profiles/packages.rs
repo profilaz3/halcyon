@@ -134,7 +134,9 @@ fn read_profile<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Pro
     // before building arbitrary JSON value/array trees inside widget settings.
     let raw = <&'de serde_json::value::RawValue>::deserialize(deserializer)?;
     if raw.get().len() > super::MAX_PROFILE_BYTES {
-        return Err(serde::de::Error::custom("Embedded profile is too large"));
+        return Err(serde::de::Error::custom(
+            "The look in this file is too large",
+        ));
     }
     super::import(raw.get().as_bytes()).map_err(serde::de::Error::custom)
 }

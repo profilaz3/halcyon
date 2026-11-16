@@ -471,7 +471,7 @@ impl Automation {
                 return Err("A rule has an invalid ID.".into());
             }
             if !rule.profile.valid() || !label_ok(&rule.name) || rule.name.is_empty() {
-                return Err("A rule names an invalid profile.".into());
+                return Err("A rule names an invalid look.".into());
             }
             match &rule.when {
                 Trigger::Schedule { days, .. } | Trigger::Solar { days, .. } if days.is_empty() => {

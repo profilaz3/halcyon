@@ -53,6 +53,34 @@ fn messages_name_current_pages_and_controls() {
     assert!(found.is_empty(), "{}", found.join("\n"));
 }
 
+/// A look is never called a profile: its Undo name says “look”, from old
+/// records and new ones, applied by hand, automatically or from the edge
+/// menu.
+#[test]
+fn looks_are_named_looks_however_they_were_applied() {
+    use super::support::change_name;
+    use crate::automation::run::{chosen_label, label};
+    use crate::desktop::store::activity::Applied;
+    for (saved, name) in [
+        ("Profile “Calm”", "look “Calm”"),
+        ("Profile “Calm” (automatic)", "look “Calm” (automatic)"),
+        ("Look “Calm” (automatic)", "look “Calm” (automatic)"),
+        ("Look “Calm” (edge menu)", "look “Calm” (edge menu)"),
+        ("Style “Paper”", "style “Paper”"),
+    ] {
+        assert_eq!(change_name(None, saved), name, "{saved}");
+    }
+    for saved in [label("Calm"), chosen_label("Calm")] {
+        assert!(!saved.to_lowercase().contains("profile"), "{saved}");
+        assert!(
+            change_name(None, &saved).starts_with("look “Calm”"),
+            "{saved}"
+        );
+        // Changes still knows a look was applied.
+        assert_eq!(Applied::of_label(&saved), Some(Applied::Look), "{saved}");
+    }
+}
+
 #[test]
 fn the_scan_reads_string_literals_only() {
     let found = literals(

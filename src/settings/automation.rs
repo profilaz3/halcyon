@@ -204,7 +204,7 @@ impl RuleDraft {
         match self.kind {
             Kind::Schedule if self.parsed_time().is_none() => Some("Enter a time like 19:00"),
             Kind::Schedule | Kind::Solar if self.days.is_empty() => Some("Choose at least one day"),
-            _ if self.profile.is_none() => Some("Choose a profile"),
+            _ if self.profile.is_none() => Some("Choose a look"),
             _ => None,
         }
     }

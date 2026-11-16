@@ -520,16 +520,23 @@ impl Settings {
     }
 
     /// Devices has nothing to set besides on and off: the card shows three
-    /// example devices so the look can be judged.
+    /// example devices so the look can be judged, and says they are samples.
     pub(super) fn devices_page(&self) -> Element<'_, Message> {
         let preview = cards::devices(
             &cards::sample_devices(),
             &self.config,
             Some(self.tool_preview_size(Widget::Devices)),
         );
-        self.widget_template(Widget::Devices, "Devices", Some(preview), Vec::new())
+        let note = container(label(DEVICES_SAMPLE, 13., MUTED))
+            .id(cosmic::widget::Id::new("devices-sample-note"))
+            .into();
+        self.widget_template(Widget::Devices, "Devices", Some(preview), vec![note])
     }
 }
+
+/// Under the Devices preview: what it shows and where real readings come from.
+const DEVICES_SAMPLE: &str = "Sample · your Bluetooth and wireless \
+     devices show here, and phones paired with KDE Connect or GSConnect.";
 
 impl Settings {
     fn visualizer_controls(&self) -> Element<'_, Message> {

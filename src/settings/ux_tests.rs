@@ -2352,6 +2352,8 @@ fn ux_native_nine_roots_and_every_old_route_resolves() {
         ("panel", Page::DesktopPanel),
         ("dock", Page::DesktopDock),
         ("island", Page::ActivityIsland),
+        // The island's own Activity settings button.
+        ("activity-island", Page::ActivityIsland),
         ("desktop-dock", Page::DesktopDock),
         ("desktop-profiles", Page::DesktopProfiles),
         ("looks", Page::DesktopProfiles),

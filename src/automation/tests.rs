@@ -1188,7 +1188,7 @@ fn a_switch_waits_for_unapplied_settings_and_explains_missing_profiles() {
     );
     assert_eq!(
         gone,
-        Ran::Failed("The profile “Evening” was deleted. Choose another one for this rule.".into())
+        Ran::Failed("The look “Evening” was deleted. Choose another one for this rule.".into())
     );
     let preview = fixture.store().read_only("preview");
     assert!(matches!(
@@ -1268,7 +1268,7 @@ fn an_interrupted_change_stops_automation_until_it_is_decided() {
     let before = fixture.tree();
     assert_eq!(
         run(&store, &installed, &glass, "Glass", &Default::default()),
-        Ran::Failed("An interrupted change needs a decision on the Profiles page first.".into())
+        Ran::Failed("An interrupted change needs a decision on the Looks page first.".into())
     );
     assert_eq!(fixture.tree(), before);
 }

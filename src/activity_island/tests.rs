@@ -2729,6 +2729,57 @@ fn do_not_disturb_switches_from_the_island_and_shows_a_moon() {
     ));
     assert!(ui.duplicate_ids(app.capsule(true)).is_empty());
 }
+/// Activity settings opens the Activity island page wherever it shows: the
+/// idle card, its glyph beside the shelf and the camera card.
+#[test]
+fn activity_settings_opens_the_island_page() {
+    use cosmic::iced::Size;
+    let dir = shelf_fixture("settings-page");
+    type Setup = fn(&mut Applet, &std::path::Path);
+    let cases: &[(&str, &str, Setup)] = &[
+        ("idle", "activity-preferences", |app, _| {
+            app.kind = Kind::Idle
+        }),
+        ("shelf glyph", "activity-preferences", |app, dir| {
+            app.supported = true;
+            app.panel_frame = host::Frame {
+                height: 32.,
+                padding: 4.,
+                radius: 8.,
+                attached: true,
+                opacity: 0.85,
+            };
+            app.snapshot.preferences.shelf = true;
+            shelve(app, dir, false);
+            app.kind = Kind::Idle;
+        }),
+        ("camera", "activity-system-settings", |app, _| {
+            system_card(app, system::Source::Camera, "Camera on", "Video call", "")
+        }),
+    ];
+    for (name, id, setup) in cases {
+        let mut app = app();
+        setup(&mut app, &dir);
+        app.popup = Some(window::Id::unique());
+        app.motion.retarget(1., false, Instant::now());
+        let frame = app.frame();
+        let mut ui =
+            crate::native_test::Native::new(Size::new(frame.popup_width(), app.popup_height()));
+        if *name == "shelf glyph" {
+            let b = ui.bounds(app.capsule(true), id);
+            assert_eq!(b.width, 44., "{name}: the glyph, not the label");
+        }
+        assert!(
+            matches!(
+                click(&mut ui, &app, id).as_slice(),
+                [Message::Settings(SETTINGS_PAGE)]
+            ),
+            "{name}"
+        );
+    }
+    assert_eq!(SETTINGS_PAGE, "activity-island");
+    let _ = std::fs::remove_dir_all(dir);
+}
 fn activity(source: system::Source, title: &str, detail: &str, expires_ms: Option<i64>) -> system::Activity {
     system::Activity {
         source,

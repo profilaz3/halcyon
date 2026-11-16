@@ -258,16 +258,7 @@ impl Settings {
             controls.push(group(Some("Everyday"), main));
             controls.push(group(
                 Some("More widgets"),
-                [
-                    Widget::Devbox,
-                    Widget::Notes,
-                    Widget::Focus,
-                    Widget::Music,
-                    Widget::Projects,
-                ]
-                .into_iter()
-                .map(pick)
-                .collect(),
+                Widget::MORE.into_iter().map(pick).collect(),
             ));
         }
         if !arrange && wizard.widgets.customized && wizard.look.is_some() {

@@ -1,8 +1,10 @@
 //! Home: the whole desktop in one picture. Each part is a sidebar page.
 //! Picking a part lights it, names it and says how it is set; picking it
-//! again, or Open, goes to its page. The picture draws cached images only
-//! and has nothing that moves. Only Home's picture leads anywhere: the
-//! small copy on a part's own page lights that part and takes no input.
+//! again, or Open, goes to its page. A tile below the picture opens its
+//! page at once, since the picture may be scrolled away. The picture draws
+//! cached images only and has nothing that moves. Only Home's picture leads
+//! anywhere: the small copy on a part's own page lights that part and takes
+//! no input.
 use super::activate::{activate, quiet};
 use super::profiles::{card, scene_geometry, schematic_window};
 use super::*;
@@ -11,8 +13,8 @@ use cosmic::iced::widget::{pin, stack};
 use cosmic::iced::{Point, Rectangle};
 use cosmic::widget::{canvas, responsive};
 
-/// The pages Home has a tile for, in sidebar order.
-pub(in crate::settings) const PARTS: [Page; 10] = [
+/// The pages Home has a tile for: every sidebar root after Home, in order.
+pub(in crate::settings) const PARTS: [Page; 11] = [
     Page::DesktopWallpaper,
     Page::WeatherEffects,
     Page::Overview,
@@ -20,6 +22,7 @@ pub(in crate::settings) const PARTS: [Page; 10] = [
     Page::DesktopDock,
     Page::ActivityIsland,
     Page::Themes,
+    Page::DesktopAppearance,
     Page::DesktopWindows,
     Page::DesktopMotion,
     Page::General,
@@ -436,7 +439,7 @@ impl Settings {
         let lit = lit.filter(|page| match page {
             Page::ActivityIsland => island.is_some(),
             Page::WeatherEffects => effect.is_some(),
-            Page::DesktopMotion | Page::General => false,
+            Page::DesktopAppearance | Page::DesktopMotion | Page::General => false,
             Page::DesktopPanel | Page::DesktopDock => bars
                 .iter()
                 .any(|draft| Some(draft.kind()) == page.bar() && draft.listed()),
@@ -683,7 +686,7 @@ impl Settings {
                         draw_badge(),
                         Page::WeatherEffects,
                         part_id(Page::WeatherEffects),
-                        "Effects".into(),
+                        "Weather effects".into(),
                         badge / 2.,
                         [badge, badge],
                     ))
@@ -810,7 +813,7 @@ impl Settings {
                     layers.push(shade(0.18));
                     layers.extend(weather(0.95));
                     layers.extend(ring(badge_rect, accent, badge / 2.));
-                    layers.push(tag("Effects", badge_rect, screen, accent));
+                    layers.push(tag("Weather effects", badge_rect, screen, accent));
                 }
                 Some(Page::Themes) => {
                     // Appearance styles all the chrome: bars, island, window
@@ -855,7 +858,7 @@ impl Settings {
         let accent = self.settings_accent();
         let Some(page) = selected else {
             return container(label(
-                "Pick a part of the picture, or a tile below.",
+                "Pick a part of the picture to see how it is set.",
                 CAPTION,
                 MUTED,
             ))
@@ -911,7 +914,8 @@ impl Settings {
         .into()
     }
 
-    /// One tile per sidebar part: name and a short state.
+    /// One tile per sidebar part: name and a short state. A tile opens its
+    /// page on one press; the picture and its card may be out of view.
     fn home_tiles(&self, selected: Option<Page>) -> Element<'_, Message> {
         let accent = self.settings_accent();
         let columns = ((self.content_width() + 8.) / 158.).floor().clamp(2., 5.) as usize;
@@ -936,7 +940,7 @@ impl Settings {
                 .class(surface(chosen, accent))
                 .padding([9, 12])
                 .width(Length::Fill)
-                .on_press(Message::HomePart(page))
+                .on_press(Message::Page(page))
                 .into()
             })
             .collect();
@@ -1054,6 +1058,31 @@ impl Settings {
                 },
                 _ => "Colors, glass and fonts".into(),
             },
+            Page::DesktopAppearance => {
+                use crate::desktop::appearance::FontRole;
+                let editor = &self.system_appearance;
+                let draft = editor.draft();
+                let font = draft.and_then(|d| {
+                    d.font(FontRole::Interface)
+                        .known()
+                        .map(|f| f.family.clone())
+                });
+                let icons = draft
+                    .and_then(|d| d.icon_theme().known().cloned())
+                    .map(|id| {
+                        editor
+                            .icons
+                            .themes
+                            .iter()
+                            .find(|theme| theme.id == id)
+                            .map_or(id, |theme| theme.name.clone())
+                    });
+                match (font, icons) {
+                    (Some(font), Some(icons)) => format!("{font} · {icons}"),
+                    (Some(one), None) | (None, Some(one)) => one,
+                    (None, None) => "Fonts and icon theme".into(),
+                }
+            }
             Page::DesktopWindows => match self
                 .windows
                 .draft()

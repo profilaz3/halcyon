@@ -126,6 +126,40 @@ fn fb03_a_failed_save_says_what_to_do_and_keeps_details_on_request() {
     );
 }
 
+/// The Dock, Panel and Activity island pages save through one bar editor,
+/// so each shows that editor's failures and warnings in its footer.
+#[test]
+fn fb03_every_bar_page_shows_its_save_notice() {
+    if child("fb03_every_bar_page_shows_its_save_notice") {
+        return;
+    }
+    let size = Size::new(820., 600.);
+    for page in [Page::DesktopDock, Page::DesktopPanel, Page::ActivityIsland] {
+        let (mut app, _) = Settings::init(Core::default(), page);
+        let _ = app.update(Message::Resized(size));
+        let mut native = Native::new(size);
+        // An Islands gap over 64 is refused before anything is written.
+        app.desktop.islands.gap_text = Some("80".into());
+        let _ = app.update(Message::DesktopEditor(desktop::Message::Apply));
+        assert_eq!(
+            native
+                .text_all(app.settings_view(), "Gap must be between 0 and 64 pixels")
+                .len(),
+            1,
+            "{page:?}"
+        );
+        // Saved, but the panel did not take the new layout.
+        app.desktop.notice = Some(desktop::Notice::Warning(desktop::ISLANDS_PENDING.into()));
+        assert_eq!(
+            native
+                .text_all(app.settings_view(), desktop::ISLANDS_PENDING)
+                .len(),
+            1,
+            "{page:?}"
+        );
+    }
+}
+
 #[test]
 fn fb03_notices_split_the_sentence_from_the_technical_text() {
     let error = crate::desktop::DesktopError::Conflict(vec![

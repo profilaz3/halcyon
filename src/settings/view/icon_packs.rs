@@ -229,12 +229,22 @@ impl Settings {
                 vec![button::text("Dismiss").on_press(edit(Edit::Dismiss)).into()],
             ));
         }
+        // The files and drives on the wallpaper have a page of their own.
+        let desktop_icons = || {
+            self.subpage_row(
+                "Icons on the desktop",
+                "Files, folders and drives on top of the wallpaper",
+                Page::DesktopIcons,
+                "appearance-open-desktop-icons",
+            )
+        };
         if packs.paths.is_none() {
             items.push(label(
                 "Icon themes can’t be listed: your home folder isn’t known.",
                 CAPTION,
                 ERROR,
             ));
+            items.push(desktop_icons());
             return column::with_children(items).spacing(14).into();
         }
         items.push(self.icon_theme_cards(packs, &context));
@@ -243,6 +253,7 @@ impl Settings {
         }
         items.push(self.icon_shape(packs, &context));
         items.push(self.icon_folders(packs, &context));
+        items.push(desktop_icons());
         column::with_children(items).spacing(18).into()
     }
 

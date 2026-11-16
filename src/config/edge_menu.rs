@@ -585,14 +585,16 @@ impl<'de> Deserialize<'de> for Item {
     }
 }
 
-/// The edge menu's second group, as it always was.
-pub const ELSEWHERE: [Widget; 6] = [
+/// The edge menu's second group: every widget outside the right column.
+/// A customized menu keeps its own saved list.
+pub const ELSEWHERE: [Widget; 7] = [
     Widget::Calendar,
     Widget::Clock,
     Widget::Glance,
     Widget::Music,
     Widget::Notes,
     Widget::Focus,
+    Widget::Devices,
 ];
 
 /// The built-in menu as a list: where a customized menu starts. `right` is
@@ -684,7 +686,31 @@ mod tests {
         assert_eq!(widgets[3..], ELSEWHERE);
         let actions: Vec<_> = items.iter().filter_map(Item::as_action).collect();
         assert_eq!(actions, [Action::Arrange, Action::Settings]);
-        assert_eq!(items.iter().filter(|item| item.focusable()).count(), 11);
+        assert_eq!(items.iter().filter(|item| item.focusable()).count(), 12);
+    }
+
+    #[test]
+    fn the_built_in_menu_lists_every_widget_once() {
+        let right = [Widget::Weather, Widget::Devbox, Widget::Projects];
+        let items = default_items(&right);
+        let widgets: Vec<_> = items.iter().filter_map(Item::as_widget).collect();
+        for widget in Widget::ALL {
+            assert_eq!(
+                widgets.iter().filter(|w| **w == widget).count(),
+                1,
+                "{widget:?}"
+            );
+        }
+        // A saved list is the user's own: nothing new is added to it.
+        let saved = vec![Item::widget(Widget::Clock)];
+        let config = Config {
+            edge_menu: EdgeMenu {
+                items: Some(saved.clone()),
+                ..EdgeMenu::default()
+            },
+            ..Config::default()
+        };
+        assert_eq!(config.edge_items(), saved);
     }
 
     #[test]

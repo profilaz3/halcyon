@@ -24,6 +24,9 @@ const LINE: f32 = 1.25;
 const TITLE_HEIGHT: f32 = 24.;
 /// Low battery, in the same amber the other cards warn in, and red at 10%.
 const URGENT: Color = Color::from_rgb(0.94, 0.42, 0.40);
+/// Where readings come from, said on the empty card.
+pub const SOURCES: &str =
+    "Shows Bluetooth and wireless devices, and phones paired with KDE Connect or GSConnect";
 
 /// A battery ring, lit clockwise from the top. Round dots, so it needs no
 /// path support and stays a handful of quads.
@@ -404,11 +407,27 @@ pub fn devices<'a, M: Clone + 'a>(
         ));
     }
     let body: Element<'a, M> = if list.is_empty() {
-        container(label(
-            "No devices connected",
-            crate::widget_style::SECONDARY,
-            p.muted,
-        ))
+        container(
+            column::with_children(vec![
+                label(
+                    "No devices connected",
+                    crate::widget_style::SECONDARY,
+                    p.muted,
+                ),
+                // Where the list comes from, so an empty card is not a puzzle.
+                cosmic::widget::text::body(SOURCES)
+                    .size(crate::widget_style::META)
+                    .line_height(LINE)
+                    .font(super::font())
+                    .align_x(cosmic::iced::alignment::Horizontal::Center)
+                    .class(cosmic::theme::Text::Color(crate::widget_style::semantic(
+                        p.muted,
+                    )))
+                    .into(),
+            ])
+            .spacing(4)
+            .align_x(Alignment::Center),
+        )
         .width(Length::Fill)
         .height(Length::Fill)
         .align_x(Alignment::Center)

@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const CHOICES: [Widget; 8] = [
+/// The daily widgets, then [`Widget::MORE`] (a test keeps them together).
+pub const CHOICES: [Widget; 9] = [
     Widget::Clock,
     Widget::Weather,
     Widget::Calendar,
@@ -14,9 +15,10 @@ pub const CHOICES: [Widget; 8] = [
     Widget::Focus,
     Widget::Music,
     Widget::Projects,
+    Widget::Devices,
 ];
 const DAILY: [Widget; 3] = [Widget::Clock, Widget::Weather, Widget::Calendar];
-const VISIBILITY: [&str; 10] = [
+const VISIBILITY: [&str; 11] = [
     "/widgets_visible",
     "/enabled_widgets",
     "/glance/enabled",
@@ -27,6 +29,7 @@ const VISIBILITY: [&str; 10] = [
     "/music/enabled",
     "/notes/enabled",
     "/focus/enabled",
+    "/devices/enabled",
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -129,7 +132,7 @@ impl Draft {
     }
     pub fn valid(&self) -> bool {
         let keys = |list: &[String], choices: bool| {
-            list.len() <= 9
+            list.len() <= Widget::ALL.len()
                 && list.iter().collect::<BTreeSet<_>>().len() == list.len()
                 && list
                     .iter()
@@ -381,6 +384,7 @@ impl Draft {
         config.music.enabled = self.selected(Widget::Music);
         config.notes.enabled = self.selected(Widget::Notes);
         config.focus.enabled = self.selected(Widget::Focus);
+        config.devices.enabled = self.selected(Widget::Devices);
         for (key, destination) in &self.destinations {
             config
                 .widget_monitors
@@ -748,7 +752,7 @@ mod tests {
             }
         }
         d.group(true);
-        assert_eq!(d.active().len(), 6);
+        assert_eq!(d.active().len(), 7);
         assert!(!d.active().contains(&Widget::Clock));
         let projected = d.config(&c);
         assert!(
@@ -759,7 +763,7 @@ mod tests {
         assert_eq!(projected.project_roots, c.project_roots);
         assert_eq!(projected.location, c.location);
         d.group(false);
-        assert_eq!(d.active().len(), 8);
+        assert_eq!(d.active().len(), 9);
         let p = d.plan(&c, s, &Registry::default(), [24.; 4]);
         assert!(p.error.is_none(), "{:?}", p.error);
         let patch = d.patch(&p, &Registry::default()).unwrap();
@@ -771,6 +775,27 @@ mod tests {
         assert_eq!(applied["location"], raw["location"]);
         assert!(!d.baseline.to_string().contains("Zagreb"));
         assert!(!d.baseline.to_string().contains("/keep"));
+    }
+    #[test]
+    fn setup_offers_the_daily_widgets_and_every_other_widget() {
+        let mut offered: Vec<_> = DAILY.into_iter().chain(Widget::MORE).collect();
+        let mut choices = CHOICES.to_vec();
+        offered.sort_by_key(|w| w.key());
+        choices.sort_by_key(|w| w.key());
+        assert_eq!(choices, offered);
+        // Devices, like the other tools, keeps its switch in its own section.
+        let (c, raw, s, mut d) = fixture();
+        assert!(!d.selected(Widget::Devices));
+        d.toggle(Widget::Devices);
+        assert!(d.config(&c).devices.enabled);
+        let p = d.plan(&c, s, &Registry::default(), [24.; 4]);
+        assert!(p.error.is_none(), "{:?}", p.error);
+        let patch = d.patch(&p, &Registry::default()).unwrap();
+        let mut applied = raw.clone();
+        for (ptr, e) in patch.changes() {
+            widget::put(&mut applied, ptr, e.desired.clone()).unwrap();
+        }
+        assert_eq!(applied["devices"]["enabled"], true);
     }
     #[test]
     fn reorder_projects_the_same_normalized_positions_that_are_written() {

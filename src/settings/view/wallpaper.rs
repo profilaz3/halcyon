@@ -717,7 +717,7 @@ impl Settings {
         side.push(group(
             None,
             vec![self.subpage_row(
-                "Effects",
+                "Weather effects",
                 "Rain, snow, fog and cloud shadows over the wallpaper",
                 Page::WeatherEffects,
                 "wallpaper-open-weather",
@@ -746,14 +746,14 @@ impl Settings {
         let editor = &self.wallpaper;
         let mut items: Vec<Element<'_, Message>> = vec![split(
             heading(
-                "Effects",
+                "Weather effects",
                 "Rain, snow, fog and cloud shadows that play over your wallpaper.",
             ),
             store_pill(editor.store(), self.wallpaper_accent()),
         )];
         if let Some(error) = editor.unavailable() {
             items.push(banner(
-                format!("Effects are unavailable. {error}"),
+                format!("Weather effects are unavailable. {error}"),
                 ERROR,
                 Vec::new(),
             ));
@@ -1235,12 +1235,15 @@ impl Settings {
             Vec::new(),
             edit(Edit::Discard),
             "wallpaper-discard",
-            button::suggested("Apply wallpaper")
-                .id(cosmic::widget::Id::new("wallpaper-apply"))
-                .on_press_maybe(
-                    (editor.can_apply() && !self.native_busy).then_some(edit(Edit::Apply)),
-                )
-                .into(),
+            // The effects page shares this bar; its button names what it applies.
+            button::suggested(if self.page == Page::WeatherEffects {
+                "Apply effects"
+            } else {
+                "Apply wallpaper"
+            })
+            .id(cosmic::widget::Id::new("wallpaper-apply"))
+            .on_press_maybe((editor.can_apply() && !self.native_busy).then_some(edit(Edit::Apply)))
+            .into(),
         )
     }
 }

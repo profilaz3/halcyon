@@ -45,6 +45,16 @@ impl Widget {
     /// Tools keep their visibility in their own config section (like Glance)
     /// and have a surface of their own while shown, placed freely.
     pub const TOOLS: [Self; 4] = [Self::Music, Self::Notes, Self::Focus, Self::Devices];
+    /// Every widget past the daily ones, as Settings lists them under More
+    /// widgets: on the Widgets page and in setup.
+    pub const MORE: [Self; 6] = [
+        Self::Devbox,
+        Self::Projects,
+        Self::Music,
+        Self::Notes,
+        Self::Focus,
+        Self::Devices,
+    ];
     pub fn is_tool(self) -> bool {
         Self::TOOLS.contains(&self)
     }
@@ -101,7 +111,9 @@ impl Widget {
 }
 
 pub const SIDEBAR_WIDTH: u32 = 212;
-pub const SIDEBAR_HEIGHT: u32 = 618;
+/// Room for the built-in menu: three right column rows and the seven other
+/// widgets, Devices included.
+pub const SIDEBAR_HEIGHT: u32 = 660;
 /// The rail's layout, top down; `FIRST_ROW` is where the draggable rows
 /// start, so a pointer position maps to a row.
 pub const RAIL_PADDING: f32 = 12.;

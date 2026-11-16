@@ -231,6 +231,82 @@ fn fresh_user_home_offers_setup_once_and_says_when_widgets_are_stopped() {
     }
 }
 
+/// The messages `task` ends with, run but not applied.
+fn outputs(task: Task<Message>) -> Vec<Message> {
+    use cosmic::iced::futures::StreamExt;
+    let Some(stream) = cosmic::iced::runtime::task::into_stream(task) else {
+        return Vec::new();
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(
+        stream
+            .filter_map(|action| async move {
+                match action {
+                    cosmic::iced::runtime::Action::Output(cosmic::Action::App(message)) => {
+                        Some(message)
+                    }
+                    _ => None,
+                }
+            })
+            .collect(),
+    )
+}
+
+/// Start widgets: once it is done the footer says so and the service is
+/// read again on the page that asked, so the banner goes. While the banner
+/// shows, the service is read every few seconds.
+#[test]
+fn starting_widgets_reads_the_service_again_and_clears_the_banner() {
+    if child("starting_widgets_reads_the_service_again_and_clears_the_banner") {
+        return;
+    }
+    let size = Size::new(820., 600.);
+    for page in [Page::Overview, Page::DesktopProfiles] {
+        let (mut app, _) = Settings::init(Core::default(), page);
+        let _ = app.update(Message::Resized(size));
+        let _ = app.update(Message::Service(Ok(ServiceState {
+            running: false,
+            startup: false,
+        })));
+        let mut native = Native::new(size);
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "widgets-start")
+                .is_some(),
+            "{page:?}"
+        );
+        assert_eq!(app.service_refresh(), Some(Duration::from_secs(5)));
+        // systemctl is done: the service is read again.
+        app.busy = true;
+        let task = app.update(Message::CommandDone(WIDGETS_STARTED.into(), Ok(())));
+        assert_eq!(app.status, "Widgets started");
+        let read: Vec<_> = outputs(task)
+            .into_iter()
+            .filter(|message| matches!(message, Message::Service(_)))
+            .collect();
+        assert_eq!(read.len(), 1, "{page:?}");
+        let _ = app.update(Message::Service(Ok(ServiceState {
+            running: true,
+            startup: false,
+        })));
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "widgets-start")
+                .is_none(),
+            "{page:?}"
+        );
+        assert!(
+            native
+                .text_all(app.settings_view(), "Background operation updated")
+                .is_empty()
+        );
+        assert_eq!(app.service_refresh(), None, "{page:?}");
+    }
+}
+
 /// Google sign-in can become available while the Calendar page is open. The
 /// Connect button then appears in front of the link button in the same row,
 /// and the next frame must lay out both instead of panicking.

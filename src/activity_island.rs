@@ -43,6 +43,8 @@ const COMPACT_HEIGHT: f32 = 32.;
 const OVERVIEW: usize = 3;
 /// Do Not Disturb, as COSMIC's own applets draw it.
 const MOON: &str = "weather-clear-night-symbolic";
+/// The Settings page that holds the island's own options.
+const SETTINGS_PAGE: &str = "activity-island";
 /// Privacy dots: green while a camera is on, orange for a microphone.
 const DOT: f32 = 6.;
 /// Room around a privacy dot that still opens its card.
@@ -2157,7 +2159,7 @@ impl Applet {
                         tint,
                         reveal,
                         Role::Quiet,
-                        Some(Message::Settings("panel")),
+                        Some(Message::Settings(SETTINGS_PAGE)),
                     ))
                     .into();
             }
@@ -2190,7 +2192,7 @@ impl Applet {
                     // A settings link, not an action on the activity itself.
                     Role::Quiet,
                     Some(if source == system::Source::Camera {
-                        Message::Settings("panel")
+                        Message::Settings(SETTINGS_PAGE)
                     } else {
                         Message::SystemSettings(source)
                     }),
