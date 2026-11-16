@@ -528,7 +528,11 @@ impl Settings {
             ),
             switch(
                 "Visible handle",
-                "A slim bar on the edge shows where the menu is. Off, the strip is invisible.",
+                if menu.open == OpenOn::Hover {
+                    "A slim bar on the edge shows where the menu is. Off, the strip is invisible, and a click on it over a maximized or full-screen app doesn’t open the menu."
+                } else {
+                    "A slim bar on the edge shows where the menu is. Off, the strip is invisible."
+                },
                 menu.handle,
                 |on| edit(Edit::Handle(on)),
             ),

@@ -751,7 +751,6 @@ fn on16_sample_events_say_they_are_samples() {
     if isolated("settings::navigation::ux_regressions::on16_sample_events_say_they_are_samples") {
         return;
     }
-    use crate::settings::calendar::Message as Account;
     let note = "Sample · connect a calendar to see your events.";
     let mut app = app(Page::Calendar);
     app.calendar.connection = crate::calendar::Connection::default();
@@ -763,11 +762,16 @@ fn on16_sample_events_say_they_are_samples() {
         // The note sits right under the sample, above the ways to connect.
         let scene = native.bounds(app.settings_view(), "desktop-scene");
         let label = native.text_bounds(app.settings_view(), note);
-        let connect = native.bounds(app.settings_view(), "calendar-sample-connect");
         let add = native.bounds(app.settings_view(), "calendar-add-open");
         assert!(scene.y + scene.height <= label.y, "{scene:?} {label:?}");
-        assert!(connect.y < add.y, "{connect:?} {add:?}");
-        assert!((connect.center().y - label.center().y).abs() < 20.);
+        assert!(label.y + label.height <= add.y, "{label:?} {add:?}");
+        // WID-14: one way to add a calendar, not a second button beside
+        // the note that starts a different flow.
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "calendar-sample-connect")
+                .is_none()
+        );
         for (theme, name) in [
             (cosmic::Theme::light(), "light"),
             (cosmic::Theme::dark(), "dark"),
@@ -778,37 +782,17 @@ fn on16_sample_events_say_they_are_samples() {
                 &format!("on16-calendar-sample-{}-{name}", size.width),
             );
         }
-        // Without Google sign-in, Connect opens the calendar link form.
-        click(&mut app, &mut native, "calendar-sample-connect");
-        assert!(app.calendar.subscription_form);
-        // With it, Connect starts the sign-in. Only check the message: the
-        // sign-in itself opens a browser.
-        app.calendar.subscription_form = false;
-        app.calendar.client_ready = true;
-        let press = |app: &Settings, native: &mut Native| {
-            let at = native
-                .bounds(app.settings_view(), "calendar-sample-connect")
-                .center();
-            let mut sent = Vec::new();
-            for event in [
-                mouse::Event::CursorMoved { position: at },
-                mouse::Event::ButtonPressed(mouse::Button::Left),
-                mouse::Event::ButtonReleased(mouse::Button::Left),
-            ] {
-                sent.extend(native.event(app.settings_view(), Event::Mouse(event), at).0);
-            }
-            sent
-        };
-        let sent = press(&app, &mut native);
-        assert!(
-            matches!(sent.as_slice(), [Message::Calendar(Account::Connect)]),
-            "{sent:?}"
-        );
-        // Busy: nothing to press twice.
-        app.calendar.busy = true;
-        let sent = press(&app, &mut native);
-        assert!(sent.is_empty(), "{sent:?}");
-        app.calendar.busy = false;
+        // Add calendar opens the chooser of every kind, with or without
+        // Google sign-in.
+        for google in [false, true] {
+            app.calendar.client_ready = google;
+            app.calendar.chooser = false;
+            click(&mut app, &mut native, "calendar-add-open");
+            assert!(app.calendar.chooser, "google: {google}");
+            assert!(!app.calendar.subscription_form);
+        }
+        app.calendar.chooser = false;
+        app.calendar.client_ready = false;
     }
     // Connected: real events, no note.
     app.calendar.connection.backend = crate::calendar::Backend::Subscription;
@@ -816,9 +800,4 @@ fn on16_sample_events_say_they_are_samples() {
     let size = Size::new(1280., 800.);
     let mut native = Native::new(size);
     assert!(native.text_all(app.settings_view(), note).is_empty());
-    assert!(
-        native
-            .try_bounds(app.settings_view(), "calendar-sample-connect")
-            .is_none()
-    );
 }

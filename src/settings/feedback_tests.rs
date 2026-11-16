@@ -511,7 +511,7 @@ fn dt13_the_weather_preview_says_it_is_an_example() {
     let _ = app.update(Message::Resized(size));
     let mut native = Native::new(size);
     assert!(app.config.location.is_none());
-    let before = "Example weather. Choose your city below to see yours.";
+    let before = "Sample · choose your city below to see yours.";
     assert_eq!(native.text_all(app.settings_view(), before).len(), 1);
     // In view without scrolling, right under the preview.
     let note = native.bounds(app.settings_view(), "weather-preview-note");
@@ -525,6 +525,15 @@ fn dt13_the_weather_preview_says_it_is_an_example() {
     });
     let _ = app.update(Message::Resized(size));
     assert!(native.text_all(app.settings_view(), before).is_empty());
-    assert_eq!(native.text_all(app.settings_view(), "Example weather").len(), 1);
+    // No reading from the desktop yet: still a sample, and it says so.
+    assert_eq!(
+        native
+            .text_all(
+                app.settings_view(),
+                "Sample · your weather shows here once the desktop has checked it."
+            )
+            .len(),
+        1
+    );
     capture(&mut app, "dt13-city");
 }

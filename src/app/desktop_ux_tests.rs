@@ -1381,3 +1381,377 @@ fn the_visible_handle_draws_on_the_strip_and_the_hidden_one_is_clear() {
         }
     }
 }
+
+/// WID-03: with every widget hidden, the edge menu says so at the top and
+/// offers Show widgets; the widget switches show the saved choice and wait
+/// instead of quietly saving "on" again, and Arrange offers the same way
+/// back in place of "All widgets added".
+#[test]
+fn wid03_hidden_widgets_have_a_way_back_in_the_edge_menu_and_arrange() {
+    if isolated("wid03_hidden_widgets_have_a_way_back_in_the_edge_menu_and_arrange") {
+        return;
+    }
+    use cosmic::iced::{Event, mouse};
+    let mut cards = cards();
+    let _output = cards.test_output_ready();
+    super::config_writes::update_saved(&mut cards, Message::SetWidgetsVisible(false));
+    assert!(!cards.config.widgets_visible);
+    assert!(cards.config.widget_selected(Widget::Weather));
+    let _ = cards.update(Message::DrawerToggle);
+    assert_eq!(
+        cards.drawer_items().first(),
+        Some(&drawer::DrawerItem::ShowWidgets)
+    );
+    // The menu grows by the row, and everything still fits.
+    assert!(cards.controls_height() > drawer::SIDEBAR_HEIGHT);
+    let mut native = rail_for(&cards);
+    native.text_bounds(cards.control_rail(), "Widgets are hidden");
+    let show = native.bounds(cards.control_rail(), "edge-show-widgets");
+    let weather = native.text_bounds(cards.control_rail(), "Weather");
+    assert!(show.y + show.height < weather.y, "{show:?} {weather:?}");
+    let customize = native.bounds(cards.control_rail(), "edge-customize");
+    assert!(
+        customize.y + customize.height
+            <= cards.controls_height() as f32 - drawer::RAIL_PADDING + 0.5,
+        "{customize:?}"
+    );
+    capture_rail_sized(&cards, "wid03-edge-menu-hidden");
+    // A widget's row does nothing while every widget is hidden.
+    let at = weather.center();
+    let mut sent = Vec::new();
+    for event in [
+        mouse::Event::CursorMoved { position: at },
+        mouse::Event::ButtonPressed(mouse::Button::Left),
+        mouse::Event::ButtonReleased(mouse::Button::Left),
+    ] {
+        sent.extend(
+            native
+                .event(cards.control_rail(), Event::Mouse(event), at)
+                .0,
+        );
+    }
+    assert!(
+        !sent
+            .iter()
+            .any(|m| matches!(m, Message::ToggleWidget(_) | Message::SidebarPress(_))),
+        "{sent:?}"
+    );
+    // Nor does Enter on it.
+    press(&mut cards, Key::Named(Named::ArrowDown), Modifiers::empty());
+    assert_eq!(
+        cards.drawer_focus(),
+        Some(drawer::DrawerItem::Widget(Widget::Weather))
+    );
+    press(&mut cards, Key::Named(Named::Enter), Modifiers::empty());
+    assert!(Config::load().widget_selected(Widget::Weather));
+    assert!(!Config::load().widgets_visible);
+    // The command line's toggle flips the saved choice instead of saving
+    // "on" for a widget that already is.
+    super::config_writes::update_saved(&mut cards, Message::ToggleWidget(Widget::Weather));
+    assert!(!Config::load().widget_selected(Widget::Weather));
+    super::config_writes::update_saved(&mut cards, Message::ToggleWidget(Widget::Weather));
+    assert!(Config::load().widget_selected(Widget::Weather));
+    // Arrange: nothing to arrange, said so, and the way to show them.
+    let _ = cards.update(Message::HideControls);
+    cards.screen_size = [1280., 800.];
+    let _ = cards.arrange();
+    assert!(cards.layout_editor.active);
+    let mut overlay = Native::new(Size::new(1280., 800.));
+    assert!(
+        overlay
+            .text_all(cards.layout_view(), "All widgets added")
+            .is_empty()
+    );
+    overlay.text_bounds(cards.layout_view(), "Widgets are hidden");
+    overlay.capture(
+        cards.layout_view(),
+        &cosmic::Theme::dark(),
+        "wid03-arrange-hidden",
+    );
+    let show = overlay.bounds(cards.layout_view(), "arrange-show-widgets");
+    let mut sent = Vec::new();
+    for event in [
+        mouse::Event::CursorMoved {
+            position: show.center(),
+        },
+        mouse::Event::ButtonPressed(mouse::Button::Left),
+        mouse::Event::ButtonReleased(mouse::Button::Left),
+    ] {
+        sent.extend(
+            overlay
+                .event(cards.layout_view(), Event::Mouse(event), show.center())
+                .0,
+        );
+    }
+    assert!(
+        matches!(sent.as_slice(), [Message::SetWidgetsVisible(true)]),
+        "{sent:?}"
+    );
+    for message in sent {
+        super::config_writes::update_saved(&mut cards, message);
+    }
+    assert!(Config::load().widgets_visible);
+    assert!(cards.layout_editor.active, "still arranging");
+    assert!(cards.arranging_widget(Widget::Weather));
+    overlay.bounds(cards.layout_view(), "arrange-add");
+    // Hide in Arrange now hides a widget that came back.
+    let task = cards.update(Message::LayoutShow(Widget::Weather, false));
+    super::config_writes::settle(&mut cards, task);
+    assert!(!cards.arranging_widget(Widget::Weather));
+    let task = cards.update(Message::LayoutFinish(true));
+    super::config_writes::settle(&mut cards, task);
+    assert!(!Config::load().widget_selected(Widget::Weather));
+    assert!(Config::load().widgets_visible);
+    // In the edge menu, Show widgets brings the switches back at once.
+    super::config_writes::update_saved(&mut cards, Message::SetWidgetsVisible(false));
+    let _ = cards.update(Message::DrawerToggle);
+    assert_eq!(cards.sidebar.focus, Some(0));
+    press(&mut cards, Key::Named(Named::Enter), Modifiers::empty());
+    assert!(Config::load().widgets_visible);
+    assert_eq!(cards.controls_height(), drawer::SIDEBAR_HEIGHT);
+    assert!(
+        rail_for(&cards)
+            .try_bounds(cards.control_rail(), "edge-show-widgets")
+            .is_none()
+    );
+}
+
+/// WID-03 in a customized menu and its Icons style: the same row first, and
+/// a widget's item waits while every widget is hidden.
+#[test]
+fn wid03_custom_and_icon_menus_offer_show_widgets_while_hidden() {
+    if isolated("wid03_custom_and_icon_menus_offer_show_widgets_while_hidden") {
+        return;
+    }
+    use crate::config::edge_menu::Style;
+    let root = std::path::PathBuf::from(std::env::var_os("DESKTOP_CARDS_DESKTOP_ROOT").unwrap());
+    let (_, _) = custom_menu_config(&root);
+    let mut cards = cards();
+    let _output = cards.test_output_ready();
+    let weather = 5;
+    assert!(matches!(
+        cards.edge_item_message(weather),
+        Some(Message::ToggleWidget(Widget::Weather))
+    ));
+    let shown = cards.controls_height();
+    super::config_writes::update_saved(&mut cards, Message::SetWidgetsVisible(false));
+    assert!(cards.edge_item_message(weather).is_none(), "it waits");
+    let item = &cards.config.edge_items()[weather];
+    assert_eq!(cards.item_state(item), Some(true), "the saved choice");
+    assert_eq!(
+        cards.controls_height(),
+        shown + (super::edge::SHOW_ROW + drawer::HEADER_GAP) as u32
+    );
+    let _ = cards.update(Message::DrawerToggle);
+    assert_eq!(cards.drawer_items()[0], drawer::DrawerItem::ShowWidgets);
+    let mut native = rail_for(&cards);
+    native.text_bounds(cards.control_rail(), "Widgets are hidden");
+    native.bounds(cards.control_rail(), "edge-show-widgets");
+    let names: Vec<String> = native
+        .a11y(cards.control_rail())
+        .into_iter()
+        .filter_map(|(_, name, _)| name)
+        .collect();
+    assert!(
+        names.iter().any(|n| n == "Weather, on, widgets are hidden"),
+        "{names:?}"
+    );
+    capture_custom_rail(&cards, "wid03-edge-menu-custom-hidden");
+    // The Icons style: Show widgets first, named in its bubble.
+    let mut config = cards.config.clone();
+    config.edge_menu.style = Style::Icons;
+    let _ = cards.apply_config(config);
+    let mut native = surface_for(&cards);
+    let show = native.bounds(cards.control_rail(), "edge-show-widgets");
+    let first = native.bounds(cards.control_rail(), "edge-item-1");
+    assert!(show.y + show.height <= first.y, "{show:?} {first:?}");
+    let _ = cards.update(Message::EdgeTip(Some(drawer::DrawerItem::ShowWidgets)));
+    native.text_bounds(cards.control_rail(), "Widgets are hidden");
+    capture_menu(&mut cards, "wid03-edge-menu-icons-hidden");
+    super::config_writes::update_saved(&mut cards, Message::SetWidgetsVisible(true));
+    assert!(
+        surface_for(&cards)
+            .try_bounds(cards.control_rail(), "edge-show-widgets")
+            .is_none()
+    );
+}
+
+/// The built-in menu at its own height, in both themes, when a capture
+/// folder is set.
+fn capture_rail_sized(cards: &Cards, name: &str) {
+    for (theme, shade) in [
+        (cosmic::Theme::light(), "light"),
+        (cosmic::Theme::dark(), "dark"),
+    ] {
+        rail_for(cards).capture(cards.control_rail(), &theme, &format!("{name}-{shade}"));
+    }
+}
+
+/// WID-04: over a maximized or full-screen window, a click on the invisible
+/// strip is left to the window: no menu, and the hover wait stops until the
+/// pointer leaves. Resting the pointer still opens it, and a visible handle
+/// or opening on click keeps a click opening it.
+#[test]
+fn wid04_a_click_on_the_invisible_strip_over_a_maximized_window_opens_nothing() {
+    if isolated("wid04_a_click_on_the_invisible_strip_over_a_maximized_window_opens_nothing") {
+        return;
+    }
+    use crate::config::edge_menu::OpenOn;
+    let mut cards = cards();
+    let _output = cards.test_output_ready();
+    let strip = cards.ids[3];
+    let name = cards
+        .selected_output
+        .as_ref()
+        .and_then(crate::displays::Output::name)
+        .unwrap()
+        .to_string();
+    assert!(cards.edge_click_guard(), "on by default");
+    // Over the desktop, a click opens it at once, as always.
+    let _ = cards.update(Message::EdgeClick(strip));
+    assert!(cards.sidebar.visible);
+    cards.sidebar.hide();
+    // Over a maximized window: the click does nothing and stops the wait.
+    cards.rain.desk.covered.insert(name.clone());
+    let now = Instant::now();
+    let _ = cards.update(Message::EdgeHover(strip, true));
+    assert!(cards.sidebar.next_transition().is_some(), "waiting to open");
+    let _ = cards.update(Message::EdgeClick(strip));
+    assert!(!cards.sidebar.visible);
+    assert!(
+        cards.sidebar.next_transition().is_none(),
+        "the wait stopped"
+    );
+    cards.sidebar.tick(now + Duration::from_secs(5), true);
+    assert!(!cards.sidebar.visible);
+    // Leaving and resting there again opens it after the delay.
+    let _ = cards.update(Message::EdgeHover(strip, false));
+    let _ = cards.update(Message::EdgeHover(strip, true));
+    cards
+        .sidebar
+        .tick(Instant::now() + drawer::EDGE_DWELL, true);
+    assert!(cards.sidebar.visible, "resting still opens it");
+    cards.sidebar.hide();
+    let _ = cards.update(Message::EdgeHover(strip, false));
+    // A visible handle is seen, so a click on it is meant.
+    let mut config = cards.config.clone();
+    config.edge_menu.handle = true;
+    let _ = cards.apply_config(config);
+    assert!(!cards.edge_click_guard());
+    let _ = cards.update(Message::EdgeClick(strip));
+    assert!(cards.sidebar.visible);
+    cards.sidebar.hide();
+    // Opening on click: the click is the only way, so it still opens.
+    let mut config = cards.config.clone();
+    config.edge_menu.handle = false;
+    config.edge_menu.open = OpenOn::Click;
+    let _ = cards.apply_config(config);
+    assert!(!cards.edge_click_guard());
+    let _ = cards.update(Message::EdgeClick(strip));
+    assert!(cards.sidebar.visible);
+}
+
+/// WID-08: on a 1280x800 display the default right column keeps every row
+/// of the System monitor. When the column has to shrink, Weather without a
+/// city and the Projects list give up the room first; a weather reading
+/// keeps its height too. A tall display shrinks nothing.
+#[test]
+fn wid08_a_laptop_screen_keeps_the_whole_system_monitor() {
+    if isolated("wid08_a_laptop_screen_keeps_the_whole_system_monitor") {
+        return;
+    }
+    let mut cards = cards();
+    let _output = cards.test_output_ready();
+    let _ = cards.apply_config(Config::default());
+    assert_eq!(
+        cards.visible_cards(),
+        [Widget::Weather, Widget::Devbox, Widget::Projects]
+    );
+    assert!(cards.config.location.is_none());
+    let weather = crate::widget_presentation::WEATHER_SIZE[1];
+    let column = |cards: &Cards| {
+        cards
+            .visible_cards()
+            .into_iter()
+            .map(|widget| cards.card_height(widget))
+            .sum::<f32>()
+            + 2. * drawer::CARD_GAP
+    };
+    let room = 800. - 96.;
+    let whole_monitor = |cards: &Cards| {
+        assert_eq!(
+            cards.card_height(Widget::Devbox),
+            cards.devbox_natural_height(),
+            "the System monitor keeps every row, Uptime included"
+        );
+        let size = cards.widget_size(Widget::Devbox);
+        let mut native = Native::new(Size::new(size[0], size[1]));
+        let uptime = native.text_bounds(cards.devbox(), "Uptime");
+        assert!(uptime.y + uptime.height <= size[1], "{uptime:?} {size:?}");
+        native
+    };
+    let monitor = |cards: &Cards| {
+        let size = cards.widget_size(Widget::Devbox);
+        Native::new(Size::new(size[0], size[1]))
+    };
+    // The default widgets at 1280x800: the Projects card without folders
+    // takes only the room it needs, so nothing is cut off.
+    cards.screen_size = [1280., 800.];
+    assert!(column(&cards) <= room + 0.5, "{}", column(&cards));
+    whole_monitor(&cards);
+    // A long Projects list makes the column too tall: Weather without a
+    // city and the list give the room, the monitor keeps its rows.
+    let projects: Vec<serde_json::Value> = (0..8)
+        .map(|n| {
+            serde_json::json!({
+                "path": format!("/sample/p{n}"), "name": format!("Project {n}"),
+                "title": format!("Project {n}"), "repository_id": format!("p{n}"),
+                "group": "sample", "upstream": true, "error": false, "branch": "main",
+                "changed": 2, "untracked": 0, "conflicts": 0, "ahead": 0, "behind": 0,
+                "servers": [], "recent": 0.0
+            })
+        })
+        .collect();
+    let mut config = Config::default();
+    config.project_roots = vec!["/sample".into()];
+    let _ = cards.apply_config(config);
+    cards.projects = Some(
+        serde_json::from_value(serde_json::json!({
+            "updated_at": chrono::Local::now().to_rfc3339(),
+            "projects": projects,
+        }))
+        .unwrap(),
+    );
+    assert!(cards.projects_natural_height() >= 300.);
+    assert!(column(&cards) <= room + 0.5, "{}", column(&cards));
+    whole_monitor(&cards);
+    assert!(cards.card_height(Widget::Weather) < weather);
+    assert!(cards.card_height(Widget::Projects) >= drawer::PROJECTS_LEAST);
+    for (theme, shade) in [
+        (cosmic::Theme::light(), "light"),
+        (cosmic::Theme::dark(), "dark"),
+    ] {
+        monitor(&cards).capture(
+            cards.devbox(),
+            &theme,
+            &format!("wid08-monitor-1280x800-{shade}"),
+        );
+    }
+    // With a city, the weather reading keeps its height; the list gives.
+    let mut config = cards.config.clone();
+    config.location = Some(crate::config::Location {
+        name: "Zagreb".into(),
+        latitude: 45.8,
+        longitude: 16.0,
+        timezone: None,
+    });
+    let _ = cards.apply_config(config);
+    assert_eq!(cards.card_height(Widget::Weather), weather);
+    assert!(column(&cards) <= room + 0.5, "{}", column(&cards));
+    whole_monitor(&cards);
+    // A tall display has room for every card at its full height.
+    cards.screen_size = [1920., 1080.];
+    assert_eq!(cards.card_height(Widget::Weather), weather);
+    assert_eq!(cards.card_height(Widget::Projects), 300.);
+    whole_monitor(&cards);
+}

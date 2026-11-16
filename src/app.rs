@@ -143,7 +143,7 @@ pub(crate) use edge::{
 };
 pub(crate) use settings_preview::{
     SettingsSamples, settings_devbox_preview, settings_projects_preview, settings_weather_preview,
-    settings_weather_preview_at, settings_weather_preview_sized,
+    settings_weather_preview_at, settings_weather_preview_sized, settings_weather_reading,
 };
 #[cfg(test)]
 mod calendar_display_tests;
@@ -666,9 +666,14 @@ impl cosmic::Application for Cards {
                 .map(Message::Activity),
             self.restart_subscription(),
         ];
+        // What covers each display: the weather effect holds still under a
+        // maximized window, and a click on the invisible edge strip over
+        // one doesn't open the menu.
+        if self.config.rain.wanted() || self.edge_click_guard() {
+            subscriptions.push(crate::rain::desk::watch().map(Message::RainDesk));
+        }
         if self.config.rain.wanted() {
             subscriptions.push(crate::rain::lifecycle::watch().map(Message::RainLifecycle));
-            subscriptions.push(crate::rain::desk::watch().map(Message::RainDesk));
             if let Some(watch) = self.rain.watch() {
                 subscriptions.push(watch.map(Message::RainNudge));
             }
@@ -1653,13 +1658,26 @@ impl Cards {
                 Task::none()
             }
             Message::ToggleWidget(widget) => {
-                self.set_widget_visible(widget, !self.config.data_visible(widget))
+                // While every widget is hidden, flip the saved choice: what
+                // the desktop shows is off for all of them.
+                let on = if self.config.widgets_visible {
+                    self.config.data_visible(widget)
+                } else {
+                    self.config.widget_selected(widget)
+                };
+                self.set_widget_visible(widget, !on)
             }
             Message::SetWidgetVisible(widget, visible) => self.set_widget_visible(widget, visible),
             Message::SaveOrder(order) => self.save_widget_order(order),
             Message::ConfigSaved(saved) => self.config_saved(*saved),
             Message::DrawerToggle => self.drawer_toggle(),
             Message::EdgeClick(id) => {
+                if !self.edge_click_opens(id) {
+                    // Meant for the app under the strip: no menu, and the
+                    // hover wait stops until the pointer leaves the strip.
+                    self.sidebar.cancel_reveal();
+                    return Task::none();
+                }
                 if !self.sidebar.visible {
                     if !self.controls_open {
                         self.edge.menu_output = self

@@ -212,6 +212,11 @@ impl Sidebar {
             self.dismiss_if_outside(now);
         }
     }
+    /// Stops a reveal the pointer started on the edge strip. It starts
+    /// again only once the pointer leaves the strip and comes back.
+    pub fn cancel_reveal(&mut self) {
+        self.reveal_at = None;
+    }
     pub fn dismiss_if_outside(&mut self, now: Instant) {
         if !self.hovered
             && !self.edge_hovered
@@ -272,6 +277,8 @@ impl Sidebar {
 /// A place the keyboard can be in the open edge menu, top down.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DrawerItem {
+    /// "Show widgets", first in the menu while every widget is hidden.
+    ShowWidgets,
     Widget(Widget),
     Arrange,
     Settings,
@@ -371,33 +378,81 @@ pub enum DragResult {
     Cancel(Vec<Widget>),
 }
 
-// Budget the right-column card heights. Content-sized cards shrink within
-// these limits; the resulting stack is centered on the desktop.
+/// One card of the right column as the column budgets it: the height it
+/// wants, and the least it gives up to before anything else has to shrink.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ColumnCard {
+    pub widget: Widget,
+    pub wanted: f32,
+    /// A list that scrolls, or a card with little to show (Weather before
+    /// a city is chosen), goes down to this first. A card sized to its
+    /// content (System monitor, Weather with a reading) has `wanted` here.
+    pub least: f32,
+}
+/// The least a list that scrolls keeps while other cards need the room.
+pub const PROJECTS_LEAST: f32 = 150.;
+
+/// Budgets the right-column card heights. When the column is too tall for
+/// `available`, cards that scroll or have little to show shrink first,
+/// toward their least; only when none of them has room left to give does
+/// every card shrink by the same ratio. The stack is centered on the
+/// desktop.
+pub fn fit_column(cards: &[ColumnCard], available: f32) -> Vec<(Widget, f32)> {
+    let gaps = cards.len().saturating_sub(1) as f32 * CARD_GAP;
+    let room = (available - gaps).max(0.);
+    let least = |card: &ColumnCard| card.least.clamp(0., card.wanted.max(0.));
+    let wanted: f32 = cards.iter().map(|card| card.wanted).sum();
+    if wanted <= room {
+        return cards
+            .iter()
+            .map(|card| (card.widget, card.wanted))
+            .collect();
+    }
+    let over = wanted - room;
+    let give: f32 = cards.iter().map(|card| card.wanted - least(card)).sum();
+    if over <= give {
+        let share = over / give;
+        return cards
+            .iter()
+            .map(|card| {
+                (
+                    card.widget,
+                    card.wanted - (card.wanted - least(card)) * share,
+                )
+            })
+            .collect();
+    }
+    let floor: f32 = cards.iter().map(least).sum();
+    let scale = room / floor.max(1.);
+    cards
+        .iter()
+        .map(|card| (card.widget, least(card) * scale))
+        .collect()
+}
+/// The column at its old fixed heights, for tests.
 #[cfg(test)]
 pub fn card_layout(widgets: &[Widget], available: f32) -> Vec<(Widget, f32)> {
-    card_layout_with_devbox(widgets, available, 172.)
-}
-pub fn card_layout_with_devbox(
-    widgets: &[Widget],
-    available: f32,
-    devbox_height: f32,
-) -> Vec<(Widget, f32)> {
-    let desired = |widget| match widget {
-        Widget::Calendar => 540.,
-        Widget::Projects => 300.,
-        Widget::Devbox => devbox_height,
-        Widget::Weather => crate::widget_presentation::WEATHER_SIZE[1],
-        Widget::Clock
-        | Widget::Glance
-        | Widget::Music
-        | Widget::Notes
-        | Widget::Focus
-        | Widget::Devices => 0.,
-    };
-    let total: f32 = widgets.iter().map(|w| desired(*w)).sum();
-    let gaps = widgets.len().saturating_sub(1) as f32 * CARD_GAP;
-    let scale = ((available - gaps).max(0.) / total.max(1.)).min(1.);
-    widgets.iter().map(|w| (*w, desired(*w) * scale)).collect()
+    let cards: Vec<ColumnCard> = widgets
+        .iter()
+        .map(|&widget| {
+            let wanted = match widget {
+                Widget::Projects => 300.,
+                Widget::Devbox => 172.,
+                Widget::Weather => crate::widget_presentation::WEATHER_SIZE[1],
+                _ => 0.,
+            };
+            ColumnCard {
+                widget,
+                wanted,
+                least: if widget == Widget::Projects {
+                    PROJECTS_LEAST
+                } else {
+                    wanted
+                },
+            }
+        })
+        .collect();
+    fit_column(&cards, available)
 }
 
 #[cfg(test)]
@@ -527,6 +582,39 @@ mod tests {
         let end = Point::new(72., start.y + 2.);
         drag.preview(end, &mut order);
         assert_eq!(drag.finish(end, order), DragResult::Click(Widget::Weather));
+    }
+    #[test]
+    fn a_short_column_shrinks_lists_and_empty_cards_before_content_sized_ones() {
+        let card = |widget, wanted, least| ColumnCard {
+            widget,
+            wanted,
+            least,
+        };
+        let cards = [
+            card(Widget::Weather, 180., 100.),
+            card(Widget::Devbox, 330., 330.),
+            card(Widget::Projects, 300., PROJECTS_LEAST),
+        ];
+        // Room for everything: nothing shrinks.
+        let roomy = fit_column(&cards, 900.);
+        assert_eq!(roomy, cards.map(|c| (c.widget, c.wanted)));
+        // A little short: the System monitor keeps all of its rows while
+        // Weather without a city and the Projects list give the room.
+        let short = fit_column(&cards, 672.);
+        let height =
+            |layout: &[(Widget, f32)], widget| layout.iter().find(|(w, _)| *w == widget).unwrap().1;
+        assert_eq!(height(&short, Widget::Devbox), 330.);
+        assert!(height(&short, Widget::Weather) < 180.);
+        assert!(height(&short, Widget::Projects) < 300.);
+        assert!(height(&short, Widget::Weather) >= 100.);
+        assert!(height(&short, Widget::Projects) >= PROJECTS_LEAST);
+        let total =
+            |layout: &[(Widget, f32)]| layout.iter().map(|(_, h)| h).sum::<f32>() + CARD_GAP * 2.;
+        assert!((total(&short) - 672.).abs() < 0.01);
+        // Far too short: only then does everything shrink, and it still fits.
+        let tiny = fit_column(&cards, 400.);
+        assert!(height(&tiny, Widget::Devbox) < 330.);
+        assert!(total(&tiny) <= 400.01);
     }
     #[test]
     fn all_cards_fit_and_reordering_does_not_change_their_heights() {

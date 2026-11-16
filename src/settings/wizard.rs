@@ -1386,6 +1386,18 @@ impl Wizard {
                     Some(serde_json::to_value(city).map_err(|e| e.to_string())?),
                 )?;
             }
+            // A first setup shows where the edge menu is; one Undo takes
+            // it back with the rest.
+            if new_edge_menu(config) {
+                let raw = widgets::raw()?;
+                for (pointer, value) in crate::config::edge_menu::new_install() {
+                    widget.set(
+                        pointer,
+                        crate::desktop::store::widget::get(&raw, pointer),
+                        Some(value),
+                    )?;
+                }
+            }
             match self.composed(store, config)? {
                 Some(profile) => apply_with(
                     store,
@@ -1464,6 +1476,9 @@ impl Wizard {
         if let Some(city) = &self.city {
             lines.push(format!("Weather city: {}", city.name));
         }
+        if new_edge_menu(config) {
+            lines.push("Edge menu: a handle in the middle of the screen edge".into());
+        }
         lines
     }
 
@@ -1501,6 +1516,12 @@ impl Wizard {
 /// Plans `profile` for all its parts and applies it, with `widget`, as one
 /// change; the change's ID, for Undo. `keep_colors` keeps a look's colors from
 /// being recomputed for the wallpaper it just set, as Setups does.
+/// Whether setup gives the edge menu its first-setup handle: on a first
+/// setup, while nobody has changed the menu.
+fn new_edge_menu(config: &crate::config::Config) -> bool {
+    !config.onboarded && config.edge_menu.is_default()
+}
+
 fn apply_with(
     store: &DesktopStore,
     profile: &Profile,
@@ -1538,6 +1559,30 @@ fn apply_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// WID-04: only a first setup, on a menu nobody changed, gives the edge
+    /// menu its visible handle; anyone who already set up keeps theirs.
+    #[test]
+    fn only_a_first_setup_of_an_untouched_menu_shows_the_edge_handle() {
+        let mut config = crate::config::Config::default();
+        assert!(new_edge_menu(&config));
+        config.onboarded = true;
+        assert!(!new_edge_menu(&config), "setup run again");
+        config.onboarded = false;
+        config.edge_menu.delay_ms = 400;
+        assert!(!new_edge_menu(&config), "a menu someone changed");
+        // What it writes is valid and reads back as a handle in the middle.
+        let mut raw = serde_json::json!({});
+        for (pointer, value) in crate::config::edge_menu::new_install() {
+            let key = pointer.trim_start_matches("/edge_menu/");
+            raw["edge_menu"][key] = value;
+        }
+        let menu: crate::config::edge_menu::EdgeMenu =
+            serde_json::from_value(raw["edge_menu"].clone()).unwrap();
+        assert!(menu.validate().is_ok());
+        assert!(menu.handle);
+        assert_eq!(menu.strip_margins(1000.), [250, 250]);
+    }
 
     #[test]
     fn every_step_after_welcome_is_a_known_usage_count() {

@@ -4,7 +4,7 @@
 //! list of items, each running an action the desktop already has.
 use super::config_writes::Failure;
 use super::*;
-use crate::config::edge_menu::{Action, Close, EdgeMenu, Item, Kind, Side, Style};
+use crate::config::edge_menu::{Action, Close, EdgeMenu, Item, Kind, OpenOn, Side, Style};
 use crate::desktop::apps::AppCatalog;
 use cosmic::iced::mouse;
 use drawer::DrawerItem;
@@ -62,6 +62,9 @@ pub(super) struct EdgeState {
     pub available: Vec<bool>,
 }
 
+/// "Show widgets" at the top of the List menus while every widget is
+/// hidden; the same gap as under the header follows it.
+pub(super) const SHOW_ROW: f32 = 34.;
 const SEPARATOR: f32 = 13.;
 const TITLE_GAP: f32 = 10.;
 const FOOTER_GAP: f32 = 8.;
@@ -564,6 +567,29 @@ impl Cards {
             .map(|strip| strip.id)
             .collect()
     }
+    /// Whether a click on an invisible strip can be meant for the window
+    /// under it: the strip has no handle and the menu opens on hover, so a
+    /// click is never needed to open it.
+    pub(super) fn edge_click_guard(&self) -> bool {
+        let menu = &self.config.edge_menu;
+        menu.enabled && !menu.handle && menu.open == OpenOn::Hover
+    }
+    /// Whether a click on strip `id` opens the menu. Over a maximized or
+    /// full-screen window, a click on an invisible strip that opens on
+    /// hover was meant for the window, such as its scrollbar at the screen
+    /// edge, so it doesn't. Resting the pointer there still opens the menu.
+    pub(super) fn edge_click_opens(&self, id: window::Id) -> bool {
+        if !self.edge_click_guard() {
+            return true;
+        }
+        let output = match self.edge.others.iter().find(|strip| strip.id == id) {
+            Some(strip) => Some(&strip.output),
+            None => self.selected_output.as_ref(),
+        };
+        !output
+            .and_then(crate::displays::Output::name)
+            .is_some_and(|name| self.rain.desk.covered.contains(name))
+    }
     /// The pointer on strip `id`: the menu opens on that strip's display.
     pub(super) fn edge_strip_hover(&mut self, id: window::Id, entered: bool) -> Task<Message> {
         if entered && !self.controls_open {
@@ -640,19 +666,18 @@ impl Cards {
     /// needs, kept on screen.
     pub(super) fn controls_height(&self) -> u32 {
         let menu = &self.config.edge_menu;
+        let room = self.show_room().ceil() as u32;
         let natural = match self.menu_items() {
-            Some(items) if self.compact() => super::edge_compact::Compact::new(menu, &items)
-                .height()
-                .ceil() as u32,
+            Some(items) if self.compact() => self.compact_layout(&items).height().ceil() as u32,
             Some(items) => {
-                let natural = natural_height(&items, menu.section_titles).ceil() as u32;
+                let natural = natural_height(&items, menu.section_titles).ceil() as u32 + room;
                 if self.rail_message() && menu.style != Style::List {
-                    natural.max(drawer::SIDEBAR_HEIGHT)
+                    natural.max(drawer::SIDEBAR_HEIGHT + room)
                 } else {
                     natural
                 }
             }
-            None => drawer::SIDEBAR_HEIGHT,
+            None => drawer::SIDEBAR_HEIGHT + room,
         };
         let screen = self.edge_screen_height();
         if self.output_known && screen.is_finite() && screen > 0. {
@@ -703,6 +728,9 @@ impl Cards {
         }
         use crate::activity_island::bridge::{Command, Event};
         Some(match &item.kind {
+            // A widget's switch waits while every widget is hidden; Show
+            // widgets at the top of the menu brings them back.
+            Kind::Widget { .. } if !self.config.widgets_visible => return None,
             Kind::Widget { .. } => Message::ToggleWidget(item.as_widget()?),
             Kind::Action { .. } => match item.as_action()? {
                 Action::ShowWidgets => Message::SetWidgetsVisible(!self.config.widgets_visible),
@@ -891,7 +919,15 @@ impl Cards {
         let header = container(
             column::with_children(vec![
                 label("Edge menu", 15., p.foreground),
-                label("Your shortcuts and switches", 12., p.muted),
+                label(
+                    if self.config.widgets_visible {
+                        "Your shortcuts and switches"
+                    } else {
+                        "Widgets are hidden"
+                    },
+                    12.,
+                    p.muted,
+                ),
             ])
             .spacing(2),
         )
@@ -959,16 +995,53 @@ impl Cards {
         let body = scrollable(column::with_children(body))
             .id(cosmic::widget::Id::new("edge-menu-items"))
             .height(Length::Fill);
-        self.rail_frame(
-            column::with_children(vec![
-                header.into(),
-                gap(drawer::HEADER_GAP),
-                body.into(),
-                gap(FOOTER_GAP),
-                self.customize_link(),
+        let mut column = vec![header.into(), gap(drawer::HEADER_GAP)];
+        if !self.config.widgets_visible {
+            column.push(self.show_widgets_row());
+            column.push(gap(drawer::HEADER_GAP));
+        }
+        column.extend([body.into(), gap(FOOTER_GAP), self.customize_link()]);
+        self.rail_frame(column::with_children(column).into())
+    }
+    /// The room "Show widgets" and its gap take at the top of the List
+    /// menus: none while widgets are shown.
+    pub(super) fn show_room(&self) -> f32 {
+        if self.config.widgets_visible {
+            0.
+        } else {
+            SHOW_ROW + drawer::HEADER_GAP
+        }
+    }
+    /// "Show widgets", at the top of the menu while every widget is hidden:
+    /// the one step that brings them back, and with them the switches.
+    pub(super) fn show_widgets_row(&self) -> Element<'_, Message> {
+        let p = self.config.surface_palette();
+        let focused = self.drawer_focus() == Some(DrawerItem::ShowWidgets);
+        let ink = crate::widget_style::on_accent(p);
+        cosmic::widget::button::custom(
+            row::with_children(vec![
+                cosmic::widget::icon::from_name(Action::ShowWidgets.icon())
+                    .size(16)
+                    .symbolic(true)
+                    .icon()
+                    .class(cosmic::theme::Svg::custom(move |_| {
+                        cosmic::iced::widget::svg::Style { color: Some(ink) }
+                    }))
+                    .into(),
+                label("Show widgets", 13., ink),
             ])
-            .into(),
+            .spacing(8)
+            .height(Length::Fill)
+            .align_y(Alignment::Center),
         )
+        .name("Show widgets. Widgets are hidden")
+        .id(cosmic::widget::Id::new("edge-show-widgets"))
+        .padding([0, 10])
+        .width(Length::Fill)
+        .height(Length::Fixed(SHOW_ROW))
+        .class(show_style(p, focused))
+        .on_press(Message::SetWidgetsVisible(true))
+        .into()
     }
     /// One row of the customized menu: icon, name and its state.
     fn custom_row(
@@ -980,6 +1053,8 @@ impl Cards {
     ) -> Element<'_, Message> {
         let p = self.config.surface_palette();
         let available = self.edge_available(index);
+        // A widget's switch waits, dimmed, while every widget is hidden.
+        let held = available && self.item_held(item);
         let title = item_title(item);
         let state = available.then(|| self.item_state(item)).flatten();
         let caption = if available {
@@ -987,7 +1062,11 @@ impl Cards {
         } else {
             Some("Unavailable".to_string())
         };
-        let ink = if available { p.foreground } else { p.muted };
+        let ink = if available && !held {
+            p.foreground
+        } else {
+            p.muted
+        };
         let (icon_name, symbolic) = item_icon(item);
         let size = self.config.edge_menu.list_icon();
         let mut icon = cosmic::widget::icon::from_name(icon_name.as_str()).size(size);
@@ -1027,9 +1106,18 @@ impl Cards {
             parts.push(label(caption.clone(), 11., p.muted));
         }
         if let Some(on) = state {
-            parts.push(super::panel::switch(on, p.accent, p));
+            let color = if held {
+                mix(p.foreground, p.background, 0.4)
+            } else {
+                p.accent
+            };
+            parts.push(super::panel::switch(on, color, p));
         }
         let spoken = match (state, &caption) {
+            (Some(on), _) if held => format!(
+                "{title}, {}, widgets are hidden",
+                if on { "on" } else { "off" }
+            ),
             (Some(on), _) => format!("{title}, {}", if on { "on" } else { "off" }),
             (None, Some(caption)) => format!("{title}, {caption}"),
             (None, None) => title.clone(),
@@ -1046,21 +1134,29 @@ impl Cards {
         .width(Length::Fill)
         .height(Length::Fixed(drawer::ROW_HEIGHT))
         .class(row_style(p, p.accent, focused, corners, true));
-        if available {
+        if available && !held {
             button = button.on_press(Message::EdgeItem(index));
         }
         mouse_area(button)
-            .interaction(if available {
+            .interaction(if available && !held {
                 mouse::Interaction::Pointer
             } else {
                 mouse::Interaction::NotAllowed
             })
             .into()
     }
+    /// Whether `item` is a widget's switch, which waits while every widget
+    /// is hidden.
+    pub(super) fn item_held(&self, item: &Item) -> bool {
+        !self.config.widgets_visible && item.as_widget().is_some()
+    }
     /// On or off, for an item whose state is known.
     pub(super) fn item_state(&self, item: &Item) -> Option<bool> {
         if let Some(widget) = item.as_widget() {
-            return Some(if widget.is_tool() {
+            // While every widget is hidden, the choice that comes back.
+            return Some(if !self.config.widgets_visible {
+                self.config.widget_selected(widget)
+            } else if widget.is_tool() {
                 self.config.widget_visible(widget)
             } else {
                 self.config.data_visible(widget)
@@ -1211,6 +1307,30 @@ fn empty_state<'a>(p: crate::config::Palette) -> Element<'a, Message> {
         }
     }))
     .into()
+}
+
+/// "Show widgets": filled with the accent, a ring when the keyboard is on
+/// it, a little lighter under the pointer.
+fn show_style(p: crate::config::Palette, focused: bool) -> cosmic::theme::Button {
+    let style = move |hovered: bool| cosmic::widget::button::Style {
+        background: Some(Background::Color(if hovered {
+            mix(p.accent, p.foreground, 0.88)
+        } else {
+            p.accent
+        })),
+        border_radius: 12.0.into(),
+        border_width: if focused { 2. } else { 0. },
+        border_color: p.foreground,
+        icon_color: Some(crate::widget_style::on_accent(p)),
+        text_color: Some(crate::widget_style::on_accent(p)),
+        ..Default::default()
+    };
+    cosmic::theme::Button::Custom {
+        active: Box::new(move |_, _| style(false)),
+        hovered: Box::new(move |_, _| style(true)),
+        pressed: Box::new(move |_, _| style(true)),
+        disabled: Box::new(move |_| style(false)),
+    }
 }
 
 /// A menu row's look: a tinted rounded group, an accent ring when the

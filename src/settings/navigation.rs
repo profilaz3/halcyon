@@ -439,6 +439,14 @@ pub(super) const TIME_OF_DAY: SearchHit = hit(
     false,
 )
 .names_page();
+/// The widget font, with the other fonts; the Widgets page and the
+/// Clock's "Same as widgets" link here.
+pub(super) const WIDGET_FONT: SearchHit =
+    hit(Page::DesktopAppearance, "Widget font", "", false).at("widget-font");
+/// The day and night widget styles on Time of day; the Widgets page links
+/// here.
+pub(super) const DAY_AND_NIGHT_STYLES: SearchHit =
+    hit(Page::Moments, "Showing now", "", false).at("moment-preview");
 pub(super) const SCENE_COVERS_CLOCK: SearchHit =
     hit(Page::Clock, "Let the scene cover the clock", "", false);
 pub(super) const MATCH_WEATHER: SearchHit =
@@ -1055,9 +1063,9 @@ const ROWS: &[SearchHit] = &[
     .at("icon-folders"),
     hit(Page::DesktopAppearance, "Interface font", "", false),
     hit(Page::DesktopAppearance, "Match style", "", false),
-    hit(Page::DesktopAppearance, "Widget font", "", false),
+    WIDGET_FONT,
     hit(Page::DesktopAutomation, "Set times and screens", "", false),
-    hit(Page::Moments, "Showing now", "", false),
+    DAY_AND_NIGHT_STYLES,
     hit(Page::DesktopAutomation, "What changes", "", false),
     hit(Page::DesktopAutomation, "Where you are", "", false),
     hit(Page::DesktopDock, "Between items", "", true)
@@ -1244,6 +1252,20 @@ const ROWS: &[SearchHit] = &[
     hit(Page::Themes, "Apps", "", false),
     hit(Page::Weather, "Dew point and how often it updates", "", false),
     hit(Page::Widgets, "How widgets behave", "", false).at("widgets-behave"),
+    hit(
+        Page::Widgets,
+        "Look",
+        "widgets look glass transparency font day night styles",
+        false,
+    )
+    .at("widgets-look"),
+    hit(
+        Page::Clock,
+        "Same as widgets",
+        "clock font widget font",
+        false,
+    )
+    .at("clock-widget-font"),
     hit(Page::EdgeMenu, "Appearance", "", false).at("edge-menu-appearance"),
     hit(Page::EdgeMenu, "Style", "icons only grid list", false).at("edge-menu-appearance"),
     hit(Page::EdgeMenu, "List", "menu style", false).at("edge-menu-appearance"),
@@ -1307,6 +1329,8 @@ pub(super) const NOT_INDEXED: &[(&str, &str)] = &[
     ("Layout", "a section of the widget builder; “layout” opens Arrange widgets"),
     ("Size and place", "on every widget’s Position tab; the widget’s name finds it"),
     ("Move or resize", "on every widget page; the widget’s name finds it"),
+    ("Widget font", "also the Widgets page's link to the row on Fonts and icons, which search opens"),
+    ("Day and night styles", "the Widgets page's link to Time of day, which search finds"),
     ("Make your own design", "a link on every widget page; “Widget builder” finds it"),
     ("More in COSMIC Settings", "a link out of Halcyon"),
     ("Dock and panel", "Appearance's link to the bars' See-through; “see-through” finds it"),

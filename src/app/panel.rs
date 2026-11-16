@@ -88,20 +88,29 @@ impl Cards {
     }
     /// Every place the keyboard can be in the edge menu, top down.
     pub(super) fn drawer_items(&self) -> Vec<DrawerItem> {
+        // While every widget is hidden, Show widgets comes first.
+        let show = (!self.config.widgets_visible).then_some(DrawerItem::ShowWidgets);
         if let Some(items) = self.menu_items() {
-            return items
-                .iter()
-                .enumerate()
-                .filter(|(_, item)| item.focusable())
-                .map(|(index, _)| DrawerItem::Entry(index))
+            return show
+                .into_iter()
+                .chain(
+                    items
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, item)| item.focusable())
+                        .map(|(index, _)| DrawerItem::Entry(index)),
+                )
                 .chain([DrawerItem::Customize])
                 .collect();
         }
-        self.config
-            .ordered_right_cards()
-            .into_iter()
-            .chain(ELSEWHERE)
-            .map(DrawerItem::Widget)
+        show.into_iter()
+            .chain(
+                self.config
+                    .ordered_right_cards()
+                    .into_iter()
+                    .chain(ELSEWHERE)
+                    .map(DrawerItem::Widget),
+            )
             .chain([
                 DrawerItem::Arrange,
                 DrawerItem::Settings,
@@ -158,6 +167,9 @@ impl Cards {
             }
             DrawerKey::Activate => {
                 return match items[index] {
+                    DrawerItem::ShowWidgets => self.update(Message::SetWidgetsVisible(true)),
+                    // A widget's switch waits while every widget is hidden.
+                    DrawerItem::Widget(_) if !self.config.widgets_visible => Task::none(),
                     DrawerItem::Widget(widget) => self.update(Message::ToggleWidget(widget)),
                     DrawerItem::Arrange => {
                         self.sidebar.hide();
@@ -203,7 +215,8 @@ impl Cards {
         Task::none()
     }
     fn rail_draggable(&self, widget: Widget) -> bool {
-        !self.custom_layout()
+        self.config.widgets_visible
+            && !self.custom_layout()
             && !(self.config.glance.enabled
                 && matches!(widget, Widget::Clock | Widget::Weather | Widget::Calendar))
     }
@@ -388,7 +401,11 @@ impl Cards {
         let notes_changed = notes_shown != self.config.widget_visible(Widget::Notes);
         let display_changed = self.config.widget_display != cfg.widget_display
             || self.config.widget_monitors != cfg.widget_monitors;
+        let visibility_changed = self.config.widgets_visible != cfg.widgets_visible;
         let old_edge = std::mem::replace(&mut self.config, cfg).edge_menu;
+        if visibility_changed {
+            self.arrange_visibility_changed();
+        }
         self.refresh_display_layouts();
         self.reconcile_weather(now);
         if display_changed {
@@ -617,7 +634,12 @@ impl Cards {
         let draggable = draggable && self.rail_draggable(widget);
         let focused = self.drawer_focus() == Some(DrawerItem::Widget(widget));
         let p = self.config.surface_palette();
-        let selected = if widget.is_tool() {
+        // While every widget is hidden the switch shows the saved choice,
+        // dimmed, and waits: "Show widgets" above brings them back.
+        let held = !self.config.widgets_visible;
+        let selected = if held {
+            self.config.widget_selected(widget)
+        } else if widget.is_tool() {
             self.config.widget_visible(widget)
         } else {
             self.config.data_visible(widget)
@@ -628,11 +650,14 @@ impl Cards {
             .as_ref()
             .is_some_and(|d| d.widget == widget && d.moved);
         let alert = widget == Widget::Calendar && self.meeting_alert();
-        let color = if alert {
+        let color = if held {
+            mix(p.foreground, p.background, 0.4)
+        } else if alert {
             mix(Color::from_rgb8(245, 190, 107), p.accent, 0.8)
         } else {
             p.accent
         };
+        let ink = if held { p.muted } else { p.foreground };
         let handle: Element<'_, Message> = if draggable {
             cosmic::widget::icon::from_name("grip-lines-symbolic")
                 .size(12)
@@ -654,18 +679,22 @@ impl Cards {
                 .icon()
                 .class(cosmic::theme::Svg::custom(move |_| {
                     cosmic::iced::widget::svg::Style {
-                        color: Some(if selected { p.foreground } else { p.muted }),
+                        color: Some(if selected && !held {
+                            p.foreground
+                        } else {
+                            p.muted
+                        }),
                     }
                 }))
                 .into(),
-            container(label(widget.title(), 13., p.foreground))
+            container(label(widget.title(), 13., ink))
                 .width(Length::Fill)
                 .into(),
             switch(selected, color, p),
         ])
         .spacing(8)
         .align_y(Alignment::Center);
-        mouse_area(
+        let row = mouse_area(
             container(content)
                 .padding([0, 10, 0, 6])
                 .width(Length::Fill)
@@ -673,7 +702,11 @@ impl Cards {
                 .align_y(Alignment::Center)
                 .class(cosmic::theme::Container::custom(move |_| {
                     cosmic::iced::widget::container::Style {
-                        icon_color: Some(if selected { p.foreground } else { p.muted }),
+                        icon_color: Some(if selected && !held {
+                            p.foreground
+                        } else {
+                            p.muted
+                        }),
                         background: Some(Background::Color(if dragged {
                             mix(color, p.background, 0.24)
                         } else {
@@ -687,8 +720,11 @@ impl Cards {
                         ..Default::default()
                     }
                 })),
-        )
-        .on_press(if draggable {
+        );
+        if held {
+            return row.interaction(mouse::Interaction::NotAllowed).into();
+        }
+        row.on_press(if draggable {
             Message::SidebarPress(widget)
         } else {
             Message::ToggleWidget(widget)
@@ -761,11 +797,20 @@ impl Cards {
         let gap = |height: f32| -> Element<'_, Message> {
             cosmic::iced::widget::space().height(height).into()
         };
+        let hidden = !self.config.widgets_visible;
         let header = container(
             column::with_children(vec![
                 // The same title as a customized menu and its Settings page.
                 label("Edge menu", 15., p.foreground),
-                label("Show or hide each widget", 12., p.muted),
+                label(
+                    if hidden {
+                        "Widgets are hidden"
+                    } else {
+                        "Show or hide each widget"
+                    },
+                    12.,
+                    p.muted,
+                ),
             ])
             .spacing(2),
         )
@@ -823,34 +868,41 @@ impl Cards {
             .into(),
         ])
         .spacing(8);
+        let mut top = vec![header.into(), gap(drawer::HEADER_GAP)];
+        if hidden {
+            top.push(self.show_widgets_row());
+            top.push(gap(drawer::HEADER_GAP));
+        }
         self.rail_frame(
-            column::with_children(vec![
-                header.into(),
-                gap(drawer::HEADER_GAP),
-                heading("Right column"),
-                gap(drawer::LABEL_GAP),
-                rows.into(),
-                gap(6.),
-                container(label(
-                    if self.custom_layout() {
-                        "Your own layout. Use Arrange below to move widgets."
-                    } else {
-                        "Drag to reorder"
-                    },
-                    12.,
-                    p.muted,
-                ))
-                .padding([0, 4])
-                .into(),
-                gap(14.),
-                heading("Other widgets"),
-                gap(drawer::LABEL_GAP),
-                others.into(),
-                gap(12.),
-                settings.into(),
-                gap(8.),
-                self.customize_link(),
-            ])
+            column::with_children(
+                top.into_iter().chain([
+                    heading("Right column"),
+                    gap(drawer::LABEL_GAP),
+                    rows.into(),
+                    gap(6.),
+                    container(label(
+                        if hidden {
+                            "Switches show what comes back"
+                        } else if self.custom_layout() {
+                            "Your own layout. Use Arrange below to move widgets."
+                        } else {
+                            "Drag to reorder"
+                        },
+                        12.,
+                        p.muted,
+                    ))
+                    .padding([0, 4])
+                    .into(),
+                    gap(14.),
+                    heading("Other widgets"),
+                    gap(drawer::LABEL_GAP),
+                    others.into(),
+                    gap(12.),
+                    settings.into(),
+                    gap(8.),
+                    self.customize_link(),
+                ]),
+            )
             .into(),
         )
     }

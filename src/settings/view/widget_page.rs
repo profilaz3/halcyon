@@ -42,6 +42,25 @@ impl Settings {
         )
     }
 
+    /// The caption right under a preview that shows made-up data, the same
+    /// on every page: "Sample", then how to see your own when there is a
+    /// way.
+    pub(super) fn sample_note<'a>(
+        &self,
+        id: &'static str,
+        more: Option<&str>,
+    ) -> Element<'a, Message> {
+        let text = match more {
+            Some(more) => format!("Sample · {more}"),
+            None => "Sample".to_string(),
+        };
+        container(label(text, 12., MUTED))
+            .id(cosmic::widget::Id::new(id))
+            .width(Length::Fill)
+            .align_x(Alignment::Center)
+            .into()
+    }
+
     /// A row that opens something else: title, description and a chevron.
     pub(super) fn link_row<'a>(
         &self,

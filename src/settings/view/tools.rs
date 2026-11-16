@@ -159,7 +159,14 @@ impl Settings {
         if let Some(hint) = hint {
             follow.push(label(hint, 12., MUTED));
         }
-        let own = vec![
+        let mut own = Vec::new();
+        if example {
+            own.push(self.sample_note(
+                "music-sample-note",
+                Some("play something in a music app to see it here."),
+            ));
+        }
+        own.extend([
             group(Some("Player"), follow),
             self.search_target("music-visualizers", self.visualizer_controls()),
             if let Some(recipe) = &self.config.recipes.music {
@@ -188,7 +195,7 @@ impl Settings {
                     ],
                 )
             },
-        ];
+        ]);
         self.widget_template(Widget::Music, "Music", Some(preview), own)
     }
 
@@ -414,7 +421,15 @@ impl Settings {
         );
         // The card as it looks on the desktop leads, like every widget page;
         // the editor for its text follows.
-        self.widget_template(Widget::Notes, "Notes", Some(preview), vec![document, items])
+        let mut sections = Vec::new();
+        if example {
+            sections.push(self.sample_note(
+                "notes-sample-note",
+                Some("write your note below and it shows here."),
+            ));
+        }
+        sections.extend([document, items]);
+        self.widget_template(Widget::Notes, "Notes", Some(preview), sections)
     }
 
     pub(super) fn focus_page(&self) -> Element<'_, Message> {
@@ -527,15 +542,13 @@ impl Settings {
             &self.config,
             Some(self.tool_preview_size(Widget::Devices)),
         );
-        let note = container(label(DEVICES_SAMPLE, 13., MUTED))
-            .id(cosmic::widget::Id::new("devices-sample-note"))
-            .into();
+        let note = self.sample_note("devices-sample-note", Some(DEVICES_SAMPLE));
         self.widget_template(Widget::Devices, "Devices", Some(preview), vec![note])
     }
 }
 
 /// Under the Devices preview: what it shows and where real readings come from.
-const DEVICES_SAMPLE: &str = "Sample · your Bluetooth and wireless \
+const DEVICES_SAMPLE: &str = "your Bluetooth and wireless \
      devices show here, and phones paired with KDE Connect or GSConnect.";
 
 impl Settings {
