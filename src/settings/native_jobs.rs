@@ -771,13 +771,18 @@ mod review030_tests {
             }
             assert!(!app.native_busy);
         }
+        // The style comes from the built-in look picked above, whatever it
+        // is called.
+        let style = app.profiles.mix.as_ref().unwrap().sources[Component::Style.index()]
+            .as_ref()
+            .map(|source| &source.origin)
+            .unwrap();
         assert_eq!(
-            app.profiles
-                .mix
-                .as_ref()
-                .unwrap()
-                .source_name(Component::Style),
-            Some("Paper")
+            (style.kind, style.id.as_deref()),
+            (
+                crate::desktop::profiles::mix::SourceKind::Builtin,
+                Some("paper-studio")
+            )
         );
         assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), original);
     }

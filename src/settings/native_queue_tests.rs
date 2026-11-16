@@ -179,12 +179,14 @@ fn task2r2_style_toggle_defers_while_helper_holds_transaction_locks() {
     let (store, mut app, mut native) = queue_fixture(Page::Themes);
     // Appearance applies a chosen style by itself. Choose one directly in
     // its editor so the apply can be started while the helper holds both
-    // transaction locks, as a running Appearance change would.
+    // transaction locks, as a running Appearance change would. The helper
+    // runs when the transaction checks Islands, which it does only for a
+    // change that writes Islands settings. A plain style choice keeps the
+    // bars' shape, so choose it with its own dock and panel: that writes
+    // the style's island gap.
     let _ = app
         .profiles
-        .update(profiles::Message::Select(profiles::Selection::Preset(
-            "theme-soft",
-        )));
+        .update(profiles::Message::UseStyleBars("theme-soft"));
     for job in app.profiles.take_theme_jobs() {
         send_settings(&mut app, Message::Profiles(job.run()));
     }
@@ -193,6 +195,13 @@ fn task2r2_style_toggle_defers_while_helper_holds_transaction_locks() {
     let _ = native.render(app.settings_view(), &controls_theme(&app.config));
     let before = Config::load().appearance.sync_colors;
     assert!(app.profiles.can_apply(), "{:?}", app.profiles.notice);
+    assert!(
+        app.profiles.plan().is_some_and(|plan| plan
+            .patch()
+            .keys()
+            .any(|key| key.namespace() == dock_islands_core::NAMESPACE)),
+        "the style's own dock and panel must write Islands settings"
+    );
     LockedNativeJob::arm(&store);
     let task = app.update(Message::Profiles(profiles::Message::Apply));
     let job = LockedNativeJob::start(&store, task);
