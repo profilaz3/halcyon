@@ -63,6 +63,8 @@ pub(super) enum Line {
     Heading(usize),
     /// A row of cells: one in the Icons style, up to the columns in the grid.
     Cells(Vec<usize>),
+    /// "Show widgets", first while every widget is hidden.
+    Show,
 }
 
 /// The Icons or Grid menu laid out: what each line holds and how tall it is.
@@ -121,13 +123,22 @@ impl Compact {
             cell_height: cell_height(menu),
         }
     }
+    /// The menu while every widget is hidden: "Show widgets" first.
+    pub fn with_show(mut self) -> Self {
+        self.lines.splice(0..0, [Line::Show, Line::Gap(TITLE_GAP)]);
+        self
+    }
     fn line_height(&self, line: &Line) -> f32 {
         match line {
             Line::Gap(height) => *height,
             Line::Rule => RULE,
             Line::Heading(_) => HEADING,
-            Line::Cells(_) => self.cell_height,
+            Line::Cells(_) | Line::Show => self.cell_height,
         }
+    }
+    /// The middle of "Show widgets", from the top of the panel.
+    pub fn show_centre(&self) -> Option<f32> {
+        (self.lines.first() == Some(&Line::Show)).then_some(PAD + self.cell / 2.)
     }
     fn body(&self) -> f32 {
         self.lines.iter().map(|line| self.line_height(line)).sum()
@@ -210,6 +221,9 @@ impl Cards {
         if !self.edge_available(index) {
             return (title, Some("Unavailable".into()));
         }
+        if self.item_held(item) {
+            return (title, Some("Hidden".into()));
+        }
         if let Some(on) = self.item_state(item) {
             return (title, Some(if on { "On" } else { "Off" }.into()));
         }
@@ -228,10 +242,20 @@ impl Cards {
     }
     /// The Icons or Grid menu, with room beside it for the name of the item
     /// the pointer or keyboard is on.
+    /// The Icons or Grid menu laid out, "Show widgets" first while every
+    /// widget is hidden.
+    pub(super) fn compact_layout(&self, items: &[Item]) -> Compact {
+        let layout = Compact::new(&self.config.edge_menu, items);
+        if self.config.widgets_visible {
+            layout
+        } else {
+            layout.with_show()
+        }
+    }
     pub(super) fn compact_rail(&self, items: &[Item]) -> Element<'_, Message> {
         let menu = &self.config.edge_menu;
         let p = self.config.surface_palette();
-        let layout = Compact::new(menu, items);
+        let layout = self.compact_layout(items);
         let focus = self.drawer_focus();
         let mut body: Vec<Element<'_, Message>> = Vec::new();
         for line in &layout.lines {
@@ -282,6 +306,7 @@ impl Cards {
                 )
                 .spacing(GAP)
                 .into(),
+                Line::Show => self.compact_show(focus == Some(DrawerItem::ShowWidgets)),
             });
         }
         let customize = mouse_area(
@@ -359,6 +384,13 @@ impl Cards {
                 "Customize this menu".to_string(),
                 None,
             )),
+            Some(DrawerItem::ShowWidgets) => layout.show_centre().map(|centre| {
+                (
+                    centre,
+                    "Show widgets".to_string(),
+                    Some("Widgets are hidden".to_string()),
+                )
+            }),
             _ => None,
         };
         let room = container(cosmic::iced::widget::space())
@@ -431,6 +463,8 @@ impl Cards {
         let menu = &self.config.edge_menu;
         let p = self.config.surface_palette();
         let available = self.edge_available(index);
+        // A widget's switch waits, dimmed, while every widget is hidden.
+        let held = available && self.item_held(item);
         let state = available.then(|| self.item_state(item)).flatten();
         let running = available
             && match item.as_action() {
@@ -441,9 +475,9 @@ impl Cards {
         let lit = state == Some(true) || running;
         let size = menu.compact_icon();
         let disc = f32::from(size) + 14.;
-        let ink = if lit {
+        let ink = if lit && !held {
             crate::widget_style::on_accent(p)
-        } else if available {
+        } else if available && !held {
             p.foreground
         } else {
             Color { a: 0.45, ..p.muted }
@@ -462,7 +496,9 @@ impl Cards {
         };
         let switch = state.is_some();
         let accent = p.accent;
-        let disc_fill = if lit {
+        let disc_fill = if lit && held {
+            Some(mix(p.foreground, p.background, 0.16))
+        } else if lit {
             Some(accent)
         } else if symbolic && !switch {
             Some(mix(p.foreground, p.background, 0.08))
@@ -581,18 +617,86 @@ impl Cards {
         .width(Length::Fixed(cell_width(menu)))
         .height(Length::Fixed(cell_height(menu)))
         .class(cell_style(p, focused, true));
-        if available {
+        if available && !held {
             button = button.on_press(Message::EdgeItem(index));
         }
         mouse_area(button)
             .on_enter(Message::EdgeTip(Some(DrawerItem::Entry(index))))
             .on_exit(Message::EdgeTip(None))
-            .interaction(if available {
+            .interaction(if available && !held {
                 mouse::Interaction::Pointer
             } else {
                 mouse::Interaction::NotAllowed
             })
             .into()
+    }
+
+    /// "Show widgets" in the Icons and Grid menus: the icon in an accent
+    /// disc, named under it in the grid and beside it in its bubble.
+    fn compact_show(&self, focused: bool) -> Element<'_, Message> {
+        let menu = &self.config.edge_menu;
+        let p = self.config.surface_palette();
+        let size = menu.compact_icon();
+        let disc = f32::from(size) + 14.;
+        let ink = crate::widget_style::on_accent(p);
+        let accent = p.accent;
+        let icon = cosmic::widget::icon::from_name(Action::ShowWidgets.icon())
+            .size(size)
+            .symbolic(true)
+            .icon()
+            .class(cosmic::theme::Svg::custom(move |_| {
+                cosmic::iced::widget::svg::Style { color: Some(ink) }
+            }));
+        let face = container(container(icon).width(disc).height(disc).center(disc).class(
+            cosmic::theme::Container::custom(move |_| cosmic::iced::widget::container::Style {
+                background: Some(Background::Color(accent)),
+                border: Border {
+                    radius: (disc / 2.).into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+        ))
+        .center(cell(menu));
+        let mut content: Vec<Element<'_, Message>> = vec![face.into()];
+        if labelled(menu) {
+            content.push(
+                container(
+                    text::body("Show widgets")
+                        .size(10.5)
+                        .line_height(1.2)
+                        .font(crate::widget_style::font())
+                        .wrapping(cosmic::iced::advanced::text::Wrapping::Word)
+                        .align_x(cosmic::iced::alignment::Horizontal::Center)
+                        .class(cosmic::theme::Text::Color(mix(p.foreground, p.muted, 0.25))),
+                )
+                .width(Length::Fill)
+                .height(LABEL)
+                .padding([1, 2, 0, 2])
+                .center_x(Length::Fill)
+                .align_y(Alignment::Start)
+                .clip(true)
+                .into(),
+            );
+        }
+        mouse_area(
+            cosmic::widget::button::custom(
+                column::with_children(content)
+                    .width(Length::Fill)
+                    .align_x(Alignment::Center),
+            )
+            .name("Show widgets. Widgets are hidden")
+            .id(cosmic::widget::Id::new("edge-show-widgets"))
+            .padding(0)
+            .width(Length::Fixed(cell_width(menu)))
+            .height(Length::Fixed(cell_height(menu)))
+            .class(cell_style(p, focused, true))
+            .on_press(Message::SetWidgetsVisible(true)),
+        )
+        .on_enter(Message::EdgeTip(Some(DrawerItem::ShowWidgets)))
+        .on_exit(Message::EdgeTip(None))
+        .interaction(mouse::Interaction::Pointer)
+        .into()
     }
 }
 

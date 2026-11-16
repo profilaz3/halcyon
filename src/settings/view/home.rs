@@ -85,10 +85,19 @@ impl Settings {
             parts.push(self.monitor_overview());
         }
         parts.push(
-            container(scene)
-                .id(cosmic::widget::Id::new("desktop-scene"))
-                .width(Length::Fill)
-                .into(),
+            column::with_children(vec![
+                container(scene)
+                    .id(cosmic::widget::Id::new("desktop-scene"))
+                    .width(Length::Fill)
+                    .into(),
+                // The places are yours; the words in the widgets are made up.
+                self.sample_note(
+                    "home-sample-note",
+                    Some("the widgets in this picture show example text."),
+                ),
+            ])
+            .spacing(6)
+            .into(),
         );
         parts.push(self.widgets_page());
         column::with_children(parts).spacing(20).into()

@@ -115,6 +115,26 @@ pub(super) fn weather_sample(today: NaiveDate) -> Weather {
     weather
 }
 
+/// The desktop's own latest reading for the chosen city, as its card shows
+/// it, its age included once it is old. Nothing is fetched.
+pub(crate) fn settings_weather_reading(
+    config: &Config,
+    reading: &WeatherSnapshot,
+) -> Element<'static, Message> {
+    weather::Presentation::new(
+        config,
+        weather::Snapshot {
+            weather: Some(&reading.weather),
+            updated_at: Some(&reading.updated_at),
+            failed: false,
+        },
+        Local::now(),
+    )
+    .view(
+        crate::widget_presentation::Context::LocalPreview,
+        crate::widget_presentation::WEATHER_SIZE,
+    )
+}
 /// Projects preview needs only immutable sample readings and the chosen style.
 /// The caller maps every action to Preview, so links and refresh stay inactive.
 pub(crate) fn settings_projects_preview(config: &Config) -> Element<'static, Message> {
@@ -148,6 +168,9 @@ pub(crate) struct SettingsSamples {
     overview: Box<Cards>,
     /// The edge menu, open, as the desktop draws it.
     edge: Box<Cards>,
+    /// The desktop's latest weather for the chosen city, shown in place of
+    /// the sample weather when there is one.
+    weather: Option<WeatherSnapshot>,
 }
 impl SettingsSamples {
     pub fn new(config: &Config) -> Self {
@@ -155,6 +178,7 @@ impl SettingsSamples {
             cards: Self::build(config),
             overview: Box::new(Self::build(config)),
             edge: Box::new(Self::build(config)),
+            weather: None,
         };
         samples.edge.edge.preview = true;
         samples.edge.sidebar.show(Instant::now());
@@ -335,7 +359,17 @@ impl SettingsSamples {
         overview.config.widget_positions.clear();
         overview.config.glance.enabled = true;
         let today = Local::now().date_naive();
-        overview.weather = Some(weather_sample(today));
+        match &self.weather {
+            Some(reading) => {
+                overview.weather = Some(reading.weather.clone());
+                overview.weather_at = Some(reading.updated_at.clone());
+            }
+            None => {
+                overview.weather = Some(weather_sample(today));
+                overview.weather_at = None;
+            }
+        }
+        overview.clock_at = Local::now();
         if today != overview.last_today {
             overview.calendar = Some(Self::calendar());
             overview.calendar_today = overview.calendar.clone();
@@ -352,6 +386,10 @@ impl SettingsSamples {
             .config
             .widget_sizes
             .insert("glance".into(), [320., height]);
+    }
+    /// The desktop's latest weather, or `None` for the sample weather.
+    pub fn set_weather(&mut self, reading: Option<WeatherSnapshot>) {
+        self.weather = reading;
     }
     /// The edge menu with `config`'s items; `available` says which of
     /// them can run.

@@ -138,7 +138,7 @@ impl Settings {
                 "clock-font-widgets".into(),
                 self.clock_font_picture(None, size),
                 "Same as widgets".into(),
-                "Follows the text font",
+                "Uses the widget font",
                 current.is_none(),
                 Message::WidgetFont(FontTarget::Clock, None),
             )];
@@ -181,11 +181,24 @@ impl Settings {
             row::with_children(tiles).spacing(8).wrap().into()
         })
         .height(Length::Shrink);
+        // Same as widgets follows the widget font, which is set with the
+        // other fonts: say which it is and open it there.
+        let widget_font = self
+            .config
+            .widget_font
+            .clone()
+            .unwrap_or_else(|| "Match style".into());
         let mut rows = vec![
             container(grid)
                 .id(cosmic::widget::Id::new("clock-font-gallery"))
                 .width(Length::Fill)
                 .into(),
+            self.link_row_state(
+                "Same as widgets",
+                format!("Uses the widget font: {widget_font}"),
+                Message::SearchResult(crate::settings::navigation::WIDGET_FONT),
+                "clock-widget-font".into(),
+            ),
         ];
         if open {
             rows.push(self.widget_font_row(

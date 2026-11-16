@@ -162,6 +162,20 @@ pub const DEFAULT_HANDLE: u8 = 4;
 pub const MIN_HANDLE_OPACITY: u8 = 10;
 /// The strip's thickness while no handle is drawn: hard to hit by accident.
 pub const HIDDEN_STRIP: u32 = 2;
+/// How much of the edge the strip covers after a first setup: the middle
+/// half, so the screen corners stay with the apps.
+pub const NEW_INSTALL_LENGTH: u8 = 50;
+
+/// What a first setup gives an edge menu nobody has changed: a visible
+/// handle on the middle half of the edge, so the strip can be seen and is
+/// out of the way of the corners. A menu someone already uses keeps its
+/// own settings, and files without these keys read as before.
+pub fn new_install() -> [(&'static str, Value); 2] {
+    [
+        ("/edge_menu/handle", Value::Bool(true)),
+        ("/edge_menu/length", Value::from(NEW_INSTALL_LENGTH)),
+    ]
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]

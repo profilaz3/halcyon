@@ -510,6 +510,17 @@ fn every_screen_fits_and_cancel_puts_the_desktop_back() {
         }
         click(&mut app, &mut native, "wizard-next");
         assert_eq!(step(&app), wizard::Step::Ready);
+        // WID-04: a first setup shows where the edge menu is, and says so.
+        let edge_line = "Edge menu: a handle in the middle of the screen edge";
+        assert!(
+            app.wizard
+                .as_ref()
+                .unwrap()
+                .summary_lines(&app.config)
+                .iter()
+                .any(|line| line == edge_line)
+        );
+        assert!(Config::load().edge_menu.is_default(), "it waits for Apply");
         shot(&app, &mut native, "5-ready");
         let startup = native.bounds(app.settings_view(), "wizard-startup");
         let apply = native.bounds(app.settings_view(), "wizard-apply");
@@ -526,6 +537,10 @@ fn every_screen_fits_and_cancel_puts_the_desktop_back() {
             app.wizard.as_ref().unwrap().error
         );
         assert!(Config::load().appearance.family.is_some());
+        let edge = Config::load().edge_menu;
+        assert!(edge.handle, "a visible handle after a first setup");
+        assert_eq!(edge.length, crate::config::edge_menu::NEW_INSTALL_LENGTH);
+        assert_eq!(edge.position, 50, "in the middle of the edge");
         assert_eq!(user(DOCK, "autohide").as_deref(), Some("OnOverlap"));
         assert_eq!(user(DOCK, "border_radius").as_deref(), Some("12"));
         // Applets and their order are never part of a look.
@@ -550,6 +565,7 @@ fn every_screen_fits_and_cancel_puts_the_desktop_back() {
             config.appearance.family, None,
             "one Undo reverses the whole setup"
         );
+        assert!(config.edge_menu.is_default(), "the edge menu too");
         for key in ["autohide", "border_radius"] {
             assert!(user(DOCK, key).is_none(), "{key}: {:?}", user(DOCK, key));
         }

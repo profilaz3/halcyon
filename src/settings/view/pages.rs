@@ -58,6 +58,9 @@ impl AppSettingsPage {
     }
 }
 
+/// Under the System monitor preview: Settings shows made-up readings.
+const DEVBOX_SAMPLE: &str = "your computer’s own readings show on the desktop.";
+
 pub(super) fn section<'a>(items: Vec<Element<'a, Message>>) -> Element<'a, Message> {
     frame(
         column::with_children(items)
@@ -177,6 +180,11 @@ impl Settings {
                     .into(),
             )],
         );
+        // How widgets look is set with the rest of the desktop's look; each
+        // row says what it is now and opens the section that sets it.
+        let look = container(super::group(Some("Look"), self.widget_look_rows()))
+            .id(cosmic::widget::Id::new("widgets-look"))
+            .into();
         // How widgets behave on the desktop lives with the widgets; Halcyon’s
         // Interface tab is about this window only. The Edge menu has one row
         // here; Open now and its animation are on its own page.
@@ -191,15 +199,60 @@ impl Settings {
         ))
         .id(cosmic::widget::Id::new("widgets-behave"))
         .into();
-        container(column::with_children(vec![visibility, daily, more, behave]).spacing(20))
+        container(column::with_children(vec![visibility, daily, more, look, behave]).spacing(20))
             .id(cosmic::widget::Id::new("desktop-widgets"))
             .into()
     }
-    fn widget_list_row(&self, widget: Widget) -> Element<'_, Message> {
-        let on = self.config.widget_selected(widget);
-        let inside = self.config.glance.enabled
-            && matches!(widget, Widget::Clock | Widget::Weather | Widget::Calendar);
-        let readiness = if widget == Widget::Notes && self.tools.unsaved() {
+    /// Glass, font and the day and night styles, as they are now, each a
+    /// link to the section that sets it.
+    fn widget_look_rows(&self) -> Vec<Element<'_, Message>> {
+        use crate::settings::navigation::{DAY_AND_NIGHT_STYLES, SEE_THROUGH, WIDGET_FONT};
+        let glass = match self
+            .config
+            .materials
+            .effective(crate::materials::Target::Widgets)
+        {
+            Some(finish) => format!(
+                "{}, {}% see-through",
+                finish.kind.title(),
+                100 - finish.opacity()
+            ),
+            None => "No glass".to_string(),
+        };
+        let font = self
+            .config
+            .widget_font
+            .clone()
+            .unwrap_or_else(|| "Match style".into());
+        let styles = match self.config.moments.active {
+            Some(phase) => format!("Showing the {} style", phase.title().to_lowercase()),
+            None => "Off".into(),
+        };
+        vec![
+            self.link_row_state(
+                "Glass and transparency",
+                glass,
+                Message::SearchResult(SEE_THROUGH),
+                "widgets-look-glass".into(),
+            ),
+            self.link_row_state(
+                "Widget font",
+                font,
+                Message::SearchResult(WIDGET_FONT),
+                "widgets-look-font".into(),
+            ),
+            self.link_row_state(
+                "Day and night styles",
+                styles,
+                Message::SearchResult(DAY_AND_NIGHT_STYLES),
+                "widgets-look-styles".into(),
+            ),
+        ]
+    }
+    /// What a widget still needs before it shows your own data, as the
+    /// Widgets list and Daily overview say it; empty when it is ready.
+    fn widget_readiness(&self, widget: Widget) -> &'static str {
+        if widget == Widget::Notes && self.tools.unsaved() {
             "Unsaved note"
         } else if widget == Widget::Calendar && !self.calendar.connection.connected() {
             "Connect your calendar"
@@ -209,7 +262,13 @@ impl Settings {
             "Choose folders"
         } else {
             ""
-        };
+        }
+    }
+    fn widget_list_row(&self, widget: Widget) -> Element<'_, Message> {
+        let on = self.config.widget_selected(widget);
+        let inside = self.config.glance.enabled
+            && matches!(widget, Widget::Clock | Widget::Weather | Widget::Calendar);
+        let readiness = self.widget_readiness(widget);
         let status = if widget == Widget::Glance {
             if self.config.glance.enabled {
                 "One card instead of separate Clock, Weather and Calendar".to_string()
@@ -350,29 +409,12 @@ impl Settings {
         let mut sections = Vec::new();
         if !connected {
             // The preview shows made-up events until a calendar is
-            // connected; say so beside it, with the way to connect.
-            let editor = &self.calendar;
-            sections.push(
-                container(split(
-                    label(
-                        "Sample · connect a calendar to see your events.",
-                        13.,
-                        MUTED,
-                    ),
-                    button::text("Connect")
-                        .id(cosmic::widget::Id::new("calendar-sample-connect"))
-                        .on_press_maybe((!editor.busy).then(|| {
-                            Message::Calendar(if editor.client_ready {
-                                crate::settings::calendar::Message::Connect
-                            } else {
-                                crate::settings::calendar::Message::SubscriptionForm(true)
-                            })
-                        }))
-                        .into(),
-                ))
-                .id(cosmic::widget::Id::new("calendar-sample-note"))
-                .into(),
-            );
+            // connected; say so beside it. The ways to connect are right
+            // below, in Calendars.
+            sections.push(self.sample_note(
+                "calendar-sample-note",
+                Some("connect a calendar to see your events."),
+            ));
         }
         sections.push(self.calendar_connection());
         if connected {
@@ -525,24 +567,27 @@ impl Settings {
                 ],
             ),
         ];
-        let preview = crate::app::settings_weather_preview(&self.config).map(|_| Message::Preview);
-        let preview = Some(super::sample::fit(preview, 220.));
-        // The preview's conditions are made up; say so, and before a city is
-        // chosen say how to see real ones.
-        let note = if self.config.location.is_none() {
-            "Example weather. Choose your city below to see yours."
-        } else {
-            "Example weather"
-        };
+        // The desktop's latest reading for the city, when there is one;
+        // otherwise made-up conditions, which say so and how to see yours.
         let mut controls = controls;
-        controls.insert(
-            0,
-            container(label(note, 12., MUTED))
-                .id(cosmic::widget::Id::new("weather-preview-note"))
-                .width(Length::Fill)
-                .align_x(Alignment::Center)
-                .into(),
-        );
+        let preview = match &self.weather_reading.snapshot {
+            Some(reading) => crate::app::settings_weather_reading(&self.config, reading),
+            None => {
+                controls.insert(
+                    0,
+                    self.sample_note(
+                        "weather-preview-note",
+                        Some(if self.config.location.is_none() {
+                            "choose your city below to see yours."
+                        } else {
+                            "your weather shows here once the desktop has checked it."
+                        }),
+                    ),
+                );
+                crate::app::settings_weather_preview(&self.config)
+            }
+        };
+        let preview = Some(super::sample::fit(preview.map(|_| Message::Preview), 220.));
         self.widget_template(Widget::Weather, "Weather", preview, controls)
     }
 
@@ -617,6 +662,14 @@ impl Settings {
             "Projects",
             Some(preview()),
             vec![
+                self.sample_note(
+                    "projects-sample-note",
+                    Some(if self.config.project_roots.is_empty() {
+                        "choose a folder below to see your projects on the desktop."
+                    } else {
+                        "your projects show on the desktop."
+                    }),
+                ),
                 group(Some("Project folders"), roots),
                 self.page_settings_advanced(
                     Page::Projects,
@@ -681,6 +734,7 @@ impl Settings {
                 "System monitor",
                 Some(super::sample::fit(preview(), 220.)),
                 vec![
+                    self.sample_note("devbox-sample-note", Some(DEVBOX_SAMPLE)),
                     group(
                         Some("Your own design"),
                         vec![group_row(
@@ -796,6 +850,7 @@ impl Settings {
             "System monitor",
             Some(super::sample::fit(preview(), 220.)),
             vec![
+                self.sample_note("devbox-sample-note", Some(DEVBOX_SAMPLE)),
                 readings,
                 self.page_settings_advanced(
                     Page::Devbox,
@@ -1064,6 +1119,9 @@ impl Settings {
                 accent,
             ),
         ));
+        // Each part says what it shows or still needs, opens its own page,
+        // and has its switch.
+        let show_weather = shown(Widget::Weather, g.show_weather);
         let mut sections = Vec::new();
         for (widget, page, key, on) in [
             (
@@ -1072,12 +1130,7 @@ impl Settings {
                 "show_clock",
                 shown(Widget::Clock, g.show_clock),
             ),
-            (
-                Widget::Weather,
-                Page::Weather,
-                "show_weather",
-                shown(Widget::Weather, g.show_weather),
-            ),
+            (Widget::Weather, Page::Weather, "show_weather", show_weather),
             (
                 Widget::Calendar,
                 Page::Calendar,
@@ -1085,13 +1138,39 @@ impl Settings {
                 show_calendar,
             ),
         ] {
-            let _ = page;
-            sections.push(split(
-                label(widget.title(), 14., FG),
-                toggler(on)
-                    .on_toggle(move |value| Message::GlanceSection(key, value))
+            sections.push(
+                row::with_children(vec![
+                    button::custom(
+                        row::with_children(vec![
+                            icon::from_name(widget.icon()).size(20).icon().into(),
+                            detail_state(widget.title(), self.glance_part_status(widget)),
+                            icon::from_name("go-next-symbolic").size(16).icon().into(),
+                        ])
+                        .spacing(14)
+                        .align_y(Alignment::Center),
+                    )
+                    .id(cosmic::widget::Id::new(format!(
+                        "glance-open-{}",
+                        widget.key()
+                    )))
+                    .class(nav_style(false, self.settings_accent()))
+                    .padding([4, 0])
+                    .width(Length::Fill)
+                    .on_press(Message::Page(page))
                     .into(),
-            ));
+                    container(
+                        toggler(on).on_toggle(move |value| Message::GlanceSection(key, value)),
+                    )
+                    .id(cosmic::widget::Id::new(format!(
+                        "glance-toggle-{}",
+                        widget.key()
+                    )))
+                    .into(),
+                ])
+                .spacing(18)
+                .align_y(Alignment::Center)
+                .into(),
+            );
         }
         if show_calendar {
             sections.push(split(
@@ -1108,7 +1187,13 @@ impl Settings {
             self.samples.overview_view().map(|_| Message::Preview),
             240.,
         ));
-        let mut parts = vec![group(Some("Include in this card"), sections)];
+        let mut parts = Vec::new();
+        // The events are always made up, and so is the weather until the
+        // desktop has a reading for your city.
+        if show_calendar || (show_weather && self.weather_reading.snapshot.is_none()) {
+            parts.push(self.sample_note("glance-sample-note", None));
+        }
+        parts.push(group(Some("Include in this card"), sections));
         if g.enabled {
             parts.push(group(Some("Look"), appearance));
             if !follows {
@@ -1116,6 +1201,27 @@ impl Settings {
             }
         }
         self.widget_template(Widget::Glance, "Daily overview", preview, parts)
+    }
+
+    /// A Daily overview part's line: what it still needs, as the Widgets
+    /// list says it, or what it shows.
+    fn glance_part_status(&self, widget: Widget) -> String {
+        let readiness = self.widget_readiness(widget);
+        if !readiness.is_empty() {
+            return readiness.into();
+        }
+        match widget {
+            Widget::Clock if self.config.clock.format_24h => "24-hour".into(),
+            Widget::Clock => "12-hour".into(),
+            Widget::Weather => self
+                .config
+                .location
+                .as_ref()
+                .map_or_else(String::new, |location| location.name.clone()),
+            Widget::Calendar if self.calendar.connection.account.is_empty() => "Connected".into(),
+            Widget::Calendar => self.calendar.connection.account.clone(),
+            _ => String::new(),
+        }
     }
 
     pub(super) fn clock_page(&self) -> Element<'_, Message> {

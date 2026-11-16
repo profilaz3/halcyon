@@ -23,6 +23,10 @@ pub enum MenuPick {
 }
 
 pub(super) const MENU_WIDTH: u32 = 220;
+/// The most the right column budgets for the Projects list; more scrolls.
+const PROJECTS_ROOM: f32 = 300.;
+/// Weather before a city is chosen: its title and one short link.
+const WEATHER_EMPTY: f32 = 96.;
 const MENU_ROW: u32 = 36;
 const MENU_PADDING: u32 = 6;
 
@@ -411,13 +415,14 @@ impl Cards {
                 .into_iter()
                 .filter(|w| self.config.widget_visible(*w) && self.same_widget_display(*w, widget))
                 .collect();
-            if let Some((_, scaled)) = drawer::card_layout_with_devbox(
-                &widgets,
-                (self.widget_screen(widget)[1] - 96.).max(1.),
-                self.devbox_natural_height(),
-            )
-            .into_iter()
-            .find(|(w, _)| *w == widget)
+            let column: Vec<drawer::ColumnCard> = widgets
+                .iter()
+                .map(|&widget| self.column_card(widget))
+                .collect();
+            if let Some((_, scaled)) =
+                drawer::fit_column(&column, (self.widget_screen(widget)[1] - 96.).max(1.))
+                    .into_iter()
+                    .find(|(w, _)| *w == widget)
             {
                 height = height.min(scaled);
             }
@@ -426,6 +431,33 @@ impl Cards {
             width.min((self.widget_screen(widget)[0] - 48.).max(1.)),
             height.min((self.widget_screen(widget)[1] - 96.).max(1.)),
         ]
+    }
+    /// How a right column card shrinks when the column is too tall: the
+    /// System monitor and a weather reading keep their content's height;
+    /// the Projects list scrolls, and Weather before a city is chosen has
+    /// one short link, so those give up room first.
+    fn column_card(&self, widget: Widget) -> drawer::ColumnCard {
+        let (wanted, least) = match widget {
+            Widget::Devbox => {
+                let natural = self.devbox_natural_height();
+                (natural, natural)
+            }
+            Widget::Projects => {
+                let wanted = self.projects_natural_height().min(PROJECTS_ROOM);
+                (wanted, wanted.min(drawer::PROJECTS_LEAST))
+            }
+            Widget::Weather => {
+                let wanted = crate::widget_presentation::WEATHER_SIZE[1];
+                let empty = self.config.location.is_none() && self.config.recipes.weather.is_none();
+                (wanted, if empty { WEATHER_EMPTY } else { wanted })
+            }
+            _ => (0., 0.),
+        };
+        drawer::ColumnCard {
+            widget,
+            wanted,
+            least,
+        }
     }
     pub(super) fn default_position(&self, widget: Widget) -> [f32; 2] {
         let size = self.widget_size(widget);
@@ -1566,6 +1598,22 @@ impl Cards {
             .map(|widget| (widget.key().into(), self.config.widget_visible(widget)))
             .collect()
     }
+    /// Widgets shown or hidden all at once while arranging: what shows now
+    /// is where the draft starts from, so Add and Hide see the widgets that
+    /// came back. Nothing earlier in the session showed or hid one, since
+    /// there was nothing to show or hide while they were all hidden.
+    pub(super) fn arrange_visibility_changed(&mut self) {
+        if !self.layout_editor.active {
+            return;
+        }
+        let shown = self.shown_now();
+        for state in &mut self.layout_editor.history {
+            state.shown = shown.clone();
+        }
+        self.layout_editor.shown = shown.clone();
+        self.layout_editor.baseline_shown = shown;
+        self.layout_editor.adding = false;
+    }
     /// The hidden widgets Add widget can put on the display being arranged.
     pub(super) fn addable_widgets(&self) -> Vec<Widget> {
         if !self.config.widgets_visible {
@@ -2378,13 +2426,17 @@ impl Cards {
             );
         }
         layers.extend(chrome_layers);
+        // With every widget hidden there is nothing to arrange; the line
+        // says why, and the Add button becomes the way to show them.
+        let hidden = !self.config.widgets_visible;
         let title = column::with_children(vec![
             label("Arrange widgets", 17., p.foreground),
             label(
-                self.layout_editor
-                    .error
-                    .as_deref()
-                    .unwrap_or("Drag to move · corner to resize · R: resize with arrows"),
+                self.layout_editor.error.as_deref().unwrap_or(if hidden {
+                    "Widgets are hidden"
+                } else {
+                    "Drag to move · corner to resize · R: resize with arrows"
+                }),
                 11.,
                 p.muted,
             ),
@@ -2404,7 +2456,17 @@ impl Cards {
         ])
         .spacing(8)
         .align_y(Alignment::Center);
-        let actions = vec![
+        let add = if hidden {
+            cosmic::widget::button::text("Show widgets")
+                .id(cosmic::widget::Id::new("arrange-show-widgets"))
+                .leading_icon(
+                    cosmic::widget::icon::from_name(
+                        crate::config::edge_menu::Action::ShowWidgets.icon(),
+                    )
+                    .size(14),
+                )
+                .on_press(Message::SetWidgetsVisible(true))
+        } else {
             cosmic::widget::button::text(if addable.is_empty() {
                 "All widgets added"
             } else {
@@ -2413,7 +2475,9 @@ impl Cards {
             .id(cosmic::widget::Id::new("arrange-add"))
             .leading_icon(cosmic::widget::icon::from_name("list-add-symbolic").size(14))
             .on_press_maybe((!addable.is_empty()).then_some(Message::LayoutAddMenu))
-            .into(),
+        };
+        let actions = vec![
+            add.into(),
             cosmic::widget::button::text("Undo")
                 .id(cosmic::widget::Id::new("arrange-undo"))
                 .on_press_maybe(

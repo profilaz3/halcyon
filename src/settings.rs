@@ -1081,6 +1081,9 @@ pub struct Settings {
     native_tasks: Vec<Task<Message>>,
     config: Config,
     samples: crate::app::SettingsSamples,
+    /// The desktop's latest weather for the chosen city, which the Weather
+    /// and Daily overview previews show in place of their sample.
+    weather_reading: WeatherReading,
     notice: u16,
     notice_editing: bool,
     material_target: crate::materials::Target,
@@ -1190,6 +1193,14 @@ fn open_wizard() -> wizard::Wizard {
         .and_then(|store| wizard::Wizard::resume(store, islands, bars, startup))
         .unwrap_or_else(|| wizard::Wizard::new(islands, bars, startup))
 }
+/// The desktop's saved weather, as last read for a page and city.
+#[derive(Default)]
+struct WeatherReading {
+    key: Option<(Page, Option<crate::config::Location>)>,
+    at: Option<std::time::Instant>,
+    snapshot: Option<crate::data::WeatherSnapshot>,
+}
+
 /// Whether the cards start at sign-in (the user service is enabled).
 fn startup_enabled() -> bool {
     std::process::Command::new("/usr/bin/systemctl")
@@ -1435,6 +1446,7 @@ impl cosmic::Application for Settings {
             tools: tools::ToolsEditor::default(),
             automation: automation::AutomationEditor::default(),
             samples: crate::app::SettingsSamples::new(&config),
+            weather_reading: WeatherReading::default(),
             config,
             notice_editing: false,
             cities: Vec::new(),
@@ -2377,7 +2389,10 @@ impl cosmic::Application for Settings {
             task
         };
 
-        if matches!(self.page, Page::Calendar | Page::Projects) {
+        if matches!(self.page, Page::Weather | Page::Glance) {
+            self.refresh_weather_reading();
+        }
+        if matches!(self.page, Page::Calendar | Page::Projects | Page::Glance) {
             self.samples.update(&self.config);
         }
         if self.page == Page::EdgeMenu {
@@ -6092,6 +6107,38 @@ impl Settings {
             Err(error) => self.failed(error),
         }
     }
+    /// Reads the desktop's saved weather for the chosen city again when the
+    /// page or the city changed, or a minute has passed. Settings never
+    /// fetches weather itself; without a recent reading, previews stay
+    /// samples.
+    fn refresh_weather_reading(&mut self) {
+        let key = (self.page, self.config.location.clone());
+        let reading = &self.weather_reading;
+        if reading.key.as_ref() == Some(&key)
+            && reading
+                .at
+                .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(60))
+        {
+            return;
+        }
+        let snapshot = self
+            .config
+            .location
+            .as_ref()
+            .and_then(crate::data::WeatherSnapshot::cached)
+            .filter(|snapshot| {
+                chrono::DateTime::parse_from_rfc3339(&snapshot.updated_at).is_ok_and(|at| {
+                    let age = chrono::Utc::now().signed_duration_since(at);
+                    age >= chrono::Duration::zero() && age < chrono::Duration::days(1)
+                })
+            });
+        self.samples.set_weather(snapshot.clone());
+        self.weather_reading = WeatherReading {
+            key: Some(key),
+            at: Some(std::time::Instant::now()),
+            snapshot,
+        };
+    }
     /// Re-reads the step the Corners row shows. Reads only.
     fn refresh_corners(&mut self) {
         self.corner_step = crate::desktop::DesktopStore::from_env()
@@ -7512,6 +7559,8 @@ mod ux_tests;
 mod wizard_tests;
 #[cfg(test)]
 mod wording_tests;
+#[cfg(test)]
+mod widgets_ux_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
