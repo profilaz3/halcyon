@@ -1169,10 +1169,9 @@ fn review_r1_family_switches_keep_custom_widgets_and_bars_until_reset_or_saved_r
                 .1
                 .widget_custom()
         );
-        assert_eq!(
-            editor.custom_surfaces,
-            [Domain::Dock, Domain::Panel].into_iter().collect()
-        );
+        // The panel's corners are its own shape, which styles leave alone,
+        // so only the dock's see-through is Custom.
+        assert_eq!(editor.custom_surfaces, [Domain::Dock].into_iter().collect());
         assert_eq!(
             PanelDraft::load(&desk.store(), PanelKind::Dock)
                 .unwrap()
@@ -1190,11 +1189,20 @@ fn review_r1_family_switches_keep_custom_widgets_and_bars_until_reset_or_saved_r
             Some(9)
         );
     }
-    for domain in [Domain::WidgetStyle, Domain::Dock, Domain::Panel] {
+    for domain in [Domain::WidgetStyle, Domain::Dock] {
         editor.update(Message::ResetSurface(domain));
         assert_eq!(editor.update(Message::Apply), Outcome::Changed);
     }
     assert!(editor.custom_surfaces.is_empty());
+    // A reset brings back the style's colors, not a shape for the bars.
+    assert_eq!(
+        PanelDraft::load(&desk.store(), PanelKind::Panel)
+            .unwrap()
+            .value::<u32>("border_radius")
+            .known()
+            .copied(),
+        Some(9)
+    );
     assert!(
         !wallpaper::automatic::read_config(&desk.store())
             .unwrap()
@@ -2289,16 +2297,20 @@ fn styles_set_corners_until_corners_are_chosen() {
     let store = desk.store();
     let bar = |kind| PanelDraft::load(&store, kind).unwrap().radius();
     let card = || desk.widget_config()["appearance"]["corner_radius"].clone();
-    let apply = |family: Family| {
+    let apply = |family: Family, own_bars: bool| {
         let mut editor = desk.editor();
-        editor.update(Message::Select(Selection::Preset(family.preset())));
+        editor.update(if own_bars {
+            Message::UseStyleBars(family.preset())
+        } else {
+            Message::Select(Selection::Preset(family.preset()))
+        });
         finish_theme(&mut editor);
         assert_eq!(editor.update(Message::Apply), Outcome::Changed, "{:?}", editor.notice);
     };
-    // A style sets the corners of widget cards and both bars. It leaves
-    // windows as they are, so Corners reads one step only when windows
-    // already have it.
-    apply(Family::Outline);
+    // A style with its own dock and panel sets the corners of widget cards
+    // and both bars. It leaves windows as they are, so Corners reads one
+    // step only when windows already have it.
+    apply(Family::Outline, true);
     let (_, widget, _) = Family::Outline.geometry();
     let (_, radius, _, _) = Family::Outline.bar();
     assert_eq!(card(), serde_json::json!(widget));
@@ -2314,11 +2326,75 @@ fn styles_set_corners_until_corners_are_chosen() {
     // Chosen corners are the person's own, like any surface setting chosen
     // by hand: the next style keeps them.
     corners::apply(&store, Step::Pill).unwrap();
-    apply(Family::Soft);
+    apply(Family::Soft, false);
     assert_eq!(card(), serde_json::json!(Step::Pill.widget()));
     assert_eq!(bar(PanelKind::Dock), Setting::Known(MAX_RADIUS));
     assert_eq!(bar(PanelKind::Panel), Setting::Known(MAX_RADIUS));
     assert_eq!(corners::current(&store, Step::Pill.widget()), Some(Step::Pill));
+}
+
+// Choosing a style or a ready-made theme keeps the dock and panel's shape
+// (floating or attached, margin, corners, padding, spacing). Their own
+// dock and panel come only when asked for, and Undo puts the shape back.
+#[test]
+fn a_style_keeps_the_bar_shape_unless_its_own_is_asked_for() {
+    use crate::desktop::panels::{PanelDraft, PanelKind};
+    use crate::desktop_theme::Family;
+    let desk = Desk::new("style-keeps-bar-shape");
+    let store = desk.store();
+    let shape = || {
+        [PanelKind::Dock, PanelKind::Panel].map(|kind| {
+            let bar = PanelDraft::load(&store, kind).unwrap();
+            format!(
+                "{:?} {:?} {:?} {:?} {:?}",
+                bar.floating(),
+                bar.margin(),
+                bar.radius(),
+                bar.padding(),
+                bar.spacing()
+            )
+        })
+    };
+    let before = shape();
+    let mut editor = desk.editor();
+    for id in [
+        Family::Soft.preset(),
+        crate::desktop::profiles::themes::named()[0].id,
+        Family::Terminal.preset(),
+    ] {
+        editor.update(Message::Select(Selection::Preset(id)));
+        finish_theme(&mut editor);
+        assert_eq!(
+            editor.update(Message::Apply),
+            Outcome::Changed,
+            "{id}: {:?}",
+            editor.notice
+        );
+        assert_eq!(shape(), before, "{id} keeps the bars' shape");
+    }
+    assert_eq!(desk.widget_config()["appearance"]["family"], "terminal");
+    // Its own dock and panel, on request: one more change.
+    let soft = Family::Soft.spec().bar;
+    let record = crate::desktop::profiles::themes::record(Family::Soft);
+    assert!(editor.bar_shape_differs(&record));
+    editor.update(Message::UseStyleBars(Family::Soft.preset()));
+    finish_theme(&mut editor);
+    assert_eq!(
+        editor.update(Message::Apply),
+        Outcome::Changed,
+        "{:?}",
+        editor.notice
+    );
+    assert!(!editor.bar_shape_differs(&record));
+    for kind in [PanelKind::Dock, PanelKind::Panel] {
+        let bar = PanelDraft::load(&store, kind).unwrap();
+        assert_eq!(bar.floating().known(), Some(&soft.floating), "{kind:?}");
+        assert_eq!(bar.radius().known(), Some(&soft.radius), "{kind:?}");
+        assert_eq!(bar.padding().known(), Some(&soft.padding), "{kind:?}");
+    }
+    assert_ne!(shape(), before);
+    assert_eq!(editor.update(Message::Undo), Outcome::Changed);
+    assert_eq!(shape(), before);
 }
 
 #[test]

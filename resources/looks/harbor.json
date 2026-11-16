@@ -2,7 +2,7 @@
   "format": "desktop-cards-profile",
   "version": 21,
   "name": "Harbor",
-  "description": "Clouds drifting over open water, the time and weather together, and room to breathe.",
+  "description": "Clouds over open water, the time and weather, and room to breathe.",
   "dock": {
     "island_gap": 12,
     "floating": true,

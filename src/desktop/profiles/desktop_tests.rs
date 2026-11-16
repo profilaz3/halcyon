@@ -548,7 +548,7 @@ fn missing_wallpaper_asset_blocks_only_its_part() {
     let wallpaper_part = part(&blocked, Domain::Wallpaper);
     assert_eq!(
         wallpaper_part.blocked,
-        ["The built-in Amber wallpaper isn’t installed. Reinstall Halcyon to restore it."]
+        ["The built-in Amber wallpaper isn’t installed. Get the pictures to add it."]
     );
     let icons = part(&blocked, Domain::DesktopIcons);
     assert!(icons.blocked.is_empty());

@@ -37,10 +37,71 @@ pub fn initialize_fresh() -> Result<bool, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(error.to_string()),
     }
-    actions::preference_store(&path)
-        .map_err(|error| error.to_string())?
+    let store = actions::preference_store(&path).map_err(|error| error.to_string())?;
+    let fresh = store
         .initialize_fresh_design()
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    if !fresh && store.writable() && no_widgets_yet(&path) {
+        // Other app data (caches, history) kept this from counting as a new
+        // installation, so the update still waits for the person. But no
+        // widget settings exist yet: whatever is saved from now on is this
+        // release's, with nothing an older Halcyon wrote to protect (see
+        // `nothing_to_protect`).
+        if let Err(error) = record_started_here(&store) {
+            eprintln!("Widget design: {error}");
+        }
+    }
+    Ok(fresh)
+}
+
+/// No widget settings from any Halcyon exist: nothing but locks beside the
+/// settings file (which is missing), and no folder from before the rename,
+/// which the rename copier could still bring in.
+fn no_widgets_yet(path: &Path) -> bool {
+    let absent = |path: &Path| {
+        std::fs::symlink_metadata(path)
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+    };
+    let only_locks = |dir: &Path| match std::fs::read_dir(dir) {
+        Ok(entries) => entries.into_iter().all(|entry| {
+            entry.is_ok_and(|entry| entry.file_name().to_string_lossy().ends_with(".lock"))
+        }),
+        Err(error) => error.kind() == std::io::ErrorKind::NotFound,
+    };
+    absent(path)
+        && path.parent().is_some_and(only_locks)
+        && [
+            dirs::config_dir(),
+            dirs::data_dir(),
+            dirs::state_dir().or_else(dirs::data_local_dir),
+        ]
+        .into_iter()
+        .flatten()
+        .all(|root| absent(&root.join(crate::paths::LEGACY)))
+}
+
+/// Kept beside the change history: the widget settings file didn't exist
+/// when a release that keeps widget designs first started.
+const STARTED_HERE: &str = "widgets-started-here";
+
+pub(crate) fn record_started_here(store: &crate::desktop::DesktopStore) -> Result<(), String> {
+    let path = store
+        .state_file(STARTED_HERE)
+        .map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(store.state_dir()).map_err(|error| error.to_string())?;
+    config::write_config_text(&path, Some(env!("CARGO_PKG_VERSION")))
+}
+
+/// Whether the one-time widget update has nothing older to protect: the
+/// widget settings were started by a release that keeps widget designs,
+/// so no older Halcyon's widgets are in them. Then the update needs no
+/// question. Any other settings file is asked about first, as before.
+pub fn nothing_to_protect() -> bool {
+    let Some(path) = Config::path() else {
+        return false;
+    };
+    actions::preference_store(&path)
+        .is_ok_and(|store| store.state_dir().join(STARTED_HERE).is_file())
 }
 
 /// Export original bytes even when their schema cannot be understood. The
@@ -280,6 +341,8 @@ mod tests {
         assert!(!initialize_fresh().unwrap());
         assert!(!Config::path().unwrap().exists());
         assert!(!crate::paths::config_dir().unwrap().exists());
+        // Nor are its widgets updated without asking.
+        assert!(!nothing_to_protect());
         // The application normally copies old folders before design startup.
         crate::paths::migrate();
         startup().unwrap();
@@ -288,5 +351,40 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
         assert!(!storage::managed(&path));
         assert_eq!(Config::load().theme, "amber");
+        assert!(!nothing_to_protect());
+    }
+
+    // Other app data keeps a missing settings file from counting as a new
+    // installation, but no older widgets exist: the widget update needs no
+    // question later. A settings file that is already there still does.
+    #[test]
+    fn widgets_started_by_this_release_need_no_question() {
+        if private_live("design::commands::tests::widgets_started_by_this_release_need_no_question")
+        {
+            return;
+        }
+        let state = crate::paths::state_dir().unwrap().join("usage.json");
+        std::fs::create_dir_all(state.parent().unwrap()).unwrap();
+        std::fs::write(&state, b"existing state").unwrap();
+        assert!(!nothing_to_protect());
+        startup().unwrap();
+        let path = Config::path().unwrap();
+        assert!(!path.exists() && !storage::managed(&path));
+        assert!(nothing_to_protect());
+        assert_eq!(std::fs::read(&state).unwrap(), b"existing state");
+    }
+
+    #[test]
+    fn widgets_from_an_earlier_release_are_asked_about() {
+        if private_live("design::commands::tests::widgets_from_an_earlier_release_are_asked_about")
+        {
+            return;
+        }
+        let path = Config::path().unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, br#"{"theme":"amber"}"#).unwrap();
+        startup().unwrap();
+        assert!(!storage::managed(&path));
+        assert!(!nothing_to_protect());
     }
 }

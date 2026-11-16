@@ -22,9 +22,10 @@ pub const SCALE_MIN: u16 = 50;
 pub const SCALE_MAX: u16 = 500;
 pub const SCALE_STEP: u16 = 25;
 /// cosmic-files redraws the desktop with an outside change only at its
-/// next desktop refresh (spec §4).
-pub const REFRESH_NOTE: &str =
-    "Icons update the next time the desktop refreshes, for example after you sign in again.";
+/// next desktop refresh (spec §4), in practice after signing in again.
+/// Nothing safe makes it redraw sooner: restarting COSMIC's desktop
+/// process isn't something Halcyon does.
+pub const REFRESH_NOTE: &str = "Desktop icon changes show after you sign in again.";
 
 /// `DesktopConfig` at 0f15f44, member for member, with its defaults.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

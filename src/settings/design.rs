@@ -4,6 +4,9 @@ use super::*;
 pub enum Message {
     Review,
     Cancel,
+    /// Apply design, before the one-time update: the update runs at once
+    /// when there's nothing older to protect, or the question opens.
+    Prepare,
     Migrate,
     Recover,
     ReviewSource,
@@ -25,10 +28,9 @@ pub(super) struct State {
     pub source_conflict: bool,
     pub source_review: bool,
     pub notice: Option<String>,
-    /// The builder opened the update review once this session.
-    pub offered: bool,
-    /// The open review was opened by the builder, not by the person.
-    pub automatic: bool,
+    /// The builder's design applies once the update is done: the question
+    /// opened from Apply design.
+    pub apply_after: bool,
     /// Why a damaged settings file can't be read is shown.
     pub details: bool,
 }
@@ -60,38 +62,29 @@ impl State {
             ..Self::default()
         }
     }
-
-    /// A reload keeps whether the builder already offered the update.
-    pub fn offered(mut self, offered: bool) -> Self {
-        self.offered = offered;
-        self
-    }
-
-    /// The builder's first visit opens the review; updating stays a choice.
-    pub fn offer(&mut self, problem: bool) {
-        if !self.managed && !self.offered && !problem {
-            self.offered = true;
-            self.review = true;
-            self.automatic = true;
-        }
-    }
 }
 impl Settings {
     pub(super) fn update_design(&mut self, edit: Message) -> Task<super::Message> {
         match edit {
             Message::Review => {
                 self.design.review = true;
-                self.design.automatic = false;
+                self.design.apply_after = false;
+            }
+            // There are older widgets to protect (otherwise the native
+            // queue already started the update): ask, once.
+            Message::Prepare => {
+                self.design.review = !self.design.managed;
+                self.design.apply_after = !self.design.managed;
             }
             Message::Cancel => {
                 self.design.review = false;
-                self.design.automatic = false;
+                self.design.apply_after = false;
                 self.design.source_review = false;
             }
             Message::ReviewSource => self.design.source_review = self.design.source_conflict,
             Message::Recheck => {
                 self.config = Config::load();
-                self.design = State::load().offered(self.design.offered);
+                self.design = State::load();
                 if self.config.design_problem.is_none() {
                     return self.after_desktop_change();
                 }

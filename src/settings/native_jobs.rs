@@ -198,19 +198,32 @@ impl Settings {
         {
             return None;
         }
+        // Apply design before the one-time update: with nothing older to
+        // protect it updates at once, without a question, and then applies.
+        // Otherwise `update_design` asks first.
+        let quiet = matches!(message, Message::Design(design::Message::Prepare))
+            && !self.design.managed
+            && crate::design::commands::nothing_to_protect();
         if let Message::Design(
             edit @ (design::Message::Migrate
+            | design::Message::Prepare
             | design::Message::Recover
             | design::Message::KeepDesign),
         ) = message
         {
-            let migrate = matches!(edit, design::Message::Migrate);
+            if matches!(edit, design::Message::Prepare) && !quiet {
+                return None;
+            }
+            let migrate = matches!(edit, design::Message::Migrate) || quiet;
             let repair = matches!(edit, design::Message::KeepDesign);
             if repair && (!self.design.source_review || !self.design.source_conflict) {
                 return Some(Task::none());
             }
-            if migrate && !self.design.review {
+            if migrate && !quiet && !self.design.review {
                 return Some(Task::none());
+            }
+            if quiet {
+                self.design.apply_after = true;
             }
             self.begin_native();
             return Some(task(move || {
@@ -618,8 +631,14 @@ impl Settings {
                 }
             }
             Done::Design(result) => {
+                let apply_after = self.design.apply_after;
                 self.config = Config::load();
-                self.design = design::State::load().offered(self.design.offered);
+                self.design = design::State::load();
+                // Updated from Apply design: the design applies next.
+                if apply_after && result.is_ok() && self.design.managed {
+                    self.native_deferred
+                        .push_front(Message::Recipe(recipes::Message::Apply));
+                }
                 self.design.notice = Some(match result {
                     Ok(notice) => notice,
                     Err(error) => error,
@@ -752,13 +771,18 @@ mod review030_tests {
             }
             assert!(!app.native_busy);
         }
+        // The style comes from the built-in look picked above, whatever it
+        // is called.
+        let style = app.profiles.mix.as_ref().unwrap().sources[Component::Style.index()]
+            .as_ref()
+            .map(|source| &source.origin)
+            .unwrap();
         assert_eq!(
-            app.profiles
-                .mix
-                .as_ref()
-                .unwrap()
-                .source_name(Component::Style),
-            Some("Paper")
+            (style.kind, style.id.as_deref()),
+            (
+                crate::desktop::profiles::mix::SourceKind::Builtin,
+                Some("paper-studio")
+            )
         );
         assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), original);
     }

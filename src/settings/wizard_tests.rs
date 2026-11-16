@@ -2059,7 +2059,7 @@ fn on07_on08_bars_and_review(size: Size) {
 }
 
 /// ON-03: the Look step says everything a look changes, and Review and Done
-/// name its light or dark style and COSMIC accent.
+/// name its light or dark mode and COSMIC accent.
 #[test]
 fn on03_look_names_style_and_accent_at_820() {
     if child("on03_look_names_style_and_accent_at_820") {
@@ -2082,13 +2082,13 @@ fn on03_look_names_style_and_accent(size: Size) {
         (cosmic::Theme::light(), "light"),
         (cosmic::Theme::dark(), "dark"),
     ];
-    let colors = "Style: Dark · Accent: Teal (all COSMIC apps)";
+    let colors = "Mode: Dark · Accent: Teal (all COSMIC apps)";
     let (mut app, mut native) = open(size);
     click(&mut app, &mut native, "wizard-start");
     assert_eq!(step(&app), wizard::Step::Look);
     native.text_bounds(
         app.settings_view(),
-        "A look sets your wallpaper, light or dark style, COSMIC accent colors, dock and panel shape, and a set of widgets. You can change the dock, panel and widgets next.",
+        "A look sets your wallpaper, light or dark mode, COSMIC accent colors, dock and panel shape, and a set of widgets. You can change the dock, panel and widgets next.",
     );
     reveal(&mut app, &mut native, "wizard-look-calm");
     click(&mut app, &mut native, "wizard-look-calm");

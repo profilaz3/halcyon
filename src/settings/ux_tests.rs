@@ -1765,7 +1765,8 @@ fn fb12_native_mix_choices_preview_cancel_and_apply_fit_both_sizes() {
         let (mut app, _) = Settings::init(Core::default(), Page::DesktopProfiles);
         let _ = app.update(Message::Resized(size));
         let mut native = Native::new(size);
-        mix_native_click(&mut app, &mut native, "looks-more");
+        // Parts of other looks is one of Make a look's starting points.
+        mix_native_click(&mut app, &mut native, "looks-make");
         mix_native_click(&mut app, &mut native, "mix-start");
         assert!(app.profiles.mix.is_some());
         native.capture(

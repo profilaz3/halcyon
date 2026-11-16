@@ -358,9 +358,10 @@ fn polish050_setup_scope_exports_and_empty_library_fit_native_windows() {
     let pictures = root.join("cosmic-root/pictures/Desktop Cards");
     std::fs::create_dir_all(&pictures).unwrap();
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/wallpapers");
+    // Tidal's own picture, so the look keeps its Wallpaper part.
     std::fs::copy(
-        crate::desktop::wallpaper::bundled_path(&source, "halcyon-calm"),
-        crate::desktop::wallpaper::bundled_path(&pictures, "halcyon-calm"),
+        crate::desktop::wallpaper::bundled_path(&source, "teal"),
+        crate::desktop::wallpaper::bundled_path(&pictures, "teal"),
     )
     .unwrap();
     let mut app = open_isolated_editor(&root);
@@ -718,20 +719,58 @@ fn polish_e_dock_shape_follow_style_and_looks_header() {
     native_click(&mut app, &mut native, "clock-follow-style");
     assert_eq!(Config::load().clock.weight, None);
     assert!(native.text_all(app.settings_view(), "Weight").is_empty());
-    // Looks: saving is the main action; Mix and Import wait behind ⋯.
+    // Looks: two ways to a look of your own, Save my desktop as a look and
+    // Make a look…, whose starting points include parts of other looks.
+    // Import waits behind ⋯.
     send_settings(&mut app, Message::Page(Page::DesktopProfiles));
     for size in [Size::new(820., 600.), Size::new(1280., 800.)] {
         send_settings(&mut app, Message::Resized(size));
         let mut native = crate::native_test::Native::new(size);
-        assert!(native.try_bounds(app.settings_view(), "setup-save-current").is_some());
-        assert!(native.try_bounds(app.settings_view(), "mix-start").is_none());
-        native_click(&mut app, &mut native, "looks-more");
-        assert!(native.try_bounds(app.settings_view(), "mix-start").is_some());
-        assert!(native.try_bounds(app.settings_view(), "discovery-import").is_some());
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "setup-save-current")
+                .is_some()
+        );
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "looks-make")
+                .is_some()
+        );
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "mix-start")
+                .is_none()
+        );
+        native_click(&mut app, &mut native, "looks-make");
+        for id in ["studio-new-desktop", "studio-new-plain", "mix-start"] {
+            assert!(native.try_bounds(app.settings_view(), id).is_some(), "{id}");
+        }
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "discovery-import")
+                .is_none()
+        );
         assert!(native.duplicate_ids(app.settings_view()).is_empty());
+        capture(&app, &mut native, "polish-e-looks-make");
+        native_click(&mut app, &mut native, "looks-make");
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "mix-start")
+                .is_none()
+        );
+        native_click(&mut app, &mut native, "looks-more");
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "discovery-import")
+                .is_some()
+        );
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "mix-start")
+                .is_none()
+        );
         capture(&app, &mut native, "polish-e-looks-more");
         native_click(&mut app, &mut native, "looks-more");
-        assert!(native.try_bounds(app.settings_view(), "mix-start").is_none());
     }
     // The look applied last says so on its tile.
     let state = app.profiles.store().unwrap().state_dir().join("looks-last-applied");

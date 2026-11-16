@@ -177,7 +177,7 @@ impl Asset {
         let name = file_label(&self.path);
         let missing = || match &self.origin {
             Origin::Bundled(palette) => format!(
-                "The built-in {} wallpaper isn’t installed. Reinstall Halcyon to restore it.",
+                "The built-in {} wallpaper isn’t installed. Get the pictures to add it.",
                 palette_title(palette)
             ),
             Origin::System(_, relative) => {

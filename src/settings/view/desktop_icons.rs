@@ -5,7 +5,10 @@ use super::windows::{recovery_banner, store_pill};
 use super::*;
 use crate::desktop::desktop_icons::{DesktopIcons, SCALE_MAX, SCALE_MIN, SCALE_STEP, Show};
 use crate::desktop::panels::Setting;
-use crate::settings::desktop_icons::{Message as Edit, REFRESH_NOTE, UNAVAILABLE};
+use crate::settings::desktop_icons::{Message as Edit, UNAVAILABLE};
+
+/// Under the sliders. Every change on this page waits for it.
+const SIGN_IN_NOTE: &str = "Changes show after you sign in again.";
 
 fn edit(message: Edit) -> Message {
     Message::DesktopIcons(message)
@@ -211,9 +214,13 @@ impl Settings {
                     known.map(|icons| icons.grid_spacing.get()),
                     Edit::Spacing,
                 ),
+                // Right by the sliders: COSMIC redraws its desktop icons
+                // only after signing in again (see `REFRESH_NOTE`).
+                container(label(SIGN_IN_NOTE, 13., MUTED))
+                    .id(cosmic::widget::Id::new("desktop-icons-sign-in"))
+                    .into(),
             ],
         ));
-        items.push(label(REFRESH_NOTE, 12., MUTED));
         column::with_children(items).spacing(16).into()
     }
 }

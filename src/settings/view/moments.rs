@@ -8,7 +8,7 @@ const FAMILIES: [&str; 14] = [
     "Paper",
     "Bare",
     "Glass",
-    "Frosted",
+    "Tinted glass",
     "Midnight",
     "Terminal",
     "Neon",

@@ -19,7 +19,10 @@ fn main() {
 /// `theme-`, like the styles' own). The records themselves are checked when
 /// the app parses them (and by the tests), so a bad file never ships quietly.
 fn embed(out: &std::path::Path, folder: &str, file: &str, prefix: &str) {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(folder);
+    // The checkout cargo runs this for, not the one it was compiled in: a
+    // target directory shared between checkouts reuses this script.
+    let root = std::env::var_os("CARGO_MANIFEST_DIR").unwrap();
+    let dir = std::path::Path::new(&root).join(folder);
     println!("cargo:rerun-if-changed={}", dir.display());
     let mut records = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&dir) {

@@ -74,6 +74,8 @@ fn bundled_name(profile: &crate::desktop::profiles::Profile) -> Option<&str> {
 mod images;
 #[cfg(test)]
 pub(in crate::settings) use images::prepare as prepare_look_images;
+/// A look's tile when Halcyon's pictures aren't installed.
+pub(in crate::settings) const PICTURE_MISSING: &str = "Picture not installed";
 pub(in crate::settings) use images::{load as load_look_images, ready as look_images_ready};
 pub(super) fn look_image(id: &str, wallpaper: bool) -> Option<cosmic::widget::image::Handle> {
     images::look(id, wallpaper)
@@ -764,6 +766,22 @@ impl Settings {
                 }
             }
         }
+        // Until the picture is read, the backdrop stands in for it in a color
+        // the widgets' text reads on: the picture's own main color when it
+        // is known and readable, else a plain dark or light one.
+        let ink = config.wallpaper_palette().foreground;
+        let neutral = if config.appearance.wallpaper_light {
+            Color::from_rgb8(226, 224, 218)
+        } else {
+            Color::from_rgb8(30, 33, 37)
+        };
+        let stand_in = editor
+            .suggestion()
+            .and_then(|s| s.swatches.first())
+            .map(|swatch| crate::desktop_theme::tone::color(swatch.rgb))
+            .filter(|color| crate::desktop_theme::contrast(ink, *color) >= 4.5)
+            .unwrap_or(neutral);
+        let loading = editor.backdrop_loading(current);
         let scene = responsive(move |available| {
             let scale = (available.width.max(1.) / screen_size[0].max(1.))
                 .min(available.height.max(1.) / screen_size[1].max(1.));
@@ -789,20 +807,22 @@ impl Settings {
                     .border_radius(9.)
                     .into()
             });
-            let backdrop = container(text::body(""))
+            let note: Element<'_, Message> = if loading {
+                text::caption("Loading wallpaper…")
+                    .class(cosmic::theme::Text::Color(Color { a: 0.75, ..ink }))
+                    .into()
+            } else {
+                text::body("").into()
+            };
+            let backdrop = container(note)
                 .width(screen[0])
                 .height(screen[1])
-                .class(cosmic::theme::Container::custom(|theme| {
+                .padding(10)
+                .align_x(Alignment::Start)
+                .align_y(Alignment::End)
+                .class(cosmic::theme::Container::custom(move |theme| {
                     cosmic::iced::widget::container::Style {
-                        background: Some(Background::Gradient(
-                            cosmic::iced::gradient::Linear::new(2.4)
-                                .add_stop(0., theme.cosmic().primary(theme.transparent).base.into())
-                                .add_stop(
-                                    1.,
-                                    theme.cosmic().background(theme.transparent).base.into(),
-                                )
-                                .into(),
-                        )),
+                        background: Some(Background::Color(stand_in)),
                         border: Border {
                             color: theme.current_container().component.divider.into(),
                             width: 1.,
@@ -1280,10 +1300,13 @@ impl Settings {
             .into(),
         ];
         if self.page != Page::Themes {
-            // The look applied last says so instead of its occasion.
+            // The look applied last says so instead of its occasion, and
+            // one whose picture isn't installed says that.
             let last = self.profiles.last_applied() == Some(Selection::Preset(preset.id));
             parts.push(if last {
                 label("Last applied", 13., self.settings_accent())
+            } else if self.profiles.picture_missing(preset.id) {
+                label(PICTURE_MISSING, 13., WARN)
             } else {
                 label(crate::desktop::profiles::occasion(preset.id), 13., MUTED)
             });
@@ -1710,7 +1733,11 @@ impl Settings {
             && editor.theme_problem().is_none();
         let mut library_actions: Vec<Element<'_, Message>> = Vec::new();
         library_actions.extend(self.studio_edit_button(available));
-        if editor.mix.is_none() {
+        // Remixing is the studio started from this look (Make a look from
+        // this), where any part can come from another look. A built-in
+        // look is copied the same way, so only your own looks get a plain
+        // copy.
+        if editor.mix.is_none() && (saved || self.page == Page::Themes) {
             library_actions.push(
                 button::text("Save a copy…")
                     .leading_icon(icon::from_name("edit-copy-symbolic").size(14))
@@ -1719,14 +1746,6 @@ impl Settings {
                     )
                     .into(),
             );
-            if self.page != Page::Themes {
-                library_actions.push(
-                    button::text("Remix…")
-                        .id(cosmic::widget::Id::new("setup-remix"))
-                        .on_press_maybe(available.then_some(edit(Edit::RemixSelected)))
-                        .into(),
-                );
-            }
         }
         if let Selection::Saved(id) = selection {
             library_actions.push(
@@ -1792,12 +1811,25 @@ impl Settings {
             12.,
             MUTED,
         ));
-        if let Selection::Preset(id) = selection
-            && let Some(hint) = crate::desktop::profiles::preset(id).and_then(|preset| {
-                crate::desktop::profiles::missing(&preset, &editor.bundled_dir(), editor.islands())
-            })
-        {
-            items.push(label(hint, 12., WARN));
+        // A built-in picture that isn't installed: the same job as Get
+        // more pictures on Wallpaper brings it, then the look applies with it.
+        let picture_missing = match selection {
+            Selection::Preset(id) => editor.picture_missing(id),
+            _ => bundled_name(profile).is_some_and(|name| {
+                !crate::desktop::wallpaper::bundled_path(&editor.bundled_dir(), name).is_file()
+            }),
+        };
+        if picture_missing {
+            items.push(banner(
+                crate::desktop::profiles::PICTURE_NOT_INSTALLED.to_string(),
+                WARN,
+                vec![
+                    button::standard("Get the pictures")
+                        .id(cosmic::widget::Id::new("look-get-pictures"))
+                        .on_press_maybe((writable && !self.busy).then_some(Message::GetPictures))
+                        .into(),
+                ],
+            ));
         }
 
         if editor.mix.is_none()
@@ -2238,7 +2270,7 @@ impl Settings {
             let mut head = Vec::new();
             if editor.mix.is_some() {
                 head.push(heading(
-                    "Mix looks",
+                    "Make a look from parts",
                     "Pick which look each part comes from.",
                 ));
             }
@@ -2250,21 +2282,25 @@ impl Settings {
                     "Looks",
                     "A look sets your wallpaper, style, widgets, dock and panel together.",
                 ),
-                // Saving is the main action; mixing and importing wait
-                // behind ⋯.
+                // Two ways to a look of your own: save the desktop as it
+                // is, or make one in the studio. Importing waits behind ⋯.
                 row::with_children(vec![
-                    button::suggested("Save current look…")
+                    button::suggested("Save my desktop as a look")
                         .id(cosmic::widget::Id::new("setup-save-current"))
                         .on_press_maybe(
                             (editor.writable() && !editor.busy())
                                 .then_some(edit(Edit::Name(Some(NameAction::Capture)))),
                         )
                         .into(),
+                    button::standard("Make a look…")
+                        .id(cosmic::widget::Id::new("looks-make"))
+                        .on_press(Message::ToggleHelp("looks-make"))
+                        .into(),
                     button::icon(icon::from_name("view-more-symbolic").size(18))
                         .id(cosmic::widget::Id::new("looks-more"))
                         .selected(self.help_open == Some("looks-more"))
                         .on_press(Message::ToggleHelp("looks-more"))
-                        .apply(|control| super::tip::tip(control, "More ways to make a look")),
+                        .apply(|control| super::tip::tip(control, "Import a look")),
                 ])
                 .spacing(6)
                 .align_y(Alignment::Center)
@@ -2274,27 +2310,49 @@ impl Settings {
         if !reviewing {
             items.extend(self.widgets_stopped_banner(true));
         }
-        if !reviewing && self.help_open == Some("looks-more") {
+        // Make a look: the studio from your desktop or from a blank look,
+        // or a look put together from parts of others. A look of the
+        // gallery starts the studio from its own review.
+        if !reviewing && self.help_open == Some("looks-make") {
             items.push(
-                row::with_children(
-                    [cosmic::iced::widget::space().width(Length::Fill).into()]
+                column::with_children(vec![
+                    row::with_children(
+                        [container(label("Start from", 13., MUTED))
+                            .width(Length::Fill)
+                            .into()]
                         .into_iter()
                         .chain(self.studio_starts())
-                        .chain([
-                            button::standard("Mix looks…")
-                                .id(cosmic::widget::Id::new("mix-start"))
-                                .on_press(edit(Edit::MixStart))
-                                .into(),
-                            button::standard("Import a look…")
-                                .id(cosmic::widget::Id::new("discovery-import"))
-                                .on_press_maybe(
-                                    (editor.writable() && !self.native_busy)
-                                        .then_some(edit(Edit::Import)),
-                                )
-                                .into(),
-                        ])
+                        .chain([button::standard("Parts of other looks…")
+                            .id(cosmic::widget::Id::new("mix-start"))
+                            .on_press(edit(Edit::MixStart))
+                            .into()])
                         .collect::<Vec<_>>(),
-                )
+                    )
+                    .spacing(6)
+                    .align_y(Alignment::Center)
+                    .wrap()
+                    .into(),
+                    label(
+                        "To start from a built-in look, open it and choose Make a look from this.",
+                        12.,
+                        MUTED,
+                    ),
+                ])
+                .spacing(6)
+                .into(),
+            );
+        }
+        if !reviewing && self.help_open == Some("looks-more") {
+            items.push(
+                row::with_children(vec![
+                    cosmic::iced::widget::space().width(Length::Fill).into(),
+                    button::standard("Import a look…")
+                        .id(cosmic::widget::Id::new("discovery-import"))
+                        .on_press_maybe(
+                            (editor.writable() && !self.native_busy).then_some(edit(Edit::Import)),
+                        )
+                        .into(),
+                ])
                 .spacing(6)
                 .wrap()
                 .into(),

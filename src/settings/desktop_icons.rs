@@ -10,8 +10,7 @@ use crate::settings::drafts::DraftEditor;
 use std::path::{Path, PathBuf};
 
 /// The deferred-refresh wording (spec §4).
-pub const REFRESH_NOTE: &str = crate::desktop::desktop_icons::REFRESH_NOTE;
-pub const APPLIED: &str = "Applied. The desktop shows it after its next refresh, for example when you sign out and back in.";
+pub const APPLIED: &str = "Applied. Changes show after you sign in again.";
 pub const UNAVAILABLE: &str = "Desktop icons are drawn by COSMIC Files, which isn’t installed";
 
 #[derive(Clone, Debug, PartialEq)]
