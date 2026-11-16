@@ -28,14 +28,14 @@ impl Cards {
     /// Shows a failed desktop change in the edge menu, opening it.
     pub(super) fn raise_notice(
         &mut self,
-        title: &'static str,
-        body: &'static str,
+        title: impl Into<std::borrow::Cow<'static, str>>,
+        body: impl Into<std::borrow::Cow<'static, str>>,
         error: String,
         retry: Option<Message>,
     ) {
         self.notice = Some(Notice {
             title: title.into(),
-            body,
+            body: body.into(),
             error,
             retry,
             details: false,
@@ -49,7 +49,7 @@ impl Cards {
         if self.notice.as_ref().is_none_or(|notice| notice.brief) {
             self.notice = Some(Notice {
                 title: format!("{} hidden", widget.title()).into(),
-                body: "You can show it again from this menu.",
+                body: "You can show it again from this menu.".into(),
                 error: String::new(),
                 retry: Some(Message::SetWidgetVisible(widget, true)),
                 details: false,
@@ -838,7 +838,7 @@ impl Cards {
         let notice = self.notice.as_ref()?;
         let mut content = vec![
             text::heading(notice.title.as_ref()).into(),
-            text::body(notice.body).into(),
+            text::body(notice.body.as_ref()).into(),
         ];
         let mut buttons = Vec::new();
         if notice.retry.is_some() {

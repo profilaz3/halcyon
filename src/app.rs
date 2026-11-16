@@ -374,7 +374,7 @@ pub enum Message {
 /// menu (where Arrange explains its own failures) until dismissed.
 pub struct Notice {
     pub title: std::borrow::Cow<'static, str>,
-    pub body: &'static str,
+    pub body: std::borrow::Cow<'static, str>,
     pub error: String,
     pub retry: Option<Message>,
     pub details: bool,

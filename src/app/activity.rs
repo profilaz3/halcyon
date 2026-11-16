@@ -340,11 +340,38 @@ impl Cards {
         let changes = serde_json::json!({ "app_rules": next.app_rules });
         self.save_config_later(
             "Activity island rule",
-            super::config_writes::Failure::quiet("Activity island rule not saved"),
+            rule_failure(app, entry, rule),
             None,
             move || crate::config::Config::save_activity_preferences(changes),
         )
     }
+}
+/// What the desktop says when an app rule chosen in the island isn't saved.
+/// The island stops waiting for it after a few seconds and the app's
+/// notifications show as before, so it says so, with Try again.
+fn rule_failure(
+    app: &str,
+    entry: &str,
+    rule: Option<crate::activity_island::preferences::AppRule>,
+) -> super::config_writes::Failure {
+    use crate::activity_island::preferences::AppRule;
+    let title = match rule {
+        Some(AppRule::Mute) => format!("Couldn’t mute {app}"),
+        _ => format!("Couldn’t save the rule for {app}"),
+    };
+    let body = match rule {
+        Some(AppRule::Mute) => format!("Notifications from {app} will still show."),
+        _ => format!("Notifications from {app} show as before."),
+    };
+    super::config_writes::Failure::notice(
+        title,
+        body,
+        Some(Message::Activity(Event::Command(Command::NoteRule {
+            app: app.into(),
+            entry: entry.into(),
+            rule,
+        }))),
+    )
 }
 /// What the player says it can do. Raising asks nothing of playback, as on
 /// the cards.

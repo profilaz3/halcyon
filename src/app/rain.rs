@@ -581,7 +581,7 @@ impl Cards {
             // is no reason to open it.
             self.notice = Some(Notice {
                 title: "The weather effect stopped moving".into(),
-                body: "It starts again when the display or the effect changes.",
+                body: "It starts again when the display or the effect changes.".into(),
                 error: format!(
                     "No frames on {} after {TRIES} tries and a new surface.",
                     stuck.join(", ")
