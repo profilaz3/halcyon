@@ -338,4 +338,51 @@ mod tests {
         assert_ne!(app.kind, Kind::Messages);
         assert!(app.snapshot.messages.is_none());
     }
+    #[test]
+    fn messages_screenshots() {
+        if std::env::var_os("DESKTOP_CARDS_LAYOUT_EVIDENCE").is_none() {
+            return;
+        }
+        use cosmic::applet::cosmic_panel_config::CosmicPanelBackground;
+        use cosmic::iced::Size;
+        let mut app = super::super::tests::app();
+        app.snapshot.preferences.messages = true;
+        app.core.applet.background = CosmicPanelBackground::Dark;
+        app.supported = true;
+        app.panel_frame = host::Frame {
+            height: 32.,
+            padding: 4.,
+            radius: 8.,
+            attached: true,
+            opacity: 0.85,
+        };
+        app.kind = Kind::Messages;
+        app.popup = Some(window::Id::unique());
+        app.held = true;
+        app.popup_extra = app.messages_extra();
+        app.motion.retarget(1., false, Instant::now());
+        let sample = crate::messages::sample();
+        for (name, state, show_text) in [
+            ("conversations", sample.clone(), true),
+            ("text-hidden", sample.clone(), false),
+            (
+                "phone-away",
+                State::Away {
+                    phone: "Pixel 8".into(),
+                    threads: sample.threads().to_vec(),
+                },
+                true,
+            ),
+            ("setup", State::NoPhone, true),
+        ] {
+            app.snapshot.messages = Some(project(&state, show_text));
+            let size = Size::new(app.frame().popup_width(), app.popup_height());
+            let mut ui = crate::native_test::Native::new(size);
+            ui.capture(
+                app.capsule(true),
+                &cosmic::Theme::dark(),
+                &format!("messages-island-{name}"),
+            );
+        }
+    }
 }
