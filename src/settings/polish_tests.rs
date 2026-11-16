@@ -1496,6 +1496,7 @@ fn time_of_day_without_a_city_asks_for_it_once() {
                 time: Time::new(19, 0).unwrap(),
                 days: Days::EVERY,
             },
+            also: Default::default(),
         });
     }
     let qualified = "Choose a city so Halcyon knows when sunrise and sunset are. Until then, only set times and screens switch.";

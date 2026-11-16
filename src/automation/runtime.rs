@@ -72,6 +72,12 @@ impl Job {
                                         }
                                         _ => None,
                                     });
+                                // A set time keeps what was arranged meanwhile
+                                // unless its rule asks to switch that too.
+                                let timed = settings.rule(&due.rule).and_then(|rule| {
+                                    matches!(rule.when, super::Trigger::Schedule { .. })
+                                        .then_some(rule.also)
+                                });
                                 crate::desktop::actions::scheduled_epoch(
                                     self.epoch,
                                     expected,
@@ -84,6 +90,7 @@ impl Job {
                                             &super::read_hold(store),
                                             matches!(due.cause, decide::Cause::Display(_)),
                                             solar,
+                                            timed,
                                         )
                                     },
                                 )

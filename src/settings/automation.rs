@@ -9,8 +9,8 @@
 //! drafts stale (`sync_hold`).
 use crate::automation::solar::{self, Context, Event, Source};
 use crate::automation::{
-    self, Automation, Change, Days, DisplayWhen, Pause, ProfileRef, Rule, State, Time, Trigger,
-    displays::Display,
+    self, Also, Automation, Change, Days, DisplayWhen, Pause, ProfileRef, Rule, State, Time,
+    Trigger, displays::Display,
 };
 use crate::desktop::DesktopStore;
 use crate::desktop::profiles::{self, Domain, ProfileLibrary};
@@ -50,6 +50,8 @@ pub enum DraftEdit {
     /// `None`: external displays as a group.
     Display(Option<String>),
     Profile(ProfileRef),
+    /// What a switch at a set time also changes.
+    Also(Also),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -113,6 +115,9 @@ pub struct RuleDraft {
     pub display: Option<String>,
     pub label: Option<String>,
     pub profile: Option<ProfileRef>,
+    /// What a switch at a set time also changes.
+    #[serde(default)]
+    pub also: Also,
     /// The draft as opened, to tell whether anything changed.
     start: Box<Option<RuleDraft>>,
     /// Exact original rule, checked inside the writer lock before Save.
@@ -136,6 +141,7 @@ impl RuleDraft {
             display: None,
             label: None,
             profile: None,
+            also: Also::default(),
             start: Box::new(None),
             baseline: None,
         };
@@ -156,6 +162,7 @@ impl RuleDraft {
         draft.id = Some(rule.id.clone());
         draft.baseline = Some(rule.clone());
         draft.profile = Some(rule.profile.clone());
+        draft.also = rule.also;
         match &rule.when {
             Trigger::Schedule { time, days } => {
                 draft.time = time.format(h24);
@@ -490,7 +497,9 @@ impl AutomationEditor {
         );
     }
 
-    pub fn profile_scope(&self, profile: &ProfileRef, kind: Kind) -> String {
+    /// What a rule's switch changes. `also`: what a switch at a set time
+    /// changes besides wallpaper, colors and style.
+    pub fn profile_scope(&self, profile: &ProfileRef, kind: Kind, also: Also) -> String {
         if matches!(profile, ProfileRef::Moment(_)) {
             return "Widget style only · wallpaper, layout and content stay.".into();
         }
@@ -501,14 +510,31 @@ impl AutomationEditor {
             .iter()
             .find(|(id, _)| id == profile)
             .map(|(_, domains)| {
-                format!(
-                    "Changes: {}.",
-                    domains
-                        .iter()
-                        .map(|d| d.title())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
+                let mut changes = Vec::new();
+                let mut keeps = Vec::new();
+                for domain in domains {
+                    let (change, keep) = match domain {
+                        Domain::WidgetLayout if kind == Kind::Schedule && !also.layout => {
+                            (None, Some("Widget layout"))
+                        }
+                        Domain::Dock | Domain::Panel if kind == Kind::Schedule && !also.bars => {
+                            (Some("Dock and panel look"), Some("Dock and panel layout"))
+                        }
+                        domain => (Some(domain.title()), None),
+                    };
+                    for (list, item) in [(&mut changes, change), (&mut keeps, keep)] {
+                        if let Some(item) = item
+                            && !list.contains(&item)
+                        {
+                            list.push(item);
+                        }
+                    }
+                }
+                let mut scope = format!("Changes: {}.", changes.join(", "));
+                if !keeps.is_empty() {
+                    scope.push_str(&format!(" Keeps: {}.", keeps.join(", ")));
+                }
+                scope
             })
             .unwrap_or_else(|| "The chosen look is unavailable.".into())
     }
@@ -660,6 +686,7 @@ impl AutomationEditor {
                         settings.rules.push(Rule {
                           id, enabled:true, since:now, profile, name,
                           when:Trigger::Solar { event,days:Days::EVERY,source },
+                          also: Default::default(),
                         });
                       }
                     }
@@ -734,6 +761,7 @@ impl AutomationEditor {
                                             days: Days::EVERY,
                                             source,
                                         },
+                                        also: Default::default(),
                                     },
                                 )
                             })
@@ -851,6 +879,7 @@ impl AutomationEditor {
                                     days: Days::EVERY,
                                     source,
                                 },
+                                also: Default::default(),
                             });
                         }
                         if !settings.enabled {
@@ -1081,6 +1110,7 @@ impl AutomationEditor {
                 draft.display = name;
             }
             DraftEdit::Profile(profile) => draft.profile = Some(profile),
+            DraftEdit::Also(also) => draft.also = also,
         }
     }
 
@@ -1112,6 +1142,7 @@ impl AutomationEditor {
                         rule.when = trigger;
                         rule.profile = profile;
                         rule.name = name.clone();
+                        rule.also = draft.also;
                         rule.since = now;
                     }
                     None => {
@@ -1129,6 +1160,7 @@ impl AutomationEditor {
                             profile,
                             name: name.clone(),
                             when: trigger,
+                            also: draft.also,
                         });
                     }
                 }
@@ -1232,23 +1264,85 @@ mod polish050_tests {
         ));
         assert!(
             editor
-                .profile_scope(&profile, Kind::Schedule)
+                .profile_scope(
+                    &profile,
+                    Kind::Schedule,
+                    Also {
+                        layout: true,
+                        bars: false
+                    }
+                )
                 .contains("Widget layout")
         );
         assert!(
             !editor
-                .profile_scope(&profile, Kind::Solar)
+                .profile_scope(&profile, Kind::Solar, Also::default())
                 .contains("Changes:")
         );
         assert!(
             editor
-                .profile_scope(&profile, Kind::Solar)
+                .profile_scope(&profile, Kind::Solar, Also::default())
                 .contains("layout, applets and content stay")
         );
         assert!(
             editor
-                .profile_scope(&ProfileRef::Moment(crate::moments::Phase::Day), Kind::Solar)
+                .profile_scope(
+                    &ProfileRef::Moment(crate::moments::Phase::Day),
+                    Kind::Solar,
+                    Also::default()
+                )
                 .starts_with("Widget style only")
         );
+    }
+
+    #[test]
+    fn look02_set_time_scope_says_what_stays_unless_the_rule_asks() {
+        let mut editor = AutomationEditor::default();
+        let profile = ProfileRef::Preset("tidal".into());
+        editor.profile_scopes.push((
+            profile.clone(),
+            vec![
+                Domain::Dock,
+                Domain::Panel,
+                Domain::Appearance,
+                Domain::Wallpaper,
+                Domain::WidgetLayout,
+            ],
+        ));
+        assert_eq!(
+            editor.profile_scope(&profile, Kind::Schedule, Also::default()),
+            "Changes: Dock and panel look, Appearance, Wallpaper. Keeps: Dock and panel layout, Widget layout."
+        );
+        assert_eq!(
+            editor.profile_scope(
+                &profile,
+                Kind::Schedule,
+                Also {
+                    layout: true,
+                    bars: true
+                }
+            ),
+            "Changes: Dock, Panel, Appearance, Wallpaper, Widget layout."
+        );
+        // A display connection switches the whole look, as before.
+        assert_eq!(
+            editor.profile_scope(&profile, Kind::Display, Also::default()),
+            "Changes: Dock, Panel, Appearance, Wallpaper, Widget layout."
+        );
+        // The choices travel with the draft and back into the rule.
+        let mut draft = RuleDraft::new(Kind::Schedule, true);
+        assert_eq!(draft.also, Also::default());
+        draft.profile = Some(profile);
+        editor.draft = Some(draft);
+        editor.edit_draft(DraftEdit::Also(Also {
+            layout: true,
+            bars: false,
+        }));
+        assert!(editor.draft.as_ref().unwrap().also.layout);
+        // A draft saved before this existed still reads.
+        let mut old = serde_json::to_value(editor.draft.as_ref().unwrap()).unwrap();
+        old.as_object_mut().unwrap().remove("also");
+        let old: RuleDraft = serde_json::from_value(old).unwrap();
+        assert_eq!(old.also, Also::default());
     }
 }

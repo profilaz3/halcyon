@@ -3312,6 +3312,7 @@ mod tests {
                     display: None,
                     label: None,
                 }),
+                also: Default::default(),
             });
             Ok(())
         })

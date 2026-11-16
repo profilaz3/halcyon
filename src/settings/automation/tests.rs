@@ -127,6 +127,32 @@ fn the_first_rule_turns_automation_on_and_later_edits_restart_it() {
 }
 
 #[test]
+fn look02_a_set_time_rule_saves_what_it_also_switches() {
+    let (fixture, mut editor) = editor("auto-also");
+    editor.update(Message::New(Kind::Schedule), true);
+    editor.update(
+        Message::Draft(DraftEdit::Profile(ProfileRef::Preset("evening".into()))),
+        true,
+    );
+    // New rules leave the layout, dock and panel alone.
+    editor.update(Message::Save, true);
+    assert_eq!(saved(&fixture).rules[0].also, Also::default());
+    // Asking for the layout is an edit like any other, and it reopens set.
+    editor.update(Message::Edit("r1".into()), true);
+    let wanted = Also {
+        layout: true,
+        bars: false,
+    };
+    editor.update(Message::Draft(DraftEdit::Also(wanted)), true);
+    assert!(editor.dirty());
+    editor.update(Message::Save, true);
+    assert_eq!(saved(&fixture).rules[0].also, wanted);
+    editor.update(Message::Edit("r1".into()), true);
+    assert_eq!(editor.draft.as_ref().unwrap().also, wanted);
+    assert!(!editor.dirty());
+}
+
+#[test]
 fn switches_order_pause_and_delete_save_at_once() {
     let (fixture, mut editor) = editor("auto-controls");
     for (kind, preset) in [(Kind::Schedule, "focus"), (Kind::Display, "presentation")] {
@@ -303,6 +329,11 @@ fn a_saved_held_layout_outlives_settings_and_a_desktop_restart() {
             when: Trigger::Schedule {
                 time: Time::new(19, 0).unwrap(),
                 days: Days::EVERY,
+            },
+            // Presentation is a layout: this rule asks to switch it.
+            also: crate::automation::Also {
+                layout: true,
+                bars: true,
             },
         }];
         Ok(())
