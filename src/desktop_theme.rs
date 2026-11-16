@@ -22,6 +22,7 @@ pub enum Family {
     Paper,
     Bare,
     Glass,
+    DarkGlass,
     Frosted,
     Midnight,
     Terminal,
@@ -305,6 +306,18 @@ const GLASS: StyleSpec = StyleSpec {
     },
     wallpaper: ([29, 43, 74], [91, 75, 138]),
 };
+/// Dark, highly transparent cards; decoration is drawn behind their contents.
+const DARK_GLASS: StyleSpec = StyleSpec {
+    id: "dark_glass",
+    title: "Dark glass",
+    description: "Dark, clear glass with a fine luminous edge",
+    accent: [143, 194, 224],
+    surface: (0.12, 0.16, 0.015, (0., 0.)),
+    geometry: (40, 24, 24),
+    shadow: Shadow::None,
+    wallpaper: ([15, 25, 40], [64, 89, 115]),
+    ..GLASS
+};
 /// Glass with a denser, more tinted card (see `resolve`). Saved as
 /// "frosted", its name before it was called Tinted glass.
 const FROSTED: StyleSpec = StyleSpec {
@@ -549,12 +562,13 @@ const BAUHAUS: StyleSpec = StyleSpec {
 };
 
 impl Family {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::Soft,
         Self::Outline,
         Self::Paper,
         Self::Bare,
         Self::Glass,
+        Self::DarkGlass,
         Self::Frosted,
         Self::Midnight,
         Self::Terminal,
@@ -571,6 +585,7 @@ impl Family {
             Self::Paper => &PAPER,
             Self::Bare => &BARE,
             Self::Glass => &GLASS,
+            Self::DarkGlass => &DARK_GLASS,
             Self::Frosted => &FROSTED,
             Self::Midnight => &MIDNIGHT,
             Self::Terminal => &TERMINAL,
@@ -592,6 +607,7 @@ impl Family {
             Self::Paper => "theme-paper",
             Self::Bare => "theme-bare",
             Self::Glass => "theme-glass",
+            Self::DarkGlass => "theme-dark-glass",
             Self::Frosted => "theme-frosted",
             Self::Midnight => "theme-midnight",
             Self::Terminal => "theme-terminal",
@@ -928,6 +944,8 @@ pub enum Surface {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Roles {
+    /// Radius of the optional widget-only dark-glass decoration.
+    pub dark_glass: Option<f32>,
     pub card: Palette,
     /// Filled counterpart for the drawer and layout controls.
     pub surface: Palette,
@@ -1031,12 +1049,27 @@ pub fn resolve(a: Appearance) -> Roles {
     if a.contrast_assist {
         card = crate::widget_style::readable(card);
     }
-    // Text on a see-through card passes over a white or a black picture.
-    card = crate::widget_style::legible(card);
+    // Dark glass explicitly opts into clear, low-opacity cards. Readability
+    // help remains available when the wallpaper needs a denser surface.
+    if family != Family::DarkGlass || a.contrast_assist {
+        card = crate::widget_style::legible(card);
+    }
     // Drawer and layout controls stay opaque even over see-through cards.
     let mut filled = card;
     filled.background.a = filled.background.a.max(0.92);
-    let filled = crate::widget_style::legible(filled);
+    let filled = if family == Family::DarkGlass {
+        // Glass is a widget treatment; drawers retain the ordinary dark
+        // surface instead of inheriting the near-black transparent card.
+        resolve(Appearance {
+            family: Some(Family::Soft),
+            accent: Some(seed),
+            opacity: Family::Soft.geometry().0,
+            ..a
+        })
+        .surface
+    } else {
+        crate::widget_style::legible(filled)
+    };
     let wall_bg = if a.wallpaper_light {
         rgb([238, 236, 226])
     } else {
@@ -1063,6 +1096,8 @@ pub fn resolve(a: Appearance) -> Roles {
     let clock = spec.clock.font(font_installed);
     let bg = if transparent { wall_bg } else { surface };
     Roles {
+        dark_glass: (family == Family::DarkGlass && !transparent)
+            .then_some(f32::from(a.corner_radius.min(32))),
         card,
         surface: filled,
         wallpaper,
@@ -1102,7 +1137,9 @@ impl Config {
                 self.appearance.contrast_assist,
             );
             // See-through cards keep their text readable over any picture.
-            roles.card = crate::widget_style::legible(roles.card);
+            if roles.dark_glass.is_none() || self.appearance.contrast_assist {
+                roles.card = crate::widget_style::legible(roles.card);
+            }
             if self.materials.widgets().is_some() {
                 roles.frosted = !roles.transparent;
             }
@@ -1168,7 +1205,11 @@ mod tests {
             assert!(!spec.title.is_empty() && !spec.description.is_empty());
             assert!((0.5..=3.).contains(&spec.border_width), "{}", spec.id);
             let (opacity, radius, border) = spec.geometry;
-            assert!((70..=100).contains(&opacity) && radius <= 32 && border <= 50);
+            assert!(
+                (crate::config::MIN_CARD_OPACITY..=100).contains(&opacity)
+                    && radius <= 32
+                    && border <= 50
+            );
             assert!((0.0..=1.0).contains(&spec.bar.opacity));
             // Serialized ids stay stable: they are stored in preferences.
             assert_eq!(
@@ -1255,6 +1296,9 @@ mod tests {
                 for opacity in [crate::config::MIN_CARD_OPACITY, 25, 40, 55, 70, 85, 100] {
                     let mut c = old.clone();
                     c.appearance.family = Some(family);
+                    // Clear dark glass preserves the requested alpha unless
+                    // the person enables readability help.
+                    c.appearance.contrast_assist = family == Family::DarkGlass;
                     c.appearance.wallpaper_light = light;
                     c.appearance.opacity = opacity;
                     let roles = c.theme_roles().unwrap();
@@ -1310,8 +1354,9 @@ mod tests {
                 ] {
                     assert!(contrast(color, bg) >= 4.5, "{family:?} {light}: {color:?}");
                 }
-                // A see-through card is read over the picture behind it.
-                if !roles.transparent {
+                // Clear dark glass opts out of the automatic opacity floor.
+                // Its assisted variant is covered across all opacities above.
+                if !roles.transparent && family != Family::DarkGlass {
                     for color in [roles.card.foreground, roles.card.muted, roles.card.accent] {
                         let worst = over_any_picture(color, roles.card.background);
                         assert!(worst >= 4.5, "{family:?} {light}: {color:?} {worst:.2}");
@@ -1387,7 +1432,7 @@ mod tests {
                             "{family:?} {seed:?} {light}: {ink:?}"
                         );
                     }
-                    if !roles.transparent {
+                    if !roles.transparent && family != Family::DarkGlass {
                         for ink in [roles.card.foreground, roles.card.muted, roles.card.accent] {
                             let worst = over_any_picture(ink, roles.card.background);
                             assert!(worst >= 4.5, "{family:?} {seed:?} {light}: {worst:.2}");

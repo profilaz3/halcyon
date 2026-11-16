@@ -1058,7 +1058,7 @@ fn appearance_starts_with_looks_and_names_each_kind_of_choice() {
     for line in [
         "A whole new desktop at once: wallpaper, style, widgets, dock and panel",
         "Colors for widgets, windows, the dock and panel",
-        "How widget cards are shaped: corners, borders and type",
+        "The shape, type and finish of your widget cards",
         "Time of day",
     ] {
         assert!(text.iter().any(|t| t == line), "{line}: {text:?}");

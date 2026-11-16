@@ -527,7 +527,7 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::Themes,
         "Style",
-        "widget cards card styles shape corners borders type soft outline paper bare glass tinted frosted midnight terminal neon editorial retro pastel bauhaus",
+        "widget cards card styles shape corners borders type soft outline paper bare glass dark glass shader grain sheen tinted frosted midnight terminal neon editorial retro pastel bauhaus",
         false,
     ),
     hit(

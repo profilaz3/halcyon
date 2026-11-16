@@ -47,7 +47,8 @@ fn theme_style(config: &Config) -> &'static str {
         Some(Family::Outline) => "outline",
         Some(Family::Paper) => "paper",
         Some(Family::Bare) => "bare",
-        Some(Family::Glass) => "glass",
+        // Both glass styles use the existing collector category.
+        Some(Family::Glass | Family::DarkGlass) => "glass",
         Some(Family::Frosted) => "frosted",
         Some(Family::Midnight) => "midnight",
         Some(Family::Terminal) => "terminal",

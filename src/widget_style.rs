@@ -112,6 +112,10 @@ pub fn fonts(body: Option<&str>, clock: Option<&str>) -> Fonts {
 /// palette `p` (no shadow without a background).
 pub fn edge(p: Palette) -> (f32, cosmic::iced::Shadow) {
     use crate::desktop_theme::Shadow;
+    // A filled shadow behind transparent glass makes it unexpectedly opaque.
+    if CONTEXT.get().is_some_and(|r| r.dark_glass.is_some()) {
+        return (1., cosmic::iced::Shadow::default());
+    }
     if MATERIAL.get().is_some() && p.background.a > 0. {
         return (
             1.,
@@ -180,6 +184,9 @@ pub fn rounded_rects(
 }
 /// Room every widget surface keeps around its card for the style's shadow.
 pub fn shadow_margin(config: &crate::config::Config) -> f32 {
+    if config.theme_roles().is_some_and(|r| r.dark_glass.is_some()) {
+        return 0.;
+    }
     if config.materials.widgets().is_some() {
         12.
     } else {
@@ -657,6 +664,17 @@ pub fn border(color: Color) -> Color {
 }
 
 pub fn surface<'a, M: 'a>(content: cosmic::Element<'a, M>, p: Palette) -> cosmic::Element<'a, M> {
+    if !ASSIST.get()
+        && p.background.a > 0.
+        && let Some(glass_radius) = CONTEXT.get().and_then(|roles| roles.dark_glass)
+    {
+        return crate::materials::dark_glass(
+            content,
+            p.accent,
+            radius(glass_radius as u16),
+            MOTION.get(),
+        );
+    }
     crate::materials::sheen(
         content,
         p.background.a > 0.
