@@ -176,6 +176,12 @@ impl Sidebar {
         self.reveal_at = None;
         self.last_frame = now;
     }
+    /// Shows the menu for `time`, then lets it slide away unless the
+    /// pointer is on it.
+    pub fn show_briefly(&mut self, now: Instant, time: Duration) {
+        self.show(now);
+        self.dismiss_at = Some(now + time);
+    }
     pub fn hide(&mut self) {
         self.visible = false;
         self.focus = None;

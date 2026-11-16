@@ -82,13 +82,29 @@ fn emitted(
     }
     (destroyed, created)
 }
-fn escape(cards: &mut Cards) -> Task<Message> {
+fn escape_key(cards: &mut Cards) -> Task<Message> {
     cards.update(Message::SurfaceInput(
         cards.ids[5],
         Box::new(Message::LayoutKey(
             keyboard::Key::Named(keyboard::key::Named::Escape),
             false,
         )),
+    ))
+}
+/// Cancel from the keyboard: Esc lets go of a selected widget, then asks
+/// before discarding changes, and Discard cancels.
+fn escape(cards: &mut Cards) -> Task<Message> {
+    if cards.layout_editor.active && cards.layout_editor.selected.is_some() {
+        drop(escape_key(cards));
+    }
+    let task = escape_key(cards);
+    if !cards.layout_editor.confirm_discard {
+        return task;
+    }
+    drop(task);
+    cards.update(Message::SurfaceMessage(
+        cards.display_generation,
+        Box::new(Message::LayoutFinish(false)),
     ))
 }
 fn moved() -> (Cards, crate::displays::test_support::Wire) {
@@ -158,8 +174,15 @@ fn arrange_cancel_error_releases_input() {
         &cosmic::Theme::dark(),
         "arrange-conflict-recovery",
     );
+    assert!(cards.paused_layout.as_ref().unwrap().cancel_failed);
     assert!(click(&mut cards, &mut native, "arrange-retry").is_empty());
     assert_eq!(cards.paused_layout.as_ref().unwrap().draft, draft);
+    // The failed retry shows on the card itself.
+    assert!(cards.paused_layout.as_ref().unwrap().retry_failed);
+    native.text_bounds(
+        cards.view_window(cards.ids[2]),
+        "That didn’t work either. Try again, or keep what’s on the desktop.",
+    );
     assert!(
         click(&mut cards, &mut native, "arrange-keep")
             .iter()
@@ -1511,7 +1534,7 @@ fn arrange_remove_then_undo_brings_the_widget_back() {
         Some(&[0.2, 0.2])
     );
 
-    // The inspector's Remove, then the Z key.
+    // The inspector's Hide, then the Z key.
     let task = cards.update(Message::LayoutSelect(Widget::Weather));
     emitted(&mut cards, task);
     click_overlay(&mut cards, &mut native, "arrange-inspector-remove");
@@ -1780,4 +1803,79 @@ fn arrange_card_buttons_take_the_click_before_the_drag() {
     );
     assert!(cards.layout_editor.drag.is_none());
     assert!(!cards.arranging_widget(Widget::Clock));
+}
+
+#[test]
+fn arrange_escape_deselects_then_asks_before_discarding() {
+    if isolated("arrange_escape_deselects_then_asks_before_discarding") {
+        return;
+    }
+    let (mut cards, _wire) = arranging(&["weather"]);
+    let mut native = overlay(&cards);
+    native.text_bounds(cards.layout_view(), "Esc: cancel · Enter: done");
+    // Nothing changed yet: Esc closes at once, as before.
+    let task = escape_key(&mut cards);
+    emitted(&mut cards, task);
+    assert!(!cards.layout_editor.active);
+
+    let task = cards.update(Message::Arrange);
+    emitted(&mut cards, task);
+    let task = cards.update(Message::LayoutSelect(Widget::Weather));
+    emitted(&mut cards, task);
+    native.text_bounds(cards.layout_view(), "Esc: deselect · Enter: done");
+    let task = cards.update(Message::SurfaceInput(
+        cards.ids[5],
+        Box::new(Message::LayoutKey(
+            keyboard::Key::Named(keyboard::key::Named::ArrowRight),
+            false,
+        )),
+    ));
+    emitted(&mut cards, task);
+    let moved = Config::load().widget_positions["weather"];
+    assert_ne!(moved, [0.2, 0.2], "each move is saved as it goes");
+
+    // With a widget selected, Esc only lets go of it.
+    let task = escape_key(&mut cards);
+    emitted(&mut cards, task);
+    assert!(cards.layout_editor.active);
+    assert_eq!(cards.layout_editor.selected, None);
+    assert!(!cards.layout_editor.confirm_discard);
+
+    // Then it asks, and a second Esc keeps arranging.
+    let task = escape_key(&mut cards);
+    emitted(&mut cards, task);
+    assert!(cards.layout_editor.active && cards.layout_editor.confirm_discard);
+    native.text_bounds(cards.layout_view(), "Discard your changes?");
+    native.capture(
+        cards.layout_view(),
+        &cosmic::Theme::dark(),
+        "arrange-discard-question",
+    );
+    // Enter does not finish behind the question.
+    let task = cards.update(Message::SurfaceInput(
+        cards.ids[5],
+        Box::new(Message::LayoutKey(
+            keyboard::Key::Named(keyboard::key::Named::Enter),
+            false,
+        )),
+    ));
+    emitted(&mut cards, task);
+    assert!(cards.layout_editor.active && cards.layout_editor.confirm_discard);
+    let task = escape_key(&mut cards);
+    emitted(&mut cards, task);
+    assert!(cards.layout_editor.active && !cards.layout_editor.confirm_discard);
+    assert_eq!(Config::load().widget_positions["weather"], moved);
+
+    // Keep arranging does the same.
+    let task = escape_key(&mut cards);
+    emitted(&mut cards, task);
+    click_overlay(&mut cards, &mut native, "arrange-keep-arranging");
+    assert!(cards.layout_editor.active && !cards.layout_editor.confirm_discard);
+
+    // Discard cancels the session and puts the widget back.
+    let task = escape_key(&mut cards);
+    emitted(&mut cards, task);
+    click_overlay(&mut cards, &mut native, "arrange-discard");
+    assert!(!cards.layout_editor.active && cards.paused_layout.is_none());
+    assert_eq!(Config::load().widget_positions["weather"], [0.2, 0.2]);
 }

@@ -224,11 +224,12 @@ mod tests {
             }),
             ("a notice waiting for Retry", |cards| {
                 cards.notice = Some(Notice {
-                    title: "Could not save",
+                    title: "Could not save".into(),
                     body: "",
                     error: String::new(),
                     retry: None,
                     details: false,
+                    brief: false,
                 })
             }),
             ("a note being written", |cards| {

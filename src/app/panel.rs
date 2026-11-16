@@ -5,6 +5,9 @@ use cosmic::iced::mouse;
 use cosmic::iced::widget::keyed_column;
 use drawer::{DrawerItem, DrawerKey};
 
+/// How long the edge menu shows a confirmation such as "Clock hidden".
+pub(super) const BRIEF_NOTICE: Duration = Duration::from_secs(5);
+
 /// The edge menu's second group, in order.
 use crate::config::edge_menu::ELSEWHERE;
 
@@ -31,13 +34,30 @@ impl Cards {
         retry: Option<Message>,
     ) {
         self.notice = Some(Notice {
-            title,
+            title: title.into(),
             body,
             error,
             retry,
             details: false,
+            brief: false,
         });
         self.sidebar.show(Instant::now());
+    }
+    /// Hides `widget` from its right-click menu, and says so in the edge
+    /// menu for a few seconds, with Undo. A failure shown there stays.
+    pub(super) fn hide_from_menu(&mut self, widget: Widget) -> Task<Message> {
+        if self.notice.as_ref().is_none_or(|notice| notice.brief) {
+            self.notice = Some(Notice {
+                title: format!("{} hidden", widget.title()).into(),
+                body: "You can show it again from this menu.",
+                error: String::new(),
+                retry: Some(Message::SetWidgetVisible(widget, true)),
+                details: false,
+                brief: true,
+            });
+            self.sidebar.show_briefly(Instant::now(), BRIEF_NOTICE);
+        }
+        self.set_widget_visible(widget, false)
     }
     /// Shows the new order at once and saves it behind any earlier write;
     /// a failed save puts the order back.
@@ -817,13 +837,13 @@ impl Cards {
     pub(super) fn notice_view(&self) -> Option<Element<'_, Message>> {
         let notice = self.notice.as_ref()?;
         let mut content = vec![
-            text::heading(notice.title).into(),
+            text::heading(notice.title.as_ref()).into(),
             text::body(notice.body).into(),
         ];
         let mut buttons = Vec::new();
         if notice.retry.is_some() {
             buttons.push(
-                cosmic::widget::button::suggested("Try again")
+                cosmic::widget::button::suggested(if notice.brief { "Undo" } else { "Try again" })
                     .id("notice-retry".into())
                     .on_press(Message::NoticeRetry)
                     .into(),
@@ -836,17 +856,21 @@ impl Cards {
                 .into(),
         );
         content.push(row::with_children(buttons).spacing(8).into());
-        content.push(
-            cosmic::widget::button::link(if notice.details {
-                "Hide details"
-            } else {
-                "Details"
-            })
-            .id("notice-details".into())
-            .on_press(Message::NoticeDetails)
-            .into(),
-        );
-        if notice.details {
+        if notice.error.is_empty() {
+            // Nothing more to tell.
+        } else {
+            content.push(
+                cosmic::widget::button::link(if notice.details {
+                    "Hide details"
+                } else {
+                    "Details"
+                })
+                .id("notice-details".into())
+                .on_press(Message::NoticeDetails)
+                .into(),
+            );
+        }
+        if notice.details && !notice.error.is_empty() {
             content.push(
                 cosmic::widget::scrollable(text::caption(notice.error.as_str()))
                     .height(Length::Fill)

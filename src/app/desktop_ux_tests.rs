@@ -222,24 +222,83 @@ fn fb08_unsaved_arrangement_offers_plain_choices_and_hides_the_error() {
         return;
     }
     let mut cards = cards();
-    let mut editor = layout::LayoutEditor::default();
-    editor.exit_failed = true;
-    cards.paused_layout = Some(editor);
+    let error = "Could not save: the settings file is busy";
+    cards.paused_layout = Some(layout::LayoutEditor::failed(false, Some(error), None));
     cards.sidebar.show(Instant::now());
     let mut native = rail();
     native.text_bounds(cards.control_rail(), "Your arrangement wasn’t saved");
-    for text in [
-        "Keep arranging",
-        "Discard changes",
-        "Undo all of Arrange",
-        "Details",
-    ] {
+    for text in ["Keep arranging", "Put everything back", "Details"] {
         let bounds = native.text_bounds(cards.control_rail(), text);
         assert!(bounds.height < 24., "{text} stays on one line: {bounds:?}");
     }
+    // The long label wraps inside its button rather than being cut off.
+    let label = native.text_bounds(cards.control_rail(), "Keep what’s on the desktop");
+    let button = native.bounds(cards.control_rail(), "arrange-keep");
+    assert!(
+        label.y >= button.y && label.y + label.height <= button.y + button.height,
+        "{label:?} inside {button:?}"
+    );
+    // Each choice says what it does.
+    native.text_bounds(cards.control_rail(), "Leaves the desktop as it is now.");
+    native.text_bounds(
+        cards.control_rail(),
+        "Undoes every change you made while arranging.",
+    );
+    assert!(native.text_all(cards.control_rail(), error).is_empty());
     capture_rail(&cards, "fb08-recovery");
     let _ = cards.update(Message::RecoveryDetails);
     native.text_bounds(cards.control_rail(), "Hide details");
+    assert!(!native.text_all(cards.control_rail(), error).is_empty());
+    let _ = cards.update(Message::RecoveryDetails);
+
+    // A failed Cancel left the saved changes on the desktop, and says so.
+    cards.paused_layout = Some(layout::LayoutEditor::failed(true, Some(error), None));
+    native.text_bounds(cards.control_rail(), "Couldn’t put everything back");
+    assert!(
+        native
+            .text_all(cards.control_rail(), "Your arrangement wasn’t saved")
+            .is_empty()
+    );
+    // A failed Put everything back shows on the card, not only in Details.
+    cards.paused_layout.as_mut().unwrap().retry_failed = true;
+    native.text_bounds(
+        cards.control_rail(),
+        "That didn’t work either. Try again, or keep what’s on the desktop.",
+    );
+    capture_rail(&cards, "fb08-recovery-cancel-failed");
+    cards.paused_layout = Some(layout::LayoutEditor::failed(false, Some(error), None));
+    cards.paused_layout.as_mut().unwrap().retry_failed = true;
+    native.text_bounds(
+        cards.control_rail(),
+        "Couldn’t put everything back. Try again, or keep what’s on the desktop.",
+    );
+
+    // A plain reason is the body; with no other error there is no Details.
+    let reason = "Displays changed. Reconnect the original displays to keep arranging, or choose another option.";
+    cards.paused_layout = Some(layout::LayoutEditor::failed(false, None, Some(reason)));
+    native.text_bounds(cards.control_rail(), reason);
+    assert!(
+        native
+            .try_bounds(cards.control_rail(), "arrange-details")
+            .is_none()
+    );
+}
+
+#[test]
+fn fb08_keep_line_counts_the_saved_changes() {
+    assert_eq!(
+        layout::keep_line(0, false),
+        "Leaves the desktop as it is now."
+    );
+    assert_eq!(
+        layout::keep_line(0, true),
+        "Drops the changes that weren’t saved."
+    );
+    assert_eq!(layout::keep_line(1, false), "Keeps your saved change.");
+    assert_eq!(
+        layout::keep_line(3, true),
+        "Keeps your 3 saved changes and drops the unsaved ones."
+    );
 }
 
 #[test]
@@ -304,6 +363,53 @@ fn dt02_right_click_menu_hides_the_widget_it_was_opened_on() {
         cosmic::iced::Point::new(10., 10.),
     );
     assert!(messages.is_empty());
+}
+
+#[test]
+fn wid12_hiding_from_the_menu_says_so_briefly_with_undo() {
+    if isolated("wid12_hiding_from_the_menu_says_so_briefly_with_undo") {
+        return;
+    }
+    let mut cards = cards();
+    assert!(Config::load().widget_visible(Widget::Music));
+    let _ = cards.update(Message::WidgetMenu(Widget::Music));
+    super::config_writes::update_saved(&mut cards, Message::WidgetMenuPick(layout::MenuPick::Hide));
+    assert!(!Config::load().widget_visible(Widget::Music));
+    // The edge menu opens on its own, says what happened and offers Undo.
+    assert!(cards.sidebar.visible);
+    let notice = cards.notice.as_ref().expect("a confirmation");
+    assert!(notice.brief);
+    let mut native = rail();
+    native.text_bounds(cards.control_rail(), "Music hidden");
+    native.text_bounds(cards.control_rail(), "Undo");
+    assert!(
+        native
+            .try_bounds(cards.control_rail(), "notice-details")
+            .is_none()
+    );
+    capture_rail(&cards, "wid12-hidden");
+    // Undo shows the widget again.
+    super::config_writes::update_saved(&mut cards, Message::NoticeRetry);
+    assert!(Config::load().widget_visible(Widget::Music));
+    assert!(cards.notice.is_none());
+
+    // Left alone, the menu slides away after a few seconds and the
+    // confirmation goes with it.
+    let _ = cards.update(Message::WidgetMenu(Widget::Music));
+    super::config_writes::update_saved(&mut cards, Message::WidgetMenuPick(layout::MenuPick::Hide));
+    assert!(cards.notice.is_some());
+    let later = Instant::now() + super::panel::BRIEF_NOTICE + Duration::from_millis(50);
+    cards.sidebar.tick(later, false);
+    assert!(!cards.sidebar.visible);
+    let _ = cards.update(Message::Animate);
+    assert!(cards.notice.is_none());
+    assert!(!Config::load().widget_visible(Widget::Music));
+
+    // A failure already in the menu is not replaced.
+    cards.raise_notice("Couldn’t save", "Body", "error".into(), None);
+    let _ = cards.update(Message::WidgetMenu(Widget::Weather));
+    super::config_writes::update_saved(&mut cards, Message::WidgetMenuPick(layout::MenuPick::Hide));
+    assert!(!cards.notice.as_ref().unwrap().brief);
 }
 
 #[test]
