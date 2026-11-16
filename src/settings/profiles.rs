@@ -129,6 +129,9 @@ pub enum Message {
     /// Opens (`Some`) or closes the custom color field, with its text.
     ThemeCustom(Option<String>),
     ThemeWallpaper(bool),
+    /// Chooses this style or theme again with its own dock and panel shape,
+    /// which choosing it otherwise leaves as it is.
+    UseStyleBars(&'static str),
     /// The applied style's Window tone (see `desktop_theme::WindowTone`).
     WindowTone(i8),
     ResetSurface(Domain),
@@ -570,6 +573,11 @@ pub struct ProfilesEditor {
     /// A widget style leaves the dock and panel as they are
     /// (Dock › "Follow the look's style" off).
     keep_bars: bool,
+    /// The next style or theme choice takes its own dock and panel shape
+    /// (see `profiles::themes::keep_bar_shape`).
+    own_bars: bool,
+    /// Built-in looks whose picture isn't installed: they apply without it.
+    missing_pictures: BTreeSet<&'static str>,
     theme_override: Option<Profile>,
     theme_jobs: Vec<ThemeJob>,
     theme_pending: Option<u64>,
@@ -701,13 +709,39 @@ impl ProfilesEditor {
         let bundled = self.store().map(wallpaper::bundled_dir).unwrap_or_default();
         self.islands = self.store().is_some_and(profiles::islands_available);
         let islands = self.islands;
-        self.presets = profiles::studio_presets()
+        let looks = profiles::studio_presets();
+        self.missing_pictures = looks
+            .iter()
+            .filter(|preset| profiles::missing(preset, &bundled, islands).is_some())
+            .map(|preset| preset.id)
+            .collect();
+        self.presets = looks
             .into_iter()
             .map(profiles::discovery::credited)
             .map(|preset| profiles::fitted(preset, config, &bundled, islands))
             .chain(profiles::themes::presets())
             .chain(profiles::adaptive::presets())
             .collect();
+    }
+    /// Whether the built-in look `id` comes without its picture, because
+    /// Halcyon's pictures aren't installed.
+    pub fn picture_missing(&self, id: &str) -> bool {
+        self.missing_pictures.contains(id)
+    }
+    /// After the pictures were installed: fits the looks again, and a look
+    /// that waited for its picture is planned with it.
+    pub fn refit(&mut self, config: &crate::config::Config) {
+        if self.store().is_none() {
+            return;
+        }
+        let waiting = match self.selection {
+            Selection::Preset(id) => self.picture_missing(id).then_some(id),
+            _ => None,
+        };
+        self.fit_presets(config);
+        if let Some(id) = waiting.filter(|id| !self.picture_missing(id)) {
+            self.select(Selection::Preset(id));
+        }
     }
     /// Whether choosing a widget style also restyles the dock and panel.
     pub fn set_style_bars(&mut self, on: bool) {
@@ -999,6 +1033,16 @@ impl ProfilesEditor {
             .as_ref()?;
         Some((format!("{key:?}"), key.entry.clone()))
     }
+    /// Whether the picture the preview shows (the applied one with
+    /// `current`, else the planned one) is still being read.
+    pub fn backdrop_loading(&self, current: bool) -> bool {
+        let key = if current {
+            self.home_background.as_ref()
+        } else {
+            self.backdrop_key.as_ref()
+        };
+        key.is_some_and(|key| !self.backdrops.iter().any(|(known, _)| known == key))
+    }
     pub fn backdrop_image(&self) -> Option<&Handle> {
         let key = self.backdrop_key.as_ref()?;
         self.backdrops
@@ -1173,7 +1217,10 @@ impl ProfilesEditor {
             self.custom_surfaces.clear();
             return;
         };
-        let record = profiles::themes::record(f);
+        // The bars' shape is their own, not the style's (see `select`), so
+        // only their colors and see-through count as Custom.
+        let mut record = profiles::themes::record(f);
+        profiles::themes::keep_bar_shape(&mut record);
         let plan = profiles::plan(
             store,
             &self.installed,
@@ -1466,8 +1513,58 @@ impl ProfilesEditor {
                 }
             }
         }
+        // A style or ready-made theme changes colors, not the shape of the
+        // dock and panel: floating or attached, margins, corners and
+        // spacing stay as they are. "Use this style's dock and panel" asks
+        // for the style's own, for that one choice.
+        let own_bars = std::mem::take(&mut self.own_bars);
+        if let Selection::Preset(id) = self.selection
+            && (profiles::themes::is_named(id) || crate::desktop_theme::Family::parse(id).is_some())
+            && let Some(record) = self
+                .preset_for(id)
+                .map(|preset| preset.profile.clone())
+                .filter(|p| p.appearance_only)
+        {
+            let mut p = self.theme_override.take().unwrap_or_else(|| record.clone());
+            if own_bars {
+                profiles::themes::use_bar_shape(&mut p, &record);
+            } else {
+                profiles::themes::keep_bar_shape(&mut p);
+            }
+            self.theme_override = Some(p);
+        }
         self.queue_theme_colors();
         self.replan();
+    }
+    /// Whether the dock or panel on the desktop is shaped differently from
+    /// `record`'s: floating or attached, margin, corners, padding, spacing.
+    pub fn bar_shape_differs(&self, record: &Profile) -> bool {
+        use crate::desktop::panels::{PanelKind, Setting};
+        fn differs<T: PartialEq>(want: Option<T>, have: Setting<T>) -> bool {
+            want.is_some_and(|want| have.known() != Some(&want))
+        }
+        let Some(preview) = self.preview() else {
+            return false;
+        };
+        [
+            (PanelKind::Dock, &record.dock),
+            (PanelKind::Panel, &record.panel),
+        ]
+        .into_iter()
+        .any(|(kind, look)| {
+            let (Some(look), Some(bar)) =
+                (look, preview.bars.iter().find(|bar| bar.kind() == kind))
+            else {
+                return false;
+            };
+            let floating = look.floating.unwrap_or(false);
+            bar.listed()
+                && (differs(look.floating, bar.floating())
+                    || (floating && differs(look.margin, bar.margin()))
+                    || differs(look.border_radius, bar.radius())
+                    || differs(look.padding, bar.padding())
+                    || differs(look.spacing, bar.spacing()))
+        })
     }
     /// The first theme keeps the color people already chose: following the
     /// wallpaper, or their own fixed accent. Someone who never chose gets
@@ -1699,6 +1796,8 @@ impl ProfilesEditor {
             return;
         };
         let mut p = profiles::themes::record(f);
+        // A reset brings back the style's colors, not a shape for the bars.
+        profiles::themes::keep_bar_shape(&mut p);
         p.name = format!("Reset {} to {}", domain.title(), f.title());
         p.appearance_only = true;
         // The style's own surfaces at its Window tone, which is a window
@@ -1983,6 +2082,13 @@ impl ProfilesEditor {
                     self.custom = Some(text);
                 }
             },
+            Message::UseStyleBars(id) => {
+                let colors = self.color_options.clone();
+                self.own_bars = true;
+                self.select(Selection::Preset(id));
+                self.color_options = colors;
+                self.replan();
+            }
             Message::ThemeWallpaper(on) => {
                 self.select_applied();
                 if let Some(mut p) = self.profile().filter(|p| p.appearance_only).cloned() {

@@ -971,23 +971,24 @@ impl Settings {
         )
     }
 
-    /// "New look" choices on Looks.
+    /// Where Make a look… starts the studio on Looks.
     pub(super) fn studio_starts(&self) -> Vec<Element<'_, Message>> {
         let editor = &self.profiles;
         let ready = editor.writable() && !editor.busy() && !self.native_busy;
         vec![
-            button::standard("New look from my desktop")
+            button::standard("My desktop")
                 .id(cosmic::widget::Id::new("studio-new-desktop"))
                 .on_press_maybe(ready.then(|| studio(Studio::Start(Start::Desktop))))
                 .into(),
-            button::standard("New plain look")
+            button::standard("A blank look")
                 .id(cosmic::widget::Id::new("studio-new-plain"))
                 .on_press_maybe(ready.then(|| studio(Studio::Start(Start::Plain))))
                 .into(),
         ]
     }
 
-    /// "Edit" for a saved look, "Edit a copy" for a built-in one.
+    /// "Edit" for a saved look; "Make a look from this" for a built-in one,
+    /// which starts the studio from a copy of it.
     pub(super) fn studio_edit_button(&self, available: bool) -> Option<Element<'_, Message>> {
         let editor = &self.profiles;
         if editor.mix.is_some() || self.page != Page::DesktopProfiles {
@@ -1001,7 +1002,7 @@ impl Settings {
             Selection::Saved(id) if id.as_str() != "before-themes" => {
                 ("Edit in studio…", Start::Saved(id.clone()))
             }
-            _ => ("Edit a copy in studio…", Start::Selected),
+            _ => ("Make a look from this…", Start::Selected),
         };
         Some(
             button::text(title)

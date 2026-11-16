@@ -53,7 +53,7 @@ const LOOKS: [Look; 12] = [
     Look {
         id: "halcyon",
         name: "Everyday",
-        description: "The time and weather together, with your system and music on the right.",
+        description: "The time and weather together, your system and music on the right.",
         family: Family::Frosted,
         wallpaper: "halcyon-night",
         palette: "ocean",
@@ -73,7 +73,7 @@ const LOOKS: [Look; 12] = [
     Look {
         id: "evening",
         name: "After hours",
-        description: "A quiet clock and your music. Leave the workday behind.",
+        description: "A quiet clock and your music, for leaving the workday behind.",
         family: Family::Soft,
         wallpaper: "halcyon-evening",
         palette: "lavender",
@@ -115,19 +115,22 @@ const LOOKS: [Look; 12] = [
         name: "Tidal",
         description: "The time and weather together, music along the edge, and open space.",
         family: Family::Soft,
-        wallpaper: "halcyon-calm",
-        palette: "teal",
-        seed: [0x6a, 0xc2, 0xc6],
+        // Its own picture and palette, so it no longer repeats Slow morning.
+        wallpaper: "teal",
+        palette: "ocean",
+        seed: [0x6c, 0xc0, 0xd0],
         light: false,
     },
     Look {
+        // Named Paper before: the style and a shifting look have that name.
+        // Its own picture and palette, so it no longer repeats Writing desk.
         id: "paper-studio",
-        name: "Paper",
-        description: "An analog clock, a notebook and a focus timer on a warm, light desktop.",
+        name: "Sketchbook",
+        description: "An analog clock, a notebook and a focus timer on dusky rose.",
         family: Family::Paper,
-        wallpaper: "halcyon-paper",
-        palette: "amber",
-        seed: [0xd5, 0xa7, 0x76],
+        wallpaper: "rose",
+        palette: "rose",
+        seed: [0xd8, 0x9c, 0xc0],
         light: true,
     },
     Look {
@@ -344,8 +347,10 @@ fn record(look: &Look) -> Value {
             "name": look.name,
             "appearance": {"mode": if look.light { "light" } else { "dark" }},
             "widget_style": {"theme": look.palette,
+                // Ink for text on the picture: only Paper's picture is
+                // light (a light look may sit on a dark one).
                 "appearance": {"accent": look.seed, "wallpaper_colors": true,
-                    "wallpaper_light": look.light},
+                    "wallpaper_light": look.wallpaper == "halcyon-paper"},
                 // A see-through At a glance (on a panel over a light
                 // wallpaper, where light text wouldn't read), and a system
                 // monitor that shows only what every computer has.
@@ -631,11 +636,11 @@ fn composition(id: &str) -> Value {
 }
 
 /// What a starter look changes beyond the wallpaper, in one line:
-/// “Style: Dark · Accent: Teal (all COSMIC apps)”. None for anything else.
+/// “Mode: Dark · Accent: Teal (all COSMIC apps)”. None for anything else.
 pub fn colors_line(id: &str) -> Option<String> {
     let look = LOOKS.iter().find(|look| look.id == id)?;
     Some(format!(
-        "Style: {} · Accent: {} (all COSMIC apps)",
+        "Mode: {} · Accent: {} (all COSMIC apps)",
         if look.light { "Light" } else { "Dark" },
         accent_name(look.seed)
     ))
@@ -851,7 +856,7 @@ fn ridge() -> Preset {
     profile.validate().expect("Ridge is a valid prepared setup");
     Preset {
         id: "ridge",
-        description: "A quiet landscape with a clock behind the mountain. Bars hide until needed.",
+        description: "A big clock behind the mountain, and bars that hide until needed.",
         profile,
     }
 }
@@ -893,7 +898,7 @@ fn spine() -> Preset {
     profile.validate().expect("Spine is a valid portable setup");
     Preset {
         id: "spine",
-        description: "A standard vertical panel with the time and weather together, and system readings.",
+        description: "A panel down the side, the time and weather, and system readings.",
         profile,
     }
 }
@@ -1056,6 +1061,11 @@ pub fn fitted(
     preset
 }
 
+/// A look whose picture isn't installed, as its review says it. Get the
+/// pictures beside it installs them.
+pub const PICTURE_NOT_INSTALLED: &str =
+    "This look’s picture isn’t installed, so applying it keeps your wallpaper.";
+
 /// What a starter look still needs from the user to look complete.
 pub fn missing(
     preset: &Preset,
@@ -1063,9 +1073,7 @@ pub fn missing(
     _islands: bool,
 ) -> Option<&'static str> {
     if !installed(preset, bundled_dir) {
-        Some(
-            "The built-in wallpapers aren’t installed, so your wallpaper stays. Reinstall Halcyon to restore them.",
-        )
+        Some(PICTURE_NOT_INSTALLED)
     } else {
         None
     }
@@ -1217,15 +1225,51 @@ mod tests {
     const DOCK: &str = "com.system76.CosmicPanel.Dock";
     const PANEL: &str = "com.system76.CosmicPanel.Panel";
 
+    // No two starter looks share a picture and a palette, no look takes
+    // another's name, and the gallery's descriptions are about the same
+    // length. IDs stay as they were.
+    #[test]
+    fn built_in_looks_each_have_their_own_picture_name_and_similar_text() {
+        for (i, a) in LOOKS.iter().enumerate() {
+            for b in &LOOKS[i + 1..] {
+                assert!(
+                    (a.wallpaper, a.palette) != (b.wallpaper, b.palette),
+                    "{} and {} repeat each other",
+                    a.id,
+                    b.id
+                );
+            }
+        }
+        let gallery = studio_presets();
+        let mut names: Vec<String> = gallery.iter().map(|p| p.profile.name.clone()).collect();
+        names.extend(super::super::adaptive::Look::ALL.map(|l| l.title().to_string()));
+        names.extend(themes::named().iter().map(|p| p.profile.name.clone()));
+        let styles: Vec<&str> = Family::ALL.map(Family::title).to_vec();
+        for (i, name) in names.iter().enumerate() {
+            assert!(
+                !names[i + 1..].contains(name),
+                "{name} names two things: {names:?}"
+            );
+            assert!(!styles.contains(&name.as_str()), "{name} is also a style");
+        }
+        for preset in &gallery {
+            let length = preset.description.chars().count();
+            assert!((50..=75).contains(&length), "{}: {length}", preset.id);
+        }
+        for id in ["tidal", "paper-studio", "calm", "paper"] {
+            assert!(gallery.iter().any(|p| p.id == id), "{id} keeps its ID");
+        }
+    }
+
     #[test]
     fn every_starter_look_names_its_style_and_accent() {
         assert_eq!(
             colors_line("calm").as_deref(),
-            Some("Style: Dark · Accent: Teal (all COSMIC apps)")
+            Some("Mode: Dark · Accent: Teal (all COSMIC apps)")
         );
         assert_eq!(
             colors_line("paper").as_deref(),
-            Some("Style: Light · Accent: Amber (all COSMIC apps)")
+            Some("Mode: Light · Accent: Amber (all COSMIC apps)")
         );
         for (id, accent) in [
             ("halcyon", "Blue"),
@@ -1446,7 +1490,8 @@ mod tests {
             ("paper", true),
             ("halcyon", false),
             ("tidal", false),
-            ("paper-studio", true),
+            // Sketchbook is a light look on a dark picture: light ink.
+            ("paper-studio", false),
             ("carbon", false),
             ("rain", false),
             ("snow", false),
@@ -1872,11 +1917,7 @@ mod tests {
         assert_eq!(panel.border_radius, Some(PILL));
         // Without the bundled wallpapers the rest of the look still applies.
         std::fs::remove_dir_all(fixture.0.join("pictures")).unwrap();
-        assert!(
-            missing(&workbench, &dir, true)
-                .unwrap()
-                .contains("Reinstall Halcyon")
-        );
+        assert_eq!(missing(&workbench, &dir, true), Some(PICTURE_NOT_INSTALLED));
         let without = fitted(workbench, &config, &dir, true);
         assert!(without.profile.wallpaper.is_none());
         assert!(without.profile.widget_style.is_some());

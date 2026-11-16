@@ -45,7 +45,7 @@ fn home_click_at(app: &mut Settings, native: &mut crate::native_test::Native, at
 #[test]
 fn home_picture_picks_parts_and_opens_their_pages() {
     use crate::desktop::panels::PanelKind;
-    use crate::settings::view::home_picture::PARTS;
+    use crate::settings::view::home_picture::{PARTS, TILES};
     let name = "home_picture_picks_parts_and_opens_their_pages";
     if desktop_test_child(
         name,
@@ -65,6 +65,12 @@ fn home_picture_picks_parts_and_opens_their_pages() {
         .filter(|page| *page != Page::Home)
         .collect();
     assert_eq!(PARTS.to_vec(), roots);
+    // The tiles are the same, with Looks after Appearance: it has no
+    // sidebar entry, and a whole new desktop is one tile away.
+    let mut tiles = roots.clone();
+    let after = tiles.iter().position(|p| *p == Page::Themes).unwrap() + 1;
+    tiles.insert(after, Page::DesktopProfiles);
+    assert_eq!(TILES.to_vec(), tiles);
     let root = isolated_root();
     seed_island(&root);
     let mut app = open_isolated_editor(&root);
@@ -93,8 +99,8 @@ fn home_picture_picks_parts_and_opens_their_pages() {
                 "{tag} {id}: {b:?}"
             );
         }
-        // So is one tile per sidebar entry, inside the window's width.
-        for page in PARTS {
+        // So is one tile per sidebar entry and Looks, inside the window's width.
+        for page in TILES {
             let id = format!("home-tile-{}", page.key());
             let b = native.bounds(app.settings_view(), &id);
             assert!(b.width > 40. && b.x + b.width <= size.width, "{tag} {id}: {b:?}");
@@ -104,6 +110,11 @@ fn home_picture_picks_parts_and_opens_their_pages() {
         // Fonts and icons says which font and icon theme are in use.
         let fonts = app.part_state(Page::DesktopAppearance);
         assert!(!fonts.is_empty() && text.contains(&fonts), "{fonts:?}: {text:?}");
+        // Light and dark are a mode, never a style; Looks says what it does.
+        let mode = app.part_state(Page::Themes);
+        assert!(!mode.contains("style"), "{mode:?}");
+        let looks = app.part_state(Page::DesktopProfiles);
+        assert!(text.contains(&looks), "{looks:?}: {text:?}");
         for (theme_name, theme) in home_themes() {
             native.capture(
                 app.settings_view(),
@@ -151,6 +162,10 @@ fn home_picture_picks_parts_and_opens_their_pages() {
     // Coming back starts with nothing picked.
     send_settings(&mut app, Message::Page(Page::Home));
     assert_eq!(app.home_part, None);
+    // The Looks tile opens Looks, though it has no sidebar entry.
+    native_click(&mut app, &mut native, "home-tile-desktop-profiles");
+    assert_eq!(app.page, Page::DesktopProfiles);
+    send_settings(&mut app, Message::Page(Page::Home));
     // Empty wallpaper picks Wallpaper.
     let picture = native.bounds(app.settings_view(), "home-part-desktop-wallpaper");
     home_click_at(

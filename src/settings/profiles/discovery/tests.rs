@@ -120,11 +120,12 @@ fn fb19_native_discovery_and_keyboard_remix_fit_compact_and_wide() {
         );
         app.open_sections.remove("setup-library-actions");
         let mut native = crate::native_test::Native::new(Size::new(w, h));
-        // Looks has no search field now; Mix and Import wait behind ⋯.
-        if app.help_open != Some("looks-more") {
+        // Looks has no search field now; mixing is a starting point of
+        // Make a look….
+        if app.help_open != Some("looks-make") {
             crate::settings::tests::send_settings(
                 &mut app,
-                crate::settings::Message::ToggleHelp("looks-more"),
+                crate::settings::Message::ToggleHelp("looks-make"),
             );
         }
         let mix = native.bounds(app.settings_view(), "mix-start");
@@ -138,10 +139,13 @@ fn fb19_native_discovery_and_keyboard_remix_fit_compact_and_wide() {
             .update(Message::Select(Selection::Preset("paper-studio")));
         assert!(
             native
-                .try_bounds(app.settings_view(), "setup-remix")
+                .try_bounds(app.settings_view(), "studio-edit")
                 .is_none(),
             "Closed Save & export must not expose hidden actions to focus"
         );
+        // Remix is gone: Make a look from this starts the studio from the
+        // look, where any part can still come from another look.
+        assert!(native.text_all(app.settings_view(), "Remix…").is_empty());
         crate::settings::tests::native_reveal(&app, &mut native, "setup-library-actions");
         native.operate(
             app.settings_view(),
@@ -175,13 +179,18 @@ fn fb19_native_discovery_and_keyboard_remix_fit_compact_and_wide() {
             crate::settings::tests::send_settings(&mut app, message);
         }
         assert!(app.open_sections.contains("setup-library-actions"));
-        crate::settings::tests::native_reveal(&app, &mut native, "setup-remix");
-        let b = native.bounds(app.settings_view(), "setup-remix");
+        crate::settings::tests::native_reveal(&app, &mut native, "studio-edit");
+        let b = native.bounds(app.settings_view(), "studio-edit");
         assert!(b.y >= 0. && b.y + b.height <= h);
+        assert!(
+            native
+                .try_bounds(app.settings_view(), "setup-remix")
+                .is_none()
+        );
         native.operate(
             app.settings_view(),
             Box::new(cosmic::iced::advanced::widget::operation::focusable::focus(
-                cosmic::widget::Id::new("setup-remix"),
+                cosmic::widget::Id::new("studio-edit"),
             )),
         );
         let key = keyboard::Key::Named(keyboard::key::Named::Enter);
@@ -202,15 +211,22 @@ fn fb19_native_discovery_and_keyboard_remix_fit_compact_and_wide() {
         );
         assert!(matches!(
             messages.as_slice(),
-            [crate::settings::Message::Profiles(Message::RemixSelected)]
+            [crate::settings::Message::Profiles(Message::Studio(
+                crate::settings::profiles::studio::Edit::Start(
+                    crate::settings::profiles::studio::Start::Selected
+                )
+            ))]
         ));
         crate::settings::tests::send_settings(&mut app, messages.into_iter().next().unwrap());
-        assert!(app.profiles.mix.is_some());
+        assert!(app.profiles.studio.is_some());
         native.capture(
             app.settings_view(),
             &cosmic::Theme::dark(),
-            &format!("fb19-remix-{w}"),
+            &format!("fb19-make-from-look-{w}"),
         );
+        app.profiles.update(Message::Studio(
+            crate::settings::profiles::studio::Edit::Close,
+        ));
         app.native_busy = true;
         let _ = app.update(crate::settings::Message::Profiles(Message::RemixSelected));
         assert!(app.native_deferred.is_empty());

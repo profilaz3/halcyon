@@ -633,7 +633,7 @@ fn home_tiles_take_tab_space_and_enter() {
     send_settings(&mut app, Message::Resized(SIZE));
     let mut native = Native::new(SIZE);
     let nodes = native.a11y(app.settings_view());
-    for page in crate::settings::view::home_picture::PARTS {
+    for page in crate::settings::view::home_picture::TILES {
         assert!(
             nodes
                 .iter()

@@ -474,8 +474,14 @@ const SEARCH: &[SearchHit] = &[
     .at("appearance-window-tone"),
     hit(
         Page::Themes,
+        "Themes",
+        "ready-made colors colours deep purple rainy lake theme",
+        false,
+    ),
+    hit(
+        Page::Themes,
         "Style",
-        "shared desktop themes theme look soft outline paper bare frosted widgets save share",
+        "widget cards card styles shape corners borders type soft outline paper bare glass tinted frosted midnight terminal neon editorial retro pastel bauhaus",
         false,
     ),
     hit(
@@ -506,13 +512,6 @@ const SEARCH: &[SearchHit] = &[
         false,
     )
     .at("appearance-density"),
-    hit(
-        Page::Themes,
-        "Style by time of day",
-        "day night sunset sunrise moments widget style",
-        false,
-    )
-    .at("appearance-moments"),
     WIDGET_READABILITY,
     hit(
         Page::General,
@@ -1607,7 +1606,8 @@ fn synonyms(word: &str) -> &'static [&'static str] {
         "timezone" => &["timezone", "city"],
         "google" | "ics" | "ical" | "caldav" | "outlook" | "agenda" | "events" => &["calendar"],
         "bigger" | "smaller" | "larger" | "scale" | "scaling" | "zoom" => &["size"],
-        "theme" | "themes" => &["style"],
+        // A theme is a set of colors; a style is the widget cards' shape.
+        "theme" | "themes" => &["themes", "colors"],
         "wizard" | "onboarding" | "setup" => &["set", "wizard"],
         "left" | "right" | "top" | "bottom" | "side" => &["position"],
         "image" | "images" | "photo" | "photos" | "picture" | "pictures" => &["picture", "wallpaper"],

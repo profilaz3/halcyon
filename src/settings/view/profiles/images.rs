@@ -54,13 +54,10 @@ pub(in crate::settings) fn prepare() {
 }
 pub(super) fn look(id: &str, wallpaper: bool) -> Option<Handle> {
     let cache = CACHE.get()?;
-    let id = match id {
-        "tidal" => "calm",
-        "paper-studio" => "paper",
-        other => other,
-    };
     if wallpaper {
         if let Some(name) = match id {
+            "tidal" => Some("teal"),
+            "paper-studio" => Some("rose"),
             "carbon" => Some("graphite"),
             "rain" => Some("halcyon-rain"),
             "snow" => Some("halcyon-snow"),
@@ -104,11 +101,21 @@ mod tests {
             let b = look(id, true).unwrap();
             assert_eq!(a.id(), b.id());
         }
+        // Tidal and Sketchbook show their own pictures, not Slow morning's
+        // and Writing desk's.
         assert_eq!(
+            look("tidal", true).unwrap().id(),
+            cache.bundled["teal"].id()
+        );
+        assert_eq!(
+            look("paper-studio", true).unwrap().id(),
+            cache.bundled["rose"].id()
+        );
+        assert_ne!(
             look("tidal", true).unwrap().id(),
             look("calm", true).unwrap().id()
         );
-        assert_eq!(
+        assert_ne!(
             look("paper-studio", true).unwrap().id(),
             look("paper", true).unwrap().id()
         );

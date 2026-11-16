@@ -48,9 +48,9 @@ pub use plan::{
 #[cfg(test)]
 pub(crate) use presets::islands_composition;
 pub use presets::{
-    CLEAN, Preset, atmosphere, built_in_file, built_in_looks, colors_line, fitted,
-    islands_available, islands_description, missing, occasion, parse_built_in, preset, presets,
-    studio_presets,
+    CLEAN, PICTURE_NOT_INSTALLED, Preset, atmosphere, built_in_file, built_in_looks, colors_line,
+    fitted, islands_available, islands_description, missing, occasion, parse_built_in, preset,
+    presets, studio_presets,
 };
 
 #[cfg(test)]

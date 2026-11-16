@@ -777,6 +777,24 @@ fn looks_ready_made_themes_and_looks_preview_and_apply_exactly() {
             );
             send_settings(&mut app, Message::Profiles(profiles::Message::Apply));
             looks_drive(&mut app);
+            // Choosing it brings its colors; the dock and panel keep their
+            // shape.
+            let shapeless = |p: &crate::desktop::profiles::Profile| {
+                let mut p = p.clone();
+                themes::keep_bar_shape(&mut p);
+                recorded(&p)
+            };
+            let captured = themes::capture(&store, "Applied").unwrap().profile;
+            assert_eq!(
+                shapeless(&captured),
+                shapeless(&saved),
+                "{id} in {tone} mode"
+            );
+            // With its own dock and panel, asked for, the desktop wears
+            // exactly the saved theme.
+            looks_send(&mut app, profiles::Message::UseStyleBars(id));
+            send_settings(&mut app, Message::Profiles(profiles::Message::Apply));
+            looks_drive(&mut app);
             let captured = themes::capture(&store, "Applied").unwrap().profile;
             assert_eq!(recorded(&captured), recorded(&saved), "{id} in {tone} mode");
             assert_eq!(
@@ -895,5 +913,219 @@ fn spine_offers_to_turn_off_islands_and_apply() {
             .anchor()
             .known(),
         Some(&Anchor::Left)
+    );
+}
+
+/// A look whose picture isn't installed says so on its tile, and its
+/// review offers Get the pictures, the job Wallpaper's Get more pictures
+/// runs. Once the pictures are there, the look plans with its picture.
+#[test]
+fn looks_without_their_picture_offer_to_get_the_pictures() {
+    let name = "looks_without_their_picture_offer_to_get_the_pictures";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use cosmic::iced::{Event, mouse};
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    let size = Size::new(1280., 800.);
+    send_settings(&mut app, Message::Resized(size));
+    send_settings(&mut app, Message::Page(Page::DesktopProfiles));
+    looks_drive(&mut app);
+    assert!(app.profiles.picture_missing("calm"));
+    let mut native = crate::native_test::Native::new(size);
+    native_reveal(&app, &mut native, "preset-calm");
+    assert!(
+        !native
+            .text_all(
+                app.settings_view(),
+                crate::settings::view::profiles::PICTURE_MISSING
+            )
+            .is_empty()
+    );
+    looks_select(&mut app, "calm");
+    assert!(
+        !app.profiles
+            .profile()
+            .unwrap()
+            .domains()
+            .contains(&Domain::Wallpaper)
+    );
+    let button = native_reveal(&app, &mut native, "look-get-pictures");
+    assert!(
+        native
+            .text_all(app.settings_view(), "Reinstall Halcyon to restore them.")
+            .is_empty()
+    );
+    let mut sent = Vec::new();
+    for event in [
+        mouse::Event::CursorMoved {
+            position: button.center(),
+        },
+        mouse::Event::ButtonPressed(mouse::Button::Left),
+        mouse::Event::ButtonReleased(mouse::Button::Left),
+    ] {
+        sent.extend(
+            native
+                .event(app.settings_view(), Event::Mouse(event), button.center())
+                .0,
+        );
+    }
+    assert!(
+        matches!(sent.as_slice(), [Message::GetPictures]),
+        "{sent:?}"
+    );
+    looks_capture(&app, &mut native, "looks-get-the-pictures");
+    // What the job leaves behind: Halcyon's pictures, then its result.
+    let store = app.desktop.store().unwrap().clone();
+    let bundled = crate::desktop::wallpaper::bundled_dir(&store);
+    std::fs::create_dir_all(&bundled).unwrap();
+    for (name, _) in crate::desktop::wallpaper::BUNDLED {
+        let _ = std::fs::copy(
+            crate::desktop::wallpaper::bundled_path(
+                &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/wallpapers"),
+                name,
+            ),
+            crate::desktop::wallpaper::bundled_path(&bundled, name),
+        );
+    }
+    send_settings(
+        &mut app,
+        Message::CommandDone("Bundled wallpapers reinstalled".into(), Ok(())),
+    );
+    looks_drive(&mut app);
+    assert!(!app.profiles.picture_missing("calm"));
+    assert_eq!(
+        app.profiles.selection(),
+        &profiles::Selection::Preset("calm")
+    );
+    assert!(
+        app.profiles
+            .profile()
+            .unwrap()
+            .domains()
+            .contains(&Domain::Wallpaper)
+    );
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "look-get-pictures")
+            .is_none()
+    );
+}
+
+/// Appearance starts with looks, names what looks, themes and styles each
+/// change, calls the time of day page by its name, and on a fresh install
+/// marks Soft, the style the widgets are drawn in, as Current.
+#[test]
+fn appearance_starts_with_looks_and_names_each_kind_of_choice() {
+    let name = "appearance_starts_with_looks_and_names_each_kind_of_choice";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let root = isolated_root();
+    let mut app = looks_desktop(&root);
+    assert_eq!(app.config.appearance.family, None);
+    let size = Size::new(1280., 900.);
+    send_settings(&mut app, Message::Resized(size));
+    send_settings(&mut app, Message::Page(Page::Themes));
+    looks_drive(&mut app);
+    let mut native = crate::native_test::Native::new(size);
+    // Looks first, on the first screen, with a few of them as pictures.
+    let looks = native.bounds(app.settings_view(), "appearance-looks");
+    let viewport = native.bounds(app.settings_view(), "settings-viewport");
+    assert!(
+        looks.y + looks.height <= viewport.y + viewport.height,
+        "{looks:?}"
+    );
+    let look = native.bounds(app.settings_view(), "appearance-look-halcyon");
+    let soft = native.bounds(app.settings_view(), "preset-theme-soft");
+    assert!(look.y < soft.y, "{look:?} {soft:?}");
+    let text = native.all_text(app.settings_view());
+    for line in [
+        "A whole new desktop at once: wallpaper, style, widgets, dock and panel",
+        "Colors for widgets, windows, the dock and panel",
+        "How widget cards are shaped: corners, borders and type",
+        "Time of day",
+    ] {
+        assert!(text.iter().any(|t| t == line), "{line}: {text:?}");
+    }
+    assert!(!text.iter().any(|t| t == "Style by time of day"));
+    // Nothing chosen yet: Soft is what the widgets look like.
+    let current = native.text_bounds(app.settings_view(), "Current");
+    assert!(soft.contains(current.center()), "{current:?} in {soft:?}");
+    looks_capture(&app, &mut native, "appearance-looks-first");
+    // Choosing a style keeps the dock and panel's shape, says so, and
+    // offers the style's own, which applies as one more change.
+    use crate::desktop::panels::{PanelDraft, PanelKind};
+    let store = crate::desktop::DesktopStore::from_env().unwrap();
+    let floating = || {
+        PanelDraft::load(&store, PanelKind::Dock)
+            .unwrap()
+            .floating()
+    };
+    let before = floating();
+    looks_select(&mut app, "theme-soft");
+    send_settings(&mut app, Message::Profiles(profiles::Message::Apply));
+    looks_drive(&mut app);
+    assert_eq!(
+        app.config.appearance.family,
+        Some(crate::desktop_theme::Family::Soft)
+    );
+    assert_eq!(floating(), before);
+    send_settings(&mut app, Message::Page(Page::Themes));
+    looks_drive(&mut app);
+    native_reveal(&app, &mut native, "appearance-style-bars");
+    assert!(
+        !native
+            .text_all(app.settings_view(), "Use this style’s dock and panel")
+            .is_empty()
+    );
+    looks_capture(&app, &mut native, "appearance-style-bars");
+    looks_send(&mut app, profiles::Message::UseStyleBars("theme-soft"));
+    send_settings(&mut app, Message::Profiles(profiles::Message::Apply));
+    looks_drive(&mut app);
+    assert_eq!(floating().known(), Some(&true));
+    send_settings(&mut app, Message::Page(Page::Themes));
+    looks_drive(&mut app);
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "appearance-style-bars")
+            .is_none()
+    );
+    // A look's picture opens it in Looks.
+    native_click(&mut app, &mut native, "appearance-look-halcyon");
+    assert_eq!(app.page, Page::DesktopProfiles);
+    assert_eq!(
+        app.profiles.selection(),
+        &profiles::Selection::Preset("halcyon")
+    );
+    // Search keeps them apart: a theme is a set of colors.
+    let hits = navigation::search("theme");
+    let themes = hits.iter().position(|hit| hit.label == "Themes");
+    assert!(themes.is_some_and(|at| at < 3), "{hits:?}");
+    assert!(
+        hits.iter()
+            .position(|hit| hit.label == "Style")
+            .is_none_or(|at| Some(at) > themes),
+        "{hits:?}"
+    );
+    assert!(
+        navigation::search("glass tinted")
+            .iter()
+            .any(|hit| hit.label == "Style")
     );
 }

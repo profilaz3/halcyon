@@ -717,6 +717,9 @@ pub enum Message {
     Back,
     /// Home: preview a built-in look on the Presets page. Nothing applies.
     TryPreset(&'static str),
+    /// Installs Halcyon's own pictures, as Get more pictures on Wallpaper
+    /// does, so a look can apply with its picture.
+    GetPictures,
     /// Home: open Dock and panel with this bar selected.
     OpenBar(crate::desktop::panels::PanelKind),
     OpenWidgetFinish,
@@ -2421,6 +2424,7 @@ fn instant_theme_edit(edit: &profiles::Message) -> bool {
             | Edit::ThemeScope(_)
             | Edit::ThemeWallpaper(_)
             | Edit::WindowTone(_)
+            | Edit::UseStyleBars(_)
             | Edit::RepairThemeMatching
             // Settling the last conflict lets the waiting choice apply;
             // there is no Apply button on Appearance to finish it.
@@ -2785,6 +2789,7 @@ impl Settings {
                 // Panel and Dock each have a page; it selects its bar.
                 return self.handle(Message::Page(Page::of_bar(kind)));
             }
+            Message::GetPictures => return self.get_pictures(),
             Message::ToggleAdvanced(page) => {
                 if self.advanced_pages.contains(&page) {
                     self.advanced_pages.retain(|p| *p != page);
@@ -4659,10 +4664,12 @@ impl Settings {
                 }
                 // Reinstalled pictures or a matched background: the page
                 // rereads its tiles, and the media work that starts runs
-                // whatever page shows.
+                // whatever page shows. A look that waited for its picture
+                // is planned with it.
                 if self.wallpaper.opened() {
                     self.wallpaper.refresh();
                 }
+                self.profiles.refit(&self.config);
                 let media = self.media_tasks();
                 match result {
                     Ok(()) => {
@@ -6221,12 +6228,8 @@ impl Settings {
                 tasks.push(wallpaper::dialog(request, Message::Wallpaper));
             }
             Outcome::Controller(args) => {
-                if preview() {
-                    self.failed("Reinstalling is off in preview mode".into());
-                } else if !self.busy {
-                    self.working("Reinstalling the bundled wallpapers…");
-                    tasks.push(controller(args, "Bundled wallpapers reinstalled"));
-                }
+                debug_assert_eq!(args, ["wallpapers-install"]);
+                tasks.push(self.get_pictures());
             }
         }
         if refresh_theme {
@@ -7241,6 +7244,24 @@ fn run_command(command: PathBuf, args: Vec<String>, status: &'static str) -> Tas
 }
 fn controller(args: Vec<String>, status: &'static str) -> Task<Message> {
     run_command(crate::paths::controller(), args, status)
+}
+impl Settings {
+    /// Installs Halcyon's own pictures: Get more pictures on Wallpaper and
+    /// Get the pictures on a look both run this one job.
+    fn get_pictures(&mut self) -> Task<Message> {
+        if preview() {
+            self.failed("Reinstalling is off in preview mode".into());
+            Task::none()
+        } else if self.busy {
+            Task::none()
+        } else {
+            self.working("Reinstalling the bundled wallpapers…");
+            controller(
+                vec!["wallpapers-install".into()],
+                "Bundled wallpapers reinstalled",
+            )
+        }
+    }
 }
 /// What the footer says once Start or Stop for the widgets is done.
 const WIDGETS_STARTED: &str = "Widgets started";

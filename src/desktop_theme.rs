@@ -126,8 +126,8 @@ pub struct StyleSpec {
     pub geometry: (u8, u16, u8),
     pub border_width: f32,
     pub shadow: Shadow,
-    /// Legacy frosted style classification; rendering is decorative and
-    /// does not enable native backdrop effects.
+    /// Cards are denser and more tinted than the opacity alone gives (see
+    /// `resolve`). Decorative only: no native backdrop effects.
     pub frosted: bool,
     /// Cards are transparent over the wallpaper by default.
     pub transparent: bool,
@@ -207,7 +207,7 @@ const OUTLINE: StyleSpec = StyleSpec {
 const PAPER: StyleSpec = StyleSpec {
     id: "paper",
     title: "Paper",
-    description: "Warm paper, dark ink",
+    description: "Light sheets, serif clock",
     accent: [60, 112, 91],
     light: true,
     surface: (0.965, 0.05, 0.006, (0.002, 0.012)),
@@ -274,7 +274,7 @@ const BARE: StyleSpec = StyleSpec {
 };
 const GLASS: StyleSpec = StyleSpec {
     id: "glass",
-    title: "Frosted",
+    title: "Glass",
     description: "See-through cards",
     accent: [184, 162, 237],
     light: false,
@@ -305,10 +305,12 @@ const GLASS: StyleSpec = StyleSpec {
     },
     wallpaper: ([29, 43, 74], [91, 75, 138]),
 };
+/// Glass with a denser, more tinted card (see `resolve`). Saved as
+/// "frosted", its name before it was called Tinted glass.
 const FROSTED: StyleSpec = StyleSpec {
     id: "frosted",
-    title: "Frosted glass",
-    description: "Tinted, easy to read",
+    title: "Tinted glass",
+    description: "Denser glass, easy to read",
     frosted: true,
     wallpaper: ([30, 40, 60], [150, 100, 140]),
     ..GLASS
@@ -350,7 +352,7 @@ const MIDNIGHT: StyleSpec = StyleSpec {
 const TERMINAL: StyleSpec = StyleSpec {
     id: "terminal",
     title: "Terminal",
-    description: "Old green screen",
+    description: "Square corners, fixed-width text",
     accent: [142, 240, 168],
     light: false,
     surface: (0.16, 0.25, 0.04, (0., 0.)),
@@ -383,7 +385,7 @@ const TERMINAL: StyleSpec = StyleSpec {
 const NEON: StyleSpec = StyleSpec {
     id: "neon",
     title: "Neon",
-    description: "Glowing edges",
+    description: "Glowing edges, narrow text",
     accent: [255, 79, 216],
     light: false,
     surface: (0.17, 0.5, 0.08, (0., 0.)),
@@ -515,7 +517,7 @@ const PASTEL: StyleSpec = StyleSpec {
 const BAUHAUS: StyleSpec = StyleSpec {
     id: "bauhaus",
     title: "Bauhaus",
-    description: "Shapes and primary colors",
+    description: "Square corners, thick lines",
     accent: [209, 59, 43],
     light: true,
     surface: (0.985, 0.0, 0.0, (0., 0.)),
@@ -631,6 +633,20 @@ impl Family {
     /// The card surface: the style's lightness, tinted by the seed's hue.
     pub fn surface(self, seed: [u8; 3]) -> [u8; 3] {
         self.surface_for(seed, !self.light())
+    }
+    /// The widget card's fill. Tinted glass takes a stronger tint of the
+    /// color at the same lightness; windows keep `surface`, so its window
+    /// colors stay as they were.
+    pub fn card_surface(self, seed: [u8; 3]) -> [u8; 3] {
+        if !self.spec().frosted {
+            return self.surface(seed);
+        }
+        let tint = tone::lch(seed);
+        tone::rgb(Lch {
+            l: self.surface_l(!self.light()),
+            c: (tint.c * 0.8).min(0.09),
+            h: tint.h,
+        })
     }
     /// Native surface in either mode. Keep the family's tint and its original
     /// polarity unchanged; the opposite variant uses a readable tonal range.
@@ -978,7 +994,7 @@ pub fn resolve(a: Appearance) -> Roles {
     let tint = tone::lch(seed);
     // Light styles draw dark ink on a light sheet.
     let paper = spec.light;
-    let surface = tone::color(family.surface(seed));
+    let surface = tone::color(family.card_surface(seed));
     let foreground = tone::color(if paper {
         hued(tint, 0.30, 0.03)
     } else {
@@ -998,11 +1014,16 @@ pub fn resolve(a: Appearance) -> Roles {
         Surface::Panel
     }) == Surface::Transparent
         && !a.contrast_assist;
+    // Tinted glass is half as see-through as its opacity says, so it reads
+    // more easily than Glass at the same setting.
+    let fill = f32::from(a.opacity) / 100.;
+    let fill = if spec.frosted {
+        fill + (1. - fill) / 2.
+    } else {
+        fill
+    };
     let mut card = Palette {
-        background: Color {
-            a: a.opacity as f32 / 100.,
-            ..surface
-        },
+        background: Color { a: fill, ..surface },
         foreground,
         muted,
         accent: readable(seed, surface),
@@ -1157,6 +1178,42 @@ mod tests {
             // A frosted style retains its filled decorative card.
             assert!(!(spec.frosted && spec.transparent), "{}", spec.id);
         }
+    }
+
+    // Tinted glass is no longer a copy of Glass: at the same settings its
+    // card is denser and more colorful, while its windows stay as they were.
+    #[test]
+    fn tinted_glass_draws_a_denser_more_tinted_card_than_glass() {
+        let old: Config = serde_json::from_str("{}").unwrap();
+        let card = |family: Family| {
+            let mut c = old.clone();
+            c.appearance.family = Some(family);
+            c.appearance.accent = Some([120, 90, 220]);
+            (
+                c.appearance.opacity,
+                c.appearance.corner_radius,
+                c.appearance.border_opacity,
+            ) = family.geometry();
+            c.theme_roles().unwrap().card
+        };
+        let (glass, tinted) = (card(Family::Glass), card(Family::Frosted));
+        assert!(
+            tinted.background.a >= glass.background.a,
+            "{tinted:?} {glass:?}"
+        );
+        assert_ne!(tinted.background, glass.background);
+        let chroma = |c: Color| tone::lch(bytes(c)).c;
+        assert!(chroma(tinted.background) > chroma(glass.background) * 1.5);
+        assert_ne!(Family::Glass.title(), Family::Frosted.title());
+        for dark in [false, true] {
+            assert_eq!(
+                Family::Frosted.window_for([120, 90, 220], dark, 0),
+                Family::Glass.window_for([120, 90, 220], dark, 0)
+            );
+        }
+        // Saved styles keep their ids.
+        assert_eq!(Family::parse("frosted"), Some(Family::Frosted));
+        assert_eq!(Family::parse("glass"), Some(Family::Glass));
     }
 
     #[test]

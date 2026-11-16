@@ -20,10 +20,12 @@ pub enum Phase {
 }
 impl Look {
     pub const ALL: [Self; 3] = [Self::Tidal, Self::Paper, Self::Moss];
+    /// Names no other look or style uses. The IDs keep the earlier names
+    /// (Tidal and Paper), so saved schedules stay as they are.
     pub fn title(self) -> &'static str {
         match self {
-            Self::Tidal => "Tidal",
-            Self::Paper => "Paper",
+            Self::Tidal => "Shoreline",
+            Self::Paper => "Linen",
             Self::Moss => "Moss",
         }
     }

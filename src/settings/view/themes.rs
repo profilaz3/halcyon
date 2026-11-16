@@ -116,7 +116,7 @@ impl Settings {
         let look = self.look();
         let mut rows = vec![heading(
             "Appearance",
-            "Style and colors for your desktop and apps.",
+            "Colors and styles for your desktop and apps. For a whole new desktop, start from a look.",
         )];
         if let Some(error) = editor.unavailable() {
             rows.push(banner(error.to_string(), ERROR, vec![]));
@@ -128,6 +128,7 @@ impl Settings {
             edit(Edit::Recover),
             edit(Edit::KeepRecovery),
         ));
+        rows.push(self.appearance_looks());
         rows.push(self.theme_stage(&look));
         if !themes::named().is_empty() {
             rows.push(self.appearance_themes());
@@ -191,8 +192,71 @@ impl Settings {
         (columns, tile)
     }
 
-    /// The ready-made themes: a style in its own colors, with its own dock
-    /// and panel. Choosing one applies it exactly as it was made.
+    /// A few looks as pictures, and the way to all of them. A look changes
+    /// the whole desktop, so it comes before the colors and styles below.
+    fn appearance_looks(&self) -> Element<'_, Message> {
+        let (columns, tile) = self.tile_grid();
+        let presets = self.profiles.presets();
+        let tiles: Vec<Element<'_, Message>> =
+            ["halcyon", "rain", "carbon", "paper", "snow", "fog"]
+                .into_iter()
+                .filter_map(|id| presets.iter().find(|preset| preset.id == id))
+                .take(columns)
+                .map(|preset| self.look_tile(preset, tile))
+                .collect();
+        column::with_children(vec![
+            split(
+                section_title(
+                    "Looks",
+                    "A whole new desktop at once: wallpaper, style, widgets, dock and panel",
+                ),
+                button::text("See all looks")
+                    .id(cosmic::widget::Id::new("appearance-looks"))
+                    .on_press(Message::Page(Page::DesktopProfiles))
+                    .into(),
+            ),
+            row::with_children(tiles)
+                .spacing(10)
+                .wrap()
+                .vertical_spacing(10)
+                .into(),
+        ])
+        .spacing(10)
+        .into()
+    }
+
+    /// A look as a small picture and its name; choosing it opens it in
+    /// Looks, where it is reviewed before it applies.
+    fn look_tile<'a>(
+        &'a self,
+        preset: &'a crate::desktop::profiles::Preset,
+        width: f32,
+    ) -> Element<'a, Message> {
+        let height = ((width - 16.) * 9. / 16.).round();
+        let mut parts = vec![
+            self.preset_thumbnail(preset, height),
+            line(preset.profile.name.clone(), 14., FG),
+        ];
+        if self.profiles.picture_missing(preset.id) {
+            parts.push(line(super::profiles::PICTURE_MISSING, 12., MUTED));
+        }
+        container(
+            button::custom(column::with_children(parts).spacing(6))
+                .class(tile_style(false, self.settings_accent()))
+                .padding(8)
+                .width(Length::Fill)
+                .on_press(Message::TryPreset(preset.id)),
+        )
+        .id(cosmic::widget::Id::new(format!(
+            "appearance-look-{}",
+            preset.id
+        )))
+        .width(width)
+        .into()
+    }
+
+    /// The ready-made themes: a style in its own colors. Choosing one
+    /// applies it at once; the dock and panel keep their shape.
     fn appearance_themes(&self) -> Element<'_, Message> {
         let (_, tile) = self.tile_grid();
         let tiles: Vec<Element<'_, Message>> = themes::named()
@@ -200,7 +264,7 @@ impl Settings {
             .map(|preset| self.theme_tile(preset, tile))
             .collect();
         column::with_children(vec![
-            text::heading("Themes").into(),
+            section_title("Themes", "Colors for widgets, windows, the dock and panel"),
             row::with_children(tiles)
                 .spacing(10)
                 .wrap()
@@ -231,9 +295,12 @@ impl Settings {
             .into_iter()
             .map(|family| self.style_tile(family, look, tile))
             .collect();
-        column::with_children(vec![
+        let mut items = vec![
             split(
-                text::heading("Style").into(),
+                section_title(
+                    "Style",
+                    "How widget cards are shaped: corners, borders and type",
+                ),
                 button::text(if all {
                     "Show fewer".to_string()
                 } else {
@@ -248,9 +315,42 @@ impl Settings {
                 .wrap()
                 .vertical_spacing(10)
                 .into(),
-        ])
-        .spacing(10)
-        .into()
+        ];
+        items.extend(self.style_bars_row());
+        column::with_children(items).spacing(10).into()
+    }
+
+    /// Choosing a style or theme leaves the dock and panel's shape as it
+    /// is. While theirs differs from the applied one's, this offers it.
+    fn style_bars_row(&self) -> Option<Element<'_, Message>> {
+        let a = &self.config.appearance;
+        let (id, what) = match themes::applied_named(a) {
+            Some(preset) => (preset.id, "Use this theme’s dock and panel"),
+            None => (a.family?.preset(), "Use this style’s dock and panel"),
+        };
+        let record = &self
+            .profiles
+            .presets()
+            .iter()
+            .find(|preset| preset.id == id)?
+            .profile;
+        if !a.style_bars || !self.profiles.bar_shape_differs(record) {
+            return None;
+        }
+        Some(split(
+            label(
+                "Your dock and panel keep their own shape when you choose a style.",
+                12.,
+                MUTED,
+            ),
+            button::text(what)
+                .id(cosmic::widget::Id::new("appearance-style-bars"))
+                .on_press_maybe(
+                    (!self.native_busy && !self.profiles.busy())
+                        .then_some(edit(Edit::UseStyleBars(id))),
+                )
+                .into(),
+        ))
     }
 
     /// One color, light or dark, and where the color is used.
@@ -516,22 +616,15 @@ impl Settings {
         ));
         // A day or night widget style overrides the style above, so while
         // one shows, say so. Time of day, which also switches whole looks,
-        // opens from here.
+        // opens from here, by the name it has everywhere.
         rows.push(self.link_row_state(
-            "Style by time of day",
+            "Time of day",
             match self.config.moments.active {
                 Some(phase) => format!("Showing the {} style", phase.title().to_lowercase()),
                 None => "Day and night styles for widgets, or whole looks".into(),
             },
             Message::Page(Page::Moments),
             "appearance-moments".into(),
-        ));
-        // Looks left the sidebar; whole-desktop looks open from here.
-        rows.push(self.link_row_state(
-            "Looks",
-            "Saved desktops: style, wallpaper, bars and widgets together",
-            Message::Page(Page::DesktopProfiles),
-            "appearance-looks".into(),
         ));
         group(Some("Surfaces"), rows)
     }
@@ -1081,7 +1174,10 @@ impl Settings {
                 && look.family == Some(family)
                 && !named
                 && matches!(editor.selection(), Selection::Preset(_)));
-        let applied = self.config.appearance.family == Some(family)
+        // Before any style is chosen, widgets are drawn the way Soft draws
+        // them (rounded, bordered, no shadow), so Soft is the current one.
+        let applied = (self.config.appearance.family == Some(family)
+            || (self.config.appearance.family.is_none() && family == Family::Soft))
             && themes::applied_named(&self.config.appearance).is_none();
         let selected = selected || applied;
         let marker: Element<'_, Message> = if applied {
@@ -1276,4 +1372,15 @@ impl Settings {
         }
         rows
     }
+}
+
+/// A section's name with one line on what it changes.
+fn section_title<'a>(title: &'a str, description: &'a str) -> Element<'a, Message> {
+    column::with_children(vec![
+        text::heading(title).into(),
+        label(description, 12., MUTED),
+    ])
+    .spacing(2)
+    .width(Length::Fill)
+    .into()
 }

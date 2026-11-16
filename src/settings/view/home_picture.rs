@@ -13,7 +13,7 @@ use cosmic::iced::widget::{pin, stack};
 use cosmic::iced::{Point, Rectangle};
 use cosmic::widget::{canvas, responsive};
 
-/// The pages Home has a tile for: every sidebar root after Home, in order.
+/// The parts of Home's picture: every sidebar root after Home, in order.
 pub(in crate::settings) const PARTS: [Page; 11] = [
     Page::DesktopWallpaper,
     Page::WeatherEffects,
@@ -35,6 +35,24 @@ pub(super) enum Picks {
     Select,
     Glance,
 }
+
+/// Home's tiles: every part, with Looks after Appearance. Looks has no
+/// sidebar entry of its own, so its tile is the quickest way to a whole
+/// new desktop.
+pub(in crate::settings) const TILES: [Page; 12] = [
+    Page::DesktopWallpaper,
+    Page::WeatherEffects,
+    Page::Overview,
+    Page::DesktopPanel,
+    Page::DesktopDock,
+    Page::ActivityIsland,
+    Page::Themes,
+    Page::DesktopProfiles,
+    Page::DesktopAppearance,
+    Page::DesktopWindows,
+    Page::DesktopMotion,
+    Page::General,
+];
 
 pub(in crate::settings) fn part_id(page: Page) -> String {
     format!("home-part-{}", page.key())
@@ -919,7 +937,7 @@ impl Settings {
     fn home_tiles(&self, selected: Option<Page>) -> Element<'_, Message> {
         let accent = self.settings_accent();
         let columns = ((self.content_width() + 8.) / 158.).floor().clamp(2., 5.) as usize;
-        let tiles: Vec<Element<'_, Message>> = PARTS
+        let tiles: Vec<Element<'_, Message>> = TILES
             .iter()
             .map(|page| {
                 let page = *page;
@@ -1050,8 +1068,8 @@ impl Settings {
             }
             Page::Themes => match self.system_appearance.draft().map(|d| d.mode()) {
                 Some(crate::desktop::panels::Setting::Known(mode)) => match mode {
-                    crate::desktop::appearance::SystemMode::Light => "Light style".into(),
-                    crate::desktop::appearance::SystemMode::Dark => "Dark style".into(),
+                    crate::desktop::appearance::SystemMode::Light => "Light mode".into(),
+                    crate::desktop::appearance::SystemMode::Dark => "Dark mode".into(),
                     crate::desktop::appearance::SystemMode::Automatic => {
                         "Light by day, dark at night".into()
                     }
@@ -1099,6 +1117,29 @@ impl Settings {
                 Some(false) => "Reduced motion".into(),
                 None => "Motion and readability".into(),
             },
+            Page::DesktopProfiles => {
+                use crate::settings::profiles::Selection;
+                let editor = &self.profiles;
+                let name = match editor.last_applied() {
+                    Some(Selection::Preset(id)) => editor
+                        .presets()
+                        .iter()
+                        .find(|preset| preset.id == id)
+                        .map(|preset| preset.profile.name.clone()),
+                    Some(Selection::Saved(id)) => editor.library().ok().and_then(|entries| {
+                        entries
+                            .iter()
+                            .find(|entry| entry.id == id)
+                            .and_then(|entry| entry.profile.as_ref().ok())
+                            .map(|profile| profile.name.clone())
+                    }),
+                    _ => None,
+                };
+                name.map_or_else(
+                    || "A whole new desktop in one go".into(),
+                    |name| format!("Last applied: {name}"),
+                )
+            }
             Page::General => format!("Version {}", env!("CARGO_PKG_VERSION")),
             _ => String::new(),
         }

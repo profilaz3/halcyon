@@ -183,13 +183,11 @@ fn match_style_follows_the_look_and_keeps_its_values() {
     let size = Size::new(1280., 800.);
     send_settings(&mut app, Message::Resized(size));
     let mut native = crate::native_test::Native::new(size);
-    // A built-in look styles the bars.
+    // A built-in style with its own dock and panel styles the bars.
     send_settings(&mut app, Message::Page(Page::Themes));
     let _ = app
         .profiles
-        .update(profiles::Message::Select(profiles::Selection::Preset(
-            "theme-outline",
-        )));
+        .update(profiles::Message::UseStyleBars("theme-outline"));
     for job in app.profiles.take_theme_jobs() {
         send_settings(&mut app, Message::Profiles(job.run()));
     }

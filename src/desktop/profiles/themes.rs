@@ -270,6 +270,35 @@ pub fn record(family: Family) -> Profile {
     p
 }
 
+/// Leaves the dock and panel's shape as it is on the desktop: floating or
+/// attached, margin, corners, padding, spacing and the island gap. Their
+/// colors and see-through still follow the record. Choosing a style or
+/// theme does this unless its own dock and panel were asked for.
+pub fn keep_bar_shape(p: &mut Profile) {
+    for bar in [&mut p.dock, &mut p.panel].into_iter().flatten() {
+        bar.floating = None;
+        bar.margin = None;
+        bar.border_radius = None;
+        bar.padding = None;
+        bar.spacing = None;
+        bar.island_gap = None;
+    }
+}
+/// Gives `p` the dock and panel shape `from` carries (see `keep_bar_shape`).
+pub fn use_bar_shape(p: &mut Profile, from: &Profile) {
+    for (to, from) in [(&mut p.dock, &from.dock), (&mut p.panel, &from.panel)] {
+        let (Some(to), Some(from)) = (to.as_mut(), from) else {
+            continue;
+        };
+        to.floating = from.floating;
+        to.margin = from.margin;
+        to.border_radius = from.border_radius;
+        to.padding = from.padding;
+        to.spacing = from.spacing;
+        to.island_gap = from.island_gap;
+    }
+}
+
 /// The Window tones a record carries, if it carries them.
 pub fn tones(p: &Profile) -> Option<desktop_theme::WindowTone> {
     p.widget_style
@@ -1261,7 +1290,9 @@ pub(crate) mod tests {
         for (id, saved) in SAVED {
             let shipped = named().iter().find(|p| p.id == id).unwrap();
             let saved = import(saved.as_bytes()).unwrap();
-            assert_eq!(shipped.profile.name, saved.name);
+            // The theme is named for its colors, so it isn't mistaken for
+            // the look of the same name, which changes the whole desktop.
+            assert_eq!(shipped.profile.name, format!("{} colors", saved.name));
             assert_eq!(recorded(&shipped.profile), recorded(&saved), "{id}");
         }
         // A wallpaper, a following color or a style's ID is refused.
