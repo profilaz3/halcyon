@@ -15,7 +15,7 @@ use super::*;
 use crate::upgrade::{Ledger, Plan, Program};
 
 /// The session ledger of the widgets' restarts into updates. Each process
-/// restarts into an update once, so the Activity pill keeps its own: one of
+/// restarts into an update once, so the Activity island keeps its own: one of
 /// them restarting often must not keep the other on the old version.
 const RESTARTS: &str = "desktop-widgets";
 /// How long the desktop must be left alone before restarting into an

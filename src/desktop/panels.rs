@@ -122,7 +122,8 @@ impl AutoHide {
     pub fn title(self) -> &'static str {
         match self {
             Self::Never => "Always visible",
-            Self::OnOverlap => "Hide behind windows",
+            // It hides while a window overlaps it, not behind windows.
+            Self::OnOverlap => "Hide if covered",
             Self::Always => "Auto-hide",
         }
     }

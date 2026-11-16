@@ -1,5 +1,5 @@
-//! Accessibility: the supported app-motion preference and its limits.
-//! Halcyon edge-menu animation belongs in App settings.
+//! Accessibility: the supported app-motion preference and its limits,
+//! easier reading, and where the keyboard shortcuts are.
 use super::desktop::WARN;
 use super::*;
 use crate::settings::motion::Message as Edit;
@@ -32,10 +32,11 @@ impl Settings {
         if editor.read_only().is_some() {
             motion.push(label("Changes are off in this preview", 12., WARN));
         }
+        // Opens the dock's folded section at the setting itself.
         motion.push(self.link_row(
-            "Dock and panel slide speed",
-            "How fast they slide in when hidden",
-            Message::Page(Page::DesktopDock),
+            "Dock and panel hide timing",
+            "How fast they hide and slide back in",
+            Message::SearchResult(crate::settings::navigation::DOCK_HIDE_TIMING),
             "accessibility-dock".into(),
         ));
         column::with_children(vec![
@@ -56,9 +57,30 @@ impl Settings {
                         Message::Page(Page::DesktopAppearance),
                         "accessibility-fonts".into(),
                     ),
+                    // The same switch as Halcyon › Interface, where people
+                    // who need the words look first.
+                    group_row(
+                        "Show explanations",
+                        "What each setting does, under its name",
+                        container(
+                            toggler(self.config.show_explanations)
+                                .on_toggle(Message::ShowExplanations),
+                        )
+                        .id(cosmic::widget::Id::new("accessibility-explanations-toggle"))
+                        .into(),
+                    ),
                 ],
             ),
-            group(Some("Keyboard"), keyboard_rows()),
+            group(
+                Some("Keyboard"),
+                vec![self.subpage_row(
+                    "Keyboard shortcuts",
+                    "Keys for windows, workspaces and apps",
+                    Page::DesktopShortcuts,
+                    "accessibility-open-shortcuts",
+                )],
+            ),
+            group(Some("Keys in this window"), keyboard_rows()),
             group(
                 None,
                 vec![

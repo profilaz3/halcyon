@@ -178,37 +178,16 @@ impl Settings {
             )],
         );
         // How widgets behave on the desktop lives with the widgets; Halcyon’s
-        // Interface tab is about this window only.
+        // Interface tab is about this window only. The Edge menu has one row
+        // here; Open now and its animation are on its own page.
         let behave = container(super::group(
             Some("How widgets behave"),
-            vec![
-                group_row(
-                    "Widget controls",
-                    if self.config.edge_menu.enabled {
-                        "A side panel to show, hide and reorder widgets. Rest the pointer on the screen edge, or use Open now."
-                    } else {
-                        "A side panel to show, hide and reorder widgets. The edge strip is off; use Open now or halcyon --toggle drawer."
-                    },
-                    button::standard("Open now")
-                        .on_press_maybe(
-                            (self.service_known && self.service.running && !self.busy && !preview())
-                                .then_some(Message::ShowControls),
-                        )
-                        .into(),
-                ),
-                switch(
-                    "Slide in",
-                    "Animate the controls as they open",
-                    self.config.sidebar_slide,
-                    Message::SidebarSlide,
-                ),
-                self.subpage_row(
-                    "Edge menu",
-                    "Turn the screen edge strip off, move it, or pick what the menu lists",
-                    Page::EdgeMenu,
-                    "widgets-edge-menu",
-                ),
-            ],
+            vec![self.subpage_row(
+                "Edge menu",
+                "A menu at the screen edge to show, hide and reorder widgets",
+                Page::EdgeMenu,
+                "widgets-edge-menu",
+            )],
         ))
         .id(cosmic::widget::Id::new("widgets-behave"))
         .into();
@@ -895,6 +874,8 @@ impl Settings {
                 row::with_children(vec![
                     container(if section == DevboxSection::Services {
                         detail(section.title(), "Apps running quietly in the background")
+                    } else if section == DevboxSection::Uptime {
+                        detail(section.title(), "How long since the computer started")
                     } else {
                         label(section.title(), 14., if visible { FG } else { MUTED })
                     })

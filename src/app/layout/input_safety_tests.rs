@@ -1879,3 +1879,71 @@ fn arrange_escape_deselects_then_asks_before_discarding() {
     assert!(!cards.layout_editor.active && cards.paused_layout.is_none());
     assert_eq!(Config::load().widget_positions["weather"], [0.2, 0.2]);
 }
+
+/// A widget page's Move or resize opens Arrange with that widget picked, so
+/// its size buttons and the arrow keys act on it at once. Plain Arrange
+/// opens with nothing picked, and a widget not on the desktop is never
+/// picked.
+#[test]
+fn arrange_opens_with_the_asked_for_widget_picked() {
+    if isolated("arrange_opens_with_the_asked_for_widget_picked") {
+        return;
+    }
+    let command = |value: serde_json::Value| Cards::command(&value);
+    assert!(matches!(
+        command(serde_json::json!({"action": "arrange", "display": null, "widget": "weather"})),
+        Some(Message::ArrangePick(None, Widget::Weather))
+    ));
+    assert!(matches!(
+        command(serde_json::json!({"action": "arrange", "display": "DP-2", "widget": "weather"})),
+        Some(Message::ArrangePick(Some(display), Widget::Weather)) if display == "DP-2"
+    ));
+    assert!(matches!(
+        command(serde_json::json!({"action": "arrange", "display": null})),
+        Some(Message::Arrange)
+    ));
+    assert!(matches!(
+        command(serde_json::json!({"action": "arrange", "widget": "no-such-widget"})),
+        Some(Message::Arrange)
+    ));
+
+    let (mut cards, _wire) = {
+        let (mut cards, _) = Cards::init(Core::default(), Config::load());
+        let wire = cards.test_output_ready();
+        (cards, wire)
+    };
+    let task = cards.update(Message::ArrangePick(None, Widget::Weather));
+    emitted(&mut cards, task);
+    assert!(cards.layout_editor.active);
+    assert_eq!(cards.layout_editor.selected, Some(Widget::Weather));
+    let mut native = crate::native_test::Native::new(cosmic::iced::Size::new(
+        cards.screen_size[0],
+        cards.screen_size[1],
+    ));
+    native.capture(
+        cards.layout_view(),
+        &cosmic::Theme::dark(),
+        "arrange-picked-weather",
+    );
+    // The same words as Arrange in this window.
+    native.text_bounds(cards.layout_view(), "Fit content");
+    native.text_bounds(cards.layout_view(), "Resize with arrows");
+    let task = escape(&mut cards);
+    emitted(&mut cards, task);
+    assert!(!cards.layout_editor.active);
+
+    // Plain Arrange: nothing picked, even after an earlier pick.
+    let task = cards.update(Message::Arrange);
+    emitted(&mut cards, task);
+    assert!(cards.layout_editor.active);
+    assert_eq!(cards.layout_editor.selected, None);
+    let task = escape(&mut cards);
+    emitted(&mut cards, task);
+
+    // Music isn't on this desktop, so nothing is picked for it.
+    let task = cards.update(Message::ArrangePick(None, Widget::Music));
+    emitted(&mut cards, task);
+    assert!(cards.layout_editor.active);
+    assert_eq!(cards.layout_editor.selected, None);
+    assert!(cards.arrange_pick.is_none());
+}

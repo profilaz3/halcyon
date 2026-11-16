@@ -503,9 +503,11 @@ impl Settings {
                 } else {
                     "Background color set outside this style"
                 },
-                container(button::text("Open").on_press(Message::Page(Page::DesktopAppearance)))
-                    .id(cosmic::widget::Id::new("window-tone-open"))
-                    .into(),
+                container(button::text("Open").on_press(Message::SearchResult(
+                    crate::settings::navigation::ADVANCED_THEME_COLORS,
+                )))
+                .id(cosmic::widget::Id::new("window-tone-open"))
+                .into(),
             ));
         }
         let (low, high) = family.tone_range(dark);

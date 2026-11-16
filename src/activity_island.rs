@@ -1498,7 +1498,7 @@ impl Applet {
             Message::Updated(new) => match crate::upgrade::Ledger::session(RESTARTS).plan(&new) {
                 crate::upgrade::Plan::Restart { after } => self.updated = Some((new, now + after)),
                 crate::upgrade::Plan::Stay => eprintln!(
-                    "Halcyon was updated, but the Activity pill restarted often lately; it keeps the running version until the next sign-in"
+                    "Halcyon was updated, but the Activity island restarted often lately; it keeps the running version until the next sign-in"
                 ),
             },
             Message::RestartDue(early) => {
@@ -1509,7 +1509,7 @@ impl Applet {
                     crate::upgrade::restart(
                         &crate::upgrade::Ledger::session(RESTARTS),
                         &new,
-                        "the Activity pill",
+                        "the Activity island",
                     );
                     self.restart_at = None;
                 }

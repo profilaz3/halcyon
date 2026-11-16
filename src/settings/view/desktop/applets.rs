@@ -167,8 +167,11 @@ impl Settings {
             }))
         .then(|| {
             split(
-                label("Beta · System, music and meetings", 13., MUTED),
-                button::text("Add Activity pill")
+                detail_state(
+                    "Activity island",
+                    "Beta · System, music and meetings in the middle of the panel",
+                ),
+                button::text("Add Activity island")
                     .id("panel-add-activity".into())
                     .on_press_maybe((!self.native_busy && !editor.drag.active()).then_some(edit(
                         Edit::Add(Region::Center, crate::activity_island::APPLET_ID.into()),
@@ -193,7 +196,7 @@ impl Settings {
         // Adding, removing or moving an item rebuilds the bar.
         let header: Element<'_, Message> = column::with_children(vec![
             text::heading(items::HEADING).into(),
-            label(super::RESTARTS, CAPTION, MUTED),
+            label(super::restarts(draft.kind()), CAPTION, MUTED),
         ])
         .spacing(3)
         .into();

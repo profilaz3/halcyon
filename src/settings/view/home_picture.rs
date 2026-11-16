@@ -418,7 +418,9 @@ impl Settings {
     /// The same picture, small, at the top of a part's own page with that
     /// part lit. It is drawn only: no part opens another page from here.
     pub(super) fn home_glance(&self, part: Page) -> Element<'_, Message> {
-        let height = (self.content_width() * 9. / 16.).clamp(150., 220.);
+        let height = (self.content_width() * 9. / 16.)
+            .clamp(150., 220.)
+            .min(self.preview_cap());
         container(self.home_scene(height, Some(part), Picks::Glance))
             .id(cosmic::widget::Id::new(format!("home-glance-{}", part.key())))
             .width(Length::Fill)
@@ -992,19 +994,28 @@ impl Settings {
             if !draft.listed() {
                 return "Off".into();
             }
-            let edge = draft
-                .anchor()
+            let anchor = draft.anchor().known().copied();
+            let edge = anchor.map(|anchor| anchor.title()).unwrap_or("Custom");
+            // The words the bar's own page uses for its Shape and Floating.
+            // Islands always float, so that says it all.
+            let islands = draft
+                .islands()
                 .known()
-                .map(|anchor| anchor.title())
-                .unwrap_or("Custom");
-            let shape = if draft.floating().known().copied().unwrap_or(false) {
-                "floating"
-            } else if draft.extend().known().copied().unwrap_or(true) {
-                "edge to edge"
+                .is_some_and(|islands| islands.enabled);
+            let shape = if islands {
+                "Islands"
+            } else if !draft.extend().known().copied().unwrap_or(true) {
+                "Compact"
+            } else if anchor.is_none_or(|anchor| anchor.horizontal()) {
+                "Full width"
             } else {
-                "centered"
+                "Full height"
             };
-            format!("{edge} · {shape}")
+            if !islands && draft.floating().known().copied().unwrap_or(false) {
+                format!("{edge} · {shape} · Floating")
+            } else {
+                format!("{edge} · {shape}")
+            }
         };
         match page {
             Page::DesktopWallpaper => match self.wallpaper.current() {

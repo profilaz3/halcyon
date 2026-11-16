@@ -166,10 +166,19 @@ impl Settings {
                 "Edge menu",
                 "A menu at the edge of the screen with widget switches, shortcuts and actions.",
             ),
-            button::standard("Show menu")
+            button::standard("Open now")
+                .id(cosmic::widget::Id::new("edge-menu-open"))
                 .on_press_maybe(can_show.then_some(Message::ShowControls))
                 .into(),
         );
+        // What Open now can do right now is always said, not explained.
+        let state = if self.service_known && !self.service.running {
+            Some("Your widgets aren’t running, so the menu can’t open now.")
+        } else if !menu.enabled {
+            Some("The edge strip is off. Use Open now, or run halcyon --toggle drawer.")
+        } else {
+            None
+        };
         let groups = column::with_children(vec![
             self.edge_appearance(),
             self.edge_handle_group(),
@@ -192,7 +201,11 @@ impl Settings {
                 .spacing(16)
                 .into()
         };
-        let mut parts = vec![top, body];
+        let mut parts = vec![top];
+        if let Some(state) = state {
+            parts.push(label(state, 12., MUTED));
+        }
+        parts.push(body);
         if page.picker {
             parts.push(self.edge_picker());
         }
@@ -446,7 +459,7 @@ impl Settings {
         let mut rows = vec![
             switch(
                 "Edge menu",
-                "Off, nothing waits at the screen edge. The menu still opens with halcyon --toggle drawer, and from Widgets in Settings.",
+                "Off, nothing waits at the screen edge. The menu still opens with Open now above, or halcyon --toggle drawer.",
                 menu.enabled,
                 |on| edit(Edit::Enabled(on)),
             ),

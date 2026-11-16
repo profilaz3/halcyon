@@ -255,7 +255,8 @@ impl Settings {
                 .align_y(Alignment::Center)
                 .into(),
             );
-            controls.push(group(Some("Everyday"), main));
+            // Named as on the Widgets page.
+            controls.push(group(Some("Daily"), main));
             controls.push(group(
                 Some("More widgets"),
                 Widget::MORE.into_iter().map(pick).collect(),

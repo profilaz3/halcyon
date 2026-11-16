@@ -377,13 +377,16 @@ impl Settings {
         let open = editor.advanced_colors || edited;
 
         items.push(
-            button::text(if open {
-                "Advanced theme colors ▾"
-            } else {
-                "Advanced theme colors ▸"
-            })
-            .on_press(edit(Edit::AdvancedColors(!open)))
-            .into(),
+            self.search_target(
+                crate::settings::navigation::ADVANCED_THEME_COLORS.anchor(),
+                button::text(if open {
+                    "Advanced theme colors ▾"
+                } else {
+                    "Advanced theme colors ▸"
+                })
+                .on_press(edit(Edit::AdvancedColors(!open)))
+                .into(),
+            ),
         );
         if open {
             items.push(label(

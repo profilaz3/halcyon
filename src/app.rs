@@ -253,6 +253,9 @@ pub enum Message {
     LayoutKeepSaved,
     ArrangeSurface(u64),
     ArrangeDisplay(String),
+    /// Arrange with this widget picked, as a widget page's Move or resize
+    /// asks; on the named display when there is one.
+    ArrangePick(Option<String>, Widget),
     LayoutDefaults,
     LayoutSnap(bool),
     LayoutCancelDrag,
@@ -400,6 +403,8 @@ pub struct Cards {
     selected_output: Option<crate::displays::Output>,
     arrange_display: Option<String>,
     pending_arrange: Option<crate::displays::WlOutput>,
+    /// The widget the next Arrange opens with picked.
+    arrange_pick: Option<Widget>,
     widget_outputs: Vec<Option<crate::displays::Output>>,
     extra_probes: Vec<monitors::Probe>,
     display_positions: std::collections::BTreeMap<String, [f32; 2]>,
@@ -544,6 +549,7 @@ impl cosmic::Application for Cards {
             selected_output: None,
             arrange_display: None,
             pending_arrange: None,
+            arrange_pick: None,
             widget_outputs: Vec::new(),
             extra_probes: Vec::new(),
             display_positions: Default::default(),
@@ -1531,8 +1537,24 @@ impl Cards {
                     self.sidebar_pointer(id, event)
                 }
             }
-            Message::Arrange => self.arrange(),
-            Message::ArrangeDisplay(display) => self.arrange_on_display(display),
+            Message::Arrange => {
+                self.arrange_pick = None;
+                self.arrange()
+            }
+            Message::ArrangeDisplay(display) => {
+                self.arrange_pick = None;
+                self.arrange_on_display(display)
+            }
+            Message::ArrangePick(display, widget) => {
+                self.arrange_pick = Some(widget);
+                let task = match display {
+                    Some(display) => self.arrange_on_display(display),
+                    None => self.arrange(),
+                };
+                // Already arranging, or arranging now: it is picked there.
+                self.apply_arrange_pick();
+                task
+            }
             Message::ResetLayout => self.reset_layout(),
             Message::LayoutPress(widget) => {
                 self.layout_editor.adding = false;

@@ -406,9 +406,16 @@ fn previews_only_act_on_their_own_page() {
     let mut native = crate::native_test::Native::new(size);
     let theme = cosmic::Theme::dark();
 
-    // Windows and Activity island: the small Home picture lights the page's
-    // part and nothing in it can be pressed, hovered or focused.
-    for page in [Page::DesktopWindows, Page::ActivityIsland] {
+    // Activity island: the small Home picture lights the page's part and
+    // nothing in it can be pressed, hovered or focused. Windows has its own
+    // picture of windows, so no second one above it.
+    send_settings(&mut app, Message::Page(Page::DesktopWindows));
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "home-glance-desktop-windows")
+            .is_none()
+    );
+    for page in [Page::ActivityIsland] {
         let id = format!("home-glance-{}", page.key());
         let own = assert_picture_stays(&mut app, &mut native, page, &id);
         assert!(

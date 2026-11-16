@@ -190,6 +190,7 @@ impl SettingsSamples {
             selected_output: None,
             arrange_display: None,
             pending_arrange: None,
+            arrange_pick: None,
             widget_outputs: Vec::new(),
             extra_probes: Vec::new(),
             display_positions: Default::default(),

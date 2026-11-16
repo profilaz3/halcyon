@@ -42,16 +42,17 @@ impl Settings {
         if self.canvas_visible() {
             return self.canvas_page();
         }
-        // Arranging happens on the desktop itself; the list in Settings
-        // stays one click away for arranging with the keyboard.
+        // Arranging happens on the desktop itself; the same editor in this
+        // window stays one click away, and each button says where it opens.
         let header = split(
             heading(
                 "Widgets",
                 "Click a widget in the picture to change it. \
-                 Arrange widgets adds, removes and moves them on your desktop.",
+                 Arrange widgets adds, removes and moves them on your desktop; \
+                 Arrange in this window moves them here.",
             ),
             row::with_children(vec![
-                button::text("Arrange with keyboard")
+                button::text("Arrange in this window")
                     .id(cosmic::widget::Id::new("canvas-start"))
                     .on_press(Message::Canvas(crate::settings::canvas::Message::Start))
                     .into(),
@@ -66,7 +67,9 @@ impl Settings {
             .into(),
         );
         // Your real wallpaper, bars and widgets; every object opens its editor.
-        let height = (self.content_width() * 0.4).clamp(200., 340.);
+        let height = (self.content_width() * 0.4)
+            .clamp(200., 340.)
+            .min(self.preview_cap());
         let scene = match self.profiles.preview() {
             Some(preview) => self.profile_scene(preview.clone(), height, true, true),
             None => self.placement_picture(height, false),

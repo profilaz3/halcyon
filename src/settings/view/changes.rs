@@ -501,7 +501,8 @@ impl Settings {
         // Only offered when a saved picture exists, and confirmed first like
         // the desktop above.
         if self.desktop_recovery.wallpaper_backup {
-            earlier.push(group_row(
+            // What was kept is shown, like the desktop row above it.
+            earlier.push(group_row_state(
                 "Wallpaper from before Halcyon",
                 "The picture you had when Halcyon was installed",
                 button::standard("Restore…")

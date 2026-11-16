@@ -535,13 +535,26 @@ impl Cards {
         let bytes = std::fs::read(&path).ok()?;
         let _ = std::fs::remove_file(path);
         let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+        Self::command(&value)
+    }
+    /// What a command written by Settings or the command line asks for.
+    pub(super) fn command(value: &serde_json::Value) -> Option<Message> {
         match value["action"].as_str()? {
-            "arrange" => Some(match value["display"].as_str() {
-                Some(display) if crate::displays::valid_name(display) => {
-                    Message::ArrangeDisplay(display.into())
-                }
-                _ => Message::Arrange,
-            }),
+            "arrange" => {
+                let display = value["display"]
+                    .as_str()
+                    .filter(|display| crate::displays::valid_name(display));
+                // A widget page's Move or resize names the widget to pick.
+                Some(
+                    match (display, value["widget"].as_str().and_then(Widget::parse)) {
+                        (display, Some(widget)) => {
+                            Message::ArrangePick(display.map(str::to_owned), widget)
+                        }
+                        (Some(display), None) => Message::ArrangeDisplay(display.into()),
+                        (None, None) => Message::Arrange,
+                    },
+                )
+            }
             "reset-layout" => Some(Message::ResetLayout),
             "close" => Some(Message::HideControls),
             "drawer" => Some(Message::DrawerToggle),
@@ -554,7 +567,7 @@ impl Cards {
                 value["widget"].as_str()?,
             )?)),
             "focus" => Some(Message::FocusCommand(value["do"].as_str()?.to_string())),
-            "timer" => timer_command(&value).map(|command| {
+            "timer" => timer_command(value).map(|command| {
                 Message::Activity(crate::activity_island::bridge::Event::Command(command))
             }),
             "capture" if std::env::var_os("DESKTOP_CARDS_CAPTURE_DIR").is_some() => {
@@ -745,7 +758,8 @@ impl Cards {
         };
         let header = container(
             column::with_children(vec![
-                label("Widgets", 15., p.foreground),
+                // The same title as a customized menu and its Settings page.
+                label("Edge menu", 15., p.foreground),
                 label("Show or hide each widget", 12., p.muted),
             ])
             .spacing(2),
@@ -814,7 +828,7 @@ impl Cards {
                 gap(6.),
                 container(label(
                     if self.custom_layout() {
-                        "Your own layout. Move widgets in Settings."
+                        "Your own layout. Use Arrange below to move widgets."
                     } else {
                         "Drag to reorder"
                     },

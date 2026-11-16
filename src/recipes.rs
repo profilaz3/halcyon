@@ -186,7 +186,7 @@ impl Part {
             Self::Disk => "Disk",
             Self::Network => "Network",
             Self::Gpu => "Graphics",
-            Self::Uptime => "Time since start",
+            Self::Uptime => "Uptime",
             Self::Face => "Clock face",
             Self::Agenda => "Agenda",
             Self::Date => "Date",

@@ -404,7 +404,7 @@ impl Settings {
                 if resized {
                     detail_state(
                         "Card size",
-                        "You resized it by hand. Use Move or resize to change it",
+                        "You resized it by hand. To pick a size here, use Fit content in Move or resize",
                     )
                 } else {
                     detail("Card size", "Grows with your note, up to this size")

@@ -93,15 +93,23 @@ impl Settings {
         let mut items = Vec::new();
         let searching = !self.search_query.trim().is_empty() || self.search_open;
         let mut top: Vec<Element<'_, Message>> = Vec::new();
-        // Sidebar pages have no back link. A subpage, or a view opened inside
-        // a page, has one link to where it sits, so it is always predictable.
+        // Back goes where Alt+← goes and names it: the page you came from,
+        // or where this one sits. A page opened from the sidebar has none.
         if let Some((title, message)) = self.up_link().filter(|_| !searching) {
             top.push(
                 button::text(title)
                     .id(cosmic::widget::Id::new("settings-back"))
                     .leading_icon(icon::from_name("go-previous-symbolic").size(16))
-                    .on_press(message)
-                    .apply(|control| super::tip::tip(control, "Back (Alt+←)")),
+                    .apply(|control| {
+                        // Leaving the arranging view keeps its changes; it
+                        // isn't a step back, so Alt+← doesn't do it.
+                        let tip = if matches!(message, Message::Back) {
+                            "Back (Alt+←)"
+                        } else {
+                            "Done arranging"
+                        };
+                        super::tip::tip(control.on_press(message), tip)
+                    }),
             );
         }
         if !top.is_empty() {
@@ -766,7 +774,7 @@ impl Settings {
         use crate::settings::desktop::Notice;
         let notices = match self.page {
             // The bars save together: Panel's Islands gap and the island's
-            // Add Activity pill report here as the Dock's edits do.
+            // Add Activity island report here as the Dock's edits do.
             Page::DesktopDock | Page::DesktopPanel | Page::ActivityIsland => {
                 [self.desktop.notice.as_ref(), None, None]
             }

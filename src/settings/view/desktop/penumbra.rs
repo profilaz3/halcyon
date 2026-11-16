@@ -58,8 +58,12 @@ impl Settings {
                 .into(),
             );
             if draft.keep_style().known() == Some(&true) {
+                // Names the folded section as its toggle does.
                 controls.push(label(
-                    "Turn off Keep style when maximized, under Spacing and timing, to change this.",
+                    format!(
+                        "Turn off Keep style when maximized, under {}, to change this.",
+                        crate::settings::navigation::BAR_ADVANCED
+                    ),
                     11.,
                     MUTED,
                 ));

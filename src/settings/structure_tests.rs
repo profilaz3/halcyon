@@ -14,8 +14,9 @@ fn structure_captures(app: &Settings, native: &mut crate::native_test::Native, n
 
 const STRUCTURE_SIZES: [(f32, f32); 2] = [(820., 600.), (1280., 800.)];
 
-/// Widget controls and Slide in live under “How widgets behave” on Widgets;
-/// Halcyon › Interface is about this window only, and search follows.
+/// The Edge menu has one row under “How widgets behave” on Widgets, and its
+/// own page holds Open now and its animation; Halcyon › Interface is about
+/// this window only, and search follows.
 #[test]
 fn ia14_widget_behaviour_lives_on_widgets() {
     if desktop_test_child(
@@ -36,10 +37,17 @@ fn ia14_widget_behaviour_lives_on_widgets() {
         let mut native = crate::native_test::Native::new(size);
         send_settings(&mut app, Message::Page(Page::Widgets));
         native_reveal(&app, &mut native, "widgets-behave");
-        for text in ["How widgets behave", "Widget controls", "Slide in"] {
+        for text in ["How widgets behave", "Edge menu"] {
             assert_eq!(
                 native.text_all(app.settings_view(), text).len(),
                 1,
+                "{text}"
+            );
+        }
+        // One name for the menu, and one place for its switches.
+        for text in ["Widget controls", "Slide in", "Open now"] {
+            assert!(
+                native.text_all(app.settings_view(), text).is_empty(),
                 "{text}"
             );
         }
@@ -66,11 +74,12 @@ fn ia14_widget_behaviour_lives_on_widgets() {
         structure_captures(&app, &mut native, &format!("ia14-interface-{width}"));
     }
     for query in ["widget controls", "edge menu"] {
-        let hit = navigation::search(query)
-            .into_iter()
-            .find(|hit| hit.label == "Widget controls")
-            .expect(query);
-        assert_eq!((hit.page, hit.anchor()), (Page::Widgets, "widgets-behave"));
+        let hit = navigation::search(query)[0];
+        assert_eq!(
+            (hit.page, hit.label),
+            (Page::EdgeMenu, "Edge menu"),
+            "{query}"
+        );
     }
 }
 

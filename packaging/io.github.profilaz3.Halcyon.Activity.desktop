@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=Activity pill (beta)
+Name=Activity island (beta)
 Comment=Notifications, music, meetings and system activity in one expandable panel capsule
 Exec=halcyon --activity-island
 Icon=io.github.profilaz3.Halcyon
