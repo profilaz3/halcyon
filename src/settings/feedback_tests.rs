@@ -315,6 +315,60 @@ fn l23_dock_and_panel_dead_ends_offer_a_way_on() {
     assert!(app.desktop.current().is_some(), "read again");
 }
 
+/// Looks says the same as Dock and Panel when the desktop settings can't
+/// be read: what is wrong, Try again and Help, with the raw error only
+/// under the footer's Details (L23).
+#[test]
+fn l23_looks_dead_end_offers_a_way_on() {
+    if child("l23_looks_dead_end_offers_a_way_on") {
+        return;
+    }
+    // The desktop settings can't be read while their folder is gone.
+    let root = std::path::PathBuf::from(std::env::var_os("DESKTOP_CARDS_DESKTOP_ROOT").unwrap());
+    let away = root.with_file_name("desktop-away");
+    std::fs::rename(&root, &away).unwrap();
+    let (mut app, _) = Settings::init(Core::default(), Page::DesktopProfiles);
+    let size = Size::new(1020., 760.);
+    let _ = app.update(Message::Resized(size));
+    let mut native = Native::new(size);
+    let raw = app.profiles.unavailable().expect("unreadable").to_string();
+    assert!(raw.contains(root.to_str().unwrap()), "{raw}");
+    native.text_bounds(
+        app.settings_view(),
+        "Halcyon can’t read your desktop settings right now.",
+    );
+    native.text_bounds(app.settings_view(), "Help and diagnostics");
+    native.bounds(app.settings_view(), "looks-retry");
+    assert!(
+        native
+            .all_text(app.settings_view())
+            .iter()
+            .all(|text| !text.contains(root.to_str().unwrap())),
+        "the raw error waits"
+    );
+    click(&mut app, &mut native, "settings-error-details");
+    assert_eq!(native.text_all(app.settings_view(), &raw).len(), 1);
+    // Back again: Try again reads them.
+    std::fs::rename(&away, &root).unwrap();
+    click(&mut app, &mut native, "looks-retry");
+    assert!(app.profiles.unavailable().is_none(), "read again");
+    assert!(app.profiles.store().is_some());
+    assert!(app.page_error_details().is_none());
+    assert!(
+        native
+            .text_all(
+                app.settings_view(),
+                "Halcyon can’t read your desktop settings right now."
+            )
+            .is_empty()
+    );
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "looks-retry")
+            .is_none()
+    );
+}
+
 #[test]
 fn fb03_notices_split_the_sentence_from_the_technical_text() {
     let error = crate::desktop::DesktopError::Conflict(vec![
