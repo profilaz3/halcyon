@@ -594,6 +594,11 @@ struct Ink {
 }
 
 fn ink(glyph: &Glyph) -> Option<Ink> {
+    ink_with(glyph, 6000.)
+}
+
+/// The clock's ink at about `count` samples whatever its size.
+fn ink_with(glyph: &Glyph, count: f64) -> Option<Ink> {
     let (w, h) = (glyph.width as usize, glyph.height as usize);
     if glyph.alpha.len() != w * h {
         return None;
@@ -613,8 +618,7 @@ fn ink(glyph: &Glyph) -> Option<Ink> {
         .collect();
     let (left, right) = (*cols.first()?, *cols.last()? + 1);
     let split = top as f64 + (bottom - top) as f64 * 2. / 3.;
-    // About 6,000 samples whatever the clock's size.
-    let stride = ((((right - left) * (bottom - top)) as f64 / 6000.)
+    let stride = ((((right - left) * (bottom - top)) as f64 / count)
         .sqrt()
         .floor() as usize)
         .max(1);
@@ -647,6 +651,11 @@ fn ink(glyph: &Glyph) -> Option<Ink> {
             .collect(),
         bottom: h as f64 / s,
     })
+}
+
+/// A mask's value at mask coordinates `p`, 0 to 1, and 0 outside it.
+pub(crate) fn sample(mask: &GrayImage, p: [f64; 2]) -> f32 {
+    bilinear(mask, p)
 }
 
 fn bilinear(mask: &GrayImage, p: [f64; 2]) -> f32 {
@@ -759,6 +768,31 @@ fn floating(
         }
     }
     loose / all.max(1e-6)
+}
+
+/// Every fourth sample's hidden share of the top two thirds, the bottom
+/// third and all the ink at `origin`: enough to set aside places that
+/// clearly fail before [`cover`] measures them.
+fn glance(ink: &Ink, map: &Map, mask: &GrayImage, origin: [f64; 2]) -> [f32; 3] {
+    let (mut top, mut top_all, mut bottom, mut bottom_all) = (0f32, 0f32, 0f32, 0f32);
+    for s in ink.samples.iter().step_by(4) {
+        let hidden = bilinear(
+            mask,
+            map.to_mask([origin[0] + s.at[0], origin[1] + s.at[1]]),
+        ) * s.weight;
+        if s.top {
+            top += hidden;
+            top_all += s.weight;
+        } else {
+            bottom += hidden;
+            bottom_all += s.weight;
+        }
+    }
+    [
+        top / top_all.max(1e-6),
+        bottom / bottom_all.max(1e-6),
+        (top + bottom) / (top_all + bottom_all).max(1e-6),
+    ]
 }
 
 fn passes(m: &Measures) -> bool {
@@ -994,6 +1028,340 @@ pub fn judge(
         },
         None => not_useful(Reason::NoSpot, current),
     })
+}
+
+// ---------------------------------------------------------------- where it fits
+
+/// Where the clock tucks behind the scene, over every place it could sit
+/// in an area of the screen: the map the Clock page shows while the clock
+/// is moved. Places are clock origins in screen pixels on the whole output.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Places {
+    /// The first column's origin x, and the screen pixels between columns.
+    pub columns: [f32; 2],
+    /// Screen pixels between the rows tried in a column.
+    pub row: f32,
+    /// The bottom middle of the time, from the clock's origin: where the
+    /// band is drawn for each place.
+    pub anchor: [f32; 2],
+    /// Per column, left to right: the runs of origin y that work, top first.
+    pub runs: Vec<Vec<[f32; 2]>>,
+}
+
+/// Where a clock sits against the places that work at its x.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fit {
+    /// On a run: the scene covers the bottom of the time.
+    On,
+    /// Above the nearest run, in front of the sky.
+    High,
+    /// Below it: the scene would hide the time.
+    Low,
+    /// Nothing works at this x.
+    Elsewhere,
+}
+
+impl Places {
+    /// Whether any place works.
+    pub fn any(&self) -> bool {
+        self.runs.iter().any(|runs| !runs.is_empty())
+    }
+    /// The runs of origin y that work for a clock whose origin is at `x`,
+    /// between the two nearest columns: a run in both is blended, a run in
+    /// only one holds to halfway.
+    pub fn at(&self, x: f32) -> Vec<[f32; 2]> {
+        let [first, step] = self.columns;
+        let last = self.runs.len();
+        if last == 0 || !(step > 0.) || !x.is_finite() {
+            return Vec::new();
+        }
+        let t = (x - first) / step;
+        if t < -0.5 || t > last as f32 - 0.5 {
+            return Vec::new();
+        }
+        let t = t.clamp(0., (last - 1) as f32);
+        let k = (t.floor() as usize).min(last - 1);
+        let f = t - k as f32;
+        let (left, right) = (&self.runs[k], self.runs.get(k + 1));
+        let Some(right) = right.filter(|_| f > 0.) else {
+            return left.clone();
+        };
+        let near = |a: &[f32; 2], b: &[f32; 2]| a[0] <= b[1] + self.row && b[0] <= a[1] + self.row;
+        let mut out = Vec::new();
+        for l in left {
+            match right.iter().find(|r| near(l, r)) {
+                Some(r) => out.push([l[0] + (r[0] - l[0]) * f, l[1] + (r[1] - l[1]) * f]),
+                None if f < 0.5 => out.push(*l),
+                None => {}
+            }
+        }
+        if f >= 0.5 {
+            out.extend(right.iter().filter(|r| !left.iter().any(|l| near(l, r))));
+        }
+        out.sort_by(|a, b| a[0].total_cmp(&b[0]));
+        out
+    }
+    /// Where a clock at `origin` sits against the runs at its x.
+    pub fn fit(&self, origin: [f32; 2]) -> Fit {
+        let runs = self.at(origin[0]);
+        let slack = self.row / 2.;
+        let y = origin[1];
+        if runs.iter().any(|r| y >= r[0] - slack && y <= r[1] + slack) {
+            return Fit::On;
+        }
+        let distance = |r: &[f32; 2]| (r[0] - y).max(y - r[1]).max(0.);
+        match runs
+            .iter()
+            .min_by(|a, b| distance(a).total_cmp(&distance(b)))
+        {
+            Some(r) if y < r[0] => Fit::High,
+            Some(_) => Fit::Low,
+            None => Fit::Elsewhere,
+        }
+    }
+    /// The working place nearest `origin`, no further than `reach` screen
+    /// pixels: at the same x when it can be, and a row inside its run, so
+    /// the clock settles where it holds when judged again.
+    pub fn nearest(&self, origin: [f32; 2], reach: f32) -> Option<[f32; 2]> {
+        let inside = |r: &[f32; 2], y: f32| {
+            let inset = self.row.min((r[1] - r[0]) / 2.);
+            y.clamp(r[0] + inset, r[1] - inset)
+        };
+        let consider = |best: &mut Option<([f32; 2], f32)>, x: f32, runs: &[[f32; 2]]| {
+            for r in runs {
+                let spot = [x, inside(r, origin[1])];
+                let d = (spot[0] - origin[0]).hypot(spot[1] - origin[1]);
+                if d <= reach && best.is_none_or(|(_, b)| d < b) {
+                    *best = Some((spot, d));
+                }
+            }
+        };
+        let mut best = None;
+        consider(&mut best, origin[0], &self.at(origin[0]));
+        if best.is_none() {
+            let [first, step] = self.columns;
+            for (k, runs) in self.runs.iter().enumerate() {
+                consider(&mut best, (first + k as f32 * step).round(), runs);
+            }
+        }
+        best.map(|(spot, _)| spot)
+    }
+}
+
+/// [`outline`] for any spot at once: which mask pixels are on the outline,
+/// and which of those on a picture edge, summed over rectangles.
+struct Outlines {
+    w: usize,
+    h: usize,
+    unit: f64,
+    boundary: Vec<u32>,
+    on_edge: Vec<u32>,
+}
+impl Outlines {
+    fn new(mask: &GrayImage, edges: &GrayImage) -> Self {
+        let (w, h) = (mask.width() as usize, mask.height() as usize);
+        let solid: Vec<u8> = mask.pixels().map(|p| u8::from(p[0] > 127)).collect();
+        // Each pixel's three rows summed, edges repeated, then three columns.
+        let mut rows = vec![0u8; w * h];
+        for y in 0..h {
+            let (up, down) = (y.saturating_sub(1), (y + 1).min(h - 1));
+            for x in 0..w {
+                rows[y * w + x] = solid[up * w + x] + solid[y * w + x] + solid[down * w + x];
+            }
+        }
+        let mut boundary = vec![0u32; (w + 1) * (h + 1)];
+        let mut on_edge = vec![0u32; (w + 1) * (h + 1)];
+        for y in 0..h {
+            let (mut run, mut run_edge) = (0u32, 0u32);
+            let line = &rows[y * w..][..w];
+            for x in 0..w {
+                let sum = line[x.saturating_sub(1)] + line[x] + line[(x + 1).min(w - 1)];
+                // Not all nine alike: the mean is between 0.05 and 0.95.
+                let is = u32::from((1..=8).contains(&sum));
+                run += is;
+                run_edge += is * u32::from(edges.get_pixel(x as u32, y as u32)[0] > 127);
+                let i = (y + 1) * (w + 1) + x + 1;
+                boundary[i] = boundary[i - (w + 1)] + run;
+                on_edge[i] = on_edge[i - (w + 1)] + run_edge;
+            }
+        }
+        Self {
+            w,
+            h,
+            unit: unit([w as u32, h as u32]),
+            boundary,
+            on_edge,
+        }
+    }
+    /// The same as [`outline`] for a clock at `origin`.
+    fn at(&self, ink: &Ink, map: &Map, origin: [f64; 2]) -> (f32, f32) {
+        let (w, h) = (self.w as i64, self.h as i64);
+        let a = map.to_mask([origin[0] + ink.cols[0], origin[1]]);
+        let b = map.to_mask([
+            origin[0] + ink.cols[1],
+            origin[1] + ink.rows[0] + (ink.rows[1] - ink.rows[0]) * 2.5,
+        ]);
+        let x0 = ((a[0] - 150. * self.unit).floor() as i64).clamp(0, w) as usize;
+        let x1 = ((b[0] + 150. * self.unit).ceil() as i64).clamp(0, w) as usize;
+        let y1 = (b[1].ceil() as i64).clamp(0, h) as usize;
+        if x1 < x0 + 2 || y1 < 2 {
+            return (0., 0.);
+        }
+        let sum = |table: &[u32]| {
+            let row = y1 * (self.w + 1);
+            table[row + x1] - table[row + x0]
+        };
+        let (boundary, on_edge) = (sum(&self.boundary), sum(&self.on_edge));
+        let align = if boundary == 0 {
+            0.
+        } else {
+            on_edge as f32 / boundary as f32
+        };
+        (align, boundary as f32 / (x1 - x0) as f32)
+    }
+}
+
+/// Columns of places tried across the screen's width.
+const COLUMNS: f64 = 96.;
+/// Samples of the clock's ink for the map.
+const MAP_SAMPLES: f64 = 2000.;
+
+/// Every place in `area` (x, y, width and height on the whole output) where
+/// the clock would tuck behind the scene, by the same rules as [`judge`].
+/// Without `stats` and `edges` (the drawn Ridge matte) the outline is
+/// trusted. Only rows near the foreground's top are tried: above them
+/// nothing covers the time, below them the top of it is hidden.
+pub fn places(
+    stats: Option<&Stats>,
+    mask: &GrayImage,
+    edges: Option<&GrayImage>,
+    glyph: &Glyph,
+    mode: &crate::desktop::wallpaper::ScalingMode,
+    area: [f32; 4],
+) -> Option<Places> {
+    let raster = [mask.width(), mask.height()];
+    let source = stats.map_or(raster, |stats| stats.source);
+    let map = Map::new(glyph.frame, mode, source, raster)?;
+    // Fewer samples than the judge's: the map is tried at thousands of
+    // places. Each run's ends are then held to the judge's own samples.
+    let ink = ink_with(glyph, MAP_SAMPLES)?;
+    let full = self::ink(glyph)?;
+    let screen = glyph.frame.screen.map(f64::from);
+    let size = glyph.frame.size.map(f64::from);
+    let ink_height = ink.rows[1] - ink.rows[0];
+    // The judge's own steps for rows; columns about 20 pixels apart on a
+    // 1920 pixel screen.
+    let row = (ink_height / 24.).max(4. * screen[1] / 1080.).max(1.);
+    let column = (screen[0] / COLUMNS).max(4.).round();
+    let lo = [f64::from(area[0]), f64::from(area[1])].map(|v| v.max(0.).ceil());
+    let hi = [
+        (f64::from(area[0] + area[2]) - size[0]).min(screen[0] - size[0]),
+        (f64::from(area[1] + area[3]) - size[1]).min(screen[1] - size[1]),
+    ]
+    .map(f64::floor);
+    let mut places = Places {
+        columns: [lo[0] as f32, column as f32],
+        row: row as f32,
+        anchor: [
+            ((ink.cols[0] + ink.cols[1]) / 2.) as f32,
+            ink.rows[1] as f32,
+        ],
+        runs: Vec::new(),
+    };
+    if hi[0] < lo[0]
+        || hi[1] < lo[1]
+        || stats.is_some_and(|s| s.flat || s.coverage < 0.02 || s.coverage > 0.85)
+    {
+        return Some(places);
+    }
+    let outlines = stats
+        .zip(edges)
+        .map(|(_, edges)| Outlines::new(mask, edges));
+    // The first foreground row of each mask column, as a screen y.
+    let tops: Vec<Option<f64>> = (0..mask.width())
+        .map(|x| {
+            (0..mask.height())
+                .find(|&y| mask.get_pixel(x, y)[0] > 127)
+                .map(|y| (f64::from(y) + 0.5) * map.scale[1] + map.offset[1])
+        })
+        .collect();
+    let top = |x: f64| {
+        let m = map.to_mask([x, 0.])[0].round();
+        (m >= 0. && m < tops.len() as f64)
+            .then(|| tops[m as usize])
+            .flatten()
+    };
+    let judged = |ink: &Ink, origin: [f64; 2]| {
+        let m = cover(ink, &map, mask, origin);
+        if !passes(&m) {
+            return false;
+        }
+        match (stats, &outlines) {
+            (Some(stats), Some(outlines)) => {
+                let (align, ragged) = outlines.at(ink, &map, origin);
+                let m = Measures { align, ragged, ..m };
+                m.align >= MIN_ALIGN && confidence(stats, &m) >= WORKS
+            }
+            _ => true,
+        }
+    };
+    let works = |origin: [f64; 2]| {
+        let [top, bottom, all] = glance(&ink, &map, mask, origin);
+        top <= MAX_HIDDEN_TOP * 4.
+            && bottom >= MIN_HIDDEN_BOTTOM / 3.
+            && all <= MAX_HIDDEN_ALL * 1.3
+            && judged(&ink, origin)
+    };
+    // A run's ends, moved inward until the judge's samples agree.
+    let hold = |x: f64, run: [f32; 2]| -> Option<[f32; 2]> {
+        let [mut top, mut bottom] = run.map(f64::from);
+        while !judged(&full, [x, top]) {
+            top = (top + row).round();
+            if top > bottom {
+                return None;
+            }
+        }
+        while bottom > top && !judged(&full, [x, bottom]) {
+            bottom = (bottom - row).round().max(top);
+        }
+        Some([top as f32, bottom as f32])
+    };
+    let count = ((hi[0] - lo[0]) / column).floor() as usize + 1;
+    for k in 0..count {
+        let x = (lo[0] + k as f64 * column).round().min(hi[0]);
+        let mut runs: Vec<[f32; 2]> = Vec::new();
+        let (mut high, mut low) = (f64::INFINITY, f64::NEG_INFINITY);
+        let mut sx = x + ink.cols[0];
+        while sx <= x + ink.cols[1] {
+            if let Some(y) = top(sx) {
+                high = high.min(y);
+                low = low.max(y);
+            }
+            sx += 2.;
+        }
+        if high.is_finite() {
+            let from = (high - ink.rows[1] - row).max(lo[1]);
+            let to = (low - ink.rows[0] + row).min(hi[1]);
+            let mut y = from;
+            let mut open: Option<[f32; 2]> = None;
+            while y <= to {
+                let at = y.round();
+                if works([x, at]) {
+                    let run = open.get_or_insert([at as f32; 2]);
+                    run[1] = at as f32;
+                } else if let Some(run) = open.take() {
+                    runs.push(run);
+                }
+                y += row;
+            }
+            runs.extend(open);
+        }
+        places
+            .runs
+            .push(runs.into_iter().filter_map(|run| hold(x, run)).collect());
+    }
+    Some(places)
 }
 
 #[cfg(test)]

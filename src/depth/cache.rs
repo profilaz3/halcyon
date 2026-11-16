@@ -100,6 +100,18 @@ pub fn load(root: &Path, key: &str) -> Option<Entry> {
     })
 }
 
+/// An entry's numbers, mask and edges, without the picture kept for
+/// lighting: what the Clock page's map needs.
+pub fn load_matte(root: &Path, key: &str) -> Option<(Stats, GrayImage, GrayImage)> {
+    let dir = dir(root, key)?;
+    let stats: Stats = serde_json::from_slice(&read(&dir.join("scene.json"))?).ok()?;
+    let mask = png(&read(&dir.join("mask.png"))?)?.to_luma8();
+    let edges = png(&read(&dir.join("edges.png"))?)?.to_luma8();
+    (edges.dimensions() == mask.dimensions()
+        && super::scene::work_size(stats.source) == [mask.width(), mask.height()])
+    .then_some((stats, mask, edges))
+}
+
 pub fn exists(root: &Path, key: &str) -> bool {
     dir(root, key).is_some_and(|dir| dir.join("scene.json").is_file())
 }

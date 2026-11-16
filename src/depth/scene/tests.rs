@@ -376,3 +376,166 @@ fn own_wallpaper_the_next_best_spot_is_offered_when_the_best_follows_nothing() {
     assert!(spot[0] < 560., "{spot:?}");
     assert!(j.measures.align >= MIN_ALIGN, "{j:?}");
 }
+
+/// The map over the whole 1920×1080 screen for the four-block clock.
+fn mapped(scene: &Scene) -> Places {
+    let alpha = glyph_alpha();
+    let frame = frame([0., 0.]);
+    places(
+        Some(&scene.stats),
+        &scene.mask,
+        Some(&scene.edges),
+        &glyph(&alpha, &frame),
+        &ScalingMode::Zoom,
+        [0., 0., SCREEN[0], SCREEN[1]],
+    )
+    .unwrap()
+}
+
+#[test]
+fn placement_map_outline_sums_match_the_judges_outline() {
+    let (depth, picture) = hill(300);
+    let scene = derive(&depth, &picture).unwrap();
+    // A saw-toothed ridge, so the outline has many pixels per column.
+    let ragged = GrayImage::from_fn(SOURCE[0], SOURCE[1], |x, y| {
+        let line = 280 + (x % 23) * 2;
+        image::Luma([if y >= line { 255 } else { 0 }])
+    });
+    let alpha = glyph_alpha();
+    for mask in [&scene.mask, &ragged] {
+        let outlines = Outlines::new(mask, &scene.edges);
+        for origin in [
+            [0., 0.],
+            [560., 380.],
+            [1100., 600.],
+            [300., 740.],
+            [1120., 750.],
+        ] {
+            let frame = frame(origin);
+            let g = glyph(&alpha, &frame);
+            let ink = ink(&g).unwrap();
+            let map = Map::new(&frame, &ScalingMode::Zoom, SOURCE, [960, 540]).unwrap();
+            let at = origin.map(f64::from);
+            assert_eq!(
+                outlines.at(&ink, &map, at),
+                outline(&ink, &map, mask, &scene.edges, at),
+                "{origin:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn placement_map_marks_where_the_judge_says_it_works() {
+    // Hill line at screen row 600; the ink's rows are 60 to 250 of the box.
+    let (depth, picture) = hill(300);
+    let scene = derive(&depth, &picture).unwrap();
+    let map = mapped(&scene);
+    assert!(map.any());
+    assert_eq!(map.anchor, [400., 250.], "the bottom middle of the ink");
+    assert_eq!(map.columns, [0., 20.]);
+    // Every column fits the clock, so every one has the same single run.
+    assert_eq!(map.runs.len(), 57);
+    for (k, runs) in map.runs.iter().enumerate() {
+        let x = (k as f32 * 20.).min(1120.);
+        assert_eq!(runs.len(), 1, "column {k}: {runs:?}");
+        if k % 8 != 0 {
+            continue;
+        }
+        let [top, bottom] = runs[0];
+        assert!(top > 340. && bottom < 430. && bottom > top, "{runs:?}");
+        for y in [top, (top + bottom) / 2., bottom] {
+            let j = judged(&scene, [x, y.round()]);
+            assert_eq!(j.verdict, Verdict::Works, "column {k} at {y}: {j:?}");
+        }
+        // Two rows out, it no longer works.
+        for y in [top - 2. * map.row, bottom + 2. * map.row] {
+            let j = judged(&scene, [x, y.round()]);
+            assert_ne!(j.verdict, Verdict::Works, "column {k} at {y}: {j:?}");
+        }
+    }
+    assert_eq!(map.fit([560., 380.]), Fit::On);
+    assert_eq!(map.fit([560., 100.]), Fit::High);
+    assert_eq!(map.fit([560., 700.]), Fit::Low);
+}
+
+#[test]
+fn placement_map_is_empty_where_nothing_can_cover_the_time() {
+    // Only a strip at the very bottom, and a picture with no foreground.
+    for (depth, picture) in [hill(520)] {
+        let scene = derive(&depth, &picture).unwrap();
+        let map = mapped(&scene);
+        assert!(!map.any(), "{map:?}");
+        assert_eq!(map.fit([560., 380.]), Fit::Elsewhere);
+        assert_eq!(map.nearest([560., 380.], 200.), None);
+    }
+    let picture = RgbImage::from_pixel(SOURCE[0], SOURCE[1], image::Rgb([90, 120, 160]));
+    let depth = Depth {
+        width: 64,
+        height: 36,
+        values: vec![3.; 64 * 36],
+    };
+    let scene = derive(&depth, &picture).unwrap();
+    assert!(
+        mapped(&scene).runs.is_empty(),
+        "a flat picture tries nothing"
+    );
+}
+
+#[test]
+fn placement_map_only_tries_places_in_the_area() {
+    let (depth, picture) = hill(300);
+    let scene = derive(&depth, &picture).unwrap();
+    let alpha = glyph_alpha();
+    let frame = frame([100., 40.]);
+    // A top panel and a side dock keep space: the clock stays inside.
+    let map = places(
+        Some(&scene.stats),
+        &scene.mask,
+        Some(&scene.edges),
+        &glyph(&alpha, &frame),
+        &ScalingMode::Zoom,
+        [100., 40., 1820., 1040.],
+    )
+    .unwrap();
+    assert_eq!(map.columns[0], 100.);
+    assert_eq!(map.runs.len(), 52);
+    let last = 100. + 51. * 20.;
+    assert!(last <= 1920. - 800., "{last}");
+}
+
+#[test]
+fn placement_map_blends_columns_and_settles_inside_a_run() {
+    let map = Places {
+        columns: [0., 20.],
+        row: 8.,
+        anchor: [400., 250.],
+        runs: vec![vec![[360., 420.]], vec![[370., 430.]], vec![]],
+    };
+    assert_eq!(map.at(0.), vec![[360., 420.]]);
+    assert_eq!(map.at(10.), vec![[365., 425.]], "halfway between");
+    assert_eq!(
+        map.at(29.),
+        vec![[370., 430.]],
+        "one column's run holds to halfway"
+    );
+    assert!(map.at(31.).is_empty());
+    assert!(map.at(-11.).is_empty() && map.at(51.).is_empty());
+    assert_eq!(map.fit([0., 380.]), Fit::On);
+    assert_eq!(map.fit([0., 356.]), Fit::On, "half a row of slack");
+    assert_eq!(map.fit([0., 100.]), Fit::High);
+    assert_eq!(map.fit([0., 600.]), Fit::Low);
+    assert_eq!(map.fit([40., 380.]), Fit::Elsewhere);
+    // Down onto the run, a row inside it, at the same x.
+    assert_eq!(map.nearest([0., 330.], 60.), Some([0., 368.]));
+    assert_eq!(map.nearest([0., 470.], 60.), Some([0., 412.]));
+    assert_eq!(map.nearest([0., 200.], 60.), None, "out of reach");
+    // Beside the band, the nearest column that has it.
+    assert_eq!(map.nearest([45., 380.], 60.), Some([20., 380.]));
+    // A run thinner than two rows settles in its middle.
+    let thin = Places {
+        runs: vec![vec![[400., 404.]]],
+        ..map
+    };
+    assert_eq!(thin.nearest([0., 380.], 60.), Some([0., 402.]));
+}

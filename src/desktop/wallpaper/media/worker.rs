@@ -236,6 +236,33 @@ pub(crate) async fn render_scene(
     crate::depth::read_rendered(&bytes)
 }
 
+/// Where the clock tucks behind its picture, for the Clock page's stage.
+/// `Some(None)` is the worker saying there is no map for this picture.
+pub(crate) async fn render_map(
+    input: Vec<u8>,
+    cancel: watch::Receiver<bool>,
+) -> Option<Option<crate::depth::Placement>> {
+    if input.len() > crate::depth::MAX_INPUT {
+        return None;
+    }
+    let side = u64::from(crate::depth::MAX_OVERLAY);
+    let bytes = run_child(
+        Child {
+            flag: "--depth-worker",
+            test: "depth::tests::worker_entry",
+            slots: 1,
+            deadline: Duration::from_secs(4),
+            max: 4 + 64 * 1024 + 2 * (8 + side * side * 4),
+            stall: false,
+        },
+        input,
+        cancel,
+        |_| {},
+    )
+    .await?;
+    crate::depth::read_map(&bytes)
+}
+
 /// The cut clock alone, for previews that only ever use the Ridge picture.
 pub(crate) async fn render_depth(input: Vec<u8>, cancel: watch::Receiver<bool>) -> Option<Pixels> {
     render_scene(input, cancel).await?.pixels

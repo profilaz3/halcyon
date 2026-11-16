@@ -855,3 +855,103 @@ fn every_face_stands_behind_the_scene_and_the_rain_glass() {
     assert!(render(&request).is_none(), "the minutes are mostly hidden");
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// The map's request: the fixture's clock anywhere on its screen.
+fn map_request(request: &Request) -> Request {
+    Request {
+        frame: Frame {
+            origin: [0., 0.],
+            ..request.frame.clone()
+        },
+        map: Some([0., 0., 1920., 1080.]),
+        ..request.clone()
+    }
+}
+
+#[test]
+fn placement_map_reply_round_trips_and_rejects_damage() {
+    let (root, _, request) = fixture();
+    let placement = render_map(&map_request(&request)).unwrap();
+    let bytes = map_bytes(Some(&placement)).unwrap();
+    assert_eq!(read_map(&bytes), Some(Some(placement)));
+    assert_eq!(read_map(&map_bytes(None).unwrap()), Some(None));
+    assert_eq!(read_map(&bytes[..bytes.len() - 1]), None);
+    let mut longer = bytes.clone();
+    longer.push(0);
+    assert_eq!(read_map(&longer), None);
+    assert_eq!(read_map(&[]), None);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn placement_map_follows_the_ridge_and_tints_its_foreground() {
+    let (root, _, request) = fixture();
+    let placement = render_map(&map_request(&request)).unwrap();
+    let places = &placement.places;
+    assert!(places.any());
+    // The fixture's clock sits low: Ridge still cuts it while the time
+    // stays readable, but the scene covers the top of the time there. Up
+    // on the band it tucks in, and in the sky nothing covers it.
+    let here = request.frame.origin;
+    assert_eq!(places.fit(here), scene::Fit::Low, "{places:?}");
+    let band = places.at(here[0]);
+    assert_eq!(band.len(), 1, "{band:?}");
+    assert_eq!(
+        places.fit([here[0], (band[0][0] + band[0][1]) / 2.]),
+        scene::Fit::On
+    );
+    assert_eq!(places.fit([here[0], 0.]), scene::Fit::High);
+    // The pictures are the screen's shape, at most MAX_OVERLAY wide.
+    let (tint, band) = (&placement.tint, &placement.band);
+    assert_eq!((tint.width, tint.height), (960, 540));
+    assert_eq!((band.width, band.height), (960, 540));
+    let alpha = |p: &Pixels, x: u32, y: u32| p.rgba[((y * p.width + x) * 4 + 3) as usize];
+    // The foreground is tinted lightly; the sky is not.
+    assert_eq!(alpha(tint, 480, 20), 0);
+    let ground = alpha(tint, 480, 500);
+    assert!(ground > 30 && ground < 70, "{ground}");
+    // The band is where the bottom of the time rests, near the ridge.
+    let x = 480;
+    let rows: Vec<u32> = (0..540).filter(|&y| alpha(band, x, y) > 0).collect();
+    assert!(!rows.is_empty());
+    let screen = |y: u32| y as f32 * 2.;
+    let runs = places.at(screen(x) - places.anchor[0]);
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    assert!(
+        (screen(rows[0]) - (runs[0][0] + places.anchor[1])).abs() <= 2.,
+        "{rows:?} {runs:?}"
+    );
+    // Not a map request, or another picture: nothing.
+    assert_eq!(render_map(&request), None);
+    let mut other = map_request(&request);
+    let path = root.join("other.png");
+    image::RgbImage::from_pixel(64, 36, image::Rgb([1, 2, 3]))
+        .save(&path)
+        .unwrap();
+    other.background.source = BgSource::Path(path);
+    assert_eq!(render_map(&other), None, "not analysed");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn placement_map_renders_inside_the_worker_limits() {
+    let (root, _, request) = fixture();
+    let mut request = map_request(&request);
+    // The most work: a 2× screen and a big clock.
+    request.frame.scale = 2.;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let (_sender, cancel) = tokio::sync::watch::channel(false);
+    let bytes = serde_json::to_vec(&request).unwrap();
+    let started = std::time::Instant::now();
+    let placement = runtime
+        .block_on(worker::render_map(bytes, cancel))
+        .unwrap()
+        .unwrap();
+    eprintln!("map worker took {:?}", started.elapsed());
+    assert_eq!(Some(placement), render_map(&request));
+    std::fs::remove_dir_all(root).unwrap();
+}

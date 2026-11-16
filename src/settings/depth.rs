@@ -33,6 +33,15 @@ impl Cache {
         }
     }
 }
+/// What the Clock page says when the clock isn't tucked in yet, and the
+/// stage's green band shows where it would be.
+pub(crate) const NUDGE_LOWER: &str =
+    "The scene covers the clock a little lower down, on the green band.";
+pub(crate) const NUDGE_HIGHER: &str =
+    "The scene covers the clock a little higher up, on the green band.";
+pub(crate) const ONTO_BAND: &str =
+    "Drag the clock onto the green band to tuck it behind the scene.";
+
 impl Settings {
     fn depth_preview_request(&self) -> Option<(bool, String, crate::depth::Request)> {
         if self.page != Page::DesktopProfiles || !self.scene_open() {
@@ -192,10 +201,15 @@ impl Settings {
                         .zip(now)
                         .is_none_or(|(spot, now)| spot[1] >= now);
                     Some(Block::reason(if lower {
-                        "The scene covers the clock a little lower down. The outline shows where."
+                        NUDGE_LOWER
                     } else {
-                        "The scene covers the clock a little higher up. The outline shows where."
+                        NUDGE_HIGHER
                     }))
+                }
+                // The judge looks for a spot near the clock; the map tries
+                // every place, and may have found one elsewhere.
+                Verdict::NotUseful if self.clock_stage_fit().is_some() => {
+                    Some(Block::reason(ONTO_BAND))
                 }
                 // Changing the wallpaper is the person's call: another
                 // picture comes first, and Ridge says it replaces theirs.

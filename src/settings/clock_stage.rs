@@ -12,6 +12,15 @@ use cosmic::iced::Color;
 use cosmic::iced::Point;
 use cosmic::widget::image::Handle;
 
+/// The map's tint and band on the stage, and its word on where the clock is.
+pub(super) const TINT_ID: &str = "clock-stage-tint";
+pub(super) const BAND_ID: &str = "clock-stage-band";
+pub(super) const FIT_ID: &str = "clock-stage-fit";
+/// What the stage says about where the clock is on the map.
+pub(crate) const FIT_ON: &str = "Behind the scene";
+pub(crate) const FIT_HIGH: &str = "Lower it onto the green band";
+pub(crate) const FIT_LOW: &str = "Too low: the scene covers the top of the time";
+pub(crate) const FIT_ELSEWHERE: &str = "Doesn’t tuck in here. The green band shows where it does.";
 /// The widest the stage gets; a wider window only adds margin around it.
 pub(super) const MAX_WIDTH: f32 = 600.;
 /// The longer side of the wallpaper picture behind the stage.
@@ -47,6 +56,9 @@ pub enum Edit {
     Settle,
     Backdrop(u64, Option<Pixels>),
     Rendered(u64, Option<crate::depth::Rendered>),
+    /// Where the clock tucks behind the picture, for its size anywhere on
+    /// the stage. `Some(None)` is the worker saying there is no map.
+    Mapped(u64, Option<Option<crate::depth::Placement>>),
 }
 
 /// One cancelable background picture: the newest request wins and the
@@ -111,6 +123,71 @@ impl<T: Clone> Job<T> {
     }
 }
 
+/// The worker's map for the clock's size: where it tucks behind the
+/// picture, and the tint and band drawn over the whole screen.
+pub(super) struct Shown {
+    pub places: crate::depth::scene::Places,
+    pub tint: Handle,
+    pub band: Handle,
+    /// The clock size and whole screen it was drawn for.
+    size: [f32; 2],
+    screen: [f32; 2],
+}
+
+/// The map in flight and the one shown. A new picture, style or clock size
+/// asks again and forgets the old map, which would be wrong for it.
+#[derive(Default)]
+struct Map {
+    key: Option<Vec<u8>>,
+    id: u64,
+    cancel: Option<tokio::sync::watch::Sender<bool>>,
+    pending: Option<[[f32; 2]; 2]>,
+    shown: Option<Shown>,
+}
+impl Map {
+    fn want(
+        &mut self,
+        key: Option<Vec<u8>>,
+        frame: Option<[[f32; 2]; 2]>,
+    ) -> Option<(u64, tokio::sync::watch::Receiver<bool>)> {
+        if self.key == key {
+            return None;
+        }
+        if let Some(cancel) = self.cancel.take() {
+            cancel.send_replace(true);
+        }
+        self.id = self.id.wrapping_add(1);
+        self.shown = None;
+        self.key = key.filter(|_| frame.is_some());
+        self.pending = frame.filter(|_| self.key.is_some());
+        self.key.as_ref()?;
+        let (send, cancel) = tokio::sync::watch::channel(false);
+        self.cancel = Some(send);
+        Some((self.id, cancel))
+    }
+    fn ready(&mut self, id: u64, placement: Option<Option<crate::depth::Placement>>) {
+        if id != self.id {
+            return;
+        }
+        self.cancel = None;
+        let Some([size, screen]) = self.pending.take() else {
+            return;
+        };
+        let handle = |p: Pixels| Handle::from_rgba(p.width, p.height, p.rgba);
+        self.shown = placement.flatten().map(|placement| Shown {
+            places: placement.places,
+            tint: handle(placement.tint),
+            band: handle(placement.band),
+            size,
+            screen,
+        });
+    }
+}
+
+/// How far, as a share of the screen's height, a dropped clock settles
+/// onto the band.
+pub(super) const SETTLE_REACH: f32 = 0.06;
+
 #[derive(Default)]
 pub(super) struct Stage {
     dragging: bool,
@@ -124,6 +201,7 @@ pub(super) struct Stage {
     lit: Job<crate::depth::Request>,
     /// What the worker found for the shown lit clock's picture.
     found: Option<crate::depth::Found>,
+    map: Map,
 }
 impl Stage {
     pub(super) fn dragging(&self) -> bool {
@@ -168,10 +246,31 @@ impl Stage {
             _ => None,
         }
     }
-    /// Draws the lit clock again for the same request, after its picture
-    /// was analysed or forgotten. The shown one stays until then.
+    /// The verdict for the clock exactly where it was last drawn.
+    pub(super) fn judgement(
+        &self,
+        frame: &crate::depth::Frame,
+    ) -> Option<&crate::depth::scene::Judgement> {
+        let (request, _) = self.lit.shown.as_ref()?;
+        match self.found.as_ref()? {
+            crate::depth::Found::Judged { judgement, .. } if request.frame == *frame => {
+                Some(judgement)
+            }
+            _ => None,
+        }
+    }
+    /// The map, only when it was drawn for this clock's size and screen.
+    pub(super) fn map(&self, frame: &crate::depth::Frame) -> Option<&Shown> {
+        self.map
+            .shown
+            .as_ref()
+            .filter(|shown| shown.size == frame.size && shown.screen == frame.screen)
+    }
+    /// Draws the lit clock and the map again for the same request, after
+    /// its picture was analysed or forgotten. The shown one stays until then.
     pub(super) fn redraw(&mut self) {
         self.lit.key = None;
+        self.map.key = None;
     }
     /// The newest lit clock asked of the worker.
     #[cfg(test)]
@@ -451,11 +550,93 @@ impl Settings {
             ..request.with_scenes(crate::depth::cache::root())
         })
     }
+    /// Where the clock tucks behind the picture, for its size anywhere in
+    /// the area widgets use. It doesn't change as the clock moves, nor with
+    /// the minute.
+    fn clock_stage_map_request(&self) -> Option<crate::depth::Request> {
+        let request = self.clock_stage_request()?;
+        let screen = self.clock_stage_screen();
+        let day = request.time.get(.."YYYY-MM-DD".len())?.to_owned();
+        Some(crate::depth::Request {
+            frame: crate::depth::Frame {
+                origin: screen.origin,
+                ..request.frame.clone()
+            },
+            time: format!("{day}T00:00:00"),
+            backdrop: None,
+            map: Some([
+                screen.origin[0],
+                screen.origin[1],
+                screen.area[0],
+                screen.area[1],
+            ]),
+            ..request
+        })
+    }
+    /// The map for the clock as it is now, and where the clock sits on it.
+    /// At rest, the verdict for exactly this place decides; while it moves,
+    /// the map does.
+    pub(super) fn clock_stage_fit(&self) -> Option<(&Shown, crate::depth::scene::Fit)> {
+        use crate::depth::scene::{Fit, Verdict};
+        let (position, size) = self.clock_stage_place()?;
+        let screen = self.clock_stage_screen();
+        let frame = frame(position, size, screen);
+        let shown = self.clock_stage.map(&frame)?;
+        if !shown.places.any() {
+            return None;
+        }
+        let fit = shown.places.fit(frame.origin);
+        let judged = (!self.clock_stage.dragging())
+            .then(|| self.clock_stage.judgement(&frame))
+            .flatten();
+        let fit = match judged.map(|j| (j.verdict, j.suggested)) {
+            Some((Verdict::Works, _)) => Fit::On,
+            Some((_, Some(spot))) if fit == Fit::On => {
+                if spot[1] > frame.origin[1] {
+                    Fit::High
+                } else {
+                    Fit::Low
+                }
+            }
+            _ => fit,
+        };
+        Some((shown, fit))
+    }
+    /// Whether the stage shows the map: while the clock is handled, or
+    /// when it isn't tucked in and the band says where it would be.
+    pub(super) fn clock_stage_map_shown(&self) -> Option<(&Shown, crate::depth::scene::Fit)> {
+        use crate::depth::scene::Verdict;
+        let (shown, fit) = self.clock_stage_fit()?;
+        let (position, size) = self.clock_stage_place()?;
+        let frame = frame(position, size, self.clock_stage_screen());
+        let astray = self
+            .clock_stage
+            .judgement(&frame)
+            .is_some_and(|j| j.verdict != Verdict::Works);
+        (self.clock_stage.handle() || astray).then_some((shown, fit))
+    }
+    /// Where a clock dropped near the band settles: a little inside the
+    /// band, at the same x when it can be. `None` when it is on the band
+    /// already or too far from it.
+    fn clock_stage_settle(&self) -> Option<[f32; 2]> {
+        let (position, size) = self.clock_stage_place()?;
+        let screen = self.clock_stage_screen();
+        let frame = frame(position, size, screen);
+        let shown = self.clock_stage.map(&frame)?;
+        if shown.places.fit(frame.origin) == crate::depth::scene::Fit::On {
+            return None;
+        }
+        let spot = shown
+            .places
+            .nearest(frame.origin, SETTLE_REACH * screen.whole[1])?;
+        Some(screen.in_area(spot))
+    }
     /// Keeps the stage's pictures in step: the wallpaper at the screen's
-    /// shape, and the lit clock once a drag rests or ends.
+    /// shape, and the lit clock and the map once a drag rests or ends.
     pub(super) fn clock_stage_sync(&mut self) -> Task<Message> {
         if !self.clock_stage_open() {
             self.clock_stage.lit.want(None, None);
+            self.clock_stage.map.want(None, None);
             self.clock_stage.found = None;
             return Task::none();
         }
@@ -509,7 +690,23 @@ impl Settings {
             },
             None => Task::none(),
         };
-        Task::batch([backdrop, lit])
+        let request = self.clock_stage_map_request();
+        let key = request
+            .as_ref()
+            .and_then(|request| serde_json::to_vec(request).ok());
+        let frame = request
+            .as_ref()
+            .map(|request| [request.frame.size, request.frame.screen]);
+        let map = match (self.clock_stage.map.want(key.clone(), frame), key) {
+            (Some((id, cancel)), Some(bytes)) => cosmic::task::future(async move {
+                Message::ClockStage(Edit::Mapped(
+                    id,
+                    crate::desktop::wallpaper::media::worker::render_map(bytes, cancel).await,
+                ))
+            }),
+            _ => Task::none(),
+        };
+        Task::batch([backdrop, lit, map])
     }
 
     pub(super) fn update_clock_stage(&mut self, event: Edit) -> Task<Message> {
@@ -533,6 +730,7 @@ impl Settings {
                     return self.scene_analyse();
                 }
             }
+            Edit::Mapped(id, placement) => self.clock_stage.map.ready(id, placement),
             Edit::Settle => {}
             // Kept even while busy, so the handle never sticks.
             Edit::Hover(over) => self.clock_stage.hover = over,
@@ -573,10 +771,19 @@ impl Settings {
                 return task;
             }
             Edit::Release => {
-                if !std::mem::take(&mut self.clock_stage.dragging) {
+                if !self.clock_stage.dragging {
                     return Task::none();
                 }
+                // Dropped near the band, the clock settles onto it, in the
+                // same Undo step as the move.
+                let settle = (!self.placement.resizing())
+                    .then(|| self.clock_stage_settle())
+                    .flatten();
+                self.clock_stage.dragging = false;
                 self.clock_stage.moved = None;
+                if let Some(spot) = settle {
+                    self.placement.release_at(clock, spot);
+                }
                 // Save ends the drag first, as the arrangement editor does.
                 return self.update_placement(placement::Message::Save);
             }
