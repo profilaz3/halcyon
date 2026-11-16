@@ -304,9 +304,9 @@ impl ToolsEditor {
         if !config.music_artwork() || self.art_loading {
             return Task::none();
         }
-        let Some(url) = self
+        let Some((url, reach)) = self
             .current(config)
-            .and_then(|player| player.art_url.clone())
+            .and_then(|player| Some((player.art_url.clone()?, player.art_reach())))
         else {
             return Task::none();
         };
@@ -315,7 +315,7 @@ impl ToolsEditor {
         }
         self.art_loading = true;
         cosmic::task::future(async move {
-            let result = music::load_art(url.clone()).await;
+            let result = music::load_art(url.clone(), reach).await;
             crate::settings::Message::Tools(Message::Art(url, result))
         })
     }
