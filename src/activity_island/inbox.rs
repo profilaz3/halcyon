@@ -20,9 +20,38 @@ const MENU_ROW: f32 = 32.;
 const MENU_GAP: f32 = 2.;
 /// Back and the four rules.
 const MENU_HEIGHT: f32 = 5. * MENU_ROW + 4. * MENU_GAP;
-/// The most the list asks of the card below its title line: five rows,
-/// Clear all, and an open Recent section.
-pub(super) const LIST_MAX: f32 = LIST_ROWS as f32 * (ROW_HEIGHT + ROW_GAP) - ROW_GAP
+/// Messages in the list: their size and the height of each line.
+const MESSAGE_SIZE: f32 = 12.;
+const MESSAGE_LINE: f32 = 16.;
+/// A row's title line, tall enough for the buttons that take the age's
+/// place under the pointer.
+const TITLE_LINE: f32 = 22.;
+/// Above and below a row's lines.
+const ROW_PAD: f32 = 2.;
+/// Between a title line and its message.
+const LINE_GAP: f32 = 2.;
+/// A row's small round buttons.
+const CONTROL: f32 = 22.;
+const CONTROL_GAP: f32 = 2.;
+/// The most a title line gives its buttons: expand, More and Dismiss.
+const TRAIL_ROOM: f32 = 3. * CONTROL + 2. * CONTROL_GAP;
+/// Kept at the end of a group member's first line for its age, or its
+/// expand and Dismiss buttons.
+const MEMBER_TRAIL: f32 = 2. * CONTROL + CONTROL_GAP + 6.;
+const TRAIL_GAP: f32 = 8.;
+/// A group member's row with one line of message.
+const MEMBER_ROW: f32 = 36.;
+/// A row with a title line and two lines of message.
+const TALL_ROW: f32 = 2. * ROW_PAD + TITLE_LINE + LINE_GAP + 2. * MESSAGE_LINE;
+/// Lines an opened message shows at most.
+const OPEN_LINES: usize = 12;
+/// Where a row's text starts: its padding, the app icon and a gap.
+const ROW_INDENT: f32 = 10. + 20. + 10.;
+/// A row's button: icon, widget id, tooltip and what it does.
+type Control = (&'static str, String, &'static str, Message);
+/// The most the list asks of the card below its title line: five rows of
+/// two lines, Clear all on a bar, and an open Recent section.
+pub(super) const LIST_MAX: f32 = LIST_ROWS as f32 * (TALL_ROW + ROW_GAP) - ROW_GAP
     + LIST_FOOTER
     + ROW_GAP
     + RECENT_HEAD
@@ -43,6 +72,105 @@ pub(super) enum Line {
     Note(u32),
     /// The app key and its notifications, newest first.
     Group(String, Vec<u32>),
+}
+
+/// A row of the list the pointer can be on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RowId {
+    Note(u32),
+    Group(String),
+}
+
+/// How a message fits a row: its first line, then the rest on the line
+/// below, cut short there unless the notification is opened in place.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Fit {
+    pub first: String,
+    pub rest: String,
+    /// The rest needs more than its one line.
+    pub cut: bool,
+    /// Lines the rest takes opened in place, at most `OPEN_LINES`.
+    pub open_lines: usize,
+}
+impl Fit {
+    /// Lines the message takes in a row that is not opened.
+    fn lines(&self) -> usize {
+        usize::from(!self.first.is_empty()) + usize::from(!self.rest.is_empty())
+    }
+}
+
+/// What a row says: a title line, none for a group member that would only
+/// repeat its app, then its message.
+struct Said {
+    title: Option<String>,
+    message: Fit,
+}
+
+type Measured = <cosmic::Renderer as cosmic::iced::advanced::text::Renderer>::Paragraph;
+/// A message's paragraph, set as a row draws it.
+fn paragraph(text: &str, width: f32, wrap: bool) -> Measured {
+    use cosmic::iced::advanced::text::{self as t, Paragraph as _};
+    Measured::with_text(t::Text {
+        content: text,
+        bounds: cosmic::iced::Size::new(width, f32::INFINITY),
+        size: MESSAGE_SIZE.into(),
+        line_height: t::LineHeight::Absolute(MESSAGE_LINE.into()),
+        font: cosmic::font::default(),
+        align_x: t::Alignment::Left,
+        align_y: cosmic::iced::alignment::Vertical::Top,
+        shaping: t::Shaping::Advanced,
+        wrapping: if wrap {
+            t::Wrapping::WordOrGlyph
+        } else {
+            t::Wrapping::None
+        },
+        ellipsize: t::Ellipsize::None,
+    })
+}
+fn line_width(text: &str) -> f32 {
+    use cosmic::iced::advanced::text::Paragraph as _;
+    paragraph(text, f32::INFINITY, false).min_bounds().width
+}
+fn wrapped_lines(text: &str, width: f32) -> usize {
+    use cosmic::iced::advanced::text::Paragraph as _;
+    let height = paragraph(text, width.max(1.), true).min_bounds().height;
+    ((height / MESSAGE_LINE).round() as usize).max(1)
+}
+/// Breaks a message after the last word that fits `first` wide; the rest
+/// goes on the line below, `width` wide. Runs of spaces and line breaks
+/// read as one space.
+pub(super) fn fit_message(text: &str, first: f32, width: f32) -> Fit {
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let fits = |end: usize| line_width(&text[..end]) <= first;
+    if text.is_empty() || fits(text.len()) {
+        return Fit {
+            first: text,
+            ..Fit::default()
+        };
+    }
+    // The most whole words that fit, else as many characters, at least one.
+    let spaces: Vec<usize> = text.match_indices(' ').map(|(at, _)| at).collect();
+    let words = spaces.partition_point(|&end| fits(end));
+    let cut = if words > 0 {
+        spaces[words - 1]
+    } else {
+        let ends: Vec<usize> = text.char_indices().map(|(at, _)| at).skip(1).collect();
+        let chars = ends.partition_point(|&end| fits(end));
+        ends.get(chars.saturating_sub(1))
+            .copied()
+            .unwrap_or(text.len())
+    };
+    let rest = text[cut..].trim_start().to_owned();
+    Fit {
+        first: text[..cut].trim_end().to_owned(),
+        cut: !rest.is_empty() && line_width(&rest) > width,
+        open_lines: if rest.is_empty() {
+            0
+        } else {
+            wrapped_lines(&rest, width).min(OPEN_LINES)
+        },
+        rest,
+    }
 }
 
 /// What the list draws, top to bottom.
@@ -117,7 +245,11 @@ impl Applet {
             };
         }
         let live = !self.notes.is_empty();
-        let mut fixed = if live { LIST_FOOTER } else { 0. };
+        let mut fixed = if live && !self.clear_on_title() {
+            LIST_FOOTER
+        } else {
+            0.
+        };
         if self.has_recent() {
             fixed += RECENT_HEAD + if live { ROW_GAP } else { 0. };
             if self.recent_open {
@@ -141,15 +273,19 @@ impl Applet {
             }
         }
         let height = |row: &Row| match row {
-            Row::Member(id) if self.note(*id).is_some_and(|n| !n.actions.is_empty()) => {
-                ROW_HEIGHT + ACTION_ROW
-            }
-            _ => ROW_HEIGHT,
+            Row::Note(id) | Row::Member(id) => self.note(*id).map_or(ROW_HEIGHT, |n| {
+                self.note_height(n, matches!(row, Row::Member(_)))
+            }),
+            Row::Group(_, ids) => ids
+                .first()
+                .and_then(|id| self.note(*id))
+                .map_or(ROW_HEIGHT, |n| {
+                    self.titled_height(&self.group_message(n), false)
+                }),
         };
-        let budget = room - fixed;
         // Up to five lines, with an open group's own rows beyond them, as
         // far as the room goes; always one.
-        let take = |start: usize| {
+        let take = |start: usize, budget: f32| {
             let (mut used, mut lines, mut rows) = (0., 0, Vec::new());
             for row in &all[start..] {
                 let lead = !matches!(row, Row::Member(_));
@@ -163,34 +299,173 @@ impl Applet {
             }
             (rows, used)
         };
-        let (mut rows, mut used) = take(0);
-        // An open group that would run out of room moves to the top.
-        if let Some(head) = all.iter().position(
-            |row| matches!(row, Row::Group(key, _) if self.open_group.as_deref() == Some(key.as_str())),
-        ) {
-            let members = all[head + 1..]
-                .iter()
-                .take_while(|row| matches!(row, Row::Member(_)))
-                .count();
-            if head > 0 && rows.len() < head + 1 + members {
-                (rows, used) = take(head);
-            }
-        }
-        let shown: usize = rows
-            .iter()
-            .map(|row| match row {
-                Row::Note(_) | Row::Member(_) => 1,
-                Row::Group(key, ids) if self.open_group.as_deref() != Some(key.as_str()) => {
-                    ids.len()
+        // An open group, or a notification opened in place, that would run
+        // out of room moves to the top.
+        let head = all.iter().position(|row| match row {
+            Row::Group(key, _) => self.open_group.as_deref() == Some(key.as_str()),
+            Row::Note(id) => self.expanded == Some(*id),
+            Row::Member(_) => false,
+        });
+        let pick = |budget: f32| {
+            let (rows, used) = take(0, budget);
+            if let Some(head) = head {
+                let members = all[head + 1..]
+                    .iter()
+                    .take_while(|row| matches!(row, Row::Member(_)))
+                    .count();
+                if head > 0 && rows.len() < head + 1 + members {
+                    return take(head, budget);
                 }
-                Row::Group(..) => 0,
-            })
-            .sum();
+            }
+            (rows, used)
+        };
+        let hidden = |rows: &[Row]| {
+            let shown: usize = rows
+                .iter()
+                .map(|row| match row {
+                    Row::Note(_) | Row::Member(_) => 1,
+                    Row::Group(key, ids) if self.open_group.as_deref() != Some(key.as_str()) => {
+                        ids.len()
+                    }
+                    Row::Group(..) => 0,
+                })
+                .sum();
+            self.notes.len().saturating_sub(shown)
+        };
+        let (mut rows, mut used) = pick(room - fixed);
+        // On an island, those that do not fit are counted on a line of
+        // their own; on a bar, beside Clear all.
+        if hidden(&rows) > 0 && self.clear_on_title() {
+            fixed += MORE_LINE;
+            (rows, used) = pick(room - fixed);
+        }
         Layout {
+            hidden: hidden(&rows),
             rows,
-            hidden: self.notes.len().saturating_sub(shown),
             height: used + fixed,
         }
+    }
+    /// Clear all is on the title line, beside Collapse. A Standard bar's
+    /// title line keeps the panel's width, too narrow for it beside the
+    /// title, so there it closes the list instead.
+    pub(super) fn clear_on_title(&self) -> bool {
+        !self.frame().attached
+    }
+    /// The list's width inside the open card.
+    fn list_inner(&self) -> f32 {
+        LIST_WIDTH - if self.frame().attached { 24. } else { 28. }
+    }
+    /// A row's message column: the list less the row's padding and icon.
+    fn message_width(&self) -> f32 {
+        self.list_inner() - ROW_INDENT - 10.
+    }
+    /// A message as it fits a row, measured once for each text and width.
+    fn fit(&self, text: &str, first: f32) -> Fit {
+        let width = self.message_width();
+        let key = (text.to_owned(), first.round() as u32, width.round() as u32);
+        if let Some(fit) = self.fits.borrow().get(&key) {
+            return fit.clone();
+        }
+        let fit = fit_message(text, first, width);
+        let mut fits = self.fits.borrow_mut();
+        if fits.len() >= 256 {
+            fits.clear();
+        }
+        fits.insert(key, fit.clone());
+        fit
+    }
+    /// What a notification's row says. The app's icon already names the
+    /// app, so the message no longer repeats it.
+    fn said(&self, n: &Note, member: bool) -> Said {
+        let body = if self.snapshot.preferences.notification_text {
+            n.body.trim()
+        } else {
+            ""
+        };
+        let title = n.title.trim();
+        let own = !title.is_empty() && !title.eq_ignore_ascii_case(n.app.trim());
+        let width = self.message_width();
+        if member && !own {
+            let message = if body.is_empty() { n.app.trim() } else { body };
+            return Said {
+                title: None,
+                message: self.fit(message, width - MEMBER_TRAIL - TRAIL_GAP),
+            };
+        }
+        let message = match (body.is_empty(), own && !member) {
+            (false, _) => body,
+            (true, true) => n.app.trim(),
+            (true, false) => "",
+        };
+        Said {
+            title: Some(if title.is_empty() {
+                n.app.clone()
+            } else {
+                title.to_owned()
+            }),
+            message: self.fit(message, width),
+        }
+    }
+    /// A group's message: the newest notification's, until the group
+    /// opens and its members say it.
+    fn group_message(&self, newest: &Note) -> Fit {
+        if self.open_group.as_deref() == Some(newest.app_key()) {
+            return Fit::default();
+        }
+        let body = if self.snapshot.preferences.notification_text {
+            newest.body.trim()
+        } else {
+            ""
+        };
+        let title = newest.title.trim();
+        let own = !title.is_empty() && !title.eq_ignore_ascii_case(newest.app.trim());
+        let message = match (own, body.is_empty()) {
+            (true, false) => format!("{title} · {body}"),
+            (true, true) => title.to_owned(),
+            (false, _) => body.to_owned(),
+        };
+        self.fit(&message, self.message_width())
+    }
+    /// A row with a title line, never shorter than one with a line of
+    /// message.
+    fn titled_height(&self, fit: &Fit, open: bool) -> f32 {
+        let lines = if open {
+            usize::from(!fit.first.is_empty()) + fit.open_lines
+        } else {
+            fit.lines()
+        };
+        let message = if lines == 0 {
+            0.
+        } else {
+            LINE_GAP + lines as f32 * MESSAGE_LINE
+        };
+        (2. * ROW_PAD + TITLE_LINE + message).max(ROW_HEIGHT)
+    }
+    /// The app's own buttons under a row: in an open group, or opened in
+    /// place.
+    fn actions_height(&self, n: &Note, member: bool) -> f32 {
+        if (member || self.expanded == Some(n.id)) && !n.actions.is_empty() {
+            ACTION_ROW
+        } else {
+            0.
+        }
+    }
+    /// A notification's row and the app's buttons under it.
+    fn note_height(&self, n: &Note, member: bool) -> f32 {
+        let said = self.said(n, member);
+        let open = self.expanded == Some(n.id);
+        let row = match said.title {
+            Some(_) => self.titled_height(&said.message, open),
+            None => {
+                let rest = match (said.message.rest.is_empty(), open) {
+                    (true, _) => 0,
+                    (false, true) => said.message.open_lines,
+                    (false, false) => 1,
+                };
+                (2. * ROW_PAD + TITLE_LINE + rest as f32 * MESSAGE_LINE).max(MEMBER_ROW)
+            }
+        };
+        row + self.actions_height(n, member)
     }
     /// Height the list needs beyond the card, as large as it may grow.
     pub(super) fn list_extra(&self) -> f32 {
@@ -353,6 +628,17 @@ impl Applet {
                 self.recent_open = !self.recent_open;
                 return self.fit_list();
             }
+            Message::RowHover(row, true) => self.hover_row = Some(row),
+            Message::RowHover(row, false) => {
+                if self.hover_row.as_ref() == Some(&row) {
+                    self.hover_row = None;
+                }
+            }
+            Message::NoteExpand(id) => {
+                self.expanded = (self.expanded != Some(id)).then_some(id);
+                self.reveal_deadline = None;
+                return self.fit_list();
+            }
             Message::RecentClear => {
                 self.recent.clear();
                 self.muted = 0;
@@ -458,58 +744,175 @@ impl Applet {
             .size(size)
             .into()
     }
-    fn round_icon<'a>(
+    /// A row's small round button on its title line.
+    fn control<'a>(
         &self,
         palette: Palette,
         tint: Color,
         reveal: f32,
-        (name, id, label): (&str, String, &str),
-        press: Message,
+        (name, id, label, press): Control,
     ) -> Element<'a, Message> {
         self.tip(
             palette,
             widget::button::icon(widget::icon::from_name(name).symbolic(true))
                 .id(id.into())
-                .icon_size(14)
-                .padding(7)
-                .width(28)
-                .height(28)
+                .icon_size(12)
+                .padding(5)
+                .width(CONTROL)
+                .height(CONTROL)
                 .class(capsule_button(palette, tint, reveal, Role::Ghost))
                 .on_press(press),
             label,
             widget::tooltip::Position::Top,
         )
     }
-    /// Two lines: a title with the age at its end, then a quieter detail.
-    fn note_lines<'a>(
+    /// A row shows its buttons while the pointer is on it, and every row
+    /// does after Tab. The rest of the time the message keeps the width.
+    fn controls_shown(&self, row: &RowId) -> bool {
+        self.keyed || self.hover_row.as_ref() == Some(row)
+    }
+    /// Where a title line ends: the age, or room for the buttons laid over
+    /// the row.
+    fn trailing<'a>(
         &self,
         palette: Palette,
         reveal: f32,
+        at_ms: i64,
+        controls: Option<usize>,
+    ) -> Element<'a, Message> {
+        match controls {
+            Some(count) => widget::Space::new()
+                .width(count as f32 * CONTROL + count.saturating_sub(1) as f32 * CONTROL_GAP)
+                .into(),
+            None => self.text(
+                super::note_age(at_ms, self.now_ms, self.format_24h),
+                11.,
+                alpha(palette.quiet, reveal),
+            ),
+        }
+    }
+    /// A row with its buttons laid over the end of its title line. Laid
+    /// over rather than inside, the row comes before its buttons for Tab,
+    /// as they read.
+    fn with_controls<'a>(
+        &self,
+        palette: Palette,
+        tint: Color,
+        reveal: f32,
+        row: Element<'a, Message>,
+        controls: Option<Vec<Control>>,
+        end: f32,
+    ) -> Element<'a, Message> {
+        let Some(controls) = controls else {
+            return row;
+        };
+        let mut buttons = widget::row([]).spacing(CONTROL_GAP);
+        for control in controls {
+            buttons = buttons.push(self.control(palette, tint, reveal, control));
+        }
+        let over = widget::container(
+            widget::row([
+                widget::Space::new().width(Length::Fill).into(),
+                buttons.into(),
+            ])
+            .align_y(cosmic::iced::Alignment::Center),
+        )
+        .width(Length::Fill)
+        .height(ROW_PAD + TITLE_LINE)
+        .padding([ROW_PAD, end, 0., 0.]);
+        cosmic::iced::widget::stack![row, over].into()
+    }
+    /// One line of a message, set as it was measured.
+    fn message_text<'a>(&self, value: String, color: Color) -> Element<'a, Message> {
+        use cosmic::iced::advanced::text as t;
+        widget::text(value)
+            .size(MESSAGE_SIZE)
+            .line_height(t::LineHeight::Absolute(MESSAGE_LINE.into()))
+            .shaping(t::Shaping::Advanced)
+            .wrapping(t::Wrapping::None)
+            .ellipsize(t::Ellipsize::End(t::EllipsizeHeightLimit::Lines(1)))
+            .class(cosmic::theme::Text::Color(color))
+            .into()
+    }
+    /// What follows the first line: one more line cut short, or opened, all
+    /// of it.
+    fn message_rest<'a>(
+        &self,
+        fit: &Fit,
+        open: bool,
+        color: Color,
+    ) -> Option<Element<'a, Message>> {
+        use cosmic::iced::advanced::text as t;
+        if fit.rest.is_empty() {
+            return None;
+        }
+        if !open {
+            return Some(self.message_text(fit.rest.clone(), color));
+        }
+        Some(
+            widget::container(
+                widget::text(fit.rest.clone())
+                    .size(MESSAGE_SIZE)
+                    .line_height(t::LineHeight::Absolute(MESSAGE_LINE.into()))
+                    .shaping(t::Shaping::Advanced)
+                    .wrapping(t::Wrapping::WordOrGlyph)
+                    .class(cosmic::theme::Text::Color(color)),
+            )
+            .width(Length::Fill)
+            .height(fit.open_lines as f32 * MESSAGE_LINE)
+            .clip(true)
+            .into(),
+        )
+    }
+    /// A title line: the title, a count for a group, then the age or the
+    /// row's buttons.
+    fn title_line<'a>(
+        &self,
         title: String,
         ink: Color,
-        at_ms: i64,
-        detail: String,
+        reveal: f32,
+        count: Option<(usize, Palette)>,
+        trailing: Element<'a, Message>,
     ) -> Element<'a, Message> {
-        widget::column([
-            widget::row([
-                widget::container(self.text(title, 13., alpha(ink, reveal)))
-                    .width(Length::Fill)
-                    .into(),
-                self.text(
-                    super::note_age(at_ms, self.now_ms, self.format_24h),
-                    11.,
-                    alpha(palette.quiet, reveal),
-                ),
-            ])
-            .spacing(8)
-            .align_y(cosmic::iced::Alignment::Center)
-            .into(),
-            self.text(detail, 12., alpha(palette.quiet, reveal)),
-        ])
-        .spacing(2)
-        .into()
+        let center = cosmic::iced::Alignment::Center;
+        let title = self.text(title, 13., alpha(ink, reveal));
+        let mut line = widget::row([]).spacing(6).align_y(center);
+        line = match count {
+            Some((count, palette)) => line
+                .push(
+                    widget::container(title)
+                        .width(Length::Shrink)
+                        .max_width(self.message_width() - TRAIL_ROOM - 54.),
+                )
+                .push(
+                    widget::container(self.text(
+                        count.to_string(),
+                        11.,
+                        alpha(palette.ink, reveal),
+                    ))
+                    .padding([0, 6])
+                    .class(cosmic::theme::Container::custom(move |_| {
+                        cosmic::widget::container::Style {
+                            background: Some(alpha(palette.ink, 0.16 * reveal).into()),
+                            border: cosmic::iced::Border {
+                                radius: 8.0.into(),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        }
+                    })),
+                )
+                .push(widget::Space::new().width(Length::Fill)),
+            None => line.push(widget::container(title).width(Length::Fill)),
+        };
+        widget::container(line.push(trailing))
+            .height(TITLE_LINE)
+            .align_y(center)
+            .into()
     }
-    /// One notification: a row that opens it, More and its own dismiss.
+    /// One notification: a row that opens it, with its age, and More and
+    /// Dismiss under the pointer. Opened in place it shows all its message
+    /// and the app's own buttons.
     fn note_row<'a>(
         &self,
         palette: Palette,
@@ -519,107 +922,171 @@ impl Applet {
         member: bool,
     ) -> Element<'a, Message> {
         let center = cosmic::iced::Alignment::Center;
-        let text = self.snapshot.preferences.notification_text;
-        let detail = if member {
-            if text && !n.body.is_empty() {
-                n.body.clone()
-            } else {
-                n.app.clone()
-            }
-        } else if text && !n.body.is_empty() {
-            format!("{} · {}", n.app, n.body)
-        } else {
-            n.app.clone()
-        };
+        let row_id = RowId::Note(n.id);
+        let said = self.said(n, member);
+        let open = self.expanded == Some(n.id);
+        let fit = &said.message;
+        let mut controls: Vec<Control> = Vec::new();
+        if open || fit.cut || (!member && !n.actions.is_empty()) {
+            controls.push((
+                if open {
+                    "pan-up-symbolic"
+                } else {
+                    "pan-down-symbolic"
+                },
+                format!("activity-note-row-expand-{}", n.id),
+                if open { "Show less" } else { "Show all" },
+                Message::NoteExpand(n.id),
+            ));
+        }
+        if !member {
+            controls.push((
+                "view-more-symbolic",
+                format!("activity-note-row-more-{}", n.id),
+                "More",
+                Message::NoteMenu(n.id),
+            ));
+        }
+        controls.push((
+            "window-close-symbolic",
+            format!("activity-note-row-dismiss-{}", n.id),
+            "Dismiss",
+            Message::NoteDismiss(n.id),
+        ));
+        let controls = self.controls_shown(&row_id).then_some(controls);
+        let trailing = self.trailing(palette, reveal, n.at_ms, controls.as_ref().map(Vec::len));
         let ink = if n.urgent {
             palette.warning()
         } else {
             palette.ink
         };
-        let lines = self.note_lines(palette, reveal, n.title.clone(), ink, n.at_ms, detail);
-        let content: Element<'a, Message> = if member {
-            lines
-        } else {
-            widget::row([self.note_icon(Some(n), 20), lines])
-                .spacing(10)
-                .align_y(center)
-                .into()
-        };
-        let open = widget::button::custom(content)
-            .id(format!("activity-note-row-{}", n.id).into())
-            .width(Length::Fill)
-            .height(super::ROW_HEIGHT)
-            .padding(if member {
-                [4, 10, 4, 40]
-            } else {
-                [4, 10, 4, 10]
-            })
-            .class(capsule_button(palette, tint, reveal, Role::Ghost))
-            // Like the popup it stands for: the notification itself, or
-            // its card when the app gave it nothing to open.
-            .on_press(if n.default {
-                Message::NoteAction(n.id, "default".into())
-            } else {
-                Message::Select(Kind::Notification(n.id))
-            });
-        let mut row = widget::row([widget::mouse_area(open)
-            .on_right_press(Message::NoteMenu(n.id))
-            .into()])
-        .spacing(2)
-        .align_y(center);
-        if !member {
-            row = row.push(self.round_icon(
-                palette,
-                tint,
-                reveal,
-                (
-                    "view-more-symbolic",
-                    format!("activity-note-row-more-{}", n.id),
-                    "More",
-                ),
-                Message::NoteMenu(n.id),
-            ));
+        let mut body = widget::column([]).spacing(0);
+        match said.title {
+            Some(title) => {
+                body = body.push(self.title_line(title, ink, reveal, None, trailing));
+                let quiet = alpha(palette.quiet, reveal);
+                let mut message = widget::column([]);
+                if !fit.first.is_empty() {
+                    message = message.push(self.message_text(fit.first.clone(), quiet));
+                }
+                if let Some(rest) = self.message_rest(fit, open, quiet) {
+                    message = message.push(rest);
+                }
+                if !fit.first.is_empty() {
+                    body = body.push(widget::container(message).padding([LINE_GAP, 0., 0., 0.]));
+                }
+            }
+            // A group member that would only repeat its app: the message
+            // leads, its first line beside the age.
+            None => {
+                let ink = alpha(ink, reveal);
+                // The first line sits low in the title line's height, so
+                // the next follows at the message's own spacing.
+                body = body.push(
+                    widget::container(
+                        widget::row([
+                            widget::container(self.message_text(fit.first.clone(), ink))
+                                .width(Length::Fill)
+                                .height(TITLE_LINE)
+                                .align_y(cosmic::iced::Alignment::End)
+                                .into(),
+                            widget::container(trailing)
+                                .width(MEMBER_TRAIL)
+                                .height(TITLE_LINE)
+                                .align_x(cosmic::iced::Alignment::End)
+                                .align_y(cosmic::iced::Alignment::End)
+                                .padding([0., 0., 1., 0.])
+                                .into(),
+                        ])
+                        .spacing(TRAIL_GAP)
+                        .align_y(center),
+                    )
+                    .height(TITLE_LINE)
+                    .align_y(center),
+                );
+                if let Some(rest) = self.message_rest(fit, open, ink) {
+                    body = body.push(rest);
+                }
+            }
         }
-        row = row.push(self.round_icon(
+        let content: Element<'a, Message> = if member {
+            body.into()
+        } else {
+            widget::row([
+                widget::container(self.note_icon(Some(n), 20))
+                    .padding([(TITLE_LINE - 20.) / 2., 0.])
+                    .into(),
+                body.into(),
+            ])
+            .spacing(10)
+            .into()
+        };
+        let height = self.note_height(n, member) - self.actions_height(n, member);
+        let open_row = widget::button::custom(
+            widget::container(content)
+                .height(Length::Fill)
+                .align_y(center),
+        )
+        .id(format!("activity-note-row-{}", n.id).into())
+        .width(Length::Fill)
+        .height(height)
+        .padding(if member {
+            [ROW_PAD, 10., ROW_PAD, ROW_INDENT]
+        } else {
+            [ROW_PAD, 10., ROW_PAD, 10.]
+        })
+        .class(capsule_button(
             palette,
             tint,
             reveal,
-            (
-                "window-close-symbolic",
-                format!("activity-note-row-dismiss-{}", n.id),
-                "Dismiss",
-            ),
-            Message::NoteDismiss(n.id),
-        ));
-        if !member || n.actions.is_empty() {
-            return row.into();
-        }
-        // In an open group each notification keeps its own buttons.
-        let mut buttons = widget::row([widget::Space::new().width(30).into()]).spacing(4);
-        for (index, (key, label)) in n.actions.iter().take(2).enumerate() {
-            buttons = buttons.push(
-                widget::button::custom(
-                    widget::container(self.text(label.clone(), 12., alpha(palette.ink, reveal)))
+            if controls.is_some() && !self.keyed {
+                Role::Lit
+            } else {
+                Role::Ghost
+            },
+        ))
+        // Like the popup it stands for: the notification itself, or
+        // its card when the app gave it nothing to open.
+        .on_press(if n.default {
+            Message::NoteAction(n.id, "default".into())
+        } else {
+            Message::Select(Kind::Notification(n.id))
+        });
+        let open_row = self.with_controls(palette, tint, reveal, open_row.into(), controls, 10.);
+        let mut whole = widget::column([open_row]).spacing(ACTION_ROW - 28.);
+        if self.actions_height(n, member) > 0. {
+            // In an open group, or opened in place, the app's own buttons.
+            let mut buttons =
+                widget::row([widget::Space::new().width(ROW_INDENT - 4.).into()]).spacing(4);
+            for (index, (key, label)) in n.actions.iter().take(2).enumerate() {
+                buttons = buttons.push(
+                    widget::button::custom(
+                        widget::container(self.text(
+                            label.clone(),
+                            12.,
+                            alpha(palette.ink, reveal),
+                        ))
                         .height(Length::Fill)
                         .align_y(center),
-                )
-                .id(format!("activity-note-row-action-{}-{index}", n.id).into())
-                .height(28)
-                .padding([0, 12])
-                .class(capsule_button(
-                    palette,
-                    tint,
-                    reveal,
-                    if index == 0 { Role::Quiet } else { Role::Ghost },
-                ))
-                .on_press(Message::NoteAction(n.id, key.clone())),
-            );
+                    )
+                    .id(format!("activity-note-row-action-{}-{index}", n.id).into())
+                    .height(28)
+                    .padding([0, 12])
+                    .class(capsule_button(
+                        palette,
+                        tint,
+                        reveal,
+                        if index == 0 { Role::Quiet } else { Role::Ghost },
+                    ))
+                    .on_press(Message::NoteAction(n.id, key.clone())),
+                );
+            }
+            whole = whole.push(buttons);
         }
-        widget::column([row.into(), buttons.into()])
-            .spacing(ACTION_ROW - 28.)
-            .into()
+        self.hovered(whole.into(), row_id, Message::NoteMenu(n.id))
     }
-    /// Two or more from one app: "Slack · 4 new" with the newest beneath.
+    /// Two or more from one app: the app and a count, then the newest
+    /// message beneath. It opens in place.
     fn group_row<'a>(
         &self,
         palette: Palette,
@@ -632,77 +1099,115 @@ impl Applet {
         let Some(newest) = ids.first().and_then(|id| self.note(*id)) else {
             return widget::Space::new().into();
         };
+        let row_id = RowId::Group(key.to_owned());
         let open = self.open_group.as_deref() == Some(key);
-        let detail = if self.snapshot.preferences.notification_text && !newest.body.is_empty() {
-            format!("{} · {}", newest.title, newest.body)
-        } else {
-            newest.title.clone()
-        };
-        let lines = self.note_lines(
-            palette,
-            reveal,
-            format!("{} · {} new", newest.app, ids.len()),
-            palette.ink,
-            newest.at_ms,
-            detail,
-        );
-        let toggle = widget::button::custom(
-            widget::row([
-                self.note_icon(Some(newest), 20),
-                lines,
-                widget::icon::from_name(if open {
-                    "pan-up-symbolic"
-                } else {
-                    "pan-down-symbolic"
-                })
-                .symbolic(true)
-                .size(12)
-                .into(),
-            ])
-            .spacing(10)
-            .align_y(center),
-        )
-        .id(format!("activity-note-group-{key}").into())
-        .width(Length::Fill)
-        .height(super::ROW_HEIGHT)
-        .padding([4, 10])
-        .class(capsule_button(
-            palette,
-            tint,
-            reveal,
-            if open { Role::Quiet } else { Role::Ghost },
-        ))
-        .on_press(Message::GroupToggle(key.to_owned()));
-        widget::row([
-            widget::mouse_area(toggle)
-                .on_right_press(Message::NoteMenu(newest.id))
-                .into(),
-            self.round_icon(
-                palette,
-                tint,
-                reveal,
+        let fit = self.group_message(newest);
+        let controls = self.controls_shown(&row_id).then(|| {
+            vec![
                 (
                     "view-more-symbolic",
                     format!("activity-note-group-more-{key}"),
                     "More",
+                    Message::NoteMenu(newest.id),
                 ),
-                Message::NoteMenu(newest.id),
-            ),
-            self.round_icon(
-                palette,
-                tint,
-                reveal,
                 (
                     "window-close-symbolic",
                     format!("activity-note-group-dismiss-{key}"),
                     "Dismiss all",
+                    Message::GroupDismiss(key.to_owned()),
                 ),
-                Message::GroupDismiss(key.to_owned()),
-            ),
-        ])
-        .spacing(2)
-        .align_y(center)
-        .into()
+            ]
+        });
+        let trailing = self.trailing(
+            palette,
+            reveal,
+            newest.at_ms,
+            controls.as_ref().map(Vec::len),
+        );
+        let caret: Element<'a, Message> = widget::icon::from_name(if open {
+            "pan-up-symbolic"
+        } else {
+            "pan-down-symbolic"
+        })
+        .symbolic(true)
+        .size(12)
+        .into();
+        let quiet = alpha(palette.quiet, reveal);
+        let mut message = widget::column([]);
+        if !fit.first.is_empty() {
+            message = message.push(self.message_text(fit.first.clone(), quiet));
+        }
+        if let Some(rest) = self.message_rest(&fit, false, quiet) {
+            message = message.push(rest);
+        }
+        let mut body = widget::column([self.title_line(
+            newest.app.clone(),
+            palette.ink,
+            reveal,
+            Some((ids.len(), palette)),
+            widget::row([trailing, caret])
+                .spacing(6)
+                .align_y(center)
+                .into(),
+        )]);
+        if !fit.first.is_empty() {
+            body = body.push(widget::container(message).padding([LINE_GAP, 0., 0., 0.]));
+        }
+        let toggle = widget::button::custom(
+            widget::container(
+                widget::row([
+                    widget::container(self.note_icon(Some(newest), 20))
+                        .padding([(TITLE_LINE - 20.) / 2., 0.])
+                        .into(),
+                    body.into(),
+                ])
+                .spacing(10),
+            )
+            .height(Length::Fill)
+            .align_y(center),
+        )
+        .id(format!("activity-note-group-{key}").into())
+        .width(Length::Fill)
+        .height(self.titled_height(&fit, false))
+        .padding([ROW_PAD, 10.])
+        .class(capsule_button(
+            palette,
+            tint,
+            reveal,
+            match (open, controls.is_some() && !self.keyed) {
+                (true, _) => Role::Quiet,
+                (false, true) => Role::Lit,
+                (false, false) => Role::Ghost,
+            },
+        ))
+        .on_press(Message::GroupToggle(key.to_owned()));
+        // The buttons stop short of the caret.
+        let toggle = self.with_controls(
+            palette,
+            tint,
+            reveal,
+            toggle.into(),
+            controls,
+            10. + 12. + 6.,
+        );
+        self.hovered(toggle, row_id, Message::NoteMenu(newest.id))
+    }
+    /// A row that says when the pointer is on it, and offers its app's
+    /// rules on right-click. Motion counts as well as entering: after a
+    /// dismissal the next row slides under a pointer that never entered it.
+    fn hovered<'a>(
+        &self,
+        row: Element<'a, Message>,
+        id: RowId,
+        menu: Message,
+    ) -> Element<'a, Message> {
+        let moved = id.clone();
+        widget::mouse_area(row)
+            .on_right_press(menu)
+            .on_enter(Message::RowHover(id.clone(), true))
+            .on_move(move |_| Message::RowHover(moved.clone(), true))
+            .on_exit(Message::RowHover(id, false))
+            .into()
     }
     /// The quiet section under the list: a toggle, then what left it.
     fn recent_view<'a>(&self, palette: Palette, tint: Color, reveal: f32) -> Element<'a, Message> {
@@ -877,8 +1382,9 @@ impl Applet {
         list.width(Length::Fill).into()
     }
     /// The notifications, newest first with urgent ones on top: a row opens
-    /// one, a group opens in place, and Clear all closes them together.
-    /// Lines beyond the popup's room are counted rather than scrolled.
+    /// one and a group opens in place. Clear all closes them together, on
+    /// the title line or, on a bar, under the rows. Lines beyond the
+    /// popup's room are counted rather than scrolled.
     /// Recent sits underneath.
     pub(super) fn list_view(
         &self,
@@ -903,21 +1409,29 @@ impl Applet {
                 Row::Group(key, ids) => self.group_row(palette, tint, reveal, key, ids),
             });
         }
-        if !self.notes.is_empty() {
-            let more = layout.hidden;
+        let more = (layout.hidden > 0).then(|| {
+            self.text(
+                format!("and {} more", layout.hidden),
+                12.,
+                alpha(palette.quiet, reveal),
+            )
+        });
+        if self.clear_on_title() || self.notes.is_empty() {
+            if let Some(more) = more {
+                list = list.push(
+                    widget::container(more)
+                        .width(Length::Fill)
+                        .height(MORE_LINE - ROW_GAP)
+                        .padding([0, 10])
+                        .align_y(cosmic::iced::Alignment::End),
+                );
+            }
+        } else {
             let footer = widget::row([
-                widget::container(if more > 0 {
-                    self.text(
-                        format!("and {more} more"),
-                        12.,
-                        alpha(palette.quiet, reveal),
-                    )
-                } else {
-                    widget::Space::new().into()
-                })
-                .width(Length::Fill)
-                .padding([0, 10])
-                .into(),
+                widget::container(more.unwrap_or_else(|| widget::Space::new().into()))
+                    .width(Length::Fill)
+                    .padding([0, 10])
+                    .into(),
                 self.label_button(
                     palette,
                     "activity-note-clear",

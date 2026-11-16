@@ -80,8 +80,16 @@ pub(super) struct Surface<'a> {
     pub chooser: bool,
     /// Popup height beyond the frame's own, fixed when the popup opened.
     pub extra: f32,
+    /// Popup width beyond the frame's own, fixed when the popup opened.
+    pub extra_width: f32,
+    /// How much of `extra_width` the open card spreads into: the
+    /// notification list's, none for other cards.
+    pub card_width: f32,
     /// How much of `extra` the card grows into; the list's rows decide.
     pub card_extra: f32,
+    /// Buttons the open title line keeps before Collapse: the list's Clear
+    /// all, 0 for other cards.
+    pub tools: f32,
     /// The badge or icon row beside the title, 0 when there is none.
     pub others_width: f32,
     /// How much of it the resting title mirrors on its left to stay centred.
@@ -123,7 +131,8 @@ impl Surface<'_> {
     }
     /// An attached card: it widens from the slot and drops from the bar.
     fn card(&self, b: Rectangle) -> Rectangle {
-        let width = self.slot_width + (ATTACHED_WIDTH - self.slot_width) * self.progress;
+        let width =
+            self.slot_width + (ATTACHED_WIDTH + self.card_width - self.slot_width) * self.progress;
         Rectangle {
             x: (b.x + (b.width - width) / 2.).round(),
             y: b.y + self.card_top(),
@@ -165,7 +174,9 @@ impl Surface<'_> {
                 0.
             };
         let width = if self.popup {
-            self.slot_width + 2. * self.frame.padding + (WIDTH - self.slot_width) * self.progress
+            self.slot_width
+                + 2. * self.frame.padding
+                + (WIDTH + self.card_width - self.slot_width) * self.progress
         } else {
             self.slot_width
         };
@@ -236,7 +247,7 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
     fn size(&self) -> Size<Length> {
         Size::new(
             Length::Fixed(if self.popup {
-                self.frame.popup_width()
+                self.frame.popup_width() + self.extra_width
             } else {
                 self.slot_width
             }),
@@ -250,7 +261,7 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
     fn layout(&mut self, t: &mut Tree, r: &Renderer, _: &layout::Limits) -> layout::Node {
         let p = self.progress;
         let outer_width = if self.popup {
-            self.frame.popup_width()
+            self.frame.popup_width() + self.extra_width
         } else {
             self.slot_width
         };
@@ -262,7 +273,7 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
         let w = if attached {
             compact
         } else {
-            compact + (WIDTH - compact) * p
+            compact + (WIDTH + self.card_width - compact) * p
         };
         let inset = if attached { 12. } else { 12. + 2. * p };
         let (left, right) = (
@@ -273,7 +284,7 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
         // Attached details start under the title's glyph, with no indent;
         // actions may use the card's full width, centred.
         let (card_left, card_inner, action_left, action_inner) = if attached {
-            let w = self.slot_width + (ATTACHED_WIDTH - self.slot_width) * p;
+            let w = self.slot_width + (ATTACHED_WIDTH + self.card_width - self.slot_width) * p;
             let edge = (outer_width - w) / 2.;
             (edge + 24., w - 48., edge + 12., w - 24.)
         } else {
@@ -337,20 +348,20 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
             },
         );
         let width = actions.size().width;
-        let (others, balance) = (self.others_width, self.balance);
+        let (others, balance, tools) = (self.others_width, self.balance, self.tools);
         let nodes = vec![
             place(
                 0,
                 left + balance * (1. - p),
                 2. + rise,
-                inner - (PIN_WIDTH + 4.) * p - balance * (1. - p) - others,
+                inner - (PIN_WIDTH + 4. + tools) * p - balance * (1. - p) - others,
                 TITLE_HEIGHT,
             ),
             place(
                 1,
-                right - PIN_WIDTH,
+                right - PIN_WIDTH - tools,
                 if attached { 2. } else { 8. },
-                PIN_WIDTH,
+                PIN_WIDTH + tools,
                 28.,
             ),
             place(2, meta.0, meta.1, meta.2, meta_height),
@@ -360,7 +371,7 @@ impl Widget<Message, Theme, Renderer> for Surface<'_> {
             )),
             place(
                 4,
-                right - others - (PIN_WIDTH + 4.) * p,
+                right - others - (PIN_WIDTH + 4. + tools) * p,
                 // Centred on the title line.
                 6. + rise,
                 others,

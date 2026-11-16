@@ -58,18 +58,25 @@ fn overview_width(icons: usize, badges: usize) -> f32 {
     }
     icons as f32 * ICON_BADGE + badges as f32 * BADGE_WIDTH + (items - 1) as f32 * OVERVIEW_GAP
 }
+/// The open island's width while it lists notifications, wider than other
+/// cards so each message gets two readable lines.
+const LIST_WIDTH: f32 = 380.;
 /// Notifications listed in the open island, at most; the rest are counted.
 const LIST_ROWS: usize = 5;
 const ROW_HEIGHT: f32 = 44.;
 const ROW_GAP: f32 = 4.;
-/// Clear all beneath the rows, with a little air above it.
+/// Clear all beneath the rows on a Standard bar, with a little air above it.
 const LIST_FOOTER: f32 = 40.;
+/// "and N more" beneath the rows on an island, when some do not fit.
+const MORE_LINE: f32 = ROW_GAP + 22.;
+/// Clear all on an island's list title line, a ✕ beside Collapse.
+const CLEAR_ROOM: f32 = 28. + 2.;
 /// The room a card has below its title line, as the chooser uses it.
 const LIST_ROOM: f32 = HEIGHT - 50.;
-/// The height of a list of `rows` notifications and its footer.
+/// The height of a list of `rows` notifications and what follows them.
 #[cfg(test)]
-fn list_height(rows: usize) -> f32 {
-    rows as f32 * (ROW_HEIGHT + ROW_GAP) - ROW_GAP + LIST_FOOTER
+fn list_height(rows: usize, footer: f32) -> f32 {
+    rows as f32 * (ROW_HEIGHT + ROW_GAP) - ROW_GAP + footer
 }
 /// How long ago a notification arrived, as a list row says it.
 fn note_age(at_ms: i64, now_ms: i64, format_24h: bool) -> String {
@@ -105,6 +112,9 @@ enum Role {
     Quiet,
     /// A secondary icon action, resting without a fill.
     Ghost,
+    /// A list row under the pointer: lit as hovered even while the pointer
+    /// is on one of the buttons laid over it.
+    Lit,
     /// A small count that must read as a control on any panel.
     Badge,
 }
@@ -147,6 +157,7 @@ fn capsule_button(palette: Palette, tint: Color, reveal: f32, role: Role) -> cos
             Role::Quiet => alpha(palette.ink, [0.07, 0.13, 0.18][level] * reveal),
             Role::Ghost if disabled => Color::TRANSPARENT,
             Role::Ghost => alpha(palette.ink, [0., 0.1, 0.16][level] * reveal),
+            Role::Lit => alpha(palette.ink, [0.1, 0.1, 0.16][level] * reveal),
             Role::Badge => alpha(palette.ink, [0.16, 0.24, 0.3][level]),
         };
         cosmic::widget::button::Style {
@@ -363,6 +374,8 @@ pub struct Applet {
     list: bool,
     /// Height the open popup has beyond its usual size, for the list.
     popup_extra: f32,
+    /// Width the open popup has beyond its usual size, for the list.
+    popup_wide: f32,
     /// Notifications that left the list this session, newest first. Kept
     /// in memory only, like `notes`, and bounded.
     recent: Vec<notifications::Recent>,
@@ -372,6 +385,15 @@ pub struct Applet {
     muted: usize,
     /// The app group open in the list, by app key; one at a time.
     open_group: Option<String>,
+    /// The list row under the pointer, which shows its buttons.
+    hover_row: Option<inbox::RowId>,
+    /// Tab was pressed in the open list: every row shows its buttons, so
+    /// they can be reached without a pointer.
+    keyed: bool,
+    /// The notification opened in place in the list, message in full.
+    expanded: Option<u32>,
+    /// How a message fits the list, by its text and width. See `inbox`.
+    fits: std::cell::RefCell<std::collections::HashMap<(String, u32, u32), inbox::Fit>>,
     /// The app whose rules menu is open.
     menu: Option<inbox::MenuTarget>,
     /// App rules as just chosen here, until the desktop reports them.
@@ -447,6 +469,10 @@ pub enum Message {
     ShowRecent,
     /// Open the rules menu for the app of a notification, live or recent.
     NoteMenu(u32),
+    /// The pointer entered (true) or left (false) a row of the list.
+    RowHover(inbox::RowId, bool),
+    /// Show a notification's whole message in the list, or fold it again.
+    NoteExpand(u32),
     MenuClose,
     /// Set, or with `None` reset, the rule for the app in the open menu.
     NoteRule(Option<preferences::AppRule>),
@@ -525,10 +551,15 @@ impl Application for Applet {
                 revealed: false,
                 list: false,
                 popup_extra: 0.,
+                popup_wide: 0.,
                 recent: Vec::new(),
                 recent_open: false,
                 muted: 0,
                 open_group: None,
+                hover_row: None,
+                keyed: false,
+                expanded: None,
+                fits: Default::default(),
                 menu: None,
                 rules_wish: None,
                 expiry_at: None,
@@ -705,6 +736,8 @@ impl Applet {
                     | Message::RecentOpen(_)
                     | Message::ShowRecent
                     | Message::NoteMenu(_)
+                    | Message::RowHover(..)
+                    | Message::NoteExpand(_)
                     | Message::MenuClose
                     | Message::NoteRule(_)
                     | Message::Dnd(_)
@@ -1101,6 +1134,8 @@ impl Applet {
             | Message::RecentOpen(_)
             | Message::ShowRecent
             | Message::NoteMenu(_)
+            | Message::RowHover(..)
+            | Message::NoteExpand(_)
             | Message::MenuClose
             | Message::NoteRule(_) => return self.inbox_update(message, now),
             Message::Notes(event) => {
@@ -1188,9 +1223,12 @@ impl Applet {
                     self.seen_pending();
                     return self.open_popup_sized();
                 };
-                if !self.held || self.popup_extra < self.list_extra() {
+                if !self.held
+                    || self.popup_extra < self.list_extra()
+                    || self.popup_wide + 0.5 < self.list_wide()
+                {
                     // A popup's size is fixed when it opens: reopen it in
-                    // hand and tall enough for the rows.
+                    // hand, wide and tall enough for the rows.
                     self.held = true;
                     self.promote_popup = Some(id);
                     return self
@@ -1318,6 +1356,7 @@ impl Applet {
                     return self.update(Message::Close);
                 }
                 keyboard::Key::Named(keyboard::key::Named::Tab) if self.popup.is_some() => {
+                    self.keyed = true;
                     return self.hold_popup();
                 }
                 keyboard::Key::Named(keyboard::key::Named::ArrowDown) if self.popup.is_none() => {
@@ -1535,6 +1574,9 @@ impl Applet {
     /// Closed, the island forgets which group, section or menu was open.
     fn reset_inbox(&mut self) {
         self.open_group = None;
+        self.hover_row = None;
+        self.keyed = false;
+        self.expanded = None;
         self.recent_open = false;
         self.menu = None;
         self.arm_expiry();
@@ -1542,12 +1584,25 @@ impl Applet {
     fn popup_height(&self) -> f32 {
         self.frame().popup_height() + self.popup_extra
     }
+    fn popup_width(&self) -> f32 {
+        self.frame().popup_width() + self.popup_wide
+    }
+    /// How much wider than other cards the notification list is.
+    fn list_wide(&self) -> f32 {
+        LIST_WIDTH
+            - if self.frame().attached {
+                surface::ATTACHED_WIDTH
+            } else {
+                WIDTH
+            }
+    }
     fn open_popup(&mut self) -> Task<Message> {
         self.list = self.wants_list();
         self.open_popup_sized()
     }
     /// Opens the popup for what is set to show, tall enough for a list.
     fn open_popup_sized(&mut self) -> Task<Message> {
+        self.popup_wide = if self.list { self.list_wide() } else { 0. };
         self.popup_extra = if self.list || self.menu.is_some() {
             self.list_extra()
         } else if self.shelf_shown() {
@@ -1572,7 +1627,7 @@ impl Applet {
                     let mut p = s.core.applet.get_popup_settings(
                         s.core.main_window_id().unwrap(),
                         id,
-                        Some((s.frame().popup_width() as u32, s.popup_height() as u32)),
+                        Some((s.popup_width() as u32, s.popup_height() as u32)),
                         None,
                         None,
                     );
@@ -1591,7 +1646,7 @@ impl Applet {
                         p.positioner.offset
                     };
                     p.positioner.size_limits = cosmic::iced::Limits::NONE
-                        .width(s.frame().popup_width())
+                        .width(s.popup_width())
                         .height(s.popup_height());
                     p.positioner.constraint_adjustment = 3;
                     // COSMIC's popup proxy drops offsets from multi-rectangle
@@ -2459,6 +2514,11 @@ impl Applet {
         }
         // Open on the list, the title line names it.
         let heading = listing && p >= 0.5;
+        // On an island, Clear all sits beside Collapse while notifications
+        // are listed.
+        let clear =
+            heading && self.menu.is_none() && !self.notes.is_empty() && self.clear_on_title();
+        let tools = if clear { CLEAR_ROOM } else { 0. };
         if heading {
             title = match (&self.menu, self.notes.len()) {
                 (Some(target), _) => target.app.clone(),
@@ -2526,11 +2586,16 @@ impl Applet {
         let compact = COMPACT_WIDTH.min(self.slot_width());
         // A Standard bar keeps the title line at its resting width.
         let attached = self.frame().attached;
+        let card_width = if popup && listing {
+            self.popup_wide
+        } else {
+            0.
+        };
         let slot = if attached {
             compact - 24.
         } else {
-            compact + (WIDTH - compact) * p - 2. * (12. + 2. * p)
-        } - 32. * p
+            compact + (WIDTH + card_width - compact) * p - 2. * (12. + 2. * p)
+        } - (32. + tools) * p
             - balance * (1. - p)
             - others_width
             - if others > 0 { 8. } else { 0. };
@@ -2762,19 +2827,44 @@ impl Applet {
             }
             _ => Message::Hold,
         });
-        let pin = self.tip(
-            palette,
-            widget::button::icon(widget::icon::from_name("go-up-symbolic").symbolic(true))
-                .id("activity-collapse".into())
-                .icon_size(16)
-                .padding(6)
-                .width(28)
-                .height(28)
-                .class(capsule_button(palette, accent, reveal, Role::Ghost))
-                .on_press(Message::Close),
+        // Round glyphs on the title line: Collapse, and the list's Clear
+        // all, the same ✕ a row dismisses with.
+        let round = |icon: &'static str, id: &'static str, press: Message, tip: &str| {
+            self.tip(
+                palette,
+                widget::button::icon(widget::icon::from_name(icon).symbolic(true))
+                    .id(id.into())
+                    .icon_size(16)
+                    .padding(6)
+                    .width(28)
+                    .height(28)
+                    .class(capsule_button(palette, accent, reveal, Role::Ghost))
+                    .on_press(press),
+                tip,
+                widget::tooltip::Position::Bottom,
+            )
+        };
+        let collapse = round(
+            "go-up-symbolic",
+            "activity-collapse",
+            Message::Close,
             "Collapse (Esc)",
-            widget::tooltip::Position::Bottom,
         );
+        let pin = if clear {
+            widget::row([
+                round(
+                    "window-close-symbolic",
+                    "activity-note-clear",
+                    Message::NotesClear,
+                    "Clear all",
+                ),
+                collapse,
+            ])
+            .spacing(CLEAR_ROOM - 28.)
+            .into()
+        } else {
+            collapse
+        };
         let note = live && !self.chooser && !listing && !shelf && matches!(self.kind, Kind::Notification(_));
         let meta = if note {
             // A notification's message may take a second line. Clipped, not
@@ -2941,6 +3031,9 @@ impl Applet {
             // The list takes the chooser's place below the title line.
             chooser: self.chooser || listing || panel || shelf,
             extra,
+            extra_width: if popup { self.popup_wide } else { 0. },
+            card_width,
+            tools,
             card_extra: if listing {
                 self.list_card_extra(extra)
             } else if panel {

@@ -2094,18 +2094,15 @@ fn notifications_render_on_islands_and_standard_bars() {
             // Open on the list: every notification in a taller popup.
             app.kind = Kind::Notification(3);
             app.list = true;
+            app.popup_wide = app.list_wide();
             app.popup_extra = app.list_extra();
+            app.hover_row = Some(inbox::RowId::Note(1));
             app.motion.retarget(1., false, Instant::now());
             let height = app.popup_height();
-            let mut tall = crate::native_test::Native::new(Size::new(frame.popup_width(), height));
+            let wide = app.popup_width();
+            let mut tall = crate::native_test::Native::new(Size::new(wide, height));
             assert!(tall.duplicate_ids(app.capsule(true)).is_empty());
-            let edge = (frame.popup_width()
-                - if attached {
-                    surface::ATTACHED_WIDTH
-                } else {
-                    WIDTH
-                })
-                / 2.;
+            let edge = (wide - LIST_WIDTH) / 2.;
             for id in [
                 "activity-note-row-3",
                 "activity-note-row-2",
@@ -2115,7 +2112,7 @@ fn notifications_render_on_islands_and_standard_bars() {
             ] {
                 let b = tall.bounds(app.capsule(true), id);
                 assert!(
-                    b.x >= edge - 0.5 && b.x + b.width <= frame.popup_width() - edge + 0.5,
+                    b.x >= edge - 0.5 && b.x + b.width <= wide - edge + 0.5,
                     "{shape} list: {id} {b:?}"
                 );
                 assert!(b.y + b.height <= height, "{shape} list: {id} {b:?}");
@@ -2123,14 +2120,13 @@ fn notifications_render_on_islands_and_standard_bars() {
             let pixels = tall.render_scaled(app.capsule(true), &theme, scale as f64);
             app.list = false;
             app.popup_extra = 0.;
+            app.popup_wide = 0.;
+            app.hover_row = None;
             let Some(root) = &root else { continue };
             save_scene(
                 &root.join(format!("note-{shape}-list-{theme_name}.png")),
                 &pixels,
-                (
-                    (frame.popup_width() * scale) as usize,
-                    (height * scale) as usize,
-                ),
+                ((wide * scale) as usize, (height * scale) as usize),
                 &frame,
                 app.palette().surface,
                 wall,
@@ -2178,8 +2174,12 @@ fn listed() -> Applet {
 fn open_list(app: &mut Applet) -> crate::native_test::Native {
     let _ = app.update(Message::Hold);
     app.motion.retarget(1., false, Instant::now());
-    let size = cosmic::iced::Size::new(app.frame().popup_width(), app.popup_height());
+    let size = cosmic::iced::Size::new(app.popup_width(), app.popup_height());
     crate::native_test::Native::new(size)
+}
+/// The pointer on a row of the list, which brings out its buttons.
+fn hover(app: &mut Applet, row: inbox::RowId) {
+    let _ = app.update(Message::RowHover(row, true));
 }
 #[test]
 fn notification_list_shows_every_notification_newest_first() {
@@ -2192,28 +2192,54 @@ fn notification_list_shows_every_notification_newest_first() {
     assert_eq!(height, app.frame().popup_height() + app.popup_extra);
     assert!(ui.text_bounds(app.capsule(true), "3 notifications").width > 0.);
     assert!(ui.duplicate_ids(app.capsule(true)).is_empty());
-    // Newest first, each with its own dismiss, all inside the popup.
+    // The list is wider than other cards, and the popup with it.
+    assert_eq!(app.popup_wide, app.list_wide());
+    assert_eq!(app.popup_width(), LIST_WIDTH + 2. * app.frame().padding);
+    // Newest first, all inside the popup. A row's buttons wait for the
+    // pointer, so the message has the row's whole width.
+    assert!(
+        ui.try_bounds(app.capsule(true), "activity-note-row-dismiss-3")
+            .is_none()
+    );
     let mut last = 0.;
     for id in [3, 2, 1] {
+        hover(&mut app, inbox::RowId::Note(id));
         let row = ui.bounds(app.capsule(true), &format!("activity-note-row-{id}"));
         let dismiss = ui.bounds(
             app.capsule(true),
             &format!("activity-note-row-dismiss-{id}"),
         );
+        let more = ui.bounds(app.capsule(true), &format!("activity-note-row-more-{id}"));
         assert!(row.y > last, "row {id} sits below the one before");
         assert!(
-            dismiss.x >= row.x + row.width - 0.5,
-            "row {id}: dismiss at its end"
+            dismiss.x + dismiss.width <= row.x + row.width + 0.5 && more.x < dismiss.x,
+            "row {id}: More, then Dismiss, at its end"
         );
-        assert!((dismiss.center_y() - row.center_y()).abs() < 1.);
-        assert!(dismiss.x + dismiss.width <= app.frame().popup_width());
+        assert!(
+            dismiss.y >= row.y && dismiss.center_y() < row.y + 14.,
+            "row {id}: on the title line {dismiss:?} {row:?}"
+        );
         assert!(row.y + row.height <= height, "row {id}: {row:?}");
         last = row.y;
     }
+    let _ = app.update(Message::RowHover(inbox::RowId::Note(1), false));
+    assert!(app.hover_row.is_none());
+    // Clear all sits on the title line, just before Collapse, so the rows
+    // end the card when they all fit.
     let clear = ui.bounds(app.capsule(true), "activity-note-clear");
+    let collapse = ui.bounds(app.capsule(true), "activity-collapse");
+    let first = ui.bounds(app.capsule(true), "activity-note-row-3");
     assert!(
-        clear.y > last && clear.y + clear.height <= height,
-        "{clear:?}"
+        clear.x + clear.width <= collapse.x
+            && collapse.x - (clear.x + clear.width) < 6.
+            && (clear.center_y() - collapse.center_y()).abs() < 0.5
+            && clear.y + clear.height <= first.y,
+        "{clear:?} {collapse:?} {first:?}"
+    );
+    let end = ui.bounds(app.capsule(true), "activity-note-row-1");
+    assert!(
+        height - (end.y + end.height) < 24.,
+        "no row below the last notification: {end:?} {height}"
     );
     // One card at a time is gone, and so is the count.
     for id in [
@@ -2227,12 +2253,13 @@ fn notification_list_shows_every_notification_newest_first() {
         ui.try_bounds(app.capsule(true), "activity-other-music")
             .is_some()
     );
-    // App, message and when, as the preference allows.
+    // Title, message and when, as the preference allows. The app's icon
+    // names the app, so the message does not repeat it.
     let text = ui.all_text(app.capsule(true));
     for line in [
         "Build channel",
-        "Chat · Deploy is green",
-        "Mail · Lunch at noon?",
+        "Deploy is green",
+        "Lunch at noon?",
         "now",
         "5 min",
     ] {
@@ -2279,6 +2306,7 @@ fn notification_list_shows_every_notification_newest_first() {
 fn notification_list_dismisses_one_and_clears_all() {
     let mut app = listed();
     let mut ui = open_list(&mut app);
+    hover(&mut app, inbox::RowId::Note(2));
     assert!(matches!(
         click(&mut ui, &app, "activity-note-row-dismiss-2").as_slice(),
         [Message::NoteDismiss(2)]
@@ -2330,7 +2358,8 @@ fn notification_list_caps_its_rows_and_counts_the_rest() {
         };
         let mut ui = open_list(&mut app);
         assert_eq!(app.list_rows(), LIST_ROWS);
-        assert_eq!(app.popup_extra, list_height(LIST_ROWS) - LIST_ROOM);
+        let footer = if attached { LIST_FOOTER } else { MORE_LINE };
+        assert_eq!(app.popup_extra, list_height(LIST_ROWS, footer) - LIST_ROOM);
         let height = app.popup_height();
         for id in 3..=7 {
             let row = ui.bounds(app.capsule(true), &format!("activity-note-row-{id}"));
@@ -2343,14 +2372,39 @@ fn notification_list_caps_its_rows_and_counts_the_rest() {
                 "{shape}: {row}"
             );
         }
+        // The rest are counted under the last row. Clear all is on an
+        // island's title line, and beside the count on a bar.
         let more = ui.text_bounds(app.capsule(true), "and 2 more");
+        let last = ui.bounds(app.capsule(true), "activity-note-row-3");
         let clear = ui.bounds(app.capsule(true), "activity-note-clear");
+        let first = ui.bounds(app.capsule(true), "activity-note-row-7");
         assert!(
-            (more.center_y() - clear.center_y()).abs() < 2.,
-            "{shape}: {more:?} {clear:?}"
+            more.y >= last.y + last.height && more.y + more.height <= height,
+            "{shape}: {more:?} {last:?}"
         );
-        assert!(clear.y + clear.height <= height, "{shape}: {clear:?}");
+        if attached {
+            assert!(
+                (more.center_y() - clear.center_y()).abs() < 2. && clear.y + clear.height <= height,
+                "{shape}: {more:?} {clear:?}"
+            );
+        } else {
+            assert!(clear.y + clear.height <= first.y, "{shape}: {clear:?}");
+        }
         assert!(ui.text_bounds(app.capsule(true), "7 notifications").width > 0.);
+        if let Some(root) = std::env::var_os("HALCYON_ACTIVITY_EVIDENCE") {
+            let scale = 2f32;
+            let wide = app.popup_width();
+            let pixels = ui.render_scaled(app.capsule(true), &cosmic::Theme::dark(), scale as f64);
+            save_scene(
+                &std::path::PathBuf::from(root).join(format!("inbox-more-{shape}.png")),
+                &pixels,
+                ((wide * scale) as usize, (height * scale) as usize),
+                &app.frame(),
+                app.palette().surface,
+                ([46., 58., 74.], [96., 84., 110.]),
+                scale,
+            );
+        }
         close(&mut app);
     }
     // Never more than the panel keeps.
@@ -2367,7 +2421,15 @@ fn notification_list_follows_the_keyboard() {
     use cosmic::iced::advanced::widget::operation::focusable::focus_next;
     let mut app = listed();
     let mut ui = open_list(&mut app);
+    // Tab brings out every row's buttons, so they can be reached.
+    assert!(!app.keyed);
+    let _ = app.update(Message::Key(keyboard::Key::Named(
+        keyboard::key::Named::Tab,
+    )));
+    assert!(app.keyed);
     let targets: Vec<(String, cosmic::iced::Rectangle)> = [
+        "activity-note-clear",
+        "activity-collapse",
         "activity-note-row-3",
         "activity-note-row-more-3",
         "activity-note-row-dismiss-3",
@@ -2377,7 +2439,6 @@ fn notification_list_follows_the_keyboard() {
         "activity-note-row-1",
         "activity-note-row-more-1",
         "activity-note-row-dismiss-1",
-        "activity-note-clear",
     ]
     .into_iter()
     .map(|id| (id.to_owned(), ui.bounds(app.capsule(true), id)))
@@ -2955,7 +3016,7 @@ fn regrow(app: &mut Applet) -> crate::native_test::Native {
     }
     app.motion.retarget(1., false, Instant::now());
     crate::native_test::Native::new(cosmic::iced::Size::new(
-        app.frame().popup_width(),
+        app.popup_width(),
         app.popup_height(),
     ))
 }
@@ -2987,9 +3048,12 @@ fn notification_groups_gather_an_app_and_keep_urgent_ones_on_top() {
     assert!(ui.duplicate_ids(app.capsule(true)).is_empty());
     assert!(ui.text_bounds(app.capsule(true), "6 notifications").width > 0.);
     let text = ui.all_text(app.capsule(true));
-    for line in ["Slack · 4 new", "Ana · Running late", "Incident"] {
+    // The group names the app with its count beside it, and the newest
+    // message beneath.
+    for line in ["Slack", "4", "Ana · Running late", "Incident"] {
         assert!(text.iter().any(|t| t == line), "{line}: {text:?}");
     }
+    assert!(!text.iter().any(|t| t.contains(" new")), "{text:?}");
     // Urgent on top, the group, then the single row; members stay folded.
     let group = format!("activity-note-group-{SLACK}");
     let urgent = ui.bounds(app.capsule(true), "activity-note-row-6");
@@ -3017,9 +3081,13 @@ fn notification_groups_gather_an_app_and_keep_urgent_ones_on_top() {
         let row = ui.bounds(app.capsule(true), &format!("activity-note-row-{id}"));
         assert!(row.y > last && row.y + row.height <= height, "member {id}: {row:?}");
         // Members carry no More of their own; the group does.
+        hover(&mut app, inbox::RowId::Note(id));
         assert!(ui.try_bounds(app.capsule(true), &format!("activity-note-row-more-{id}")).is_none());
         let dismiss = ui.bounds(app.capsule(true), &format!("activity-note-row-dismiss-{id}"));
-        assert!((dismiss.center_y() - row.center_y()).abs() < 1.);
+        assert!(
+            dismiss.y >= row.y && dismiss.center_y() < row.y + 14.,
+            "member {id}: {dismiss:?}"
+        );
         last = row.y;
     }
     let files = ui.bounds(app.capsule(true), "activity-note-row-1");
@@ -3028,6 +3096,7 @@ fn notification_groups_gather_an_app_and_keep_urgent_ones_on_top() {
         click(&mut ui, &app, "activity-note-row-action-3-0").as_slice(),
         [Message::NoteAction(3, key)] if key == "reply"
     ));
+    hover(&mut app, inbox::RowId::Note(4));
     assert!(matches!(
         click(&mut ui, &app, "activity-note-row-dismiss-4").as_slice(),
         [Message::NoteDismiss(4)]
@@ -3041,6 +3110,7 @@ fn notification_groups_gather_an_app_and_keep_urgent_ones_on_top() {
     assert!(app.open_group.is_none());
     // The group's dismiss clears the group; the urgent one stays.
     let mut ui = regrow(&mut app);
+    hover(&mut app, inbox::RowId::Group(SLACK.into()));
     assert!(matches!(
         click(&mut ui, &app, &format!("activity-note-group-dismiss-{SLACK}")).as_slice(),
         [Message::GroupDismiss(key)] if key == SLACK
@@ -3194,10 +3264,12 @@ fn app_rules_mute_always_show_and_list_only() {
     };
     assert_eq!(menu(right_click(&mut ui, &app, &group)), Some(3));
     assert_eq!(menu(right_click(&mut ui, &app, "activity-note-row-4")), Some(4));
+    hover(&mut app, inbox::RowId::Group(SLACK.into()));
     assert!(matches!(
         click(&mut ui, &app, &format!("activity-note-group-more-{SLACK}")).as_slice(),
         [Message::NoteMenu(3)]
     ));
+    hover(&mut app, inbox::RowId::Note(4));
     assert!(matches!(
         click(&mut ui, &app, "activity-note-row-more-4").as_slice(),
         [Message::NoteMenu(4)]
@@ -3330,7 +3402,8 @@ fn notification_groups_recent_and_rules_render_for_review() {
             assert!(ui.duplicate_ids(app.capsule(true)).is_empty(), "{name}");
             let frame = app.frame();
             let height = app.popup_height();
-            let edge = (frame.popup_width() - WIDTH) / 2.;
+            let wide = app.popup_width();
+            let edge = (wide - LIST_WIDTH) / 2.;
             for id in [
                 "activity-note-clear",
                 "activity-recent-toggle",
@@ -3338,7 +3411,7 @@ fn notification_groups_recent_and_rules_render_for_review() {
                 "activity-rule-reset",
             ] {
                 if let Some(b) = ui.try_bounds(app.capsule(true), id) {
-                    assert!(b.x >= edge - 0.5 && b.x + b.width <= frame.popup_width() - edge + 0.5, "{name}: {id} {b:?}");
+                    assert!(b.x >= edge - 0.5 && b.x + b.width <= wide - edge + 0.5, "{name}: {id} {b:?}");
                     assert!(b.y + b.height <= height + 0.5, "{name}: {id} {b:?}");
                 }
             }
@@ -3347,10 +3420,239 @@ fn notification_groups_recent_and_rules_render_for_review() {
             save_scene(
                 &root.join(format!("inbox-{name}-{theme_name}.png")),
                 &pixels,
-                ((frame.popup_width() * scale) as usize, (height * scale) as usize),
+                ((wide * scale) as usize, (height * scale) as usize),
                 &frame,
                 app.palette().surface,
                 wall,
+                scale,
+            );
+        }
+    }
+}
+
+#[test]
+fn long_messages_break_after_a_word_onto_a_second_line() {
+    let short = inbox::fit_message("Lunch at noon?", 300., 300.);
+    assert_eq!(short.first, "Lunch at noon?");
+    assert!(short.rest.is_empty() && !short.cut && short.open_lines == 0);
+    let fit = inbox::fit_message(MAIL_BODY, 300., 300.);
+    assert!(!fit.first.is_empty() && !fit.rest.is_empty(), "{fit:?}");
+    assert_eq!(
+        format!("{} {}", fit.first, fit.rest),
+        MAIL_BODY,
+        "nothing lost between the lines"
+    );
+    assert!(
+        MAIL_BODY[fit.first.len()..].starts_with(' '),
+        "a whole word ends the line: {fit:?}"
+    );
+    assert!(fit.cut && fit.open_lines >= 2, "{fit:?}");
+    // A first line kept narrower, for a member's age, breaks sooner.
+    let narrow = inbox::fit_message(MAIL_BODY, 200., 300.);
+    assert!(narrow.first.len() < fit.first.len(), "{narrow:?}");
+    // A word too long for the line breaks inside it rather than overflowing.
+    let sender = "noreply-apps-scripts-notifications@google.com";
+    let long = inbox::fit_message(sender, 120., 300.);
+    assert!(
+        !long.first.is_empty() && long.first.len() < sender.len(),
+        "{long:?}"
+    );
+    assert_eq!(format!("{}{}", long.first, long.rest), sender);
+    // Line breaks and runs of spaces read as one space.
+    assert_eq!(
+        inbox::fit_message("One\n\ntwo   three", 300., 300.).first,
+        "One two three"
+    );
+    assert_eq!(inbox::fit_message("   ", 300., 300.), inbox::Fit::default());
+}
+const MAIL_BODY: &str = "Summary of failures for Google Apps Script: Calendar sync. Your script has recently failed to finish successfully. A summary of the failures is shown below.";
+/// A mail with a long sender and message, and an app that titles every
+/// notification with its own name.
+fn wordy() -> Applet {
+    let mut app = app();
+    let _ = app.update(Message::Notes(notifications::Event::Ready(true)));
+    let mut mail = note(
+        1,
+        "Geary",
+        "mail-unread-symbolic",
+        "noreply-apps-scripts-notifications@google.com",
+        MAIL_BODY,
+    );
+    mail.actions = vec![
+        ("open".into(), "Open".into()),
+        ("read".into(), "Mark as read".into()),
+    ];
+    notify(&mut app, mail);
+    for (id, body) in [
+        (2, "Agent finished: System Performance baseline"),
+        (3, "Agent finished: System Performance tuning, 4 changes"),
+        (
+            4,
+            "Agent finished: System Performance review. 12 files changed and all tests pass, ready for you to look at.",
+        ),
+    ] {
+        notify(&mut app, note(id, "Antigravity", "", "Antigravity", body));
+    }
+    app.now_ms = app.notes[0].at_ms;
+    app
+}
+#[test]
+fn notification_list_gives_messages_two_lines_and_opens_one_in_place() {
+    let mut app = wordy();
+    let mut ui = open_list(&mut app);
+    assert!(app.listing());
+    assert!(ui.duplicate_ids(app.capsule(true)).is_empty());
+    let text = ui.all_text(app.capsule(true));
+    // The group names the app once, with its count, and the newest message.
+    assert_eq!(
+        text.iter().filter(|t| t.contains("Antigravity")).count(),
+        1,
+        "{text:?}"
+    );
+    assert!(text.iter().any(|t| t == "3"), "{text:?}");
+    assert!(
+        text.iter()
+            .any(|t| t.starts_with("Agent finished: System Performance review.")),
+        "{text:?}"
+    );
+    // The mail: its sender, then its message with no app name before it.
+    assert!(!text.iter().any(|t| t.contains("Geary")), "{text:?}");
+    assert!(
+        text.iter()
+            .any(|t| MAIL_BODY.starts_with(t.as_str()) && t.len() > 40),
+        "{text:?}"
+    );
+    // Both take two lines of message.
+    let group = ui.bounds(app.capsule(true), "activity-note-group-Antigravity");
+    let mail = ui.bounds(app.capsule(true), "activity-note-row-1");
+    assert!((group.height - 60.).abs() < 0.5, "{group:?}");
+    assert!((mail.height - 60.).abs() < 0.5, "{mail:?}");
+    assert!(mail.y + mail.height <= app.popup_height(), "{mail:?}");
+    // Opened in place: all of the message and the app's own buttons.
+    assert!(
+        ui.try_bounds(app.capsule(true), "activity-note-row-expand-1")
+            .is_none()
+    );
+    hover(&mut app, inbox::RowId::Note(1));
+    assert!(matches!(
+        click(&mut ui, &app, "activity-note-row-expand-1").as_slice(),
+        [Message::NoteExpand(1)]
+    ));
+    let _ = app.update(Message::NoteExpand(1));
+    assert_eq!(app.expanded, Some(1));
+    let mut ui = regrow(&mut app);
+    assert_eq!(app.popup_extra, app.list_extra());
+    let opened = ui.bounds(app.capsule(true), "activity-note-row-1");
+    assert!(opened.height > mail.height + 10., "{opened:?}");
+    for id in [
+        "activity-note-row-action-1-0",
+        "activity-note-row-action-1-1",
+    ] {
+        let b = ui.bounds(app.capsule(true), id);
+        assert!(
+            b.y >= opened.y + opened.height && b.y + b.height <= app.popup_height(),
+            "{id}: {b:?}"
+        );
+    }
+    let _ = app.update(Message::NoteExpand(1));
+    assert!(app.expanded.is_none(), "and folds again");
+    // Opened, the group's members say their message, not the app again.
+    let _ = app.update(Message::GroupToggle("Antigravity".into()));
+    let mut ui = regrow(&mut app);
+    let text = ui.all_text(app.capsule(true));
+    assert_eq!(
+        text.iter().filter(|t| t.contains("Antigravity")).count(),
+        1,
+        "{text:?}"
+    );
+    let mut last = ui
+        .bounds(app.capsule(true), "activity-note-group-Antigravity")
+        .y;
+    for id in [4, 3, 2] {
+        let row = ui.bounds(app.capsule(true), &format!("activity-note-row-{id}"));
+        assert!(
+            row.y > last && row.y + row.height <= app.popup_height(),
+            "member {id}: {row:?}"
+        );
+        last = row.y;
+    }
+    // Closing forgets what was open and where the pointer was.
+    hover(&mut app, inbox::RowId::Note(2));
+    close(&mut app);
+    assert!(app.expanded.is_none() && app.hover_row.is_none() && !app.keyed);
+    assert!(app.open_group.is_none());
+}
+#[test]
+fn notification_list_long_messages_render_for_review() {
+    use cosmic::applet::cosmic_panel_config::CosmicPanelBackground;
+    let root = std::env::var_os("HALCYON_ACTIVITY_EVIDENCE").map(std::path::PathBuf::from);
+    let scale = 2f32;
+    type Setup = fn(&mut Applet);
+    let states: [(&str, Setup); 5] = [
+        ("long", |_| {}),
+        // The title line at its most crowded: Do Not Disturb and music.
+        ("long-busy", |app| {
+            app.snapshot.dnd = true;
+            app.snapshot.music = Some(music());
+        }),
+        ("long-hover", |app| hover(app, inbox::RowId::Note(1))),
+        ("long-opened", |app| {
+            let _ = app.update(Message::NoteExpand(1));
+        }),
+        ("long-group-open", |app| {
+            let _ = app.update(Message::GroupToggle("Antigravity".into()));
+        }),
+    ];
+    for (shape, attached) in [("island", false), ("bar", true)] {
+        for (name, setup) in states {
+            let mut app = wordy();
+            app.core.applet.background = CosmicPanelBackground::Dark;
+            app.panel_frame = host::Frame {
+                height: 32.,
+                padding: 4.,
+                radius: 8.,
+                attached,
+                opacity: 1.,
+            };
+            let _ = open_list(&mut app);
+            setup(&mut app);
+            let mut ui = regrow(&mut app);
+            assert!(app.listing(), "{shape} {name}");
+            assert!(
+                ui.duplicate_ids(app.capsule(true)).is_empty(),
+                "{shape} {name}"
+            );
+            let (wide, height) = (app.popup_width(), app.popup_height());
+            assert_eq!(
+                wide - app.frame().popup_width(),
+                app.list_wide(),
+                "{shape} {name}"
+            );
+            let edge = (wide - LIST_WIDTH) / 2.;
+            for id in [
+                "activity-note-row-1",
+                "activity-note-group-Antigravity",
+                "activity-note-row-dismiss-1",
+                "activity-note-row-action-1-1",
+                "activity-note-clear",
+            ] {
+                if let Some(b) = ui.try_bounds(app.capsule(true), id) {
+                    assert!(
+                        b.x >= edge - 0.5 && b.x + b.width <= wide - edge + 0.5,
+                        "{shape} {name}: {id} {b:?}"
+                    );
+                    assert!(b.y + b.height <= height + 0.5, "{shape} {name}: {id} {b:?}");
+                }
+            }
+            let pixels = ui.render_scaled(app.capsule(true), &cosmic::Theme::dark(), scale as f64);
+            let Some(root) = &root else { continue };
+            save_scene(
+                &root.join(format!("inbox-{name}-{shape}.png")),
+                &pixels,
+                ((wide * scale) as usize, (height * scale) as usize),
+                &app.frame(),
+                app.palette().surface,
+                ([46., 58., 74.], [96., 84., 110.]),
                 scale,
             );
         }
