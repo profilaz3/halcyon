@@ -333,11 +333,16 @@ impl Settings {
                     "wizard-start",
                     (!self.native_busy).then_some(go(Step::Start)),
                 ),
-                quiet("Skip for now", "wizard-leave", go(Step::Leave)),
+                quiet("Set up later", "wizard-leave", go(Step::Leave)),
             ]
         };
         let intro = column::with_children(vec![
             heading("Welcome to Halcyon", 32.),
+            words(
+                "Widgets, looks and wallpaper effects for your COSMIC desktop.",
+                17.,
+                INK,
+            ),
             words(
                 "Set up your desktop in four short steps. Nothing changes until you press Apply at the end.",
                 15.,

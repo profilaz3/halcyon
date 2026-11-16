@@ -351,7 +351,7 @@ impl fmt::Display for DesktopError {
             Self::UndoUnavailable(reason) => write!(f, "{reason}"),
             Self::RecoveryPending => write!(
                 f,
-                "Halcyon was closed in the middle of a change. Keep what’s on screen or go back to before, then try again."
+                "A change didn’t finish. Choose Keep what’s on screen or Go back to before, then try again."
             ),
             Self::Io(message) => write!(f, "{message}"),
             Self::RolledBack(error) => {
@@ -366,7 +366,7 @@ impl fmt::Display for DesktopError {
                 fields,
             } => write!(
                 f,
-                "Could not apply changes ({error}). Not yet restored: {}. Use Restore to retry.",
+                "Could not apply changes ({error}). Not yet restored: {}. Choose Go back to before to retry.",
                 keys.iter()
                     .map(ToString::to_string)
                     .chain(fields.iter().cloned())
@@ -595,6 +595,18 @@ impl AppliedChange {
     pub fn touches(&self, key: &ConfigKey) -> bool {
         self.entries.iter().any(|entry| &entry.key == key)
     }
+}
+
+/// Journals this process kept after a write failed in place, as opposed to
+/// one left by a Halcyon that was closed in the middle of a change.
+static FAILED_IN_PLACE: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Whether `journal` was kept here after a write failed and couldn't be
+/// fully put back, rather than left by a Halcyon that was closed mid-change.
+pub fn failed_in_place(journal: &Journal) -> bool {
+    FAILED_IN_PLACE
+        .lock()
+        .is_ok_and(|ids| ids.contains(&journal.id))
 }
 
 /// Persistent record of an in-flight transaction (`desktop-journal.json`).
@@ -2012,6 +2024,11 @@ impl DesktopStore {
             let _ = fs::remove_file(self.journal_path());
             DesktopError::RolledBack(error)
         } else {
+            if let Ok(Some(journal)) = self.pending_recovery()
+                && let Ok(mut ids) = FAILED_IN_PLACE.lock()
+            {
+                ids.push(journal.id);
+            }
             DesktopError::RollbackIncomplete {
                 error,
                 keys,
@@ -2198,7 +2215,7 @@ impl DesktopStore {
                 .is_some()
             {
                 return Err(DesktopError::Io(
-                    "An older transaction needs review before the migrated design can be recovered"
+                    "A change from an older Halcyon needs review before your widget design can be recovered"
                         .into(),
                 ));
             }
@@ -2919,7 +2936,13 @@ pub(crate) mod tests {
             matches!(&error, DesktopError::RollbackIncomplete { keys: stuck, .. } if stuck == &keys[..1]),
             "{error:?}"
         );
-        assert!(error.to_string().contains("Use Restore to retry"));
+        assert!(
+            error
+                .to_string()
+                .contains("Choose Go back to before to retry")
+        );
+        // Its banner says the change failed here, not that Halcyon was closed.
+        assert!(failed_in_place(&store.pending_recovery().unwrap().unwrap()));
         assert_eq!(fixture.read(DOCK, "anchor").as_deref(), Some("Top"));
         let journal = store.pending_recovery().unwrap().expect("journal kept");
         assert_eq!(journal.entries.len(), 2);

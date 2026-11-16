@@ -498,13 +498,44 @@ impl Settings {
 
     fn earlier_setups(&self) -> Element<'_, Message> {
         let mut earlier = self.desktop_recovery_rows();
-        earlier.push(group_row(
-            "Wallpaper from before Halcyon",
-            "The picture you had when Halcyon was installed",
-            button::standard("Restore…")
-                .on_press_maybe((!self.busy && !preview()).then_some(Message::Restore(true)))
-                .into(),
-        ));
+        // Only offered when a saved picture exists, and confirmed first like
+        // the desktop above.
+        if self.desktop_recovery.wallpaper_backup {
+            earlier.push(group_row(
+                "Wallpaper from before Halcyon",
+                "The picture you had when Halcyon was installed",
+                button::standard("Restore…")
+                    .id("restore-wallpaper".into())
+                    .on_press_maybe(
+                        (!self.busy && !self.restore_confirm).then_some(Message::Restore(false)),
+                    )
+                    .into(),
+            ));
+            if self.restore_confirm {
+                earlier.push(detail_state(
+                    "Restore the earlier wallpaper?",
+                    "Only the wallpaper goes back. Your widgets and the rest of your desktop stay as they are.",
+                ));
+                earlier.push(
+                    row::with_children(vec![
+                        cosmic::widget::space().width(Length::Fill).into(),
+                        button::text("Cancel")
+                            .id("restore-wallpaper-cancel".into())
+                            .on_press(Message::Restore(false))
+                            .into(),
+                        button::suggested("Restore wallpaper")
+                            .id("restore-wallpaper-confirm".into())
+                            .on_press_maybe(
+                                (!self.busy && !preview()).then_some(Message::Restore(true)),
+                            )
+                            .into(),
+                    ])
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .into(),
+                );
+            }
+        }
         self.search_target("changes-earlier", group(Some("Before Halcyon"), earlier))
     }
 }

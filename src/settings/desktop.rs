@@ -1799,10 +1799,27 @@ mod tests {
         let Some(Notice::Error(error)) = &editor.notice else {
             panic!("{:?}", editor.notice)
         };
-        assert!(error.contains("Use Restore to retry"), "{error}");
+        assert!(error.contains("Choose Go back to before"), "{error}");
+        // The sentence names the banner's real button.
+        assert!(
+            editor
+                .notice
+                .as_ref()
+                .unwrap()
+                .text()
+                .ends_with("Choose Go back to before to try again."),
+            "{error}"
+        );
         assert_eq!(fixture.read(DOCK, "anchor").as_deref(), Some("Left"));
         // Restore is offered now, not after a second failed Apply.
-        assert!(matches!(editor.recovery(), Some(Ok(_))));
+        let Some(Ok(journal)) = editor.recovery() else {
+            panic!("{:?}", editor.recovery())
+        };
+        // Halcyon wasn't closed: the banner says the change couldn't finish.
+        assert_eq!(
+            crate::desktop::store::activity::interrupted(journal),
+            "A change to Dock and panel couldn’t finish, and part of it is still applied."
+        );
         assert!(editor.dirty(), "the draft is kept");
         assert!(!editor.can_apply());
         // The watcher sees our own partial write while the journal waits.

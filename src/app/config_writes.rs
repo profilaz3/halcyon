@@ -70,6 +70,9 @@ pub struct Saved {
     /// Runs on the UI thread before a failure is shown, to undo a change the
     /// desktop already showed.
     pub revert: Option<Revert>,
+    /// It failed because the settings file is damaged, so trying again
+    /// can't work until Settings repairs it.
+    pub damaged: bool,
 }
 
 /// A change the desktop showed ahead of its write, put back on failure.
@@ -100,7 +103,12 @@ impl Cards {
             } else {
                 run()
             };
-            let _ = reply.send(result);
+            let damaged = result.is_err()
+                && Config::path()
+                    .as_deref()
+                    .and_then(crate::config::damaged_file)
+                    .is_some();
+            let _ = reply.send((result, damaged));
         });
         // Queued now, not when the task first runs, so order is kept.
         let queued = writer()
@@ -112,16 +120,17 @@ impl Cards {
                     .map_err(|_| "The settings writer stopped".to_string())
             });
         cosmic::task::future(async move {
-            let result = match queued {
+            let (result, damaged) = match queued {
                 Ok(()) => answer
                     .await
-                    .unwrap_or_else(|_| Err("The settings writer stopped".into())),
-                Err(error) => Err(error),
+                    .unwrap_or_else(|_| (Err("The settings writer stopped".into()), false)),
+                Err(error) => (Err(error), false),
             };
             Message::ConfigSaved(Box::new(Saved {
                 result: result.map(Box::new),
                 failure,
                 revert,
+                damaged,
             }))
         })
     }
@@ -135,12 +144,26 @@ impl Cards {
                     None => {}
                 }
                 eprintln!("{}: {error}", saved.failure.title);
-                self.raise_notice(
-                    saved.failure.title,
-                    saved.failure.body,
-                    error,
-                    saved.failure.retry.map(|message| *message),
-                );
+                if saved.damaged {
+                    // Try again can't help; the parser's words stay under
+                    // Details.
+                    self.raise_notice(
+                        "Halcyon’s settings file is damaged",
+                        format!("Your desktop still works. {}", saved.failure.body),
+                        error,
+                        None,
+                    );
+                    if let Some(notice) = &mut self.notice {
+                        notice.repair = true;
+                    }
+                } else {
+                    self.raise_notice(
+                        saved.failure.title,
+                        saved.failure.body,
+                        error,
+                        saved.failure.retry.map(|message| *message),
+                    );
+                }
                 Task::none()
             }
         }
@@ -333,8 +356,14 @@ mod tests {
         assert_eq!(cards.config.ordered_right_cards(), order);
         finish(&mut cards, task);
         assert_eq!(cards.config.ordered_right_cards(), before);
+        // A damaged file says so, and that the order went back.
         let notice = cards.notice.as_ref().expect("the failure is shown");
-        assert_eq!(notice.title, "Couldn’t save the widget order");
+        assert_eq!(notice.title, "Halcyon’s settings file is damaged");
+        assert_eq!(
+            notice.body,
+            "Your desktop still works. The widgets are back in their saved order."
+        );
+        assert!(notice.repair && notice.retry.is_none());
     }
 
     #[test]
@@ -349,7 +378,12 @@ mod tests {
         let mut cards = cards();
         let path = Config::path().unwrap();
         let saved = std::fs::read(&path).unwrap();
-        std::fs::write(&path, "{broken").unwrap();
+        // A file that can't be opened right now (here a link, which
+        // settings never follow) isn't damaged, so Try again is offered.
+        let elsewhere = path.with_file_name("elsewhere.json");
+        std::fs::write(&elsewhere, &saved).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &path).unwrap();
         let mute = Command::NoteRule {
             app: "Firefox".into(),
             entry: "firefox".into(),
@@ -362,9 +396,10 @@ mod tests {
         let notice = cards.notice.as_ref().expect("the failure is shown");
         assert_eq!(notice.title, "Couldn’t mute Firefox");
         assert_eq!(notice.body, "Notifications from Firefox will still show.");
-        assert!(notice.retry.is_some() && !notice.brief);
+        assert!(notice.retry.is_some() && !notice.brief && !notice.repair);
         assert!(cards.sidebar.visible);
         // Try again saves it once the settings can be written.
+        std::fs::remove_file(&path).unwrap();
         std::fs::write(&path, &saved).unwrap();
         let task = cards.update(Message::NoticeRetry);
         finish(&mut cards, task);

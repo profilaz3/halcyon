@@ -179,17 +179,57 @@ fn fb04_a_failed_save_explains_itself_and_try_again_finishes_it() {
     let mut cards = cards();
     let path = Config::path().unwrap();
     let saved = std::fs::read(&path).unwrap();
+    // FIRST-07: a damaged settings file says so and that the desktop still
+    // works, and offers Settings' repair, not a Try again that can't work.
+    // The parser's words wait under Details.
     std::fs::write(&path, "{broken").unwrap();
     let task = cards.update(Message::SetWidgetVisible(Widget::Music, false));
     super::config_writes::finish(&mut cards, task);
     let notice = cards.notice.as_ref().expect("the failure is shown");
-    assert_eq!(notice.title, "Couldn’t save the widget list");
+    assert_eq!(notice.title, "Halcyon’s settings file is damaged");
     assert!(cards.sidebar.visible, "the edge menu opens to show it");
     let mut native = rail();
+    native.text_bounds(cards.control_rail(), "Halcyon’s settings file is damaged");
+    native.text_bounds(
+        cards.control_rail(),
+        "Your desktop still works. Your change wasn’t kept.",
+    );
+    native.text_bounds(cards.control_rail(), "Open Settings to repair");
+    native.bounds(cards.control_rail(), "notice-repair");
+    assert!(
+        native
+            .try_bounds(cards.control_rail(), "notice-retry")
+            .is_none(),
+        "trying again can't help"
+    );
+    let error = notice.error.clone();
+    assert!(
+        native.text_all(cards.control_rail(), &error).is_empty(),
+        "details start hidden"
+    );
+    capture_rail(&cards, "fb04-damaged");
+    let _ = cards.update(Message::NoticeDetails);
+    assert!(!native.text_all(cards.control_rail(), &error).is_empty());
+    let _ = cards.update(Message::NoticeDismiss);
+    // A save that fails for another reason (a link, which settings never
+    // follow) explains itself with Try again.
+    let elsewhere = path.with_file_name("elsewhere.json");
+    std::fs::write(&elsewhere, &saved).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &path).unwrap();
+    let task = cards.update(Message::SetWidgetVisible(Widget::Music, false));
+    super::config_writes::finish(&mut cards, task);
+    let notice = cards.notice.as_ref().expect("the failure is shown");
+    assert_eq!(notice.title, "Couldn’t save the widget list");
     native.text_bounds(cards.control_rail(), "Couldn’t save the widget list");
     native.text_bounds(cards.control_rail(), "Your change wasn’t kept.");
     native.bounds(cards.control_rail(), "notice-retry");
     native.bounds(cards.control_rail(), "notice-dismiss");
+    assert!(
+        native
+            .try_bounds(cards.control_rail(), "notice-repair")
+            .is_none()
+    );
     let error = notice.error.clone();
     assert!(
         native.text_all(cards.control_rail(), &error).is_empty(),
@@ -200,6 +240,7 @@ fn fb04_a_failed_save_explains_itself_and_try_again_finishes_it() {
     assert!(!native.text_all(cards.control_rail(), &error).is_empty());
     capture_rail(&cards, "fb04-notice-details");
     // Try again after the file is readable again.
+    std::fs::remove_file(&path).unwrap();
     std::fs::write(&path, &saved).unwrap();
     let task = cards.update(Message::NoticeRetry);
     super::config_writes::finish(&mut cards, task);

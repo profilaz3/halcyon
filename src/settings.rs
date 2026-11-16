@@ -589,6 +589,32 @@ impl City {
     }
 }
 
+/// Where Stop using Halcyon is: asking first, working, then done with the
+/// command that removes the package.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum StopUsing {
+    #[default]
+    Closed,
+    Confirm,
+    Working,
+    Done {
+        restored: bool,
+    },
+}
+
+/// The command that removes the package, from the packaging docs: the one
+/// for this installation, or both when it isn't known.
+fn removal_command(channel: Option<updates::UpdateChannel>) -> &'static str {
+    use updates::UpdateChannel;
+    match channel {
+        Some(UpdateChannel::Apt | UpdateChannel::ManualDeb) => "sudo apt remove cosmic-ext-halcyon",
+        Some(UpdateChannel::Dnf | UpdateChannel::ManualRpm) => "sudo dnf remove cosmic-ext-halcyon",
+        _ => {
+            "sudo apt remove cosmic-ext-halcyon   # Pop!_OS\nsudo dnf remove cosmic-ext-halcyon   # Fedora"
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ServiceState {
     running: bool,
@@ -705,11 +731,10 @@ pub enum Message {
     ResolveUndoShown(crate::desktop::store::UndoReview, bool),
     /// Closes the review of an Undo that hit newer changes; the Undo stays.
     UndoReviewLater,
-    RecoverySelect(usize, bool),
-    RecoveryUseProposed(usize),
+    /// Shows or hides a waiting change's values for editing.
+    RecoveryEdit(usize, bool),
     RecoveryOpen(usize),
     RecoveryDiscard(usize),
-    RecoveryApply,
     RecoveryApplyOne(usize),
     RecoveryText(usize, usize, String),
     UndoPreferences,
@@ -887,7 +912,7 @@ pub enum Message {
     CommandDone(String, Result<(), String>),
     OpenCalendar,
     Calendar(calendar::Message),
-    /// Hides the Home card that offers setup ("Not now").
+    /// Hides the Home card that offers setup ("Set up later").
     SetupDismissed(bool),
     /// Hides the Home card about an update without opening its notes.
     NotesSeen,
@@ -895,6 +920,15 @@ pub enum Message {
     OpenNoteLink(&'static str),
     /// Close the finished setup and open a page for a follow-up task.
     FinishSetupTo(Page),
+    /// Opens (true) or closes the Stop using Halcyon steps.
+    StopUsing(bool),
+    /// Puts the desktop back as it was before Halcyon, then stops the
+    /// widgets, now and at sign-in.
+    StopUsingConfirm,
+    /// The desktop is back (`true`), or there was nothing to put back.
+    StopUsingRestored(Result<bool, String>),
+    /// Copies the command that removes the package.
+    CopyRemoval,
     OpenWeatherSource,
     UndoDesktopRestore(String),
     DesktopRestorePreview,
@@ -1090,6 +1124,8 @@ pub struct Settings {
     status: String,
     error: bool,
     restore_confirm: bool,
+    /// Halcyon › Running and startup › Stop using Halcyon, step by step.
+    stop_using: StopUsing,
     capture_key: String,
     nav_model: cosmic::widget::nav_bar::Model,
     window: Size,
@@ -1383,6 +1419,7 @@ impl cosmic::Application for Settings {
             status: page.save_hint().into(),
             error: false,
             restore_confirm: false,
+            stop_using: StopUsing::Closed,
             capture_key: String::new(),
             window: initial_size(),
         };
@@ -2005,6 +2042,7 @@ impl cosmic::Application for Settings {
             // drains queued Close only after its durable write completes.
             return Some(Message::Window(WindowControl::Close));
         }
+        self.finish_setup_on_close();
         self.checkpoint_session_drafts();
         self.automation.release_hold();
         None
@@ -2571,7 +2609,7 @@ impl Settings {
                 // Setup is the first visit: there is nothing new to tell yet.
                 if on {
                     self.record_notes_seen();
-                    // Not now lands on Home, as dismissing setup always has.
+                    // Set up later lands on Home, as dismissing setup always has.
                     return self.handle(Message::Page(Page::Home));
                 }
             }
@@ -2824,15 +2862,9 @@ impl Settings {
                     }
                 }
             }
-            Message::RecoverySelect(index, selected) => {
+            Message::RecoveryEdit(index, open) => {
                 if let Some(row) = self.recovery_sheet.rows.get_mut(index) {
-                    row.selected = selected;
-                }
-            }
-            Message::RecoveryUseProposed(index) => {
-                if let Some(row) = self.recovery_sheet.rows.get_mut(index) {
-                    row.use_proposed = true;
-                    row.review();
+                    row.editing = open;
                 }
             }
             Message::RecoveryDiscard(index) => {
@@ -2840,21 +2872,17 @@ impl Settings {
                     self.failed(error);
                 }
             }
-            Message::RecoveryApplyOne(index) => match self.recovery_sheet.apply_one(index) {
-                Ok(()) => {
-                    self.error = false;
-                    self.status.clear();
-                    return self.after_desktop_change();
+            Message::RecoveryApplyOne(index) => {
+                self.recovery_sheet.allow_replacing(index);
+                match self.recovery_sheet.apply_one(index) {
+                    Ok(()) => {
+                        self.error = false;
+                        self.status.clear();
+                        return self.after_desktop_change();
+                    }
+                    Err(error) => self.failed(error),
                 }
-                Err(error) => self.failed(error),
-            },
-            Message::RecoveryApply => match self.recovery_sheet.apply() {
-                Ok(()) => {
-                    self.error = false;
-                    return self.after_desktop_change();
-                }
-                Err(error) => self.failed(error),
-            },
+            }
             Message::RecoveryOpen(index) => return self.open_recovered_form(index),
             Message::UndoPreferences => {
                 self.explained = None;
@@ -3209,7 +3237,18 @@ impl Settings {
                         self.design = design::State::load().offered(self.design.offered);
                         return Task::none();
                     }
-                    Err(_) => {}
+                    // A file that became damaged: its repair, not defaults.
+                    Err(_) => {
+                        if let Some(damage) = Config::path()
+                            .as_deref()
+                            .and_then(crate::config::damaged_file)
+                        {
+                            self.config.design_problem = Some(damage);
+                            self.config.settings_damaged = true;
+                            self.design = design::State::load().offered(self.design.offered);
+                            return Task::none();
+                        }
+                    }
                 }
                 self.placement.refresh(&self.config);
                 self.refresh_canvas();
@@ -3800,6 +3839,9 @@ impl Settings {
                 self.reorder.cancel();
                 self.devbox_reorder.cancel();
                 self.restore_confirm = false;
+                if self.stop_using != StopUsing::Working {
+                    self.stop_using = StopUsing::Closed;
+                }
                 let scroll = cosmic::iced::widget::scrollable::scroll_to(
                     cosmic::widget::Id::new("settings-content"),
                     cosmic::iced::widget::scrollable::AbsoluteOffset {
@@ -4634,7 +4676,17 @@ impl Settings {
                         self.status = status;
                         self.error = false;
                     }
-                    Err(error) => self.failed(error),
+                    Err(error) => {
+                        // Setup has no footer: say it on its own card.
+                        if let Some(wizard) = self.wizard.as_mut() {
+                            wizard.error = Some(if status == WIDGETS_STARTED {
+                                format!("The widgets couldn’t start: {error}")
+                            } else {
+                                error.clone()
+                            });
+                        }
+                        self.failed(error)
+                    }
                 }
                 if service {
                     return Task::batch([service_task(), media]);
@@ -4649,6 +4701,90 @@ impl Settings {
                     "/usr/bin/xdg-open".into(),
                     vec![self.calendar.connection.web_url()],
                     "Calendar opened",
+                );
+            }
+            Message::StopUsing(open) => {
+                if self.stop_using == StopUsing::Working {
+                    return Task::none();
+                }
+                self.stop_using = if open {
+                    StopUsing::Confirm
+                } else {
+                    StopUsing::Closed
+                };
+                if open {
+                    // Whether there is a desktop to put back, and which
+                    // package command to show at the end.
+                    self.desktop_recovery.refresh();
+                    if self.updates.identity.is_none() {
+                        return self.update_updates(updates::Message::Inspect);
+                    }
+                }
+            }
+            Message::StopUsingConfirm => {
+                if self.stop_using != StopUsing::Confirm || self.busy || self.desktop_recovery.busy
+                {
+                    return Task::none();
+                }
+                self.stop_using = StopUsing::Working;
+                let restore = self.desktop_recovery.info.is_some();
+                // The same restore as Changes › Desktop from before Halcyon.
+                return cosmic::task::future(async move {
+                    let result = tokio::task::spawn_blocking(move || {
+                        if !restore {
+                            return Ok(false);
+                        }
+                        let store =
+                            crate::desktop::DesktopStore::from_env().map_err(|e| e.to_string())?;
+                        let mut domains = crate::desktop::recovery::RecoveryDomain::ALL.to_vec();
+                        domains.push(crate::desktop::recovery::RecoveryDomain::AppAnimations);
+                        let plan = crate::desktop::recovery::plan_restore(&store, &domains)
+                            .map_err(|e| e.to_string())?;
+                        crate::desktop::recovery::apply_restore(&store, &plan)
+                            .map(|_| true)
+                            .map_err(|e| e.to_string())
+                    })
+                    .await
+                    .map_err(|e| e.to_string())
+                    .and_then(|v| v);
+                    Message::StopUsingRestored(result)
+                });
+            }
+            Message::StopUsingRestored(result) => {
+                self.desktop_recovery.refresh();
+                match result {
+                    Ok(restored) => {
+                        self.stop_using = StopUsing::Done { restored };
+                        let refresh = if restored {
+                            self.config = Config::load();
+                            self.after_desktop_change()
+                        } else {
+                            Task::none()
+                        };
+                        // The same steps as Stop and Start when you sign in.
+                        let stop = if preview() {
+                            Task::none()
+                        } else {
+                            self.working("Stopping widgets…");
+                            systemctl_steps(vec![
+                                (vec!["disable"], "Startup preference saved"),
+                                (vec!["stop"], WIDGETS_STOPPED),
+                            ])
+                        };
+                        return Task::batch([refresh, stop]);
+                    }
+                    Err(error) => {
+                        // Nothing was stopped: the choice is still open.
+                        self.stop_using = StopUsing::Confirm;
+                        self.failed(error);
+                    }
+                }
+            }
+            Message::CopyRemoval => {
+                self.status = "Command copied".into();
+                self.error = false;
+                return cosmic::iced::clipboard::write(
+                    removal_command(self.updates.identity.as_ref().map(|i| i.channel)).into(),
                 );
             }
             Message::DesktopRestorePreview => {
@@ -5276,33 +5412,81 @@ impl Settings {
                 }
                 self.handle(Message::Page(Page::Overview))
             }
-            wizard::Outcome::Done { finish, startup } => {
-                self.setup_kept = false;
-                self.wizard = None;
-                if let Some(store) = &store {
-                    wizard::Wizard::forget(store);
-                }
-                self.save(json!({"onboarded": true}));
-                self.record_notes_seen();
-                let refresh = self.after_desktop_change();
-                let page = self.handle(Message::Page(Page::Overview));
-                // The cards appear now, and at every sign-in when chosen.
-                // The cards appear now; at sign-in only when chosen.
-                let any_widgets = Widget::ALL
-                    .into_iter()
-                    .any(|w| self.config.widget_visible(w));
-                let start = if finish && any_widgets && !preview() {
-                    if startup {
-                        systemctl(vec!["enable", "--now"], "Halcyon is running")
-                    } else {
-                        systemctl(vec!["disable"], "Halcyon won't start at sign-in")
-                            .chain(systemctl(vec!["start"], "Halcyon is running"))
-                    }
+            wizard::Outcome::Applied { changed, startup } => {
+                let refresh = if changed {
+                    self.after_desktop_change()
                 } else {
                     Task::none()
                 };
-                Task::batch([refresh, page, start])
+                // Remember how the widgets ran, so Undo setup can put that
+                // back too.
+                let before = self.service_known.then_some(wizard::Service {
+                    running: self.service.running,
+                    startup: self.service.startup,
+                });
+                if let Some(wizard) = self.wizard.as_mut() {
+                    if let Some(applied) = wizard.applied.as_mut() {
+                        applied.service_before = before;
+                    }
+                    if let Some(store) = &store {
+                        wizard.remember(store);
+                    }
+                }
+                // The ending says the desktop is ready, so the widgets start
+                // now (and at sign-in only when chosen), even if the window
+                // closes there.
+                let any_widgets = Widget::ALL
+                    .into_iter()
+                    .any(|w| self.config.widget_visible(w));
+                let start = if any_widgets && !preview() {
+                    systemctl_steps(setup_start_steps(startup))
+                } else {
+                    Task::none()
+                };
+                Task::batch([refresh, start])
             }
+            wizard::Outcome::Undone { changed, service } => {
+                let refresh = if changed {
+                    self.after_desktop_change()
+                } else {
+                    Task::none()
+                };
+                Task::batch([refresh, self.restore_service(service)])
+            }
+            wizard::Outcome::Done { service } => {
+                self.end_setup();
+                let refresh = self.after_desktop_change();
+                let page = self.handle(Message::Page(Page::Overview));
+                Task::batch([refresh, page, self.restore_service(service)])
+            }
+        }
+    }
+    /// Setup is over: it isn't offered or resumed again.
+    fn end_setup(&mut self) {
+        self.setup_kept = false;
+        self.wizard = None;
+        if let Ok(store) = crate::desktop::DesktopStore::from_env() {
+            wizard::Wizard::forget(&store);
+        }
+        self.save(json!({"onboarded": true}));
+        self.record_notes_seen();
+    }
+    /// Closing the window on setup's ending is the same as Done: Apply
+    /// already started the widgets, so nothing is left to do.
+    fn finish_setup_on_close(&mut self) {
+        if self
+            .wizard
+            .as_ref()
+            .is_some_and(|wizard| wizard.step == wizard::Step::Done && !wizard.undone)
+        {
+            self.end_setup();
+        }
+    }
+    /// Puts the widgets back to how they ran before setup's Apply.
+    fn restore_service(&self, service: Option<wizard::Service>) -> Task<Message> {
+        match service {
+            Some(before) if !preview() => systemctl_steps(setup_restore_steps(before)),
+            _ => Task::none(),
         }
     }
     /// After a profile change, Undo or recovery: re-read the widget
@@ -5433,6 +5617,8 @@ impl Settings {
                 self.scenes.refresh();
             }
             Page::DesktopIcons => self.desktop_icons.open(),
+            // Whether anything from before Halcyon can be put back.
+            Page::Changes => self.desktop_recovery.refresh(),
             _ => {}
         }
     }
@@ -7071,6 +7257,37 @@ fn systemctl(args: Vec<&'static str>, status: &'static str) -> Task<Message> {
     command.extend(args.into_iter().map(String::from));
     command.push(crate::paths::SERVICE.into());
     run_command("/usr/bin/systemctl".into(), command, status)
+}
+/// What setup's Apply runs: the widgets start now, and at sign-in only
+/// when `startup`. The last step is read back like Start on the Halcyon page.
+fn setup_start_steps(startup: bool) -> Vec<(Vec<&'static str>, &'static str)> {
+    if startup {
+        vec![(vec!["enable", "--now"], WIDGETS_STARTED)]
+    } else {
+        vec![
+            (vec!["disable"], "Halcyon won't start at sign-in"),
+            (vec!["start"], WIDGETS_STARTED),
+        ]
+    }
+}
+/// What Undo setup runs to put the widgets back to how they ran before.
+fn setup_restore_steps(before: wizard::Service) -> Vec<(Vec<&'static str>, &'static str)> {
+    let mut steps = vec![(
+        vec![if before.startup { "enable" } else { "disable" }],
+        "Startup preference saved",
+    )];
+    if !before.running {
+        steps.push((vec!["stop"], WIDGETS_STOPPED));
+    }
+    steps
+}
+/// Runs systemctl steps one after another.
+fn systemctl_steps(steps: Vec<(Vec<&'static str>, &'static str)>) -> Task<Message> {
+    steps
+        .into_iter()
+        .map(|(args, status)| systemctl(args, status))
+        .reduce(Task::chain)
+        .unwrap_or_else(Task::none)
 }
 fn service_task() -> Task<Message> {
     cosmic::task::future(async {

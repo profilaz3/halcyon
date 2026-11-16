@@ -588,16 +588,24 @@ fn finishing_keeps_the_look_and_skip_leaves_the_desktop_alone() {
     seed_desktop();
     let size = Size::new(1020., 760.);
     let (mut app, mut native) = open(size);
+    // FIRST-12: the welcome says what Halcyon is. FIRST-11: and leaving
+    // uses the same words as every other step.
+    native.text_bounds(
+        app.settings_view(),
+        "Widgets, looks and wallpaper effects for your COSMIC desktop.",
+    );
+    native.text_bounds(app.settings_view(), "Set up later");
     click(&mut app, &mut native, "wizard-leave");
     assert!(app.wizard.is_none());
-    // Skip for now isn't finishing: Home keeps offering setup.
+    // Set up later on the welcome screen isn't finishing: Home keeps
+    // offering setup.
     assert!(!Config::load().onboarded);
     assert!(app.needs_setup());
     assert_eq!(Config::load().appearance.family, None);
     assert_eq!(
         user(DOCK, "border_radius"),
         None,
-        "Skip for now changes nothing"
+        "Set up later changes nothing"
     );
 
     let (mut app, mut native) = open(size);
@@ -716,9 +724,17 @@ fn cancel_undoes_setup_after_a_city_and_after_reopening() {
             .iter()
             .any(|item| item.title == "Setup choices")
     );
-    let _ = app.update(Message::ResumeKept(
-        super::navigation::KeptTarget::SetupChoices,
-    ));
+    // FIRST-11: Home keeps offering setup while its choices wait, with a
+    // way back in, also after Settings is opened again.
+    let (mut app, mut native) = {
+        drop(app);
+        let (app, _) = Settings::init(Core::default(), Page::Home);
+        (app, Native::new(size))
+    };
+    let _ = app.update(Message::Resized(size));
+    assert!(app.setup_kept && app.offers_setup());
+    native.text_bounds(app.settings_view(), "Finish setting up your desktop");
+    click(&mut app, &mut native, "setup-resume");
     let wizard = app.wizard.as_ref().unwrap();
     assert_eq!(wizard.city.as_ref().unwrap().name, "Belgrade");
     assert_eq!(wizard.look, Some("calm"));
@@ -2350,4 +2366,90 @@ fn the_weather_city_row_fits_a_narrow_window() {
             "{size:?}: the field stays on screen: {field:?}"
         );
     }
+}
+
+/// H6: the ending's "Your desktop is ready" is true once Apply returns.
+/// Apply starts the widgets with the systemctl steps Done used to run
+/// (never in a preview), remembers how they ran for Undo setup, and closing
+/// the window on the ending finishes setup the way Done does.
+#[test]
+fn h6_apply_starts_the_widgets_and_closing_the_ending_finishes_setup() {
+    if child("h6_apply_starts_the_widgets_and_closing_the_ending_finishes_setup") {
+        return;
+    }
+    let verbs = |steps: Vec<(Vec<&'static str>, &'static str)>| {
+        steps.into_iter().map(|(args, _)| args).collect::<Vec<_>>()
+    };
+    assert_eq!(
+        verbs(setup_start_steps(true)),
+        vec![vec!["enable", "--now"]]
+    );
+    assert_eq!(
+        verbs(setup_start_steps(false)),
+        vec![vec!["disable"], vec!["start"]]
+    );
+    // Undo setup puts back a first run's stopped widgets.
+    assert_eq!(
+        verbs(setup_restore_steps(wizard::Service {
+            running: false,
+            startup: false,
+        })),
+        vec![vec!["disable"], vec!["stop"]]
+    );
+    assert_eq!(
+        verbs(setup_restore_steps(wizard::Service {
+            running: true,
+            startup: true,
+        })),
+        vec![vec!["enable"]]
+    );
+    seed_desktop();
+    let store = crate::desktop::DesktopStore::from_env().unwrap();
+    let size = Size::new(1020., 760.);
+    let first_run = wizard::Service {
+        running: false,
+        startup: false,
+    };
+    let apply = |app: &mut Settings, native: &mut Native, look: &str| {
+        app.service_known = true;
+        app.service = ServiceState {
+            running: false,
+            startup: false,
+        };
+        click(app, native, "wizard-start");
+        click(app, native, &format!("wizard-look-{look}"));
+        for _ in 0..3 {
+            click(app, native, "wizard-next");
+        }
+        click(app, native, "wizard-apply");
+        assert_eq!(step(app), wizard::Step::Done);
+    };
+    let (mut app, mut native) = open(size);
+    apply(&mut app, &mut native, "focus");
+    let applied = app.wizard.as_ref().unwrap().applied.clone().unwrap();
+    assert_eq!(applied.service_before, Some(first_run));
+    // Kept with the progress, so Undo setup still knows after reopening.
+    let resumed =
+        wizard::Wizard::resume(&store, false, wizard::Bars::starter(false), true).unwrap();
+    assert_eq!(resumed.applied.unwrap().service_before, Some(first_run));
+    // Closing the window on the ending is Done: nothing to resume.
+    assert!(app.on_app_exit().is_none());
+    assert!(app.wizard.is_none());
+    assert!(Config::load().onboarded);
+    assert!(!wizard::Wizard::pending(&store));
+    assert!(!app.needs_setup());
+
+    // Closing after Undo setup keeps the choices and says it was undone.
+    let (mut app, mut native) = open(size);
+    apply(&mut app, &mut native, "calm");
+    click(&mut app, &mut native, "wizard-undo");
+    assert!(app.wizard.as_ref().unwrap().undone);
+    assert!(app.wizard.as_ref().unwrap().applied.is_none());
+    assert!(app.on_app_exit().is_none());
+    assert!(wizard::Wizard::pending(&store));
+    let (app, mut native) = open(size);
+    let wizard = app.wizard.as_ref().unwrap();
+    assert_eq!(wizard.step, wizard::Step::Done);
+    assert!(wizard.undone);
+    native.text_bounds(app.settings_view(), "Your desktop is back as it was");
 }

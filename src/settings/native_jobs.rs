@@ -378,18 +378,13 @@ impl Settings {
                     Done::Profiles(editor, result)
                 }))
             }
-            Message::RecoveryApply | Message::RecoveryApplyOne(_) => {
+            Message::RecoveryApplyOne(index) => {
+                let index = *index;
+                self.recovery_sheet.allow_replacing(index);
                 let mut recovery = self.recovery_sheet.clone();
-                let index = match message {
-                    Message::RecoveryApplyOne(i) => Some(*i),
-                    _ => None,
-                };
                 self.begin_native();
                 Some(task(move || {
-                    let result = match index {
-                        Some(i) => recovery.apply_one(i),
-                        None => recovery.apply(),
-                    };
+                    let result = recovery.apply_one(index);
                     Done::Recovery(recovery, result)
                 }))
             }

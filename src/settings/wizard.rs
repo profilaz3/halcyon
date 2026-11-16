@@ -424,16 +424,35 @@ pub enum Outcome {
     None,
     /// The desktop changed: reread preferences and editors.
     Changed,
-    /// The wizard is over. `finish` starts the cards (and at sign-in when
-    /// `startup`); otherwise nothing more happens.
     /// Setup closes with its choices saved for later; nothing was written.
     Left,
     /// Skipped from Welcome: nothing chosen, and setup isn't finished.
     Skipped,
-    Done {
-        finish: bool,
+    /// Apply wrote every choice (`changed` when the desktop changed). The
+    /// widgets start now, and at sign-in when `startup`, so the ending's
+    /// "ready" is true even if the window closes there.
+    Applied {
+        changed: bool,
         startup: bool,
     },
+    /// Undo setup put the desktop back. `service` is how the widgets ran
+    /// before Apply started them, to put back too.
+    Undone {
+        changed: bool,
+        service: Option<Service>,
+    },
+    /// The wizard is over. Apply already started the widgets; `service`
+    /// puts them back as they were after Cancel.
+    Done {
+        service: Option<Service>,
+    },
+}
+
+/// How the widgets ran: now, and at sign-in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Service {
+    pub running: bool,
+    pub startup: bool,
 }
 
 /// What one Apply changed, as the ending says it.
@@ -442,6 +461,8 @@ pub struct Applied {
     pub lines: Vec<String>,
     pub next_login: bool,
     pub changed: bool,
+    /// How the widgets ran before this Apply started them, when known.
+    pub service_before: Option<Service>,
 }
 
 #[derive(Clone)]
@@ -593,8 +614,15 @@ impl Wizard {
                     .unwrap_or_default(),
                 next_login: saved["applied"]["next_login"].as_bool().unwrap_or(false),
                 changed: saved["applied"]["changed"].as_bool().unwrap_or(false),
+                service_before: saved["applied"]["service_before"]
+                    .as_object()
+                    .map(|service| Service {
+                        running: service.get("running").and_then(|v| v.as_bool()) == Some(true),
+                        startup: service.get("startup").and_then(|v| v.as_bool()) == Some(true),
+                    }),
             });
         }
+        wizard.undone = wizard.step == Step::Done && saved["undone"].as_bool() == Some(true);
         if let Some(choices) = saved.get("bars").and_then(Bars::saved) {
             wizard.bars = choices.0;
             wizard.touched = choices.1;
@@ -635,7 +663,11 @@ impl Wizard {
             "applied": self.applied.as_ref().map(|applied| json!({
                 "lines": applied.lines, "next_login": applied.next_login,
                 "changed": applied.changed,
+                "service_before": applied.service_before.map(|service| json!({
+                    "running": service.running, "startup": service.startup,
+                })),
             })),
+            "undone": self.undone,
         });
         crate::config::write_config_text(&path, Some(&state.to_string()))
     }
@@ -862,8 +894,12 @@ impl Wizard {
                 let changed = self.undo_all(store);
                 if self.error.is_none() {
                     crate::usage::counts::setup("undone");
-                    self.applied = None;
+                    let service = self.applied.take().and_then(|a| a.service_before);
                     self.undone = true;
+                    return Outcome::Undone {
+                        changed: changed == Outcome::Changed,
+                        service,
+                    };
                 }
                 return changed;
             }
@@ -1026,16 +1062,13 @@ impl Wizard {
                 }
                 crate::usage::counts::setup("cancelled");
                 return Outcome::Done {
-                    finish: false,
-                    startup: false,
+                    service: self.applied.take().and_then(|a| a.service_before),
                 };
             }
+            // Apply already started the widgets: Done only closes.
             Message::Finish => {
                 crate::usage::counts::setup("finished");
-                return Outcome::Done {
-                    finish: true,
-                    startup: self.startup,
-                };
+                return Outcome::Done { service: None };
             }
         }
         Outcome::None
@@ -1364,12 +1397,12 @@ impl Wizard {
                     lines,
                     next_login,
                     changed,
+                    service_before: None,
                 });
                 self.go(Step::Done);
-                if changed {
-                    Outcome::Changed
-                } else {
-                    Outcome::None
+                Outcome::Applied {
+                    changed,
+                    startup: self.startup,
                 }
             }
             Err(error) => {

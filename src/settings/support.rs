@@ -118,21 +118,45 @@ pub enum Message {
     /// Opens one of the project's own help pages in the browser.
     Guide(&'static str),
 }
-/// The Help page links: label and an address the project already publishes.
-pub const GUIDES: [(&str, &str); 3] = [
+/// The Help page links: label, an address the project already publishes,
+/// and whether it needs a GitHub account. Both guides are sections of the
+/// project's README on GitHub.
+pub const GUIDES: [(&str, &str, bool); 3] = [
     (
-        "Guides and tips ↗",
+        "README on GitHub ↗",
         "https://github.com/profilaz3/halcyon#readme",
+        false,
     ),
     (
         "Keyboard and command line ↗",
         "https://github.com/profilaz3/halcyon#command-line-and-shortcuts",
+        false,
     ),
     (
         "Send feedback ↗",
         "https://github.com/profilaz3/halcyon/issues",
+        true,
     ),
 ];
+/// Said beside every link that ends on GitHub's issue pages.
+pub const NEEDS_ACCOUNT: &str = "Needs a free GitHub account";
+const NEW_ISSUE: &str = "https://github.com/profilaz3/halcyon/issues/new";
+/// Well under the address length browsers and GitHub accept.
+const MAX_ISSUE_URL: usize = 6000;
+/// The new-issue page with the previewed report already in its text, when
+/// the address stays short enough. Nothing is sent: GitHub shows the issue
+/// for review before anyone submits it.
+pub fn issue_url(report: &str) -> String {
+    let Ok(mut url) = reqwest::Url::parse(NEW_ISSUE) else {
+        return NEW_ISSUE.into();
+    };
+    url.query_pairs_mut().append_pair("body", report);
+    if url.as_str().len() <= MAX_ISSUE_URL {
+        url.into()
+    } else {
+        NEW_ISSUE.into()
+    }
+}
 /// Which changes the Changes page lists.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Filter {
@@ -627,11 +651,25 @@ impl Settings {
                 });
             }
             Message::ReportProblem => {
-                return super::run_command(
-                    "/usr/bin/xdg-open".into(),
-                    vec!["https://github.com/profilaz3/halcyon/issues/new".into()],
-                    "Issue page opened",
-                );
+                // The report the person just read goes along: copied, and
+                // filled in when it fits. They still submit it themselves.
+                let Some(report) = self.support.report.clone() else {
+                    return super::run_command(
+                        "/usr/bin/xdg-open".into(),
+                        vec![NEW_ISSUE.into()],
+                        "Issue page opened",
+                    );
+                };
+                let url = issue_url(&report);
+                self.support.notice = Some(if url == NEW_ISSUE {
+                    "Report copied. Paste it into the issue."
+                } else {
+                    "Report copied and filled in. Check the issue before you submit it."
+                });
+                return Task::batch([
+                    cosmic::iced::clipboard::write(report),
+                    super::run_command("/usr/bin/xdg-open".into(), vec![url], "Issue page opened"),
+                ]);
             }
             Message::Guide(url) => {
                 return super::run_command(

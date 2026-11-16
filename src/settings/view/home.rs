@@ -72,7 +72,7 @@ impl Settings {
             None => self.placement_picture(height, false),
         };
         let mut parts = vec![header];
-        let setup = self.needs_setup();
+        let setup = self.offers_setup();
         if setup {
             parts.push(self.setup_card());
         }

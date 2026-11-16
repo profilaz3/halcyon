@@ -380,7 +380,7 @@ impl Settings {
             "Everything Halcyon changes, in one picture. Pick a part to change it.",
         )];
         // Settings opens here, so first-run setup and what's new wait here.
-        if self.needs_setup() {
+        if self.offers_setup() {
             parts.push(self.setup_card());
         }
         parts.extend(self.updated_card());

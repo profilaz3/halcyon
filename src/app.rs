@@ -381,6 +381,9 @@ pub struct Notice {
     /// A confirmation, not a failure: its button is Undo, and it lasts
     /// only until the edge menu closes.
     pub brief: bool,
+    /// The settings file is damaged: trying again can't help, Settings
+    /// can repair it.
+    pub repair: bool,
 }
 
 /// Where the pointer last moved, so the widget menu opens under it. Kept

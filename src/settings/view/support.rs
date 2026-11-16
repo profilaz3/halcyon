@@ -1,5 +1,5 @@
 use super::*;
-use crate::settings::support::{GUIDES, Health, Message as Edit};
+use crate::settings::support::{GUIDES, Health, Message as Edit, NEEDS_ACCOUNT};
 
 fn action<'a>(title: &'static str, message: Edit) -> Element<'a, Message> {
     button::text(title)
@@ -27,10 +27,14 @@ impl Settings {
                         .on_press(Message::Support(Edit::Save))
                         .into(),
                     button::text("Open the issue page ↗")
+                        .id(cosmic::widget::Id::new("help-open-issue"))
                         .on_press(Message::Support(Edit::ReportProblem))
                         .into(),
+                    label(NEEDS_ACCOUNT, 12., MUTED),
                 ])
                 .spacing(8)
+                .align_y(Alignment::Center)
+                .wrap()
                 .into(),
                 label(self.support.notice.unwrap_or(""), 12., MUTED),
             ])
@@ -55,10 +59,23 @@ impl Settings {
             row::with_children(
                 GUIDES
                     .iter()
-                    .map(|&(title, url)| action(title, Edit::Guide(url)))
+                    .map(|&(title, url, account)| {
+                        if account {
+                            row::with_children(vec![
+                                action(title, Edit::Guide(url)),
+                                label(NEEDS_ACCOUNT, 12., MUTED),
+                            ])
+                            .spacing(4)
+                            .align_y(Alignment::Center)
+                            .into()
+                        } else {
+                            action(title, Edit::Guide(url))
+                        }
+                    })
                     .collect::<Vec<_>>(),
             )
             .spacing(8)
+            .align_y(Alignment::Center)
             .wrap()
             .into(),
         );

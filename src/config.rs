@@ -27,6 +27,10 @@ pub struct Location {
 pub struct Config {
     #[serde(skip)]
     pub design_problem: Option<String>,
+    /// The problem is the settings file itself: it is there but can't be
+    /// read as settings. Settings offers its repair; nothing replaces it.
+    #[serde(skip)]
+    pub settings_damaged: bool,
     pub theme: String,
     /// Read-only desktop colors, cached outside the saved configuration.
     /// Rendering never reads files or changes COSMIC preferences.
@@ -114,6 +118,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             design_problem: None,
+            settings_damaged: false,
             theme: "lavender".into(),
             desktop_palette: None,
             saved: SavedChoices::default(),
@@ -206,14 +211,23 @@ impl Config {
         match (Self::try_load(), problem) {
             (Ok(config), None) => config,
             (result, pending) => {
+                // A settings file that is there but can't be read is never
+                // quietly replaced by defaults: it gets the same repair as a
+                // widget design, and setup isn't offered again meanwhile.
+                let damaged = pending
+                    .is_none()
+                    .then(|| Self::path().as_deref().and_then(damaged_file))
+                    .flatten();
                 let error = pending.or_else(|| result.err());
-                if crate::design::commands::pending_problem().is_some()
+                if damaged.is_some()
+                    || crate::design::commands::pending_problem().is_some()
                     || Self::path()
                         .as_deref()
                         .is_some_and(crate::design::storage::managed)
                 {
                     Self {
-                        design_problem: error,
+                        settings_damaged: damaged.is_some(),
+                        design_problem: damaged.or(error),
                         widgets_visible: false,
                         enabled_widgets: vec![],
                         onboarded: true,
@@ -1885,6 +1899,30 @@ pub fn lock_config(path: &std::path::Path) -> Result<ConfigLock, String> {
             return Err(error.to_string());
         }
     }
+}
+
+/// Why the settings file at `path` can't be read as settings, when it is
+/// there but damaged: not text, not a JSON object, or (before the widget
+/// design update) values this version can't take. A missing file, or one
+/// that can't be opened right now (busy, no permission), isn't damaged.
+pub fn damaged_file(path: &std::path::Path) -> Option<String> {
+    let text = match read_raw_config_text(path) {
+        Ok(Some(text)) => text,
+        Ok(None) => return None,
+        // Not a regular file, too large or not UTF-8.
+        Err(error) if error.starts_with("Configuration ") => return Some(error),
+        Err(_) => return None,
+    };
+    if let Err(error) = parse_config_text(Some(&text)) {
+        return Some(error);
+    }
+    if crate::design::storage::managed(path) {
+        // The widget design holds the widgets; its own checks report it.
+        return None;
+    }
+    Config::from_bytes(text.as_bytes())
+        .and_then(|config| config.validate())
+        .err()
 }
 
 /// The configuration file's text, or `None` when it does not exist.

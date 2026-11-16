@@ -230,6 +230,7 @@ mod tests {
                     retry: None,
                     details: false,
                     brief: false,
+                    repair: false,
                 })
             }),
             ("a note being written", |cards| {

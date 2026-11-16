@@ -463,8 +463,9 @@ fn native_area(namespace: &str) -> &'static str {
         "Windows"
     }
 }
-/// What an interrupted change was doing, named by the pages it touched,
-/// for the banner that asks whether to keep it.
+/// What an unfinished change was doing, named by the pages it touched,
+/// for the banner that asks whether to keep it. A write that failed here
+/// says so; only a journal left by a closed Halcyon says it was closed.
 pub fn interrupted(journal: &super::Journal) -> String {
     let mut pages: Vec<&str> = Vec::new();
     for entry in &journal.entries {
@@ -481,10 +482,22 @@ pub fn interrupted(journal: &super::Journal) -> String {
         [one] => one.to_string(),
         [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     };
-    match journal.operation.as_str() {
-        "undo" | "undo_restore" => format!("Halcyon was closed while undoing a change to {what}."),
-        "restore" => format!("Halcyon was closed while restoring {what}."),
-        _ => format!("Halcyon was closed while changing {what}."),
+    let failed = super::failed_in_place(journal);
+    match (journal.operation.as_str(), failed) {
+        ("undo" | "undo_restore", true) => {
+            format!("Undoing a change to {what} couldn’t finish, and part of it is still applied.")
+        }
+        ("restore", true) => {
+            format!("Restoring {what} couldn’t finish, and part of it is still applied.")
+        }
+        (_, true) => {
+            format!("A change to {what} couldn’t finish, and part of it is still applied.")
+        }
+        ("undo" | "undo_restore", false) => {
+            format!("Halcyon was closed while undoing a change to {what}.")
+        }
+        ("restore", false) => format!("Halcyon was closed while restoring {what}."),
+        (_, false) => format!("Halcyon was closed while changing {what}."),
     }
 }
 /// The recorded name of a desktop setting that has one (see `SETTINGS`).
