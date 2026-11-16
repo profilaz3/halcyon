@@ -85,7 +85,7 @@ fn style(open: bool) -> cosmic::theme::Button {
             })),
             border_color: if open { accent } else { component.divider.into() },
             border_width: 1.,
-            border_radius: 9.0.into(),
+            border_radius: (MARK / 2.).into(),
             outline_width: if focused { 2. } else { 0. },
             outline_color: accent,
             text_color: Some(if open {
@@ -104,11 +104,14 @@ fn style(open: bool) -> cosmic::theme::Button {
     }
 }
 
+/// The "?" is at least this wide and tall, an easy target to point at.
+pub(in crate::settings) const MARK: f32 = 24.;
+
 /// The "?" beside a title: tooltip on hover, toggles the line on press.
 fn button<'a>(key: u64, description: &str, open: bool) -> Element<'a, Message> {
-    let mark = container(text::body("?").size(11).line_height(1.0))
-        .center_x(Length::Fixed(18.))
-        .center_y(Length::Fixed(18.));
+    let mark = container(text::body("?").size(12).line_height(1.0))
+        .center_x(Length::Fixed(MARK))
+        .center_y(Length::Fixed(MARK));
     let control = cosmic::widget::button::custom(mark)
         .id(next_id(key))
         .padding(0)

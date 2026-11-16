@@ -2702,12 +2702,13 @@ fn ux_three_screens_keep_primary_actions_reachable_and_state_local() {
             "face choices visible: {face:?}"
         );
         send_settings(&mut app, Message::Page(Page::Appearance));
-        // Glass is a detail page of Appearance; Back names it.
+        // Glass is a detail page of Appearance; opened from Clock, Back
+        // returns there, as Alt+← does, and says so.
         let back = native.bounds(app.settings_view(), "settings-back");
-        assert!(back.width > 70. && back.x >= app.sidebar_width());
+        assert!(back.width > 50. && back.x >= app.sidebar_width());
         assert_eq!(
             app.up_link().map(|(title, _)| title).as_deref(),
-            Some("Appearance")
+            Some("Clock")
         );
         native.capture(
             app.settings_view(),
@@ -2772,11 +2773,12 @@ fn ux_native_overview_leads_with_arrange_widgets() {
         let mut native = Native::new(size);
         let arrange = native.bounds(app.settings_view(), "arrange-widgets");
         assert!(arrange.width > 0. && arrange.x + arrange.width <= size.width);
-        let _ = app.update(Message::Explain(view::explain::key("Widgets")));
+        // The page intro is always shown, and says where each editor opens.
         let hint = native.text_all(
             app.settings_view(),
             "Click a widget in the picture to change it. \
-             Arrange widgets adds, removes and moves them on your desktop.",
+             Arrange widgets adds, removes and moves them on your desktop; \
+             Arrange in this window moves them here.",
         );
         assert_eq!(hint.len(), 1, "{:?}", native.all_text(app.settings_view()));
         assert_eq!(native.overflowing_text(app.settings_view()), Vec::new());

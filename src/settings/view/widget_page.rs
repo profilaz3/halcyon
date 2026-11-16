@@ -130,25 +130,35 @@ impl Settings {
                 format!("{key}-open-glance"),
             ));
         } else {
-            // Always the same row; it says what to do first when it can't open.
+            // Always the same row, the Clock's too; it says where it opens,
+            // and what to do first when it can't.
             if self.canvas_visible() {
                 // The arranging canvas is already open above.
-            } else if widget == Widget::Clock && self.config.widget_selected(widget) {
-                // The Clock stage above moves it and resizes it, digits and
-                // all; a second editor for the same thing only confused.
+            } else if !self.config.widgets_visible {
+                rows.push(split(
+                    detail_state("Move or resize", "All widgets are hidden"),
+                    button::standard("Show widgets")
+                        .id(cosmic::widget::Id::new(format!("{key}-show")))
+                        .on_press(Message::Desktop(true))
+                        .into(),
+                ));
             } else if self.config.widget_selected(widget) {
                 rows.push(self.link_row(
                     "Move or resize",
-                    "Drag it on a picture of your desktop",
-                    // Opens the canvas on this page; a bare Start stayed hidden.
-                    Message::EditWidgetLayout(widget),
+                    if crate::settings::desktop_arrange_available(&self.config) {
+                        "Opens Arrange widgets on your desktop, with this widget picked"
+                    } else {
+                        // The desktop can't open its editor: this window's.
+                        "Opens Arrange in this window"
+                    },
+                    Message::ArrangeWidget(widget),
                     format!("{key}-arrange"),
                 ));
             } else {
                 rows.push(
                     // Offer the one step that makes it possible.
                     split(
-                        detail_state("Move or resize", "It needs to be on the desktop first"),
+                        detail_state("Move or resize", "Show it on your desktop first"),
                         button::standard("Show on desktop")
                             .id(cosmic::widget::Id::new(format!("{key}-show")))
                             .on_press(Message::Widget(widget, true))

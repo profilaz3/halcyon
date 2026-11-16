@@ -129,7 +129,7 @@ fn caption(draft: &PanelDraft) -> Option<&'static str> {
     }
     match draft.autohide().known() {
         Some(AutoHide::Always) => Some("Hidden until you point at the edge"),
-        Some(AutoHide::OnOverlap) => Some("Hides behind windows"),
+        Some(AutoHide::OnOverlap) => Some("Hides while a window covers it"),
         _ => None,
     }
 }
@@ -617,7 +617,9 @@ impl Settings {
         };
         let look = Look::of(draft);
         if !look.horizontal() {
-            return (self.content_width() * 0.42).clamp(220., 300.);
+            return (self.content_width() * 0.42)
+                .clamp(220., 300.)
+                .min(self.preview_cap());
         }
         let shared: f32 = PanelKind::ALL
             .into_iter()

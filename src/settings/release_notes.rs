@@ -151,7 +151,7 @@ pub(super) const RELEASES: &[Release] = &[
         version: "0.6.0",
         notes: &[
             Note {
-                title: "Activity pill (beta)",
+                title: "Activity island (beta)",
                 body: "Music, meetings, notifications and camera or mic use, in the top panel. Needs Islands.",
                 place: Some(navigation::ACTIVITY_ISLAND),
                 link: None,

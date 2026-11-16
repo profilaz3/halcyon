@@ -40,15 +40,24 @@ pub(super) fn line<'a>(value: impl Into<String>, size: f32, color: Color) -> Ele
 
 /// Label left, control right; the control wraps under at compact widths.
 /// Said under controls whose change makes COSMIC rebuild the bar, which
-/// restarts every item on it.
-pub(super) const RESTARTS: &str = "This restarts the panel";
+/// restarts every item on it. Only the bar being changed is rebuilt.
+pub(super) fn restarts(kind: PanelKind) -> &'static str {
+    match kind {
+        PanelKind::Dock => "This restarts the dock",
+        PanelKind::Panel => "This restarts the panel",
+    }
+}
 
-/// A [`field`] whose change restarts the panel, and says so.
-fn restarting<'a>(title: &'static str, control: Element<'a, Message>) -> Element<'a, Message> {
+/// A [`field`] whose change restarts its bar, and says so.
+fn restarting<'a>(
+    kind: PanelKind,
+    title: &'static str,
+    control: Element<'a, Message>,
+) -> Element<'a, Message> {
     super::field(
         Some(title.to_owned()),
         None,
-        detail_state(title, RESTARTS),
+        detail_state(title, restarts(kind)),
         row::with_children(vec![control])
             .align_y(Alignment::Center)
             .wrap()
@@ -313,20 +322,28 @@ impl Settings {
         // With one display and the default choice there is nothing to pick.
         if self.desktop.outputs.len() > 1 || draft.output().known() != Some(&Output::All) {
             rows.push(restarting(
+                draft.kind(),
                 "Show on display",
                 choice(&draft.output(), outputs, Edit::Output, accent),
             ));
         }
         rows.extend([
             restarting(
+                draft.kind(),
                 "Screen edge",
                 choice(&draft.anchor(), anchors, Edit::Anchor, accent),
             ),
             self.search_target(
                 "dock-visibility",
-                field(
-                    "Visibility",
-                    choice(
+                super::field(
+                    Some("Visibility".into()),
+                    None,
+                    detail(
+                        "Visibility",
+                        "Hide if covered: it hides while a window overlaps it. \
+                         Auto-hide: it stays hidden until you point at its edge.",
+                    ),
+                    row::with_children(vec![choice(
                         &draft.autohide(),
                         AutoHide::ALL
                             .into_iter()
@@ -334,7 +351,10 @@ impl Settings {
                             .collect(),
                         Edit::AutoHide,
                         accent,
-                    ),
+                    )])
+                    .align_y(Alignment::Center)
+                    .wrap()
+                    .into(),
                 ),
             ),
         ]);
@@ -366,6 +386,7 @@ impl Settings {
         ];
         let mut style: Vec<Element<'_, Message>> = Vec::new();
         style.push(restarting(
+            draft.kind(),
             "Size",
             choice(&draft.size(), sizes, Edit::Size, accent),
         ));
@@ -422,14 +443,14 @@ impl Settings {
             "dock-background",
             split(
                 if following {
-                    detail_state("Background", RESTARTS)
+                    detail_state("Background", restarts(draft.kind()))
                 } else {
                     column::with_children(vec![
                         detail_state(
                             "Background",
                             "Choosing a style leaves the dock and panel as they are",
                         ),
-                        label(RESTARTS, CAPTION, MUTED),
+                        label(restarts(draft.kind()), CAPTION, MUTED),
                     ])
                     .spacing(3)
                     .width(Length::Fill)
@@ -492,13 +513,15 @@ impl Settings {
         }
         let mut items: Vec<Element<'_, Message>> = vec![toggle.into()];
         let hides = draft.autohide().known().copied();
+        // Hide timing is one block, so a link to it can ring all of it.
+        let mut timing: Vec<Element<'_, Message>> = Vec::new();
         match draft.behavior() {
             Setting::Known(behavior) => {
                 let mut heading = vec![label("Hide timing", 13., FG)];
                 if hides == Some(AutoHide::Never) {
                     heading.push(label("Used when hiding is on", 12., MUTED));
                 }
-                items.push(
+                timing.push(
                     row::with_children(heading)
                         .spacing(8)
                         .align_y(Alignment::Center)
@@ -522,18 +545,22 @@ impl Settings {
                             .into()
                         })
                         .collect();
-                    items.push(row::with_children(sliders).spacing(20).into());
+                    timing.push(row::with_children(sliders).spacing(20).into());
                 }
             }
             Setting::Unsupported(raw) => {
-                items.push(field("Hide timing", kept(&raw)));
+                timing.push(field("Hide timing", kept(&raw)));
             }
         }
+        items.push(self.search_target(
+            "dock-timing",
+            column::with_children(timing).spacing(10).into(),
+        ));
         items.push(separator());
         items.push(label("Spacing", 13., FG));
         // Padding is drawn inside the bar; only the gap between items rebuilds it.
         items.push(label(
-            format!("Between items: {}", RESTARTS.to_lowercase()),
+            format!("Between items: {}", restarts(draft.kind()).to_lowercase()),
             CAPTION,
             MUTED,
         ));

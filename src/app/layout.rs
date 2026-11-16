@@ -1006,6 +1006,7 @@ impl Cards {
             saved_grid: self.config.placement,
             ..Default::default()
         };
+        self.apply_arrange_pick();
         Task::batch([
             // A draft that couldn't be saved waits, without the keyboard.
             note.chain(self.note_surface_mode()),
@@ -1031,8 +1032,23 @@ impl Cards {
             .as_ref()
             .and_then(|output| self.displays.key(output));
         self.layout_editor = draft;
+        self.apply_arrange_pick();
         self.pause_note();
         self.replace_arrange_surface()
+    }
+
+    /// Picks the widget a widget page's Move or resize asked for, once the
+    /// editor is open. One that isn't being arranged is left unpicked.
+    pub(super) fn apply_arrange_pick(&mut self) {
+        if !self.layout_editor.active {
+            return;
+        }
+        if let Some(widget) = self.arrange_pick.take()
+            && self.arranging_widget(widget)
+        {
+            self.layout_editor.adding = false;
+            self.layout_editor.selected = Some(widget);
+        }
     }
 
     /// Called only when output handles and geometry are unchanged. Keep the
@@ -2500,10 +2516,12 @@ impl Cards {
                     13.,
                     p.foreground,
                 ),
+                // The same words as Arrange in this window: each button
+                // says what it does.
                 cosmic::widget::button::text(if self.layout_editor.resize_mode {
-                    "Arrows: resize"
+                    "Move with arrows"
                 } else {
-                    "Arrows: move"
+                    "Resize with arrows"
                 })
                 .on_press(Message::LayoutResizeMode)
                 .into(),
@@ -2519,7 +2537,7 @@ impl Cards {
                 cosmic::widget::button::text("H +")
                     .on_press(Message::LayoutResize([0, 1]))
                     .into(),
-                cosmic::widget::button::text("Automatic")
+                cosmic::widget::button::text("Fit content")
                     .on_press(Message::LayoutAutomatic)
                     .into(),
                 cosmic::widget::button::text("Settings")

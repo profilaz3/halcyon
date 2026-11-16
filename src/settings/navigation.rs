@@ -341,6 +341,30 @@ pub(super) const WIDGET_READABILITY: SearchHit = hit(
 .at("contrast-assist")
 .open(SearchOpen::Readability);
 
+/// The Weather page's city, ready to type; Time of day links here.
+pub(super) const WEATHER_LOCATION: SearchHit = hit(
+    Page::Weather,
+    "Location",
+    "weather location city forecast belgrade search",
+    false,
+)
+.open(SearchOpen::City);
+/// The folded theme colors on Fonts and icons, where a style's window
+/// background can be set by hand. Appearance's Window tone links here. It
+/// stays out of the search index: its toggle's name carries an arrow.
+pub(super) const ADVANCED_THEME_COLORS: SearchHit =
+    hit(Page::DesktopAppearance, "Advanced theme colors", "", true)
+        .at("appearance-advanced-colors");
+/// The dock's hide timing, in its folded section; Accessibility links here.
+pub(super) const DOCK_HIDE_TIMING: SearchHit = hit(
+    Page::DesktopDock,
+    "Hide timing",
+    "dock timing hide delay slide speed duration reveal autohide",
+    true,
+)
+.at("dock-timing")
+.bar(PanelKind::Dock)
+.section(BAR_ADVANCED);
 pub(super) const LOOKS: SearchHit = hit(
     Page::DesktopProfiles,
     "Looks",
@@ -443,7 +467,8 @@ pub(super) const WEATHER_EFFECTS: SearchHit = hit(
 pub(super) const EDGE_MENU: SearchHit = hit(
     Page::EdgeMenu,
     "Edge menu",
-    "edge menu flyout sidebar drawer panel strip screen edge shortcuts apps folders actions customize hover click off disable left right position",
+    // It was called Widget controls; that name still finds it.
+    "edge menu widget controls open now flyout sidebar drawer side panel strip screen edge shortcuts apps folders actions customize hover click off disable left right position slide animation",
     false,
 )
 .names_page();
@@ -536,13 +561,7 @@ const SEARCH: &[SearchHit] = &[
         false,
     )
     .at("devbox-reorder-anchor"),
-    hit(
-        Page::Weather,
-        "Location",
-        "weather location city forecast belgrade search",
-        false,
-    )
-    .open(SearchOpen::City),
+    WEATHER_LOCATION,
     hit(
         Page::Weather,
         "Units",
@@ -632,8 +651,9 @@ const SEARCH: &[SearchHit] = &[
     .open(SearchOpen::Arrange),
     hit(
         Page::Overview,
-        "Arrange with keyboard",
-        "keyboard arrow keys list accessible arrange layout",
+        "Arrange in this window",
+        // It was Arrange with keyboard; those words still find it.
+        "arrange with keyboard arrow keys list accessible layout here settings window",
         false,
     )
     .at("canvas-start"),
@@ -797,22 +817,14 @@ const SEARCH: &[SearchHit] = &[
     .at("dock-advanced")
     .bar(crate::desktop::panels::PanelKind::Panel)
     .section(BAR_ADVANCED),
-    hit(
-        Page::DesktopDock,
-        "Hide timing",
-        "dock timing hide delay slide speed duration reveal autohide",
-        true,
-    )
-    .at("dock-advanced")
-    .bar(crate::desktop::panels::PanelKind::Dock)
-    .section(BAR_ADVANCED),
+    DOCK_HIDE_TIMING,
     hit(
         Page::DesktopPanel,
         "Hide timing",
         "panel timing hide delay slide speed duration reveal autohide",
         true,
     )
-    .at("dock-advanced")
+    .at("dock-timing")
     .bar(crate::desktop::panels::PanelKind::Panel)
     .section(BAR_ADVANCED),
     hit(
@@ -895,7 +907,7 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::DesktopDock,
         "Visibility",
-        "dock autohide auto-hide hide behind windows always visible",
+        "dock autohide auto-hide hide if covered when overlap behind windows always visible",
         false,
     )
     .at("dock-visibility")
@@ -903,7 +915,7 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::DesktopPanel,
         "Visibility",
-        "panel autohide auto-hide hide behind windows always visible",
+        "panel autohide auto-hide hide if covered when overlap behind windows always visible",
         false,
     )
     .at("dock-visibility")
@@ -952,13 +964,6 @@ const SEARCH: &[SearchHit] = &[
     TIME_OF_DAY,
     STARTUP,
     EDGE_MENU,
-    hit(
-        Page::Widgets,
-        "Widget controls",
-        "widget controls sidebar screen edge menu side panel slide delay animation",
-        false,
-    )
-    .at("widgets-behave"),
     PRIVACY,
     hit(
         Page::General,
@@ -1066,7 +1071,7 @@ const ROWS: &[SearchHit] = &[
         .section(BAR_ADVANCED),
     hit(Page::DesktopDock, "Floating", "", false).bar(PanelKind::Dock),
     hit(Page::DesktopDock, "Hide after", "", true)
-        .at("dock-advanced")
+        .at("dock-timing")
         .bar(PanelKind::Dock)
         .section(BAR_ADVANCED),
     hit(Page::DesktopDock, "Inner padding", "", true)
@@ -1079,19 +1084,19 @@ const ROWS: &[SearchHit] = &[
         .section(BAR_ADVANCED),
     hit(Page::DesktopDock, "Position", "", false).bar(PanelKind::Dock),
     hit(Page::DesktopDock, "Reveal edge", "", true)
-        .at("dock-advanced")
+        .at("dock-timing")
         .bar(PanelKind::Dock)
         .section(BAR_ADVANCED),
     hit(Page::DesktopDock, "Screen edge", "", false).bar(PanelKind::Dock),
     hit(Page::DesktopDock, "See-through", "", false).bar(PanelKind::Dock),
     hit(Page::DesktopDock, "Shape", "", false).bar(PanelKind::Dock),
     hit(Page::DesktopDock, "Show after", "", true)
-        .at("dock-advanced")
+        .at("dock-timing")
         .bar(PanelKind::Dock)
         .section(BAR_ADVANCED),
     hit(Page::DesktopDock, "Size", "", false).bar(PanelKind::Dock),
     hit(Page::DesktopDock, "Slide duration", "", true)
-        .at("dock-advanced")
+        .at("dock-timing")
         .bar(PanelKind::Dock)
         .section(BAR_ADVANCED),
     hit(Page::DesktopDock, "Style", "", false).bar(PanelKind::Dock),
@@ -1106,7 +1111,7 @@ const ROWS: &[SearchHit] = &[
         .section(BAR_ADVANCED),
     hit(Page::DesktopPanel, "Floating", "", false).bar(PanelKind::Panel),
     hit(Page::DesktopPanel, "Hide after", "", true)
-        .at("dock-advanced")
+        .at("dock-timing")
         .bar(PanelKind::Panel)
         .section(BAR_ADVANCED),
     hit(Page::DesktopPanel, "Inner padding", "", true)
@@ -1119,29 +1124,35 @@ const ROWS: &[SearchHit] = &[
         .section(BAR_ADVANCED),
     hit(Page::DesktopPanel, "Position", "", false).bar(PanelKind::Panel),
     hit(Page::DesktopPanel, "Reveal edge", "", true)
-        .at("dock-advanced")
+        .at("dock-timing")
         .bar(PanelKind::Panel)
         .section(BAR_ADVANCED),
     hit(Page::DesktopPanel, "Screen edge", "", false).bar(PanelKind::Panel),
     hit(Page::DesktopPanel, "See-through", "", false).bar(PanelKind::Panel),
     hit(Page::DesktopPanel, "Shape", "", false).bar(PanelKind::Panel),
     hit(Page::DesktopPanel, "Show after", "", true)
-        .at("dock-advanced")
+        .at("dock-timing")
         .bar(PanelKind::Panel)
         .section(BAR_ADVANCED),
     hit(Page::DesktopPanel, "Size", "", false).bar(PanelKind::Panel),
     hit(Page::DesktopPanel, "Slide duration", "", true)
-        .at("dock-advanced")
+        .at("dock-timing")
         .bar(PanelKind::Panel)
         .section(BAR_ADVANCED),
     hit(Page::DesktopPanel, "Style", "", false).bar(PanelKind::Panel),
     hit(Page::DesktopIcons, "Show on the desktop", "", false),
     hit(Page::DesktopIcons, "Size", "", false),
-    hit(Page::DesktopMotion, "Dock and panel slide speed", "", false),
     hit(Page::DesktopMotion, "Easier-to-read widgets", "", false),
     hit(Page::DesktopMotion, "Keyboard", "", false),
+    hit(
+        Page::DesktopMotion,
+        "Keys in this window",
+        "keyboard settings",
+        false,
+    ),
     hit(Page::DesktopMotion, "Motion", "", false),
     hit(Page::DesktopMotion, "Reading", "", false),
+    hit(Page::DesktopMotion, "Show explanations", "", false),
     MATCH_WEATHER,
     hit(Page::DesktopWallpaper, "Picture size", "", false),
     hit(Page::DesktopWallpaper, "Same on all displays", "", false),
@@ -1168,7 +1179,12 @@ const ROWS: &[SearchHit] = &[
     hit(Page::DesktopWindows, "Wrap around", "", false),
     hit(Page::Devbox, "Background services", "", false),
     hit(Page::Devbox, "How often it updates", "", false),
-    hit(Page::Devbox, "Time since start", "", false),
+    hit(
+        Page::Devbox,
+        "Uptime",
+        "time since start computer started running",
+        false,
+    ),
     hit(Page::Focus, "Break", "", false),
     hit(Page::Focus, "Focus", "", false),
     hit(Page::Focus, "How long", "", false),
@@ -1228,7 +1244,6 @@ const ROWS: &[SearchHit] = &[
     hit(Page::Themes, "Apps", "", false),
     hit(Page::Weather, "Dew point and how often it updates", "", false),
     hit(Page::Widgets, "How widgets behave", "", false).at("widgets-behave"),
-    hit(Page::Widgets, "Slide in", "", false).at("widgets-behave"),
     hit(Page::EdgeMenu, "Appearance", "", false).at("edge-menu-appearance"),
     hit(Page::EdgeMenu, "Style", "icons only grid list", false).at("edge-menu-appearance"),
     hit(Page::EdgeMenu, "List", "menu style", false).at("edge-menu-appearance"),
@@ -1295,6 +1310,7 @@ pub(super) const NOT_INDEXED: &[(&str, &str)] = &[
     ("Make your own design", "a link on every widget page; “Widget builder” finds it"),
     ("More in COSMIC Settings", "a link out of Halcyon"),
     ("Dock and panel", "Appearance's link to the bars' See-through; “see-through” finds it"),
+    ("Dock and panel hide timing", "Accessibility's link to the dock's Hide timing, which search opens itself"),
     ("Not on your panel", "the Activity island page's empty state; “island” finds the page"),
     ("Before Halcyon", "a group in the Changes list, which follows your history"),
     ("Changed Daily overview", "an entry in the Changes list"),
@@ -1310,21 +1326,16 @@ pub(super) const NOT_INDEXED: &[(&str, &str)] = &[
     ("Set up your desktop", "a card shown until setup is finished; Home has it in search"),
     ("Status", "a status row that opens the setting it’s about"),
     ("Check again", "a button"),
-    ("Search settings", "a key listed under Keyboard on Accessibility; “keyboard” finds the list"),
-    ("Undo", "a key listed under Keyboard on Accessibility; “keyboard” finds the list"),
-    ("Go back", "a key listed under Keyboard on Accessibility; “keyboard” finds the list"),
-    ("Move between controls", "a key listed under Keyboard on Accessibility; “keyboard” finds the list"),
-    ("Close", "a key listed under Keyboard on Accessibility; “keyboard” finds the list"),
+    ("Search settings", "a key listed under Keys in this window on Accessibility, which search finds"),
+    ("Undo", "a key listed under Keys in this window on Accessibility, which search finds"),
+    ("Go back", "a key listed under Keys in this window on Accessibility, which search finds"),
+    ("Move between controls", "a key listed under Keys in this window on Accessibility, which search finds"),
+    ("Close", "a key listed under Keys in this window on Accessibility, which search finds"),
 ];
 
 /// Labels the screen draws only in a state the test fixture lacks, and why.
 #[cfg(test)]
 pub(super) const UNCHECKED_LABELS: &[(&str, &str)] = &[
-    (
-        "Activity pill",
-        "named by its item in the panel’s Contents or by the Add Activity pill button, \
-         and the fixture has no Halcyon panel to offer either",
-    ),
     ("Tomorrow", "in Calendar, shown once a calendar is connected"),
     ("Days shown", "in Calendar, shown once a calendar is connected"),
     ("All-day events", "in Calendar, shown once a calendar is connected"),
@@ -2112,6 +2123,35 @@ mod tests {
     }
 
     #[test]
+    fn renamed_settings_are_found_by_their_new_and_old_names() {
+        // The shortcuts page comes before the keys listed on Accessibility.
+        for query in ["shortcuts", "keyboard shortcuts", "Keyboard Shortcuts"] {
+            let hit = search(query)[0];
+            assert_eq!(
+                (hit.page, hit.label),
+                (Page::DesktopShortcuts, "Keyboard shortcuts")
+            );
+        }
+        // The Edge menu was Widget controls.
+        for query in ["edge menu", "widget controls", "open now"] {
+            assert_eq!(search(query)[0].page, Page::EdgeMenu, "{query}");
+        }
+        // The Activity island was the Activity pill.
+        for query in ["activity island", "activity pill"] {
+            assert_eq!(search(query)[0].page, Page::ActivityIsland, "{query}");
+        }
+        for query in ["hide if covered", "hide behind windows"] {
+            assert_eq!(search(query)[0].label, "Visibility", "{query}");
+        }
+        // Accessibility's link opens the dock's hide timing itself.
+        let timing = search("hide timing")[0];
+        assert_eq!(timing, DOCK_HIDE_TIMING);
+        assert_eq!(timing.anchor(), "dock-timing");
+        assert!(timing.advanced);
+        assert_eq!(search("dock slide speed")[0].anchor(), "dock-timing");
+    }
+
+    #[test]
     fn search_accepts_common_typos_without_fuzzy_acronyms_or_unrelated_words() {
         for query in ["calender", "calndar", "calendarr", "clalendar", "claendar"] {
             assert_eq!(search(query)[0].page, Page::Calendar, "{query}");
@@ -2160,6 +2200,8 @@ mod tests {
         }
         assert_eq!(search("autostart")[0].label, "Running and startup");
         assert_eq!(search("hotkeys")[0].page, Page::DesktopShortcuts);
+        assert_eq!(search("uptime")[0].label, "Uptime");
+        assert_eq!(search("time since start")[0].label, "Uptime");
         let hit = search("memory cache")[0];
         assert_eq!(hit.anchor(), "devbox-memory");
         let hit = search("dock spacing")[0];
@@ -2264,13 +2306,12 @@ mod tests {
             assert_eq!(hit.open, SearchOpen::Arrange, "{query}");
             assert!(!hit.advanced);
         }
-        // The list in Settings stays reachable for the keyboard.
-        let keyboard = search("arrange with keyboard")[0];
-        assert_eq!(
-            (keyboard.page, keyboard.anchor()),
-            (Page::Overview, "canvas-start")
-        );
-        assert_eq!(keyboard.open, SearchOpen::None);
+        // The editor in this window stays reachable, by its old name too.
+        for query in ["arrange in this window", "arrange with keyboard"] {
+            let here = search(query)[0];
+            assert_eq!((here.page, here.anchor()), (Page::Overview, "canvas-start"));
+            assert_eq!(here.open, SearchOpen::None);
+        }
     }
 
     #[test]
@@ -2409,6 +2450,8 @@ pub(super) struct Route {
     saved_collection: bool,
     setup_review: Option<super::profiles::Selection>,
     report: Option<String>,
+    /// The page was opened from the sidebar, so it shows no Back link.
+    from_sidebar: bool,
 }
 const MAX_HISTORY: usize = 40;
 
@@ -2508,6 +2551,7 @@ impl Settings {
             setup_review: (self.page == Page::DesktopProfiles && self.profiles.review_open())
                 .then(|| self.profiles.selection().clone()),
             report: self.support.report.clone(),
+            from_sidebar: self.from_sidebar,
         }
     }
     pub(super) fn remember_route(&mut self) {
@@ -2519,9 +2563,10 @@ impl Settings {
             }
         }
     }
-    /// The header's one way up: from search results back to them, from a
-    /// view opened inside a page back to that page, and from a subpage to
-    /// its parent. Sidebar pages have none. It never names an unrelated page.
+    /// The header's Back link. It does what Alt+← does, and names where
+    /// that goes: the screen you came from, or, with nothing before, the
+    /// page this one sits under. A sidebar page opened from the sidebar has
+    /// none; reached from a link on another page, it leads back there.
     pub(super) fn up_link(&self) -> Option<(String, Message)> {
         if !self.search_query.trim().is_empty() {
             return None;
@@ -2529,13 +2574,6 @@ impl Settings {
         let last = self.history.last();
         if last.is_some_and(|route| route.search_open || !route.query.trim().is_empty()) {
             return Some(("Search results".into(), Message::Back));
-        }
-        if self.page == Page::PendingChanges && !self.history.last().is_some_and(|r| r.page != Page::Changes) {
-            let back = self.history.last().is_some_and(|r| r.page == Page::Changes);
-            return Some((
-                Page::Changes.nav_title().into(),
-                if back { Message::Back } else { Message::Page(Page::Changes) },
-            ));
         }
         if self.page == Page::Overview && self.canvas_visible() {
             // The link stays while a drag or save is running (doing nothing
@@ -2545,58 +2583,44 @@ impl Settings {
                 self.canvas_done().unwrap_or(Message::Preview),
             ));
         }
-        // Release notes belong to Updates, where they are opened.
-        if self.page == Page::General && self.app_settings_page == AppSettingsPage::WhatsNew {
-            let updates = AppSettingsPage::Updates;
-            let back = last.is_some_and(|r| r.page == Page::General && r.app == updates);
+        // Back first closes the Look studio's part picker or its review.
+        if self.page == Page::DesktopProfiles
+            && let Some(draft) = &self.profiles.studio
+            && (draft.picking.is_some() || draft.reviewing)
+        {
+            let name = draft.profile.name.trim();
             return Some((
-                updates.tab_title().into(),
-                if back {
-                    Message::Back
-                } else {
-                    Message::AppSettingsPage(updates)
-                },
+                if name.is_empty() { "Look studio" } else { name }.into(),
+                Message::Back,
             ));
         }
-        let inside = match self.page {
+        // With nothing before it, Back goes up to where this screen sits.
+        let up: Option<String> = match self.page {
+            // Release notes belong to Updates, where they are opened.
+            Page::General if self.app_settings_page == AppSettingsPage::WhatsNew => {
+                Some(AppSettingsPage::Updates.tab_title().into())
+            }
             Page::General
                 if self.support.report.is_some()
                     || self.app_settings_page != AppSettingsPage::Home =>
             {
-                Some(Page::General)
+                Some(Page::General.nav_title().into())
             }
             Page::DesktopProfiles
                 if self.profiles.package.is_some()
                     || self.profiles.mix.is_some()
                     || self.profiles.review_open() =>
             {
-                Some(Page::DesktopProfiles)
+                Some(Page::DesktopProfiles.nav_title().into())
             }
-            _ => None,
+            page => page.parent().map(|parent| parent.nav_title().into()),
         };
-        if let Some(page) = inside {
-            let back = self.history.is_empty() || last.is_some_and(|route| route.page == page);
-            return back.then(|| (page.nav_title().into(), Message::Back));
+        match last {
+            // A sidebar page reached from the sidebar starts afresh.
+            Some(_) if up.is_none() && self.from_sidebar => None,
+            Some(route) => Some((self.route_title(route), Message::Back)),
+            None => up.map(|title| (title, Message::Back)),
         }
-        let parent = self.page.parent()?;
-        // Looks hands off to its siblings under Appearance, such as Time of
-        // day, so they lead back to Looks.
-        if last.is_some_and(|route| {
-            route.page == Page::DesktopProfiles
-                && self.page != Page::DesktopProfiles
-                && Page::DesktopProfiles.parent() == Some(parent)
-        }) {
-            return Some((Page::DesktopProfiles.nav_title().into(), Message::Back));
-        }
-        let back = last.is_some_and(|route| route.page == parent);
-        Some((
-            parent.nav_title().into(),
-            if back {
-                Message::Back
-            } else {
-                Message::Page(parent)
-            },
-        ))
     }
     /// The destination Back names, or the parent when nothing came before.
     pub(super) fn back_title(&self) -> Option<String> {
@@ -2639,6 +2663,13 @@ impl Settings {
                     self.quiet_navigation = false;
                     task
                 }
+                // Release notes go back to Updates, where they are opened.
+                None if self.page == Page::General
+                    && self.app_settings_page == AppSettingsPage::WhatsNew =>
+                {
+                    self.app_settings_page = AppSettingsPage::Updates;
+                    Task::none()
+                }
                 None if self.page == Page::General
                     && self.app_settings_page != AppSettingsPage::Home =>
                 {
@@ -2658,6 +2689,7 @@ impl Settings {
         self.quiet_navigation = false;
         self.app_settings_page = route.app;
         self.object_tab = route.tab;
+        self.from_sidebar = route.from_sidebar;
         self.arranging = route.arranging && self.canvas.is_some();
         self.support.report = route.report;
         if route.page == Page::DesktopProfiles {
@@ -2714,6 +2746,7 @@ impl Settings {
             self.page_scroll.remove(root.key());
         }
         let task = self.handle(Message::Page(root));
+        self.from_sidebar = true;
         self.arranging = false;
         self.search_selected = None;
         if root == Page::General {

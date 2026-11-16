@@ -809,6 +809,11 @@ pub enum Message {
     ArrangeWidgets,
     /// The desktop couldn't open its editor: arrange in Settings instead.
     ArrangeHere(String),
+    /// A widget page's Move or resize: the editor on the desktop with this
+    /// widget picked, or this page's own when the desktop can't open it.
+    ArrangeWidget(Widget),
+    /// The desktop couldn't open its editor for this widget: move it here.
+    ArrangeWidgetHere(Widget, String),
     OpenDesktop(&'static str),
     CalendarPrivacy(bool),
     Today(bool),
@@ -999,6 +1004,8 @@ pub struct Settings {
     search_open: bool,
     /// Set while Back restores a route, or a flat tab changes.
     quiet_navigation: bool,
+    /// This page was opened from the sidebar rather than from a link.
+    from_sidebar: bool,
     /// What leaving just kept, and how to return to it.
     kept_note: Option<(String, navigation::KeptTarget)>,
     /// The technical text shown under the footer's error; a new error
@@ -1363,6 +1370,7 @@ impl cosmic::Application for Settings {
             arranging: false,
             search_open: false,
             quiet_navigation: false,
+            from_sidebar: true,
             kept_note: None,
             error_details: None,
             setup_kept: false,
@@ -2645,6 +2653,8 @@ impl Settings {
                 self.quiet_navigation = true;
                 let navigation = self.handle(Message::Page(hit.target()));
                 self.quiet_navigation = false;
+                // A result or a link to one leads back where it was picked.
+                self.from_sidebar = false;
                 self.object_tab = hit.object_tab();
                 if let Some(bar) = hit.bar {
                     let _ = self.desktop.update(desktop::Message::Select(bar));
@@ -3698,6 +3708,8 @@ impl Settings {
                     self.undo_elsewhere = None;
                     if !self.quiet_navigation {
                         self.remember_route();
+                        // Opened from a link; the sidebar sets this back.
+                        self.from_sidebar = false;
                     }
                     self.object_tab = Default::default();
                     self.arranging = false;
@@ -4122,6 +4134,44 @@ impl Settings {
                     self.placement.display.clone(),
                     true,
                 );
+            }
+            Message::ArrangeWidget(widget) => {
+                if self.busy || self.canvas.is_some() {
+                    return Task::none();
+                }
+                // Combined widgets move as the Daily overview card.
+                let picked = if self.config.glance.enabled
+                    && matches!(widget, Widget::Clock | Widget::Weather | Widget::Calendar)
+                {
+                    Widget::Glance
+                } else {
+                    widget
+                };
+                // Only a widget the desktop shows can be picked there.
+                if !desktop_arrange_available(&self.config) || !self.config.widget_visible(picked) {
+                    return self.update(Message::EditWidgetLayout(widget));
+                }
+                self.working("Opening desktop arrangement…");
+                return desktop_request(
+                    "arrange",
+                    "Drag widgets, then save your layout",
+                    self.placement.display.clone(),
+                    true,
+                    Some(picked),
+                );
+            }
+            Message::ArrangeWidgetHere(widget, error) => {
+                self.busy = false;
+                eprintln!("Arrange on desktop: {error}");
+                let task = self.update(Message::EditWidgetLayout(widget));
+                if self.canvas.is_some() {
+                    self.status =
+                        "The desktop couldn’t open its editor, so you can move it here".into();
+                    self.error = false;
+                } else if !self.error {
+                    self.failed(error);
+                }
+                return task;
             }
             Message::ArrangeHere(error) => {
                 self.busy = false;
@@ -7163,6 +7213,17 @@ fn desktop_command(
     display: Option<String>,
     arrange_here: bool,
 ) -> Task<Message> {
+    desktop_request(action, status, display, arrange_here, None)
+}
+/// [`desktop_command`], naming the widget Arrange opens with picked. Where
+/// the desktop can't take it, that widget is moved in Settings instead.
+fn desktop_request(
+    action: &'static str,
+    status: &'static str,
+    display: Option<String>,
+    arrange_here: bool,
+    pick: Option<crate::drawer::Widget>,
+) -> Task<Message> {
     let path = desktop_command_path();
     let isolated = preview();
     cosmic::task::future(async move {
@@ -7182,18 +7243,19 @@ fn desktop_command(
                 .ok_or_else(|| "Desktop command directory unavailable".to_string())?;
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
             let temp = path.with_extension("tmp");
-            std::fs::write(
-                &temp,
-                json!({"action": action, "display": display}).to_string(),
-            )
-            .map_err(|error| error.to_string())?;
+            let mut command = json!({"action": action, "display": display});
+            if let Some(widget) = pick {
+                command["widget"] = widget.key().into();
+            }
+            std::fs::write(&temp, command.to_string()).map_err(|error| error.to_string())?;
             std::fs::rename(temp, path).map_err(|error| error.to_string())
         })
         .await
         .unwrap_or_else(|error| Err(error.to_string()));
-        match result {
-            Err(error) if arrange_here => Message::ArrangeHere(error),
-            result => Message::CommandDone(status.into(), result),
+        match (result, pick) {
+            (Err(error), Some(widget)) if arrange_here => Message::ArrangeWidgetHere(widget, error),
+            (Err(error), None) if arrange_here => Message::ArrangeHere(error),
+            (result, _) => Message::CommandDone(status.into(), result),
         }
     })
 }
@@ -7363,6 +7425,7 @@ mod tests {
     include!("settings/edge_menu_tests.rs");
     include!("settings/comfort_tests.rs");
     include!("settings/dock_glass_tests.rs");
+    include!("settings/names_tests.rs");
 
     /// What Wallpaper & colors recommends for a solid color background.
     fn recommended_color(rgb: [f32; 3]) -> [u8; 3] {
@@ -7794,30 +7857,34 @@ mod tests {
                 );
                 let saved_layout = raw_preferences();
                 // A combined clock moves as the Daily overview card, reached
-                // from its own page. A clock on its own has the Clock stage,
-                // which moves and resizes it, so the page offers no second
-                // "Move or resize"; the canvas still opens from Desktop.
-                if combined {
+                // from its own page. A clock on its own has the Clock stage
+                // and, like every widget page, Move or resize. Move or resize
+                // asks the desktop's editor first; where the desktop can't
+                // open it, this page's own arranging canvas opens instead.
+                let (page, widget) = if combined {
                     click(&mut app, &mut native, "clock-open-glance");
                     assert_eq!(app.page, Page::Glance);
                     click(&mut app, &mut native, "glance-arrange");
-                    assert_eq!(app.page, Page::Glance);
+                    (Page::Glance, Widget::Glance)
                 } else {
-                    assert!(
-                        native
-                            .try_bounds(app.settings_view(), "clock-arrange")
-                            .is_none(),
-                        "the Clock stage is the one place to move and resize the clock"
-                    );
                     assert!(
                         native
                             .try_bounds(app.settings_view(), "clock-stage")
                             .is_some()
                     );
-                    send_settings(&mut app, Message::EditWidgetLayout(Widget::Clock));
-                    assert_eq!(app.page, Page::Clock);
-                }
-                assert!(app.canvas_visible(), "Move or resize shows the arranging canvas");
+                    click(&mut app, &mut native, "clock-arrange");
+                    (Page::Clock, Widget::Clock)
+                };
+                assert!(app.busy && app.canvas.is_none(), "{}", app.status);
+                send_settings(
+                    &mut app,
+                    Message::ArrangeWidgetHere(widget, "no desktop".into()),
+                );
+                assert_eq!(app.page, page);
+                assert!(
+                    app.canvas_visible(),
+                    "Move or resize shows the arranging canvas"
+                );
                 assert_eq!(
                     app.placement.selected(),
                     Some(if combined {
@@ -8099,7 +8166,7 @@ mod tests {
                 Page::DesktopWindows,
                 "appearance-effects",
             ),
-            ("dock timing", Page::DesktopDock, "dock-advanced"),
+            ("dock timing", Page::DesktopDock, "dock-timing"),
         ] {
             let _ = app.update(Message::SearchSettings(query.into()));
             let _ = app.update(Message::SearchFirst);

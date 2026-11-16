@@ -231,11 +231,19 @@ fn switch<'a>(
         toggler(value).on_toggle(message).into(),
     )
 }
+/// A page's title and its one-line intro, which is always shown: it says
+/// what the page is for before anything on it is explained.
 fn heading<'a>(title: &'static str, description: &'static str) -> Element<'a, Message> {
     #[cfg(test)]
     drawn::note(title);
-    let big = text::title3(title).size(28).into();
-    explain::titled(big, title, description.to_owned(), 13., 4)
+    let mut lines = vec![text::title3(title).size(28).into()];
+    if !description.is_empty() {
+        lines.push(label(description, 13., MUTED));
+    }
+    column::with_children(lines)
+        .spacing(4)
+        .width(Length::Fill)
+        .into()
 }
 fn separator() -> Element<'static, Message> {
     container(text::body(""))
@@ -543,6 +551,12 @@ impl Settings {
     fn inspector_height(&self) -> f32 {
         (self.window.height - 200.).max(260.)
     }
+    /// The tallest a picture above a page's controls may be: about a third
+    /// of the window, so the first controls under it are in view even in
+    /// an 820 × 600 window.
+    pub(in crate::settings) fn preview_cap(&self) -> f32 {
+        (self.window.height / 3.).max(160.)
+    }
     fn stage_width(&self) -> f32 {
         let width = self.content_width();
         let scene = self.canvas_visible()
@@ -690,20 +704,12 @@ impl Settings {
                     .into(),
                 group(
                     None,
-                    vec![
-                        self.subpage_row(
-                            "Apps that don’t tile",
-                            "They open as normal windows when tiling is on",
-                            Page::DesktopWindowRules,
-                            "windows-open-rules",
-                        ),
-                        self.subpage_row(
-                            "Keyboard shortcuts",
-                            "Keys for windows, workspaces and apps",
-                            Page::DesktopShortcuts,
-                            "windows-open-shortcuts",
-                        ),
-                    ],
+                    vec![self.subpage_row(
+                        "Apps that don’t tile",
+                        "They open as normal windows when tiling is on",
+                        Page::DesktopWindowRules,
+                        "windows-open-rules",
+                    )],
                 ),
             ])
             .spacing(16)

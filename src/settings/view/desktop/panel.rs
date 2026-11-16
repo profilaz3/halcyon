@@ -40,8 +40,10 @@ impl Settings {
             shape.push(kept(&raw));
         }
         if offered {
+            // Islands is a shape; the Activity island is an item on the
+            // panel, whatever its shape. Both are on this page.
             shape.push(label(
-                "Islands splits the panel into floating pieces.",
+                "Islands splits the panel into floating pieces. It is not the Activity island, which is an item you add to the panel.",
                 12.,
                 MUTED,
             ));

@@ -8,7 +8,7 @@ impl Settings {
         let mut parts = vec![
             heading(
                 "Activity island",
-                "Music, meetings and alerts in a pill on the panel.",
+                "Music, meetings and alerts in the middle of your top panel.",
             ),
             self.home_glance(Page::ActivityIsland),
         ];

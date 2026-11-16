@@ -949,6 +949,9 @@ fn built_in_edge_menu_fits_every_widget() {
     assert_eq!(cards.config.ordered_right_cards().len(), 3);
     let _ = cards.update(Message::DrawerToggle);
     let mut rail = rail();
+    // Named like a customized menu and its page in Settings.
+    rail.text_bounds(cards.control_rail(), "Edge menu");
+    assert!(rail.text_all(cards.control_rail(), "Widgets").is_empty());
     let devices = rail.text_bounds(cards.control_rail(), "Devices");
     let customize = rail.bounds(cards.control_rail(), "edge-customize");
     assert!(
@@ -965,6 +968,15 @@ fn built_in_edge_menu_fits_every_widget() {
             .contains(&drawer::DrawerItem::Widget(Widget::Devices))
     );
     capture_rail(&cards, "edge-menu-every-widget");
+    // With widgets placed by hand, the menu points at Arrange, right below.
+    let mut config = cards.config.clone();
+    config.widget_positions.insert("clock".into(), [0.2, 0.2]);
+    let _ = cards.apply_config(config);
+    assert!(cards.custom_layout());
+    rail.text_bounds(
+        cards.control_rail(),
+        "Your own layout. Use Arrange below to move widgets.",
+    );
 }
 
 /// The open menu at its surface's own size, room for names included.

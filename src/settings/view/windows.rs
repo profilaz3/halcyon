@@ -93,6 +93,20 @@ impl Settings {
         self.settings_accent()
     }
 
+    /// Keyboard shortcuts sit near the top, where people look for them,
+    /// whatever state the window settings are in.
+    fn windows_shortcuts(&self) -> Element<'_, Message> {
+        group(
+            None,
+            vec![self.subpage_row(
+                "Keyboard shortcuts",
+                "Keys for windows, workspaces and apps",
+                Page::DesktopShortcuts,
+                "windows-open-shortcuts",
+            )],
+        )
+    }
+
     pub(super) fn windows_page(&self) -> Element<'_, Message> {
         let accent = self.windows_accent();
         let editor = &self.windows;
@@ -107,6 +121,7 @@ impl Settings {
                 ERROR,
                 Vec::new(),
             ));
+            items.push(self.windows_shortcuts());
             return column::with_children(items).spacing(14).into();
         }
         let Some(draft) = editor.draft() else {
@@ -115,13 +130,14 @@ impl Settings {
                 store_pill(self.windows.store(), accent),
             ));
             items.push(label("Reading window settings…", 12., MUTED));
+            items.push(self.windows_shortcuts());
             return column::with_children(items).spacing(14).into();
         };
         items.push(split(
             heading("Windows", "How windows open, line up and take focus."),
             store_pill(self.windows.store(), accent),
         ));
-        items.push(self.home_glance(Page::DesktopWindows));
+        // The page's own picture shows its windows; Home's would repeat it.
         if let Some(banner) = recovery_banner(
             editor.recovery(),
             editor.writable(),
@@ -170,6 +186,7 @@ impl Settings {
             ));
         }
         items.push(self.windows_header(draft));
+        items.push(self.windows_shortcuts());
         // Tiling and snapping are both about where windows go: one card.
         let mut arranging = self.windows_tiling(draft);
         arranging.extend(self.windows_snap(draft));
@@ -209,7 +226,9 @@ impl Settings {
         let (outer, inner) = draft.gaps(variant).known().copied().unwrap_or((8, 8));
         let hint = draft.flag(Behavior::ActiveHint).known() != Some(&false);
         let outline = draft.outline_width(variant).known().copied().unwrap_or(1);
-        let height = (self.window.height * 0.26).clamp(120., 190.);
+        let height = (self.window.height * 0.26)
+            .clamp(120., 190.)
+            .min(self.preview_cap());
         let buttons = (
             draft.flag(Behavior::ShowMinimize).known() != Some(&false),
             draft.flag(Behavior::ShowMaximize).known() != Some(&false),

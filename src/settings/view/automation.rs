@@ -807,7 +807,9 @@ impl Settings {
             controls.push(split(
                 summary,
                 button::text("Change in Weather")
-                    .on_press(Message::Page(Page::Weather))
+                    .on_press(Message::SearchResult(
+                        crate::settings::navigation::WEATHER_LOCATION,
+                    ))
                     .into(),
             ));
         } else if context.city(Source::Manual).is_ok() && !self.schedule_city_editing {

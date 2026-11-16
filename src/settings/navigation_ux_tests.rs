@@ -587,8 +587,8 @@ fn structure_accessibility_root_halcyon_and_one_owner_each() {
     );
     // Search speaks the new names and still understands the old ones.
     for (query, label) in [
-        ("edge menu", "Widget controls"),
-        ("widget controls", "Widget controls"),
+        ("edge menu", "Edge menu"),
+        ("widget controls", "Edge menu"),
         ("accessibility", "Reduce motion"),
     ] {
         assert!(

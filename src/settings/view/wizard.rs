@@ -2,9 +2,9 @@
 //! Illustrations are local samples; the existing wizard owns apply and rollback.
 use super::*;
 mod widget_pages;
-use crate::desktop::panels::{PanelDraft, PanelKind};
+use crate::desktop::panels::{AutoHide, PanelDraft, PanelKind};
 use crate::desktop::profiles::Preset;
-use crate::settings::wizard::{Message as Step, Shape, Step as Screen, Wizard};
+use crate::settings::wizard::{Bars, Message as Step, Shape, Step as Screen, Wizard};
 use cosmic::widget::image::Handle;
 
 const INK: Color = Color::from_rgb(0.95, 0.95, 1.);
@@ -237,7 +237,52 @@ fn picker<'a>(
         .into()
 }
 
+/// The dock as setup would leave it, in the Dock page's words.
+fn wizard_dock_summary(bars: Bars) -> String {
+    let mut parts = vec![format!("{} corners", bars.dock_shape.title())];
+    if bars.floating {
+        parts.push("Floating".into());
+    }
+    parts.push(
+        if bars.hides {
+            AutoHide::OnOverlap
+        } else {
+            AutoHide::Never
+        }
+        .title()
+        .into(),
+    );
+    parts.join(" · ")
+}
+
 impl Settings {
+    /// The panel's shape when it isn't Islands, as Shape on the Panel page
+    /// names it. Setup keeps whichever the panel has.
+    fn wizard_bar_shape(&self) -> &'static str {
+        let panel = self.desktop.draft(PanelKind::Panel);
+        let vertical = panel
+            .and_then(|draft| draft.anchor().known().copied())
+            .is_some_and(|anchor| !anchor.horizontal());
+        match panel.and_then(|draft| draft.extend().known().copied()) {
+            Some(false) => "Compact",
+            _ if vertical => "Full height",
+            _ => "Full width",
+        }
+    }
+
+    /// The panel as setup would leave it, in the Panel page's words.
+    fn wizard_panel_summary(&self, bars: Bars) -> String {
+        format!(
+            "{} · {} corners",
+            if bars.islands {
+                "Islands"
+            } else {
+                self.wizard_bar_shape()
+            },
+            bars.panel_shape.title()
+        )
+    }
+
     /// Why Islands can't be picked here, in one line; Why? names the fix.
     fn wizard_islands_unavailable(&self) -> Element<'_, Message> {
         use crate::desktop::islands::Installation;
@@ -782,33 +827,12 @@ impl Settings {
             ],
             accent,
         )];
-        let dock_summary = format!(
-            "{}, {}, {}",
-            bars.dock_shape.title(),
-            if bars.floating {
-                "floating"
-            } else {
-                "on the screen edge"
-            },
-            if bars.hides {
-                "hides until needed"
-            } else {
-                "always shown"
-            }
-        );
         if keep {
             controls.push(group(
                 Some("What you have now"),
                 vec![
-                    detail(
-                        "Panel",
-                        format!(
-                            "{} {}",
-                            bars.panel_shape.title(),
-                            if bars.islands { "islands" } else { "bar" }
-                        ),
-                    ),
-                    detail("Dock", dock_summary),
+                    detail("Panel", self.wizard_panel_summary(bars)),
+                    detail("Dock", wizard_dock_summary(bars)),
                 ],
             ));
             controls.push(words(
@@ -835,16 +859,18 @@ impl Settings {
             };
             let islands_ready =
                 wizard.islands_available && self.desktop.islands.installation.installed();
+            // The same names as the Panel and Dock pages: Shape, Floating
+            // and Visibility, each with that page's choices.
             controls.push(group(
                 Some("Panel"),
                 vec![
                     group_row(
-                        "Style",
-                        "Islands splits it into floating pieces",
+                        "Shape",
+                        "Islands floats it in pieces",
                         picker(
                             vec![
                                 (
-                                    "Bar",
+                                    self.wizard_bar_shape(),
                                     !bars.islands,
                                     Some(go(Step::Islands(false))),
                                     "wizard-panel-bar".into(),
@@ -878,18 +904,18 @@ impl Settings {
                         shapes(bars.dock_shape, "dock", Step::DockShape),
                     ),
                     group_row(
-                        "Position",
+                        "Floating",
                         "",
                         picker(
                             vec![
                                 (
-                                    "Floating",
+                                    "On",
                                     bars.floating,
                                     Some(go(Step::Floating(true))),
                                     "wizard-dock-floating".into(),
                                 ),
                                 (
-                                    "On the edge",
+                                    "Off",
                                     !bars.floating,
                                     Some(go(Step::Floating(false))),
                                     "wizard-dock-attached".into(),
@@ -898,22 +924,24 @@ impl Settings {
                             accent,
                         ),
                     ),
+                    // Setup offers one of Visibility's choices; it is named
+                    // as on the Dock page, and Off keeps it always visible.
                     group_row(
-                        "Visibility",
+                        AutoHide::OnOverlap.title(),
                         "",
                         picker(
                             vec![
                                 (
-                                    "Always shown",
-                                    !bars.hides,
-                                    Some(go(Step::Hides(false))),
-                                    "wizard-dock-shown".into(),
-                                ),
-                                (
-                                    "Hides",
+                                    "On",
                                     bars.hides,
                                     Some(go(Step::Hides(true))),
                                     "wizard-dock-hides".into(),
+                                ),
+                                (
+                                    "Off",
+                                    !bars.hides,
+                                    Some(go(Step::Hides(false))),
+                                    "wizard-dock-shown".into(),
                                 ),
                             ],
                             accent,
@@ -959,7 +987,6 @@ impl Settings {
     /// desktop's own bars, the chosen look's bar style on top, then this
     /// step's choices. Kept bars stay exactly as they are.
     pub(super) fn wizard_bar_drafts(&self, wizard: &Wizard) -> Vec<PanelDraft> {
-        use crate::desktop::panels::AutoHide;
         let installed = self.desktop.islands.installation.installed();
         // The same order Apply uses: the look's dock and panel unless they
         // are kept, then every value chosen here written over it.
@@ -1205,10 +1232,9 @@ impl Settings {
             })
             .unwrap_or_else(|| "My current desktop".into());
         let panel = format!(
-            "{} {}, {} dock",
-            bars.panel_shape.title(),
-            if bars.islands { "islands" } else { "bar" },
-            bars.dock_shape.title().to_lowercase()
+            "Panel: {}. Dock: {}",
+            self.wizard_panel_summary(bars),
+            wizard_dock_summary(bars)
         );
         let city = wizard
             .city

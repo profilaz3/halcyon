@@ -1464,7 +1464,8 @@ impl DevboxSection {
             Self::Disk => "Disk",
             Self::Network => "Network",
             Self::Gpu => "Graphics (GPU)",
-            Self::Uptime => "Time since start",
+            // The word the card itself shows.
+            Self::Uptime => "Uptime",
             Self::Services => "Background services",
         }
     }
