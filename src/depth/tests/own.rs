@@ -439,6 +439,12 @@ fn own_wallpaper_scene_worker_refuses_a_wrong_model_or_picture() {
         analyse::Failure::Model.sentence(),
         "The scene model needs downloading again"
     );
+    // A worker that ran out of time or memory doesn't blame the picture.
+    assert_ne!(
+        analyse::Failure::Stopped.sentence(),
+        analyse::Failure::Depth.sentence()
+    );
+    assert!(analyse::Failure::Stopped.sentence().contains("Try again"));
     std::fs::remove_dir_all(root).unwrap();
 }
 

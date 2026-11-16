@@ -77,6 +77,28 @@ fn field<'a>(title: &'static str, control: Element<'a, Message>) -> Element<'a, 
     )
 }
 
+/// The desktop settings can't be read: says so, with Try again (`retry`
+/// reads them again) and Help. Why is in the footer, with the technical
+/// text under Details.
+pub(super) fn unreadable_banner<'a>(
+    retry_id: &'static str,
+    retry: Message,
+) -> Element<'a, Message> {
+    banner(
+        "Halcyon can’t read your desktop settings right now.",
+        ERROR,
+        vec![
+            button::text("Try again")
+                .id(cosmic::widget::Id::new(retry_id))
+                .on_press(retry)
+                .into(),
+            button::text("Help and diagnostics")
+                .on_press(Message::AppSettingsPage(AppSettingsPage::Help))
+                .into(),
+        ],
+    )
+}
+
 pub(super) fn banner<'a>(
     message: impl Into<String>,
     color: Color,
@@ -218,12 +240,21 @@ impl Settings {
     pub(super) fn desktop_dock_page(&self) -> Element<'_, Message> {
         let editor = &self.desktop;
         let mut items: Vec<Element<'_, Message>> = Vec::new();
-        if let Some(error) = editor.unavailable() {
-            items.push(banner(
-                format!("Desktop settings are unavailable. {error}"),
-                ERROR,
-                Vec::new(),
-            ));
+        // Each state says what it is and offers a way on; why it happened
+        // is in the footer, with the technical text under Details.
+        let retry = || {
+            button::text("Try again")
+                .id(cosmic::widget::Id::new("desktop-retry"))
+                .on_press(edit(Edit::Retry))
+                .into()
+        };
+        let cosmic_settings = || {
+            button::text("Open COSMIC Settings ↗")
+                .on_press(Message::OpenDesktop(editor.selected.system_page()))
+                .into()
+        };
+        if editor.unavailable().is_some() {
+            items.push(unreadable_banner("desktop-retry", edit(Edit::Retry)));
             return column::with_children(items).spacing(16).into();
         }
         if !editor.opened() {
@@ -238,20 +269,23 @@ impl Settings {
         ));
         let Some(draft) = editor.current() else {
             items.push(banner(
-                format!("Could not read the {} settings.", editor.selected.title()),
+                format!(
+                    "Halcyon couldn’t read the {} settings.",
+                    editor.selected.title()
+                ),
                 ERROR,
-                Vec::new(),
+                vec![retry(), cosmic_settings()],
             ));
             return column::with_children(items).spacing(16).into();
         };
         if !draft.installed() {
             items.push(banner(
                 format!(
-                    "No {} settings were found. Is cosmic-panel installed?",
+                    "No {} settings were found on this computer. COSMIC’s panel (cosmic-panel) may not be installed.",
                     editor.selected.title()
                 ),
                 WARN,
-                Vec::new(),
+                vec![retry(), cosmic_settings()],
             ));
             return column::with_children(items).spacing(16).into();
         }

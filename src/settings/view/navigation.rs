@@ -125,7 +125,10 @@ impl Settings {
         }
         if let Some(problem) = &self.session_drafts.error {
             items.push(label(
-                format!("Draft recovery: {problem}"),
+                format!(
+                    "Draft recovery: {}",
+                    crate::desktop::store::message::plain_failure(problem)
+                ),
                 11.,
                 Color::from_rgb8(245, 149, 138),
             ));
@@ -586,25 +589,40 @@ impl Settings {
     /// A failure in plain words, with its technical text one click away.
     pub(super) fn error_line<'a>(&'a self, error: &'a str) -> Element<'a, Message> {
         let line = label(error, 12., desktop::ERROR);
-        let Some(details) = self.page_error_details() else {
+        // Try again, where it can work, for the footer's own error.
+        let retry = self
+            .footer_failure()
+            .filter(|failure| failure.retry.is_some() && self.page_error() == Some(error))
+            .map(|_| {
+                button::text("Try again")
+                    .id(cosmic::widget::Id::new("settings-error-retry"))
+                    .on_press_maybe((!self.busy).then_some(Message::FooterRetry))
+                    .into()
+            });
+        let details = self.page_error_details();
+        if details.is_none() && retry.is_none() {
             return container(line).width(Length::Fill).into();
-        };
-        let open = self.error_details.as_deref() == Some(details);
-        let mut lines = vec![
-            row::with_children(vec![
-                container(line).width(Length::Fill).into(),
+        }
+        let open = details.is_some() && self.error_details.as_deref() == details;
+        let mut first: Vec<Element<'a, Message>> = vec![container(line).width(Length::Fill).into()];
+        first.extend(retry);
+        if details.is_some() {
+            first.push(
                 button::text(if open { "Hide details" } else { "Details" })
                     .id(cosmic::widget::Id::new("settings-error-details"))
                     .class(cosmic::theme::Button::Text)
                     .padding([2, 4])
                     .on_press(Message::ToggleErrorDetails)
                     .into(),
-            ])
-            .spacing(8)
-            .align_y(Alignment::Center)
-            .into(),
+            );
+        }
+        let mut lines = vec![
+            row::with_children(first)
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .into(),
         ];
-        if open {
+        if let Some(details) = details.filter(|_| open) {
             lines.push(label(details, 11., MUTED));
         }
         container(column::with_children(lines).spacing(4))
@@ -819,6 +837,10 @@ impl Settings {
     }
     /// The technical text behind the footer's error, for Details.
     pub(in crate::settings) fn page_error_details(&self) -> Option<&str> {
-        self.page_notice()?.details()
+        use crate::settings::desktop::Notice;
+        match self.page_notice() {
+            Some(notice @ Notice::Error(_)) => notice.details(),
+            _ => self.footer_failure()?.details.as_deref(),
+        }
     }
 }

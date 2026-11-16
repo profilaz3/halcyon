@@ -41,7 +41,7 @@ impl Cards {
     fn island_host_gone(&self) -> bool {
         self.activity.left_host.is_some_and(|host| !host.alive())
     }
-    fn activity_snapshot(&self) -> Snapshot {
+    pub(super) fn activity_snapshot(&self) -> Snapshot {
         let focus = &self.tools.focus;
         let now = focus::now_ms();
         let playing = self
@@ -154,6 +154,10 @@ impl Cards {
             },
             calendar,
             calendar_problem: self.calendar_today_error,
+            calendar_reason: self
+                .calendar_needs_you()
+                .filter(|_| self.calendar_today_error)
+                .map(|(reason, _)| reason.to_string()),
             music_problem: self.tools.music_problem
                 || matches!(self.tools.feed, Some(music::Feed::Unavailable(_))),
             reduced_motion: !self.config.settings_animations,
@@ -269,6 +273,8 @@ impl Cards {
                     crate::activity_island::popups::restore_soon();
                 }
             }
+            // The island's Try again on a calendar that couldn't refresh.
+            Event::Command(Command::RefreshCalendar) => self.retry_calendar_now(),
             Event::Command(Command::NoteRule { app, entry, rule }) => {
                 return self.save_note_rule(&app, &entry, rule);
             }

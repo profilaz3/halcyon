@@ -548,7 +548,8 @@ impl Cards {
                 Task::none()
             }
             Err(notes::SaveError::Failed(error)) => {
-                self.tools.note_problem = Some(format!("Not saved: {error}"));
+                eprintln!("Notes: not saved: {error}");
+                self.tools.note_problem = Some(notes::not_saved(&error));
                 Task::none()
             }
         }
@@ -761,7 +762,8 @@ impl Cards {
                 self.tools.note_problem = Some("Changed elsewhere. Check the item again.".into());
             }
             Err(notes::SaveError::Failed(error)) => {
-                self.tools.note_problem = Some(format!("Not saved: {error}"))
+                eprintln!("Notes: not saved: {error}");
+                self.tools.note_problem = Some(notes::not_saved(&error))
             }
         }
         // A watch event may have arrived while the save was pending. Read the

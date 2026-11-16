@@ -2,7 +2,7 @@
 //! Style, color and mode apply as soon as they are chosen (one recoverable
 //! desktop transaction each, undone from the footer); surfaces, fonts and
 //! icons open as detail subpages.
-use super::desktop::{ERROR, WARN, banner, line};
+use super::desktop::{ERROR, WARN, banner, line, unreadable_banner};
 use super::profiles::tile_style;
 use super::system_appearance::fill;
 use super::*;
@@ -118,8 +118,10 @@ impl Settings {
             "Appearance",
             "Colors and styles for your desktop and apps. For a whole new desktop, start from a look.",
         )];
-        if let Some(error) = editor.unavailable() {
-            rows.push(banner(error.to_string(), ERROR, vec![]));
+        // Like Looks: say so plainly, keep the raw error under Details in
+        // the footer, and offer a way on.
+        if editor.unavailable().is_some() {
+            rows.push(unreadable_banner("themes-retry", edit(Edit::Retry)));
             return column::with_children(rows).spacing(16).into();
         }
         rows.extend(super::windows::recovery_banner(

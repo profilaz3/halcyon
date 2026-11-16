@@ -160,6 +160,252 @@ fn fb03_every_bar_page_shows_its_save_notice() {
     }
 }
 
+/// Widget pages, setup, starting the widgets and file pickers say their
+/// failures as plain sentences, keep the technical text under Details and
+/// offer Try again only where it can work (M32).
+#[test]
+fn m32_every_footer_failure_reads_plainly_with_details() {
+    if child("m32_every_footer_failure_reads_plainly_with_details") {
+        return;
+    }
+    let (mut app, _) = Settings::init(Core::default(), Page::Clock);
+    let size = Size::new(820., 600.);
+    let _ = app.update(Message::Resized(size));
+    let mut native = Native::new(size);
+    let technical = "Could not write /home/someone/.config/halcyon/config.json: \
+                     No space left on device (os error 28)";
+    app.failed(technical.into());
+    let plain = "Your disk is full. Free some space, then try again.";
+    assert_eq!(native.text_all(app.settings_view(), plain).len(), 1);
+    assert!(native.text_all(app.settings_view(), technical).is_empty());
+    click(&mut app, &mut native, "settings-error-details");
+    assert_eq!(native.text_all(app.settings_view(), technical).len(), 1);
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "settings-error-retry")
+            .is_none(),
+        "doing the change again is the retry"
+    );
+    // A sentence that already reads plainly is kept, with nothing more.
+    app.failed("Finish the current edit before undoing a change.".into());
+    assert_eq!(
+        native
+            .text_all(
+                app.settings_view(),
+                "Finish the current edit before undoing a change."
+            )
+            .len(),
+        1
+    );
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "settings-error-details")
+            .is_none()
+    );
+    // Starting the widgets: what didn't happen, with Try again; systemctl's
+    // words wait under Details.
+    let systemctl = "Job for halcyon.service failed because the control process exited with error code.\n\
+                     See \"journalctl --user -xeu halcyon.service\" for details.";
+    let _ = app.update(Message::CommandDone(
+        WIDGETS_STARTED.into(),
+        Err(systemctl.into()),
+    ));
+    let started = "The widgets couldn’t start. Try again, or see Help for what went wrong.";
+    assert_eq!(native.text_all(app.settings_view(), started).len(), 1);
+    native.bounds(app.settings_view(), "settings-error-retry");
+    assert!(matches!(
+        app.footer_failure().and_then(|f| f.retry.as_deref()),
+        Some(Message::Background(true))
+    ));
+    assert_eq!(
+        app.footer_failure().and_then(|f| f.details.as_deref()),
+        Some(systemctl)
+    );
+    // Links name what didn't open.
+    let _ = app.update(Message::CommandDone(
+        "Weather source opened".into(),
+        Err("xdg-open: no method available for opening 'https://open-meteo.com/'".into()),
+    ));
+    assert_eq!(
+        app.status,
+        "Couldn’t open the weather source. Check that you have a default web browser, then try again."
+    );
+    // A later status replaces the failure, and its Details with it.
+    app.saved();
+    assert!(app.footer_failure().is_none());
+    assert!(app.page_error_details().is_none());
+    // Setup's own card says it plainly too, with Details.
+    app.wizard = Some(open_wizard());
+    app.wizard
+        .as_mut()
+        .unwrap()
+        .fail("Could not save setup progress: Is a directory (os error 21)".into());
+    let wizard = app.wizard.as_ref().unwrap();
+    assert_eq!(
+        wizard.error.as_deref(),
+        Some("Could not save setup progress.")
+    );
+    assert_eq!(
+        wizard.error_details(),
+        Some("Could not save setup progress: Is a directory (os error 21)")
+    );
+    let _ = app.update(Message::ToggleErrorDetails);
+    assert_eq!(
+        app.error_details.as_deref(),
+        Some("Could not save setup progress: Is a directory (os error 21)")
+    );
+}
+
+/// A file chooser that won't open, or a picture that can't be kept, says so
+/// plainly on the Wallpaper and Looks pages.
+#[test]
+fn m32_file_picker_failures_read_plainly() {
+    let notice = desktop::Notice::plain(
+        "Could not open the file chooser: org.freedesktop.DBus.Error.ServiceUnknown".into(),
+    );
+    assert_eq!(notice.text(), "Couldn’t open the file chooser. Try again.");
+    assert_eq!(
+        notice.details(),
+        Some("Could not open the file chooser: org.freedesktop.DBus.Error.ServiceUnknown")
+    );
+    let notice = desktop::Notice::plain("Choose a local file or folder.".into());
+    assert_eq!(notice.text(), "Choose a local file or folder.");
+    assert_eq!(notice.details(), None);
+}
+
+/// The Dock and Panel pages state what is wrong and offer a way on, never
+/// a raw error or a question (L23).
+#[test]
+fn l23_dock_and_panel_dead_ends_offer_a_way_on() {
+    if child("l23_dock_and_panel_dead_ends_offer_a_way_on") {
+        return;
+    }
+    let (mut app, _) = Settings::init(Core::default(), Page::DesktopDock);
+    let size = Size::new(1020., 760.);
+    let _ = app.update(Message::Resized(size));
+    let mut native = Native::new(size);
+    // The desktop settings can't be read: say so, try again or get help;
+    // the raw error is only under Details.
+    let raw = "Could not read /home/someone/.config/cosmic: Permission denied (os error 13)";
+    app.desktop.unreadable(Some(raw));
+    native.text_bounds(
+        app.settings_view(),
+        "Halcyon can’t read your desktop settings right now.",
+    );
+    native.text_bounds(app.settings_view(), "Help and diagnostics");
+    native.bounds(app.settings_view(), "desktop-retry");
+    assert!(
+        native
+            .all_text(app.settings_view())
+            .iter()
+            .all(|text| !text.contains("os error")),
+        "the raw error waits"
+    );
+    click(&mut app, &mut native, "desktop-retry");
+    assert!(app.desktop.unavailable().is_none(), "read again");
+    assert!(app.desktop.current().is_some());
+    // A bar that can't be read: the same, with COSMIC Settings.
+    app.desktop.unreadable(None);
+    native.text_bounds(
+        app.settings_view(),
+        "Halcyon couldn’t read the Dock settings.",
+    );
+    native.text_bounds(app.settings_view(), "Open COSMIC Settings ↗");
+    click(&mut app, &mut native, "desktop-retry");
+    assert!(app.desktop.current().is_some(), "read again");
+}
+
+/// Looks says the same as Dock and Panel when the desktop settings can't
+/// be read: what is wrong, Try again and Help, with the raw error only
+/// under the footer's Details (L23).
+#[test]
+fn l23_looks_dead_end_offers_a_way_on() {
+    if child("l23_looks_dead_end_offers_a_way_on") {
+        return;
+    }
+    // The desktop settings can't be read while their folder is gone.
+    let root = std::path::PathBuf::from(std::env::var_os("DESKTOP_CARDS_DESKTOP_ROOT").unwrap());
+    let away = root.with_file_name("desktop-away");
+    std::fs::rename(&root, &away).unwrap();
+    let (mut app, _) = Settings::init(Core::default(), Page::DesktopProfiles);
+    let size = Size::new(1020., 760.);
+    let _ = app.update(Message::Resized(size));
+    let mut native = Native::new(size);
+    let raw = app.profiles.unavailable().expect("unreadable").to_string();
+    assert!(raw.contains(root.to_str().unwrap()), "{raw}");
+    native.text_bounds(
+        app.settings_view(),
+        "Halcyon can’t read your desktop settings right now.",
+    );
+    native.text_bounds(app.settings_view(), "Help and diagnostics");
+    native.bounds(app.settings_view(), "looks-retry");
+    assert!(
+        native
+            .all_text(app.settings_view())
+            .iter()
+            .all(|text| !text.contains(root.to_str().unwrap())),
+        "the raw error waits"
+    );
+    click(&mut app, &mut native, "settings-error-details");
+    assert_eq!(native.text_all(app.settings_view(), &raw).len(), 1);
+    // Back again: Try again reads them.
+    std::fs::rename(&away, &root).unwrap();
+    click(&mut app, &mut native, "looks-retry");
+    assert!(app.profiles.unavailable().is_none(), "read again");
+    assert!(app.profiles.store().is_some());
+    assert!(app.page_error_details().is_none());
+    assert!(
+        native
+            .text_all(
+                app.settings_view(),
+                "Halcyon can’t read your desktop settings right now."
+            )
+            .is_empty()
+    );
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "looks-retry")
+            .is_none()
+    );
+}
+
+#[test]
+fn l23_appearance_dead_end_offers_a_way_on() {
+    if child("l23_appearance_dead_end_offers_a_way_on") {
+        return;
+    }
+    let root = std::path::PathBuf::from(std::env::var_os("DESKTOP_CARDS_DESKTOP_ROOT").unwrap());
+    let away = root.with_file_name("desktop-away");
+    std::fs::rename(&root, &away).unwrap();
+    let (mut app, _) = Settings::init(Core::default(), Page::Themes);
+    let size = Size::new(1020., 760.);
+    let _ = app.update(Message::Resized(size));
+    let mut native = Native::new(size);
+    let raw = app.profiles.unavailable().expect("unreadable").to_string();
+    native.text_bounds(
+        app.settings_view(),
+        "Halcyon can’t read your desktop settings right now.",
+    );
+    native.bounds(app.settings_view(), "themes-retry");
+    assert!(
+        native
+            .all_text(app.settings_view())
+            .iter()
+            .all(|text| !text.contains(root.to_str().unwrap())),
+        "the raw error waits"
+    );
+    click(&mut app, &mut native, "settings-error-details");
+    assert_eq!(native.text_all(app.settings_view(), &raw).len(), 1);
+    std::fs::rename(&away, &root).unwrap();
+    click(&mut app, &mut native, "themes-retry");
+    assert!(app.profiles.unavailable().is_none(), "read again");
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "themes-retry")
+            .is_none()
+    );
+}
+
 #[test]
 fn fb03_notices_split_the_sentence_from_the_technical_text() {
     let error = crate::desktop::DesktopError::Conflict(vec![

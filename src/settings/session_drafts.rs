@@ -415,8 +415,7 @@ impl Settings {
         }
         if !errors.is_empty() {
             session.error = Some(errors.join(" · "));
-            self.status = session.error.clone().unwrap();
-            self.error = true;
+            self.failed(session.error.clone().unwrap());
         }
         self.session_drafts = session;
     }
@@ -506,8 +505,7 @@ impl Settings {
                 "Could not keep changes not applied yet for next time: {}",
                 errors.join(" · ")
             ));
-            self.status = self.session_drafts.error.clone().unwrap();
-            self.error = true;
+            self.failed(self.session_drafts.error.clone().unwrap());
         } else if self.session_drafts.unreadable.is_empty() {
             self.session_drafts.error = None;
             if previous_error.as_deref() == Some(self.status.as_str()) {

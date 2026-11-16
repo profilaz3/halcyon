@@ -180,6 +180,8 @@ pub enum Message {
     Undo,
     /// Plans again after the desktop changed under the preview.
     Replan,
+    /// Reads the desktop settings again after they couldn't be read.
+    Retry,
     /// `true` keeps this review's value; `false` keeps the newer desktop value.
     ResolveConflict(Domain, bool),
     ResolveValueConflict(String, bool),
@@ -647,7 +649,11 @@ impl ProfilesEditor {
     /// Reads only.
     pub fn open(&mut self) {
         if self.store.is_none() {
-            let store = DesktopStore::from_env().map_err(|error| error.to_string());
+            // The footer says why, with the technical text under Details.
+            let store = DesktopStore::from_env().map_err(|error| {
+                self.notice = Some(Notice::failed(&error));
+                error.to_string()
+            });
             if let Ok(store) = &store {
                 self.installed = Installed::discover(store);
             }
@@ -917,6 +923,14 @@ impl ProfilesEditor {
 
     pub fn store(&self) -> Option<&DesktopStore> {
         self.store.as_ref().and_then(|store| store.as_ref().ok())
+    }
+    /// Reads the desktop settings again after they couldn't be read.
+    fn retry(&mut self) {
+        if self.unavailable().is_some() {
+            self.store = None;
+            self.notice = None;
+        }
+        self.open();
     }
     pub fn unavailable(&self) -> Option<&str> {
         self.store
@@ -2258,6 +2272,7 @@ impl ProfilesEditor {
                 self.notice = None;
                 self.refresh();
             }
+            Message::Retry => self.retry(),
             Message::Recover => return self.recover(true),
             Message::KeepRecovery => return self.recover(false),
             Message::Backdrop(id, pixels) => self.backdrop_ready(id, pixels),
@@ -2467,8 +2482,9 @@ impl ProfilesEditor {
         let bytes = match result {
             Ok(Some(bytes)) => bytes,
             Ok(None) => return Outcome::None,
+            // The file chooser or the file: plainly, with Details.
             Err(error) => {
-                self.notice = Some(Notice::Error(error));
+                self.notice = Some(Notice::plain(error));
                 return Outcome::None;
             }
         };
@@ -2541,7 +2557,7 @@ impl ProfilesEditor {
                 self.notes = kept_note(&omitted).into_iter().collect();
             }
             Ok(None) => {}
-            Err(error) => self.notice = Some(Notice::Error(error)),
+            Err(error) => self.notice = Some(Notice::plain(error)),
         }
     }
 

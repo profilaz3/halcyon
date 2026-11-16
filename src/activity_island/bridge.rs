@@ -30,6 +30,9 @@ pub struct Snapshot {
     pub focus: Focus,
     pub calendar: Option<Calendar>,
     pub calendar_problem: bool,
+    /// Why the calendar couldn't refresh, when only the person can fix it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calendar_reason: Option<String>,
     pub music_problem: bool,
     pub reduced_motion: bool,
     /// The quick timer. The desktop owns it so `halcyon-ctl` reaches it.
@@ -124,6 +127,8 @@ pub enum Command {
     TimerResume,
     /// Cancel, and Dismiss once done.
     TimerCancel,
+    /// Try the calendar again now.
+    RefreshCalendar,
 }
 #[derive(Clone, Debug)]
 pub enum Event {
@@ -507,6 +512,25 @@ async fn serve(
         }
     }
 }
+/// Until when (ms since the epoch) the island looks for the desktop four
+/// times a second instead of every 3 s: just after it asked to start it.
+static HURRY_UNTIL: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+static HURRY: tokio::sync::Notify = tokio::sync::Notify::const_new();
+/// Looks for the desktop now, and often for the next `wait`.
+pub fn hurry(wait: std::time::Duration) {
+    let wait = i64::try_from(wait.as_millis()).unwrap_or(i64::MAX);
+    HURRY_UNTIL.store(
+        chrono::Utc::now().timestamp_millis().saturating_add(wait),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    HURRY.notify_one();
+}
+/// How long to wait before looking for the desktop again.
+fn retry_pause() -> std::time::Duration {
+    let hurried = chrono::Utc::now().timestamp_millis()
+        < HURRY_UNTIL.load(std::sync::atomic::Ordering::Relaxed);
+    std::time::Duration::from_millis(if hurried { 250 } else { 3000 })
+}
 pub fn client() -> Subscription<ClientEvent> {
     Subscription::run_with(socket_path(), |path| {
         let path = path.clone();
@@ -535,7 +559,10 @@ pub fn client() -> Subscription<ClientEvent> {
                     if out.send(ClientEvent::Offline).await.is_err() {
                         break;
                     }
-                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                    tokio::select! {
+                        _ = tokio::time::sleep(retry_pause()) => {}
+                        _ = HURRY.notified() => {}
+                    }
                 }
             }
             std::future::pending::<()>().await;

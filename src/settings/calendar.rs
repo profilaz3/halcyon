@@ -368,6 +368,29 @@ enum Change {
 fn wrap(message: Message) -> super::Message {
     super::Message::Calendar(message)
 }
+/// Asks the running desktop to fetch its calendar again, through its
+/// command file. Nothing starts the desktop for this.
+fn refresh_desktop() -> Task<super::Message> {
+    let Some(path) = super::desktop_command_path() else {
+        return Task::none();
+    };
+    cosmic::iced::Task::future(async move {
+        let written = tokio::task::spawn_blocking(move || {
+            let parent = path.parent().ok_or(std::io::ErrorKind::NotFound)?;
+            if !parent.is_dir() {
+                return Ok(());
+            }
+            let temp = path.with_extension("tmp");
+            std::fs::write(&temp, r#"{"action":"refresh-calendar"}"#)?;
+            std::fs::rename(temp, path)
+        })
+        .await;
+        if let Ok(Err(error)) = written {
+            eprintln!("Could not ask the desktop to refresh its calendar: {error}");
+        }
+    })
+    .discard()
+}
 async fn open_url(url: String) -> Result<(), String> {
     use std::process::Stdio;
     let mut child = tokio::process::Command::new("xdg-open")
@@ -502,6 +525,10 @@ impl Settings {
                         self.calendar.choices = choices;
                         self.calendar.error = self.calendar.connection.selected_calendars().iter().any(|selected| !self.calendar.choices.iter().any(|c| c.id == selected.id)).then(||
                             "A selected calendar is no longer available. Choose calendars again.".into());
+                        // The calendar works again from here, after an
+                        // unlock or a new sign-in perhaps: a desktop that
+                        // waited for that tries now.
+                        return refresh_desktop();
                     }
                     Err(problem) => self.calendar.error = Some(problem.to_string()),
                 }

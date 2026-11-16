@@ -1,7 +1,7 @@
 //! Setup studio: compare the captured desktop with a local candidate, review
 //! the planner’s included domains, and manage the portable setup library.
 //! Scene objects only navigate; Apply and Cancel use the existing editor.
-use super::desktop::{ERROR, WARN, banner, line};
+use super::desktop::{ERROR, WARN, banner, line, unreadable_banner};
 use super::pages::section;
 use super::system_appearance::{color, fill};
 use super::*;
@@ -2358,12 +2358,10 @@ impl Settings {
                 .into(),
             );
         }
-        if let Some(error) = editor.unavailable() {
-            items.push(banner(
-                format!("Desktop settings are unavailable. {error}"),
-                ERROR,
-                Vec::new(),
-            ));
+        // As on Dock and Panel: what is wrong and a way on; the footer
+        // says why, with the technical text under Details.
+        if editor.unavailable().is_some() {
+            items.push(unreadable_banner("looks-retry", edit(Edit::Retry)));
             return column::with_children(items).spacing(16).into();
         }
         items.extend(super::windows::recovery_banner(

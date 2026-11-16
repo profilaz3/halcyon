@@ -5240,3 +5240,103 @@ fn shelf_shows_from_the_idle_card_and_forgets_vanished_files() {
     assert!(!app.shelf.open);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Starting the desktop keeps saying so until it answers; one that started
+/// and stopped again, or never started, says why and where to look.
+#[test]
+fn start_waits_for_the_desktop_and_failures_say_why() {
+    let mut app = app();
+    let _ = app.update(Message::Backend(ClientEvent::Offline));
+    let _ = app.update(Message::Start);
+    let _ = app.update(Message::Started(Ok(())));
+    assert!(
+        app.starting,
+        "systemd launching it isn't the desktop answering"
+    );
+    assert!(app.start_deadline.is_some());
+    assert_eq!(app.content().title, "Starting Halcyon…");
+    // A connection retry before it answers keeps waiting.
+    let _ = app.update(Message::Backend(ClientEvent::Offline));
+    assert!(app.starting);
+    assert_eq!(app.content().title, "Starting Halcyon…");
+    // Its answer ends the wait.
+    let (tx, _rx) = tokio::sync::mpsc::channel(1);
+    let _ = app.update(Message::Backend(ClientEvent::Connected(tx)));
+    assert!(!app.starting && app.start_deadline.is_none() && app.problem.is_none());
+    // No answer in time: it started but stopped again, and Settings opens
+    // on Help.
+    let _ = app.update(Message::Backend(ClientEvent::Offline));
+    let _ = app.update(Message::Start);
+    let _ = app.update(Message::Started(Ok(())));
+    app.start_deadline = Some(Instant::now());
+    let _ = app.update(Message::Wake(Duration::ZERO));
+    assert!(!app.starting && app.start_deadline.is_none());
+    assert_eq!(app.content().title, "Halcyon started but stopped again");
+    assert_eq!(app.content().meta, "Settings › Help shows what went wrong");
+    app.motion.retarget(1., false, Instant::now());
+    let mut ui = crate::native_test::Native::new(cosmic::iced::Size::new(WIDTH, HEIGHT));
+    assert!(matches!(
+        click(&mut ui, &app, "activity-settings").as_slice(),
+        [Message::Settings(HELP_PAGE)]
+    ));
+    assert!(matches!(
+        click(&mut ui, &app, "activity-start").as_slice(),
+        [Message::Start]
+    ));
+    // A start that failed keeps systemctl's first line.
+    let _ = app.update(Message::Start);
+    let _ = app.update(Message::Started(Err(super::first_line(
+        "Failed to start halcyon.service: Unit halcyon.service not found.\nSee system logs for details.\n",
+    )
+    .unwrap())));
+    assert_eq!(app.content().title, "Could not start Halcyon");
+    assert_eq!(
+        app.content().meta,
+        "Failed to start halcyon.service: Unit halcyon.service not found."
+    );
+}
+
+/// A calendar that couldn't refresh says why, when the desktop knows, and
+/// offers Try again.
+#[test]
+fn calendar_error_card_says_why_and_tries_again() {
+    let mut app = app();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    app.commands = Some(tx);
+    app.kind = Kind::Calendar;
+    app.snapshot.calendar = None;
+    app.snapshot.calendar_problem = true;
+    assert_eq!(app.content().title, "Calendar unavailable");
+    assert_eq!(app.content().meta, "Could not refresh your calendar");
+    app.snapshot.calendar_reason = Some("Your keyring is locked".into());
+    assert_eq!(app.content().meta, "Your keyring is locked");
+    app.motion.retarget(1., false, Instant::now());
+    let mut ui = crate::native_test::Native::new(cosmic::iced::Size::new(WIDTH, HEIGHT));
+    let sent = click(&mut ui, &app, "activity-calendar-retry");
+    assert!(matches!(
+        sent.as_slice(),
+        [Message::Control(Command::RefreshCalendar)]
+    ));
+    for message in sent {
+        let _ = app.update(message);
+    }
+    assert!(matches!(rx.try_recv(), Ok(Command::RefreshCalendar)));
+    // The reason travels from the desktop, and an older desktop without it
+    // still connects.
+    let snapshot: bridge::Snapshot =
+        serde_json::from_value(serde_json::to_value(&app.snapshot).unwrap()).unwrap();
+    assert_eq!(
+        snapshot.calendar_reason.as_deref(),
+        Some("Your keyring is locked")
+    );
+    let mut older = serde_json::to_value(&app.snapshot).unwrap();
+    older.as_object_mut().unwrap().remove("calendar_reason");
+    let snapshot: bridge::Snapshot = serde_json::from_value(older).unwrap();
+    assert_eq!(snapshot.calendar_reason, None);
+    // A shown event has no Try again.
+    app.snapshot.calendar_problem = false;
+    assert!(
+        ui.try_bounds(app.capsule(true), "activity-calendar-retry")
+            .is_none()
+    );
+}

@@ -78,7 +78,11 @@ pub(super) fn view<'a>(
                     spread(
                         metric_name(section, "CPU", p),
                         reading(
-                            format!("{:.0}%", m.cpu),
+                            if m.measured {
+                                format!("{:.0}%", m.cpu)
+                            } else {
+                                MEASURING.into()
+                            },
                             m.cpu_temperature.map(|value| format!("{value:.0}°C")),
                             if hot { HOT } else { p.foreground },
                             p,
@@ -125,7 +129,7 @@ pub(super) fn view<'a>(
                             bar(&[((used / total.max(1.)) as f32, p.accent)], p),
                         )
                     })
-                    .unwrap_or_else(|| ("Unavailable".into(), neutral_rule(p)));
+                    .unwrap_or_else(|| (unavailable(m), neutral_rule(p)));
                 metric_section(
                     spread(
                         metric_name(section, "Disk", p),
@@ -145,7 +149,7 @@ pub(super) fn view<'a>(
                         ),
                         _ => ("Measuring…".into(), None),
                     },
-                    None => ("Unavailable".into(), None),
+                    None => (unavailable(m), None),
                 };
                 metric_section(
                     spread(
@@ -160,7 +164,15 @@ pub(super) fn view<'a>(
                     metric_section(
                         spread(
                             metric_name(section, "GPU", p),
-                            metric_text("No GPU detected", 12., p.muted),
+                            metric_text(
+                                if m.measured {
+                                    "No GPU detected"
+                                } else {
+                                    MEASURING
+                                },
+                                12.,
+                                p.muted,
+                            ),
                         ),
                         indicator(section, neutral_rule(p)),
                     )
@@ -306,9 +318,21 @@ fn reading<'a>(
         .into()
 }
 
+/// Before the first sample.
+const MEASURING: &str = "Measuring…";
+/// A reading that isn't there: not taken yet, or failed.
+fn unavailable(metrics: &Metrics) -> String {
+    if metrics.measured {
+        "Unavailable"
+    } else {
+        MEASURING
+    }
+    .into()
+}
+
 fn memory_summary(metrics: &Metrics) -> String {
     if metrics.memory_total <= 0. {
-        "Unavailable".into()
+        unavailable(metrics)
     } else {
         format!(
             "{:.1} / {:.0} GB",

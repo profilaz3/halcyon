@@ -89,7 +89,8 @@ def dependencies(binary, scratch, islands=None):
     if islands:
         import panel_launcher
         detected += ", " + ", ".join(panel_launcher.PACKAGES)
-    return detected + ", python3, git, systemd, pulseaudio-utils"
+    # libgtk-3-bin provides gtk-launch, which opens the edge menu's apps.
+    return detected + ", python3, git, systemd, pulseaudio-utils, libgtk-3-bin"
 
 
 def default_wallpapers():

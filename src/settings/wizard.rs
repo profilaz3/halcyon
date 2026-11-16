@@ -481,6 +481,9 @@ pub struct Wizard {
     /// state file too, so Cancel still works after closing and reopening.
     changes: Vec<LatestChange>,
     pub error: Option<String>,
+    /// The technical text behind `error`, for its Details: the sentence it
+    /// belongs to, then the text.
+    error_details: Option<(String, String)>,
     pub startup: bool,
     /// The person chose Start at sign-in themselves.
     pub startup_touched: bool,
@@ -536,6 +539,7 @@ impl Wizard {
             islands_available,
             changes: Vec::new(),
             error: None,
+            error_details: None,
             startup,
             startup_touched: false,
             city: None,
@@ -685,8 +689,27 @@ impl Wizard {
     /// Saves progress after a choice made outside `update`.
     pub fn remember(&mut self, store: &DesktopStore) {
         if let Err(error) = self.save(store) {
-            self.error = Some(format!("Could not save setup progress: {error}"));
+            self.fail(format!("Could not save setup progress: {error}"));
         }
+    }
+
+    /// Setup says `error` as a plain sentence; the technical text stays for
+    /// its Details.
+    pub fn fail(&mut self, error: String) {
+        let shown = crate::desktop::store::message::plain_failure(&error);
+        self.fail_with(shown, error);
+    }
+    /// Setup says `shown`, with `details` under Details.
+    pub fn fail_with(&mut self, shown: String, details: String) {
+        self.error_details = (details != shown).then(|| (shown.clone(), details));
+        self.error = Some(shown);
+    }
+    /// The technical text behind the error setup shows now.
+    pub fn error_details(&self) -> Option<&str> {
+        self.error_details
+            .as_ref()
+            .filter(|(shown, _)| self.error.as_ref() == Some(shown))
+            .map(|(_, details)| details.as_str())
     }
 
     /// Setup is over: nothing to resume.
@@ -711,7 +734,7 @@ impl Wizard {
         self.applied_bars = self.bars;
         self.capture_insets(Some(store));
         if let Err(error) = self.save(store) {
-            self.error = Some(format!("Could not save setup progress: {error}"));
+            self.fail(format!("Could not save setup progress: {error}"));
         }
     }
 
@@ -829,7 +852,7 @@ impl Wizard {
             && let Some(store) = store
         {
             if let Err(e) = self.save(store) {
-                self.error = Some(format!("Could not save setup progress: {e}"));
+                self.fail(format!("Could not save setup progress: {e}"));
             }
         }
         outcome
@@ -1038,7 +1061,7 @@ impl Wizard {
                     })();
                     match result {
                         Ok(draft) => self.widgets = draft,
-                        Err(e) => self.error = Some(e),
+                        Err(e) => self.fail(e),
                     }
                 }
             }
@@ -1178,7 +1201,7 @@ impl Wizard {
                 self.widgets = widgets::Draft::new(config, &raw, &self.geometry);
                 self.widgets.customized = customized;
             }
-            Err(e) => self.error = Some(e),
+            Err(e) => self.fail(e),
         }
     }
     fn move_widget(&mut self, key: &str, delta: i8, config: &crate::config::Config) {
@@ -1406,7 +1429,7 @@ impl Wizard {
                 }
             }
             Err(error) => {
-                self.error = Some(error);
+                self.fail(error);
                 Outcome::None
             }
         }
@@ -1454,9 +1477,14 @@ impl Wizard {
         let any = !self.changes.is_empty();
         while let Some(change) = self.changes.last() {
             if let Err(error) = store.undo_change(change) {
-                self.error = Some(format!(
-                    "{error} Some of setup's changes stay; undo them from Changes, Panel or Dock."
-                ));
+                use crate::desktop::UserMessage;
+                self.fail_with(
+                    format!(
+                        "{} Some of setup’s changes stay; undo them from Changes, Panel or Dock.",
+                        error.user_message()
+                    ),
+                    error.to_string(),
+                );
                 break;
             }
             self.changes.pop();

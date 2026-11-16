@@ -936,10 +936,13 @@ impl Cards {
                 {
                     rows.push(
                         container(action(
-                            if self.calendar_connection.connected() {
-                                "Check calendar connection →"
+                            // One row, as the agenda's height expects.
+                            if let Some((reason, fix)) = self.calendar_needs_you() {
+                                format!("{reason} · {fix} →")
+                            } else if self.calendar_connection.connected() {
+                                "Check calendar connection →".into()
                             } else {
-                                "Connect your calendar →"
+                                "Connect your calendar →".into()
                             },
                             Message::CalendarSettings,
                             p.accent,
@@ -951,11 +954,7 @@ impl Cards {
                     continue;
                 }
                 let value = if self.glance_calendar().is_none() {
-                    if self.calendar_today_error {
-                        "Calendar unavailable · retrying soon"
-                    } else {
-                        "Syncing your calendar…"
-                    }
+                    "Syncing your calendar…"
                 } else if agenda.finished > 0 {
                     "All done for today"
                 } else if *day == today {
@@ -1025,7 +1024,16 @@ impl Cards {
         } else {
             heading
         };
-        let content = if day == today && self.glance_panel() {
+        let content = if day == today
+            && self.glance_calendar().is_some()
+            && let Some((_, fix)) = self.calendar_needs_you()
+        {
+            // Saved events still show; the fix takes the time's place.
+            spread(
+                heading,
+                action(format!("{fix} →"), Message::CalendarSettings, p.accent),
+            )
+        } else if day == today && self.glance_panel() {
             spread(
                 heading,
                 timestamp(

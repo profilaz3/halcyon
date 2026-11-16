@@ -561,6 +561,21 @@ impl Settings {
                     .width(Length::Fill)
                     .into(),
             );
+            // The technical text stays under Details.
+            if let Some(details) = wizard.error_details() {
+                let open = self.error_details.as_deref() == Some(details);
+                parts.push(
+                    button::text(if open { "Hide details" } else { "Details" })
+                        .id(cosmic::widget::Id::new("wizard-error-details"))
+                        .class(cosmic::theme::Button::Text)
+                        .padding([2, 4])
+                        .on_press(Message::ToggleErrorDetails)
+                        .into(),
+                );
+                if open {
+                    parts.push(words(details.to_owned(), 11., SOFT));
+                }
+            }
         }
         if wizard.leaving {
             parts.push(
