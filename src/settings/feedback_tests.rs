@@ -370,6 +370,43 @@ fn l23_looks_dead_end_offers_a_way_on() {
 }
 
 #[test]
+fn l23_appearance_dead_end_offers_a_way_on() {
+    if child("l23_appearance_dead_end_offers_a_way_on") {
+        return;
+    }
+    let root = std::path::PathBuf::from(std::env::var_os("DESKTOP_CARDS_DESKTOP_ROOT").unwrap());
+    let away = root.with_file_name("desktop-away");
+    std::fs::rename(&root, &away).unwrap();
+    let (mut app, _) = Settings::init(Core::default(), Page::Themes);
+    let size = Size::new(1020., 760.);
+    let _ = app.update(Message::Resized(size));
+    let mut native = Native::new(size);
+    let raw = app.profiles.unavailable().expect("unreadable").to_string();
+    native.text_bounds(
+        app.settings_view(),
+        "Halcyon can’t read your desktop settings right now.",
+    );
+    native.bounds(app.settings_view(), "themes-retry");
+    assert!(
+        native
+            .all_text(app.settings_view())
+            .iter()
+            .all(|text| !text.contains(root.to_str().unwrap())),
+        "the raw error waits"
+    );
+    click(&mut app, &mut native, "settings-error-details");
+    assert_eq!(native.text_all(app.settings_view(), &raw).len(), 1);
+    std::fs::rename(&away, &root).unwrap();
+    click(&mut app, &mut native, "themes-retry");
+    assert!(app.profiles.unavailable().is_none(), "read again");
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "themes-retry")
+            .is_none()
+    );
+}
+
+#[test]
 fn fb03_notices_split_the_sentence_from_the_technical_text() {
     let error = crate::desktop::DesktopError::Conflict(vec![
         crate::desktop::ConfigKey::new("com.system76.CosmicTk", 1, "accent_palette").unwrap(),
