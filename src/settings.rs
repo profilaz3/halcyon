@@ -1,6 +1,7 @@
 use crate::config::{
     ClockAlignment, Config, DevboxSection, GlanceDensity, GlanceStyle, Location, RefreshIntervals,
 };
+use crate::desktop::store::message::plain_failure;
 use crate::drawer::Widget;
 use cosmic::app::{Core, Task};
 use cosmic::iced::{Length, Size, Subscription, window};
@@ -699,6 +700,8 @@ pub enum Message {
     ResumeKept(navigation::KeptTarget),
     /// Shows or hides the technical text behind the footer's error.
     ToggleErrorDetails,
+    /// Does again what the footer's error says failed.
+    FooterRetry,
     /// Undoes one step of the preview on this screen, and nothing else.
     UndoPreviewStep,
     /// Reveals the unresolved values inside the page's preview review.
@@ -1011,6 +1014,9 @@ pub struct Settings {
     /// The technical text shown under the footer's error; a new error
     /// starts hidden.
     error_details: Option<String>,
+    /// What stands behind the footer's own error (`failed`): its technical
+    /// text and, where trying again can work, the retry.
+    footer_failure: Option<FooterFailure>,
     /// Setup choices wait to be resumed from Recovery.
     setup_kept: bool,
     /// The release notes last seen when Settings opened: What’s new lists
@@ -1161,6 +1167,9 @@ fn initial_size() -> Size {
 
 /// Set by `run` for the `styles` destination, read once by `init`.
 static OPEN_STYLES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Set by `run` for the `help` destination (Halcyon › Help, where help and
+/// diagnostics live), read once by `init`.
+static OPEN_HELP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// First-run setup, starting from the dock and panel as they are now, or
 /// resuming setup left unfinished (with its changes, for Cancel).
 fn open_wizard() -> wizard::Wizard {
@@ -1188,6 +1197,8 @@ fn startup_enabled() -> bool {
         .status()
         .is_ok_and(|status| status.success())
 }
+/// The destination for help and diagnostics, for `--settings`.
+pub const HELP_PAGE: &str = "help";
 /// Set by `run` for first-run setup (`setup`), read once by `init`.
 static OPEN_WIZARD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Set when someone chooses Restart Settings; `main` opens Settings again
@@ -1227,6 +1238,13 @@ pub fn run(page: &str) -> cosmic::iced::Result {
     let page = if page == "styles" {
         OPEN_STYLES.store(true, std::sync::atomic::Ordering::Relaxed);
         "themes"
+    } else {
+        page
+    };
+    // `help` opens Halcyon on its Help section.
+    let page = if page == HELP_PAGE {
+        OPEN_HELP.store(true, std::sync::atomic::Ordering::Relaxed);
+        "general"
     } else {
         page
     };
@@ -1364,7 +1382,13 @@ impl cosmic::Application for Settings {
             material_native: false,
             appearance_draft: config.appearance.clone(),
             appearance_preview: Widget::Weather,
-            app_settings_page: navigation::app_destination(),
+            app_settings_page: if page == Page::General
+                && OPEN_HELP.swap(false, std::sync::atomic::Ordering::Relaxed)
+            {
+                AppSettingsPage::Help
+            } else {
+                navigation::app_destination()
+            },
             history: Vec::new(),
             object_tab: Default::default(),
             arranging: false,
@@ -1373,6 +1397,7 @@ impl cosmic::Application for Settings {
             from_sidebar: true,
             kept_note: None,
             error_details: None,
+            footer_failure: None,
             setup_kept: false,
             notes_seen: release_notes::seen(),
             notes_recorded: release_notes::seen(),
@@ -2939,8 +2964,17 @@ impl Settings {
             Message::BrowseSetups => return self.leave_review_to_browse(),
             Message::ObjectTab(tab) => return self.select_object_tab(tab),
             Message::ResumeKept(target) => return self.resume_kept(target),
+            Message::FooterRetry => {
+                if let Some(retry) = self.footer_failure().and_then(|f| f.retry.clone()) {
+                    return self.update(*retry);
+                }
+            }
             Message::ToggleErrorDetails => {
-                let shown = self.page_error_details().map(str::to_owned);
+                // Setup shows its own error, with its own Details.
+                let shown = match self.wizard.as_ref().and_then(|w| w.error_details()) {
+                    Some(details) => Some(details.to_owned()),
+                    None => self.page_error_details().map(str::to_owned),
+                };
                 self.error_details = match shown {
                     Some(details) if self.error_details.as_ref() != Some(&details) => {
                         Some(details)
@@ -3288,6 +3322,8 @@ impl Settings {
                             if let Some(page) = value["page"].as_str() {
                                 tasks.push(self.update(if page == "panel" {
                                     Message::OpenBar(crate::desktop::panels::PanelKind::Panel)
+                                } else if page == HELP_PAGE {
+                                    Message::AppSettingsPage(AppSettingsPage::Help)
                                 } else {
                                     Message::Page(Page::parse(page))
                                 }));
@@ -4699,7 +4735,11 @@ impl Settings {
                 }
                 Err(error) => {
                     self.service_known = false;
-                    self.failed(error);
+                    self.failed_with(
+                        "Halcyon couldn’t check whether the widgets are running.".into(),
+                        error,
+                        None,
+                    );
                 }
             },
             Message::CommandDone(status, result) => {
@@ -4727,15 +4767,12 @@ impl Settings {
                         self.error = false;
                     }
                     Err(error) => {
+                        let (shown, retry) = command_failure(&status, &error);
                         // Setup has no footer: say it on its own card.
                         if let Some(wizard) = self.wizard.as_mut() {
-                            wizard.error = Some(if status == WIDGETS_STARTED {
-                                format!("The widgets couldn’t start: {error}")
-                            } else {
-                                error.clone()
-                            });
+                            wizard.fail_with(shown.clone(), error.clone());
                         }
-                        self.failed(error)
+                        self.failed_with(shown, error, retry)
                     }
                 }
                 if service {
@@ -6078,9 +6115,28 @@ impl Settings {
         self.status = "Saved".into();
         self.error = false;
     }
+    /// The footer says `error` as a plain sentence; the technical text
+    /// stays for its Details.
     fn failed(&mut self, error: String) {
-        self.status = error;
+        self.failed_with(plain_failure(&error), error, None);
+    }
+    /// The footer says `shown`, with `details` under Details and, where
+    /// trying again can work, a Try again that sends `retry`.
+    fn failed_with(&mut self, shown: String, details: String, retry: Option<Message>) {
+        self.footer_failure = Some(FooterFailure {
+            shown: shown.clone(),
+            details: (details != shown && !details.is_empty()).then_some(details),
+            retry: retry.map(Box::new),
+        });
+        self.status = shown;
         self.error = true;
+    }
+    /// The footer's own error as it shows now. Any later status replaces
+    /// the text, and the failure no longer matches it.
+    pub(super) fn footer_failure(&self) -> Option<&FooterFailure> {
+        self.footer_failure
+            .as_ref()
+            .filter(|failure| self.error && failure.shown == self.status)
     }
     /// How often the widgets service is read again: on General, and soon
     /// while a "Widgets aren't running" banner shows.
@@ -7323,6 +7379,60 @@ impl Settings {
                 "Bundled wallpapers reinstalled",
             )
         }
+    }
+}
+/// What stands behind a failure the footer says in a plain sentence.
+#[derive(Debug, Clone)]
+pub(crate) struct FooterFailure {
+    shown: String,
+    pub details: Option<String>,
+    pub retry: Option<Box<Message>>,
+}
+/// The footer's plain sentence for a command that failed: what `status`
+/// (the words for its success) says didn't happen, or the error itself
+/// when it already reads plainly. Where trying again can work, the retry.
+fn command_failure(status: &str, error: &str) -> (String, Option<Message>) {
+    match status {
+        WIDGETS_STARTED => (
+            "The widgets couldn’t start. Try again, or see Help for what went wrong.".into(),
+            Some(Message::Background(true)),
+        ),
+        WIDGETS_STOPPED => (
+            "The widgets couldn’t stop. Try again.".into(),
+            Some(Message::Background(false)),
+        ),
+        "Startup preference saved" => (
+            "Halcyon couldn’t change whether it starts at sign-in. Try again.".into(),
+            None,
+        ),
+        "Signing out" => (
+            "Couldn’t sign out. Sign out from the system menu instead.".into(),
+            None,
+        ),
+        "System settings opened" => ("Couldn’t open COSMIC Settings. Try again.".into(), None),
+        "Edge controls opened" => ("Couldn’t open the edge menu. Try again.".into(), None),
+        "Previous wallpaper restored" => (
+            "Couldn’t put your previous wallpaper back. Try again.".into(),
+            None,
+        ),
+        "Bundled wallpapers reinstalled" => (
+            "Couldn’t reinstall Halcyon’s wallpapers. Try again.".into(),
+            None,
+        ),
+        "Palette and wallpaper matched" | "COSMIC colors matched" => {
+            ("Couldn’t match the colors. Try again.".into(), None)
+        }
+        _ => match status.strip_suffix(" opened") {
+            // Links and guides a browser opens.
+            Some(thing) => (
+                format!(
+                    "Couldn’t open the {}. Check that you have a default web browser, then try again.",
+                    thing.to_lowercase()
+                ),
+                None,
+            ),
+            None => (plain_failure(error), None),
+        },
     }
 }
 /// What the footer says once Start or Stop for the widgets is done.

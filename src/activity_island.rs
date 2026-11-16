@@ -110,6 +110,15 @@ thread_local! {
 /// Escape with the pointer still on the capsule must not reopen it on the next
 /// small motion. Leaving the capsule ends this sooner.
 const ESCAPE_HOVER_BLOCK: Duration = Duration::from_secs(10);
+/// How long "Starting Halcyon…" waits for the desktop to answer after
+/// systemd started it.
+const START_WAIT: Duration = Duration::from_secs(15);
+/// The card's title when the desktop could not be started.
+const START_FAILED: &str = "Could not start Halcyon";
+/// The card's title when the desktop started but never answered.
+const START_STOPPED: &str = "Halcyon started but stopped again";
+/// The Settings page that explains why the desktop isn't running.
+const HELP_PAGE: &str = crate::settings::HELP_PAGE;
 #[derive(Clone, Copy, PartialEq)]
 enum Role {
     /// The title: always visible, never a filled control.
@@ -204,6 +213,14 @@ struct Content {
     /// Where the line starts: a download with no known total moves a
     /// segment along instead of filling.
     bar_start: f32,
+}
+/// The first line of a command's error output, which says what failed;
+/// the rest is where to look for more.
+fn first_line(text: &str) -> Option<String> {
+    text.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(|line| line.chars().take(160).collect())
 }
 fn clock_time(ms: i64, format_24h: bool) -> String {
     chrono::DateTime::from_timestamp_millis(ms)
@@ -340,6 +357,11 @@ pub struct Applet {
     active: bool,
     panel_frame: host::Frame,
     starting: bool,
+    /// After systemd started the desktop: when to stop waiting for it to
+    /// answer and say it stopped again.
+    start_deadline: Option<Instant>,
+    /// The first line of why the start failed, under `START_FAILED`.
+    start_error: Option<String>,
     popup_entered: bool,
     hover_block: Option<Instant>,
     format_24h: bool,
@@ -548,6 +570,8 @@ impl Application for Applet {
                 active: false,
                 panel_frame: host::Frame::default(),
                 starting: false,
+                start_deadline: None,
+                start_error: None,
                 popup_entered: false,
                 hover_block: None,
                 format_24h: read_24h(),
@@ -652,6 +676,7 @@ impl Application for Applet {
             .chain(self.reveal_deadline)
             .chain(self.pending_at)
             .chain(self.expiry_at)
+            .chain(self.start_deadline)
             .chain(self.cleared.as_ref().filter(|c| !c.done).map(|c| c.until))
             .chain(self.ui.jobs.deadline())
             .chain(clock.then_some(self.next_clock))
@@ -849,6 +874,8 @@ impl Applet {
                 ClientEvent::Connected(tx) => {
                     self.commands = Some(tx);
                     self.problem = None;
+                    self.starting = false;
+                    self.start_deadline = None;
                 }
                 ClientEvent::Offline => {
                     if self.commands.is_some() {
@@ -1086,11 +1113,20 @@ impl Applet {
                     &mut self.reveal_deadline,
                     &mut self.pending_at,
                     &mut self.expiry_at,
+                    &mut self.start_deadline,
                 ]
                 .into_iter()
                 .flatten()
                 {
                     *at = at.checked_sub(early).unwrap_or(now);
+                }
+                if self.start_deadline.is_some_and(|at| at <= now) {
+                    // systemd started it, but it never answered.
+                    self.start_deadline = None;
+                    self.starting = false;
+                    if self.commands.is_none() {
+                        self.problem = Some(START_STOPPED.into());
+                    }
                 }
                 if let Some(cleared) = self.cleared.as_mut().filter(|c| !c.done) {
                     cleared.until = cleared.until.checked_sub(early).unwrap_or(now);
@@ -1461,6 +1497,8 @@ impl Applet {
                     return Task::none();
                 }
                 self.starting = true;
+                self.start_deadline = None;
+                self.start_error = None;
                 self.problem = None;
                 return cosmic::task::future(async {
                     if crate::tools::preview() {
@@ -1476,14 +1514,27 @@ impl Applet {
                     .await;
                     Message::Started(match result {
                         Ok(Ok(out)) if out.status.success() => Ok(()),
-                        _ => Err("Could not start Halcyon".into()),
+                        Ok(Ok(out)) => Err(first_line(&String::from_utf8_lossy(&out.stderr))
+                            .unwrap_or_else(|| format!("systemctl ended with {}", out.status))),
+                        Ok(Err(error)) => Err(format!("Couldn’t run systemctl: {error}")),
+                        Err(_) => Err("systemctl didn’t answer in time".into()),
                     })
                 });
             }
-            Message::Started(result) => {
-                self.starting = false;
-                self.problem = result.err();
-            }
+            Message::Started(result) => match result {
+                // systemd launched it; the card keeps saying so until the
+                // desktop answers, or says it stopped again.
+                Ok(()) if self.commands.is_none() => {
+                    self.start_deadline = Some(now + START_WAIT);
+                    bridge::hurry(START_WAIT);
+                }
+                Ok(()) => self.starting = false,
+                Err(error) => {
+                    self.starting = false;
+                    self.problem = Some(START_FAILED.into());
+                    self.start_error = (error != START_FAILED).then_some(error);
+                }
+            },
             Message::SettingsOpened(result) => {
                 // Settings finishing says nothing about an earlier failure.
                 if let Err(error) = result {
@@ -1856,7 +1907,12 @@ impl Applet {
         let now = self.now_ms;
         if !self.live() {
             let (title, meta) = if let Some(problem) = &self.problem {
-                (problem.clone(), "Try again, or open Settings for help")
+                let meta = match (problem.as_str(), &self.start_error) {
+                    (START_FAILED, Some(error)) => error.as_str(),
+                    (START_STOPPED, _) => "Settings › Help shows what went wrong",
+                    _ => "Try again, or open Settings for help",
+                };
+                (problem.clone(), meta)
             } else if self.commands.is_some() {
                 ("Connecting to Halcyon…".into(), "")
             } else if self.starting {
@@ -2057,7 +2113,11 @@ impl Applet {
             },
             None if problem => Content {
                 title: "Calendar unavailable".into(),
-                meta: "Could not refresh your calendar".into(),
+                meta: self
+                    .snapshot
+                    .calendar_reason
+                    .clone()
+                    .unwrap_or_else(|| "Could not refresh your calendar".into()),
                 ..Default::default()
             },
             None => Content {
@@ -2231,7 +2291,12 @@ impl Applet {
                 tint,
                 reveal,
                 Role::Quiet,
-                Some(Message::Settings("general")),
+                // After a failed start, Help says why it isn't running.
+                Some(Message::Settings(if self.problem.is_some() {
+                    HELP_PAGE
+                } else {
+                    "general"
+                })),
             ));
             if self.commands.is_none() && !self.starting {
                 row = row.push(self.label_button(
@@ -2559,6 +2624,17 @@ impl Applet {
                     .filter(|c| c.ends_at_ms > now);
                 let join = event.and_then(|c| c.join.clone());
                 let event = event.is_some();
+                if !event && self.snapshot.calendar_problem {
+                    row = row.push(self.label_button(
+                        palette,
+                        "activity-calendar-retry",
+                        "Try again",
+                        tint,
+                        reveal,
+                        Role::Primary,
+                        Some(Message::Control(Command::RefreshCalendar)),
+                    ));
+                }
                 if event {
                     // Dismiss is the stronger choice unless there is a meeting to join.
                     row = row.push(self.label_button(

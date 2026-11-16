@@ -556,9 +556,10 @@ fn own_wallpaper_clock_page_walks_every_scene_state() {
             Err(crate::depth::analyse::Failure::Stopped),
         )),
     );
+    // Out of time or memory: the computer ran out, not the picture.
     assert_eq!(
         reason(&app).as_deref(),
-        Some("Couldn’t find the foreground in this picture")
+        Some("This took too long on this computer. Try again, or use a smaller picture.")
     );
     let mut native = Native::new(size);
     native_reveal(&app, &mut native, "clock-depth-fix");

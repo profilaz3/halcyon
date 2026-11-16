@@ -272,7 +272,11 @@ pub enum Message {
     Weather(crate::providers::weather::Completion),
     WeatherCacheSaved(Result<(), String>),
     Service(bool),
-    Calendar(String, String, Result<CalendarData, String>),
+    Calendar(
+        String,
+        String,
+        Result<CalendarData, crate::calendar::Problem>,
+    ),
     PreviewCalendar(CalendarData),
     RequestCapture,
     Week(i32),
@@ -286,7 +290,8 @@ pub enum Message {
     CalendarSettings,
     DevboxSettings,
     ProjectSettings,
-    ControlFinished(Result<(), String>),
+    /// What a click opened, and whether it opened.
+    ControlFinished(Opened, Result<(), String>),
     CaptureScreens,
     Captured(usize, window::Screenshot),
     /// A Music, Notes or Focus card control.
@@ -341,7 +346,9 @@ pub enum Message {
     LaunchApp(String),
     /// Switches to a Look from the edge menu.
     ApplyLook(crate::automation::ProfileRef, String),
-    LookApplied(Result<(), String>),
+    LookApplied(Result<(), edge::LookFailure>),
+    /// Opens Settings on the page with this key.
+    SettingsPage(&'static str),
     /// A key on the edge menu or the widget menu (others are dropped).
     KeyInput(
         window::Id,
@@ -387,6 +394,8 @@ pub struct Notice {
     /// The settings file is damaged: trying again can't help, Settings
     /// can repair it.
     pub repair: bool,
+    /// Opens the Settings page that can sort it out.
+    pub open: Option<Message>,
 }
 
 /// Where the pointer last moved, so the widget menu opens under it. Kept
@@ -474,6 +483,10 @@ pub struct Cards {
     ahead_fetching: Option<String>,
     next_ahead_calendar: Instant,
     calendar_error: bool,
+    /// Why the latest calendar refresh failed. One the person has to fix
+    /// (a locked keyring, an expired sign-in) stops the automatic retries
+    /// until something changes; see `calendar_blocked`.
+    calendar_problem: Option<crate::calendar::Problem>,
     calendar_fetching: Option<String>,
     next_calendar: Instant,
     month: NaiveDate,
@@ -604,6 +617,7 @@ impl cosmic::Application for Cards {
             calendar,
             calendar_connection: crate::calendar::load_connection(),
             calendar_error: false,
+            calendar_problem: None,
             calendar_fetching: None,
             next_calendar: Instant::now(),
             month,
@@ -1307,6 +1321,10 @@ impl Cards {
             Message::FilesChanged => {
                 let mut tasks = vec![];
                 self.reload_note();
+                // A settings change may be the fix a stuck calendar waits for.
+                if self.calendar_blocked() {
+                    self.retry_calendar_now();
+                }
                 tasks.push(self.reload_calendar_connection());
                 match Config::try_load() {
                     Ok(config) => tasks.push(self.apply_config(config)),
@@ -1414,6 +1432,9 @@ impl Cards {
                                 ..Default::default()
                             };
                         }
+                        // The reading failed: what is missing is unavailable,
+                        // not still being measured.
+                        self.metrics.measured = true;
                         self.histories.unavailable(
                             &self.config.devbox_sampling(),
                             self.config.widget_visible(Widget::Devbox),
@@ -1662,20 +1683,33 @@ impl Cards {
             Message::SetWidgetsVisible(visible) => self.set_widgets_visible(visible),
             Message::SetDnd(on) => self.set_dnd(on),
             Message::SetWeatherEffect(on) => self.set_weather_effect(on),
-            Message::LaunchApp(app) => self.launch("gtk-launch", vec![app]),
+            Message::LaunchApp(app) => {
+                let mut opened = Opened::of("gtk-launch", std::slice::from_ref(&app));
+                if let Some(name) = self.edge_app_name(&app) {
+                    opened.name = name;
+                }
+                self.launch_opened("gtk-launch", vec![app], opened)
+            }
             Message::ApplyLook(look, name) => self.apply_look(look, name),
             Message::LookApplied(result) => {
-                if let Err(error) = result {
-                    eprintln!("Look not applied: {error}");
+                if let Err(failure) = result {
+                    eprintln!("Look not applied: {} {}", failure.body, failure.details);
                     self.raise_notice(
                         "Couldn’t switch the Look",
-                        "Nothing was changed.",
-                        error,
-                        None,
+                        failure.body,
+                        failure.details,
+                        failure.retry.map(|message| *message),
                     );
+                    if let Some(notice) = &mut self.notice {
+                        notice.open = Some(Message::SettingsPage(failure.page));
+                    }
                 }
                 Task::none()
             }
+            Message::SettingsPage(page) => self.launch(
+                crate::paths::CONTROLLER,
+                vec!["settings".into(), "--page".into(), page.into()],
+            ),
             Message::KeyInput(id, key, modifiers) => {
                 if self.menu.is_some_and(|(menu, _)| menu == id) {
                     if matches!(
@@ -1833,11 +1867,16 @@ impl Cards {
                     self.ahead_fetching = None;
                 }
                 let retry = Instant::now()
-                    + if result.is_ok() {
-                        self.config.refresh_intervals.duration(Widget::Calendar)
-                    } else {
-                        Duration::from_secs(120)
+                    + match &result {
+                        Ok(_) => self.config.refresh_intervals.duration(Widget::Calendar),
+                        // Only the person can fix it: no retry until
+                        // something changes (see `calendar_blocked`).
+                        Err(problem) if problem.needs_you().is_some() => CALENDAR_BLOCKED,
+                        Err(_) => Duration::from_secs(120),
                     };
+                if let Err(problem) = &result {
+                    eprintln!("Calendar: {problem}");
+                }
                 // One request owns each month until its cache write AND this
                 // completion finish. Both views consume that same result.
                 if month == Local::now().format("%Y-%m").to_string() {
@@ -1856,9 +1895,17 @@ impl Cards {
                 if month == self.month.format("%Y-%m").to_string() {
                     self.calendar_error = result.is_err();
                     self.next_calendar = retry;
-                    if let Ok(calendar) = result {
-                        self.calendar = Some(calendar);
+                }
+                match result {
+                    Ok(calendar) => {
+                        if month == self.month.format("%Y-%m").to_string() {
+                            self.calendar = Some(calendar);
+                        }
+                        if !self.calendar_error && !self.calendar_today_error {
+                            self.calendar_problem = None;
+                        }
                     }
+                    Err(problem) => self.calendar_problem = Some(problem),
                 }
                 self.sync_widget_surfaces()
             }
@@ -1880,6 +1927,7 @@ impl Cards {
                 self.ahead_fetching = None;
                 self.calendar_error = false;
                 self.calendar_today_error = false;
+                self.calendar_problem = None;
                 self.next_calendar = Instant::now() + Duration::from_secs(3600);
                 self.next_today_calendar = self.next_calendar;
                 self.next_ahead_calendar = self.next_calendar;
@@ -1899,9 +1947,7 @@ impl Cards {
             Message::Day(day) => self.select_day(day),
             Message::Today => self.calendar_overview(),
             Message::RefreshCalendar => {
-                self.next_today_calendar = Instant::now();
-                self.next_ahead_calendar = Instant::now();
-                self.next_calendar = Instant::now();
+                self.retry_calendar_now();
                 Task::none()
             }
             Message::Service(active) => {
@@ -1953,9 +1999,20 @@ impl Cards {
                     self.launch("xdg-open", vec![url])
                 }
             }
-            Message::ControlFinished(result) => {
-                if let Err(e) = result {
-                    eprintln!("Halcyon: {e}");
+            Message::ControlFinished(opened, result) => {
+                if let Err(error) = result {
+                    eprintln!("Halcyon: couldn’t open {}: {error}", opened.name);
+                    let (body, details) = if error == NO_GTK_LAUNCH {
+                        (NO_GTK_LAUNCH, String::new())
+                    } else {
+                        (opened.hint, error)
+                    };
+                    self.raise_notice(
+                        format!("Couldn’t open {}", opened.name),
+                        body,
+                        details,
+                        None,
+                    );
                 }
                 Task::none()
             }
@@ -2078,6 +2135,10 @@ fn empty_surface<'a>() -> Element<'a, Message> {
 /// The calendar card around its agenda: 100px header + 20px footer + two
 /// 10px gaps + 36px frame padding.
 const CALENDAR_CHROME_HEIGHT: f32 = 176.;
+/// How long a calendar problem only the person can fix waits before the
+/// desktop tries by itself again. A settings change, Try again or an unlock
+/// in Settings tries at once.
+const CALENDAR_BLOCKED: Duration = Duration::from_secs(24 * 60 * 60);
 /// The event location line under a title.
 const PLACE_SIZE: f32 = 11.;
 const PLACE_HEIGHT: f32 = PLACE_SIZE * 1.25;
@@ -2218,6 +2279,88 @@ fn action<'a>(value: impl Into<String>, message: Message, color: Color) -> Eleme
     )
     .on_press(message)
     .interaction(cosmic::iced::mouse::Interaction::Pointer)
+    .into()
+}
+/// What a click opens, named for "Couldn’t open …", with what to check.
+#[derive(Clone, Debug)]
+pub struct Opened {
+    pub name: String,
+    pub hint: &'static str,
+}
+impl Opened {
+    /// What `command` with `args` opens: an app by its desktop entry, Settings
+    /// or one of its pickers, or a link or folder.
+    fn of(command: &str, args: &[String]) -> Self {
+        let first = args.first().map(String::as_str).unwrap_or_default();
+        if command == crate::paths::CONTROLLER {
+            return Self {
+                name: if first == "weather-picker" {
+                    "the city picker"
+                } else {
+                    "Settings"
+                }
+                .into(),
+                hint: "Try again in a moment.",
+            };
+        }
+        if command == "gtk-launch" {
+            return Self {
+                name: first.trim_end_matches(".desktop").into(),
+                hint: "Check that the app is still installed, then try again.",
+            };
+        }
+        if first.contains("://") && !first.starts_with("file://") {
+            return Self {
+                name: "the link".into(),
+                hint: "Check that you have a default web browser, then try again.",
+            };
+        }
+        Self {
+            name: std::path::Path::new(first.trim_start_matches("file://"))
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map_or_else(|| "the folder".into(), str::to_owned),
+            hint: "Check that the folder still exists, then try again.",
+        }
+    }
+}
+/// Why no app opens: neither gtk-launch nor gio is there.
+const NO_GTK_LAUNCH: &str =
+    "Opening apps needs the gtk-launch tool, which comes with GTK 3. Install it, then try again.";
+/// `name` on `PATH`, when it is there.
+fn program_path(name: &str) -> Option<std::path::PathBuf> {
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join(name))
+        .find(|path| path.is_file())
+}
+/// The file of the desktop entry `id`, where the launcher would find it.
+fn desktop_entry(id: &str) -> Option<std::path::PathBuf> {
+    if id.contains('/') {
+        return None;
+    }
+    let file = if id.ends_with(".desktop") {
+        id.to_string()
+    } else {
+        format!("{id}.desktop")
+    };
+    let shared =
+        std::env::var_os("XDG_DATA_DIRS").unwrap_or_else(|| "/usr/local/share:/usr/share".into());
+    dirs::data_dir()
+        .into_iter()
+        .chain(std::env::split_paths(&shared))
+        .map(|dir| dir.join("applications").join(&file))
+        .find(|path| path.is_file())
+}
+/// A calendar problem only the person can fix: why, and the button that
+/// opens Settings › Calendar to fix it.
+fn needs_you<'a>(reason: &'static str, fix: &'static str, p: Palette) -> Element<'a, Message> {
+    column::with_children(vec![
+        container(label(reason, 14., p.muted))
+            .padding([0, 8])
+            .into(),
+        action(format!("{fix} →"), Message::CalendarSettings, p.accent),
+    ])
+    .spacing(2)
     .into()
 }
 fn spread<'a>(left: Element<'a, Message>, right: Element<'a, Message>) -> Element<'a, Message> {
@@ -2514,9 +2657,15 @@ impl Cards {
             .unwrap_or(accent)
     }
     fn launch(&self, command: &str, args: Vec<String>) -> Task<Message> {
+        let opened = Opened::of(command, &args);
+        self.launch_opened(command, args, opened)
+    }
+    /// Opens something for a click; a failure says so in the edge menu.
+    fn launch_opened(&self, command: &str, args: Vec<String>, opened: Opened) -> Task<Message> {
+        let app = command == "gtk-launch";
         let command = if command == crate::paths::CONTROLLER {
             crate::paths::controller()
-        } else if command == "gtk-launch" {
+        } else if app {
             // Opens a desktop entry as the launcher would, by its ID.
             std::path::PathBuf::from("gtk-launch")
         } else {
@@ -2524,22 +2673,40 @@ impl Cards {
         };
         cosmic::task::future(async move {
             let result = tokio::task::spawn_blocking(move || {
+                // Without gtk-launch, GLib's gio opens the same entry by its
+                // file.
+                let (command, args) = if app && program_path("gtk-launch").is_none() {
+                    let entry = args.first().and_then(|id| desktop_entry(id));
+                    match (program_path("gio"), entry) {
+                        (Some(gio), Some(entry)) => (
+                            gio,
+                            vec!["launch".into(), entry.to_string_lossy().into_owned()],
+                        ),
+                        _ => return Err(NO_GTK_LAUNCH.to_string()),
+                    }
+                } else {
+                    (command, args)
+                };
                 // Outside the service's control group, so restarting the
                 // widgets (after an upgrade) leaves what they opened running.
                 let in_service = crate::settings_lifecycle::in_widget_service_now();
                 let status =
                     crate::settings_lifecycle::independent_command(&command, &args, in_service)
                         .status()
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| format!("{}: {e}", command.display()))?;
                 if status.success() {
                     Ok(())
                 } else {
-                    Err(format!("Command exited with {status}"))
+                    Err(format!(
+                        "{} {} exited with {status}",
+                        command.display(),
+                        args.join(" ")
+                    ))
                 }
             })
             .await
             .unwrap_or_else(|e| Err(e.to_string()));
-            Message::ControlFinished(result)
+            Message::ControlFinished(opened, result)
         })
     }
     fn reload_calendar_connection(&mut self) -> Task<Message> {
@@ -2556,6 +2723,7 @@ impl Cards {
         self.calendar_today = None;
         self.calendar_error = false;
         self.calendar_today_error = false;
+        self.calendar_problem = None;
         self.calendar_fetching = None;
         self.today_fetching = None;
         self.calendar_ahead = None;
@@ -2565,6 +2733,23 @@ impl Cards {
         self.next_today_calendar = Instant::now();
         self.next_ahead_calendar = Instant::now();
         self.sync_widget_surfaces()
+    }
+    /// Every calendar view is due now.
+    fn retry_calendar_now(&mut self) {
+        self.next_today_calendar = Instant::now();
+        self.next_ahead_calendar = Instant::now();
+        self.next_calendar = Instant::now();
+    }
+    /// The calendar failed for a reason only the person can fix: its reason
+    /// and the button that leads to the fix.
+    fn calendar_needs_you(&self) -> Option<(&'static str, &'static str)> {
+        if !self.calendar_error && !self.calendar_today_error {
+            return None;
+        }
+        self.calendar_problem.as_ref()?.needs_you()
+    }
+    fn calendar_blocked(&self) -> bool {
+        self.calendar_needs_you().is_some()
     }
     fn calendar_month_pending(&self, month: &str) -> bool {
         self.calendar_fetching.as_deref() == Some(month)
@@ -2921,6 +3106,8 @@ impl Cards {
                         Message::CalendarSettings,
                         p.accent,
                     )
+                } else if let Some((reason, fix)) = self.calendar_needs_you() {
+                    needs_you(reason, fix, p)
                 } else if self.calendar_error {
                     action(
                         "Check calendar connection →",
@@ -3077,7 +3264,9 @@ impl Cards {
         let calendar_url = self.calendar_connection.web_url();
         let footer = container(spread(
             mouse_area(
-                text::body(if self.calendar_error {
+                text::body(if let Some((_, fix)) = self.calendar_needs_you() {
+                    format!("{fix} →")
+                } else if self.calendar_error {
                     "Check connection →".into()
                 } else {
                     if self.config.calendar_private || calendar_url.is_empty() {
@@ -3565,7 +3754,7 @@ mod tests {
             let _ = cards.update(Message::Calendar(
                 connection.revision.clone(),
                 month.clone(),
-                Err("offline fixture".into()),
+                Err(crate::calendar::Problem::Network),
             ));
             assert!(cards.calendar_error && cards.calendar_today_error);
             assert!(cards.next_calendar > Instant::now() + Duration::from_secs(119));

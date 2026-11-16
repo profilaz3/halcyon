@@ -216,3 +216,20 @@ fn own_wallpaper_model_unreachable_is_a_network_error() {
     );
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// A failed download says what to do next, and the room the model needs
+/// is the room it takes.
+#[test]
+fn failed_downloads_say_what_to_do_next() {
+    let disk = Error::Disk.sentence();
+    assert!(
+        disk.contains("about 100 MB") && disk.contains("try again"),
+        "{disk}"
+    );
+    let mb = SIZE as f64 / 1_000_000.;
+    assert!(
+        (95. ..=105.).contains(&mb),
+        "the model is now {mb:.0} MB: say so"
+    );
+    assert!(Error::Status(503).sentence().ends_with("Try again later."));
+}

@@ -417,7 +417,7 @@ fn a_system_only_calendar_list_without_eds_fails_its_refresh_plainly() {
         .build()
         .unwrap();
     let result = runtime.block_on(super::super::fetch(connection.clone(), "2026-10".into()));
-    assert_eq!(result.unwrap_err(), "System calendars are not available.");
+    assert_eq!(result.unwrap_err(), Problem::SystemUnavailable);
     assert!(store::cached(&connection, "2026-10").is_none());
 }
 

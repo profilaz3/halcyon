@@ -41,6 +41,7 @@ pub(in crate::app) fn monitor_sample() -> &'static MonitorSample {
             uptime: "3h 24m".into(),
             t3: true,
             dictation: "idle".into(),
+            measured: true,
         };
         let histories = MetricHistories::settings_sample(&metrics);
         MonitorSample { metrics, histories }
@@ -248,6 +249,7 @@ impl SettingsSamples {
                 ..Default::default()
             },
             calendar_error: false,
+            calendar_problem: None,
             calendar_fetching: None,
             next_calendar: Instant::now(),
             month,

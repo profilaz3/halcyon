@@ -590,6 +590,7 @@ impl Cards {
                 details: false,
                 brief: false,
                 repair: false,
+                open: None,
             });
         }
         Task::batch([nudge, recreate])

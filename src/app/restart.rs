@@ -231,6 +231,7 @@ mod tests {
                     details: false,
                     brief: false,
                     repair: false,
+                    open: None,
                 })
             }),
             ("a note being written", |cards| {

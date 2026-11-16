@@ -81,6 +81,8 @@ URL: https://github.com/profilaz3/halcyon
 ExclusiveArch: x86_64
 Requires: python3, git, systemd, cosmic-panel, cosmic-comp, cosmic-session, cosmic-settings-daemon
 Requires: PackageKit, pulseaudio-utils
+# gtk-launch opens the edge menu's apps.
+Requires: /usr/bin/gtk-launch
 Requires(post): python3
 Requires(preun): python3
 %global debug_package %{{nil}}

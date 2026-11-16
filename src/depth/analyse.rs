@@ -52,7 +52,12 @@ impl Failure {
         match self {
             Self::Picture => "This picture’s format can’t be analysed; use a PNG or JPEG",
             Self::Model => "The scene model needs downloading again",
-            Self::Depth | Self::Stopped => "Couldn’t find the foreground in this picture",
+            Self::Depth => "Couldn’t find the foreground in this picture",
+            // Out of time or memory, or the analysis crashed: the computer
+            // ran out, not the picture.
+            Self::Stopped => {
+                "This took too long on this computer. Try again, or use a smaller picture."
+            }
             Self::Disk => "Couldn’t save the result on this computer",
         }
     }

@@ -355,7 +355,7 @@ impl Settings {
             ));
         }
         if let Some(problem) = &tools.problem {
-            note.push(label(format!("Not saved: {problem}"), 12., ERROR));
+            note.push(label(crate::tools::notes::not_saved(problem), 12., ERROR));
         }
         // An empty note previews as a short example, so the card and the
         // checklist tip make sense before anything is written.

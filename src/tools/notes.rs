@@ -113,6 +113,21 @@ pub fn load_from(path: &Path) -> Result<Note, String> {
     Ok(record.note)
 }
 
+/// What a note shows when saving it failed with `error`: "Not saved" and
+/// what to do, in plain words. The system's own words go to the log.
+pub fn not_saved(error: &str) -> String {
+    let reason = crate::desktop::store::message::plain_failure(error);
+    if reason == crate::desktop::store::message::GENERIC {
+        return "Not saved. Try again.".into();
+    }
+    let end = if reason.ends_with(['.', '!', '?']) {
+        ""
+    } else {
+        "."
+    };
+    format!("Not saved. {reason}{end}")
+}
+
 /// Saves `text` if the note still holds `expected`.
 pub fn save(expected: &str, text: &str) -> Result<Note, SaveError> {
     let path = path().ok_or_else(|| SaveError::Failed("No data folder".into()))?;

@@ -2467,8 +2467,9 @@ impl ProfilesEditor {
         let bytes = match result {
             Ok(Some(bytes)) => bytes,
             Ok(None) => return Outcome::None,
+            // The file chooser or the file: plainly, with Details.
             Err(error) => {
-                self.notice = Some(Notice::Error(error));
+                self.notice = Some(Notice::plain(error));
                 return Outcome::None;
             }
         };
@@ -2541,7 +2542,7 @@ impl ProfilesEditor {
                 self.notes = kept_note(&omitted).into_iter().collect();
             }
             Ok(None) => {}
-            Err(error) => self.notice = Some(Notice::Error(error)),
+            Err(error) => self.notice = Some(Notice::plain(error)),
         }
     }
 

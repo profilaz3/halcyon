@@ -1318,11 +1318,17 @@ fn onboarding_widgets_legacy_sessions_and_progress_write_failure_are_explicit() 
     std::fs::create_dir(&path).unwrap();
     let mut wizard = wizard::Wizard::new(false, wizard::Bars::starter(false), true);
     wizard.update(wizard::Message::Start, Some(&store), &Config::load());
+    // A plain sentence; the system's words wait under Details.
+    assert_eq!(
+        wizard.error.as_deref(),
+        Some("Could not save setup progress.")
+    );
     assert!(
-        wizard
-            .error
-            .as_deref()
-            .is_some_and(|e| e.starts_with("Could not save setup progress:"))
+        wizard.error_details().is_some_and(|details| details
+            .starts_with("Could not save setup progress:")
+            && details.contains("os error")),
+        "{:?}",
+        wizard.error_details()
     );
     std::fs::remove_dir(path).unwrap();
 }

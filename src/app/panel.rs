@@ -41,6 +41,7 @@ impl Cards {
             details: false,
             brief: false,
             repair: false,
+            open: None,
         });
         self.sidebar.show(Instant::now());
     }
@@ -56,6 +57,7 @@ impl Cards {
                 details: false,
                 brief: true,
                 repair: false,
+                open: None,
             });
             self.sidebar.show_briefly(Instant::now(), BRIEF_NOTICE);
         }
@@ -556,6 +558,9 @@ impl Cards {
                 )
             }
             "reset-layout" => Some(Message::ResetLayout),
+            // Settings › Calendar reached the calendar again, after an unlock
+            // or a new sign-in.
+            "refresh-calendar" => Some(Message::RefreshCalendar),
             "close" => Some(Message::HideControls),
             "drawer" => Some(Message::DrawerToggle),
             "rail" => Some(Message::ShowControls),
@@ -865,6 +870,14 @@ impl Cards {
                     .into(),
             );
         }
+        if let Some(open) = &notice.open {
+            buttons.push(
+                cosmic::widget::button::standard("Open Settings")
+                    .id("notice-open-settings".into())
+                    .on_press(open.clone())
+                    .into(),
+            );
+        }
         if notice.retry.is_some() {
             buttons.push(
                 cosmic::widget::button::suggested(if notice.brief { "Undo" } else { "Try again" })
@@ -879,7 +892,7 @@ impl Cards {
                 .on_press(Message::NoticeDismiss)
                 .into(),
         );
-        content.push(row::with_children(buttons).spacing(8).into());
+        content.push(row::with_children(buttons).spacing(8).wrap().into());
         if notice.error.is_empty() {
             // Nothing more to tell.
         } else {

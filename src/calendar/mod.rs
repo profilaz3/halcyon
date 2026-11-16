@@ -283,6 +283,23 @@ impl Problem {
             Self::CalendarLimit => "You can show up to eight calendars. Remove one to add another.",
         }
     }
+    /// What only the person can fix, so trying again by itself won't help:
+    /// a short reason for the desktop, and the button that leads to the fix
+    /// in Settings › Calendar. `None` for problems that can pass, such as a
+    /// lost connection.
+    pub fn needs_you(&self) -> Option<(&'static str, &'static str)> {
+        Some(match self {
+            Self::Locked => ("Your keyring is locked", "Unlock your keyring"),
+            Self::Keyring => ("Your keyring isn’t running", "Open calendar settings"),
+            Self::SignIn => ("Your calendar sign-in expired", "Sign in again"),
+            Self::Denied => ("Calendar access wasn’t approved", "Sign in again"),
+            Self::Credentials => ("Your calendar password wasn’t accepted", "Sign in again"),
+            Self::MissingClient | Self::InvalidClient => {
+                ("Calendar sign-in isn’t set up", "Open calendar settings")
+            }
+            _ => return None,
+        })
+    }
 }
 impl std::fmt::Display for Problem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -413,8 +430,8 @@ pub async fn disconnect(expected: Connection) -> Result<Connection, Problem> {
 pub async fn fetch(
     connection: Connection,
     month: String,
-) -> Result<crate::data::CalendarData, String> {
-    let result = tokio::time::timeout(Duration::from_secs(50), async {
+) -> Result<crate::data::CalendarData, Problem> {
+    tokio::time::timeout(Duration::from_secs(50), async {
         if !connection.connected() {
             return Err(Problem::Disconnected);
         }
@@ -428,8 +445,7 @@ pub async fn fetch(
     })
     .await
     .map_err(|_| Problem::Network)
-    .and_then(|result| result);
-    result.map_err(|problem| problem.to_string())
+    .and_then(|result| result)
 }
 
 fn cache_fetched(
@@ -439,7 +455,14 @@ fn cache_fetched(
 ) -> Result<crate::data::CalendarData, Problem> {
     data.connection_revision = connection.revision.clone();
     data.calendar_id = connection.calendar_id.clone();
-    store::save_cache(connection, month, &data)?;
+    match store::save_cache(connection, month, &data) {
+        Ok(()) => {}
+        // Settings changed the connection meanwhile: these events are
+        // from the old one.
+        Err(Problem::Changed) => return Err(Problem::Changed),
+        // A full disk only costs the offline copy; the fresh events show.
+        Err(problem) => eprintln!("Calendar: the offline copy wasn’t saved: {problem}"),
+    }
     Ok(data)
 }
 
@@ -449,8 +472,8 @@ pub(crate) fn fixture_completion(
     connection: &Connection,
     month: &str,
     data: crate::data::CalendarData,
-) -> Result<crate::data::CalendarData, String> {
-    cache_fetched(connection, month, data).map_err(|e| e.to_string())
+) -> Result<crate::data::CalendarData, Problem> {
+    cache_fetched(connection, month, data)
 }
 
 async fn legacy(

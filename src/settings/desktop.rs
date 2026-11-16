@@ -63,6 +63,8 @@ pub enum Message {
     Undo,
     /// Re-read live values; edits and their conflict baselines are kept.
     Refresh,
+    /// Reads the desktop settings again after they couldn't be read.
+    Retry,
     /// Drop the edits that changed outside this editor and adopt the current
     /// values; every other edit stays.
     UseCurrent,
@@ -147,6 +149,19 @@ impl Notice {
         } else {
             format!("{message}{DETAILS}{details}")
         })
+    }
+    /// `sentence`, with `details` kept for Details.
+    pub fn with_details(sentence: String, details: String) -> Self {
+        Self::Error(if details == sentence || details.is_empty() {
+            sentence
+        } else {
+            format!("{sentence}{DETAILS}{details}")
+        })
+    }
+    /// A failure that only survives as text, as a plain sentence, with the
+    /// text kept for Details.
+    pub fn plain(error: String) -> Self {
+        Self::with_details(crate::desktop::store::message::plain_failure(&error), error)
     }
     /// The sentence the page shows.
     pub fn text(&self) -> &str {
@@ -312,7 +327,11 @@ impl DesktopEditor {
         self.unchecked = true;
     }
     fn read(&mut self) {
-        let store = DesktopStore::from_env().map_err(|error| error.to_string());
+        // The footer says why, with the technical text under Details.
+        let store = DesktopStore::from_env().map_err(|error| {
+            self.notice = Some(Notice::failed(&error));
+            error.to_string()
+        });
         if let Ok(store) = &store {
             self.catalog = Self::catalog_for(store);
             // Fixture discovery never consults the live machine's hardware.
@@ -577,6 +596,25 @@ impl DesktopEditor {
                     self.notice = Some(Notice::failed(&error));
                 }
             }
+        }
+    }
+    /// As if the desktop settings (`Some`) or the bars (`None`) couldn't
+    /// be read.
+    #[cfg(test)]
+    pub fn unreadable(&mut self, store: Option<&str>) {
+        if let Some(error) = store {
+            self.store = Some(Err(error.into()));
+        }
+        self.drafts.clear();
+    }
+    /// Tries again after the desktop settings, or a bar's, couldn't be read.
+    pub fn retry(&mut self) {
+        self.notice = None;
+        if self.store().is_none() {
+            self.store = None;
+            self.open();
+        } else {
+            self.refresh();
         }
     }
     pub fn refresh(&mut self) {
@@ -863,6 +901,7 @@ impl DesktopEditor {
             }
             Message::Undo => self.undo(),
             Message::Refresh => self.refresh(),
+            Message::Retry => self.retry(),
             Message::UseCurrent => self.use_current(),
             Message::KeepMine => self.keep_mine(),
             Message::Recover => self.recover(true),

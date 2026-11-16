@@ -171,6 +171,9 @@ pub struct Metrics {
     pub uptime: String,
     pub t3: bool,
     pub dictation: String,
+    /// A sample has been taken. Until then the card says it is measuring
+    /// rather than that readings are unavailable.
+    pub measured: bool,
 }
 #[derive(Debug, Clone, Default)]
 pub struct Sampler {
@@ -304,6 +307,7 @@ impl Sampler {
                 .map(|s| s.trim().to_string())
                 .unwrap_or_else(|| "offline".into());
         }
+        m.measured = true;
         m
     }
 }

@@ -134,6 +134,81 @@ pub(super) fn destroy(id: window::Id) -> Task<Message> {
     cosmic::iced::platform_specific::shell::commands::layer_surface::destroy_layer_surface(id)
 }
 
+/// Why a Look chosen in the edge menu wasn't switched, as the menu says it.
+#[derive(Clone, Debug)]
+pub struct LookFailure {
+    /// The sentence under "Couldn’t switch the Look".
+    pub body: String,
+    /// The technical text, for Details; empty when the sentence says it all.
+    pub details: String,
+    /// The Settings page that can sort it out.
+    pub page: &'static str,
+    /// The same switch again, where trying again can work.
+    pub retry: Option<Box<Message>>,
+    retryable: bool,
+}
+/// Settings › Looks.
+const LOOKS_PAGE: &str = "desktop-profiles";
+impl LookFailure {
+    /// Settings has unapplied changes to `parts`, which the Look would
+    /// overwrite. Nothing was changed.
+    pub(super) fn waiting(
+        parts: &std::collections::BTreeSet<crate::desktop::profiles::Domain>,
+    ) -> Self {
+        let names: Vec<&str> = parts.iter().map(|part| part.title()).collect();
+        Self {
+            body: format!(
+                "Settings has changes to {} that aren’t applied yet, so nothing was changed. Apply or discard them, then try again.",
+                names.join(", ")
+            ),
+            details: String::new(),
+            page: parts.first().map_or(LOOKS_PAGE, |part| domain_page(*part)),
+            retry: None,
+            retryable: true,
+        }
+    }
+    /// The switch failed with `reason`. Only an interrupted change, or one
+    /// that couldn't be put back, needs a decision on the Looks page; the
+    /// body never says nothing changed when something may have.
+    pub(super) fn failed(reason: String) -> Self {
+        let decision = reason.starts_with("An interrupted change")
+            || reason.starts_with("Could not apply changes (");
+        let preview = reason.contains("preview mode");
+        let body = crate::desktop::store::message::plain_failure(&reason);
+        Self {
+            details: if body == reason {
+                String::new()
+            } else {
+                reason
+            },
+            body,
+            page: LOOKS_PAGE,
+            retry: None,
+            retryable: !decision && !preview,
+        }
+    }
+    pub(super) fn retry_with(mut self, retry: Message) -> Self {
+        if self.retryable {
+            self.retry = Some(Box::new(retry));
+        }
+        self
+    }
+}
+/// The Settings page with a part's unapplied changes.
+fn domain_page(domain: crate::desktop::profiles::Domain) -> &'static str {
+    use crate::desktop::profiles::Domain;
+    match domain {
+        Domain::Dock => "desktop-dock",
+        Domain::Panel => "desktop-panel",
+        Domain::Appearance => "themes",
+        Domain::Windows | Domain::Workspaces => "desktop-windows",
+        Domain::Wallpaper => "desktop-wallpaper",
+        Domain::DesktopIcons => "desktop-icons",
+        Domain::WidgetStyle => "appearance",
+        Domain::WidgetLayout => "overview",
+    }
+}
+
 /// What an item is called in the menu and to a screen reader.
 pub(crate) fn item_title(item: &Item) -> String {
     let named = |name: &str, fallback: &str| {
@@ -650,6 +725,14 @@ impl Cards {
             Kind::Separator | Kind::Title { .. } | Kind::Unknown(_) => return None,
         })
     }
+    /// The name the edge menu shows for app `app`.
+    pub(super) fn edge_app_name(&self, app: &str) -> Option<String> {
+        self.config
+            .edge_items()
+            .iter()
+            .find(|item| matches!(&item.kind, Kind::App { app: id, .. } if id == app))
+            .map(item_title)
+    }
     /// Runs item `index`, and closes the menu as the Close setting says.
     pub(super) fn edge_item(&mut self, index: usize) -> Task<Message> {
         let Some(message) = self.edge_item_message(index) else {
@@ -741,29 +824,30 @@ impl Cards {
         look: crate::automation::ProfileRef,
         name: String,
     ) -> Task<Message> {
+        let retry = Message::ApplyLook(look.clone(), name.clone());
         cosmic::task::future(async move {
             let result = tokio::task::spawn_blocking(move || {
-                let store = crate::desktop::DesktopStore::from_env().map_err(|e| e.to_string())?;
+                let store = crate::desktop::DesktopStore::from_env()
+                    .map_err(|e| LookFailure::failed(e.to_string()))?;
                 let installed = crate::desktop::profiles::Installed::discover(&store);
                 let held = crate::automation::read_hold(&store);
                 match crate::automation::run::run_chosen(&store, &installed, &look, &name, &held) {
                     crate::automation::run::Ran::Applied { .. }
                     | crate::automation::run::Ran::AlreadySet => Ok(()),
-                    crate::automation::run::Ran::Waiting(parts) => Err(format!(
-                        "Settings has changes to {} that aren’t applied yet.",
-                        parts
-                            .iter()
-                            .map(|part| part.title())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )),
-                    crate::automation::run::Ran::Failed(reason) => Err(reason),
+                    crate::automation::run::Ran::Waiting(parts) => {
+                        Err(LookFailure::waiting(&parts))
+                    }
+                    crate::automation::run::Ran::Failed(reason) => Err(LookFailure::failed(reason)),
                     crate::automation::run::Ran::KeptManual(_) => Ok(()),
                 }
             })
             .await
-            .unwrap_or_else(|_| Err("The switch stopped unexpectedly.".into()));
-            Message::LookApplied(result)
+            .unwrap_or_else(|_| {
+                Err(LookFailure::failed(
+                    "The switch stopped unexpectedly.".into(),
+                ))
+            });
+            Message::LookApplied(result.map_err(|failure| failure.retry_with(retry)))
         })
     }
     /// The menu's own page in Settings.

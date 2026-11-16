@@ -1943,7 +1943,7 @@ impl WallpaperEditor {
                 match result {
                     Ok(Some(path)) => self.add(path),
                     Ok(None) => {}
-                    Err(error) => self.core.notice = Some(Notice::Error(error)),
+                    Err(error) => self.core.notice = Some(Notice::plain(error)),
                 }
             }
             Message::Remove(path) => self.remove(&path),
@@ -2373,7 +2373,7 @@ impl WallpaperEditor {
             (true, Some(store)) => match Collection::load(store) {
                 Ok(collection) => collection,
                 Err(error) => {
-                    self.core.notice = Some(Notice::Error(error));
+                    self.core.notice = Some(Notice::plain(error));
                     return;
                 }
             },
@@ -2388,7 +2388,7 @@ impl WallpaperEditor {
         match self.core.store() {
             Some(store) if store.writable() => match collection.save(store) {
                 Ok(()) => self.collection = Ok(collection),
-                Err(error) => self.core.notice = Some(Notice::Error(error)),
+                Err(error) => self.core.notice = Some(Notice::plain(error)),
             },
             _ => {
                 self.session = true;
