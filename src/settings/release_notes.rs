@@ -23,31 +23,31 @@ pub(super) const RELEASES: &[Release] = &[
         notes: &[
             Note {
                 title: "Phone messages",
-                body: "Pair a phone through KDE Connect and show its conversations as a widget, an Activity island entry, or both. Message text is hidden until you enable it.",
+                body: "Show your phone's KDE Connect conversations as a widget, an Activity island entry, or both.",
                 place: Some(navigation::MESSAGES),
                 link: None,
             },
             Note {
                 title: "Dark glass widgets",
-                body: "Choose Dark glass in Appearance for transparent dark cards with a fine edge, subtle grain and a brief hover glint.",
+                body: "Try transparent dark cards with a fine edge, subtle grain and a brief hover glint.",
                 place: None,
                 link: None,
             },
             Note {
                 title: "More clock faces",
-                body: "Try Stacked, Split, Words, Minimal and Numbers, plus four bundled typefaces and clearer clock placement controls.",
+                body: "Try five new clock faces, four bundled typefaces and clearer clock placement controls.",
                 place: None,
                 link: None,
             },
             Note {
                 title: "More ways to add calendars",
-                body: "Use CalDAV, calendar files and folders, holiday feeds and system account calendars. Choose which days and event details to show.",
+                body: "Add CalDAV, calendar files and folders, holiday feeds and calendars from system accounts.",
                 place: None,
                 link: None,
             },
             Note {
                 title: "Clearer navigation and recovery",
-                body: "Return from Devices to activities, undo Clear all, and find clearer next steps in Settings, setup and Arrange.",
+                body: "Return from Devices to activities, undo Clear all, and find clearer next steps in Settings.",
                 place: None,
                 link: None,
             },
