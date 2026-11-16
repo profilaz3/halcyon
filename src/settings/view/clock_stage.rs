@@ -1,8 +1,10 @@
 //! The Clock page's stage: the screen the clock is on, with the clock where
 //! it sits. Dragging the clock moves it on the desktop, and dragging its
-//! corner handle resizes it. When the scene would
-//! cover it a little way off, an outline marks that spot and a button moves
-//! it there.
+//! corner handle resizes it. With the scene on, handling the clock shows
+//! the map: what stands in front of the clock, lightly tinted, and a green
+//! band where the bottom of the time can rest, with a word on where the
+//! clock is now. A clock dropped near the band settles onto it, and a
+//! button moves it to the scene's suggested spot.
 use super::*;
 use crate::settings::clock_stage::{self as stage, Edit};
 use cosmic::iced::widget::{pin, stack};
@@ -18,6 +20,55 @@ const HANDLE: f32 = 16.;
 /// What the stage says under the picture: the pointer and the keys.
 pub(crate) const STAGE_HINT: &str = "Drag the clock to move it, or drag its corner to resize. \
 With the keyboard, Tab selects the clock, arrow keys move it, + and − resize it, and Esc cancels a drag.";
+
+/// The word on the map: a dot and where the clock is, on a dark pill at the
+/// bottom of the stage, over any picture.
+fn fit_chip<'a>(fit: crate::depth::scene::Fit, size: [f32; 2]) -> Element<'a, Message> {
+    use crate::depth::scene::Fit;
+    let (dot, words) = match fit {
+        Fit::On => (Color::from_rgb8(79, 220, 138), stage::FIT_ON),
+        Fit::High => (Color::from_rgb8(214, 218, 226), stage::FIT_HIGH),
+        Fit::Low => (Color::from_rgb8(255, 107, 107), stage::FIT_LOW),
+        Fit::Elsewhere => (Color::from_rgb8(255, 179, 71), stage::FIT_ELSEWHERE),
+    };
+    let dot = container(cosmic::iced::widget::space())
+        .width(8)
+        .height(8)
+        .class(cosmic::theme::Container::custom(move |_| {
+            cosmic::iced::widget::container::Style {
+                background: Some(Background::Color(dot)),
+                border: Border {
+                    radius: 4.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        }));
+    let pill = container(
+        row::with_children(vec![dot.into(), label(words, CAPTION, Color::WHITE)])
+            .spacing(6)
+            .align_y(Alignment::Center),
+    )
+    .id(cosmic::widget::Id::new(stage::FIT_ID))
+    .padding([4, 10])
+    .class(cosmic::theme::Container::custom(|_| {
+        cosmic::iced::widget::container::Style {
+            background: Some(Background::Color(Color::from_rgba8(22, 24, 28, 0.8))),
+            border: Border {
+                radius: 999.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }));
+    container(pill)
+        .width(size[0])
+        .height(size[1])
+        .align_x(Alignment::Center)
+        .align_y(Alignment::End)
+        .padding([0., 0., 10., 0.])
+        .into()
+}
 
 /// What the stage says when the clock, drawn straight on the picture, is
 /// hard to tell from what's behind it.
@@ -167,32 +218,6 @@ impl Settings {
             {
                 let frame = stage::frame(position, clock, screen);
                 let shown = clock.map(|v| v * scale);
-                if let Some(spot) = self.clock_stage.suggested(&frame)
-                    && !self.clock_stage.dragging()
-                {
-                    let at = stage::to_stage(spot, scale);
-                    layers.push(
-                        pin(container(cosmic::iced::widget::space())
-                            .width(shown[0])
-                            .height(shown[1])
-                            .class(cosmic::theme::Container::custom(move |_| {
-                                cosmic::iced::widget::container::Style {
-                                    background: Some(Background::Color(Color {
-                                        a: 0.12,
-                                        ..accent
-                                    })),
-                                    border: Border {
-                                        color: accent,
-                                        width: 1.5,
-                                        radius: 5.into(),
-                                    },
-                                    ..Default::default()
-                                }
-                            })))
-                        .position(Point::new(at[0], at[1]))
-                        .into(),
-                    );
-                }
                 let resizing = self.placement.resizing();
                 let lit = self
                     .clock_stage
@@ -276,6 +301,36 @@ impl Settings {
                 );
                 let at = stage::to_stage(at, scale);
                 layers.push(pin(body).position(Point::new(at[0], at[1])).into());
+                // Over the clock, so what the scene will hide is tinted too;
+                // the band fades while the clock rests on it. Pictures take
+                // no input, so the clock under them still does.
+                if let Some((map, fit)) = self.clock_stage_map_shown() {
+                    use crate::depth::scene::Fit;
+                    for (handle, opacity, id) in [
+                        (&map.tint, 1., stage::TINT_ID),
+                        (
+                            &map.band,
+                            if fit == Fit::On { 0.35 } else { 1. },
+                            stage::BAND_ID,
+                        ),
+                    ] {
+                        layers.push(
+                            container(
+                                cosmic::widget::image(handle.clone())
+                                    .width(width)
+                                    .height(height)
+                                    .content_fit(cosmic::iced::ContentFit::Fill)
+                                    .border_radius(10.)
+                                    .opacity(opacity),
+                            )
+                            .id(cosmic::widget::Id::new(id))
+                            .into(),
+                        );
+                    }
+                    if self.clock_stage.handle() {
+                        layers.push(fit_chip(fit, size));
+                    }
+                }
             } else if let Some((position, card)) = self.clock_stage_overview() {
                 // Daily overview carries the time: its clock and date, where
                 // the overview sits. It is moved on the Daily overview page.

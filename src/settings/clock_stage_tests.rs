@@ -155,6 +155,28 @@ fn clock_stage_drag_saves_one_undo_step_and_relights() {
     assert!(near(saved(), moved), "{:?} vs {moved:?}", saved());
     assert!(lit_at(&app, moved), "{:?}", app.clock_stage.requested());
     assert!(app.clock_stage_moved());
+    // In the sky over Ridge, the map shows the ridge's band below while the
+    // clock is handled.
+    send_settings(&mut app, Message::ClockStage(Edit::Hover(true)));
+    assert_eq!(
+        app.clock_stage_fit().map(|(_, fit)| fit),
+        Some(crate::depth::scene::Fit::High)
+    );
+    assert_eq!(
+        native.text_all(app.settings_view(), stage::FIT_HIGH).len(),
+        1
+    );
+    for (theme, name) in [
+        (cosmic::Theme::light(), "light"),
+        (cosmic::Theme::dark(), "dark"),
+    ] {
+        native.capture(
+            app.settings_view(),
+            &theme,
+            &format!("clock-stage-map-{name}"),
+        );
+    }
+    send_settings(&mut app, Message::ClockStage(Edit::Hover(false)));
 
     for (theme, name) in [
         (cosmic::Theme::light(), "light"),
@@ -558,7 +580,7 @@ fn own_wallpaper_clock_page_walks_every_scene_state() {
     assert!(spot[1] > high[1] + 100., "{spot:?}");
     assert_eq!(
         reason(&app).as_deref(),
-        Some("The scene covers the clock a little lower down. The outline shows where.")
+        Some(crate::settings::depth::NUDGE_LOWER)
     );
     let frame = stage::frame(high, clock, screen);
     assert!(
@@ -566,6 +588,10 @@ fn own_wallpaper_clock_page_walks_every_scene_state() {
         "the plain clock until it moves"
     );
     assert!(present(&app, "clock-stage-suggested"));
+    // The map says where, before the clock is touched; its word on where
+    // the clock is waits for the pointer.
+    assert!(present(&app, stage::TINT_ID) && present(&app, stage::BAND_ID));
+    assert!(!present(&app, stage::FIT_ID));
     shots(&mut app, "nudge", "clock-stage-suggested");
 
     // One click moves it there, as one Undo step, and the scene covers it.
@@ -581,6 +607,8 @@ fn own_wallpaper_clock_page_walks_every_scene_state() {
     assert!(app.depth_block().is_none(), "{:?}", reason(&app));
     assert!(present(&app, "clock-lighting"));
     assert!(!present(&app, "clock-stage-suggested"));
+    // Tucked in, the map waits for the clock to be handled.
+    assert!(!present(&app, stage::BAND_ID));
     shots(&mut app, "works", "clock-scene-model");
     let mut native = Native::new(size);
     native_click(&mut app, &mut native, "settings-undo");
@@ -614,6 +642,10 @@ fn own_wallpaper_clock_page_walks_every_scene_state() {
     assert!(present(&app, "clock-depth-alternative"));
     assert!(!present(&app, "clock-lighting"));
     assert!(app.clock_stage.lit(&frame).is_none());
+    // Nowhere to tuck in, so no map, even while the clock is handled.
+    send_settings(&mut app, Message::ClockStage(stage::Edit::Hover(true)));
+    assert!(!present(&app, stage::BAND_ID) && !present(&app, stage::FIT_ID));
+    send_settings(&mut app, Message::ClockStage(stage::Edit::Hover(false)));
     shots(&mut app, "not-useful", "clock-depth-fix");
 
     // Removing the model forgets every analysed picture too.
@@ -631,6 +663,226 @@ fn own_wallpaper_clock_page_walks_every_scene_state() {
     // Another picture is chosen on Wallpaper, where the change and its Undo live.
     drop(app.update(Message::ChooseScenePicture));
     assert_eq!(app.page, Page::DesktopWallpaper);
+}
+
+/// With the scene on, the stage maps where the clock tucks in: the scene
+/// lightly tinted and a green band where the bottom of the time can rest.
+/// A word says where the clock is while it's handled, and a clock dropped
+/// near the band settles onto it in the same Undo step as the move.
+#[test]
+fn clock_stage_map_shows_where_the_clock_tucks_in_and_settles_it_there() {
+    if desktop_test_child(
+        "clock_stage_map_shows_where_the_clock_tucks_in_and_settles_it_there",
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::depth::scene::{Fit, Verdict};
+    use crate::depth::{Found, cache};
+    use crate::desktop::wallpaper::{BgEntry, BgSource};
+    use crate::native_test::Native;
+    use crate::settings::clock_stage::{self as stage, Edit, FIT_HIGH, FIT_LOW, FIT_ON};
+    use cosmic::iced::{Event, Point, mouse};
+    let root = isolated_root();
+    let fixture = root.join("cosmic-root");
+    let pictures = root.join("pictures");
+    std::fs::create_dir_all(&pictures).unwrap();
+    let (hill, key, files) = crate::depth::tests::own::hill(&pictures, 300);
+    cache::store(&cache::root().unwrap(), &key, &files).unwrap();
+    seed(
+        &fixture.join("config/cosmic"),
+        &[(
+            "com.system76.CosmicBackground",
+            "all",
+            &ron::to_string(&BgEntry::new("all", BgSource::Path(hill.clone()))).unwrap(),
+        )],
+    );
+    Config::save_clock(json!({"depth": true, "face": "digital", "surface": "none"})).unwrap();
+    let open = || {
+        let (mut app, initial) = Settings::init(Core::default(), Page::Clock);
+        app.scenes.hold = true;
+        settle_settings(&mut app, initial);
+        drive_wallpaper(&mut app);
+        app
+    };
+    // The clock already high in the sky when the page opens.
+    let mut setup = open();
+    let screen = stage::known(setup.placement.preview_snapshot().screen);
+    let (_, clock) = setup.clock_stage_place().unwrap();
+    let high = [(screen[0] - clock[0]) / 2., 60.];
+    assert!(setup.placement.place_widget(Widget::Clock.key(), high));
+    send_settings(&mut setup, Message::Placement(placement::Message::Save));
+    drop(setup);
+    let mut app = open();
+    let size = Size::new(1280., 800.);
+    send_settings(&mut app, Message::Resized(size));
+    assert!((app.clock_stage_place().unwrap().0[1] - high[1]).abs() < 1.5);
+    let saved = || {
+        let (mut fresh, initial) = Settings::init(Core::default(), Page::Clock);
+        fresh.scenes.hold = true;
+        settle_settings(&mut fresh, initial);
+        fresh.clock_stage_place().unwrap().0
+    };
+    let present = |app: &Settings, id: &str| {
+        Native::new(size)
+            .try_bounds(app.settings_view(), id)
+            .is_some()
+    };
+    let has = |app: &Settings, text: &str| {
+        Native::new(size).text_all(app.settings_view(), text).len() == 1
+    };
+    assert!(matches!(
+        app.clock_stage.found(),
+        Some(Found::Judged { judgement, .. }) if judgement.verdict == Verdict::NeedsNudge
+    ));
+
+    // High in the sky: the band is below, and says so while handled.
+    let (map, fit) = app.clock_stage_fit().expect("the map for this clock");
+    assert_eq!(fit, Fit::High);
+    let runs = map.places.at(high[0]);
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    let [top, bottom] = runs[0];
+    assert!(top > high[1] + 100. && bottom > top, "{runs:?}");
+    // Exactly as wide as the stage: the band is over the whole screen.
+    let mut native = Native::new(size);
+    let stage_box = native_reveal(&app, &mut native, stage::BAND_ID);
+    let picture = native.bounds(app.settings_view(), "clock-stage");
+    assert!(
+        (stage_box.width - stage::stage_size([picture.width, f32::INFINITY], screen)[0]).abs() < 1.
+    );
+    assert!(!has(&app, FIT_HIGH));
+    send_settings(&mut app, Message::ClockStage(Edit::Hover(true)));
+    assert!(has(&app, FIT_HIGH) && present(&app, stage::FIT_ID));
+    let shots = |app: &mut Settings, name: &str| {
+        for (theme, mode) in [
+            (cosmic::Theme::light(), "light"),
+            (cosmic::Theme::dark(), "dark"),
+        ] {
+            let mut native = Native::new(size);
+            native_reveal(app, &mut native, stage::CLOCK_ID);
+            assert!(
+                native.overflowing_text(app.settings_view()).is_empty(),
+                "{name}"
+            );
+            assert!(
+                native.duplicate_ids(app.settings_view()).is_empty(),
+                "{name}"
+            );
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("clock-map-{name}-{mode}"),
+            );
+        }
+    };
+    shots(&mut app, "high");
+
+    // Dragged to just above the band and let go: it settles a little inside
+    // the band, saved as one move.
+    let body = native_reveal(&app, &mut native, stage::CLOCK_ID);
+    let scale = body.width / clock[0];
+    let send = |app: &mut Settings, native: &mut Native, event: mouse::Event, at: Point| {
+        for message in native.event(app.settings_view(), Event::Mouse(event), at).0 {
+            send_settings(app, message);
+        }
+    };
+    let grab = body.center();
+    send(
+        &mut app,
+        &mut native,
+        mouse::Event::CursorMoved { position: grab },
+        grab,
+    );
+    send(
+        &mut app,
+        &mut native,
+        mouse::Event::ButtonPressed(mouse::Button::Left),
+        grab,
+    );
+    assert!(app.clock_stage.dragging());
+    let target = [high[0], top - 36.];
+    let to = Point::new(
+        grab.x + (target[0] - high[0]) * scale,
+        grab.y + (target[1] - high[1]) * scale,
+    );
+    send(
+        &mut app,
+        &mut native,
+        mouse::Event::CursorMoved { position: to },
+        to,
+    );
+    let (dropped, _) = app.clock_stage_place().unwrap();
+    assert!(
+        dropped[1] < top - 12.,
+        "dropped above the band: {dropped:?}"
+    );
+    assert!(
+        present(&app, stage::BAND_ID),
+        "the map stays up while it moves"
+    );
+    send(
+        &mut app,
+        &mut native,
+        mouse::Event::ButtonReleased(mouse::Button::Left),
+        to,
+    );
+    let release = stage::drag_input(
+        Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+        cosmic::iced::event::Status::Ignored,
+    )
+    .unwrap();
+    send_settings(&mut app, Message::ClockStage(release));
+    assert!(!app.error, "{}", app.status);
+    let (settled, _) = app.clock_stage_place().unwrap();
+    assert!(
+        settled[1] >= top + map_row(&app) - 1. && settled[1] <= bottom,
+        "{settled:?} in {runs:?}"
+    );
+    assert!((saved()[1] - settled[1]).abs() < 1.5, "{:?}", saved());
+    let frame = stage::frame(settled, clock, screen);
+    assert_eq!(
+        app.clock_stage.judgement(&frame).map(|j| j.verdict),
+        Some(Verdict::Works),
+        "the judge agrees with the band"
+    );
+    assert!(app.depth_block().is_none());
+    assert!(has(&app, FIT_ON));
+    shots(&mut app, "on");
+    // One Undo puts it back in the sky.
+    let mut native = Native::new(size);
+    native_click(&mut app, &mut native, "settings-undo");
+    assert!(
+        (app.clock_stage_place().unwrap().0[1] - high[1]).abs() < 1.5,
+        "{:?} {} {:?} {:?}",
+        app.clock_stage_place(),
+        app.status,
+        high,
+        settled
+    );
+
+    // Far below the band: too low, and the page says it fits higher up.
+    let low = [high[0], bottom + 160.];
+    assert!(app.placement.place_widget(Widget::Clock.key(), low));
+    send_settings(&mut app, Message::Placement(placement::Message::Save));
+    assert_eq!(app.clock_stage_fit().map(|(_, fit)| fit), Some(Fit::Low));
+    assert_eq!(
+        app.depth_block().map(|b| b.reason.into_owned()).as_deref(),
+        Some(crate::settings::depth::NUDGE_HIGHER)
+    );
+    assert!(has(&app, FIT_LOW));
+    shots(&mut app, "low");
+    send_settings(&mut app, Message::ClockStage(Edit::Hover(false)));
+}
+
+fn map_row(app: &Settings) -> f32 {
+    let (position, size) = app.clock_stage_place().unwrap();
+    let frame = crate::settings::clock_stage::frame(position, size, app.clock_stage_screen());
+    app.clock_stage.map(&frame).unwrap().places.row
 }
 
 /// The stage clock's corner handle resizes its box, shape kept: the drag

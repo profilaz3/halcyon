@@ -69,6 +69,11 @@ pub struct Request {
     /// clock picks the same ink as the one on the desktop.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backdrop: Option<f32>,
+    /// Asks where the clock tucks behind the scene instead of the cut
+    /// clock: everywhere in this area of the whole output (x, y, width and
+    /// height), for the frame's size. See [`render_map`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub map: Option<[f32; 4]>,
 }
 
 /// A picture file's identity: replacing or editing the file changes it.
@@ -138,6 +143,7 @@ impl Request {
             seen: None,
             plain: false,
             backdrop: None,
+            map: None,
         })
     }
     /// A request for the clock alone, to stand behind the rain glass.
@@ -162,6 +168,7 @@ impl Request {
             seen: None,
             plain: true,
             backdrop: None,
+            map: None,
         })
     }
     /// The same request, also allowed to use analysed pictures from `root`.
@@ -768,6 +775,197 @@ pub(crate) fn read_rendered(bytes: &[u8]) -> Option<Rendered> {
     Some(Rendered { found, pixels })
 }
 
+/// The longest side of the map's pictures; the Clock page's stage is at
+/// most 600 points wide.
+pub const MAX_OVERLAY: u32 = 960;
+/// How strongly the foreground is tinted, and its outline drawn.
+const TINT: [u8; 3] = [140, 182, 255];
+const TINT_ALPHA: f32 = 0.2;
+const OUTLINE: [u8; 4] = [228, 238, 255, 150];
+/// The band where the bottom of the time can rest, and its edges.
+const BAND: [u8; 4] = [79, 220, 138, 120];
+const BAND_EDGE: [u8; 4] = [150, 255, 196, 235];
+
+/// Where the clock tucks behind its picture, and the two pictures that
+/// show it over the whole output: the foreground tinted with its outline,
+/// and the band where the bottom of the time can rest.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Placement {
+    pub places: scene::Places,
+    pub tint: Pixels,
+    pub band: Pixels,
+}
+
+/// The map's pictures' size for a screen: its shape, at most [`MAX_OVERLAY`].
+fn overlay_size(screen: [f32; 2]) -> [u32; 2] {
+    let k = f64::from(MAX_OVERLAY) / f64::from(screen[0].max(screen[1]));
+    screen.map(|v| ((f64::from(v) * k).round() as u32).clamp(1, MAX_OVERLAY))
+}
+
+/// Draws the map's two pictures over the whole output.
+fn overlays(
+    places: &scene::Places,
+    mask: &image::GrayImage,
+    map: &scene::Map,
+    screen: [f32; 2],
+) -> (Pixels, Pixels) {
+    let [w, h] = overlay_size(screen);
+    let k = [0, 1].map(|i| f64::from(screen[i]) / f64::from([w, h][i]));
+    let value = |x: u32, y: u32| {
+        scene::sample(
+            mask,
+            map.to_mask([(f64::from(x) + 0.5) * k[0], (f64::from(y) + 0.5) * k[1]]),
+        )
+    };
+    let values: Vec<f32> = (0..h)
+        .flat_map(|y| (0..w).map(move |x| (x, y)))
+        .map(|(x, y)| value(x, y))
+        .collect();
+    let mut tint = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            let v = values[y * w as usize + x];
+            let crosses = |other: f32| (v >= 0.5) != (other >= 0.5);
+            let edge = (x + 1 < w as usize && crosses(values[y * w as usize + x + 1]))
+                || (y + 1 < h as usize && crosses(values[(y + 1) * w as usize + x]));
+            let pixel = &mut tint[(y * w as usize + x) * 4..][..4];
+            if edge {
+                pixel.copy_from_slice(&OUTLINE);
+            } else if v > 0. {
+                pixel[..3].copy_from_slice(&TINT);
+                pixel[3] = (v * TINT_ALPHA * 255.).round() as u8;
+            }
+        }
+    }
+    let mut band = vec![0u8; (w * h * 4) as usize];
+    for x in 0..w {
+        let at = (f64::from(x) + 0.5) * k[0] - f64::from(places.anchor[0]);
+        for run in places.at(at as f32) {
+            let rows = [run[0], run[1]].map(|y| f64::from(y + places.anchor[1]) / k[1]);
+            let top = rows[0].floor().max(0.) as u32;
+            let bottom = (rows[1].ceil() as u32).max(top + 2).min(h);
+            for y in top..bottom {
+                let colour = if y == top || y + 1 == bottom {
+                    BAND_EDGE
+                } else {
+                    BAND
+                };
+                band[((y * w + x) * 4) as usize..][..4].copy_from_slice(&colour);
+            }
+        }
+    }
+    let pixels = |rgba| Pixels {
+        width: w,
+        height: h,
+        rgba,
+    };
+    (pixels(tint), pixels(band))
+}
+
+/// Where the clock tucks behind the request's picture, for the Clock page's
+/// stage: the Ridge picture's drawn matte, or an analysed picture's
+/// foreground. `None` when the picture has not been analysed or the
+/// request is not for a map.
+pub fn render_map(request: &Request) -> Option<Placement> {
+    let area = request.map?;
+    let config = request.config()?;
+    let BgSource::Path(path) = &request.background.source else {
+        return None;
+    };
+    let mode = &request.background.scaling_mode;
+    let time = chrono::NaiveDateTime::parse_from_str(&request.time, "%Y-%m-%dT%H:%M:%S").ok()?;
+    let bytes = read_picture(path)?;
+    let (stats, mask, edges) =
+        if bytes.len() == PICTURE.len() && Sha256::digest(&bytes) == Sha256::digest(PICTURE) {
+            (None, mask()?, None)
+        } else {
+            let (stats, mask, edges) =
+                cache::load_matte(request.scenes.as_ref()?, &cache::key(&bytes))?;
+            (Some(stats), mask, Some(edges))
+        };
+    let (drawn, face) = draw(&config, &request.frame, judging_time(time))?;
+    let alpha: Vec<u8> = drawn.rgba.chunks_exact(4).map(|p| p[3]).collect();
+    let places = scene::places(
+        stats.as_ref(),
+        &mask,
+        edges.as_ref(),
+        &scene::Glyph {
+            alpha: &alpha,
+            width: drawn.width,
+            height: drawn.height,
+            frame: &request.frame,
+            face,
+        },
+        mode,
+        area,
+    )?;
+    let source = stats
+        .as_ref()
+        .map_or([mask.width(), mask.height()], |s| s.source);
+    let map = scene::Map::new(&request.frame, mode, source, [mask.width(), mask.height()])?;
+    let (tint, band) = overlays(&places, &mask, &map, request.frame.screen);
+    Some(Placement { places, tint, band })
+}
+
+/// [`render_map`]'s reply after MAGIC: a length-prefixed JSON
+/// [`scene::Places`] (length 0 for no map), then the tint and band pixels,
+/// each as width, height and RGBA.
+fn map_bytes(placement: Option<&Placement>) -> Option<Vec<u8>> {
+    let places = match placement {
+        Some(placement) => serde_json::to_vec(&placement.places).ok()?,
+        None => Vec::new(),
+    };
+    let mut bytes = (places.len() as u32).to_le_bytes().to_vec();
+    bytes.extend(places);
+    for pixels in placement.iter().flat_map(|p| [&p.tint, &p.band]) {
+        bytes.extend(pixels.width.to_le_bytes());
+        bytes.extend(pixels.height.to_le_bytes());
+        bytes.extend(&pixels.rgba);
+    }
+    Some(bytes)
+}
+pub(crate) fn write_map(placement: Option<&Placement>) -> Option<()> {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    out.write_all(&map_bytes(placement)?).ok()?;
+    out.flush().ok()
+}
+
+/// Reads [`write_map`]'s reply after MAGIC. `Some(None)` is a clean answer
+/// that there is no map.
+pub(crate) fn read_map(bytes: &[u8]) -> Option<Option<Placement>> {
+    let take = |at: usize, n: usize| bytes.get(at..at.checked_add(n)?);
+    let u32_at = |at: usize| Some(u32::from_le_bytes(take(at, 4)?.try_into().ok()?));
+    let length = u32_at(0)? as usize;
+    if length > 64 * 1024 {
+        return None;
+    }
+    if length == 0 {
+        return (bytes.len() == 4).then_some(None);
+    }
+    let places: scene::Places = serde_json::from_slice(take(4, length)?).ok()?;
+    let pixels = |at: usize| -> Option<(Pixels, usize)> {
+        let (width, height) = (u32_at(at)?, u32_at(at + 4)?);
+        if width == 0 || height == 0 || width > MAX_OVERLAY || height > MAX_OVERLAY {
+            return None;
+        }
+        let n = (width * height * 4) as usize;
+        let rgba = take(at + 8, n)?.to_vec();
+        Some((
+            Pixels {
+                width,
+                height,
+                rgba,
+            },
+            at + 8 + n,
+        ))
+    };
+    let (tint, at) = pixels(4 + length)?;
+    let (band, end) = pixels(at)?;
+    (end == bytes.len() && tint.width == band.width && tint.height == band.height)
+        .then_some(Some(Placement { places, tint, band }))
+}
+
 pub(crate) fn scene_main() -> ! {
     analyse::main()
 }
@@ -785,6 +983,9 @@ pub(crate) fn main() -> ! {
         }
         let request: Request = serde_json::from_slice(&bytes).ok()?;
         worker::ready()?;
+        if request.map.is_some() {
+            return write_map(render_map(&request).as_ref());
+        }
         write_rendered(&render_scene(&request)?)
     })();
     std::process::exit(if result.is_some() { 0 } else { 2 });

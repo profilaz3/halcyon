@@ -469,6 +469,16 @@ impl PlacementEditor {
         );
         true
     }
+    /// Ends a move with the card at `point` instead of where the pointer
+    /// left it, as the same Undo step. Nothing changes for a resize or a
+    /// drag that ended outside.
+    pub(super) fn release_at(&mut self, key: &str, point: [f32; 2]) -> bool {
+        if !self.dragging() || self.resizing() || !self.inside {
+            return false;
+        }
+        self.release();
+        self.place_widget(key, point)
+    }
     /// Arrow-key movement of one card, outside the arrangement editor.
     pub(super) fn nudge_widget(&mut self, key: &str, direction: [i8; 2], large: bool) {
         if self.dragging() || self.geometry(key).is_none() {
