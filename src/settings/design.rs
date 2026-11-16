@@ -11,6 +11,11 @@ pub enum Message {
     Recheck,
     Export(bool),
     Exported(Result<Option<PathBuf>, String>),
+    /// A damaged settings file is set aside, kept, and Halcyon starts again
+    /// with its usual settings.
+    StartFresh,
+    /// Shows or hides why the settings file can't be read.
+    Details(bool),
 }
 #[derive(Default)]
 pub(super) struct State {
@@ -24,6 +29,8 @@ pub(super) struct State {
     pub offered: bool,
     /// The open review was opened by the builder, not by the person.
     pub automatic: bool,
+    /// Why a damaged settings file can't be read is shown.
+    pub details: bool,
 }
 impl State {
     /// Settings may be constructed without the command-line startup path.
@@ -89,6 +96,21 @@ impl Settings {
                     return self.after_desktop_change();
                 }
             }
+            Message::Details(open) => self.design.details = open,
+            Message::StartFresh => match start_fresh() {
+                Ok(kept) => {
+                    let notice = format!(
+                        "Started fresh. The damaged file is kept as {}.",
+                        kept.file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_default()
+                    );
+                    let task = self.update_design(Message::Recheck);
+                    self.design.notice = Some(notice);
+                    return task;
+                }
+                Err(error) => self.design.notice = Some(error),
+            },
             Message::Export(legacy) => return export_task(legacy),
             Message::Exported(result) => {
                 self.design.notice = match result {
@@ -102,6 +124,39 @@ impl Settings {
         }
         Task::none()
     }
+}
+/// Moves a damaged settings file aside, under a name that says so and never
+/// over another copy, then starts from a fresh one as a new installation
+/// does. A file the widget design manages, or one that reads again, stays.
+fn start_fresh() -> Result<PathBuf, String> {
+    let path = Config::path().ok_or("No configuration directory")?;
+    let lock = crate::config::lock_config(&path)?;
+    if crate::config::damaged_file(&path).is_none() {
+        return Err("The settings file can be read again. Choose Check again.".into());
+    }
+    if crate::design::storage::managed(&path) {
+        return Err("Put back a saved copy of the settings file, then choose Check again.".into());
+    }
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let kept = (0..100)
+        .map(|n| {
+            let suffix = if n == 0 {
+                String::new()
+            } else {
+                format!("-{n}")
+            };
+            path.with_file_name(format!("config.damaged-{stamp}{suffix}.json"))
+        })
+        .find(|kept| std::fs::symlink_metadata(kept).is_err())
+        .ok_or("Couldn’t find a name for the copy of the damaged file")?;
+    std::fs::rename(&path, &kept).map_err(|e| e.to_string())?;
+    drop(lock);
+    // Without a file Halcyon already uses its usual settings; a fresh
+    // design that can't be made now is made at the next start.
+    if let Err(error) = crate::design::commands::initialize_fresh() {
+        eprintln!("Starting fresh: {error}");
+    }
+    Ok(kept)
 }
 fn export_task(legacy: bool) -> Task<super::Message> {
     cosmic::task::future(async move {

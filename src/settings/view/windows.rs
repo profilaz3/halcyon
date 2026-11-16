@@ -35,8 +35,9 @@ pub(super) fn store_pill<'a>(store: Option<&DesktopStore>, accent: Color) -> Ele
     }
 }
 
-/// The banner shared by every desktop page after Halcyon was closed in
-/// the middle of a change: it says what was being changed.
+/// The banner shared by every desktop page after a change didn't finish,
+/// because Halcyon was closed or a write failed: it says what was being
+/// changed.
 pub(super) fn recovery_banner<'a>(
     recovery: Option<&Result<crate::desktop::store::Journal, String>>,
     writable: bool,

@@ -351,7 +351,8 @@ pub(super) const LOOKS: SearchHit = hit(
 pub(super) const STARTUP: SearchHit = hit(
     Page::General,
     "Running and startup",
-    "general halcyon app settings startup login sign in background service running stopped stop start on off setup again uninstall remove",
+    // Uninstall and remove find Stop using Halcyon, the row on this page.
+    "general halcyon app settings startup login sign in background service running stopped stop start on off setup again",
     false,
 )
 .names_page();
@@ -1183,6 +1184,14 @@ const ROWS: &[SearchHit] = &[
     hit(Page::General, "This window", "", false).destination(AppSettingsPage::Interface),
     hit(Page::General, "Running", "", false).destination(AppSettingsPage::Operation),
     hit(Page::General, "Set up again", "", false).destination(AppSettingsPage::Operation),
+    hit(
+        Page::General,
+        "Stop using Halcyon",
+        "uninstall remove removal stop quit leave delete get rid go back stock cosmic",
+        false,
+    )
+    .at("stop-using")
+    .destination(AppSettingsPage::Operation),
     hit(Page::General, "Setting up", "", false).destination(AppSettingsPage::Operation),
     hit(Page::General, "Start when you sign in", "", false).destination(AppSettingsPage::Operation),
     hit(Page::General, "Always stays on your computer", "", false).destination(AppSettingsPage::Privacy),
@@ -2235,7 +2244,8 @@ mod tests {
             ("backup", "Looks"),
             ("remove widget", "Widgets"),
             ("delete widget", "Widgets"),
-            ("uninstall", "Running and startup"),
+            ("uninstall", "Stop using Halcyon"),
+            ("remove halcyon", "Stop using Halcyon"),
         ] {
             let hits = search(query);
             assert!(

@@ -1639,9 +1639,99 @@ impl Settings {
                     ),
                 ],
             ),
+            self.search_target("stop-using", group(None, self.stop_using_rows())),
         ])
         .spacing(16)
         .into()
+    }
+
+    /// One way out: the desktop from before Halcyon, the widgets stopped
+    /// now and at sign-in, then the command that removes the package.
+    fn stop_using_rows(&self) -> Vec<Element<'_, Message>> {
+        use crate::settings::StopUsing;
+        let state = self.stop_using;
+        let mut rows = vec![group_row(
+            "Stop using Halcyon",
+            "Put your desktop back, stop the widgets, then remove the app",
+            button::standard("Stop using…")
+                .id(cosmic::widget::Id::new("stop-using-open"))
+                .on_press_maybe(
+                    (state == StopUsing::Closed && !self.busy).then_some(Message::StopUsing(true)),
+                )
+                .into(),
+        )];
+        match state {
+            StopUsing::Closed => {}
+            StopUsing::Confirm => {
+                rows.push(detail_state(
+                    "Stop using Halcyon?",
+                    if self.desktop_recovery.info.is_some() {
+                        "Your desktop goes back to how it was before Halcyon. The widgets stop and won’t start when you sign in. Undo for the desktop stays on Changes."
+                    } else {
+                        "Halcyon has no copy of your desktop from before its first change, so your desktop stays as it is. The widgets stop and won’t start when you sign in."
+                    },
+                ));
+                rows.push(
+                    row::with_children(vec![
+                        cosmic::widget::space().width(Length::Fill).into(),
+                        button::text("Cancel")
+                            .id(cosmic::widget::Id::new("stop-using-cancel"))
+                            .on_press(Message::StopUsing(false))
+                            .into(),
+                        button::destructive("Stop using Halcyon")
+                            .id(cosmic::widget::Id::new("stop-using-confirm"))
+                            .on_press_maybe(
+                                (!self.busy && !self.desktop_recovery.busy)
+                                    .then_some(Message::StopUsingConfirm),
+                            )
+                            .into(),
+                    ])
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .into(),
+                );
+            }
+            StopUsing::Working => {
+                rows.push(label("Putting your desktop back…", 13., MUTED));
+            }
+            StopUsing::Done { restored } => {
+                let mut lines = vec![if restored {
+                    "Your desktop is back as it was before Halcyon."
+                } else {
+                    "Your desktop stays as it is."
+                }];
+                lines.push(if preview() {
+                    "The widgets aren’t changed in this preview."
+                } else {
+                    "The widgets are stopped and won’t start when you sign in."
+                });
+                rows.push(detail_state("Halcyon is stopped", lines.join(" ")));
+                rows.push(label("To remove the app, run this in a terminal:", 13., FG));
+                let command = crate::settings::removal_command(
+                    self.updates.identity.as_ref().map(|i| i.channel),
+                );
+                rows.push(split(
+                    container(text::monotext(command).size(13))
+                        .id(cosmic::widget::Id::new("stop-using-command"))
+                        .width(Length::Fill)
+                        .into(),
+                    row::with_children(vec![
+                        button::standard("Copy")
+                            .id(cosmic::widget::Id::new("stop-using-copy"))
+                            .on_press(Message::CopyRemoval)
+                            .into(),
+                        button::text("Done")
+                            .id(cosmic::widget::Id::new("stop-using-done"))
+                            .on_press(Message::StopUsing(false))
+                            .into(),
+                    ])
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .into(),
+                ));
+            }
+        }
+        rows
     }
 
     fn app_interface_page(&self) -> Element<'_, Message> {

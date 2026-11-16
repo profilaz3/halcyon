@@ -496,7 +496,7 @@ fn product_help_tabs_and_primary_actions_fit_compact_and_wide_windows() {
             "primary action visible on entry"
         );
         // DT-11: the guides sit right under Report a problem.
-        for (title, _) in support::GUIDES {
+        for (title, _, _) in support::GUIDES {
             let link = native.text_bounds(app.settings_view(), title);
             assert!(link.x + link.width <= size.width && link.y + link.height < size.height);
         }
@@ -511,9 +511,43 @@ fn product_help_tabs_and_primary_actions_fit_compact_and_wide_windows() {
                 &format!("product-help-{}-{name}", size.width),
             );
         }
+        // FIRST-08: the links that go to GitHub's issues say they need an account.
+        native.text_bounds(app.settings_view(), support::NEEDS_ACCOUNT);
         send_settings(&mut app, Message::Support(support::Message::Preview(true)));
         native_reveal(&app, &mut native, "help-copy-report");
+        native_reveal(&app, &mut native, "help-open-issue");
+        native.text_bounds(app.settings_view(), support::NEEDS_ACCOUNT);
+        // Opening the issue page copies the report the person just read and
+        // says so. The task isn't run, so no browser opens.
+        let _ = app.update(Message::Support(support::Message::ReportProblem));
+        assert!(
+            app.support
+                .notice
+                .is_some_and(|notice| notice.starts_with("Report copied")),
+            "{:?}",
+            app.support.notice
+        );
+        send_settings(&mut app, Message::Support(support::Message::Preview(false)));
     }
+}
+
+/// FIRST-08: the issue page opens with the previewed report in its text
+/// when the address stays short, and plain when it wouldn't.
+#[test]
+fn product_issue_page_carries_the_report_only_when_it_fits() {
+    let report = "Halcyon support report · version 1\nDisplay 1: 1920 × 1080, scale 1\n";
+    let url = reqwest::Url::parse(&support::issue_url(report)).unwrap();
+    assert_eq!(url.path(), "/profilaz3/halcyon/issues/new");
+    let body = url
+        .query_pairs()
+        .find(|(key, _)| key == "body")
+        .map(|(_, value)| value.into_owned());
+    assert_eq!(body.as_deref(), Some(report));
+    let long = "x".repeat(10_000);
+    assert_eq!(
+        support::issue_url(&long),
+        "https://github.com/profilaz3/halcyon/issues/new"
+    );
 }
 
 #[test]
@@ -537,4 +571,275 @@ fn product_direct_help_loads_history_without_opening_a_desktop_editor() {
     );
     assert!(app.support.local.store.is_some());
     assert!(app.support.local.recent.entries.is_empty());
+}
+
+/// FIRST-09: the Before Halcyon rows say whether anything can be put back,
+/// and the wallpaper row is only there with a saved picture, asking first
+/// like the desktop row.
+#[test]
+fn before_halcyon_rows_say_what_can_be_restored_and_ask_first() {
+    let name = "before_halcyon_rows_say_what_can_be_restored_and_ask_first";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    let size = Size::new(1280., 900.);
+    send_settings(&mut app, Message::Resized(size));
+    send_settings(&mut app, Message::Page(Page::Changes));
+    let mut native = crate::native_test::Native::new(size);
+    assert!(app.desktop_recovery.info.is_none(), "nothing saved yet");
+    native_reveal(&app, &mut native, "restore-desktop");
+    native.text_bounds(
+        app.settings_view(),
+        "Nothing to restore yet. Halcyon saves your desktop before its first change.",
+    );
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "restore-wallpaper")
+            .is_none(),
+        "no saved wallpaper, no row"
+    );
+    let backup = super::recovery::wallpaper_backup().unwrap();
+    assert!(backup.starts_with(&root));
+    std::fs::create_dir_all(backup.parent().unwrap()).unwrap();
+    std::fs::write(&backup, "saved").unwrap();
+    send_settings(&mut app, Message::Page(Page::Changes));
+    native_click(&mut app, &mut native, "restore-wallpaper");
+    assert!(app.restore_confirm, "Restore… asks first");
+    native_reveal(&app, &mut native, "restore-wallpaper-confirm");
+    native.text_bounds(app.settings_view(), "Restore the earlier wallpaper?");
+    native_click(&mut app, &mut native, "restore-wallpaper-cancel");
+    assert!(!app.restore_confirm);
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "restore-wallpaper-confirm")
+            .is_none()
+    );
+}
+
+/// FIRST-13: a waiting change has one decision, use it or keep what's on
+/// screen, with no page-wide switch on top, and the empty page doesn't
+/// talk about a previous version that may never have existed.
+#[test]
+fn pending_changes_offer_one_decision_per_row() {
+    let name = "pending_changes_offer_one_decision_per_row";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    use crate::desktop::panels::Anchor;
+    let root = isolated_root();
+    let mut app = open_isolated_editor(&root);
+    let size = Size::new(1280., 900.);
+    send_settings(&mut app, Message::Resized(size));
+    send_settings(&mut app, Message::Page(Page::PendingChanges));
+    let mut native = crate::native_test::Native::new(size);
+    native.text_bounds(
+        app.settings_view(),
+        "This appears only if an update or change was interrupted.",
+    );
+    // A dock change an older version saved but never applied.
+    let store = app.desktop.store().unwrap().clone();
+    let _ = app.desktop.update(desktop::Message::Anchor(Anchor::Left));
+    let draft = app.desktop.session_draft().unwrap();
+    let record = json!({
+        "format": "desktop-cards-settings-draft", "version": 1,
+        "kind": session_drafts::Kind::Dock.key(),
+        "draft": ron::to_string(&draft).unwrap(),
+    });
+    let path = store
+        .state_file(&format!(
+            "settings-draft-{}.json",
+            session_drafts::Kind::Dock.key()
+        ))
+        .unwrap();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, record.to_string()).unwrap();
+    let _ = app.desktop.update(desktop::Message::Discard);
+    app.recovery_sheet = legacy::Recovery::load();
+    assert_eq!(app.recovery_sheet.rows.len(), 1);
+    send_settings(&mut app, Message::Page(Page::PendingChanges));
+    native.bounds(app.settings_view(), "pending-keep-0");
+    native.bounds(app.settings_view(), "pending-use-0");
+    assert!(
+        native
+            .text_all(app.settings_view(), "Use selected choices")
+            .is_empty(),
+        "the rows cover it"
+    );
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "pending-edit-0")
+            .is_none(),
+        "nothing to edit here"
+    );
+    native_click(&mut app, &mut native, "pending-use-0");
+    assert!(app.recovery_sheet.rows.is_empty(), "applied");
+    native.text_bounds(app.settings_view(), "Nothing waiting");
+}
+
+/// FIRST-05: Halcyon › Running and startup has one way out. It asks
+/// first, puts back the desktop from before Halcyon when there is one,
+/// stops the widgets (never from a preview), and ends with the command
+/// that removes the package. Search finds it by the words people use.
+#[test]
+fn stop_using_halcyon_puts_the_desktop_back_and_shows_the_removal_command() {
+    let name = "stop_using_halcyon_puts_the_desktop_back_and_shows_the_removal_command";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    for query in ["uninstall", "remove", "stop"] {
+        assert!(
+            navigation::search(query)
+                .iter()
+                .any(|hit| hit.label == "Stop using Halcyon"),
+            "{query}"
+        );
+    }
+    assert_eq!(
+        navigation::search("uninstall")[0].label,
+        "Stop using Halcyon"
+    );
+    let store = crate::desktop::DesktopStore::from_env().unwrap();
+    // Nothing saved yet: it says the desktop stays as it is.
+    let (mut app, initial) = Settings::init(Core::default(), Page::General);
+    settle_settings(&mut app, initial);
+    let size = Size::new(1280., 900.);
+    send_settings(&mut app, Message::Resized(size));
+    send_settings(
+        &mut app,
+        Message::AppSettingsPage(AppSettingsPage::Operation),
+    );
+    let mut native = crate::native_test::Native::new(size);
+    native_click(&mut app, &mut native, "stop-using-open");
+    assert_eq!(app.stop_using, StopUsing::Confirm);
+    native.text_bounds(app.settings_view(), "Stop using Halcyon?");
+    assert!(app.desktop_recovery.info.is_none());
+    native_click(&mut app, &mut native, "stop-using-cancel");
+    assert_eq!(app.stop_using, StopUsing::Closed);
+    // A desktop change saves the desktop from before it.
+    let key =
+        crate::desktop::ConfigKey::new("com.system76.CosmicPanel.Dock", 1, "opacity").unwrap();
+    let before = store.read_user(&key).unwrap();
+    let mut patch = crate::desktop::DesktopPatch::new();
+    patch.set(
+        key.clone(),
+        before.clone(),
+        Some(crate::desktop::RawValue::parse("0.71").unwrap()),
+    );
+    store.apply(&patch).unwrap();
+    native_click(&mut app, &mut native, "stop-using-open");
+    assert!(app.desktop_recovery.info.is_some());
+    native_click(&mut app, &mut native, "stop-using-confirm");
+    assert_eq!(app.stop_using, StopUsing::Done { restored: true });
+    assert_eq!(
+        store.read_user(&key).unwrap().as_ref().map(|v| v.as_str()),
+        before.as_ref().map(|v| v.as_str()),
+        "the desktop from before Halcyon is back"
+    );
+    native.text_bounds(app.settings_view(), "Halcyon is stopped");
+    native_reveal(&app, &mut native, "stop-using-command");
+    let command = removal_command(app.updates.identity.as_ref().map(|i| i.channel));
+    assert!(command.contains("remove cosmic-ext-halcyon"), "{command}");
+    native_click(&mut app, &mut native, "stop-using-copy");
+    assert_eq!(app.status, "Command copied");
+    native_click(&mut app, &mut native, "stop-using-done");
+    assert_eq!(app.stop_using, StopUsing::Closed);
+}
+
+/// FIRST-07 / FAIL-09: a settings file that is there but can't be read
+/// isn't replaced by defaults. Settings opens the same repair widget
+/// designs get, setup isn't offered meanwhile, the parser's words wait
+/// under Details, and Start fresh keeps a copy of the damaged file.
+#[test]
+fn a_damaged_settings_file_gets_a_repair_not_defaults() {
+    let name = "a_damaged_settings_file_gets_a_repair_not_defaults";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let path = Config::path().unwrap();
+    std::fs::write(&path, "{broken").unwrap();
+    let loaded = Config::load();
+    assert!(loaded.settings_damaged);
+    let problem = loaded.design_problem.clone().expect("the damage is named");
+    assert!(problem.contains("line 1"), "{problem}");
+    assert!(loaded.onboarded && !loaded.widgets_visible);
+    let (mut app, initial) = Settings::init(Core::default(), Page::Home);
+    settle_settings(&mut app, initial);
+    let size = Size::new(1280., 900.);
+    send_settings(&mut app, Message::Resized(size));
+    let mut native = crate::native_test::Native::new(size);
+    assert!(app.config.settings_damaged);
+    assert!(
+        !app.offers_setup(),
+        "setup isn't offered over a damaged file"
+    );
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "setup-open")
+            .is_none()
+    );
+    native.text_bounds(app.settings_view(), "Halcyon’s settings file is damaged");
+    assert!(
+        native.text_all(app.settings_view(), &problem).is_empty(),
+        "the parser's words wait under Details"
+    );
+    native_click(&mut app, &mut native, "settings-damage-details");
+    native.text_bounds(app.settings_view(), &problem);
+    // Start fresh keeps the damaged file and reads a fresh one.
+    native_click(&mut app, &mut native, "settings-start-fresh");
+    assert!(
+        app.config.design_problem.is_none(),
+        "{:?}",
+        app.design.notice
+    );
+    let kept: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+        .unwrap()
+        .flatten()
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("config.damaged-")
+        })
+        .map(|entry| std::fs::read(entry.path()).unwrap())
+        .collect();
+    assert_eq!(kept, [b"{broken".to_vec()]);
+    assert!(Config::load().design_problem.is_none());
+    assert!(
+        app.design
+            .notice
+            .as_deref()
+            .is_some_and(|notice| notice.starts_with("Started fresh")),
+        "{:?}",
+        app.design.notice
+    );
 }

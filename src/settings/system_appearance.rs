@@ -1038,7 +1038,7 @@ mod tests {
             }));
         editor.update(Message::Apply);
         assert!(
-            matches!(&editor.notice, Some(Notice::Error(text)) if text.contains("Use Restore"))
+            matches!(&editor.notice, Some(Notice::Error(text)) if text.contains("Choose Go back to before"))
         );
         assert!(matches!(editor.recovery(), Some(Ok(_))));
         assert!(editor.dirty() && !editor.can_apply());

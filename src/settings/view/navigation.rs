@@ -317,57 +317,67 @@ impl Settings {
         column::with_children(rows).spacing(10).into()
     }
 
+    /// Each waiting change has one decision: use it, or keep what's on
+    /// screen. Its values open only for someone who wants to edit them.
     pub(super) fn pending_changes_page(&self) -> Element<'_, Message> {
         let mut rows = vec![heading(
             "Unfinished changes",
             if self.recovery_sheet.rows.is_empty() {
-                "Changes you made in a previous version that were never applied show up here."
+                "Changes that were never applied show up here."
             } else {
                 "Changes you made in the previous version that were never applied. Nothing changes until you pick one."
             },
         )];
         for (index, proposal) in self.recovery_sheet.rows.iter().enumerate() {
-            let mut parts = vec![split(
-                detail_state(proposal.kind.title(), &proposal.summary),
-                toggler(proposal.selected)
-                    .on_toggle(move |on| Message::RecoverySelect(index, on))
-                    .into(),
-            )];
+            let mut parts = vec![detail_state(proposal.kind.title(), &proposal.summary)];
             if let Some(problem) = &proposal.problem {
                 parts.push(label(problem, 12., desktop::ERROR));
             }
-            for (field, (name, value)) in proposal.fields().into_iter().enumerate() {
-                parts.push(split(
-                    label(name, 13., FG),
-                    cosmic::widget::text_input("#RRGGBB", value)
-                        .on_input(move |text| Message::RecoveryText(index, field, text))
-                        .width(180)
-                        .into(),
-                ));
+            let fields = proposal.fields();
+            if proposal.editing {
+                for (field, (name, value)) in fields.iter().cloned().enumerate() {
+                    parts.push(split(
+                        label(name, 13., FG),
+                        cosmic::widget::text_input("#RRGGBB", value)
+                            .on_input(move |text| Message::RecoveryText(index, field, text))
+                            .width(180)
+                            .into(),
+                    ));
+                }
             }
             let mut actions = vec![
                 button::text("Keep what’s on screen")
+                    .id(cosmic::widget::Id::new(format!("pending-keep-{index}")))
                     .on_press(Message::RecoveryDiscard(index))
                     .into(),
-                button::text("Use this choice")
-                    .on_press(Message::RecoveryApplyOne(index))
-                    .into(),
             ];
-            if proposal.problem.is_some() {
-                if proposal.fields().is_empty() {
-                    actions.push(
-                        button::text("Open form")
-                            .on_press(Message::RecoveryOpen(index))
-                            .into(),
-                    );
-                }
+            // Colors are edited here; other forms open on their own page.
+            if !fields.is_empty() {
                 actions.push(
-                    button::text("Use recovered values")
-                        .on_press(Message::RecoveryUseProposed(index))
+                    button::text(if proposal.editing {
+                        "Hide values"
+                    } else {
+                        "Edit values"
+                    })
+                    .id(cosmic::widget::Id::new(format!("pending-edit-{index}")))
+                    .on_press(Message::RecoveryEdit(index, !proposal.editing))
+                    .into(),
+                );
+            } else if proposal.problem.is_some() {
+                actions.push(
+                    button::text("Edit values")
+                        .id(cosmic::widget::Id::new(format!("pending-edit-{index}")))
+                        .on_press(Message::RecoveryOpen(index))
                         .into(),
                 );
             }
-            parts.push(row::with_children(actions).spacing(8).wrap().into());
+            parts.push(split(
+                row::with_children(actions).spacing(8).wrap().into(),
+                button::suggested("Use this choice")
+                    .id(cosmic::widget::Id::new(format!("pending-use-{index}")))
+                    .on_press(Message::RecoveryApplyOne(index))
+                    .into(),
+            ));
             rows.push(group(None, parts));
         }
         if self.recovery_sheet.rows.is_empty() {
@@ -375,15 +385,9 @@ impl Settings {
                 None,
                 vec![detail_state(
                     "Nothing waiting",
-                    "Every change from the previous version was applied.",
+                    "This appears only if an update or change was interrupted.",
                 )],
             ));
-        } else {
-            rows.push(
-                button::suggested("Use selected choices")
-                    .on_press(Message::RecoveryApply)
-                    .into(),
-            );
         }
         column::with_children(rows).spacing(12).into()
     }

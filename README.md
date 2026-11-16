@@ -116,7 +116,7 @@ Halcyon keeps a copy of your desktop from before its first change. Depending on 
 - window, workspace and icon settings
 - whether the desktop widgets start at sign-in
 
-**To go back to stock COSMIC:** open Halcyon, go to **Changes → Before Halcyon → Desktop from before Halcyon** and choose **Restore…**. Then remove the package:
+**To go back to stock COSMIC:** open Halcyon, go to **Halcyon → Running and startup → Stop using Halcyon**. It puts back your desktop from before Halcyon, stops the widgets, including at sign-in, and shows the command that removes the package:
 
 ```sh
 sudo apt remove cosmic-ext-halcyon   # Pop!_OS

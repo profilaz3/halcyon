@@ -371,7 +371,10 @@ impl WindowRulesEditor {
     }
     fn save(&mut self) {
         if self.core.recovery().is_some() {
-            self.core.notice=Some(Notice::Error("Resolve the interrupted transaction before saving this rule. The form is retained.".into()));
+            self.core.notice = Some(Notice::Error(
+                "A change didn’t finish. Choose Keep what’s on screen or Go back to before above, then save this rule. Your rule is still here."
+                    .into(),
+            ));
             return;
         }
         let Some(form) = self.form.clone() else {
@@ -493,5 +496,47 @@ mod tests {
         );
         assert!(!editor.dirty());
         assert_eq!(editor.draft().unwrap().rows().len(), 4);
+    }
+
+    /// FAIL-01: while a change waits in the banner, saving a rule points to
+    /// the banner's choices in plain words and keeps the form.
+    #[test]
+    fn saving_during_an_unfinished_change_points_to_the_banner() {
+        let fixture = Fixture::new("rules-unfinished");
+        let store = fixture.store();
+        let journal = crate::desktop::store::Journal {
+            format: "desktop-cards-journal".into(),
+            version: 1,
+            id: "rules-unfinished".into(),
+            operation: "apply".into(),
+            created: "2026-11-11T12:00:00Z".into(),
+            entries: vec![crate::desktop::store::JournalEntry {
+                namespace: "com.system76.CosmicComp".into(),
+                version: 1,
+                key: "autotile".into(),
+                before: Some("false".into()),
+                after: Some("true".into()),
+            }],
+            widget: None,
+            undo: None,
+            design: None,
+        };
+        std::fs::create_dir_all(store.state_dir()).unwrap();
+        std::fs::write(
+            store.state_dir().join("desktop-journal.json"),
+            serde_json::to_vec(&journal).unwrap(),
+        )
+        .unwrap();
+        let mut editor = WindowRulesEditor::with_store(store);
+        assert!(editor.recovery().is_some());
+        editor.update(Message::Add);
+        editor.update(Message::AppId("org.example.Notes".into()));
+        editor.update(Message::Save);
+        let Some(Notice::Error(text)) = editor.notice() else {
+            panic!("{:?}", editor.notice())
+        };
+        assert!(!text.contains("transaction"), "{text}");
+        assert!(text.contains("Go back to before"), "{text}");
+        assert!(editor.form.is_some(), "the form is kept");
     }
 }

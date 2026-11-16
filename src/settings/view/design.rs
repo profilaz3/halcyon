@@ -77,6 +77,18 @@ impl Settings {
     }
     /// A line above a page that stays usable, while widget editing waits.
     pub(super) fn design_banner(&self) -> Element<'_, Message> {
+        if self.config.settings_damaged {
+            return super::desktop::banner(
+                "Halcyon’s settings file is damaged. Halcyon’s own settings are paused until it is repaired.",
+                super::desktop::WARN,
+                vec![
+                    button::standard("Repair…")
+                        .id("design-banner-restore".into())
+                        .on_press(Message::Page(Page::Home))
+                        .into(),
+                ],
+            );
+        }
         super::desktop::banner(
             "Your widget design needs attention. Widget editing is paused until it is restored.",
             super::desktop::WARN,
@@ -88,8 +100,78 @@ impl Settings {
             ],
         )
     }
+    /// A settings file that is there but can't be read: start fresh with a
+    /// copy kept, or put back a saved copy. The parser's words stay under
+    /// Details.
+    fn damaged_settings_view(&self) -> Element<'_, Message> {
+        let config_file = crate::config::Config::path()
+            .map(|config| config.display().to_string())
+            .unwrap_or_else(|| "config.json".into());
+        let managed = crate::config::Config::path()
+            .as_deref()
+            .is_some_and(crate::design::storage::managed);
+        let mut steps = Vec::new();
+        if !managed {
+            steps.push(group_row(
+                "Start fresh",
+                "Halcyon keeps a copy of the damaged file beside it and starts again with its usual settings",
+                button::suggested("Start fresh")
+                    .id("settings-start-fresh".into())
+                    .on_press(Message::Design(Edit::StartFresh))
+                    .into(),
+            ));
+        }
+        steps.push(detail_state(
+            if managed {
+                "Put back a saved copy"
+            } else {
+                "Or put back a saved copy"
+            },
+            format!(
+                "Copy a settings file you saved earlier, or one from a backup, to {config_file}. Then check again."
+            ),
+        ));
+        steps.push(group_row(
+            "Check again",
+            "Halcyon reads the file again and your settings come back",
+            button::standard("Check again")
+                .id("design-recheck".into())
+                .on_press(Message::Design(Edit::Recheck))
+                .into(),
+        ));
+        let mut parts = vec![
+            heading(
+                "Halcyon’s settings file is damaged",
+                "Your desktop still works. Halcyon’s own settings are paused until the file is repaired; the rest of Settings still works.",
+            ),
+            group(Some("Repair it"), steps),
+            button::link(if self.design.details {
+                "Hide details"
+            } else {
+                "Details"
+            })
+            .id("settings-damage-details".into())
+            .on_press(Message::Design(Edit::Details(!self.design.details)))
+            .into(),
+        ];
+        if self.design.details
+            && let Some(problem) = &self.config.design_problem
+        {
+            parts.push(label(problem, 13., MUTED));
+        }
+        if let Some(notice) = &self.design.notice {
+            parts.push(label(notice, 13., MUTED));
+        }
+        column::with_children(parts)
+            .spacing(18)
+            .max_width(680)
+            .into()
+    }
     /// The guided restore, shown in place of a page whose edits wait.
     pub(super) fn design_recovery_view(&self) -> Element<'_, Message> {
+        if self.config.settings_damaged {
+            return self.damaged_settings_view();
+        }
         let design_file = crate::config::Config::path()
             .map(|config| crate::design::storage::path(&config).display().to_string())
             .unwrap_or_else(|| "design-v1.json".into());

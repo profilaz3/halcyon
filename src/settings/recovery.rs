@@ -146,9 +146,17 @@ pub(super) struct DesktopRecovery {
     pub problem: Option<String>,
     pub plan: Option<crate::desktop::recovery::RestorePlan>,
     pub busy: bool,
+    /// The wallpaper from before Halcyon was saved, so it can be put back.
+    pub wallpaper_backup: bool,
+}
+/// Where the controller keeps the wallpaper from before Halcyon's first
+/// change (`halcyon-ctl restore-wallpaper` reads it there).
+pub(super) fn wallpaper_backup() -> Option<std::path::PathBuf> {
+    crate::paths::config_dir().map(|dir| dir.join("original-background.ron"))
 }
 impl DesktopRecovery {
     pub fn refresh(&mut self) {
+        self.wallpaper_backup = wallpaper_backup().is_some_and(|path| path.is_file());
         match crate::desktop::DesktopStore::from_env()
             .and_then(|s| crate::desktop::recovery::load_baseline(&s))
         {
@@ -164,7 +172,7 @@ impl DesktopRecovery {
     }
     pub fn summary(&self) -> String {
         self.info.as_ref().map_or_else(
-            || "Saved before the first desktop change".into(),
+            || "Nothing to restore yet. Halcyon saves your desktop before its first change.".into(),
             |info| {
                 let kind = match info.kind {
                     crate::desktop::recovery::BaselineKind::OriginalDesktop => "Original desktop",

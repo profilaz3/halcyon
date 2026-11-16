@@ -40,6 +40,7 @@ impl Cards {
             retry,
             details: false,
             brief: false,
+            repair: false,
         });
         self.sidebar.show(Instant::now());
     }
@@ -54,6 +55,7 @@ impl Cards {
                 retry: Some(Message::SetWidgetVisible(widget, true)),
                 details: false,
                 brief: true,
+                repair: false,
             });
             self.sidebar.show_briefly(Instant::now(), BRIEF_NOTICE);
         }
@@ -841,6 +843,14 @@ impl Cards {
             text::body(notice.body.as_ref()).into(),
         ];
         let mut buttons = Vec::new();
+        if notice.repair {
+            buttons.push(
+                cosmic::widget::button::suggested("Open Settings to repair")
+                    .id("notice-repair".into())
+                    .on_press(Message::Settings)
+                    .into(),
+            );
+        }
         if notice.retry.is_some() {
             buttons.push(
                 cosmic::widget::button::suggested(if notice.brief { "Undo" } else { "Try again" })

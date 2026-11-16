@@ -589,6 +589,7 @@ impl Cards {
                 retry: Some(Message::RainRetry),
                 details: false,
                 brief: false,
+                repair: false,
             });
         }
         Task::batch([nudge, recreate])

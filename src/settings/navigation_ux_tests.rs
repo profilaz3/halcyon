@@ -674,9 +674,16 @@ fn on13_running_and_startup_says_whether_halcyon_is_on() {
         native.text_bounds(app.settings_view(), "Stopped");
         crate::settings::DRAW_REAL_SERVICE.with(|real| real.set(false));
     }
-    assert_eq!(
-        crate::settings::navigation::search("stop halcyon")[0].label,
-        "Running and startup"
+    // Both ways to stop are on this page: the Stop button above, and Stop
+    // using Halcyon, which search lists first for these words.
+    let hits = crate::settings::navigation::search("stop halcyon");
+    assert_eq!(hits[0].page, Page::General);
+    assert_eq!(hits[0].app_destination(), AppSettingsPage::Operation);
+    assert!(
+        hits.iter()
+            .take(3)
+            .any(|hit| hit.label == "Running and startup"),
+        "{hits:?}"
     );
 }
 

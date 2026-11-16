@@ -4,21 +4,43 @@ use super::desktop::{WARN, banner};
 use super::*;
 
 impl Settings {
-    /// Home offers setup until it is finished or put off with “Not now”.
+    /// Home offers setup until it is finished or put off with “Set up later”.
     pub(in crate::settings) fn needs_setup(&self) -> bool {
         !self.config.onboarded && !self.config.setup_dismissed
     }
 
-    /// The one way into first-run setup from Home.
+    /// Whether Home shows the setup card: setup not done yet, or its
+    /// choices kept for later.
+    pub(in crate::settings) fn offers_setup(&self) -> bool {
+        self.needs_setup() || self.setup_kept
+    }
+
+    /// The one way into first-run setup from Home. Choices kept with Set up
+    /// later come back here too, not only in Changes.
     pub(super) fn setup_card(&self) -> Element<'_, Message> {
-        frame(
-            split(
+        let (text, actions) = if self.setup_kept {
+            (
+                detail_state(
+                    "Finish setting up your desktop",
+                    "Your setup choices are kept. Nothing changes until you apply.",
+                ),
+                vec![
+                    button::suggested("Resume setup")
+                        .id(cosmic::widget::Id::new("setup-resume"))
+                        .on_press(Message::ResumeKept(
+                            crate::settings::navigation::KeptTarget::SetupChoices,
+                        ))
+                        .into(),
+                ],
+            )
+        } else {
+            (
                 detail_state(
                     "Set up your desktop",
                     "Pick a look, your dock and panel, and widgets in four short steps. Nothing changes until you apply.",
                 ),
-                row::with_children(vec![
-                    button::text("Not now")
+                vec![
+                    button::text("Set up later")
                         .id(cosmic::widget::Id::new("setup-dismiss"))
                         .on_press(Message::SetupDismissed(true))
                         .into(),
@@ -26,10 +48,16 @@ impl Settings {
                         .id(cosmic::widget::Id::new("setup-open"))
                         .on_press(Message::OpenWizard)
                         .into(),
-                ])
-                .spacing(6)
-                .align_y(Alignment::Center)
-                .into(),
+                ],
+            )
+        };
+        frame(
+            split(
+                text,
+                row::with_children(actions)
+                    .spacing(6)
+                    .align_y(Alignment::Center)
+                    .into(),
             ),
             SURFACE,
             LINE,

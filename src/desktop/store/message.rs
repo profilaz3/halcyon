@@ -10,7 +10,7 @@ pub const GENERIC: &str = "Halcyon couldn’t read or save your settings. Try ag
 const CONFLICT: &str =
     "These settings changed somewhere else since you started editing. Nothing was changed.";
 const ROLLBACK_INCOMPLETE: &str = "Couldn’t save this change, and some settings couldn’t be \
-     put back. Choose Restore to try again.";
+     put back. Choose Go back to before to try again.";
 const ROLLED_BACK: &str = "Couldn’t save this change, so your previous settings were put back.";
 
 /// An error with a sentence for people and technical text for Details.

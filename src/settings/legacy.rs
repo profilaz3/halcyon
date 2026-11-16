@@ -34,6 +34,8 @@ pub(super) struct Proposal {
     pub selected: bool,
     pub use_proposed: bool,
     pub problem: Option<String>,
+    /// Its values are open for editing on the page.
+    pub editing: bool,
     pub summary: String,
     pub text: String,
     original: Vec<u8>,
@@ -87,6 +89,7 @@ impl Recovery {
                 kind,
                 selected: false,
                 use_proposed: false,
+                editing: false,
                 summary: String::new(),
                 text,
                 original,
@@ -156,6 +159,15 @@ impl Recovery {
     pub fn apply(&mut self) -> Result<(), String> {
         let store = DesktopStore::from_env().map_err(|e| e.to_string())?;
         self.apply_at(&store)
+    }
+    /// Use this choice on a row that conflicts with a change made since is
+    /// the permission to replace that change with the recovered values.
+    pub fn allow_replacing(&mut self, index: usize) {
+        if let Some(row) = self.rows.get_mut(index)
+            && row.problem.is_some()
+        {
+            row.use_proposed = true;
+        }
     }
     pub fn apply_one(&mut self, index: usize) -> Result<(), String> {
         let selected: Vec<_> = self.rows.iter().map(|r| (r.kind, r.selected)).collect();
@@ -1159,7 +1171,9 @@ mod tests {
             "the competing original must now require explicit permission to replace the field"
         );
         assert_eq!(f.tree(), after_first);
-        recovery.rows[0].use_proposed = true;
+        // Use this choice on the conflicting row is that permission.
+        recovery.allow_replacing(0);
+        assert!(recovery.rows[0].use_proposed);
         recovery.apply_at(&store).unwrap();
         assert_eq!(
             AppearanceDraft::load(&store)
