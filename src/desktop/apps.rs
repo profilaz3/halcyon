@@ -17,6 +17,41 @@ pub struct AppInfo {
     /// `StartupWMClass` when it has one, else its desktop ID. Always shown
     /// for editing; it is a suggestion, not a guarantee.
     pub app_id: String,
+    /// The entry's `Exec` line, as written; never read as an ID.
+    pub exec: String,
+}
+
+impl AppInfo {
+    /// A command that starts the app from a shortcut: its `Exec` line
+    /// without the field codes a launcher fills in (files, URLs, its icon
+    /// and name), and without Flatpak's file-forwarding markers. Empty when
+    /// the entry has no `Exec`.
+    pub fn launch_command(&self) -> String {
+        let mut words = Vec::new();
+        for word in self.exec.split_whitespace() {
+            if matches!(word, "@@" | "@@u" | "@@f") {
+                continue;
+            }
+            let mut text = String::new();
+            let mut chars = word.chars();
+            while let Some(c) = chars.next() {
+                match (c, chars.clone().next()) {
+                    ('%', Some('%')) => {
+                        text.push('%');
+                        chars.next();
+                    }
+                    ('%', Some(_)) => {
+                        chars.next();
+                    }
+                    _ => text.push(c),
+                }
+            }
+            if !text.is_empty() {
+                words.push(text);
+            }
+        }
+        words.join(" ")
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -73,6 +108,20 @@ impl AppCatalog {
             .values()
             .find(|info| info.app_id == app_id)
             .or_else(|| self.apps.get(app_id))
+    }
+    /// The one installed app whose candidate app ID `pattern` matches, as
+    /// the compositor matches it (anywhere in the ID). None when no app or
+    /// apps with different IDs match, or the pattern isn't valid.
+    pub fn for_pattern(&self, pattern: &str) -> Option<&AppInfo> {
+        let regex = regex::Regex::new(pattern).ok()?;
+        let mut found = self
+            .apps
+            .values()
+            .filter(|info| regex.is_match(&info.app_id));
+        let first = found.next()?;
+        found
+            .all(|other| other.app_id == first.app_id)
+            .then(|| self.for_app_id(&first.app_id).unwrap_or(first))
     }
 }
 
@@ -164,6 +213,7 @@ fn parse(id: &str, text: &str) -> Option<AppInfo> {
         name,
         icon: values.get("Icon").cloned().unwrap_or_default(),
         app_id,
+        exec: values.get("Exec").cloned().unwrap_or_default(),
     })
 }
 
@@ -223,5 +273,46 @@ mod tests {
                 .iter()
                 .all(|a| !a.app_id.contains("sentinel"))
         );
+    }
+
+    /// BAR-03: a pattern names an app only when one installed app ID
+    /// matches it, the way the compositor matches. BAR-05: an app's command
+    /// drops what a launcher fills in.
+    #[test]
+    fn patterns_name_one_app_and_launch_commands_drop_field_codes() {
+        let fixture = Fixture::new("apps-patterns");
+        let dir = fixture.0.join("applications");
+        entry(
+            &dir,
+            "com.valvesoftware.Steam.desktop",
+            "Type=Application\nName=Steam\nIcon=steam\nExec=/usr/bin/flatpak run --command=steam com.valvesoftware.Steam @@u %U @@\n",
+        );
+        entry(
+            &dir,
+            "org.gnome.Calculator.desktop",
+            "Type=Application\nName=Calculator\nExec=gnome-calculator --mode=%%basic %f\n",
+        );
+        entry(
+            &dir,
+            "org.gnome.Clocks.desktop",
+            "Type=Application\nName=Clocks\nExec=gnome-clocks\n",
+        );
+        let catalog = AppCatalog::discover(&[dir]);
+        let name = |pattern: &str| catalog.for_pattern(pattern).map(|app| app.name.clone());
+        assert_eq!(name("Steam").as_deref(), Some("Steam"));
+        assert_eq!(name("^org\\.gnome\\.Calc").as_deref(), Some("Calculator"));
+        assert_eq!(name("org\\.gnome\\."), None, "two apps match");
+        assert_eq!(name("nothing"), None);
+        assert_eq!(name("("), None, "not a pattern");
+        let command = |id: &str| catalog.get(id).unwrap().launch_command();
+        assert_eq!(
+            command("com.valvesoftware.Steam"),
+            "/usr/bin/flatpak run --command=steam com.valvesoftware.Steam"
+        );
+        assert_eq!(
+            command("org.gnome.Calculator"),
+            "gnome-calculator --mode=%basic"
+        );
+        assert_eq!(command("org.gnome.Clocks"), "gnome-clocks");
     }
 }

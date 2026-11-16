@@ -12,6 +12,8 @@ mod colors;
 mod design;
 mod desktop;
 pub(super) use desktop::host::Host;
+#[cfg(test)]
+pub(in crate::settings) use desktop::{GESTURES, POPUPS_NOTE};
 mod desktop_icons;
 mod edge_menu;
 pub(super) mod explain;

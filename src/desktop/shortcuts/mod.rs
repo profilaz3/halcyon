@@ -862,6 +862,60 @@ impl ShortcutsDraft {
         Ok(())
     }
 
+    /// Moves a built-in action to other keys, the way COSMIC Settings does:
+    /// a custom entry runs the same action on `binding`, and a custom
+    /// `Disable` turns the default's own keys off. Undo brings the default
+    /// back, as do removing the new entry and switching the old keys on.
+    /// Keys already in use need `choice.replace`.
+    pub fn rebind_builtin(
+        &mut self,
+        ident: Ident,
+        binding: &Binding,
+        choice: Choice,
+    ) -> Result<(), Ask> {
+        if !binding.is_set() {
+            return Err(Ask::Refused(
+                "Add Super, Ctrl or Alt to that key; only function and media keys work alone."
+                    .into(),
+            ));
+        }
+        let mut work = self.work(false)?;
+        let default = work
+            .default_at(ident)
+            .filter(|entry| entry.active())
+            .cloned()
+            .ok_or_else(|| Ask::Refused("This isn’t a built-in shortcut.".into()))?;
+        if work.custom_at(ident).is_some() {
+            return Err(Ask::Refused(
+                "This shortcut was changed meanwhile. Cancel and open it again.".into(),
+            ));
+        }
+        let target = binding.ident();
+        if target == ident {
+            return Ok(());
+        }
+        if let Some(current) = work.occupant(target)?
+            && !choice.replace
+        {
+            return Err(Ask::Replace {
+                combo: binding.label(),
+                current,
+            });
+        }
+        let at = work.clear(target);
+        let moved = default
+            .with_binding(binding.plain())
+            .map_err(Ask::Refused)?;
+        match at {
+            Some(at) => work.custom.insert(at, moved),
+            None => work.custom.push(moved),
+        }
+        let off = Entry::new(default.binding.plain(), Action::Disable).map_err(Ask::Refused)?;
+        work.custom.push(off);
+        self.commit(work);
+        Ok(())
+    }
+
     /// Turns a built-in default off with a custom `Disable`, or back on by
     /// removing that `Disable`.
     pub fn set_default(&mut self, ident: Ident, on: bool) -> Result<(), Ask> {

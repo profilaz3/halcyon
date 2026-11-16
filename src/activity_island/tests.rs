@@ -2479,9 +2479,9 @@ fn notification_list_caps_its_rows_and_counts_the_rest() {
                 "{shape}: {row}"
             );
         }
-        // The rest are counted under the last row. Clear all is on an
-        // island's title line, and beside the count on a bar.
-        let more = ui.text_bounds(app.capsule(true), "and 2 more");
+        // The rest are a press away under the last row. Clear all is on an
+        // island's title line, and beside the button on a bar.
+        let more = ui.text_bounds(app.capsule(true), "Show 2 more");
         let last = ui.bounds(app.capsule(true), "activity-note-row-3");
         let clear = ui.bounds(app.capsule(true), "activity-note-clear");
         let first = ui.bounds(app.capsule(true), "activity-note-row-7");
@@ -2520,8 +2520,111 @@ fn notification_list_caps_its_rows_and_counts_the_rest() {
     }
     assert_eq!(app.notes.len(), notifications::LIMIT);
     let mut ui = open_list(&mut app);
-    let more = format!("and {} more", notifications::LIMIT - LIST_ROWS);
+    let more = format!("Show {} more", notifications::LIMIT - LIST_ROWS);
     assert!(ui.text_bounds(app.capsule(true), &more).width > 0.);
+}
+/// BAR-12: "Show N more" swaps the older notifications into the rows, in
+/// the same popup, and "Back to newest" brings the first ones back. Each
+/// page keeps reading order for Tab, and closing starts over.
+#[test]
+fn notification_list_pages_to_the_older_ones_and_back() {
+    use cosmic::iced::advanced::widget::operation::focusable::focus_next;
+    let mut app = app();
+    let _ = app.update(Message::Notes(notifications::Event::Ready(true)));
+    for id in 1..=7 {
+        notify(
+            &mut app,
+            note(id, &format!("App {id}"), "", &format!("Message {id}"), ""),
+        );
+    }
+    for attached in [false, true] {
+        app.panel_frame = host::Frame {
+            height: 32.,
+            padding: 4.,
+            radius: 8.,
+            attached,
+            opacity: 1.,
+        };
+        let mut ui = open_list(&mut app);
+        let height = app.popup_height();
+        assert!(
+            ui.try_bounds(app.capsule(true), "activity-note-newest")
+                .is_none()
+        );
+        let sent = click(&mut ui, &app, "activity-note-older");
+        assert!(
+            sent.iter()
+                .any(|m| matches!(m, Message::NotesPage(from) if *from == LIST_ROWS)),
+            "{sent:?}"
+        );
+        for message in sent {
+            let _ = app.update(message);
+        }
+        // The two older ones fill the rows, inside the same popup.
+        for id in 1..=2 {
+            let row = ui.bounds(app.capsule(true), &format!("activity-note-row-{id}"));
+            assert!(row.y + row.height <= height, "{attached}: row {id} {row:?}");
+        }
+        for id in 3..=7 {
+            let row = format!("activity-note-row-{id}");
+            assert!(ui.try_bounds(app.capsule(true), &row).is_none(), "{row}");
+        }
+        assert!(
+            ui.try_bounds(app.capsule(true), "activity-note-older")
+                .is_none()
+        );
+        let back = ui.bounds(app.capsule(true), "activity-note-newest");
+        let last = ui.bounds(app.capsule(true), "activity-note-row-1");
+        assert!(back.y >= last.y + last.height && back.y + back.height <= height);
+        ui.text_bounds(app.capsule(true), "Back to newest");
+        // Tab: the rows in reading order, then the way back.
+        let _ = app.update(Message::Key(keyboard::Key::Named(
+            keyboard::key::Named::Tab,
+        )));
+        let targets: Vec<(String, cosmic::iced::Rectangle)> = [
+            "activity-note-row-2",
+            "activity-note-row-1",
+            "activity-note-newest",
+        ]
+        .into_iter()
+        .map(|id| (id.to_owned(), ui.bounds(app.capsule(true), id)))
+        .collect();
+        let mut reached = Vec::new();
+        for _ in 0..24 {
+            ui.operate(app.capsule(true), Box::new(focus_next::<()>()));
+            if let Some(focus) = ui.focused(app.capsule(true))
+                && let Some((id, _)) = targets.iter().find(|(_, b)| *b == focus)
+                && !reached.contains(id)
+            {
+                reached.push(id.clone());
+            }
+        }
+        let order: Vec<String> = targets.iter().map(|(id, _)| id.clone()).collect();
+        assert_eq!(reached, order, "{attached}");
+        // Back to the newest five.
+        for message in click(&mut ui, &app, "activity-note-newest") {
+            let _ = app.update(message);
+        }
+        assert!(
+            ui.try_bounds(app.capsule(true), "activity-note-row-7")
+                .is_some()
+        );
+        assert!(
+            ui.try_bounds(app.capsule(true), "activity-note-row-1")
+                .is_none()
+        );
+        // Opened again later, the list starts with the newest.
+        for message in click(&mut ui, &app, "activity-note-older") {
+            let _ = app.update(message);
+        }
+        close(&mut app);
+        let mut ui = open_list(&mut app);
+        assert!(
+            ui.try_bounds(app.capsule(true), "activity-note-row-7")
+                .is_some()
+        );
+        close(&mut app);
+    }
 }
 #[test]
 fn notification_list_follows_the_keyboard() {

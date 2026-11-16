@@ -501,3 +501,77 @@ fn unchanged_command_edit_is_not_an_edit() {
     assert!(!draft.dirty());
     assert!(draft.plan().patch.is_empty());
 }
+
+/// BAR-04: a built-in action moves to other keys the way COSMIC Settings
+/// does it: the custom list runs the same action on the new keys and turns
+/// the old keys off. Keys in use ask first; Undo brings everything back.
+#[test]
+fn builtin_actions_move_to_other_keys() {
+    let fixture = Fixture::new("shortcuts-rebind");
+    fixture.system(NAMESPACE, "defaults", DEFAULTS);
+    let store = fixture.store();
+    let mut draft = draft(&store);
+    let terminal = Binding::parse("Super+T").unwrap();
+    let new = Binding::parse("Super+Alt+T").unwrap();
+    draft
+        .rebind_builtin(terminal.ident(), &new, Choice::default())
+        .unwrap();
+    let rows = draft.rows();
+    let moved = row(&rows, "Super+Alt+T");
+    assert_eq!(
+        moved.kind,
+        Kind::Override {
+            label: "Open terminal".into()
+        }
+    );
+    assert!(moved.custom);
+    let old = row(&rows, "Super+T");
+    assert_eq!(
+        old.kind,
+        Kind::Builtin {
+            label: "Open terminal".into(),
+            on: false
+        }
+    );
+    let custom = draft.custom().unwrap();
+    assert_eq!(custom.len(), 2);
+    assert_eq!(custom[0].action_raw, "System(Terminal)");
+    assert!(custom[1].is_disable());
+    let before = fixture.read(NAMESPACE, "custom");
+    let change = apply(&store, &draft);
+    let written = fixture.read(NAMESPACE, "custom").unwrap();
+    assert!(written.contains("System(Terminal)"), "{written}");
+    assert!(written.contains("Disable"), "{written}");
+    // COSMIC reads it back as the same two entries.
+    let read = format::parse_map(&written).unwrap();
+    assert_eq!(read.len(), 2);
+    assert_eq!(read[0].ident(), new.ident());
+    // Keys another shortcut uses ask before replacing it.
+    let mut draft = ShortcutsDraft::load(&store).unwrap();
+    let close = Binding::parse("Super+Q").unwrap();
+    let maximize = Binding::parse("Super+M").unwrap();
+    assert_eq!(
+        draft.rebind_builtin(maximize.ident(), &close, Choice::default()),
+        Err(Ask::Replace {
+            combo: "Super+Q".into(),
+            current: "Close window".into(),
+        })
+    );
+    assert!(!draft.dirty());
+    // The same keys change nothing, and a plain letter isn't keys.
+    draft
+        .rebind_builtin(maximize.ident(), &maximize, Choice::default())
+        .unwrap();
+    assert!(!draft.dirty());
+    assert!(matches!(
+        draft.rebind_builtin(
+            maximize.ident(),
+            &Binding::parse("k").unwrap(),
+            Choice::default()
+        ),
+        Err(Ask::Refused(_))
+    ));
+    // Undo puts the defaults back as they were.
+    store.undo_latest(&change.id).unwrap();
+    assert_eq!(fixture.read(NAMESPACE, "custom"), before);
+}

@@ -100,6 +100,8 @@ impl Message {
 pub enum AppletControl {
     Drag,
     Select,
+    /// Opens the row's regions.
+    MoveTo,
     Up,
     Down,
     Remove,
@@ -110,6 +112,7 @@ pub fn control_id(slot: Slot, control: AppletControl) -> cosmic::widget::Id {
     let name = match control {
         AppletControl::Drag => "drag",
         AppletControl::Select => "select",
+        AppletControl::MoveTo => "move-to",
         AppletControl::Up => "up",
         AppletControl::Down => "down",
         AppletControl::Remove => "remove",
@@ -131,6 +134,10 @@ pub enum Notice {
     /// The change was made, with something worth knowing.
     Warning(String),
 }
+
+/// How long item edits wait for the next one before they apply together,
+/// so moving an item across the bar restarts it once, not at every step.
+pub const ITEMS_HOLD: std::time::Duration = std::time::Duration::from_millis(1500);
 
 /// Saved, but Islands didn't take the new layout yet.
 pub const ISLANDS_PENDING: &str = "Saved, but the panel didn’t pick up the new layout. It shows \
@@ -213,6 +220,11 @@ pub struct DesktopEditor {
     follow_style: bool,
     /// The item edit waiting for Apply, named for its Undo and Changes.
     item: Option<ItemChange>,
+    /// Item edits are held until then, and then apply together; they also
+    /// apply when the row or the page is left (BAR-09).
+    pub items_due: Option<std::time::Instant>,
+    /// The items before the held edits, which name them as one change.
+    items_from: Option<Regions>,
     /// Read for a picture elsewhere (setup), so the page's first visit
     /// still checks for Islands.
     unchecked: bool,
@@ -299,6 +311,8 @@ impl DesktopEditor {
             recovery: self.recovery.clone(),
             follow_style: self.follow_style,
             item: self.item.clone(),
+            items_due: self.items_due,
+            items_from: self.items_from.clone(),
             unchecked: self.unchecked,
         }
     }
@@ -641,17 +655,50 @@ impl DesktopEditor {
             return;
         };
         let before = regions.clone();
-        // Named only as the one unsaved edit, so the name covers all Apply saves.
+        // Named only as the one unsaved edit, so the name covers all Apply
+        // saves. Held edits are named together, from before the first.
         let clean = self
             .drafts
             .values()
             .all(|draft| draft.edited().next().is_none());
+        let from = if clean {
+            Some(before)
+        } else {
+            self.items_from.take()
+        };
         let focus = change(&mut regions);
         self.focus = focus;
         self.edit(|draft| draft.set_applets(&regions));
-        self.item = clean
-            .then(|| self.name_item_edit(&before, &regions))
-            .flatten();
+        self.item = from
+            .as_ref()
+            .and_then(|from| self.name_item_edit(from, &regions));
+        self.items_from = from;
+        // One restart for the lot: wait for the next edit before applying.
+        if self.dirty() {
+            self.items_due = Some(std::time::Instant::now() + ITEMS_HOLD);
+        }
+    }
+    /// Item edits wait to apply together.
+    pub fn items_held(&self) -> bool {
+        self.items_due.is_some()
+    }
+    /// The panel's starter layout: COSMIC's usual installed items, keeping
+    /// the Activity island when the panel has it.
+    pub fn starter(&self) -> Regions {
+        let mut starter = self.catalog.starter(self.has_battery);
+        let island = crate::activity_island::APPLET_ID;
+        let has_island = self
+            .current()
+            .and_then(|draft| draft.applets().known().cloned())
+            .is_some_and(|regions| {
+                Region::ALL
+                    .iter()
+                    .any(|region| regions.list(*region).iter().any(|id| id == island))
+            });
+        if has_island && self.selected == PanelKind::Panel {
+            starter.add(Region::Center, island);
+        }
+        starter
     }
     /// An item edit in the words the editor shows: "Added Sound", "Moved
     /// Sound to Right", "Reordered Dock items".
@@ -747,6 +794,10 @@ impl DesktopEditor {
             }
             Message::AppletGroup(group) => self.applet_group = group,
             Message::SelectApplet(slot) => {
+                // Leaving the row applies what waited, now.
+                if self.items_due.is_some() && slot != self.focus {
+                    self.items_due = Some(std::time::Instant::now());
+                }
                 self.focus = slot.filter(|s| {
                     self.current()
                         .and_then(|d| d.applets().known().cloned())
@@ -773,7 +824,7 @@ impl DesktopEditor {
                 self.picker = None;
             }
             Message::UseStarter if self.selected == PanelKind::Panel => {
-                let starter = self.catalog.starter(self.has_battery);
+                let starter = self.starter();
                 if starter != Regions::default() {
                     self.edit(|d| d.set_applets(&starter));
                     self.focus = None;
@@ -889,6 +940,8 @@ impl DesktopEditor {
                 if self.arranging() {
                     self.island_edit(islands::Edit::Cancel);
                 }
+                self.items_due = None;
+                self.items_from = None;
                 for draft in self.drafts.values_mut() {
                     draft.discard();
                 }
@@ -928,6 +981,9 @@ impl DesktopEditor {
     }
 
     fn apply(&mut self) {
+        // Held item edits go with this Apply, whatever it does with them.
+        self.items_due = None;
+        self.items_from = None;
         // Live Arrange owns its draft until Done/Cancel. Ordinary control
         // completion must not commit or disrupt that lease.
         if self.arranging() {
@@ -1288,6 +1344,58 @@ mod tests {
         }
     }
 
+    /// BAR-09: item edits wait for a pause and then apply as one change
+    /// named for all of them; leaving the row applies them at once; a
+    /// Discard drops them unwritten. Other controls still apply at once.
+    #[test]
+    fn item_edits_wait_and_apply_together() {
+        let fixture = Fixture::new("item-edit-hold");
+        let mut editor = editor(&fixture);
+        editor.update(Message::Select(PanelKind::Dock));
+        let before = fixture.tree();
+        let slot = |region, index| Slot { region, index };
+        editor.update(Message::MoveTo(slot(Region::Center, 0), Region::End));
+        let first = editor.items_due.expect("held");
+        assert!(first > std::time::Instant::now() + ITEMS_HOLD / 2);
+        editor.update(Message::Step(slot(Region::End, 0), -1));
+        assert!(editor.items_due.unwrap() >= first, "each edit waits again");
+        assert_eq!(
+            editor.item.as_ref().map(ItemChange::title),
+            Some("Reordered Dock items".into())
+        );
+        assert!(editor.dirty());
+        assert_eq!(fixture.tree(), before, "nothing written while held");
+        assert!(
+            super::super::direct::completion(&super::super::Message::DesktopEditor(Message::Step(
+                slot(Region::Center, 0),
+                1
+            )))
+            .is_none()
+        );
+        // The pause is over: one Apply writes them all, named once.
+        editor.update(Message::Apply);
+        assert!(!editor.dirty() && editor.items_due.is_none());
+        assert_ne!(fixture.tree(), before);
+        // Leaving the row applies at once.
+        editor.update(Message::SelectApplet(Some(slot(Region::Center, 0))));
+        editor.update(Message::MoveTo(slot(Region::Center, 0), Region::Start));
+        assert!(editor.items_held());
+        let moved = editor.focus;
+        editor.update(Message::SelectApplet(None));
+        assert!(
+            editor.items_due.unwrap() <= std::time::Instant::now(),
+            "{moved:?}"
+        );
+        editor.update(Message::Apply);
+        // Discard drops held edits without writing them.
+        let applied = fixture.tree();
+        editor.update(Message::Remove(slot(Region::Start, 0)));
+        assert!(editor.items_held());
+        editor.update(Message::Discard);
+        assert!(!editor.items_held() && !editor.dirty());
+        assert_eq!(fixture.tree(), applied);
+    }
+
     #[test]
     fn item_edits_use_the_region_names_of_the_bar() {
         let fixture = Fixture::new("item-edit-names");
@@ -1315,7 +1423,8 @@ mod tests {
             editor.item.as_ref().map(ItemChange::title),
             Some(format!("Moved {name} to Bottom"))
         );
-        // A second item edit before Apply makes it more than one item's.
+        // Edits held for one Apply are named together, from before the
+        // first: moved out and stepped back is a new order.
         editor.update(Message::Step(
             Slot {
                 region: Region::End,
@@ -1323,7 +1432,10 @@ mod tests {
             },
             -1,
         ));
-        assert_eq!(editor.item, None);
+        assert_eq!(
+            editor.item.as_ref().map(ItemChange::title),
+            Some("Reordered Dock items".into())
+        );
         editor.update(Message::Discard);
         editor.update(Message::MoveTo(start(0), Region::End));
         editor.update(Message::Apply);
@@ -1425,6 +1537,43 @@ mod tests {
                 .unwrap()
                 .contains("com.system76.CosmicAppletBattery")
         );
+    }
+
+    /// BAR-09: the starter layout keeps the Activity island in the middle
+    /// when the panel has it; without it, none is added.
+    #[test]
+    fn panel_starter_keeps_the_activity_island() {
+        let fixture = Fixture::new("panel-starter-island");
+        let panel = PanelKind::Panel.namespace();
+        let island = crate::activity_island::APPLET_ID;
+        fixture.user(
+            &panel,
+            "plugins_center",
+            &format!("Some([\"{island}\", \"other\"])"),
+        );
+        let apps = fixture.0.join("applications");
+        std::fs::create_dir_all(&apps).unwrap();
+        std::fs::write(
+            apps.join("com.system76.CosmicAppletTime.desktop"),
+            "[Desktop Entry]\nName=Time\nX-CosmicApplet=true\n",
+        )
+        .unwrap();
+        let mut editor = editor(&fixture);
+        editor.catalog = AppletCatalog::discover(&[apps]);
+        editor.update(Message::Select(PanelKind::Panel));
+        let starter = editor.starter();
+        assert_eq!(starter.center, ["com.system76.CosmicAppletTime", island]);
+        editor.update(Message::UseStarter);
+        let used = editor.current().unwrap().applets().known().unwrap().clone();
+        assert_eq!(used, starter);
+        assert!(!used.contains("other"));
+        // Without the island on the panel, the starter adds none.
+        editor.update(Message::Discard);
+        editor.update(Message::Remove(Slot {
+            region: Region::Center,
+            index: 0,
+        }));
+        assert!(!editor.starter().contains(island));
     }
 
     #[test]

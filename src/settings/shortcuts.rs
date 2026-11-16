@@ -7,6 +7,7 @@
 //! only for the draft it was derived from. When the draft changes under it
 //! (Refresh, reopening, Use current, an Apply conflict), the answers are
 //! dropped and the question is derived again from what is there now.
+use crate::desktop::apps::AppCatalog;
 use crate::desktop::shortcuts::{Ask, Binding, Choice, Ident, Kind, ShortcutsDraft, Target};
 use crate::desktop::store::{DesktopStore, Journal, Owner};
 use crate::settings::desktop::Notice;
@@ -132,6 +133,15 @@ pub struct CommandForm {
     pub name: String,
     pub combo: String,
     pub command: String,
+    /// A built-in shortcut whose action moves to the new keys; the form
+    /// then asks for the keys only.
+    #[serde(default)]
+    pub rebinding: Option<Ident>,
+    /// The installed-app picker is open.
+    #[serde(skip)]
+    pub picker: bool,
+    #[serde(skip)]
+    pub picker_search: String,
     #[serde(skip)]
     pub error: Option<String>,
     /// The question Save is waiting on.
@@ -187,11 +197,21 @@ pub enum Message {
     Category(Category),
     Add,
     Edit(Target),
+    /// Move a built-in shortcut's action to other keys.
+    ChangeKeys(Ident),
+    /// Open or close the installed-app picker.
+    Picker(bool),
+    PickerSearch(String),
+    /// Fill the command and name from an installed app.
+    Pick(String),
     Name(String),
     Combo(String),
     Record,
     CancelRecording,
     Recorded(Result<String, String>),
+    /// The desktop holds back its own shortcuts for this window (true), or
+    /// stopped doing so.
+    Inhibited(bool),
     Command(String),
     Save,
     Cancel,
@@ -243,6 +263,10 @@ pub struct ShortcutsEditor {
     pub expanded_categories: BTreeSet<Category>,
     recording: bool,
     pub recording_error: Option<String>,
+    /// The desktop confirmed it holds back its own shortcuts while keys are
+    /// recorded here.
+    pub inhibited: bool,
+    apps: Option<AppCatalog>,
 }
 
 impl Default for ShortcutsEditor {
@@ -257,6 +281,8 @@ impl Default for ShortcutsEditor {
             expanded_categories: BTreeSet::new(),
             recording: false,
             recording_error: None,
+            inhibited: false,
+            apps: None,
         }
     }
 }
@@ -273,6 +299,21 @@ impl ShortcutsEditor {
         self.cancel_recording();
         self.core.open();
         self.revalidate();
+        if self.apps.is_none() {
+            // A fixture replaces discovery, like Floating apps.
+            let fixture = self
+                .core
+                .store()
+                .and_then(DesktopStore::fixture_root)
+                .map(|root| root.join("applications"));
+            self.apps = Some(match fixture {
+                Some(dir) => AppCatalog::discover(&[dir]),
+                None => AppCatalog::installed(),
+            });
+        }
+    }
+    pub fn apps(&self) -> Option<&AppCatalog> {
+        self.apps.as_ref()
     }
     pub(super) fn session_draft(&self) -> Option<SavedShortcuts> {
         (self.dirty() || self.form.is_some())
@@ -332,6 +373,7 @@ impl ShortcutsEditor {
     pub fn cancel_recording(&mut self) {
         self.recording = false;
         self.recording_error = None;
+        self.inhibited = false;
     }
     pub fn recovery(&self) -> Option<&Result<Journal, String>> {
         self.core.recovery()
@@ -432,6 +474,52 @@ impl ShortcutsEditor {
                     });
                 }
             }
+            Message::ChangeKeys(ident) => {
+                self.cancel_recording();
+                let row = self.draft().and_then(|draft| {
+                    draft.rows().into_iter().find(|row| {
+                        row.ident() == ident
+                            && !row.custom
+                            && !row.unused
+                            && matches!(row.kind, Kind::Builtin { on: true, .. })
+                    })
+                });
+                if let Some(row) = row {
+                    self.pending = None;
+                    self.form = Some(CommandForm {
+                        rebinding: Some(ident),
+                        name: row.name.clone(),
+                        ..CommandForm::default()
+                    });
+                }
+            }
+            Message::Picker(open) => self.form_mut(|form| form.picker = open),
+            Message::PickerSearch(text) => {
+                self.form_mut(|form| form.picker_search = text.chars().take(64).collect())
+            }
+            Message::Pick(id) => {
+                let Some(app) = self.apps.as_ref().and_then(|apps| apps.get(&id)).cloned() else {
+                    return;
+                };
+                let command = app.launch_command();
+                self.form_mut(|form| {
+                    form.picker = false;
+                    if !command.is_empty() {
+                        form.command = command.clone();
+                        if form.name.trim().is_empty() {
+                            form.name = format!("Open {}", app.name);
+                        }
+                    }
+                });
+                if command.is_empty()
+                    && let Some(form) = &mut self.form
+                {
+                    form.error = Some(format!(
+                        "{} can’t be started from a shortcut. Type its command instead.",
+                        app.name
+                    ));
+                }
+            }
             Message::Name(text) => self.form_mut(|form| form.name = text),
             Message::Combo(text) => self.form_mut(|form| form.combo = text),
             Message::Record => {
@@ -441,6 +529,7 @@ impl ShortcutsEditor {
                 }
             }
             Message::CancelRecording => self.cancel_recording(),
+            Message::Inhibited(on) => self.inhibited = on && self.recording(),
             Message::Recorded(result) => {
                 if self.recording() {
                     match result {
@@ -550,7 +639,10 @@ impl ShortcutsEditor {
     }
     fn run_save(draft: &mut ShortcutsDraft, form: &CommandForm, choice: Choice) -> Result<(), Ask> {
         let binding = form.binding().map_err(Ask::Refused)?;
-        draft.save_command(form.editing, &form.name, &binding, &form.command, choice)
+        match form.rebinding {
+            Some(ident) => draft.rebind_builtin(ident, &binding, choice),
+            None => draft.save_command(form.editing, &form.name, &binding, &form.command, choice),
+        }
     }
     fn row_op(&mut self, op: RowOp, choice: Choice) {
         let result = self.try_edit(|draft| Self::run_row(draft, &op, choice));

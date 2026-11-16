@@ -184,8 +184,13 @@ pub(super) enum Row {
 
 pub(super) struct Layout {
     pub rows: Vec<Row>,
-    /// Live notifications that did not fit, counted as "and N more".
+    /// Live notifications not shown: older ones after the rows, and newer
+    /// ones before them once the list has moved on.
     pub hidden: usize,
+    /// Of those, the older ones "Show N more" brings in.
+    pub older: usize,
+    /// Where the list starts to show them.
+    pub next: usize,
     /// The body's height below the title line.
     pub height: f32,
 }
@@ -241,6 +246,8 @@ impl Applet {
             return Layout {
                 rows: Vec::new(),
                 hidden: 0,
+                older: 0,
+                next: 0,
                 height: MENU_HEIGHT,
             };
         }
@@ -283,21 +290,22 @@ impl Applet {
                     self.titled_height(&self.group_message(n), false)
                 }),
         };
-        // Up to five lines, with an open group's own rows beyond them, as
-        // far as the room goes; always one.
+        // Up to five lines from `start`, with an open group's own rows
+        // beyond them, as far as the room goes; always one. Gives back
+        // where they end and the height they take.
         let take = |start: usize, budget: f32| {
-            let (mut used, mut lines, mut rows) = (0., 0, Vec::new());
+            let (mut used, mut lines, mut end) = (0., 0, start);
             for row in &all[start..] {
                 let lead = !matches!(row, Row::Member(_));
-                let next = used + height(row) + if rows.is_empty() { 0. } else { ROW_GAP };
-                if !rows.is_empty() && (next > budget + 0.5 || (lead && lines == LIST_ROWS)) {
+                let next = used + height(row) + if end == start { 0. } else { ROW_GAP };
+                if end > start && (next > budget + 0.5 || (lead && lines == LIST_ROWS)) {
                     break;
                 }
                 lines += usize::from(lead);
                 used = next;
-                rows.push(row.clone());
+                end += 1;
             }
-            (rows, used)
+            (start, end, used)
         };
         // An open group, or a notification opened in place, that would run
         // out of room moves to the top.
@@ -306,22 +314,23 @@ impl Applet {
             Row::Note(id) => self.expanded == Some(*id),
             Row::Member(_) => false,
         });
+        // "Show N more" moved the list on to older ones.
+        let from = self.list_from.min(all.len().saturating_sub(1));
         let pick = |budget: f32| {
-            let (rows, used) = take(0, budget);
+            let (start, end, used) = take(from, budget);
             if let Some(head) = head {
                 let members = all[head + 1..]
                     .iter()
                     .take_while(|row| matches!(row, Row::Member(_)))
                     .count();
-                if head > 0 && rows.len() < head + 1 + members {
+                if head > start && end < head + 1 + members {
                     return take(head, budget);
                 }
             }
-            (rows, used)
+            (start, end, used)
         };
-        let hidden = |rows: &[Row]| {
-            let shown: usize = rows
-                .iter()
+        let count = |rows: &[Row]| -> usize {
+            rows.iter()
                 .map(|row| match row {
                     Row::Note(_) | Row::Member(_) => 1,
                     Row::Group(key, ids) if self.open_group.as_deref() != Some(key.as_str()) => {
@@ -329,19 +338,23 @@ impl Applet {
                     }
                     Row::Group(..) => 0,
                 })
-                .sum();
-            self.notes.len().saturating_sub(shown)
+                .sum()
         };
-        let (mut rows, mut used) = pick(room - fixed);
-        // On an island, those that do not fit are counted on a line of
-        // their own; on a bar, beside Clear all.
-        if hidden(&rows) > 0 && self.clear_on_title() {
+        let hidden =
+            |start: usize, end: usize| self.notes.len().saturating_sub(count(&all[start..end]));
+        let (mut start, mut end, mut used) = pick(room - fixed);
+        // On an island, those that are not shown get a line of their own;
+        // on a bar, they sit beside Clear all.
+        if hidden(start, end) > 0 && self.clear_on_title() {
             fixed += MORE_LINE;
-            (rows, used) = pick(room - fixed);
+            (start, end, used) = pick(room - fixed);
         }
+        let hidden = hidden(start, end);
         Layout {
-            hidden: hidden(&rows),
-            rows,
+            hidden,
+            older: count(&all[end..]).min(hidden),
+            next: end,
+            rows: all[start..end].to_vec(),
             height: used + fixed,
         }
     }
@@ -626,6 +639,13 @@ impl Applet {
             }
             Message::RecentToggle => {
                 self.recent_open = !self.recent_open;
+                return self.fit_list();
+            }
+            Message::NotesPage(from) => {
+                self.list_from = from;
+                self.expanded = None;
+                self.reveal_deadline = None;
+                self.held = true;
                 return self.fit_list();
             }
             Message::RowHover(row, true) => self.hover_row = Some(row),
@@ -1384,7 +1404,8 @@ impl Applet {
     /// The notifications, newest first with urgent ones on top: a row opens
     /// one and a group opens in place. Clear all closes them together, on
     /// the title line or, on a bar, under the rows. Lines beyond the
-    /// popup's room are counted rather than scrolled.
+    /// popup's room are a page away: "Show N more" swaps in the older ones
+    /// and "Back to newest" returns, so each page keeps its Tab order.
     /// Recent sits underneath.
     pub(super) fn list_view(
         &self,
@@ -1409,12 +1430,34 @@ impl Applet {
                 Row::Group(key, ids) => self.group_row(palette, tint, reveal, key, ids),
             });
         }
-        let more = (layout.hidden > 0).then(|| {
-            self.text(
-                format!("and {} more", layout.hidden),
-                12.,
-                alpha(palette.quiet, reveal),
-            )
+        // Those not shown are a press away: older ones replace the rows,
+        // and the newest come back the same way.
+        let more = (layout.hidden > 0).then(|| -> Element<'_, Message> {
+            let page = |id: &'static str, label: String, from: usize| -> Element<'_, Message> {
+                widget::button::custom(
+                    widget::container(self.text(label, 12., alpha(palette.ink, 0.8 * reveal)))
+                        .height(Length::Fill)
+                        .align_y(center),
+                )
+                .id(id.into())
+                .height(Length::Fixed(MORE_LINE - ROW_GAP))
+                .padding([0, 10])
+                .class(capsule_button(palette, tint, reveal, Role::Ghost))
+                .on_press(Message::NotesPage(from))
+                .into()
+            };
+            let mut pages = widget::row([]).spacing(2).align_y(center);
+            if layout.older > 0 {
+                pages = pages.push(page(
+                    "activity-note-older",
+                    format!("Show {} more", layout.older),
+                    layout.next,
+                ));
+            }
+            if layout.hidden > layout.older {
+                pages = pages.push(page("activity-note-newest", "Back to newest".into(), 0));
+            }
+            pages.into()
         });
         if self.clear_on_title() || self.notes.is_empty() {
             if let Some(more) = more {
@@ -1422,7 +1465,6 @@ impl Applet {
                     widget::container(more)
                         .width(Length::Fill)
                         .height(MORE_LINE - ROW_GAP)
-                        .padding([0, 10])
                         .align_y(cosmic::iced::Alignment::End),
                 );
             }
@@ -1430,7 +1472,6 @@ impl Applet {
             let footer = widget::row([
                 widget::container(more.unwrap_or_else(|| widget::Space::new().into()))
                     .width(Length::Fill)
-                    .padding([0, 10])
                     .into(),
                 self.label_button(
                     palette,

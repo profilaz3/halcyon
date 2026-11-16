@@ -412,6 +412,9 @@ pub struct Applet {
     recent: Vec<notifications::Recent>,
     /// The Recent section is open.
     recent_open: bool,
+    /// The list row the open list starts at; past 0 once "Show N more"
+    /// moved it on to older notifications.
+    list_from: usize,
     /// Arrivals from muted apps this session.
     muted: usize,
     /// The app group open in the list, by app key; one at a time.
@@ -509,6 +512,9 @@ pub enum Message {
     GroupDismiss(String),
     RecentToggle,
     RecentClear,
+    /// Show the list from this row: older notifications, or back to the
+    /// newest with 0.
+    NotesPage(usize),
     /// Open a recent notification, or its app.
     RecentOpen(u32),
     /// Open the island on the Recent list.
@@ -602,6 +608,7 @@ impl Application for Applet {
                 popup_wide: 0.,
                 recent: Vec::new(),
                 recent_open: false,
+                list_from: 0,
                 muted: 0,
                 open_group: None,
                 hover_row: None,
@@ -785,6 +792,7 @@ impl Applet {
                     | Message::GroupDismiss(_)
                     | Message::RecentToggle
                     | Message::RecentClear
+                    | Message::NotesPage(_)
                     | Message::RecentOpen(_)
                     | Message::ShowRecent
                     | Message::NoteMenu(_)
@@ -1207,6 +1215,7 @@ impl Applet {
             | Message::GroupDismiss(_)
             | Message::RecentToggle
             | Message::RecentClear
+            | Message::NotesPage(_)
             | Message::RecentOpen(_)
             | Message::ShowRecent
             | Message::NoteMenu(_)
@@ -1681,6 +1690,7 @@ impl Applet {
         self.keyed = false;
         self.expanded = None;
         self.recent_open = false;
+        self.list_from = 0;
         self.menu = None;
         self.arm_expiry();
     }

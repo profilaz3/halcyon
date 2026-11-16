@@ -1101,6 +1101,9 @@ pub struct Settings {
     appearance_pending: Vec<AppearanceControl>,
     edit_generation: u64,
     save_at: Option<Instant>,
+    /// The desktop was asked to hold back its own shortcuts while keys are
+    /// recorded (Wayland keyboard-shortcuts-inhibit).
+    shortcuts_inhibit: bool,
     city_search: CitySearch,
     schedule_city_search: CitySearch,
     schedule_city_editing: bool,
@@ -1421,6 +1424,7 @@ impl cosmic::Application for Settings {
             appearance_pending: Vec::new(),
             edit_generation: 0,
             save_at: None,
+            shortcuts_inhibit: false,
             city_search: CitySearch::default(),
             schedule_city_search: CitySearch::default(),
             schedule_city_editing: false,
@@ -1675,6 +1679,18 @@ impl cosmic::Application for Settings {
                 .map(|_| Message::ReadSystemMotion),
             );
         }
+        if self.page == Page::DesktopShortcuts && self.shortcuts.recording() {
+            // Whether the desktop holds its own shortcuts back for the recorder.
+            subscriptions.push(cosmic::iced::event::listen_with(|event, _, _| {
+                use cosmic::iced::event::{PlatformSpecific, wayland};
+                match event {
+                    cosmic::iced::Event::PlatformSpecific(PlatformSpecific::Wayland(
+                        wayland::Event::ShortcutsInhibited(on),
+                    )) => Some(Message::Shortcuts(shortcuts::Message::Inhibited(on))),
+                    _ => None,
+                }
+            }));
+        }
         if !(self.page == Page::DesktopShortcuts && self.shortcuts.recording()) {
             subscriptions.push(cosmic::iced::event::listen_with(|event, status, _| {
                 use cosmic::iced::{Event, keyboard};
@@ -1724,6 +1740,14 @@ impl cosmic::Application for Settings {
                     _ => None,
                 }
             }));
+        }
+        if let Some(due) = self.desktop.items_due {
+            // Held Dock or Panel item edits apply together after a pause.
+            subscriptions.push(
+                crate::schedule::wake_at(due)
+                    .with("bar-items")
+                    .map(|_| Message::DesktopEditor(desktop::Message::Apply)),
+            );
         }
         if let Some(deadline) = self.save_at {
             let generation = self.edit_generation;
@@ -2078,7 +2102,11 @@ impl cosmic::Application for Settings {
     }
     fn on_app_exit(&mut self) -> Option<Message> {
         self.updates.cancel();
-        if self.native_busy || self.tools.saving() {
+        // Held item edits apply first; Close applies them, then closes.
+        if self.native_busy
+            || self.tools.saving()
+            || (self.desktop.items_held() && self.page.edits_bars())
+        {
             return Some(Message::Window(WindowControl::Close));
         }
         self.flush_edits();
@@ -2168,6 +2196,18 @@ impl cosmic::Application for Settings {
                 self.tools.close_after_save = true;
                 return Task::none();
             }
+        }
+        // Held Dock or Panel item edits apply before the window closes, so
+        // none is lost.
+        if matches!(
+            message,
+            Message::Window(WindowControl::Close) | Message::FlushEdits
+        ) && !self.native_busy
+            && self.desktop.items_held()
+            && self.page.edits_bars()
+        {
+            let held = self.update(Message::DesktopEditor(desktop::Message::Apply));
+            return Task::batch([held, self.update(message)]);
         }
         if let Message::Support(message) = message {
             return self.update_support(message);
@@ -2433,8 +2473,9 @@ impl cosmic::Application for Settings {
         let stage = self.clock_stage_sync();
         let instant = self.instant_theme_apply();
         let wallpaper = self.instant_wallpaper_apply();
+        let inhibit = self.shortcuts_inhibit_sync();
         Task::batch(
-            [task, depth, stage, instant, wallpaper]
+            [task, depth, stage, instant, wallpaper, inhibit]
                 .into_iter()
                 .chain(std::mem::take(&mut self.native_tasks)),
         )
@@ -2508,6 +2549,32 @@ impl Settings {
         } else {
             Task::none()
         }
+    }
+
+    /// Applies held Dock or Panel item edits now, as one change (BAR-09).
+    fn apply_held_items(&mut self) -> Task<Message> {
+        if !self.desktop.items_held() || !self.page.edits_bars() {
+            return Task::none();
+        }
+        let label = direct::label(&Message::DesktopEditor(desktop::Message::Apply));
+        crate::desktop::actions::in_action(&label, || {
+            self.handle(Message::DesktopEditor(desktop::Message::Apply))
+        })
+    }
+
+    /// While keys are recorded for a shortcut, asks the desktop to hold back
+    /// its own shortcuts for this window, so Super+T is recorded instead of
+    /// opening a terminal (BAR-11). COSMIC grants it through Wayland's
+    /// keyboard-shortcuts-inhibit; the recorder says when it is granted.
+    /// Asked again to stop as soon as recording ends or the page changes.
+    fn shortcuts_inhibit_sync(&mut self) -> Task<Message> {
+        let want = self.page == Page::DesktopShortcuts && self.shortcuts.recording();
+        if want == self.shortcuts_inhibit {
+            return Task::none();
+        }
+        self.shortcuts_inhibit = want;
+        cosmic::iced::platform_specific::shell::commands::keyboard_shortcuts_inhibit::inhibit_shortcuts(want)
+            .discard()
     }
 
     /// Applies a wallpaper choice once it can be: one recoverable change,
@@ -3751,6 +3818,12 @@ impl Settings {
                 let legacy_layout = page == Page::WidgetLayout;
                 let page = page.canonical();
                 let from = self.page;
+                // Held Dock or Panel item edits apply before the page goes.
+                let held = if self.page != page {
+                    self.apply_held_items()
+                } else {
+                    Task::none()
+                };
                 if self.page != page {
                     crate::usage::counts::page(page.usage_key());
                     // A previous page's change stays available in Recent
@@ -3931,6 +4004,7 @@ impl Settings {
                     Task::none()
                 };
                 return Task::batch([
+                    held,
                     scroll,
                     reveal,
                     navigation::reveal_in_sidebar(page),
@@ -7585,6 +7659,7 @@ mod tests {
     include!("settings/comfort_tests.rs");
     include!("settings/dock_glass_tests.rs");
     include!("settings/names_tests.rs");
+    include!("settings/bars_ux_tests.rs");
 
     /// What Wallpaper & colors recommends for a solid color background.
     fn recommended_color(rgb: [f32; 3]) -> [u8; 3] {
@@ -9416,12 +9491,14 @@ mod tests {
             before,
             "discovery and search are read-only"
         );
-        // Add is a completed action in the Dock's middle.
+        // Add goes in the Dock's middle, and saves after a short pause.
         let _ = app.update(Message::DesktopEditor(Edit::AddToBar("battery".into())));
         assert_eq!(
             app.desktop.placements("battery"),
             [(PanelKind::Dock, Region::Center, true)]
         );
+        assert!(app.desktop.items_held());
+        pause_items(&mut app);
         assert!(!app.desktop.dirty());
         assert_ne!(
             crate::desktop::store::tests::tree(&root.join("cosmic-root/config")),
@@ -13290,6 +13367,13 @@ mod tests {
     pub(super) fn send_settings(app: &mut Settings, message: Message) {
         let task = app.update(message);
         settle_settings(app, task);
+    }
+    /// The pause held Dock and Panel item edits wait for is over: sends
+    /// what its timer sends (BAR-09).
+    pub(super) fn pause_items(app: &mut Settings) {
+        if app.desktop.items_held() {
+            send_settings(app, Message::DesktopEditor(desktop::Message::Apply));
+        }
     }
     /// Reveal a real control through the page scrollable before asserting its
     /// reachability. Scrolling never changes application configuration.

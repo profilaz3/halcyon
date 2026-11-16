@@ -75,6 +75,9 @@ fn product_applet_remove_is_visible_and_persists_for_both_bars() {
                     &format!("applets-{:?}-{}-worker-{}", kind, size.width, worker),
                 );
                 native_click(&mut app, &mut native, "applet-start-1-remove");
+                // Held for a moment, then applied once.
+                assert_eq!(PanelDraft::load(&store, kind).unwrap().applets(), before);
+                pause_items(&mut app);
                 let after = PanelDraft::load(&store, kind)
                     .unwrap()
                     .applets()
@@ -100,6 +103,7 @@ fn product_applet_remove_is_visible_and_persists_for_both_bars() {
                     ),
                 );
                 native_click(&mut app, &mut native, "applet-end-0-remove");
+                pause_items(&mut app);
                 assert!(
                     PanelDraft::load(&store, kind)
                         .unwrap()
@@ -129,6 +133,7 @@ fn product_applet_remove_is_visible_and_persists_for_both_bars() {
                         ))
                     );
                     settle_settings(&mut app, pending);
+                    pause_items(&mut app);
                     assert_eq!(
                         PanelDraft::load(&store, kind)
                             .unwrap()
@@ -224,6 +229,7 @@ fn product_applet_add_move_drag_cancel_and_empty_regions() {
                     .is_none()
             );
             applet_click(&mut app, &mut native, "applet-picker-add-sample3");
+            pause_items(&mut app);
             assert_eq!(
                 PanelDraft::load(&store, kind)
                     .unwrap()
@@ -270,6 +276,7 @@ fn product_applet_add_move_drag_cancel_and_empty_regions() {
             for message in messages {
                 native_send(&mut app, &mut native, message);
             }
+            pause_items(&mut app);
             assert_eq!(
                 PanelDraft::load(&store, kind)
                     .unwrap()
@@ -331,6 +338,7 @@ fn product_applet_add_move_drag_cancel_and_empty_regions() {
                 to,
             );
             assert!(!app.desktop.drag.active());
+            pause_items(&mut app);
             assert_eq!(
                 PanelDraft::load(&store, kind)
                     .unwrap()
@@ -341,6 +349,7 @@ fn product_applet_add_move_drag_cancel_and_empty_regions() {
                 ["sample3"]
             );
             applet_click(&mut app, &mut native, "applet-start-0-remove");
+            pause_items(&mut app);
             assert_eq!(
                 PanelDraft::load(&store, kind).unwrap().applets().known(),
                 Some(&Regions::default())
@@ -393,6 +402,7 @@ fn product_applet_step_keeps_panel_controls_after_saving() {
             1,
         )),
     );
+    pause_items(&mut app);
     assert_eq!(
         app.desktop.focus,
         Some(Slot {

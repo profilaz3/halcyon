@@ -1451,7 +1451,7 @@ fn dock_and_panel_edit_items_with_one_editor() {
             send_settings(&mut app, Message::Resized(size));
             let mut native = crate::native_test::Native::new(size);
             native_reveal(&app, &mut native, "applets-add-start");
-            for control in ["drag", "select", "up", "down", "remove"] {
+            for control in ["drag", "select", "move-to", "up", "down", "remove"] {
                 for slot in ["start-0", "center-0"] {
                     native.bounds(app.settings_view(), &format!("applet-{slot}-{control}"));
                 }
@@ -1465,7 +1465,7 @@ fn dock_and_panel_edit_items_with_one_editor() {
             );
             native.text_bounds(
                 app.settings_view(),
-                "Drag to reorder. Press a name to move it to another region.",
+                "Drag or use the arrows to reorder. Move to… puts an item in another region.",
             );
             assert!(native.duplicate_ids(app.settings_view()).is_empty());
             // The editor sits near the foot of the page.
@@ -1941,6 +1941,8 @@ fn dock_and_panel_item_changes_are_named() {
         for (step, edit, title) in steps {
             let before = items(&app);
             send_settings(&mut app, Message::DesktopEditor(edit.clone()));
+            // Applied after the short pause item edits wait for.
+            pause_items(&mut app);
             assert!(!app.error, "{bar} {step}: {}", app.status);
             let after = items(&app);
             assert_ne!(after, before, "{bar} {step}");
@@ -1983,6 +1985,7 @@ fn dock_and_panel_item_changes_are_named() {
             assert!(!app.error, "{bar} {step}: {}", app.status);
             assert_eq!(items(&app), before, "{bar} {step}: undo");
             send_settings(&mut app, Message::DesktopEditor(edit));
+            pause_items(&mut app);
             assert_eq!(items(&app), after, "{bar} {step}: again");
             assert_eq!(app.last_desktop_summary.as_ref().unwrap().title(), title);
         }

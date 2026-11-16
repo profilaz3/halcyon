@@ -11,6 +11,8 @@ use crate::settings::desktop::Message as Edit;
 use cosmic::iced::advanced::text as advanced_text;
 
 mod applets;
+#[cfg(test)]
+pub(in crate::settings) use applets::{GESTURES, POPUPS_NOTE};
 pub(super) mod host;
 mod islands;
 mod panel;
