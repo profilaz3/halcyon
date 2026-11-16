@@ -827,7 +827,9 @@ impl Settings {
         } else {
             scrolling.into()
         };
-        let status: Element<'_, Message> = if searching || self.undo_review.is_some() {
+        // A question about Undo takes the footer on any page.
+        let undo_question = self.undo_review.is_some() || self.undo_elsewhere_shown().is_some();
+        let status: Element<'_, Message> = if searching || undo_question {
             self.simple_status()
         } else if self.canvas_visible() {
             self.canvas_actions()
@@ -895,12 +897,13 @@ impl Settings {
     }
     fn status_key(&self) -> String {
         format!(
-            "status-{}-{}-{}-{}-{}",
+            "status-{}-{}-{}-{}-{}-{}",
             self.page.key(),
             self.canvas_visible(),
             self.native_busy,
             self.undo_review.is_some(),
             self.kept_note.is_some(),
+            self.undo_elsewhere_shown().is_some(),
         )
     }
 

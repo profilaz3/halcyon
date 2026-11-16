@@ -857,7 +857,31 @@ fn history_f_changes_names_widgets_and_puts_back_older_changes() {
     native_click(&mut app, &mut native, &format!("change-undo-{dock}"));
     let review = app.undo_review.clone().expect("the review opens");
     assert!(review.puts_back());
-    assert!(!native.text_all(app.settings_view(), "Undo the rest anyway").is_empty());
+    assert!(
+        !native
+            .text_all(app.settings_view(), "Undo the rest, keep the changed ones")
+            .is_empty()
+    );
+    native.text_bounds(
+        app.settings_view(),
+        "Don’t undo anything also removes this Undo.",
+    );
+    // Not now closes the choice and leaves the Undo where it was.
+    let restorable = store.recent_changes().unwrap().restorable;
+    native_click(&mut app, &mut native, "undo-not-now");
+    assert!(app.undo_review.is_none());
+    assert_eq!(store.recent_changes().unwrap().restorable, restorable);
+    assert!(restorable.contains(&dock));
+    native_reveal(&app, &mut native, &format!("change-undo-{dock}"));
+    native_click(&mut app, &mut native, &format!("change-undo-{dock}"));
+    let again = app
+        .undo_review
+        .as_ref()
+        .expect("the same choice opens again");
+    assert_eq!(
+        (again.id(), &again.conflicts),
+        (review.id(), &review.conflicts)
+    );
     // Each conflict in the page's words, never its config key.
     assert_eq!(review.conflicts, ["Between items: now 9 px, was Default"]);
     native.text_bounds(app.settings_view(), "Between items: now 9 px, was Default");
@@ -1098,11 +1122,16 @@ fn footer_undo_stays_on_the_page_that_made_the_change() {
     // Its own page offers it again, though it was made on an earlier visit.
     send_settings(&mut app, Message::Page(Page::DesktopDock));
     native.text_bounds(app.settings_view(), &format!("Undo {title}"));
-    // Ctrl+Z on another page does nothing, like the footer: the change
-    // stays, and its own page still offers to undo it.
+    // Ctrl+Z on another page leaves the change, like the footer, and says
+    // where it was, with a way to undo it or see every change.
     send_settings(&mut app, Message::Page(Page::Overview));
     let id = app.last_desktop_change.as_ref().unwrap().2.clone();
     let spacing_now = app.desktop.current().unwrap().spacing().known().copied();
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "settings-undo-elsewhere")
+            .is_none()
+    );
     send_settings(&mut app, Message::KeyboardUndo(false));
     assert!(!app.error, "{}", app.status);
     assert_eq!(app.last_desktop_change.as_ref().map(|c| &c.2), Some(&id));
@@ -1111,7 +1140,34 @@ fn footer_undo_stays_on_the_page_that_made_the_change() {
         spacing_now
     );
     assert!(native.try_bounds(app.settings_view(), "settings-undo").is_none());
+    native.text_bounds(app.settings_view(), "The latest change was on Dock");
     capture(&app, &mut native, "footer-other-page-ctrl-z");
+    for (control, wanted) in [
+        (
+            "undo-elsewhere",
+            Message::UndoDesktopShown(Some(id.clone())),
+        ),
+        ("undo-elsewhere-changes", Message::OpenRoot(Page::Changes)),
+    ] {
+        let point = native.bounds(app.settings_view(), control).center();
+        let mut sent = Vec::new();
+        for event in [
+            cosmic::iced::mouse::Event::CursorMoved { position: point },
+            cosmic::iced::mouse::Event::ButtonPressed(cosmic::iced::mouse::Button::Left),
+            cosmic::iced::mouse::Event::ButtonReleased(cosmic::iced::mouse::Button::Left),
+        ] {
+            sent.extend(
+                native
+                    .event(
+                        app.settings_view(),
+                        cosmic::iced::Event::Mouse(event),
+                        point,
+                    )
+                    .0,
+            );
+        }
+        assert_eq!(format!("{sent:?}"), format!("{:?}", [wanted]), "{control}");
+    }
     send_settings(&mut app, Message::Page(Page::DesktopDock));
     native.text_bounds(app.settings_view(), &format!("Undo {title}"));
     // On its own page, Ctrl+Z undoes it, as the button would.
