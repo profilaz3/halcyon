@@ -388,26 +388,32 @@ impl Settings {
         let width = self.content_width();
         // 16:9, and short enough that the chosen part's row stays in view.
         let height = (width * 9. / 16.)
-            .min((self.window.height - 250.).max(200.))
+            .min((self.window.height - 395.).max(165.))
             .max(160.);
         let picture = container(self.home_scene(height, selected, Picks::Select))
             .id(cosmic::widget::Id::new("home-picture"))
             .width(Length::Fill);
-        let mut parts = vec![heading(
-            "Home",
-            "Everything Halcyon changes, in one picture. Pick a part to change it.",
-        )];
+        let header = if self.widgets_stopped() {
+            split(
+                heading("Home", "Your desktop widgets are stopped."),
+                self.start_widgets_button(),
+            )
+        } else {
+            heading("Home", "Pick a part of the desktop to change it.")
+        };
+        let mut parts = vec![header];
         // Settings opens here, so first-run setup and what's new wait here.
+        parts.push(self.islands_activation_card());
         if self.offers_setup() {
             parts.push(self.setup_card());
         }
         parts.extend(self.updated_card());
         parts.extend(self.ignored_settings_banner());
-        parts.extend([
-            picture.into(),
-            self.home_detail(selected),
-            self.home_tiles(selected),
-        ]);
+        parts.push(picture.into());
+        if let Some(page) = selected {
+            parts.push(self.home_detail(page));
+        }
+        parts.push(self.home_tiles(selected));
         let body = column::with_children(parts).spacing(12);
         container(activate(body.into()))
             .id(cosmic::widget::Id::new("home"))
@@ -874,22 +880,8 @@ impl Settings {
 
     /// Under the picture: the chosen part's icon, name, how it is set now,
     /// and Open.
-    fn home_detail(&self, selected: Option<Page>) -> Element<'_, Message> {
+    fn home_detail(&self, page: Page) -> Element<'_, Message> {
         let accent = self.settings_accent();
-        let Some(page) = selected else {
-            return container(label(
-                "Pick a part of the picture to see how it is set.",
-                CAPTION,
-                MUTED,
-            ))
-            .id(cosmic::widget::Id::new("home-detail"))
-            .padding([12, 14])
-            .height(60)
-            .width(Length::Fill)
-            .align_y(Alignment::Center)
-            .class(cosmic::theme::Container::Card)
-            .into();
-        };
         let badge = container(icon::from_name(page.nav_icon()).size(18).icon())
             .width(34)
             .height(34)
@@ -1054,6 +1046,10 @@ impl Settings {
                     .count();
                 if !config.widgets_visible {
                     "Hidden".into()
+                } else if self.widgets_stopped() {
+                    format!("Stopped · {shown} selected")
+                } else if !self.service_known {
+                    format!("{shown} selected")
                 } else if shown == 1 {
                     "1 on the desktop".into()
                 } else {

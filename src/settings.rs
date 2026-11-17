@@ -93,6 +93,7 @@ pub enum Page {
     Focus,
     Devices,
     Messages,
+    Markets,
     General,
     Desktop,
     /// The dock's editor. The panel's is the same page on the other bar.
@@ -160,7 +161,7 @@ impl Page {
     ];
     /// Pinned below the roots, at the bottom of the sidebar.
     const PINNED: Self = Self::Changes;
-    const ALL: [Self; 39] = [
+    const ALL: [Self; 40] = [
         Self::Home,
         Self::Overview,
         Self::WidgetLayout,
@@ -178,6 +179,7 @@ impl Page {
         Self::Focus,
         Self::Devices,
         Self::Messages,
+        Self::Markets,
         Self::General,
         Self::Desktop,
         Self::DesktopDock,
@@ -340,6 +342,7 @@ impl Page {
             Self::Focus => Some(Widget::Focus),
             Self::Devices => Some(Widget::Devices),
             Self::Messages => Some(Widget::Messages),
+            Self::Markets => Some(Widget::Markets),
             _ => None,
         }
     }
@@ -362,6 +365,7 @@ impl Page {
             Self::Focus => "focus",
             Self::Devices => "devices",
             Self::Messages => "messages",
+            Self::Markets => "markets",
             Self::General => "general",
             Self::Desktop => "desktop",
             Self::DesktopDock => "desktop-dock",
@@ -405,6 +409,7 @@ impl Page {
             Self::Focus => "Focus timer",
             Self::Devices => "Devices",
             Self::Messages => "Messages",
+            Self::Markets => "Markets",
             Self::General => "Halcyon",
             Self::Desktop => "Desktop",
             Self::DesktopDock => "Dock",
@@ -538,6 +543,7 @@ impl Page {
             Self::Focus => "alarm-symbolic",
             Self::Devices => "bluetooth-symbolic",
             Self::Messages => "chat-symbolic",
+            Self::Markets => "utilities-system-monitor-symbolic",
             Self::General => "preferences-system-symbolic",
             Self::DesktopWallpaper => "preferences-desktop-wallpaper-symbolic",
             Self::WeatherEffects => "weather-showers-symbolic",
@@ -1594,7 +1600,7 @@ impl cosmic::Application for Settings {
         };
         let tools = page
             .tool()
-            .map(|tool| app.tools.open(tool))
+            .map(|tool| app.tools.open(tool, &app.config))
             .unwrap_or_else(Task::none);
         let calendar = if page == Page::Calendar {
             app.calendar.check(false)
@@ -2130,6 +2136,26 @@ impl cosmic::Application for Settings {
         Some(Message::FlushEdits)
     }
     fn update(&mut self, message: Message) -> Task<Message> {
+        if self
+            .wizard
+            .as_ref()
+            .is_some_and(|wizard| wizard.step == wizard::Step::Done && !wizard.undone)
+        {
+            match message {
+                Message::Updates(action @ updates::Message::Islands(updates::islands::Message::Enable))
+                    if self.panel_host() == view::Host::Switch =>
+                {
+                    let stage = self.update_updates(action);
+                    let finish = self.update(Message::FinishSetupTo(Page::Home));
+                    return Task::batch([stage, finish]);
+                }
+                Message::AppSettingsPage(AppSettingsPage::Updates) => {
+                    let finish = self.update(Message::FinishSetupTo(Page::General));
+                    return Task::batch([finish, self.handle(message)]);
+                }
+                _ => {}
+            }
+        }
         if let Message::FinishSetupTo(page) = message {
             let finish = self.update(Message::Wizard(wizard::Message::Finish));
             let open = self.update(Message::Page(page));
@@ -2750,9 +2776,6 @@ impl Settings {
                     self.devbox_reorder.cancel();
                     self.desktop.drag.cancel();
                 }
-                if query.trim().is_empty() {
-                    self.search_open = false;
-                }
                 self.search_query = query;
                 self.search_selected = None;
             }
@@ -2864,6 +2887,7 @@ impl Settings {
                     return self.update_support(support::Message::Preview(false));
                 }
                 if !self.search_query.trim().is_empty() || self.search_open {
+                    self.search_open = false;
                     return self.handle(Message::SearchSettings(String::new()));
                 }
                 if self.history.is_empty()
@@ -3974,7 +3998,7 @@ impl Settings {
                 }
                 let tools = page
                     .tool()
-                    .map(|tool| self.tools.open(tool))
+                    .map(|tool| self.tools.open(tool, &self.config))
                     .unwrap_or_else(Task::none);
                 self.reorder.cancel();
                 self.devbox_reorder.cancel();
@@ -4015,7 +4039,7 @@ impl Settings {
                     reveal,
                     navigation::reveal_in_sidebar(page),
                     changes,
-                    if matches!(page, Page::General | Page::Overview) {
+                    if matches!(page, Page::General | Page::Overview | Page::Home) {
                         service_task()
                     } else {
                         Task::none()
@@ -4841,7 +4865,7 @@ impl Settings {
                 self.busy = false;
                 // A start or stop is read back on any page, so the "Widgets
                 // aren't running" banner follows at once.
-                let service = matches!(self.page, Page::General | Page::Overview)
+                let service = matches!(self.page, Page::General | Page::Overview | Page::Home)
                     || status == WIDGETS_STARTED
                     || status == WIDGETS_STOPPED;
                 if let Ok(config) = Config::try_load() {
@@ -6127,6 +6151,12 @@ impl Settings {
             Some(tools::Saved::Tool(widget, key, value)) => {
                 match Config::save_tool(widget, json!({ key: value })) {
                     Ok(config) => {
+                        if widget == Widget::Markets {
+                            self.tools.market_preview = crate::tools::cards::sample_markets_for(&config.markets);
+                            if key == "symbols" {
+                                self.tools.market_symbols = config.markets.symbols.join(", ");
+                            }
+                        }
                         self.config = config;
                         self.placement.refresh(&self.config);
                         self.refresh_canvas();
@@ -6268,9 +6298,9 @@ impl Settings {
     /// How often the widgets service is read again: on General, and soon
     /// while a "Widgets aren't running" banner shows.
     fn service_refresh(&self) -> Option<Duration> {
-        if self.widgets_stopped() && matches!(self.page, Page::Overview | Page::DesktopProfiles) {
+        if self.widgets_stopped() && matches!(self.page, Page::Home | Page::Overview | Page::DesktopProfiles) {
             Some(Duration::from_secs(5))
-        } else if self.page == Page::General {
+        } else if matches!(self.page, Page::Home | Page::General) {
             Some(Duration::from_secs(30))
         } else {
             None
@@ -7659,6 +7689,7 @@ mod tests {
     include!("settings/clock_gallery_tests.rs");
     include!("settings/devices_tests.rs");
     include!("settings/messages_tests.rs");
+    include!("settings/markets_tests.rs");
     include!("settings/icon_packs_tests.rs");
     include!("settings/glance_off_tests.rs");
     include!("settings/looks_tests.rs");

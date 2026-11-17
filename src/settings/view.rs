@@ -673,6 +673,7 @@ impl Settings {
             Page::Focus => self.focus_page(),
             Page::Devices => self.devices_page(),
             Page::Messages => self.messages_page(),
+            Page::Markets => self.markets_page(),
             Page::General => self.general_page(),
             Page::Home => self.home_page(),
             Page::DesktopDock | Page::DesktopPanel => {
@@ -1168,16 +1169,6 @@ impl Settings {
                 0..=50,
                 appearance.border_opacity as u16,
                 AppearanceControl::Border,
-            ),
-            separator(),
-            split(
-                detail(
-                    "Easier to read",
-                    "Adds a little more background behind small text on busy wallpapers",
-                ),
-                container(toggler(appearance.contrast_assist).on_toggle(Message::ContrastAssist))
-                    .id(cosmic::widget::Id::new("contrast-assist"))
-                    .into(),
             ),
         ])
     }

@@ -1057,7 +1057,13 @@ impl Cards {
         let held = available && self.item_held(item);
         let title = item_title(item);
         let state = available.then(|| self.item_state(item)).flatten();
-        let caption = if available {
+        let caption = if focused
+            && item
+                .as_widget()
+                .is_some_and(|widget| self.can_interact_with_tool(widget))
+        {
+            Some("Shift+Enter".to_owned())
+        } else if available {
             self.item_caption(item)
         } else {
             Some("Unavailable".to_string())

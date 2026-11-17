@@ -589,14 +589,7 @@ impl Settings {
             .or(shared);
         let mut rows = vec![self.link_row_state(
             "Glass and transparency",
-            match finish {
-                Some(finish) => format!(
-                    "{}, {}% see-through",
-                    finish.kind.title(),
-                    100 - finish.opacity()
-                ),
-                None => "No glass".to_string(),
-            },
+            self.finish_summary(finish),
             Message::Page(Page::Appearance),
             "appearance-surfaces".into(),
         )];

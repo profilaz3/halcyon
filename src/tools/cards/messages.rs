@@ -281,13 +281,11 @@ pub fn messages<'a, M: Clone + 'a>(
     .spacing(GAP)
     .height(Length::Fill)
     .into();
-    let content = match on_action {
-        Some(on_action) => cosmic::widget::mouse_area(content)
-            .on_press(on_action(Action::MessagesOpen))
-            .interaction(cosmic::iced::mouse::Interaction::Pointer)
-            .into(),
-        None => content,
-    };
+    let content = super::press(
+        content,
+        on_action.map(|on| on(Action::MessagesOpen)),
+        "Open KDE Connect messages",
+    );
     frame(content, config, height)
 }
 

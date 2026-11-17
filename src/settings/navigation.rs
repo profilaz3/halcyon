@@ -768,6 +768,17 @@ const SEARCH: &[SearchHit] = &[
     DEVICES,
     MESSAGES,
     MESSAGES_TEXT,
+    hit(
+        Page::Markets,
+        "Markets",
+        "stocks stock watchlist shares price charts finance twelve data",
+        false,
+    )
+    .names_page(),
+    hit(Page::Markets, "Data source", "public yahoo free no key provider", false),
+    hit(Page::Markets, "Symbols", "stock ticker exchange", false),
+    hit(Page::Markets, "Watchlist", "stocks shares list", false),
+    hit(Page::Markets, "Twelve Data", "provider api key connection", false),
     DOCK_SEE_THROUGH,
     hit(
         Page::DesktopPanel,
@@ -945,6 +956,13 @@ const SEARCH: &[SearchHit] = &[
     .bar(crate::desktop::panels::PanelKind::Panel),
     ACTIVITY_ISLAND,
     hit(
+        Page::ActivityIsland,
+        "Islands panel",
+        "enable islands activate reinstall setup switch sign out sign in",
+        false,
+    )
+    .at("islands-activation"),
+    hit(
         Page::DesktopWindows,
         "Tile windows automatically",
         "windows tiling tile arranging gaps focus controls snapping",
@@ -1029,6 +1047,7 @@ const ROWS: &[SearchHit] = &[
     hit(Page::ActivityIsland, "Microphone in use", "", false).bar(PanelKind::Panel),
     hit(Page::ActivityIsland, "Network", "", false).bar(PanelKind::Panel),
     hit(Page::ActivityIsland, "Notifications", "", false).bar(PanelKind::Panel),
+    hit(Page::ActivityIsland, "Open on hover", "island pointer pointing click", false).bar(PanelKind::Panel),
     hit(Page::ActivityIsland, "Playing media", "", false).bar(PanelKind::Panel),
     hit(Page::ActivityIsland, "Phone messages", "kde connect sms unread conversations", false).bar(PanelKind::Panel),
     hit(Page::ActivityIsland, "Show message text", "", false).bar(PanelKind::Panel),
@@ -1266,10 +1285,10 @@ const ROWS: &[SearchHit] = &[
     .destination(AppSettingsPage::Operation),
     hit(Page::General, "Setting up", "", false).destination(AppSettingsPage::Operation),
     hit(Page::General, "Start when you sign in", "", false).destination(AppSettingsPage::Operation),
-    hit(Page::General, "Always stays on your computer", "", false).destination(AppSettingsPage::Privacy),
+    hit(Page::General, "Outside usage reports", "privacy local data stays on computer", false).destination(AppSettingsPage::Privacy),
     hit(Page::General, "Privacy policy", "", false).destination(AppSettingsPage::Privacy),
     hit(Page::General, "Sharing", "", false).destination(AppSettingsPage::Privacy),
-    hit(Page::General, "Your calendar, notes, accounts and projects", "", false).destination(AppSettingsPage::Privacy),
+    hit(Page::General, "Widget contents and accounts", "calendar notes projects markets stocks weather privacy", false).destination(AppSettingsPage::Privacy),
     hit(Page::General, "Get ready for your own designs", "", false).destination(AppSettingsPage::Updates),
     hit(Page::General, "Islands panel", "", false).destination(AppSettingsPage::Updates),
     hit(Page::General, "More about this version", "", false).destination(AppSettingsPage::Updates),
@@ -1378,7 +1397,7 @@ pub(super) const NOT_INDEXED: &[(&str, &str)] = &[
     ("Clock italic", "a part of the day’s own value; search opens the Clock setting"),
     ("Clock background", "a part of the day’s own value; search opens the Clock setting"),
     ("Widget look", "a part of the day’s own value; search opens Glass and transparency"),
-    ("No glass", "a choice in the glass picker; “glass” finds it"),
+    ("Style default", "a choice in the glass picker; “glass” finds it"),
     ("Layout", "a section of the widget builder; “layout” opens Arrange widgets"),
     ("Size and place", "on every widget’s Position tab; the widget’s name finds it"),
     ("Move or resize", "on every widget page; the widget’s name finds it"),
@@ -2606,6 +2625,7 @@ pub(super) fn widget_of(page: Page) -> Option<crate::drawer::Widget> {
         Page::Focus => Widget::Focus,
         Page::Devices => Widget::Devices,
         Page::Messages => Widget::Messages,
+        Page::Markets => Widget::Markets,
         _ => return None,
     })
 }
@@ -2623,6 +2643,7 @@ pub(super) fn widget_page(widget: crate::drawer::Widget) -> Page {
         Widget::Focus => Page::Focus,
         Widget::Devices => Page::Devices,
         Widget::Messages => Page::Messages,
+        Widget::Markets => Page::Markets,
     }
 }
 

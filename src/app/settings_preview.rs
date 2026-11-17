@@ -153,7 +153,6 @@ pub(crate) fn settings_projects_preview(config: &Config) -> Element<'static, Mes
         projects: Some(data),
         projects_fetching: false,
         projects_error: false,
-        all_projects: false,
         expanded_projects: expanded,
     };
     view.view(view.natural_height(360.), false)
@@ -237,7 +236,8 @@ impl SettingsSamples {
             projects_error: false,
             projects_reserved: None,
             next_projects: Instant::now(),
-            all_projects: false,
+            reading_window: None,
+            interacting_tool: None,
             expanded_projects: Default::default(),
             config,
             sampler: Sampler::default(),

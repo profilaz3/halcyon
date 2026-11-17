@@ -270,7 +270,25 @@ impl Settings {
         }
     }
 
-    /// The panel as setup would leave it, in the Panel page's words.
+    fn wizard_host_summary(&self) -> &'static str {
+        match self.panel_host() {
+            Host::Running => {
+                "The Islands panel is running. Your floating groups can appear in this session."
+            }
+            Host::SignIn => "The Islands panel is ready. Sign out and back in when convenient.",
+            Host::Switch => {
+                "Setup saves the layout. On the final screen, switch to the Islands panel to use it at your next sign-in."
+            }
+            Host::Checking | Host::Switching => {
+                "Setup saves the layout. The final screen shows the panel’s activation status."
+            }
+            Host::Failed(_) | Host::Unavailable(_) => {
+                "Setup can save the layout. The Islands panel needs attention before it can show floating groups."
+            }
+        }
+    }
+
+    /// The panel as setup would leave it.
     fn wizard_panel_summary(&self, bars: Bars) -> String {
         format!(
             "{} · {} corners",
@@ -881,7 +899,7 @@ impl Settings {
                 vec![
                     group_row(
                         "Shape",
-                        "Islands floats it in pieces",
+                        "Separate floating groups",
                         picker(
                             vec![
                                 (
@@ -965,15 +983,7 @@ impl Settings {
                 ],
             ));
             if bars.islands {
-                controls.push(words(
-                    if self.desktop.islands.installation.installed() {
-                        "Islands start the next time you sign in. No need to sign out now."
-                    } else {
-                        "Islands shows as a normal panel in this preview. Check it in Settings after setup."
-                    },
-                    12.,
-                    SOFT,
-                ));
+                controls.push(words(self.wizard_host_summary(), 12., SOFT));
             }
         }
         super::adaptive::columns(
@@ -1168,12 +1178,8 @@ impl Settings {
             vec![words("Your desktop stays as it was.", 14., INK)]
         };
         parts.push(group(Some("What changed"), lines));
-        if applied.is_some_and(|applied| applied.next_login) {
-            parts.push(words(
-                "Islands start the next time you sign in. No need to sign out now.",
-                13.,
-                SOFT,
-            ));
+        if applied.is_some() && wizard.bars.islands && !wizard.undone {
+            parts.push(self.islands_activation_card());
         }
         if applied.is_some_and(|applied| applied.changed) {
             // Undo setup on this screen goes away when it closes; say where
@@ -1299,11 +1305,7 @@ impl Settings {
         }
         let mut parts = vec![group(Some("Your choices"), choices)];
         if wizard.bars.islands && wizard.has_bar_choices() {
-            parts.push(words(
-                "Islands start the next time you sign in. No need to sign out now.",
-                12.,
-                SOFT,
-            ));
+            parts.push(words(self.wizard_host_summary(), 12., SOFT));
         }
         let mut running = Vec::new();
         if !wizard.widgets.active().is_empty() {

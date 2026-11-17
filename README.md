@@ -25,13 +25,15 @@ Wallpapers, light and dark themes, accent colors, fonts, icons and surface finis
 
 The widget builder customizes Clock, Weather, Calendar, System monitor, Music and Focus. Notes, Git project status and Daily overview are also included. Widgets support moving, resizing, ordering and assignment to different displays.
 
+[Markets](docs/MARKETS.md) adds a stock watchlist with daily price charts, using public data without signup, with optional Twelve Data integration.
+
 [![Illustration of individual Clock, Weather, System monitor, Focus, Music and Notes widgets](docs/presentation/070-readme/widgets-elements-dark.png)](docs/presentation/070-readme/widgets-elements-dark.png)
 
 [Native widget builder](docs/screenshots/055/widget-builder.png)
 
 ## 3. Dock and panel customization
 
-Applet arrangement, spacing, size, opacity, corners and auto-hide. **Islands** separates applets into floating groups; **Penumbra** fades bar backgrounds into the wallpaper. Both are optional and included in the package. The **Activity island** (beta) shows music, meetings, notifications and camera or microphone use in the middle of an Islands panel.
+Applet arrangement, spacing, size, opacity, corners and auto-hide. **Islands** separates applets into floating groups; **Penumbra** fades bar backgrounds into the wallpaper. Both are optional and included in the package. The **Activity island** (beta) shows music, meetings, notifications and camera or microphone use on a standard COSMIC top panel or a floating Islands panel.
 
 [![Illustration of Islands, Penumbra, Activity island states and an icon-only edge menu with a handle](docs/presentation/070-readme/panel-elements-dark.png)](docs/presentation/070-readme/panel-elements-dark.png)
 
@@ -103,7 +105,7 @@ sudo dnf install ./cosmic-ext-halcyon-*.x86_64.rpm
 
 Fresh installations configure the signed update source. Future updates arrive through **COSMIC Store → Updates**, APT or DNF. Automatic installation follows your OS settings; disabled or modified sources stay that way.
 
-To activate the optional panel component, open **Dock and panel**, set **Shape** to **Islands** and choose **Switch at next sign-in**, then sign out and back in when convenient. Halcyon and the panel component update together.
+To activate the optional Islands panel, open **Home** or **Activity island** and choose **Switch at next sign-in**. Sign out and back in when convenient. Once the panel is active, choose **Panel layout** on Home to set its shape, or open **Activity island** to add it to your top panel. Halcyon and the panel component update together.
 
 [Installation & updates](docs/DISTRIBUTION.md) · [Fedora package details](docs/FEDORA-PACKAGING.md)
 
@@ -136,7 +138,7 @@ halcyon-ctl focus toggle    Start or pause the Focus timer
 halcyon-ctl --help          Every command, described
 ```
 
-Bind `halcyon --toggle drawer` to a key in **COSMIC Settings → Keyboard → Keyboard shortcuts** to open the edge menu without the mouse. In the menu, Tab and the arrow keys move, Enter shows or hides a widget, Alt+Up and Alt+Down reorder the right column, and Esc closes it. Right-click any widget for its settings, Arrange, or Hide. `man halcyon` and `man halcyon-ctl` have the details.
+Bind `halcyon --toggle drawer` to a key in **COSMIC Settings → Keyboard → Keyboard shortcuts** to open the edge menu without the mouse. In the menu, Tab and the arrow keys move, Enter shows or hides a widget, Alt+Up and Alt+Down reorder the right column, and Esc closes it. On a visible Music, Notes, Focus, Messages or Markets entry, Shift+Enter moves keyboard focus to the widget. Tab moves between its controls, Enter activates one, and Esc releases focus. The same action is in the widget’s right-click menu. `man halcyon` and `man halcyon-ctl` have the details.
 
 ## Help & development
 

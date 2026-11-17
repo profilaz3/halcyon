@@ -34,6 +34,123 @@ fn choice_row<'a>(
 }
 
 impl Settings {
+    pub(super) fn markets_page(&self) -> Element<'_, Message> {
+        let editor = &self.tools;
+        let preview = cards::markets(
+            &editor.market_preview,
+            &self.config,
+            None,
+            Some(self.tool_preview_size(Widget::Markets)),
+        );
+        use crate::markets::Provider;
+        let provider = self.config.markets.provider;
+        let sources = [
+            ("Yahoo Finance", Provider::Public),
+            ("Twelve Data", Provider::TwelveData),
+        ];
+        let source_controls = segmented(
+            sources
+                .into_iter()
+                .map(|(name, source)| {
+                    (
+                        name.into(),
+                        provider == source,
+                        Some(edit(Edit::MarketProvider(source))),
+                    )
+                })
+                .collect(),
+            self.settings_accent(),
+        );
+        let source_note = match provider {
+            Provider::Public => {
+                "Public quotes without signup. Yahoo’s unofficial feed may be delayed."
+            }
+            Provider::TwelveData => "Exchange coverage and delays depend on your Twelve Data plan.",
+        };
+        let mut controls = vec![
+            group(
+                Some("Watchlist"),
+                vec![
+                    group_row_state(
+                        "Symbols",
+                        "Up to five stocks, separated by commas. Select a stock on the widget to see its chart.",
+                        text_input("AAPL, MSFT, NVDA", &editor.market_symbols)
+                            .id("market-symbol-input".into())
+                            .on_submit(|_| edit(Edit::MarketSaveSymbols))
+                            .on_input(|s| edit(Edit::MarketSymbols(s)))
+                            .width(Length::Fill)
+                            .into(),
+                    ),
+                    button::text("Save watchlist")
+                        .on_press(edit(Edit::MarketSaveSymbols))
+                        .into(),
+                ],
+            ),
+            group(
+                Some("Data source"),
+                vec![source_controls, label(source_note, 13., FG)],
+            ),
+        ];
+        if provider == Provider::TwelveData {
+            controls.push(group(
+                None,
+                vec![
+                    button::text("Get an API key")
+                        .on_press(Message::OpenNoteLink(
+                            "https://twelvedata.com/account/api-keys",
+                        ))
+                        .into(),
+                    label(
+                        "Save your Twelve Data API key in your desktop keyring.",
+                        13.,
+                        FG,
+                    ),
+                    text_input("API key", &editor.market_key.0)
+                        .password()
+                        .on_input(|s| edit(Edit::MarketKey(crate::markets::Secret(s))))
+                        .width(Length::Fill)
+                        .into(),
+                    row::with_children(vec![
+                        button::text(if editor.market_busy {
+                            "Working…"
+                        } else {
+                            "Save API key"
+                        })
+                        .on_press_maybe((!editor.market_busy).then(|| edit(Edit::MarketSaveKey)))
+                        .into(),
+                        button::text("Remove API key")
+                            .on_press_maybe(
+                                (!editor.market_busy).then(|| edit(Edit::MarketRemoveKey)),
+                            )
+                            .into(),
+                    ])
+                    .spacing(8)
+                    .into(),
+                ],
+            ));
+        }
+        controls.push(label(
+            "Updates every 15 minutes while visible · up to 30 trading sessions",
+            12.,
+            MUTED,
+        ));
+        if let Some(status) = &editor.market_status {
+            controls.push(label(status, 13., FG));
+        }
+        let preview = column::with_children(vec![
+            container(label("Example prices and chart", 13., FG))
+                .id("markets-sample").width(Length::Fill).into(),
+            self.preview_stage(container(preview).max_width(360.).into()),
+        ]).spacing(6);
+        let editor = adaptive::columns(
+            column::with_children(controls).spacing(12).into(),
+            preview.into(),
+            [320., 300.],
+            false,
+        );
+        self.widget_template(Widget::Markets, "Markets", None, vec![editor])
+    }
+
     fn tool_preview_size(&self, widget: Widget) -> [f32; 2] {
         let [width, height] = self
             .config

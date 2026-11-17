@@ -168,7 +168,7 @@ macro_rules! fields {
 }
 
 /// Every member a profile, its Undo or its recovery may write.
-pub static FIELDS: [WidgetField; 116] = fields![
+pub static FIELDS: [WidgetField; 119] = fields![
     "/recipes/music", "Music recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Music);
     "/recipes/focus", "Focus recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Focus);
     "/recipes/devbox", "System recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::System);
@@ -270,11 +270,13 @@ pub static FIELDS: [WidgetField; 116] = fields![
     "/focus/enabled", "Focus timer", Layout, boolean;
     "/devices/enabled", "Devices", Layout, boolean;
     "/messages/enabled", "Messages", Layout, boolean;
+    "/markets/enabled", "Markets", Layout, boolean;
     "/widget_positions/music", "Music position", Layout, position;
     "/widget_positions/notes", "Notes position", Layout, position;
     "/widget_positions/focus", "Focus position", Layout, position;
     "/widget_positions/devices", "Devices position", Layout, position;
     "/widget_positions/messages", "Messages position", Layout, position;
+    "/widget_positions/markets", "Markets position", Layout, position;
     "/widget_sizes/clock", "Clock size", Layout, size;
     "/widget_sizes/weather", "Weather size", Layout, size;
     "/widget_sizes/calendar", "Calendar size", Layout, size;
@@ -286,11 +288,16 @@ pub static FIELDS: [WidgetField; 116] = fields![
     "/widget_sizes/focus", "Focus size", Layout, size;
     "/widget_sizes/devices", "Devices size", Layout, size;
     "/widget_sizes/messages", "Messages size", Layout, size;
+    "/widget_sizes/markets", "Markets size", Layout, size;
 ];
 
 // Local preferences participate in transactions and Undo but are never
 // captured or exported by the profile library.
 pub static LOCAL_FIELDS: &[WidgetField] = &fields![
+    "/markets/provider", "Market data source", Style, |v| matches!(v.as_str(), Some("public" | "twelve_data"));
+    "/markets/symbols", "Stock watchlist", Style, |v| serde_json::from_value::<Vec<String>>(v.clone()).is_ok_and(|s| crate::markets::symbols(&s.join(",")).is_ok_and(|valid| valid == s));
+    "/markets/selected", "Selected stock", Style, |v| v.as_str().is_some_and(|s| s.is_empty() || crate::markets::symbols(s).is_ok_and(|valid| valid == [s]));
+    "/markets/credential_revision", "Markets connection", Style, |v| v.as_u64().is_some();
     "/edge_menu/enabled", "Edge menu", Style, boolean;
     "/edge_menu/side", "Edge menu side", Style, |v| matches!(v.as_str(), Some("left" | "right"));
     "/edge_menu/position", "Edge menu position", Style, |v| int_in(v,0,100);
@@ -318,6 +325,7 @@ pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/activity_island/media", "Activity media", Style, boolean;
     "/activity_island/calendar", "Activity meetings", Style, boolean;
     "/activity_island/reveals", "Activity reveals", Style, boolean;
+    "/activity_island/open_on_hover", "Activity hover opening", Style, boolean;
     "/activity_island/shelf", "Activity file shelf", Style, boolean;
     "/activity_island/lead_minutes", "Activity reminder", Style, |v| matches!(v.as_u64(),Some(5|10|15));
     "/activity_island/notifications", "Activity notifications", Style, boolean;
@@ -372,8 +380,11 @@ pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/widget_monitors/devices/hide_disconnected", "Disconnected widget", Layout, boolean;
     "/monitor_layouts/devices", "Display layout", Layout, monitor_layout;
     "/widget_monitors/messages/display", "Widget display", Layout, |v| v.is_null() || v.as_str().is_some_and(crate::displays::valid_name);
+    "/widget_monitors/markets/display", "Widget display", Layout, |v| v.is_null() || v.as_str().is_some_and(crate::displays::valid_name);
     "/widget_monitors/messages/hide_disconnected", "Disconnected widget", Layout, boolean;
+    "/widget_monitors/markets/hide_disconnected", "Disconnected widget", Layout, boolean;
     "/monitor_layouts/messages", "Display layout", Layout, monitor_layout;
+    "/monitor_layouts/markets", "Display layout", Layout, monitor_layout;
     "/widget_display", "Widget display", Layout, |v| v.is_null() || v.as_str().is_some_and(crate::displays::valid_name);
     "/appearance/match_wallpaper", "Matching wallpaper", Style, boolean;
     "/appearance/match_cosmic_colors", "Follow COSMIC colors", Style, boolean;
@@ -416,7 +427,7 @@ pub fn tool_of(pointer: &str) -> Option<&'static str> {
         .or_else(|| pointer.strip_prefix("/widget_sizes/"))
         .or_else(|| pointer.strip_prefix('/'))?;
     let name = rest.split('/').next()?;
-    ["music", "notes", "focus", "devices", "messages"]
+    ["music", "notes", "focus", "devices", "messages", "markets"]
         .into_iter()
         .find(|tool| {
             *tool == name

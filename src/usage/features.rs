@@ -11,7 +11,7 @@ use std::time::Duration;
 /// Widgets newer than the report's schema, left out of `widgets`: naming one
 /// would change what usage sharing sends, and the collector refuses keys it
 /// doesn't know.
-pub const UNREPORTED: [Widget; 1] = [Widget::Messages];
+pub const UNREPORTED: [Widget; 2] = [Widget::Messages, Widget::Markets];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub(crate) struct Features {

@@ -443,6 +443,13 @@ fn week_range_and_location_fit_the_calendar_card_at_small_and_default_sizes() {
         );
         let title = find("Next 7 days");
         assert!(title.x + title.width <= size[0], "{name}: {title:?}");
+        assert!(native.scrollables(cards.calendar_card()).is_empty());
+        if name == "small" {
+            assert!(placed.iter().any(|(value, _)| value.contains("Open agenda")));
+            let pixels = native.render(cards.calendar_card(), &theme);
+            capture_over_ridge(&pixels, size, "calendar-week-location-small");
+            continue;
+        }
         for heading in &headings {
             let bounds = find(heading);
             assert!(
@@ -463,29 +470,5 @@ fn week_range_and_location_fit_the_calendar_card_at_small_and_default_sizes() {
         assert!(long.x + long.width <= size[0], "{name}: {long:?}");
         let pixels = native.render(cards.calendar_card(), &theme);
         capture_over_ridge(&pixels, size, &format!("calendar-week-location-{name}"));
-        // Every day is reachable: the last heading scrolls into view.
-        let agenda = native
-            .scrollables(cards.calendar_card())
-            .into_iter()
-            .next()
-            .expect("the agenda scrolls");
-        let last = headings.last().unwrap();
-        if agenda.1.height > agenda.0.height + 0.5 {
-            assert_eq!(name, "small", "the default size grows to its agenda");
-            native.scroll(cards.calendar_card(), "calendar", agenda.1.height);
-            let pixels = native.render(cards.calendar_card(), &theme);
-            capture_over_ridge(
-                &pixels,
-                size,
-                &format!("calendar-week-location-{name}-last-day"),
-            );
-        }
-        let bounds = native.text_bounds(cards.calendar_card(), last);
-        assert!(
-            bounds.y >= agenda.0.y - 0.5
-                && bounds.y + bounds.height <= agenda.0.y + agenda.0.height + 0.5,
-            "{name}: {last} {bounds:?} in {:?}",
-            agenda.0
-        );
     }
 }

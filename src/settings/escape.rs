@@ -53,7 +53,10 @@ impl Settings {
                 self.explained = None;
                 Task::none()
             }
-            Some(Closes::Search) => self.handle(Message::SearchSettings(String::new())),
+            Some(Closes::Search) => {
+                self.search_open = false;
+                self.handle(Message::SearchSettings(String::new()))
+            }
             None => Task::none(),
         }
     }

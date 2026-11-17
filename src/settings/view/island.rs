@@ -6,25 +6,31 @@ use crate::settings::desktop::Message as Edit;
 
 impl Settings {
     pub(super) fn activity_island_page(&self) -> Element<'_, Message> {
-        let mut parts = vec![
-            heading(
-                "Activity island",
-                "Music, meetings and alerts in the middle of your top panel.",
-            ),
-            self.home_glance(Page::ActivityIsland),
-        ];
+        let mut parts = vec![heading(
+            "Activity island",
+            "Music, meetings and alerts in the middle of your top panel.",
+        )];
         let panel = self.desktop.draft(PanelKind::Panel);
-        if !panel.is_some_and(|draft| draft.listed() && has_island(draft)) {
-            // Why it isn't there, with the step that puts it there.
+        if panel.is_some_and(|draft| {
+            draft.listed() && draft.anchor().known() == Some(&Anchor::Top) && has_island(draft)
+        }) {
+            parts.push(group(
+                None,
+                vec![detail_state(
+                    "On your panel",
+                    "Open Activity island on your top panel.",
+                )],
+            ));
+        } else {
             parts.push(group(None, vec![self.island_way_on()]));
-            // What it offers shows before it's added; the choices are kept
-            // for when it is.
             parts.push(label(
                 "These choices apply once the island is on your panel.",
                 12.,
                 MUTED,
             ));
         }
+        parts.push(self.islands_activation_card());
+        parts.push(self.home_glance(Page::ActivityIsland));
         parts.push(self.activity_preferences());
         parts.push(self.activity_gestures());
         container(column::with_children(parts).spacing(20))

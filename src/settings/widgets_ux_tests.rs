@@ -106,7 +106,7 @@ fn wid07_the_widgets_page_links_to_how_widgets_look() {
             finish.kind.title(),
             100 - finish.opacity()
         ),
-        None => "No glass".to_string(),
+        None => app.finish_summary(None),
     };
     super::tests::native_reveal(&app, &mut native, "widgets-look");
     for (id, title, value) in [

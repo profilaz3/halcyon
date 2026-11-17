@@ -119,18 +119,20 @@ impl Settings {
         self.service_known && !self.service.running
     }
 
+    pub(super) fn start_widgets_button(&self) -> Element<'static, Message> {
+        button::standard("Start widgets")
+            .id(cosmic::widget::Id::new("widgets-start"))
+            .on_press_maybe((!self.busy).then_some(Message::Background(true)))
+            .into()
+    }
+
     /// Shown on Widgets and Looks while the widgets service is stopped.
     /// `offer_setup` adds Set up… where Home's setup card isn't already shown.
     pub(super) fn widgets_stopped_banner(&self, offer_setup: bool) -> Option<Element<'_, Message>> {
         if !self.widgets_stopped() {
             return None;
         }
-        let mut actions = vec![
-            button::standard("Start widgets")
-                .id(cosmic::widget::Id::new("widgets-start"))
-                .on_press_maybe((!self.busy).then_some(Message::Background(true)))
-                .into(),
-        ];
+        let mut actions = vec![self.start_widgets_button()];
         if offer_setup {
             actions.push(
                 button::text("Set up…")

@@ -119,6 +119,69 @@ impl Settings {
     /// The one next step toward the Islands panel, or None once it runs.
     /// `lead` says what asked for it, e.g. "Islands use".
     pub(super) fn host_step(&self, lead: &str) -> Option<Element<'_, Message>> {
+        self.host_instructions(&format!("{lead} the Islands panel instead of the COSMIC one. It takes over the next time you sign in."))
+    }
+
+    /// The same activation state and actions on both entry pages. The applet
+    /// has its own placement state, independent of which panel is running.
+    pub(in crate::settings) fn islands_activation_card(&self) -> Element<'_, Message> {
+        let host = self.panel_host();
+        let (status, tint) = match &host {
+            Host::Running => ("Active", READY),
+            Host::Switch => ("Available", self.settings_accent()),
+            Host::SignIn => ("Sign-in needed", self.settings_accent()),
+            Host::Checking => ("Checking", MUTED),
+            Host::Switching => ("Preparing", MUTED),
+            Host::Failed(_) | Host::Unavailable(_) => ("Needs attention", WARN),
+        };
+        // Echo the floating panel groups using the user's accent in either theme.
+        let accent = self.settings_accent();
+        let segment = |width: u16| {
+            container(cosmic::widget::space())
+                .width(width)
+                .height(6)
+                .class(cosmic::theme::Container::custom(move |_| {
+                    cosmic::iced::widget::container::Style {
+                        background: Some(Background::Color(accent)),
+                        border: Border {
+                            radius: 4.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
+                }))
+                .into()
+        };
+        let mark = row::with_children(vec![segment(6), segment(16), segment(6)]).spacing(3);
+        let mut header = row::with_children(vec![
+            mark.into(),
+            container(label("Islands panel", 17., FG))
+                .width(Length::Fill)
+                .into(),
+            pill(status, tint),
+        ])
+        .spacing(10)
+        .align_y(Alignment::Center);
+        if matches!(host, Host::Running) && self.page == Page::Home && self.wizard.is_none() {
+            header = header
+                .push(button::text("Panel layout").on_press(Message::Page(Page::DesktopPanel)))
+                .push(
+                    button::text("Activity island").on_press(Message::Page(Page::ActivityIsland)),
+                );
+        }
+        let mut body = column::with_children(vec![header.into()]).spacing(8);
+        if let Some(step) = self.host_instructions("Use the Islands panel for floating groups. Activity island also works on the standard top panel.") {
+            body = body.push(step);
+        }
+        container(body)
+            .id("islands-activation")
+            .padding([12, 16])
+            .width(Length::Fill)
+            .class(cosmic::theme::Container::Card)
+            .into()
+    }
+
+    fn host_instructions(&self, switch_hint: &str) -> Option<Element<'_, Message>> {
         // Updates holds the panel's checks and fixes; the link says so, and
         // lines up with the text above it.
         let help = || -> Element<'_, Message> {
@@ -133,19 +196,18 @@ impl Settings {
             Host::Checking => vec![label("Checking the Islands panel…", 12., MUTED)],
             Host::Switching => vec![label("Getting the Islands panel ready…", 12., MUTED)],
             Host::Switch => vec![
-                label(
-                    format!(
-                        "{lead} the Islands panel instead of the COSMIC one. \
-                         It takes over the next time you sign in."
-                    ),
-                    12.,
-                    MUTED,
-                ),
+                label(switch_hint.to_owned(), 12., MUTED),
                 actions(vec![
-                    button::suggested("Switch at next sign-in")
-                        .id("enable-islands".into())
-                        .on_press(update(Panel::Enable))
-                        .into(),
+                    (if self.wizard.is_some() {
+                        button::suggested("Finish and switch at next sign-in")
+                    } else if self.page == Page::ActivityIsland {
+                        button::standard("Switch at next sign-in")
+                    } else {
+                        button::suggested("Switch at next sign-in")
+                    })
+                    .id("enable-islands".into())
+                    .on_press(update(Panel::Enable))
+                    .into(),
                 ]),
             ],
             Host::SignIn => {

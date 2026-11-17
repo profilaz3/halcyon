@@ -44,10 +44,10 @@ impl Settings {
                 ],
             ),
             group(
-                Some("Always stays on your computer"),
+                Some("Outside usage reports"),
                 vec![detail_state(
-                    "Your calendar, notes, accounts and projects",
-                    "Never sent anywhere, even with usage data on",
+                    "Widget contents and accounts",
+                    "Usage reports exclude their contents. Connected services receive the information they need, such as a city for weather or stock symbols for quotes.",
                 )],
             ),
         ])

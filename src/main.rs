@@ -17,6 +17,7 @@ mod layout;
 mod layout_state;
 mod materials;
 mod messages;
+mod markets;
 mod moments;
 #[cfg(test)]
 mod native_test;

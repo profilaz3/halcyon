@@ -100,6 +100,11 @@ fn ax04_keys_map_to_drawer_moves() {
             DrawerKey::MoveDown,
         ),
         (Key::Named(Named::Enter), none, DrawerKey::Activate),
+        (
+            Key::Named(Named::Enter),
+            Modifiers::SHIFT,
+            DrawerKey::Interact,
+        ),
         (Key::Character(" ".into()), none, DrawerKey::Activate),
     ] {
         assert_eq!(
@@ -541,7 +546,11 @@ fn dt14_idle_music_card_keeps_its_slot_and_offers_the_last_track() {
     let press = cosmic::iced::Event::Mouse(cosmic::iced::mouse::Event::ButtonPressed(
         cosmic::iced::mouse::Button::Left,
     ));
-    let (messages, _) = native.event(resumable(), press.clone(), resume.center());
+    let _ = native.event(resumable(), press.clone(), resume.center());
+    let release = cosmic::iced::Event::Mouse(cosmic::iced::mouse::Event::ButtonReleased(
+        cosmic::iced::mouse::Button::Left,
+    ));
+    let (messages, _) = native.event(resumable(), release.clone(), resume.center());
     assert!(
         messages.iter().any(|message| matches!(
             message,
@@ -1754,4 +1763,72 @@ fn wid08_a_laptop_screen_keeps_the_whole_system_monitor() {
     assert_eq!(cards.card_height(Widget::Weather), weather);
     assert_eq!(cards.card_height(Widget::Projects), 300.);
     whole_monitor(&cards);
+}
+
+#[test]
+fn keyboard_enters_focus_card_starts_timer_and_leaves_on_escape() {
+    if isolated("keyboard_enters_focus_card_starts_timer_and_leaves_on_escape") {
+        return;
+    }
+    use cosmic::iced::advanced::widget::operation::{focusable, scoped};
+    use cosmic::iced::{Event, Point, keyboard};
+    let mut cards = cards();
+    cards.config.focus.enabled = true;
+    let _ = cards.update(Message::DrawerToggle);
+    cards.sidebar.focus = cards
+        .drawer_items()
+        .iter()
+        .position(|item| *item == drawer::DrawerItem::Widget(Widget::Focus));
+    assert!(cards.sidebar.focus.is_some());
+    let _ = cards.update(Message::KeyInput(
+        cards.ids[2],
+        Key::Named(Named::Enter),
+        Modifiers::SHIFT,
+    ));
+    assert_eq!(cards.interacting_tool, Some(Widget::Focus));
+    assert!(!cards.sidebar.visible);
+    let mut native = Native::new(Size::new(380., 300.));
+    let mut actions = Vec::new();
+    let count = native
+        .focus_stops(cards.individual_widget(Widget::Focus))
+        .len();
+    for _ in 0..=count {
+        native.operate(
+            cards.individual_widget(Widget::Focus),
+            Box::new(scoped("tool-controls".into(), focusable::focus_next())),
+        );
+        let key = Key::Named(Named::Enter);
+        let event = Event::Keyboard(keyboard::Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Enter),
+            location: keyboard::Location::Standard,
+            modifiers: Modifiers::empty(),
+            text: None,
+            repeat: false,
+        });
+        actions.extend(
+            native
+                .event(cards.individual_widget(Widget::Focus), event, Point::ORIGIN)
+                .0,
+        );
+    }
+    let start = actions
+        .into_iter()
+        .find(|message| {
+            matches!(
+                message,
+                Message::Tool(crate::tools::cards::Action::FocusToggle)
+            )
+        })
+        .expect("Enter reaches the timer control");
+    let _ = cards.update(start);
+    assert!(cards.tools.focus.running());
+    let id = cards.widget_id(Widget::Focus);
+    let _ = cards.update(Message::KeyInput(
+        id,
+        Key::Named(Named::Escape),
+        Modifiers::empty(),
+    ));
+    assert!(cards.interacting_tool.is_none());
 }

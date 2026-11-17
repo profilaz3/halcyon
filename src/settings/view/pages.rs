@@ -86,6 +86,7 @@ fn widget_page(widget: Widget) -> Page {
         Widget::Focus => Page::Focus,
         Widget::Devices => Page::Devices,
         Widget::Messages => Page::Messages,
+        Widget::Markets => Page::Markets,
     }
 }
 
@@ -108,6 +109,7 @@ impl Settings {
             Widget::Focus => "A timer for focused work and breaks.",
             Widget::Devices => "The battery of your headphones, mouse and phone.",
             Widget::Messages => "Your phone’s newest text messages, through KDE Connect.",
+            Widget::Markets => "A personal stock watchlist with price charts.",
             Widget::Projects => "For people who write code: what changed in each project.",
             Widget::Devbox => "How busy your computer is.",
         };
@@ -209,18 +211,7 @@ impl Settings {
     /// link to the section that sets it.
     fn widget_look_rows(&self) -> Vec<Element<'_, Message>> {
         use crate::settings::navigation::{DAY_AND_NIGHT_STYLES, SEE_THROUGH, WIDGET_FONT};
-        let glass = match self
-            .config
-            .materials
-            .effective(crate::materials::Target::Widgets)
-        {
-            Some(finish) => format!(
-                "{}, {}% see-through",
-                finish.kind.title(),
-                100 - finish.opacity()
-            ),
-            None => "No glass".to_string(),
-        };
+        let glass = self.finish_summary(self.config.materials.widgets());
         let font = self
             .config
             .widget_font

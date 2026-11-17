@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 #[serde(transparent)]
 pub struct InstanceId(std::borrow::Cow<'static, str>);
 /// Widget kinds added after the instance format, in the order they arrived.
-const LATER_KINDS: [Widget; 2] = [Widget::Devices, Widget::Messages];
+const LATER_KINDS: [Widget; 3] = [Widget::Devices, Widget::Messages, Widget::Markets];
 
 impl InstanceId {
     pub fn legacy(kind: Widget) -> Self {
@@ -25,6 +25,7 @@ impl InstanceId {
             Widget::Focus => "legacy:focus",
             Widget::Devices => "legacy:devices",
             Widget::Messages => "legacy:messages",
+            Widget::Markets => "legacy:markets",
         }))
     }
     pub fn new() -> Result<Self, String> {

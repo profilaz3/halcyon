@@ -72,8 +72,8 @@ const ROW_GAP: f32 = 4.;
 const LIST_FOOTER: f32 = 40.;
 /// "and N more" beneath the rows on an island, when some do not fit.
 const MORE_LINE: f32 = ROW_GAP + 22.;
-/// Clear all on an island's list title line, a ✕ beside Collapse.
-const CLEAR_ROOM: f32 = 28. + 2.;
+/// Space for a header button and its gap next to Collapse.
+const HEADER_BUTTON_ROOM: f32 = 28. + 2.;
 /// The room a card has below its title line, as the chooser uses it.
 const LIST_ROOM: f32 = HEIGHT - 50.;
 /// The height of a list of `rows` notifications and what follows them.
@@ -340,6 +340,12 @@ impl Kind {
         }
     }
 }
+/// The level entered from the activity list, so Back returns to its origin.
+#[derive(Clone, Copy, PartialEq)]
+enum ActivitySelection {
+    Card,
+    Detail,
+}
 pub struct Applet {
     core: Core,
     popup: Option<window::Id>,
@@ -372,6 +378,7 @@ pub struct Applet {
     hover_block: Option<Instant>,
     format_24h: bool,
     chooser: bool,
+    from_activities: Option<ActivitySelection>,
     host_reveals: bool,
     reveal_deadline: Option<Instant>,
     last_reveal: Option<Instant>,
@@ -588,6 +595,7 @@ impl Application for Applet {
                 hover_block: None,
                 format_24h: read_24h(),
                 chooser: false,
+                from_activities: None,
                 host_reveals: false,
                 reveal_deadline: None,
                 last_reveal: None,
@@ -897,11 +905,16 @@ impl Applet {
                     }
                     self.priority_deadline = None;
                     self.commands = None;
-                    self.snapshot = Snapshot::default();
+                    self.snapshot = Snapshot {
+                        preferences: self.snapshot.preferences.clone(),
+                        ..Snapshot::default()
+                    };
                     if self.popup.is_none() {
                         self.kind = Kind::Idle;
                     }
-                    return self.sync_popups();
+                    self.chooser = false;
+                    self.from_activities = None;
+                    return Task::batch([self.sync_popups(), self.resize_popup()]);
                 }
                 ClientEvent::Snapshot(mut snapshot) => {
                     // The switch just flipped here wins until the desktop
@@ -930,6 +943,9 @@ impl Applet {
                     self.music_sampled = now;
                     self.observe_system_deadlines(&snapshot, now);
                     self.snapshot = snapshot;
+                    if !self.snapshot.preferences.open_on_hover {
+                        self.hover_deadline = None;
+                    }
                     self.keep_art();
                     if !self.snapshot.preferences.notifications {
                         self.notes.clear();
@@ -972,18 +988,8 @@ impl Applet {
                     let reveal = timer_due.then_some(Kind::Timer).or(system_reveal);
                     let reveal = self.consider_reveal(reveal, now);
                     self.settle_device_banner(now);
-                    // Keep the way back visible as devices arrive or the list empties.
-                    let devices = if self.popup.is_some()
-                        && self.kind == Kind::Devices
-                        && self.devices.card
-                        && !self.chooser
-                        && self.devices_extra() > self.popup_extra + 0.5
-                    {
-                        self.regrow(now)
-                    } else {
-                        Task::none()
-                    };
-                    return Task::batch([popups, reveal, devices]);
+                    let resize = self.resize_popup();
+                    return Task::batch([popups, reveal, resize]);
                 }
             },
             Message::Enter(popup) => {
@@ -997,7 +1003,9 @@ impl Applet {
                     if self.motion.target() == 0. && self.hover_block.is_none_or(|end| now >= end) {
                         self.motion.retarget(1., self.animates(), now);
                     }
-                } else if self.popup.is_none() && self.hover_block.is_none_or(|end| now >= end) {
+                } else if self.popup.is_none() && self.snapshot.preferences.open_on_hover
+                    && self.hover_block.is_none_or(|end| now >= end)
+                {
                     self.hover_block = None;
                     self.hover_cap = now + HOVER_MAX_WAIT;
                     self.hover_deadline = Some(now + HOVER_DELAY);
@@ -1113,6 +1121,7 @@ impl Applet {
                     self.now_ms = chrono::Utc::now().timestamp_millis();
                     self.arm_pause_grace();
                     self.kind = self.automatic_kind();
+                    self.from_activities = None;
                     self.chooser = false;
                     self.list = false;
                     self.reset_inbox();
@@ -1229,7 +1238,7 @@ impl Applet {
             Message::Choose => {
                 self.reveal_deadline = None;
                 self.chooser = !self.chooser;
-                self.ui.view = live::View::Card;
+                self.from_activities = None;
                 return self.hold_popup();
             }
             Message::GroupToggle(_)
@@ -1249,9 +1258,26 @@ impl Applet {
                 let job = self.note_transfer(&event, now);
                 return Task::batch([job, self.note_event(event, now)]);
             }
-            Message::Live(msg) => return self.live_update(msg, now),
-            Message::Devices(msg) => return self.devices_update(msg, now),
-            Message::Shelf(msg) => return self.shelf_update(msg, now),
+            Message::Live(msg) => {
+                if self.chooser && matches!(msg, live::Msg::TimerPicker) {
+                    self.from_activities = Some(ActivitySelection::Detail);
+                }
+                let action = self.live_update(msg, now);
+                return Task::batch([action, self.resize_popup()]);
+            }
+            Message::Devices(msg) => {
+                if self.chooser && matches!(msg, devices::Msg::Open) {
+                    self.from_activities = Some(ActivitySelection::Detail);
+                }
+                return self.devices_update(msg, now);
+            }
+            Message::Shelf(msg) => {
+                if self.chooser && matches!(msg, shelf::Msg::Show) {
+                    self.from_activities = Some(ActivitySelection::Detail);
+                }
+                let action = self.shelf_update(msg, now);
+                return Task::batch([action, self.resize_popup()]);
+            }
             Message::NoteAction(id, action) => {
                 let Some(note) = self.note(id) else {
                     return Task::none();
@@ -1426,6 +1452,7 @@ impl Applet {
                 if !self.live() || !self.eligible_kinds().contains(&kind) {
                     return Task::none();
                 }
+                self.from_activities = self.chooser.then_some(ActivitySelection::Card);
                 self.chooser = false;
                 self.list = false;
                 self.ui.view = live::View::Card;
@@ -1435,6 +1462,7 @@ impl Applet {
                 self.capture_source();
                 self.problem = None;
                 self.now_ms = chrono::Utc::now().timestamp_millis();
+                return self.hold_popup();
             }
             Message::Control(command) => {
                 if let Some(tx) = &self.commands {
@@ -1448,14 +1476,30 @@ impl Applet {
                 }
             }
             Message::Key(key) => match key.as_ref() {
-                // Escape leaves a rules menu before the island.
+                keyboard::Key::Named(keyboard::key::Named::Escape) if self.chooser => {
+                    return self.update(Message::Choose);
+                }
                 keyboard::Key::Named(keyboard::key::Named::Escape) if self.menu.is_some() => {
                     self.menu = None;
+                    return self.resize_popup();
                 }
-                keyboard::Key::Named(keyboard::key::Named::Escape)
-                    if self.popup.is_some() && self.ui.view != live::View::Card =>
-                {
-                    return self.live_update(live::Msg::Back, now);
+                keyboard::Key::Named(keyboard::key::Named::Escape) if self.popup.is_some() => {
+                    if self.ui.view != live::View::Card {
+                        return self.update(Message::Live(live::Msg::Back));
+                    }
+                    if self.kind == Kind::Devices && self.devices.card {
+                        return self.devices_update(devices::Msg::Back, now);
+                    }
+                    if self.shelf.open {
+                        return self.update(Message::Shelf(shelf::Msg::Back));
+                    }
+                    if self.from_activities == Some(ActivitySelection::Card) {
+                        return self.update(Message::Choose);
+                    }
+                    if self.hovered {
+                        self.hover_block = Some(now + ESCAPE_HOVER_BLOCK);
+                    }
+                    return self.update(Message::Close);
                 }
                 keyboard::Key::Named(
                     named @ (keyboard::key::Named::ArrowLeft | keyboard::key::Named::ArrowRight),
@@ -1466,12 +1510,6 @@ impl Applet {
                         live::SEEK_STEP
                     };
                     return self.live_update(live::Msg::SeekBy(step), now);
-                }
-                keyboard::Key::Named(keyboard::key::Named::Escape) => {
-                    if self.popup.is_some() && self.hovered {
-                        self.hover_block = Some(now + ESCAPE_HOVER_BLOCK);
-                    }
-                    return self.update(Message::Close);
                 }
                 keyboard::Key::Named(keyboard::key::Named::Tab) if self.popup.is_some() => {
                     self.keyed = true;
@@ -1668,12 +1706,19 @@ impl Applet {
             )
             .min();
     }
+    fn back_from_detail(&mut self) -> Task<Message> {
+        if self.from_activities == Some(ActivitySelection::Detail) {
+            self.update(Message::Choose)
+        } else {
+            self.resize_popup()
+        }
+    }
     fn hold_popup(&mut self) -> Task<Message> {
         self.reveal_deadline = None;
         self.revealed = false;
         self.leave_deadline = None;
         if self.held {
-            return Task::none();
+            return self.resize_popup();
         }
         self.held = true;
         // Retire the hover popup before requesting a new native grab. Sending
@@ -1734,16 +1779,33 @@ impl Applet {
         self.list = self.wants_list();
         self.open_popup_sized()
     }
-    /// Opens the popup for what is set to show, tall enough for a list.
-    fn open_popup_sized(&mut self) -> Task<Message> {
-        self.popup_wide = if self.list { self.list_wide() } else { 0. };
-        self.popup_extra = if self.list || self.menu.is_some() {
-            self.list_extra()
+    fn popup_dimensions(&self) -> (f32, f32) {
+        if self.chooser {
+            (0., self.chooser_extra())
+        } else if self.list || self.menu.is_some() {
+            (if self.list { self.list_wide() } else { 0. }, self.list_extra())
         } else if self.shelf_shown() {
-            self.shelf_extra()
+            (0., self.shelf_extra())
         } else {
-            self.live_extra()
-        };
+            (0., self.live_extra())
+        }
+    }
+    /// Wayland fixes a popup's size at creation. Reopen once at the new size,
+    /// keeping its grab, the selected activity and any change received meanwhile.
+    fn resize_popup(&mut self) -> Task<Message> {
+        let Some(id) = self.popup else { return Task::none(); };
+        let (wide, extra) = self.popup_dimensions();
+        if self.promote_popup.is_none() && self.motion.target() > 0.
+            && ((wide - self.popup_wide).abs() > 0.5 || (extra - self.popup_extra).abs() > 0.5)
+        {
+            self.promote_popup = Some(id);
+            return self.update(Message::Surface(cosmic::surface::action::destroy_popup(id)));
+        }
+        Task::none()
+    }
+    /// Opens the popup at the size of its current contents.
+    fn open_popup_sized(&mut self) -> Task<Message> {
+        (self.popup_wide, self.popup_extra) = self.popup_dimensions();
         let id = window::Id::unique();
         self.capture_source();
         self.popup = Some(id);
@@ -1799,6 +1861,7 @@ impl Applet {
         self.promote_popup = None;
         self.held = false;
         self.chooser = false;
+        self.from_activities = None;
         self.list = false;
         self.reset_inbox();
         self.ui.view = live::View::Card;
@@ -2792,7 +2855,7 @@ impl Applet {
         // are listed.
         let clear =
             heading && self.menu.is_none() && !self.notes.is_empty() && self.clear_on_title();
-        let tools = if clear { CLEAR_ROOM } else { 0. };
+        let tools = HEADER_BUTTON_ROOM * if clear { 2. } else { 1. };
         if heading {
             title = match (&self.menu, self.notes.len()) {
                 (Some(target), _) => target.app.clone(),
@@ -2846,15 +2909,15 @@ impl Applet {
         } else {
             (&others[..], 0)
         };
-        let others_width = if self.chooser && !others.is_empty() {
-            BADGE_WIDTH
+        let others_width = if self.chooser {
+            0.
         } else {
             overview_width(shown.len(), count_badge + usize::from(more > 0))
         };
         // A single badge keeps the resting title centred; a row of icons
         // takes the title's balancing space instead.
         let balance = if others_width <= BADGE_WIDTH { others_width } else { 0. };
-        let others = others.len() + count_badge;
+        let others = if self.chooser { 0 } else { others.len() + count_badge };
         // The cue says when or how far along, so it keeps its full width and
         // the title gives way. This mirrors the title slot in `surface`.
         let compact = COMPACT_WIDTH.min(self.slot_width());
@@ -3122,23 +3185,25 @@ impl Applet {
             "go-up-symbolic",
             "activity-collapse",
             Message::Close,
-            "Collapse (Esc)",
+            "Collapse island",
         );
-        let pin = if clear {
-            widget::row([
-                round(
-                    "window-close-symbolic",
-                    "activity-note-clear",
-                    Message::NotesClear,
-                    "Clear all",
-                ),
-                collapse,
-            ])
-            .spacing(CLEAR_ROOM - 28.)
-            .into()
+        let home = if live {
+            round(
+                if self.chooser { "go-previous-symbolic" } else { "view-list-symbolic" },
+                "activity-home",
+                Message::Choose,
+                if self.chooser { "Back to activity" } else { "All activities" },
+            )
         } else {
-            collapse
+            widget::Space::new().width(28).into()
         };
+        let mut buttons = widget::row([home]).spacing(2);
+        if clear {
+            buttons = buttons.push(round(
+                "window-close-symbolic", "activity-note-clear", Message::NotesClear, "Clear all",
+            ));
+        }
+        let pin = buttons.push(collapse).into();
         let note = live && !self.chooser && !listing && !shelf && matches!(self.kind, Kind::Notification(_));
         let meta = if note {
             // A notification's message may take a second line. Clipped, not
@@ -3193,21 +3258,6 @@ impl Applet {
         };
         let activities: Element<'_, Message> = if others == 0 {
             widget::Space::new().into()
-        } else if self.chooser {
-            self.tip(
-                palette,
-                badge(
-                    widget::icon::from_name("go-previous-symbolic")
-                        .symbolic(true)
-                        .size(14)
-                        .into(),
-                    "activity-others",
-                    BADGE_WIDTH,
-                    Message::Choose,
-                ),
-                "Back to activity",
-                widget::tooltip::Position::Bottom,
-            )
         } else {
             let mut row = widget::row([]).spacing(OVERVIEW_GAP);
             if count_badge > 0 {
@@ -3308,7 +3358,9 @@ impl Applet {
             extra_width: if popup { self.popup_wide } else { 0. },
             card_width,
             tools,
-            card_extra: if listing {
+            card_extra: if self.chooser {
+                self.chooser_extra().min(extra)
+            } else if listing {
                 self.list_card_extra(extra)
             } else if panel {
                 self.live_extra().clamp(0., extra)

@@ -211,6 +211,48 @@ mod tests {
     }
 
     #[test]
+    fn compact_projects_open_a_window_with_every_checkout() {
+        let mut cards = column_cards();
+        cards.projects = Some(loaded(6));
+        cards
+            .config
+            .widget_sizes
+            .insert("projects".into(), [300., 180.]);
+        let mut native = crate::native_test::Native::new(cosmic::iced::Size::new(300., 180.));
+        let card = cards.projects_card();
+        assert!(native.scrollables(card).is_empty());
+        let more = native
+            .text_bounds(cards.projects_card(), "All 6 projects →")
+            .center();
+        let (actions, _) = native.event(
+            cards.projects_card(),
+            cosmic::iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            more,
+        );
+        assert!(
+            actions
+                .iter()
+                .any(|m| matches!(m, Message::ReadingDetails(Widget::Projects)))
+        );
+        let _ = cards.update(Message::ReadingDetails(Widget::Projects));
+        let (id, _) = cards.reading_window.unwrap();
+        assert!(
+            native
+                .all_text(cards.view_window(id))
+                .iter()
+                .any(|text| text == "Project 5")
+        );
+        let _ = cards.update(Message::ReadingDetails(Widget::Devbox));
+        assert_eq!(cards.reading_window, Some((id, Widget::Devbox)));
+        let _ = cards.update(Message::SurfaceClosed(id));
+        assert!(cards.reading_window.is_none());
+        let _ = cards.update(Message::ReadingDetails(Widget::Projects));
+        assert_ne!(cards.reading_window.unwrap().0, id);
+        let _ = cards.update(Message::CloseReading);
+        assert!(cards.reading_window.is_none());
+    }
+
+    #[test]
     fn active_then_changed_then_recent_checkouts_are_selected() {
         let mut main = project("/projects/app", "App", "same-repository");
         main.recent = 200.0;
@@ -393,8 +435,6 @@ mod tests {
                 )
             }));
         assert_eq!(cards.projects_natural_height(), 300.);
-        cards.all_projects = true;
-        assert_eq!(cards.projects_natural_height(), 300.);
     }
 
     #[test]
@@ -447,10 +487,9 @@ mod tests {
                 })
                 .collect(),
         });
-        for expanded in [false, true, false] {
-            cards.all_projects = expanded;
-            tree.diff(cards.projects_card().as_widget_mut());
-        }
+        tree.diff(cards.projects_card().as_widget_mut());
+        tree.diff(cards.full_projects().as_widget_mut());
+        tree.diff(cards.projects_card().as_widget_mut());
         cards.projects.as_mut().unwrap().projects.clear();
         tree.diff(cards.projects_card().as_widget_mut());
         cards.projects = None;
@@ -606,13 +645,15 @@ fn checkout_target(path: &str) -> Option<String> {
 }
 
 fn open_checkout<'a>(content: Element<'a, Message>, path: &str) -> Element<'a, Message> {
-    let area = mouse_area(content);
     match checkout_target(path) {
-        Some(path) => area
-            .on_press(Message::Open(path))
-            .interaction(mouse::Interaction::Pointer)
+        Some(target) => cosmic::widget::button::custom(content)
+            .name(format!("Open checkout {path}"))
+            .class(cosmic::theme::Button::Text)
+            .padding(0)
+            .width(Length::Fill)
+            .on_press(Message::Open(target))
             .into(),
-        None => area.into(),
+        None => content,
     }
 }
 
@@ -869,11 +910,14 @@ pub(super) struct Presentation<'a> {
     pub projects: Option<&'a ProjectsData>,
     pub projects_fetching: bool,
     pub projects_error: bool,
-    pub all_projects: bool,
     pub expanded_projects: &'a BTreeSet<String>,
 }
 impl Presentation<'_> {
     pub(super) fn natural_height(&self, width: f32) -> f32 {
+        self.content_height(width).min(300.)
+    }
+
+    fn content_height(&self, width: f32) -> f32 {
         const CHROME: f32 = 116.; // Same header, footer, gaps and frame as projects_card.
         let groups = self
             .projects
@@ -894,15 +938,9 @@ impl Presentation<'_> {
             };
             let content = estimated_text_lines(message, 13., width - 42.) * 16.25;
             // The compact fallback card uses 10px gaps in place of 8px gaps.
-            return (CHROME + content + if content < 44. { 4. } else { 0. })
-                .ceil()
-                .min(300.);
+            return (CHROME + content + if content < 44. { 4. } else { 0. }).ceil();
         }
-        let count = if self.all_projects {
-            groups.len()
-        } else {
-            groups.len().min(3)
-        };
+        let count = groups.len().min(3);
         let mut height = CHROME + count.saturating_sub(1) as f32 * 6.;
         for group in groups.iter().take(count) {
             let ports = group.web_ports();
@@ -946,7 +984,7 @@ impl Presentation<'_> {
                 height += 20.75;
             }
         }
-        height.ceil().min(300.)
+        height.ceil()
     }
 
     /// No folders chosen yet: a title, one line of guidance and the way to
@@ -982,6 +1020,10 @@ impl Presentation<'_> {
     }
 
     pub(super) fn view(&self, limit: f32, explicit: bool) -> Element<'static, Message> {
+        self.project_list(limit, explicit, false)
+    }
+
+    fn project_list(&self, limit: f32, explicit: bool, full: bool) -> Element<'static, Message> {
         let _style = crate::widget_style::scope(self.config);
         if self
             .projects
@@ -1036,7 +1078,41 @@ impl Presentation<'_> {
             } else {
                 summary
             });
-            let count = if self.all_projects { groups.len() } else { 3 };
+            let width = self
+                .config
+                .widget_sizes
+                .get(Widget::Projects.key())
+                .map_or(360., |size| size[0]);
+            if !full && self.content_height(width) > limit {
+                let capacity = ((limit - 112.) / 26.).floor().max(1.) as usize;
+                for group in groups.iter().take(capacity) {
+                    let status = if group.unavailable() > 0 {
+                        "Unavailable".into()
+                    } else if group.conflicts() > 0 {
+                        "Conflict".into()
+                    } else if !group.web_ports().is_empty() {
+                        "Live".into()
+                    } else if group.changes() > 0 {
+                        format!("{} edits", group.changes())
+                    } else {
+                        "Clean".into()
+                    };
+                    entries.push(open_checkout(
+                        spread(
+                            widget_details::summary_line(group.title.clone(), 14., p.foreground),
+                            label(status, 11., p.accent),
+                        ),
+                        &group.selected.path,
+                    ));
+                }
+                footer = action(
+                    format!("All {} projects →", groups.len()),
+                    Message::ReadingDetails(Widget::Projects),
+                    p.accent,
+                );
+                return self.frame(header, entries, footer, limit, explicit);
+            }
+            let count = if full { groups.len() } else { 3 };
             for group in groups.iter().take(count) {
                 let project = group.selected;
                 let web = group.web_ports();
@@ -1200,14 +1276,10 @@ impl Presentation<'_> {
                 );
             }
             footer = spread(
-                if groups.len() > 3 {
+                if groups.len() > 3 && !full {
                     text_action(
-                        if self.all_projects {
-                            "Show fewer ↑".into()
-                        } else {
-                            format!("All {} projects ↓", groups.len())
-                        },
-                        Message::ToggleProjects,
+                        format!("All {} projects →", groups.len()),
+                        Message::ReadingDetails(Widget::Projects),
                         p.accent,
                     )
                 } else {
@@ -1239,44 +1311,30 @@ impl Presentation<'_> {
                 p.muted,
             ));
         }
+        self.frame(header, entries, footer, limit, explicit)
+    }
+
+    fn frame(
+        &self,
+        header: Vec<Element<'static, Message>>,
+        entries: Vec<Element<'static, Message>>,
+        footer: Element<'static, Message>,
+        limit: f32,
+        explicit: bool,
+    ) -> Element<'static, Message> {
+        let p = self.config.palette();
         let header = container(column::with_children(header).spacing(5)).height(Length::Fixed(44.));
         let entries = column::with_children(entries)
             .spacing(6)
             .width(Length::Fill);
         let footer = container(footer).height(Length::Fixed(20.));
-        // The shared column uses the same bounded logical frame as placement
-        // and input. Its contents scroll inside that frame instead of shrinking
-        // the native tree behind the independently published geometry.
-        const CHROME: f32 = 116.; // header + footer + two gaps + frame padding
-        if limit < CHROME + 44. {
-            return card(
-                vec![header.into(), entries.into(), footer.into()],
-                p,
-                self.config.appearance,
-                Widget::Projects,
-                limit,
-            );
-        }
-        let list = container(
-            scrollable(container(entries).padding([0, 6, 0, 0]).width(Length::Fill))
-                .id(cosmic::widget::Id::new(Widget::Projects.key()))
-                .width(Length::Fill)
-                .height(if explicit {
-                    Length::Fill
-                } else {
-                    Length::Shrink
-                })
-                .scroller_width(2.)
-                .scrollbar_width(2.)
-                .scrollbar_padding(2.),
-        )
-        .max_height(limit - CHROME)
-        .height(if explicit {
-            Length::Fill
-        } else {
-            Length::Shrink
-        })
-        .width(Length::Fill);
+        let list = container(entries)
+            .height(if explicit {
+                Length::Fill
+            } else {
+                Length::Shrink
+            })
+            .width(Length::Fill);
         card_frame(
             column::with_children(vec![header.into(), list.into(), footer.into()])
                 .spacing(8)
@@ -1299,13 +1357,16 @@ impl Presentation<'_> {
 }
 
 impl Cards {
+    pub(super) fn full_projects(&self) -> Element<'static, Message> {
+        self.projects_presentation().project_list(0., false, true)
+    }
+
     fn projects_presentation(&self) -> Presentation<'_> {
         Presentation {
             config: &self.config,
             projects: self.projects.as_ref(),
             projects_fetching: self.projects_fetching,
             projects_error: self.projects_error,
-            all_projects: self.all_projects,
             expanded_projects: &self.expanded_projects,
         }
     }
@@ -1333,7 +1394,6 @@ impl Cards {
         let width = self.projects_width();
         let expanded = BTreeSet::new();
         let height = Presentation {
-            all_projects: false,
             expanded_projects: &expanded,
             ..self.projects_presentation()
         }

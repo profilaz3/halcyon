@@ -293,10 +293,18 @@ mod tests {
             let alpha = |x: usize, y: usize| pixels[(y * 300 + x) * 4 + 3];
             assert!(alpha(0, 0) < 20, "{backend}: rounded corner stays clear");
             assert!(
-                (95..=120).contains(&alpha(150, 150)),
+                (95..=130).contains(&alpha(150, 2)) && alpha(150, 150) > alpha(150, 2) + 20,
                 "{backend}: {}",
                 alpha(150, 150)
             );
+            let pixel = (150 * 300 + 150) * 4;
+            let opacity = f32::from(pixels[pixel + 3]) / 255.;
+            let over_white = |channel: usize| 1. - opacity + f32::from(pixels[pixel + channel]) / 255. * opacity;
+            let background = Color::from_rgb(over_white(0), over_white(1), over_white(2));
+            let palette = config.palette();
+            for ink in [palette.foreground, palette.muted, palette.accent] {
+                assert!(crate::widget_style::ratio(ink, background) >= 4.5, "{backend}: {ink:?} on {background:?}");
+            }
             let at = ui.bounds(view(), "glass-test-open").center();
             let _ = ui.event(
                 view(),
@@ -326,6 +334,21 @@ mod tests {
                     &cosmic::Theme::dark(),
                     &format!("dark-glass-messages-{backend}"),
                 );
+                let paper = ::image::open(concat!(
+                    env!("CARGO_MANIFEST_DIR"), "/assets/wallpapers/halcyon-paper.jpg"
+                )).unwrap().thumbnail(840, 560).into_rgba8();
+                let wallpaper = cosmic::widget::image::Handle::from_rgba(
+                    paper.width(), paper.height(), paper.into_raw()
+                );
+                let mut scene = crate::native_test::Native::with_backend(Size::new(480., 360.), backend);
+                let card = crate::tools::cards::messages::<()>(&sample, &config, None, Some([340., 280.]));
+                let scene_widget = cosmic::iced::widget::Stack::new().push(
+                    cosmic::widget::image(wallpaper)
+                        .content_fit(cosmic::iced::ContentFit::Cover)
+                        .width(480).height(360),
+                ).push(cosmic::widget::container(cosmic::widget::container(card).width(340))
+                    .center_x(480).center_y(360)).width(480).height(360).clip(true);
+                scene.capture(scene_widget.into(), &cosmic::Theme::dark(), &format!("dark-glass-paper-{backend}"));
                 let mut clear = config.clone();
                 clear.materials.widgets = Some(crate::materials::Finish {
                     kind: crate::materials::Kind::Clear,

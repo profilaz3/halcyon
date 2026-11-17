@@ -230,6 +230,105 @@ fn native_controls_are_inert_when_collapsed_and_fit_scaled_surfaces() {
 }
 
 #[test]
+fn activity_home_is_reachable_by_pointer_and_keyboard_and_restores_card_sizes() {
+    use cosmic::iced::{Size, advanced::widget::operation::focusable::focus_next};
+    let mut app = app();
+    app.snapshot.music = Some(music());
+    app.snapshot.reduced_motion = true;
+    app.supported = true;
+    app.core.applet.background = cosmic::applet::cosmic_panel_config::CosmicPanelBackground::Dark;
+    app.panel_frame = host::Frame {
+        height: 32., padding: 4., radius: 8., attached: true, opacity: 0.85,
+    };
+    let _ = app.update(Message::Hold);
+    let settle = |app: &mut Applet| {
+        if let Some(old) = app.promote_popup {
+            let _ = app.update(Message::PopupGone(old));
+        }
+        crate::native_test::Native::new(Size::new(app.frame().popup_width(), app.popup_height()))
+    };
+    let press = |app: &mut Applet, ui: &mut crate::native_test::Native, id: &str| {
+        let messages = click(ui, app, id);
+        assert!(!messages.is_empty(), "could not click {id}");
+        for message in messages { let _ = app.update(message); }
+    };
+    let escape = || Message::Key(keyboard::Key::Named(keyboard::key::Named::Escape));
+    let mut ui = settle(&mut app);
+    let home = ui.bounds(app.capsule(true), "activity-home");
+    let mut reached = false;
+    for _ in 0..24 {
+        ui.operate(app.capsule(true), Box::new(focus_next::<()>()));
+        if ui.focused(app.capsule(true)) == Some(home) {
+            reached = true;
+            break;
+        }
+    }
+    assert!(reached, "Activities must be reachable with Tab");
+    press(&mut app, &mut ui, "activity-home");
+    let mut ui = settle(&mut app);
+    assert!(app.chooser);
+    ui.capture(app.capsule(true), &cosmic::Theme::dark(), "activities-open-from-music");
+    for id in ["activity-choice-timer", "activity-choice-dnd"] {
+        let b = ui.bounds(app.capsule(true), id);
+        assert!(b.y >= 0. && b.y + b.height <= app.popup_height());
+    }
+    press(&mut app, &mut ui, "activity-choice-timer");
+    let _ = settle(&mut app);
+    assert_eq!(app.ui.view, live::View::Picker);
+    let _ = app.update(escape());
+    let _ = settle(&mut app);
+    assert!(app.chooser);
+    let _ = app.update(escape());
+    let mut ui = settle(&mut app);
+    assert!(!app.chooser && app.kind == Kind::Music);
+    assert_eq!(app.popup_extra, 0.);
+
+    let mut snapshot = app.snapshot.clone();
+    snapshot.preferences.messages = true;
+    snapshot.messages = Some(messages::project(&crate::messages::sample(), true));
+    let _ = app.update(Message::Backend(ClientEvent::Snapshot(snapshot.clone())));
+    press(&mut app, &mut ui, "activity-home");
+    let mut ui = settle(&mut app);
+    press(&mut app, &mut ui, "activity-choice-messages");
+    let mut ui = settle(&mut app);
+    let four = app.popup_height();
+    let open = ui.bounds(app.capsule(true), "activity-messages-open");
+    assert!(open.height > 0. && open.y + open.height <= four);
+    assert!(ui.bounds(app.capsule(true), "activity-message-3").height > 0.);
+    snapshot.messages = Some(messages::project(&crate::messages::State::NoPhone, true));
+    let _ = app.update(Message::Backend(ClientEvent::Snapshot(snapshot)));
+    let mut ui = settle(&mut app);
+    assert!(app.popup_height() < four);
+    let open = ui.bounds(app.capsule(true), "activity-messages-open");
+    assert!(open.height > 0. && open.y + open.height <= app.popup_height());
+    let _ = app.update(escape());
+    let _ = settle(&mut app);
+    assert!(app.chooser && app.held);
+}
+
+#[test]
+fn click_only_cancels_pending_hover_and_keeps_direct_and_keyboard_opening() {
+    let old: preferences::Preferences = serde_json::from_str("{}").unwrap();
+    assert!(old.open_on_hover);
+    let mut app = app();
+    let _ = app.update(Message::Enter(false));
+    assert!(app.hover_deadline.is_some());
+    let mut snapshot = app.snapshot.clone();
+    snapshot.preferences.open_on_hover = false;
+    snapshot.reduced_motion = true;
+    let _ = app.update(Message::Backend(ClientEvent::Snapshot(snapshot)));
+    assert!(app.hover_deadline.is_none() && app.snapshot.preferences.reveals);
+    let _ = app.update(Message::Enter(false));
+    let _ = app.update(Message::Moved);
+    assert!(app.hover_deadline.is_none() && app.popup.is_none());
+    let _ = app.update(Message::Hold);
+    assert!(app.popup.is_some() && app.held);
+    let _ = app.update(Message::Close);
+    let _ = app.update(Message::Key(keyboard::Key::Named(keyboard::key::Named::ArrowDown)));
+    assert!(app.popup.is_some() && app.held);
+}
+
+#[test]
 fn active_chooser_keeps_controls_accessible_without_permanent_tabs() {
     use cosmic::iced::Size;
     let mut app = app();
