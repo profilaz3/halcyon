@@ -403,6 +403,14 @@ fn ax10_escape_closes_one_thing_at_a_time_from_the_inside_out() {
     assert!(app.color_well.is_none() && app.font_menu.is_none());
     assert!(app.explained.is_none() && app.search_query.is_empty());
 
+    let _ = app.update(Message::Resized(Size::new(820., 600.)));
+    let _ = app.update(Message::FocusSearch);
+    let _ = app.update(Message::SearchSettings("clock".into()));
+    let _ = app.update(Message::SearchSettings(String::new()));
+    assert!(app.search_open, "clearing the input keeps Search available");
+    let _ = app.update(Message::Escape);
+    assert!(!app.search_open);
+
     // An explanation left open on another page isn't on screen to close.
     app.explained = Some((Page::Clock, 1));
     assert_eq!(app.escape_closes(), None);

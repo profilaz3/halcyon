@@ -264,7 +264,7 @@ fn starting_widgets_reads_the_service_again_and_clears_the_banner() {
         return;
     }
     let size = Size::new(820., 600.);
-    for page in [Page::Overview, Page::DesktopProfiles] {
+    for page in [Page::Home, Page::Overview, Page::DesktopProfiles] {
         let (mut app, _) = Settings::init(Core::default(), page);
         let _ = app.update(Message::Resized(size));
         let _ = app.update(Message::Service(Ok(ServiceState {
@@ -303,7 +303,7 @@ fn starting_widgets_reads_the_service_again_and_clears_the_banner() {
                 .text_all(app.settings_view(), "Background operation updated")
                 .is_empty()
         );
-        assert_eq!(app.service_refresh(), None, "{page:?}");
+        assert_eq!(app.service_refresh(), (page == Page::Home).then_some(Duration::from_secs(30)), "{page:?}");
     }
 }
 

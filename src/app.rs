@@ -11,6 +11,7 @@ use crate::drawer::{self, DragResult, ReorderDrag, Sidebar, Widget};
 mod auditfix_tests;
 mod autoswitch;
 mod calendar_details;
+mod widget_details;
 mod clock;
 mod clock_backdrop;
 pub(crate) use clock::{adapted_ink, backdrop_brightness, with_backdrop};
@@ -263,7 +264,6 @@ pub enum Message {
     SidebarPress(Widget),
     Pointer(window::Id, cosmic::iced::mouse::Event),
     SurfaceResized(window::Id, cosmic::iced::Size),
-    ToggleProjects,
     ToggleProject(String),
     ToggleEarlier,
     RefreshProjects,
@@ -283,6 +283,7 @@ pub enum Message {
     Today,
     RefreshCalendar,
     Open(String),
+    AgendaLink(Widget, String),
     Settings,
     WeatherSettings,
     ClockSettings,
@@ -351,7 +352,7 @@ pub enum Message {
     LookApplied(Result<(), edge::LookFailure>),
     /// Opens Settings on the page with this key.
     SettingsPage(&'static str),
-    /// A key on the edge menu or the widget menu (others are dropped).
+    /// A key on a menu, focused widget, or reading window.
     KeyInput(
         window::Id,
         cosmic::iced::keyboard::Key,
@@ -363,7 +364,9 @@ pub enum Message {
     PointerLeft(window::Id),
     /// A surface closed; the compositor dismisses the widget menu this way.
     SurfaceClosed(window::Id),
-    /// Right-click on a widget: its menu.
+    ReadingDetails(Widget),
+    CloseReading,
+    /// Open the widget’s context menu.
     WidgetMenu(Widget),
     WidgetMenuPick(layout::MenuPick),
     WidgetSettings(Widget),
@@ -447,7 +450,7 @@ pub struct Cards {
     /// The room Projects took last time, kept until its first reading.
     projects_reserved: Option<projects::Reserved>,
     next_projects: Instant,
-    all_projects: bool,
+    reading_window: Option<(window::Id, Widget)>,
     expanded_projects: std::collections::BTreeSet<String>,
     config: Config,
     /// The system's “enable animations” (Accessibility › Reduce motion off).
@@ -513,6 +516,7 @@ pub struct Cards {
     notice: Option<Notice>,
     /// The open widget menu: its popup and the widget it's for.
     menu: Option<(window::Id, Widget)>,
+    interacting_tool: Option<Widget>,
     recovery_details: bool,
     /// Restarting into an update once the desktop is left alone.
     restart: restart::Restart,
@@ -586,7 +590,7 @@ impl cosmic::Application for Cards {
             projects_error: false,
             projects_reserved: projects::Reserved::load(),
             next_projects: Instant::now(),
-            all_projects: false,
+            reading_window: None,
             expanded_projects: Default::default(),
             config,
             sampler: Sampler::default(),
@@ -639,6 +643,7 @@ impl cosmic::Application for Cards {
             edge: Default::default(),
             notice: None,
             menu: None,
+            interacting_tool: None,
             recovery_details: false,
             restart: Default::default(),
             applying_colors: 0,
@@ -817,18 +822,23 @@ impl cosmic::Application for Cards {
                 self.sidebar.focus.is_some(),
                 self.menu.map(|(id, _)| id),
                 self.note_typing_surface(),
+                self.interacting_tool.map(|widget| self.widget_id(widget)),
+                self.reading_window.map(|(id, _)| id),
             ))
             .filter_map(
-                |((ids, dragging, arranging, drawer_keys, menu, note), message)| {
+                |((ids, dragging, arranging, drawer_keys, menu, note, interacting, reading), message)| {
                     match &message {
                         Message::KeyInput(id, key, modifiers) => {
+                            if Some(*id) == reading {
+                                return Some(message);
+                            }
                             if arranging {
                                 Some(Message::SurfaceInput(
                                     *id,
                                     Box::new(Message::LayoutKey(key.clone(), modifiers.shift())),
                                 ))
                             } else {
-                                ((drawer_keys && *id == ids[2]) || Some(*id) == menu)
+                                ((drawer_keys && *id == ids[2]) || Some(*id) == menu || Some(*id) == interacting)
                                     .then_some(message)
                             }
                         }
@@ -839,7 +849,7 @@ impl cosmic::Application for Cards {
                                     Box::new(Message::LayoutCancelDrag),
                                 ))
                             } else {
-                                (Some(*id) == note).then_some(message)
+                                (Some(*id) == note || Some(*id) == interacting).then_some(message)
                             }
                         }
                         Message::PointerLeft(id) => {
@@ -852,7 +862,7 @@ impl cosmic::Application for Cards {
                                     .then_some(Message::Pointer(*id, event))
                             }
                         }
-                        Message::SurfaceClosed(id) => (Some(*id) == menu).then_some(message),
+                        Message::SurfaceClosed(id) => (Some(*id) == menu || Some(*id) == reading).then_some(message),
                         Message::Pointer(id, event) => {
                             // Motion over Calendar/Weather must not rebuild all five surfaces.
                             // Outside releases still cancel an active sidebar drag.
@@ -897,6 +907,9 @@ impl cosmic::Application for Cards {
         text::body("").into()
     }
     fn view_window(&self, id: window::Id) -> Element<'_, Message> {
+        if let Some((reading, widget)) = self.reading_window && reading == id {
+            return self.reading_view(widget);
+        }
         if let Some(view) = self.rain_view(id) {
             return view;
         }
@@ -1753,6 +1766,17 @@ impl Cards {
                 vec!["settings".into(), "--page".into(), page.into()],
             ),
             Message::KeyInput(id, key, modifiers) => {
+                if self.reading_window.is_some_and(|(reading, _)| reading == id) {
+                    return self.reading_key(key, modifiers.shift());
+                }
+                if self.interacting_tool.is_some_and(|widget| self.widget_id(widget) == id) {
+                    use cosmic::iced::keyboard::{Key, key::Named};
+                    return match key {
+                        Key::Named(Named::Escape) => self.leave_tool(),
+                        Key::Named(Named::Tab) => Self::move_tool_focus(modifiers.shift()),
+                        _ => Task::none(),
+                    };
+                }
                 if self.menu.is_some_and(|(menu, _)| menu == id) {
                     if matches!(
                         key,
@@ -1769,6 +1793,7 @@ impl Cards {
                     _ => Task::none(),
                 }
             }
+            Message::Unfocused(id) if self.interacting_tool.is_some_and(|widget| self.widget_id(widget) == id) => self.leave_tool(),
             Message::Unfocused(id) | Message::PointerLeft(id)
                 if Some(id) != self.note_typing_surface() =>
             {
@@ -1776,7 +1801,19 @@ impl Cards {
             }
             Message::Unfocused(_) => self.note_focus_lost(),
             Message::PointerLeft(_) => self.note_pointer_left(),
+            Message::ReadingDetails(widget) => {
+                self.calendar_details = None;
+                self.open_reading(widget)
+            }
+            Message::CloseReading => {
+                self.calendar_details = None;
+                self.reading_window.take().map_or_else(Task::none, |(id, _)| window::close(id))
+            }
             Message::SurfaceClosed(id) => {
+                if self.reading_window.is_some_and(|(reading, _)| reading == id) {
+                    self.reading_window = None;
+                    self.calendar_details = None;
+                }
                 if self.menu.is_some_and(|(menu, _)| menu == id) {
                     self.menu = None;
                 }
@@ -1837,10 +1874,6 @@ impl Cards {
                 } else {
                     Task::none()
                 }
-            }
-            Message::ToggleProjects => {
-                self.all_projects = !self.all_projects;
-                self.sync_widget_surfaces()
             }
             Message::ToggleProject(id) => {
                 if self
@@ -2017,29 +2050,34 @@ impl Cards {
                 crate::paths::CONTROLLER,
                 vec!["settings".into(), "--page".into(), "projects".into()],
             ),
-            Message::Open(url) => {
-                if url.starts_with("halcyon-event:") {
-                    if !self.config.calendar_private {
-                        let exists = self
-                            .calendar
-                            .iter()
-                            .chain(self.calendar_today.iter())
-                            .chain(self.calendar_ahead.iter())
-                            .flat_map(|c| &c.events)
-                            .any(|e| e.details_key() == url);
-                        if exists {
-                            self.calendar_details = if self.calendar_details.as_ref() == Some(&url)
-                            {
-                                None
-                            } else {
-                                Some(url)
-                            };
-                        }
+            Message::Open(url) if url.starts_with("halcyon-event:") => {
+                let widget = self.reading_window
+                    .map(|(_, widget)| widget)
+                    .filter(|widget| matches!(widget, Widget::Glance | Widget::Calendar))
+                    .unwrap_or(Widget::Calendar);
+                self.update(Message::AgendaLink(widget, url))
+            }
+            Message::AgendaLink(widget, url) if url.starts_with("halcyon-event:") => {
+                let exists = !self.config.calendar_private
+                    && self.calendar.iter()
+                        .chain(self.calendar_today.iter())
+                        .chain(self.calendar_ahead.iter())
+                        .flat_map(|calendar| &calendar.events)
+                        .any(|event| event.details_key() == url);
+                if exists {
+                    if self.calendar_details.as_ref() == Some(&url)
+                        && self.reading_window.is_some_and(|(_, source)| source == widget)
+                    {
+                        self.calendar_details = None;
+                    } else {
+                        self.calendar_details = Some(url);
+                        return self.open_reading(widget);
                     }
-                    self.sync_widget_surfaces()
-                } else {
-                    self.launch("xdg-open", vec![url])
                 }
+                Task::none()
+            }
+            Message::Open(url) | Message::AgendaLink(_, url) => {
+                self.launch("xdg-open", vec![url])
             }
             Message::ControlFinished(opened, result) => {
                 if let Err(error) = result {
@@ -2450,22 +2488,7 @@ fn card_sized<'a>(
         _ => 10,
     };
     card_frame_width(
-        scrollable(
-            container(
-                column::with_children(children)
-                    .spacing(spacing)
-                    .width(Length::Fill),
-            )
-            .width(Length::Fill)
-            .padding([0, 6, 0, 0]),
-        )
-        .id(cosmic::widget::Id::new(widget.key()))
-        .height(Length::Fill)
-        .width(Length::Fill)
-        .scroller_width(3.)
-        .scrollbar_width(3.)
-        .scrollbar_padding(2.)
-        .into(),
+        column::with_children(children).spacing(spacing).width(Length::Fill).into(),
         p,
         appearance,
         Length::Fixed(height),
@@ -2953,9 +2976,7 @@ impl Cards {
         } else {
             0.
         };
-        (title + if status { 15. } else { 0. } + place).max(30.)
-            + 12.
-            + self.event_details_height(event)
+        (title + if status { 15. } else { 0. } + place).max(30.) + 12.
     }
     /// The place shown under an event's title: Show event location is on,
     /// details are not hidden, and the card is not in its compact layout.
@@ -3118,6 +3139,9 @@ impl Cards {
         );
         let header = container(column::with_children(rows).spacing(8).width(Length::Fill))
             .height(Length::Fixed(100.));
+        let explicit = self.explicit_size(Widget::Calendar).is_some();
+        let limit = self.card_height(Widget::Calendar);
+        let summarized = self.calendar_natural_height() > limit;
         let mut agenda = Vec::new();
         if days.is_empty() {
             agenda.push(label("Choose a date above", 14., p.muted));
@@ -3125,7 +3149,9 @@ impl Cards {
         // Several days: each under its own heading.
         let headed = days.len() > 1;
         let days = self.calendar_sections(today);
-        for day in &days {
+        // Build detailed event controls only when they will be drawn.
+        let detailed_days = if summarized { &[][..] } else { days.as_slice() };
+        for day in detailed_days {
             if headed {
                 agenda.push(
                     container(spread(
@@ -3229,7 +3255,7 @@ impl Cards {
                         .font(crate::widget_style::font())
                         .wrapping(cosmic::iced::advanced::text::Wrapping::WordOrGlyph)
                         .width(Length::Fill)
-                        .on_link_click(Message::Open)
+                        .on_link_click(|url| Message::AgendaLink(Widget::Calendar, url))
                         .into(),
                     ];
                     if let Some(place) = self.calendar_place(event) {
@@ -3304,9 +3330,6 @@ impl Cards {
                         }))
                         .into(),
                     );
-                    if self.event_details_open(event) {
-                        agenda.push(self.event_details_view(event, p));
-                    }
                 }
             }
             // With day headings, the toggle sits beside the day name.
@@ -3376,42 +3399,15 @@ impl Cards {
         ))
         .height(Length::Fixed(20.));
         let agenda = column::with_children(agenda).spacing(3).width(Length::Fill);
-        let explicit = self.explicit_size(Widget::Calendar).is_some();
-        let limit = self.card_height(Widget::Calendar);
-        // Shrink to the actual rendered rows, including wrapped titles. Only
-        // the agenda is capped, so busy days keep the date and sync controls.
-        const CHROME_HEIGHT: f32 = CALENDAR_CHROME_HEIGHT;
-        if limit < CHROME_HEIGHT + 44. {
-            // On very short displays there isn't room for fixed controls and
-            // an event; keep everything reachable in one compact scroller.
-            return card(
-                vec![header.into(), agenda.into(), footer.into()],
-                p,
-                self.config.appearance,
-                Widget::Calendar,
-                limit,
-            );
-        }
-        let agenda = container(
-            scrollable(container(agenda).padding([0, 6, 0, 0]).width(Length::Fill))
-                .id(cosmic::widget::Id::new(Widget::Calendar.key()))
-                .height(if explicit {
-                    Length::Fill
-                } else {
-                    Length::Shrink
-                })
-                .width(Length::Fill)
-                .scroller_width(2.)
-                .scrollbar_width(2.)
-                .scrollbar_padding(2.),
-        )
-        .max_height(limit - CHROME_HEIGHT)
-        .height(if explicit {
-            Length::Fill
+        let available = (limit - CALENDAR_CHROME_HEIGHT).max(1.);
+        let agenda: Element<'_, Message> = if summarized {
+            self.compact_agenda(Widget::Calendar, &days, available, p)
         } else {
-            Length::Shrink
-        })
-        .width(Length::Fill);
+            agenda.into()
+        };
+        let agenda = container(agenda)
+            .width(Length::Fill)
+            .height(if explicit { Length::Fill } else { Length::Shrink });
         card_frame(
             column::with_children(vec![header.into(), agenda.into(), footer.into()])
                 .spacing(10)
@@ -3685,12 +3681,12 @@ mod tests {
         );
         cards.projects = Some(ProjectsData::default());
         cards.projects_error = true;
-        cards.all_projects = true;
+        cards.expanded_projects.insert("old-project".into());
         let mut config = cards.config.clone();
         config.project_roots = vec!["/new/project".into()];
         let _ = cards.apply_config(config);
         assert!(cards.projects.is_none());
-        assert!(!cards.projects_error && !cards.all_projects);
+        assert!(!cards.projects_error && cards.expanded_projects.is_empty());
         let _ = cards.update(Message::Projects(
             vec!["/old/project".into()],
             Ok(ProjectsData::default()),

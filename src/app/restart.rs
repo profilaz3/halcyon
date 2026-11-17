@@ -92,6 +92,7 @@ impl Cards {
             && self.arrange_display.is_none()
             && self.menu.is_none()
             && self.calendar_details.is_none()
+            && self.reading_window.is_none()
             && self.notice.is_none()
             && self.tools.settled()
             && !self.automator.busy()

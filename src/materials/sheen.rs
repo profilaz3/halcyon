@@ -12,17 +12,21 @@ pub fn sheen<'a, Message: 'a>(
         content,
         animate,
         glass: None,
+        backing: None,
     })
 }
 pub fn dark_glass<'a, Message: 'a>(
     content: Element<'a, Message>,
     accent: cosmic::iced::Color,
     radius: f32,
+    backing: f32,
     animate: bool,
 ) -> Element<'a, Message> {
     Element::new(Sheen {
         content,
         animate: false,
+        // Three nested translucent fills feather the edge of the reading area.
+        backing: (backing > 0.).then(|| (radius, 1. - (1. - backing).cbrt())),
         glass: Some(
             cosmic::iced::widget::shader(super::dark_glass::Program {
                 accent,
@@ -37,6 +41,7 @@ struct Sheen<'a, Message> {
     content: Element<'a, Message>,
     animate: bool,
     glass: Option<Element<'a, Message>>,
+    backing: Option<(f32, f32)>,
 }
 #[derive(Default)]
 struct State {
@@ -178,6 +183,27 @@ impl<Message> Widget<Message, Theme, Renderer> for Sheen<'_, Message> {
                 cursor,
                 viewport,
             );
+        }
+        if let Some((radius, alpha)) = self.backing {
+            use cosmic::iced::advanced::Renderer as _;
+            let outer = layout.bounds();
+            for inset in [3., 6., 9.] {
+                if outer.width <= inset * 2. || outer.height <= inset * 2. { break; }
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: Rectangle {
+                            x: outer.x + inset, y: outer.y + inset,
+                            width: outer.width - 2. * inset, height: outer.height - 2. * inset,
+                        },
+                        border: cosmic::iced::Border {
+                            radius: (radius - inset).max(0.).into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                    cosmic::iced::Color::from_rgba(0., 0., 0., alpha),
+                );
+            }
         }
         self.content.as_widget().draw(
             &tree.children[0],

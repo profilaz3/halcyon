@@ -663,6 +663,37 @@ pub fn border(color: Color) -> Color {
     })
 }
 
+/// Additional black behind the content well. The card's outer edge keeps
+/// its configured opacity. Calculate against white, the brightest wallpaper.
+fn glass_backing(p: Palette) -> f32 {
+    if p.background.a >= 1. {
+        return 0.;
+    }
+    let dimmest_ink = [p.foreground, p.muted, p.accent]
+        .map(luminance)
+        .into_iter()
+        .fold(1., f32::min);
+    // Leave a little headroom for the material's upper-edge highlight.
+    let max_luminance = (dimmest_ink + 0.05) / 4.8 - 0.05;
+    let luminance_over_white = |backing| {
+        let behind = blend(Color::BLACK, Color::WHITE, backing);
+        luminance(blend(p.background, behind, p.background.a))
+    };
+    if luminance_over_white(0.) <= max_luminance {
+        return 0.;
+    }
+    let (mut low, mut high) = (0., 1.);
+    for _ in 0..8 {
+        let middle = (low + high) / 2.;
+        if luminance_over_white(middle) > max_luminance {
+            low = middle;
+        } else {
+            high = middle;
+        }
+    }
+    high
+}
+
 pub fn surface<'a, M: 'a>(content: cosmic::Element<'a, M>, p: Palette) -> cosmic::Element<'a, M> {
     if !ASSIST.get()
         && p.background.a > 0.
@@ -672,6 +703,7 @@ pub fn surface<'a, M: 'a>(content: cosmic::Element<'a, M>, p: Palette) -> cosmic
             content,
             p.accent,
             radius(glass_radius as u16),
+            glass_backing(p),
             MOTION.get(),
         );
     }

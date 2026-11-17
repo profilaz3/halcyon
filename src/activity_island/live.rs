@@ -423,7 +423,7 @@ impl Applet {
         match self.ui.view {
             View::Picker => Some("New timer".into()),
             View::Outputs => Some("Output".into()),
-            View::Card if self.kind == Kind::Messages => Some(self.messages_heading()),
+            View::Card if self.kind == Kind::Messages => Some(self.messages_heading(self.frame().attached)),
             View::Card if self.kind == Kind::Devices && self.devices.card => Some("Devices".into()),
             // The ring holds the time, so the title says what it is.
             View::Card if self.kind == Kind::Timer && self.timer_live() => Some("Timer".into()),
@@ -1361,20 +1361,15 @@ impl Applet {
         self.list = false;
         self.problem = None;
         self.now_ms = chrono::Utc::now().timestamp_millis();
-        let Some(id) = self.popup else {
+        if self.popup.is_none() {
             self.held = true;
             self.paused_until = None;
             return self.open_popup_sized();
-        };
-        if !self.held || self.popup_extra + 0.5 < self.live_extra() {
-            self.held = true;
-            self.promote_popup = Some(id);
-            return self.update(Message::Surface(cosmic::surface::action::destroy_popup(id)));
         }
         if self.motion.target() == 0. {
             self.motion.retarget(1., self.animates(), now);
         }
-        Task::none()
+        self.hold_popup()
     }
     fn send(&mut self, command: Command) -> Task<Message> {
         self.update(Message::Control(command))
@@ -1567,7 +1562,7 @@ impl Applet {
             }
             Msg::Back => {
                 self.ui.view = View::Card;
-                Task::none()
+                self.back_from_detail()
             }
         }
     }

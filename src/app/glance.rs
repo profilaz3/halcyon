@@ -299,7 +299,7 @@ impl Cards {
     pub(super) fn glance_events(&self, day: NaiveDate) -> Vec<&CalendarEvent> {
         self.glance_day_agenda(day).events
     }
-    fn glance_day_agenda(&self, day: NaiveDate) -> data::CalendarAgenda<'_> {
+    pub(super) fn glance_day_agenda(&self, day: NaiveDate) -> data::CalendarAgenda<'_> {
         let month = day.format("%Y-%m").to_string();
         // Today's month first: the standalone calendar may be browsing.
         [&self.calendar_today, &self.calendar, &self.calendar_ahead]
@@ -356,7 +356,7 @@ impl Cards {
         } else {
             30.
         };
-        detail.max(timing) + self.glance_event_padding() * 2. + self.event_details_height(event)
+        detail.max(timing) + self.glance_event_padding() * 2.
     }
     fn glance_agenda_height(&self) -> f32 {
         self.glance_agenda_height_at_width(self.glance_width())
@@ -449,7 +449,7 @@ impl Cards {
                 .min((self.widget_screen(Widget::Glance)[1] - position[1] - 48.).max(1.)),
         ]
     }
-    fn glance_needs_outer_scroll(&self, height: f32) -> bool {
+    fn glance_needs_compact_header(&self, height: f32) -> bool {
         let header = self.glance_header_height();
         let divider = if header > 0. {
             self.glance_divider_height()
@@ -485,17 +485,37 @@ impl Cards {
         }
     }
     /// Normal layouts restrict pointer input to the weather chooser and agenda.
-    /// The short-view outer scroller is interactive throughout: event and calendar
-    /// actions can scroll into the area initially occupied by the clock.
+    /// Compact headers leave the time and date click-through as well.
     pub(super) fn glance_input_rects(&self) -> Vec<[u32; 4]> {
         if !self.config.glance.enabled || !self.glance_has_sections() {
             return Vec::new();
         }
         let [width, height] = self.glance_size();
-        if self.glance_needs_outer_scroll(height) {
-            return vec![[0, 0, width.ceil() as u32, height.ceil() as u32]];
-        }
         let padding = self.glance_padding();
+        if self.glance_needs_compact_header(height) {
+            let mut rects = Vec::new();
+            if self.config.glance.show_weather {
+                rects.push([
+                    (width - padding - 80.).max(0.) as u32,
+                    padding as u32,
+                    80,
+                    32,
+                ]);
+            }
+            let top = padding
+                + if self.config.glance.show_weather || self.config.glance.show_clock {
+                    32.
+                } else {
+                    0.
+                };
+            rects.push([
+                padding as u32,
+                top as u32,
+                (width - 2. * padding).max(0.) as u32,
+                (height - top).max(0.) as u32,
+            ]);
+            return rects;
+        }
         let header = self.glance_header_height();
         let mut rects = Vec::new();
         let mut push = |x: f32, y: f32, w: f32, h: f32| {
@@ -850,7 +870,7 @@ impl Cards {
             .font(crate::widget_style::font())
             .wrapping(advanced_text::Wrapping::WordOrGlyph)
             .width(Length::Fill)
-            .on_link_click(Message::Open)
+            .on_link_click(|url| Message::AgendaLink(Widget::Glance, url))
             .into(),
         ];
         if highlighted {
@@ -891,15 +911,13 @@ impl Cards {
             title.into(),
         ];
         let panel = self.glance_panel();
-        let mut content = vec![
+        let content = vec![
             row::with_children(cells)
                 .spacing(8)
                 .align_y(Alignment::Center)
                 .into(),
         ];
-        if self.event_details_open(event) {
-            content.push(self.event_details_view(event, p));
-        }
+
         container(column::with_children(content).spacing(0))
             .padding([self.glance_event_padding(), 0.])
             .width(Length::Fill)
@@ -1095,41 +1113,69 @@ impl Cards {
                     .into(),
             );
         }
-        let short = self.glance_needs_outer_scroll(height);
         if self.config.glance.show_calendar {
-            if short {
-                content.push(self.glance_agenda());
-            } else {
-                let available = (height - 2. * padding - header_height - divider).max(1.);
-                content.push(
-                    scrollable(
-                        container(self.glance_agenda())
-                            .padding([0, 4, 0, 0])
-                            .width(Length::Fill),
-                    )
-                    .id(cosmic::widget::Id::new("glance-agenda"))
-                    .height(self.glance_agenda_height().min(available))
-                    .width(Length::Fill)
-                    .scroller_width(2.)
-                    .scrollbar_width(2.)
-                    .scrollbar_padding(1.)
-                    .into(),
-                );
+            let mut available = height - 2. * padding - header_height - divider;
+            if self.glance_needs_compact_header(height) {
+                let mut items = Vec::new();
+                if self.config.glance.show_clock {
+                    items.push(label(
+                        crate::config::time_of_day(&self.clock_at, self.config.clock.format_24h),
+                        22.,
+                        p.foreground,
+                    ));
+                }
+                if self.config.clock.show_date && self.config.glance.show_clock {
+                    items.push(label(
+                        self.clock_at.format("%a, %b %-d").to_string(),
+                        12.,
+                        p.muted,
+                    ));
+                }
+                if self.config.glance.show_weather {
+                    let value = self.weather.as_ref().map_or_else(
+                        || {
+                            if self.config.location.is_none() {
+                                "Choose city".into()
+                            } else {
+                                "Weather".into()
+                            }
+                        },
+                        |w| {
+                            forecast_temperature_in(
+                                self.config.weather,
+                                Some(&w.current.temperature_2m),
+                            )
+                        },
+                    );
+                    items.push(cosmic::widget::space().width(Length::Fill).into());
+                    items.push(action(value, Message::WeatherSettings, p.accent));
+                }
+                content.clear();
+                available = height - 2. * padding;
+                if !items.is_empty() {
+                    content.push(
+                        row::with_children(items)
+                            .spacing(8)
+                            .align_y(Alignment::Center)
+                            .height(32.)
+                            .into(),
+                    );
+                    available -= 32.;
+                }
             }
+            content.push(if self.glance_agenda_height() > available {
+                self.compact_agenda(
+                    Widget::Glance,
+                    &self.glance_days(Local::now().date_naive()),
+                    available,
+                    p,
+                )
+            } else {
+                self.glance_agenda()
+            });
         }
         let content: Element<'_, Message> =
             column::with_children(content).width(Length::Fill).into();
-        let content = if short {
-            scrollable(content)
-                .id(cosmic::widget::Id::new("glance-small-screen"))
-                .height(Length::Fill)
-                .width(Length::Fill)
-                .scroller_width(2.)
-                .scrollbar_width(2.)
-                .into()
-        } else {
-            content
-        };
         let panel = self.glance_panel();
         let opacity = f32::from(self.config.glance.opacity.min(100)) / 100.;
         let opacity = if self.config.appearance.contrast_assist {
@@ -1613,7 +1659,7 @@ mod tests {
                         assert!(
                             messages
                                 .iter()
-                                .any(|m| matches!(m, Message::Open(url) if url == expected)),
+                                .any(|m| matches!(m, Message::AgendaLink(Widget::Glance, url) if url == expected)),
                             "link {span} {style:?} {width} {title}: {messages:?}"
                         );
                     }
@@ -1719,7 +1765,7 @@ mod tests {
     }
 
     #[test]
-    fn compact_tomorrow_agenda_grows_and_scrolls_with_real_event_rows() {
+    fn compact_tomorrow_agenda_adapts_with_real_event_rows() {
         let mut cards = app();
         let today = Local::now().date_naive();
         let tomorrow = today + Days::days(1);
@@ -1751,26 +1797,14 @@ mod tests {
         native.capture(
             cards.glance(),
             &cosmic::Theme::dark(),
-            "compact-tomorrow-scroll",
+            "compact-tomorrow-agenda",
         );
-        let before_scroll = native.render(cards.glance(), &cosmic::Theme::dark());
-        let point = cosmic::iced::Point::new(size[0] / 2., size[1] - 24.);
-        native.event(
-            cards.glance(),
-            cosmic::iced::Event::Mouse(cosmic::iced::mouse::Event::WheelScrolled {
-                delta: cosmic::iced::mouse::ScrollDelta::Lines { x: 0., y: -100. },
-            }),
-            point,
-        );
-        assert!(
-            native.render(cards.glance(), &cosmic::Theme::dark()) != before_scroll,
-            "The compact agenda scrolls to later Tomorrow events"
-        );
-        native.capture(
-            cards.glance(),
-            &cosmic::Theme::dark(),
-            "compact-tomorrow-scroll-bottom",
-        );
+        assert!(native.scrollables(cards.glance()).is_empty());
+        let titles = native.all_text(cards.glance());
+        assert!(titles.iter().any(|t| t == "Tomorrow meeting 0"));
+        assert!(titles.iter().any(|t| t.contains("Open agenda")));
+        let full = native.scrollables(cards.reading_view(Widget::Glance));
+        assert!(full.iter().any(|(viewport, content)| content.height > viewport.height + 100.));
         cards.calendar_today.as_mut().unwrap().events.truncate(2);
         for style in [GlanceStyle::Transparent, GlanceStyle::Panel] {
             cards.config.glance.style = style;
@@ -1783,7 +1817,7 @@ mod tests {
         }
     }
     #[test]
-    fn full_agenda_grows_down_from_its_saved_anchor_then_scrolls_at_the_screen_edge() {
+    fn full_agenda_grows_down_from_its_saved_anchor_to_the_screen_edge() {
         let mut cards = app();
         let today = Local::now().date_naive();
         let encoded = crate::layout_state::encode_position(

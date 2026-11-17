@@ -300,6 +300,7 @@ impl ToolsEditor {
         self.tab = tab;
         if tab == Widget::Markets {
             self.market_symbols = config.markets.symbols.join(", ");
+            self.market_preview = crate::tools::cards::sample_markets_for(&config.markets);
         }
         self.refresh();
         if tab == Widget::Music {

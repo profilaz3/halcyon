@@ -254,6 +254,17 @@ impl Applet {
             },
         }
     }
+    /// Show up to five activity rows before the list needs to scroll.
+    pub(super) fn chooser_extra(&self) -> f32 {
+        let rows = self.eligible_kinds().len()
+            + usize::from(self.notes.len() > 1 && self.notes_shown())
+            + usize::from(self.has_recent() && self.notes_shown())
+            + usize::from(self.timer().is_none())
+            + usize::from(self.shelf_enabled())
+            + usize::from(!self.snapshot.devices.is_empty() && !self.devices_eligible())
+            + 2; // Do Not Disturb and settings.
+        (rows.min(5) as f32 * 34. - 2. - LIST_ROOM).max(0.)
+    }
     pub(super) fn chooser_view(
         &self,
         palette: Palette,
@@ -381,6 +392,37 @@ impl Applet {
             .class(capsule_button(palette, tint, reveal, Role::Ghost))
             .on_press(Message::Dnd(!dnd)),
         );
+        let destination = |id: &'static str, name: &'static str, icon: &'static str, msg| {
+            widget::button::custom(
+                widget::row([
+                    widget::icon::from_name(icon).symbolic(true).size(16).into(),
+                    self.text(name, 13., alpha(palette.ink, reveal)),
+                ])
+                .spacing(10)
+                .align_y(cosmic::iced::Alignment::Center),
+            )
+            .id(id.into())
+            .width(Length::Fill)
+            .height(32)
+            .padding([6, 10])
+            .class(capsule_button(palette, tint, reveal, Role::Ghost))
+            .on_press(msg)
+        };
+        if !self.snapshot.devices.is_empty() && !self.devices_eligible() {
+            list = list.push(destination(
+                "activity-choice-devices", "Devices", "bluetooth-symbolic",
+                Message::Devices(devices::Msg::Open),
+            ));
+        }
+        if self.shelf_enabled() {
+            list = list.push(destination(
+                "activity-choice-shelf", "File shelf", shelf::ICON, Message::Shelf(shelf::Msg::Show),
+            ));
+        }
+        list = list.push(destination(
+            "activity-choice-settings", "Activity settings", "preferences-system-symbolic",
+            Message::Settings(SETTINGS_PAGE),
+        ));
         widget::scrollable(list)
             .id("activity-choices")
             .height(Length::Fill)

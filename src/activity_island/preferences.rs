@@ -65,6 +65,8 @@ pub struct Preferences {
     pub messages: bool,
     pub calendar: bool,
     pub reveals: bool,
+    /// Open the collapsed island when the pointer rests over it.
+    pub open_on_hover: bool,
     /// Files dropped on the island, kept on its shelf.
     pub shelf: bool,
     pub lead_minutes: u8,
@@ -120,6 +122,7 @@ impl Default for Preferences {
             messages: false,
             calendar: true,
             reveals: true,
+            open_on_hover: true,
             shelf: true,
             lead_minutes: 5,
             notifications: true,

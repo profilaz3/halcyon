@@ -106,7 +106,7 @@ fn home_picture_picks_parts_and_opens_their_pages() {
             assert!(b.width > 40. && b.x + b.width <= size.width, "{tag} {id}: {b:?}");
         }
         let text = native.all_text(app.settings_view());
-        assert!(text.iter().any(|t| t == "Pick a part of the picture to see how it is set."));
+        assert!(native.try_bounds(app.settings_view(), "home-detail").is_none());
         // Fonts and icons says which font and icon theme are in use.
         let fonts = app.part_state(Page::DesktopAppearance);
         assert!(!fonts.is_empty() && text.contains(&fonts), "{fonts:?}: {text:?}");

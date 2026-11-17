@@ -397,6 +397,65 @@ impl Cards {
         }
     }
 
+    pub(super) fn can_interact_with_tool(&self, widget: Widget) -> bool {
+        matches!(
+            widget,
+            Widget::Music | Widget::Focus | Widget::Notes | Widget::Markets | Widget::Messages
+        ) && self.tool_shown(widget)
+            && !self.layout_editor.active
+            && !(widget == Widget::Notes && self.note_lifted())
+            && self.placed_position(widget)[0] >= 0.
+    }
+
+    pub(super) fn move_tool_focus(previous: bool) -> Task<Message> {
+        use cosmic::iced::advanced::widget::operation::{focusable, scoped};
+        if previous {
+            cosmic::iced::runtime::task::widget(scoped(
+                "tool-controls".into(),
+                focusable::focus_previous(),
+            ))
+        } else {
+            cosmic::iced::runtime::task::widget(scoped(
+                "tool-controls".into(),
+                focusable::focus_next(),
+            ))
+        }
+    }
+
+    pub(super) fn interact_with_tool(&mut self, widget: Widget) -> Task<Message> {
+        if !self.can_interact_with_tool(widget) {
+            return Task::none();
+        }
+        let leave = self.leave_tool();
+        let release_drawer = if self.controls_open {
+            set_keyboard_interactivity(self.ids[2], KeyboardInteractivity::None)
+        } else {
+            Task::none()
+        };
+        self.sidebar.hide();
+        self.interacting_tool = Some(widget);
+        let id = self.widget_id(widget);
+        leave
+            .chain(release_drawer)
+            .chain(set_layer(id, Layer::Top))
+            .chain(set_keyboard_interactivity(
+                id,
+                KeyboardInteractivity::Exclusive,
+            ))
+            .chain(Self::move_tool_focus(false))
+    }
+
+    pub(super) fn leave_tool(&mut self) -> Task<Message> {
+        let Some(widget) = self.interacting_tool.take() else {
+            return Task::none();
+        };
+        let id = self.widget_id(widget);
+        Task::batch([
+            set_keyboard_interactivity(id, KeyboardInteractivity::None),
+            set_layer(id, Layer::Bottom),
+        ])
+    }
+
     /// Whether the note surface holds the keyboard above windows.
     fn note_lifted(&self) -> bool {
         self.tools.draft.as_ref().is_some_and(|draft| draft.typing)
@@ -590,7 +649,14 @@ impl Cards {
             {
                 return Task::none();
             }
-            Action::Music(command) => return self.music_command(command),
+            Action::Music(command) => {
+                let leave = if command.command == music::Command::Raise {
+                    self.leave_tool()
+                } else {
+                    Task::none()
+                };
+                return leave.chain(self.music_command(command));
+            }
             Action::MusicSeek(request) => {
                 return cosmic::task::future(async move {
                     Message::MusicControlDone(music::perform(music::Control::Seek(request)).await)
@@ -614,7 +680,11 @@ impl Cards {
                 }
                 return self.music_art_task();
             }
-            Action::MarketsOpen => return self.update(Message::SettingsPage("markets")),
+            Action::MarketsOpen => {
+                return self
+                    .leave_tool()
+                    .chain(self.update(Message::SettingsPage("markets")));
+            }
             Action::MarketSelect(symbol) => {
                 if !self.config.markets.symbols.contains(&symbol) {
                     return Task::none();
@@ -630,7 +700,7 @@ impl Cards {
                     move || Config::save_tool(Widget::Markets, serde_json::json!({"selected": symbol})),
                 );
             }
-            Action::MessagesOpen => return self.open_messages(),
+            Action::MessagesOpen => return self.leave_tool().chain(self.open_messages()),
             Action::NoteCopy => {
                 if let Ok(note) = &self.tools.note {
                     let text = note.text.clone();
@@ -653,6 +723,9 @@ impl Cards {
                 }
             }
             Action::NoteEdit => {
+                if self.interacting_tool == Some(Widget::Notes) {
+                    self.interacting_tool = None;
+                }
                 if let Some(draft) = &mut self.tools.draft {
                     // Resume a paused draft where it was left.
                     draft.typing = true;
@@ -916,7 +989,8 @@ impl Cards {
         } else {
             [-10000., 0.]
         };
-        let editing = widget == Widget::Notes && self.note_lifted();
+        let editing =
+            widget == Widget::Notes && self.note_lifted() || self.interacting_tool == Some(widget);
         get_layer_surface(SctkLayerSurfaceSettings {
             id: self.widget_id(widget),
             output: self.widget_layer_output(widget),
@@ -975,13 +1049,21 @@ impl Cards {
             self.pause_note();
         }
         let mut tasks = Vec::new();
+        if self
+            .interacting_tool
+            .is_some_and(|widget| !self.can_interact_with_tool(widget))
+        {
+            tasks.push(self.leave_tool());
+        }
         for widget in Widget::TOOLS {
             let size = self.tool_surface_size(widget);
-            let release = if widget == Widget::Notes && release_note {
-                self.note_editing(false)
-            } else {
-                Task::none()
-            };
+            let release =
+                if widget == Widget::Notes && release_note && self.interacting_tool != Some(widget)
+                {
+                    self.note_editing(false)
+                } else {
+                    Task::none()
+                };
             if self.tools.geometry.get(&widget) != Some(&size) {
                 self.tools.geometry.insert(widget, size);
                 let destroy = release.chain(destroy_layer_surface(self.widget_id(widget)));
@@ -1623,12 +1705,21 @@ mod tests {
         use cosmic::iced::{Event, Size, mouse};
         let mut native = crate::native_test::Native::new(Size::new(360., 140.));
         let bounds = native.bounds(cards.tool_card(Widget::Music), id);
-        let (messages, _) = native.event(
-            cards.tool_card(Widget::Music),
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
-            bounds.center(),
-        );
-        messages
+        [
+            mouse::Event::ButtonPressed(mouse::Button::Left),
+            mouse::Event::ButtonReleased(mouse::Button::Left),
+        ]
+        .into_iter()
+        .flat_map(|event| {
+            native
+                .event(
+                    cards.tool_card(Widget::Music),
+                    Event::Mouse(event),
+                    bounds.center(),
+                )
+                .0
+        })
+        .collect()
     }
 
     fn click_music_play(cards: &Cards) -> Message {

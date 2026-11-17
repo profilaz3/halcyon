@@ -153,7 +153,7 @@ impl Settings {
                 .into()
         };
         let mark = row::with_children(vec![segment(6), segment(16), segment(6)]).spacing(3);
-        let header = row::with_children(vec![
+        let mut header = row::with_children(vec![
             mark.into(),
             container(label("Islands panel", 17., FG))
                 .width(Length::Fill)
@@ -162,14 +162,16 @@ impl Settings {
         ])
         .spacing(10)
         .align_y(Alignment::Center);
+        if matches!(host, Host::Running) && self.page == Page::Home && self.wizard.is_none() {
+            header = header
+                .push(button::text("Panel layout").on_press(Message::Page(Page::DesktopPanel)))
+                .push(
+                    button::text("Activity island").on_press(Message::Page(Page::ActivityIsland)),
+                );
+        }
         let mut body = column::with_children(vec![header.into()]).spacing(8);
-        if let Some(step) = self.host_instructions("Use the Islands panel for floating groups and the Activity island. The switch takes effect at your next sign-in.") {
+        if let Some(step) = self.host_instructions("Use the Islands panel for floating groups. Activity island also works on the standard top panel.") {
             body = body.push(step);
-        } else if self.page == Page::Home {
-            body = body.push(actions(vec![
-                button::text("Panel layout").on_press(Message::Page(Page::DesktopPanel)).into(),
-                button::text("Activity island").on_press(Message::Page(Page::ActivityIsland)).into(),
-            ]));
         }
         container(body)
             .id("islands-activation")
@@ -196,10 +198,16 @@ impl Settings {
             Host::Switch => vec![
                 label(switch_hint.to_owned(), 12., MUTED),
                 actions(vec![
-                    button::suggested("Switch at next sign-in")
-                        .id("enable-islands".into())
-                        .on_press(update(Panel::Enable))
-                        .into(),
+                    (if self.wizard.is_some() {
+                        button::suggested("Finish and switch at next sign-in")
+                    } else if self.page == Page::ActivityIsland {
+                        button::standard("Switch at next sign-in")
+                    } else {
+                        button::suggested("Switch at next sign-in")
+                    })
+                    .id("enable-islands".into())
+                    .on_press(update(Panel::Enable))
+                    .into(),
                 ]),
             ],
             Host::SignIn => {

@@ -104,7 +104,7 @@ fn auditfix_ob03_planned_viewports_match_runtime_and_collision_positions() {
     }
     let saved = cards.config.widget_sizes.clone();
     cards.screen_size = [420., 300.];
-    assert_eq!(cards.widget_size(Widget::Devbox), [360., 204.]);
+    assert_eq!(cards.widget_size(Widget::Devbox), [360., 180.]);
     let small = crate::layout_state::project(
         crate::layout_state::Snapshot {
             screen: cards.screen_size,

@@ -295,32 +295,61 @@ pub fn markets<'a, M: Clone + 'static>(
 }
 
 pub fn sample() -> State {
-    let quotes = [
-        ("AAPL", "Apple", 190.12, 1.24),
-        ("MSFT", "Microsoft", 410.32, -0.52),
-        ("NVDA", "NVIDIA", 140.64, 2.15),
-    ]
-    .into_iter()
-    .map(|(symbol, name, price, percent)| Quote {
-        symbol: symbol.into(),
-        name: name.into(),
-        currency: "USD".into(),
-        price,
-        change: None,
-        percent: Some(percent),
-        timestamp: 1794859200,
-        market_open: None,
-    })
-    .collect();
+    sample_for(&crate::markets::Preferences::default())
+}
+
+pub fn sample_for(preferences: &crate::markets::Preferences) -> State {
+    use chrono::{Datelike, Weekday};
+    let quotes: Vec<_> = preferences
+        .symbols
+        .iter()
+        .enumerate()
+        .map(|(index, symbol)| {
+            let (name, price, percent) = match symbol.as_str() {
+                "AAPL" => ("Apple", 190.12, 1.24),
+                "MSFT" => ("Microsoft", 410.32, -0.52),
+                "NVDA" => ("NVIDIA", 140.64, 2.15),
+                _ => (symbol.as_str(), 100. + index as f64 * 15., 0.8),
+            };
+            Quote {
+                symbol: symbol.clone(),
+                name: name.into(),
+                currency: "USD".into(),
+                price,
+                change: None,
+                percent: Some(percent),
+                timestamp: 1794859200,
+                market_open: None,
+            }
+        })
+        .collect();
+    let selected_price = quotes
+        .iter()
+        .find(|q| q.symbol == preferences.selected)
+        .map_or(100., |q| q.price);
+    let end = chrono::DateTime::from_timestamp(1794859200, 0)
+        .unwrap()
+        .date_naive();
+    let mut dates: Vec<_> = (0..)
+        .map(|days| end - chrono::Duration::days(days))
+        .filter(|d| !matches!(d.weekday(), Weekday::Sat | Weekday::Sun))
+        .take(30)
+        .collect();
+    dates.reverse();
     State {
-        source: Some(crate::markets::Preferences::default()),
+        source: Some(preferences.clone()),
         quotes,
-        chart_symbol: "AAPL".into(),
-        chart: (0..30)
-            .map(|i| PricePoint {
-                date: chrono::NaiveDate::from_ymd_opt(2026, 10, 1).unwrap()
-                    + chrono::Duration::days(i),
-                close: 180. + i as f64 * 0.3 + (i as f64 * 0.7).sin() * 2.,
+        chart_symbol: preferences.selected.clone(),
+        chart: dates
+            .into_iter()
+            .enumerate()
+            .map(|(i, date)| {
+                let remaining = (29 - i) as f64;
+                PricePoint {
+                    date,
+                    close: selected_price
+                        * (1. - remaining * 0.0015 + (remaining * 0.7).sin() * 0.012),
+                }
             })
             .collect(),
         ..State::default()

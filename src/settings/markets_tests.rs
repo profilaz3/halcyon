@@ -36,10 +36,15 @@ fn markets_widget_settings_preserve_watchlist_and_render_native_charts() {
     }
     let (mut app, task) = Settings::init(Core::default(), Page::Markets);
     settle_settings(&mut app, task);
-    for size in [Size::new(640., 600.), Size::new(1100., 800.)] {
+    for size in [Size::new(640., 600.), Size::new(820., 600.), Size::new(1100., 800.)] {
         send_settings(&mut app, Message::Resized(size));
         let mut native = crate::native_test::Native::new(size);
         assert!(native.duplicate_ids(app.settings_view()).is_empty());
+        let input = native.bounds(app.settings_view(), "market-symbol-input");
+        assert!(input.y >= 0. && input.y + input.height <= size.height);
+        let save = native.text_bounds(app.settings_view(), "Save watchlist");
+        assert!(save.y + save.height <= size.height);
+
         native.capture(
             app.settings_view(),
             &cosmic::Theme::dark(),
@@ -79,6 +84,9 @@ fn markets_widget_settings_preserve_watchlist_and_render_native_charts() {
     );
     send_settings(&mut app, Message::Tools(Edit::MarketSaveSymbols));
     assert_eq!(Config::load().markets.symbols, ["MSFT", "AAPL"]);
+    assert_eq!(app.tools.market_preview.source.as_ref().unwrap(), &app.config.markets);
+    assert_eq!(app.tools.market_preview.chart_symbol, app.config.markets.selected);
+    assert_eq!(app.tools.market_preview.quotes.len(), 2);
     for pointer in [
         "/markets/symbols",
         "/markets/selected",

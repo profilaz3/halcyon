@@ -620,7 +620,7 @@ fn polish_privacy_discloses_activity_and_opt_out_status_in_view() {
     let mut native = crate::native_test::Native::new(size);
     for label in [
         crate::settings::view::USAGE_SHARED,
-        "Never sent anywhere, even with usage data on",
+        "Usage reports exclude their contents. Connected services receive the information they need, such as a city for weather or stock symbols for quotes.",
     ] {
         let bounds = native.text_bounds(app.settings_view(), label);
         assert!(
@@ -1227,9 +1227,14 @@ fn reactive_activity_preferences_are_reachable_saved_and_undoable() {
         );
         send_settings(&mut app, Message::ActivityPreference("notifications", true));
         // Taller than a small window: each switch scrolls into view.
-        for key in ["camera", "bluetooth", "reveals"] {
+        for key in ["camera", "bluetooth", "open_on_hover", "reveals"] {
             native_reveal(&app, &mut native, &format!("activity-preference-{key}"));
         }
+        native_reveal(&app, &mut native, "activity-preference-open_on_hover");
+        native_click(&mut app, &mut native, "activity-preference-open_on_hover");
+        assert!(!Config::load().activity_island.open_on_hover && Config::load().activity_island.reveals);
+        send_settings(&mut app, Message::UndoDesktop);
+        assert!(Config::load().activity_island.open_on_hover);
         send_settings(&mut app, Message::ActivityPreference("bluetooth", false));
         assert!(!Config::load().activity_island.bluetooth && Config::load().activity_island.camera);
         assert!(

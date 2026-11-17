@@ -459,7 +459,6 @@ pub struct Service {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Applied {
     pub lines: Vec<String>,
-    pub next_login: bool,
     pub changed: bool,
     /// How the widgets ran before this Apply started them, when known.
     pub service_before: Option<Service>,
@@ -616,7 +615,6 @@ impl Wizard {
                             .collect()
                     })
                     .unwrap_or_default(),
-                next_login: saved["applied"]["next_login"].as_bool().unwrap_or(false),
                 changed: saved["applied"]["changed"].as_bool().unwrap_or(false),
                 service_before: saved["applied"]["service_before"]
                     .as_object()
@@ -665,7 +663,7 @@ impl Wizard {
             "city": self.city,
             "bars": self.bars.saved_value(self.touched),
             "applied": self.applied.as_ref().map(|applied| json!({
-                "lines": applied.lines, "next_login": applied.next_login,
+                "lines": applied.lines,
                 "changed": applied.changed,
                 "service_before": applied.service_before.map(|service| json!({
                     "running": service.running, "startup": service.startup,
@@ -1371,7 +1369,6 @@ impl Wizard {
             return Outcome::None;
         };
         let lines = self.summary_lines(config);
-        let next_login = self.bars.islands && !self.applied_bars.islands;
         let result = (|| -> Result<Option<LatestChange>, String> {
             let plan = self.widget_plan(config);
             if let Some(error) = plan.error.clone() {
@@ -1430,7 +1427,6 @@ impl Wizard {
                 self.touched = Touched::default();
                 self.applied = Some(Applied {
                     lines,
-                    next_login,
                     changed,
                     service_before: None,
                 });

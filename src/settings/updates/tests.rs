@@ -525,13 +525,12 @@ fn obsolete_tokens_and_close_invalidate_results_without_erasing_new_request() {
     assert!(*cancel.borrow());
 }
 
-fn ui_child() -> bool {
-    const NAME: &str =
-        "settings::updates::tests::native_updates_clicks_renders_failure_unknown_and_absence";
+fn ui_child(test: &str) -> bool {
+    let name = format!("settings::updates::tests::{test}");
     if std::env::var("HALCYON_UPDATES_UI_TEST").as_deref() == Ok("1") {
         return false;
     }
-    let root = std::env::temp_dir().join(format!("halcyon-updates-ui-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("halcyon-updates-ui-{}-{test}", std::process::id()));
     for dir in ["config", "data", "cache", "state", "desktop"] {
         std::fs::create_dir_all(root.join(dir)).unwrap();
     }
@@ -571,7 +570,7 @@ fn ui_child() -> bool {
     )
     .unwrap();
     let out = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", NAME, "--nocapture"])
+        .args(["--exact", &name, "--nocapture"])
         .env("HALCYON_UPDATES_UI_TEST", "1")
         .env("DESKTOP_CARDS_CONFIG", root.join("config.json"))
         .env("DESKTOP_CARDS_DESKTOP_ROOT", root.join("desktop"))
@@ -598,14 +597,15 @@ fn ui_click(
     id: &str,
 ) -> Vec<SettingsMessage> {
     use cosmic::iced::{Event, mouse};
-    native.scroll(app.settings_view(), "settings-content", 0.);
+    let scroll_id = if app.wizard.is_some() {
+        "wizard-body"
+    } else {
+        "settings-content"
+    };
+    native.scroll(app.settings_view(), scroll_id, 0.);
     let target = native.bounds(app.settings_view(), id);
     if target.y + target.height > native.size.height - 64. {
-        native.scroll(
-            app.settings_view(),
-            "settings-content",
-            (target.y - 240.).max(0.),
-        );
+        native.scroll(app.settings_view(), scroll_id, (target.y - 240.).max(0.));
     }
     let bounds = native.bounds(app.settings_view(), id);
     assert!(
@@ -806,7 +806,7 @@ fn penumbra_setup_actions(app: &mut Settings, native: &mut crate::native_test::N
 
 #[test]
 fn native_updates_clicks_renders_failure_unknown_and_absence() {
-    if ui_child() {
+    if ui_child("native_updates_clicks_renders_failure_unknown_and_absence") {
         return;
     }
     use crate::{
@@ -1268,4 +1268,71 @@ async fn bundled_updates_only_offer_the_main_package() {
         None
     );
     assert_eq!(packagekit::candidate(&installed, &[]).await.unwrap(), None);
+}
+
+#[test]
+fn setup_finishes_with_verified_islands_activation() {
+    if ui_child("setup_finishes_with_verified_islands_activation") {
+        return;
+    }
+    use crate::{desktop::islands::Installation, native_test::Native, settings::Page};
+    use cosmic::{Application, app::Core, iced::Size};
+    let (mut app, init) = Settings::init(Core::default(), Page::Home);
+    drop(init);
+    app.window = Size::new(820., 600.);
+    app.updates.identity = Some(apt());
+    app.installation_busy = false;
+    let mut native = Native::new(app.window);
+    app.desktop.islands.installation = Installation::Installed {
+        provenance: crate::desktop::islands::Provenance::Package,
+        enabled: false,
+        compatible: None,
+        status: Some(crate::desktop::islands::CompatibilityStatus::Disabled),
+        diagnostics: String::new(),
+    };
+    use crate::settings::wizard::{Applied, Bars, Step, Wizard};
+    let mut wizard = Wizard::new(true, Bars::starter(true), true);
+    wizard.bars.islands = true;
+    wizard.step = Step::Done;
+    wizard.applied = Some(Applied::default());
+    app.wizard = Some(wizard);
+    assert!(
+        ui_click(&app, &mut native, "enable-islands")
+            .iter()
+            .any(|m| matches!(
+                m,
+                SettingsMessage::Updates(Message::Islands(islands::Message::Enable))
+            ))
+    );
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "sign-out-islands")
+            .is_none()
+    );
+    let disabled = app.desktop.islands.installation.clone();
+    if let Installation::Installed {
+        enabled, status, ..
+    } = &mut app.desktop.islands.installation
+    {
+        *enabled = true;
+        *status = Some(crate::desktop::islands::CompatibilityStatus::LogoutRequired);
+    }
+    native.bounds(app.settings_view(), "sign-out-islands");
+    native.bounds(app.settings_view(), "disable-islands");
+    app.desktop.islands.compatible = true;
+    native.text_bounds(app.settings_view(), "Active");
+    assert!(
+        native
+            .try_bounds(app.settings_view(), "sign-out-islands")
+            .is_none()
+    );
+    app.desktop.islands.compatible = false;
+    app.desktop.islands.installation = disabled;
+    for message in ui_click(&app, &mut native, "enable-islands") {
+        drop(app.update(message));
+    }
+    assert!(app.wizard.is_none());
+    assert_eq!(app.page, Page::Home);
+    assert!(app.updates.islands.busy());
+    native.text_bounds(app.settings_view(), "Preparing");
 }

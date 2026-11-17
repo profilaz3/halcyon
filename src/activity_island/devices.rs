@@ -234,7 +234,7 @@ impl Applet {
                 self.batch.clear();
                 self.shelf.open = false;
                 self.menu = None;
-                self.regrow(now)
+                self.back_from_detail()
             }
             Msg::Open => {
                 if !self.live() {

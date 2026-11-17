@@ -160,6 +160,13 @@ impl Settings {
             }
         }
         controls = controls.push(toggle(
+            "Open on hover",
+            "Open the island when your pointer rests over it. Clicking always opens it.",
+            "open_on_hover",
+            p.open_on_hover,
+            false,
+        ));
+        controls = controls.push(toggle(
             "Brief automatic reveals",
             "Opens by itself for a few seconds when something new happens.",
             "reveals",
@@ -282,7 +289,7 @@ impl Settings {
                     "Activity island",
                     "Beta · System, music and meetings in the middle of the panel",
                 ),
-                button::text("Add Activity island")
+                (if self.page == Page::ActivityIsland { button::suggested("Add Activity island") } else { button::text("Add Activity island") })
                     .id("panel-add-activity".into())
                     .on_press_maybe((!self.native_busy && !editor.drag.active()).then_some(edit(
                         Edit::Add(Region::Center, crate::activity_island::APPLET_ID.into()),
@@ -901,16 +908,17 @@ impl Settings {
                 rows.push(separator());
             }
             let here = placed.contains(&info.id);
+            let compatible = editor.can_place_applet(&info.id);
             rows.push(
                 self.applet_entry(
                     info,
-                    button::text(if here { "Add another" } else { items::ADD })
+                    button::text(if !compatible { "Top panel only" } else if here { "Add another" } else { items::ADD })
                         .id(cosmic::widget::Id::new(format!(
                             "applet-picker-add-{}",
                             info.id
                         )))
                         .on_press_maybe(
-                            (!self.native_busy).then_some(edit(Edit::Add(region, info.id.clone()))),
+                            (!self.native_busy && compatible).then_some(edit(Edit::Add(region, info.id.clone()))),
                         )
                         .into(),
                 ),
@@ -939,7 +947,7 @@ pub(in crate::settings) const POPUPS_NOTE: &str =
 pub(in crate::settings) const GESTURES: [(&str, &str); 5] = [
     (
         "Point or click",
-        "Pointing opens it. A click keeps it open, and another click closes it.",
+        "Pointing opens it when Open on hover is on. A click keeps it open, and another click closes it.",
     ),
     (
         "Right-click",
@@ -947,7 +955,7 @@ pub(in crate::settings) const GESTURES: [(&str, &str); 5] = [
     ),
     ("Middle-click", "Plays or pauses what’s playing."),
     ("Swipe on a touchpad", "Closes a brief reveal."),
-    ("Esc", "Closes the open island."),
+    ("Esc", "Goes back from a detail, or closes the island at the top level."),
 ];
 
 /// The words both bars’ item editors use, kept in one place so they match.

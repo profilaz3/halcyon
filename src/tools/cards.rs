@@ -4,7 +4,7 @@
 //! without one the card is drawn without controls that respond.
 mod devices;
 mod markets;
-pub use markets::{markets, sample as sample_markets};
+pub use markets::{markets, sample as sample_markets, sample_for as sample_markets_for};
 pub(crate) mod messages;
 pub(crate) mod recipe;
 use super::{focus, music, notes};
@@ -12,9 +12,9 @@ use crate::config::{Config, Palette};
 use crate::drawer::Widget;
 use cosmic::Element;
 use cosmic::iced::advanced::text as advanced_text;
-use cosmic::iced::{Alignment, Background, Border, Color, Font, Length, mouse};
+use cosmic::iced::{Alignment, Background, Border, Color, Font, Length};
 use cosmic::widget::image::Handle;
-use cosmic::widget::{column, container, icon, mouse_area, row, scrollable, text, text_editor};
+use cosmic::widget::{column, container, icon, row, text, text_editor};
 pub(crate) use devices::charging_icon;
 pub use devices::{devices, sample as sample_devices};
 pub use messages::{messages, sample as sample_messages};
@@ -212,11 +212,17 @@ fn tinted<'a, M: 'a>(
         .into()
 }
 
-fn press<'a, M: Clone + 'a>(content: Element<'a, M>, message: Option<M>) -> Element<'a, M> {
+fn press<'a, M: Clone + 'a>(
+    content: Element<'a, M>,
+    message: Option<M>,
+    name: impl Into<String>,
+) -> Element<'a, M> {
     match message {
-        Some(message) => mouse_area(content)
+        Some(message) => cosmic::widget::button::custom(content)
+            .name(name.into())
+            .padding(0)
+            .class(cosmic::theme::Button::Text)
             .on_press(message)
-            .interaction(mouse::Interaction::Pointer)
             .into(),
         None => content,
     }
@@ -265,7 +271,16 @@ fn control<'a, M: Clone + 'a>(
     } else {
         glyph()
     };
-    press(tinted(content, background, color, [pad, pad], 40.), message)
+    let title = match name {
+        "media-playback-start-symbolic" => "Play or resume",
+        "media-playback-pause-symbolic" => "Pause",
+        "media-skip-forward-symbolic" => "Next track",
+        "media-skip-backward-symbolic" => "Previous track",
+        "edit-copy-symbolic" => "Copy note",
+        "edit-symbolic" => "Edit note",
+        _ => name,
+    };
+    press(tinted(content, background, color, [pad, pad], 40.), message, title)
 }
 
 /// A text control with an optional leading icon. A strong chip is the
@@ -292,7 +307,8 @@ pub(crate) fn chip<'a, M: Clone + 'a>(
     if let Some(name) = name {
         parts.push(icon::from_name(name).size(14).icon().into());
     }
-    parts.push(label(title, crate::widget_style::SECONDARY, color));
+    let title = title.into();
+    parts.push(label(title.clone(), crate::widget_style::SECONDARY, color));
     press(
         tinted(
             row::with_children(parts)
@@ -312,6 +328,7 @@ pub(crate) fn chip<'a, M: Clone + 'a>(
             14.,
         ),
         message,
+        title,
     )
 }
 
@@ -506,6 +523,7 @@ pub fn music_visualized<'a, M: Clone + 'static>(
                         },
                     ),
                     transport(music::Command::Raise, player.can_raise),
+                    "Open music player",
                 ),
                 line(
                     if subtitle.is_empty() {
@@ -571,6 +589,7 @@ pub fn music_visualized<'a, M: Clone + 'static>(
             let source = press(
                 container(source).padding([4, 0]).into(),
                 act(Action::MusicCycle, players > 1),
+                "Switch music player",
             );
             let controls = row::with_children(vec![
                 container(control(
@@ -779,6 +798,24 @@ fn last_played<'a, M: Clone + 'static>(
         .into()
 }
 
+fn note_lines(value: &str, size: f32, width: f32) -> usize {
+    use advanced_text::Paragraph as _;
+    type Paragraph = <cosmic::Renderer as advanced_text::Renderer>::Paragraph;
+    let text = Paragraph::with_text(advanced_text::Text {
+        content: value,
+        bounds: cosmic::iced::Size::new(width, f32::INFINITY),
+        size: size.into(),
+        line_height: advanced_text::LineHeight::Relative(1.25),
+        font: font(),
+        align_x: advanced_text::Alignment::Left,
+        align_y: cosmic::iced::alignment::Vertical::Top,
+        shaping: advanced_text::Shaping::Advanced,
+        wrapping: advanced_text::Wrapping::WordOrGlyph,
+        ellipsize: advanced_text::Ellipsize::None,
+    });
+    (text.min_bounds().height / (size * 1.25)).round().max(1.) as usize
+}
+
 /// Everything the Notes card shows.
 pub struct NotesView<'a> {
     pub note: Result<&'a notes::Note, &'a str>,
@@ -801,7 +838,7 @@ pub fn notes<'a, M: Clone + 'a>(
 ) -> Element<'a, M> {
     let _style = crate::widget_style::scope(config);
     let p = config.palette();
-    let [_, height] = dimensions.unwrap_or_else(|| size(Widget::Notes, config));
+    let [width, height] = dimensions.unwrap_or_else(|| size(Widget::Notes, config));
     let act = |action: Action| on.map(|on| on(action));
     if let Some(content) = view.editing {
         let editor = text_editor(content)
@@ -943,6 +980,7 @@ pub fn notes<'a, M: Clone + 'a>(
     .align_y(Alignment::Center);
     let mut body: Vec<Element<'a, M>> = Vec::new();
     let mut footer = None;
+    let mut overflow = false;
     match view.note {
         Err(reason) => body.push(label(reason.to_string(), 12., WARN)),
         Ok(note) if note.text.trim().is_empty() => {
@@ -956,35 +994,70 @@ pub fn notes<'a, M: Clone + 'a>(
             ));
         }
         Ok(note) => {
-            for line in notes::lines(&note.text) {
-                body.push(match line {
+            let lines = notes::lines(&note.text);
+            let mut space = (height - 104.).max(20.);
+            for entry in lines {
+                let (value, size, inset) = match entry {
+                    notes::Line::Heading(title) => (title, 15., 0.),
+                    notes::Line::Text(value) => (value, 13., 0.),
+                    notes::Line::Bullet(value) => (value, 13., 18.),
+                    notes::Line::Task { text, .. } => (text, 13., 26.),
+                    notes::Line::Blank => ("", 13., 0.),
+                };
+                let available = (space / (size * 1.25)).floor() as usize;
+                if available == 0 {
+                    overflow = true;
+                    break;
+                }
+                let color = if matches!(entry, notes::Line::Task { done: true, .. }) {
+                    p.muted
+                } else {
+                    p.foreground
+                };
+                let text_width = (width - 2. * f32::from(PADDING) - inset).max(1.);
+                let needed = note_lines(value, size, text_width);
+                let count = available.min(needed).max(1);
+                let paragraph: Element<'a, M> = text::body(value.to_owned())
+                    .size(size)
+                    .font(font())
+                    .line_height(1.25)
+                    .wrapping(advanced_text::Wrapping::WordOrGlyph)
+                    .ellipsize(advanced_text::Ellipsize::End(
+                        advanced_text::EllipsizeHeightLimit::Lines(count),
+                    ))
+                    .class(cosmic::theme::Text::Color(crate::widget_style::semantic(
+                        color,
+                    )))
+                    .width(Length::Fill)
+                    .into();
+                body.push(match entry {
                     notes::Line::Blank => container(cosmic::iced::widget::space()).height(4).into(),
-                    notes::Line::Heading(title) => label(title.to_string(), 15., p.foreground),
-                    notes::Line::Text(value) => label(value.to_string(), 13., p.foreground),
-                    notes::Line::Bullet(value) => row::with_children(vec![
-                        label("•", 13., p.accent),
-                        container(label(value.to_string(), 13., p.foreground))
-                            .width(Length::Fill)
-                            .into(),
-                    ])
-                    .spacing(8)
-                    .into(),
+                    notes::Line::Heading(_) | notes::Line::Text(_) => paragraph,
+                    notes::Line::Bullet(_) => {
+                        row::with_children(vec![label("•", 13., p.accent), paragraph])
+                            .spacing(8)
+                            .into()
+                    }
                     notes::Line::Task { line, done, text } => press(
                         row::with_children(vec![
                             container(checkbox(done, p)).padding([2, 0, 0, 0]).into(),
-                            container(label(
-                                text.to_string(),
-                                13.,
-                                if done { p.muted } else { p.foreground },
-                            ))
-                            .width(Length::Fill)
-                            .into(),
+                            paragraph,
                         ])
                         .spacing(9)
                         .into(),
                         act(Action::NoteToggle(line)),
+                        format!("{} {text}", if done { "Uncheck" } else { "Check" }),
                     ),
                 });
+                space -= if matches!(entry, notes::Line::Blank) {
+                    10.
+                } else {
+                    count as f32 * size * 1.25 + 6.
+                };
+                if count < needed {
+                    overflow = true;
+                    break;
+                }
             }
             footer = note
                 .updated_at
@@ -1005,17 +1078,11 @@ pub fn notes<'a, M: Clone + 'a>(
     }
     let mut parts = vec![
         header.into(),
-        scrollable(
-            container(column::with_children(body).spacing(6).width(Length::Fill))
-                .padding([0, 8, 0, 0])
-                .width(Length::Fill),
-        )
-        .height(Length::Fill)
-        .width(Length::Fill)
-        .scroller_width(3.)
-        .scrollbar_width(3.)
-        .scrollbar_padding(2.)
-        .into(),
+        column::with_children(body)
+            .spacing(6)
+            .height(Length::Fill)
+            .width(Length::Fill)
+            .into(),
     ];
     if let Some(problem) = view.problem {
         parts.push(label(
@@ -1040,6 +1107,12 @@ pub fn notes<'a, M: Clone + 'a>(
             .align_y(Alignment::Center)
             .into(),
         );
+    } else if overflow {
+        parts.push(press(
+            line("Open full note →", 12., p.accent),
+            act(Action::NoteEdit),
+            "Open full note",
+        ));
     } else if let Some(footer) = footer {
         parts.push(label(footer, crate::widget_style::SECONDARY, p.muted));
     }
@@ -1200,6 +1273,7 @@ pub fn focus<'a, M: Clone + 'static>(
                 (!selected)
                     .then(|| act(Action::FocusMinutes(minutes)))
                     .flatten(),
+                format!("{minutes} minutes"),
             ));
         }
     } else {
@@ -1285,7 +1359,7 @@ fn dot<'a, M: 'a>(on: bool, p: Palette) -> Element<'a, M> {
 mod tests {
     use super::*;
     use crate::native_test::Native;
-    use cosmic::iced::{Event, Point, Size};
+    use cosmic::iced::{Event, Point, Size, mouse};
     use std::collections::HashMap;
     #[test]
     fn copying_a_note_does_not_enter_editing_or_toggle_its_checklist() {
@@ -1312,7 +1386,8 @@ mod tests {
         };
         let copy = native.bounds(view(true), "notes-copy").center();
         let click = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
-        let (messages, _) = native.event(view(true), click.clone(), copy);
+        let _ = native.event(view(true), click.clone(), copy);
+        let (messages, _) = native.event(view(true), Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)), copy);
         assert_eq!(messages.len(), 1);
         assert!(matches!(messages[0], Action::NoteCopy));
         let (messages, _) = native.event(view(false), click, copy);
@@ -1381,9 +1456,10 @@ mod tests {
                             && auto.x + auto.width <= width
                             && auto.y + auto.height <= height
                     );
+                    let _ = native.event(view(true, true), Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)), auto.center());
                     let (messages, _) = native.event(
                         view(true, true),
-                        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                        Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
                         auto.center(),
                     );
                     assert!(messages.iter().any(|m| matches!(m, Action::MusicAuto)));

@@ -101,8 +101,7 @@ fn fixture(placed: bool, material: bool, glance: bool) -> Cards {
         ] {
             config.widget_positions.insert(key.into(), at);
         }
-        // A saved size, and one smaller than the System monitor's content,
-        // which the desktop grows to fit.
+        // A roomy Weather card and a System monitor that needs a compact reading.
         config.widget_sizes.insert("weather".into(), [420., 240.]);
         config.widget_sizes.insert("devbox".into(), [380., 200.]);
     }

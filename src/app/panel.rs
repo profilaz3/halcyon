@@ -126,8 +126,9 @@ impl Cards {
     }
     /// `halcyon --toggle drawer`.
     pub(super) fn drawer_toggle(&mut self) -> Task<Message> {
+        let release = self.leave_tool();
         if self.sidebar.visible {
-            return self.update(Message::HideControls);
+            return release.chain(self.update(Message::HideControls));
         }
         if !self.controls_open {
             // From the keyboard, on the widgets' display.
@@ -137,9 +138,12 @@ impl Cards {
         self.sidebar.focus = Some(0);
         if self.controls_open {
             // Still sliding out: the open surface takes the keys now.
-            set_keyboard_interactivity(self.ids[2], KeyboardInteractivity::Exclusive)
+            release.chain(set_keyboard_interactivity(
+                self.ids[2],
+                KeyboardInteractivity::Exclusive,
+            ))
         } else {
-            Task::none()
+            release
         }
     }
     pub(super) fn drawer_key(&mut self, key: DrawerKey) -> Task<Message> {
@@ -182,6 +186,18 @@ impl Cards {
                     DrawerItem::Customize => self.update(Message::EdgeCustomize),
                     DrawerItem::Entry(entry) => self.update(Message::EdgeItem(entry)),
                 };
+            }
+            DrawerKey::Interact => {
+                let widget = match items[index] {
+                    DrawerItem::Widget(widget) => Some(widget),
+                    DrawerItem::Entry(entry) => self
+                        .menu_items()
+                        .and_then(|items| items.get(entry)?.as_widget()),
+                    _ => None,
+                };
+                if let Some(widget) = widget {
+                    return self.interact_with_tool(widget);
+                }
             }
             DrawerKey::MoveUp | DrawerKey::MoveDown => {
                 if let DrawerItem::Entry(entry) = items[index] {
@@ -360,7 +376,7 @@ impl Cards {
             // old selection while its first scan is in flight.
             self.projects = cfg.project_roots.is_empty().then(ProjectsData::default);
             self.projects_error = false;
-            self.all_projects = false;
+            self.expanded_projects.clear();
             self.next_projects = now;
         }
         for widget in Widget::ALL {
@@ -811,7 +827,11 @@ impl Cards {
                     if hidden {
                         "Widgets are hidden"
                     } else {
-                        "Show or hide each widget"
+                        if self.sidebar.focus.is_some() {
+                            "Shift+Enter for widget controls"
+                        } else {
+                            "Show or hide each widget"
+                        }
                     },
                     12.,
                     p.muted,

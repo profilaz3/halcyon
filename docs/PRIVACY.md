@@ -318,6 +318,7 @@ Do not post installation tokens, credentials or private widget contents there.
 ## Widget connections
 
 - **Weather:** searches and selected coordinates go to Open-Meteo.
+- **Markets:** the selected quote provider receives watchlist symbols over HTTPS. Yahoo Finance requires no account. Twelve Data also receives the API key saved in the desktop keyring. Usage reports exclude symbols, quotes and credentials.
 - **Google Calendar:** connecting an account allows Halcyon to read the calendars
   you select. Sign-in tokens stay in the system keyring.
 - **Calendar subscriptions (0.3.0):** HTTPS/iCal links are fetched

@@ -447,23 +447,6 @@ fn is_content_sized(widget: Widget) -> bool {
     matches!(widget, Widget::Devbox | Widget::Projects | Widget::Calendar)
 }
 
-/// Shared saved-viewport rule: list cards grow to their content, bounded by
-/// the output. Callers retain the saved dimensions; only effective geometry grows.
-pub fn effective_explicit_size(
-    widget: Widget,
-    saved: [f32; 2],
-    content_height: Option<f32>,
-    screen: [f32; 2],
-) -> [f32; 2] {
-    let mut size = layout::sized(widget, saved, screen);
-    if is_content_sized(widget)
-        && let Some(height) = content_height
-    {
-        size[1] = size[1].max(height.min((screen[1] - 96.).max(1.)));
-    }
-    size
-}
-
 /// Shared automatic geometry for built-in and personal system widgets.
 /// The System monitor's title slot, drawn by `app::devbox`.
 pub const DEVBOX_TITLE_HEIGHT: f32 = 23.;
@@ -515,13 +498,8 @@ pub fn project(mut state: Snapshot, config: &Config) -> Snapshot {
     for g in &mut state.widgets {
         if let Some(size) = config.widget_sizes.get(&g.key) {
             let widget = Widget::parse(&g.key).unwrap();
-            let content = g.natural_height.or_else(|| {
-                is_content_sized(widget).then(|| {
-                    g.natural_size
-                        .map_or(g.size[1], |natural| natural[1].max(g.size[1]))
-                })
-            });
-            g.size = effective_explicit_size(widget, *size, content, state.screen);
+            // Explicit card dimensions are a viewport; summaries adapt within it.
+            g.size = layout::sized(widget, *size, state.screen);
         }
     }
     state = default_positions(state, config);
@@ -660,13 +638,13 @@ mod tests {
         assert_eq!(stored.screen, newer.screen);
     }
     #[test]
-    fn auditfix_ob03_uncached_system_monitor_and_published_lists_expand() {
+    fn auditfix_ob03_uncached_system_monitor_and_published_lists_keep_saved_viewports() {
         let mut config = Config::default();
         config.widget_sizes.insert("devbox".into(), [360., 180.]);
         let snapshot = project(fallback(&config), &config);
         let system = snapshot.widgets.iter().find(|g| g.key == "devbox").unwrap();
         assert_eq!(devbox_content_height(&config.devbox, 0), 257.);
-        assert_eq!(system.size[1], 257.);
+        assert_eq!(system.size[1], 180.);
         assert_eq!(config.widget_sizes["devbox"], [360., 180.]);
         for w in [Widget::Devbox, Widget::Projects, Widget::Calendar] {
             let mut snapshot = fallback(&config);
@@ -686,7 +664,7 @@ mod tests {
                     .find(|g| g.key == w.key())
                     .unwrap()
                     .size[1],
-                504.
+                layout::minimum_size(w)[1]
             );
         }
     }

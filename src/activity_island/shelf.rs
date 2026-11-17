@@ -1000,7 +1000,7 @@ impl Applet {
             }
             Msg::Back => {
                 self.shelf.open = false;
-                Task::none()
+                self.back_from_detail()
             }
             Msg::DragEnter => {
                 self.shelf.over = true;

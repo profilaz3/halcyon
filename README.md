@@ -33,7 +33,7 @@ The widget builder customizes Clock, Weather, Calendar, System monitor, Music an
 
 ## 3. Dock and panel customization
 
-Applet arrangement, spacing, size, opacity, corners and auto-hide. **Islands** separates applets into floating groups; **Penumbra** fades bar backgrounds into the wallpaper. Both are optional and included in the package. The **Activity island** (beta) shows music, meetings, notifications and camera or microphone use in the middle of an Islands panel.
+Applet arrangement, spacing, size, opacity, corners and auto-hide. **Islands** separates applets into floating groups; **Penumbra** fades bar backgrounds into the wallpaper. Both are optional and included in the package. The **Activity island** (beta) shows music, meetings, notifications and camera or microphone use on a standard COSMIC top panel or a floating Islands panel.
 
 [![Illustration of Islands, Penumbra, Activity island states and an icon-only edge menu with a handle](docs/presentation/070-readme/panel-elements-dark.png)](docs/presentation/070-readme/panel-elements-dark.png)
 
@@ -138,7 +138,7 @@ halcyon-ctl focus toggle    Start or pause the Focus timer
 halcyon-ctl --help          Every command, described
 ```
 
-Bind `halcyon --toggle drawer` to a key in **COSMIC Settings → Keyboard → Keyboard shortcuts** to open the edge menu without the mouse. In the menu, Tab and the arrow keys move, Enter shows or hides a widget, Alt+Up and Alt+Down reorder the right column, and Esc closes it. Right-click any widget for its settings, Arrange, or Hide. `man halcyon` and `man halcyon-ctl` have the details.
+Bind `halcyon --toggle drawer` to a key in **COSMIC Settings → Keyboard → Keyboard shortcuts** to open the edge menu without the mouse. In the menu, Tab and the arrow keys move, Enter shows or hides a widget, Alt+Up and Alt+Down reorder the right column, and Esc closes it. On a visible Music, Notes, Focus, Messages or Markets entry, Shift+Enter moves keyboard focus to the widget. Tab moves between its controls, Enter activates one, and Esc releases focus. The same action is in the widget’s right-click menu. `man halcyon` and `man halcyon-ctl` have the details.
 
 ## Help & development
 

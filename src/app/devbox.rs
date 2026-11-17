@@ -66,11 +66,25 @@ pub(super) fn view<'a>(
         }
     };
     let mut rows = Vec::new();
-    for section in preferences
-        .ordered_sections()
+    let sections = preferences.ordered_sections();
+    let mut available = height - 36. - TITLE_HEIGHT;
+    let row_height = HEADER_HEIGHT + LINE_GAP + indicator_height + SECTION_GAP;
+    let mut hidden = 0;
+    for section in sections
         .into_iter()
         .filter(|section| section.enabled(preferences))
     {
+        let cost = row_height
+            * if section == DevboxSection::Gpu {
+                m.gpus.len().max(1) as f32
+            } else {
+                1.
+            };
+        if hidden > 0 || cost > available + 0.5 {
+            hidden += 1;
+            continue;
+        }
+        available -= cost;
         rows.push(match section {
             DevboxSection::Cpu => {
                 let hot = m.cpu_temperature.is_some_and(|value| value >= 85.);
@@ -276,7 +290,7 @@ pub(super) fn view<'a>(
             }
         });
     }
-    if rows.is_empty() {
+    if rows.is_empty() && hidden == 0 {
         rows.push(
             container(spread(
                 metric_text("All Devbox sections are hidden", 12., p.muted),
@@ -289,10 +303,21 @@ pub(super) fn view<'a>(
     }
     rows.insert(
         0,
-        container(label("System", crate::widget_style::TITLE, p.foreground))
-            .height(Length::Fixed(TITLE_HEIGHT))
-            .align_y(Alignment::Center)
-            .into(),
+        container(spread(
+            label("System", crate::widget_style::TITLE, p.foreground),
+            if hidden > 0 {
+                action(
+                    format!("{hidden} more →"),
+                    Message::ReadingDetails(Widget::Devbox),
+                    p.accent,
+                )
+            } else {
+                label("", 11., p.muted)
+            },
+        ))
+        .height(Length::Fixed(TITLE_HEIGHT))
+        .align_y(Alignment::Center)
+        .into(),
     );
     card(rows, p, config.appearance, Widget::Devbox, height)
 }
@@ -552,9 +577,8 @@ mod tests {
     }
 
     #[test]
-    fn a_smaller_saved_size_grows_to_fit_every_reading() {
-        // The saved size predates sections turned on later: the card expands
-        // instead of scrolling its readings.
+    fn a_smaller_saved_size_keeps_the_viewport_and_opens_full_readings() {
+        // Saved geometry stays stable when more sections are enabled.
         let config = serde_json::from_value(serde_json::json!({
             "enabled_widgets":["devbox"],
             "widget_sizes":{"devbox":[360.0, 204.0]},
@@ -567,7 +591,13 @@ mod tests {
         cards.metrics.gpus = vec![Default::default()];
         let natural = cards.devbox_natural_height();
         assert!(natural > 204., "{natural}");
-        assert_eq!(cards.widget_size(Widget::Devbox), [360., natural]);
+        assert_eq!(cards.widget_size(Widget::Devbox), [360., 204.]);
+        let mut native = crate::native_test::Native::new(Size::new(360., 204.));
+        let texts = native.all_text(cards.devbox());
+        assert!(texts.iter().any(|t| t.contains("more →")));
+        assert!(native.scrollables(cards.devbox()).is_empty());
+        let details = native.all_text(cards.reading_view(Widget::Devbox));
+        assert!(details.iter().any(|t| t == "Services"));
         // A larger saved size is kept, and a tiny screen caps the growth.
         cards
             .config

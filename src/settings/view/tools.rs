@@ -68,7 +68,6 @@ impl Settings {
             Provider::TwelveData => "Exchange coverage and delays depend on your Twelve Data plan.",
         };
         let mut controls = vec![
-            label("Example prices and chart", 13., FG),
             group(
                 Some("Watchlist"),
                 vec![
@@ -76,6 +75,8 @@ impl Settings {
                         "Symbols",
                         "Up to five stocks, separated by commas. Select a stock on the widget to see its chart.",
                         text_input("AAPL, MSFT, NVDA", &editor.market_symbols)
+                            .id("market-symbol-input".into())
+                            .on_submit(|_| edit(Edit::MarketSaveSymbols))
                             .on_input(|s| edit(Edit::MarketSymbols(s)))
                             .width(Length::Fill)
                             .into(),
@@ -136,7 +137,18 @@ impl Settings {
         if let Some(status) = &editor.market_status {
             controls.push(label(status, 13., FG));
         }
-        self.widget_template(Widget::Markets, "Markets", Some(preview), controls)
+        let preview = column::with_children(vec![
+            container(label("Example prices and chart", 13., FG))
+                .id("markets-sample").width(Length::Fill).into(),
+            self.preview_stage(container(preview).max_width(360.).into()),
+        ]).spacing(6);
+        let editor = adaptive::columns(
+            column::with_children(controls).spacing(12).into(),
+            preview.into(),
+            [320., 300.],
+            false,
+        );
+        self.widget_template(Widget::Markets, "Markets", None, vec![editor])
     }
 
     fn tool_preview_size(&self, widget: Widget) -> [f32; 2] {

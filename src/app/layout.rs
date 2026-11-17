@@ -17,6 +17,7 @@ use std::collections::BTreeMap;
 /// A choice in a widget's right-click menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuPick {
+    Interact,
     Settings,
     Arrange,
     Hide,
@@ -361,12 +362,7 @@ impl Cards {
     }
     pub(super) fn widget_size(&self, widget: Widget) -> [f32; 2] {
         if let Some(size) = self.explicit_size(widget) {
-            return crate::layout_state::effective_explicit_size(
-                widget,
-                size,
-                self.content_height(widget),
-                self.widget_screen(widget),
-            );
+            return size;
         }
         if widget == Widget::Glance {
             self.glance_size()
@@ -2122,7 +2118,7 @@ impl Cards {
         };
         let id = window::Id::unique();
         self.menu = Some((id, widget));
-        let height = MENU_ROW * 3 + MENU_PADDING * 2;
+        let height = MENU_ROW * (3 + u32::from(self.can_interact_with_tool(widget))) + MENU_PADDING * 2;
         let popup = get_popup(SctkPopupSettings {
             parent,
             id,
@@ -2163,6 +2159,7 @@ impl Cards {
         };
         let close = self.close_widget_menu();
         let next = self.update(match pick {
+            MenuPick::Interact => return close.chain(self.interact_with_tool(widget)),
             MenuPick::Settings => Message::WidgetSettings(widget),
             MenuPick::Arrange => Message::Arrange,
             MenuPick::Hide => return Task::batch([close, self.hide_from_menu(widget)]),
@@ -2185,7 +2182,7 @@ impl Cards {
             .into()
         };
         let (settings, hide) = widget_menu_labels(widget);
-        container(column::with_children(vec![
+        let mut choices = vec![
             item(settings, "widget-menu-settings", MenuPick::Settings),
             item(
                 "Arrange widgets".into(),
@@ -2193,7 +2190,11 @@ impl Cards {
                 MenuPick::Arrange,
             ),
             item(hide, "widget-menu-hide", MenuPick::Hide),
-        ]))
+        ];
+        if self.can_interact_with_tool(widget) {
+            choices.insert(0, item("Use widget controls".into(), "widget-menu-interact", MenuPick::Interact));
+        }
+        container(column::with_children(choices))
         .padding(MENU_PADDING as u16)
         .width(Length::Fill)
         .height(Length::Fill)
@@ -2220,6 +2221,7 @@ impl Cards {
                 self.tool_card(widget)
             }
         };
+        let card = if self.interacting_tool == Some(widget) { container(card).id("tool-controls").into() } else { card };
         let card = self.with_menu(widget, card);
         // Matches the surface's shadow margin (see the layer surface sizes).
         let m = crate::widget_style::shadow_margin(&self.config);
@@ -2843,9 +2845,9 @@ mod tests {
     }
 
     #[test]
-    fn sized_native_cards_fill_their_surface_and_keep_busy_agendas_scrollable() {
+    fn sized_native_cards_fill_their_surface_and_keep_busy_agendas_visible() {
         use crate::native_test::Native;
-        use cosmic::iced::{Event, Size};
+        use cosmic::iced::Size;
         let mut config = Config::default();
         config.music.enabled = true;
         config.notes.enabled = true;
@@ -2912,29 +2914,59 @@ mod tests {
                     &theme,
                     &format!("card-{}-{name}", widget.key()),
                 );
+                assert!(
+                    native
+                        .scrollables(cards.individual_widget(widget))
+                        .is_empty(),
+                    "{widget:?} {name} is stationary"
+                );
                 if matches!(widget, Widget::Calendar | Widget::Glance) {
-                    assert_eq!(cards.calendar.as_ref().unwrap().events.len(), 24);
-                    let point = Point::new(size[0] / 2., size[1] - 80.);
-                    let _ = native.event(
-                        cards.individual_widget(widget),
-                        Event::Mouse(mouse::Event::WheelScrolled {
-                            delta: mouse::ScrollDelta::Pixels { x: 0., y: -10000. },
-                        }),
-                        point,
-                    );
-                    let scrolled = native.render(cards.individual_widget(widget), &theme);
+                    let texts = native.all_text(cards.individual_widget(widget));
                     assert!(
-                        pixels != scrolled,
-                        "{widget:?} {name}: agenda remains scrollable"
+                        texts.iter().any(|s| s.contains("Fixture event 00")),
+                        "{widget:?} {name}: {texts:?}"
                     );
-                    native.capture(
+                    assert!(
+                        texts.iter().any(|s| s.contains("Open agenda")),
+                        "{widget:?} {name}: {texts:?}"
+                    );
+                    let bounds = native.text_bounds(
                         cards.individual_widget(widget),
-                        &theme,
-                        &format!("card-{}-{name}-last-events", widget.key()),
+                        texts.iter().find(|s| s.contains("Open agenda")).unwrap(),
+                    );
+                    assert!(
+                        bounds.y + bounds.height <= size[1],
+                        "{widget:?} {name}: {bounds:?}"
                     );
                 }
             }
         }
+        cards.tools.note = Ok(crate::tools::notes::Note {
+            text: (0..20)
+                .map(|i| format!("[ ] Task {i}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            updated_at: None,
+        });
+        let mut notes = Native::new(Size::new(260., 180.));
+        cards
+            .config
+            .widget_sizes
+            .insert("notes".into(), [260., 180.]);
+        assert!(
+            notes
+                .scrollables(cards.individual_widget(Widget::Notes))
+                .is_empty()
+        );
+        let bounds = notes.text_bounds(cards.individual_widget(Widget::Notes), "Open full note →");
+        assert!(bounds.y + bounds.height <= 180.);
+        let mut large = Native::new(Size::new(480., 360.));
+        cards
+            .config
+            .widget_sizes
+            .insert("notes".into(), [480., 360.]);
+        let texts = large.all_text(cards.individual_widget(Widget::Notes));
+        assert!(texts.iter().any(|text| text == "Task 8"));
         cards.config.widget_sizes.remove("glance");
         cards.config.glance.enabled = true;
         assert!(

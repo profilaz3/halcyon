@@ -11,6 +11,17 @@ fn see_through_limit(target: Target) -> u8 {
     }
 }
 impl Settings {
+    pub(in crate::settings) fn finish_summary(&self, finish: Option<Finish>) -> String {
+        let mut config = self.config.clone();
+        config.materials.shared = finish;
+        config.materials.widgets = None;
+        let name = finish.map(|value| value.kind.title()).unwrap_or_else(|| {
+            config.appearance.family.map_or("Style default", |family| family.title())
+        });
+        let opacity = (100. * config.palette().background.a).round() as u8;
+        format!("{name}, {}% see-through", 100 - opacity)
+    }
+
     pub(super) fn appearance_page(&self) -> Element<'_, Message> {
         let target = self.material_target;
         let selected = self
@@ -20,12 +31,12 @@ impl Settings {
         let tile = |specimen, title, chosen, id, message| {
             material_tile(specimen, title, chosen, id, message, accent)
         };
-        // "No glass" is a choice like the others, so the current state is
+        // The original style is a choice like the others, so the current state is
         // always one marked tile. For one part, it means "follow the rest".
         let own = self.material_draft.or(self.config.materials.get(target));
         let mut tiles: Vec<Element<'_, Message>> = vec![tile(
-            self.material_specimen(None),
-            if target == Target::Shared { "No glass" } else { "Same as the rest" },
+            self.material_specimen(if target == Target::Shared { None } else { self.config.materials.shared }),
+            if target == Target::Shared { "Style default" } else { "Same as the rest" },
             own.is_none(),
             "material-none".to_owned(),
             Message::MaterialChoose(None),
@@ -111,7 +122,18 @@ impl Settings {
             || self.config.materials.dock.is_some()
             || self.config.materials.panel.is_some()
             || self.config.materials.widgets.is_some();
-        let mut rows = Vec::new();
+        let mut rows = vec![group(None, vec![
+            field(
+                Some("Easier to read".into()),
+                Some(self.config.appearance.contrast_assist),
+                detail_state("Easier to read", "Strengthens the background behind widget text."),
+                container(self.search_target(
+                    "contrast-assist",
+                    container(toggler(self.config.appearance.contrast_assist).on_toggle(Message::ContrastAssist))
+                        .id("material-readability").into(),
+                )).width(52).into(),
+            ),
+        ])];
         if scoped {
             rows.push(
                 container(group(None, vec![group_row_state("Use on", state, scopes)]))
@@ -129,10 +151,6 @@ impl Settings {
                 vec![
                     self.material_slider("See-through", format!("{}%", 100 - finish.opacity()), 0..=see_through_limit(target), 100 - finish.opacity(), true),
                     self.material_slider("Color tint", format!("{}%", finish.tint), 0..=100, finish.tint, false),
-                    self.search_target("contrast-assist", split(
-                        detail("Easier to read", "Adds a little more background behind small text on busy wallpapers"),
-                        container(toggler(self.config.appearance.contrast_assist).on_toggle(Message::ContrastAssist)).id(cosmic::widget::Id::new("material-readability")).into(),
-                    )),
                     container(split(
                         detail("Liquid motion", "Liquid glass moves gently"),
                         toggler(self.config.material_motion).on_toggle(Message::MaterialMotion).into(),
@@ -295,44 +313,6 @@ impl Settings {
         config.materials.shared = finish;
         config.materials.widgets = None;
         let p = config.palette();
-        let p = if p.background.a == 0. {
-            crate::materials::palette(config.surface_palette(), finish, false)
-        } else {
-            p
-        };
-        // The desktop blurs what is behind glass; a sample can't, so a haze
-        // stands in for the blur and makes each finish recognizable.
-        // Each finish is drawn a little stronger than life so the five
-        // read apart at a glance; the sliders still move them.
-        let mut tone = p.background;
-        let (toward, amount, alpha) = match finish.map(|f| f.kind) {
-            Some(Kind::Frosted) => (1., 0.32, 1.),
-            Some(Kind::Clear) => (1., 0.04, 0.55),
-            Some(Kind::Smoked) => (0., 0.55, 0.95),
-            Some(Kind::Liquid) => (1., 0.10, 0.75),
-            // No glass is a solid card.
-            None => (0., 0., 1.),
-        };
-        tone.r += (toward - tone.r) * amount;
-        tone.g += (toward - tone.g) * amount;
-        tone.b += (toward - tone.b) * amount;
-        tone.a = if finish.is_some() { (tone.a * alpha).clamp(0.25, 1.) } else { 1. };
-        let bg = crate::materials::background(tone, finish);
-        // Clear and Liquid catch the light at the edge; Liquid most.
-        let (rim, rim_width) = match finish.map(|f| f.kind) {
-            Some(Kind::Liquid) => (0.65, 1.5),
-            Some(Kind::Clear) => (0.4, 1.),
-            _ => (0.15, 1.),
-        };
-        let surface = move |_: &cosmic::Theme| cosmic::iced::widget::container::Style {
-            background: Some(bg),
-            border: Border {
-                color: Color::from_rgba(1., 1., 1., rim),
-                width: rim_width,
-                radius: 9.into(),
-            },
-            ..Default::default()
-        };
         // The sample weather follows the chosen units, like every preview.
         let units = self.config.weather;
         let deg = |c: f64| format!("{:.0}°", units.degrees(c).round());
@@ -341,79 +321,15 @@ impl Settings {
             Widget::Devbox => ("26%".to_string(), "Processor · Memory 8.2 / 32 GB".to_string()),
             _ => (deg(21.), format!("Partly cloudy · High {}", deg(23.))),
         };
-        let card = container(
+        let card = crate::tools::cards::frame(
             column::with_children(vec![
-                label(value, 32., p.foreground),
-                label(subtitle, 11., p.foreground),
-            ])
-            .spacing(4),
-        )
-        .width(Length::Fill)
-        .height(96)
-        .align_y(Alignment::Center)
-        .padding([8, 16])
-        .class(cosmic::theme::Container::custom(surface));
-        // Bold stripes run behind every sample, so how much shows through
-        // each finish is plain to see; a smooth picture would hide it.
-        let stripes = [
-            Color::from_rgb(0.96, 0.62, 0.40),
-            Color::from_rgb(0.16, 0.22, 0.48),
-            Color::from_rgb(0.99, 0.86, 0.55),
-            Color::from_rgb(0.46, 0.30, 0.62),
-            Color::from_rgb(0.30, 0.68, 0.82),
-            Color::from_rgb(0.10, 0.12, 0.22),
-            Color::from_rgb(0.92, 0.45, 0.52),
-        ];
-        let last = stripes.len() - 1;
-        let backdrop = row::with_children(
-            stripes
-                .into_iter()
-                .enumerate()
-                .map(|(index, color)| {
-                    // Round the outer stripes, since children aren't clipped
-                    // to the frame's corners.
-                    let radius = match index {
-                        0 => cosmic::iced::border::Radius::from(10.).right(0.),
-                        i if i == last => cosmic::iced::border::Radius::from(10.).left(0.),
-                        _ => 0.into(),
-                    };
-                    container(cosmic::iced::widget::space())
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .class(cosmic::theme::Container::custom(move |_| {
-                            cosmic::iced::widget::container::Style {
-                                background: Some(Background::Color(color)),
-                                border: Border {
-                                    radius,
-                                    ..Default::default()
-                                },
-                                ..Default::default()
-                            }
-                        }))
-                        .into()
-                })
-                .collect::<Vec<_>>(),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill);
-        container(
-            cosmic::iced::widget::Stack::new()
-                .push(container(backdrop).width(Length::Fill).height(Length::Fill))
-                .push(container(card).padding(12).width(Length::Fill)),
-        )
-        .width(Length::Fill)
-        .height(120)
-        .clip(true)
-        .class(cosmic::theme::Container::custom(|_| {
-            cosmic::iced::widget::container::Style {
-                border: Border {
-                    radius: 10.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
-        }))
-        .into()
+                label(value, 28., p.foreground),
+                label(subtitle, 12., p.muted),
+            ]).spacing(3).into(),
+            &config,
+            96.,
+        );
+        self.preview_stage_padded(card, 12)
     }
 }
 

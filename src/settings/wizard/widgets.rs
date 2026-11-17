@@ -1003,7 +1003,7 @@ mod tests {
     }
 
     #[test]
-    fn auditfix_ob03_pack_uses_content_height_and_preserves_saved_viewports() {
+    fn auditfix_ob03_pack_uses_and_preserves_saved_viewports() {
         let (_, mut raw, mut snapshot, _) = fixture();
         raw["enabled_widgets"] = serde_json::json!(["devbox"]);
         raw["widget_sizes"] = serde_json::json!({"devbox":[360,180],"notes":[360,180]});
@@ -1027,22 +1027,16 @@ mod tests {
         );
         assert!(plan.error.is_none(), "{:?}", plan.error);
         let geometry = |key| plan.snapshot.widgets.iter().find(|g| g.key == key).unwrap();
-        assert_eq!(geometry("devbox").size, [360., 226.]);
+        assert_eq!(geometry("devbox").size, [360., 180.]);
         assert_eq!(geometry("devbox").position, [24., 88.]);
-        assert_eq!(geometry("notes").position, [24., 334.]);
+        assert_eq!(geometry("notes").position, [24., 288.]);
         let mut applied = raw.clone();
         for (pointer, entry) in draft.patch(&plan, &Registry::default()).unwrap().changes() {
             widget::put(&mut applied, pointer, entry.desired.clone()).unwrap();
         }
         assert_eq!(applied["widget_sizes"], raw["widget_sizes"]);
         for widget in [Widget::Devbox, Widget::Notes] {
-            let content = (widget == Widget::Devbox).then_some(226.);
-            let size = crate::layout_state::effective_explicit_size(
-                widget,
-                [360., 180.],
-                content,
-                snapshot.screen,
-            );
+            let size = crate::layout::sized(widget, [360., 180.], snapshot.screen);
             let actual = crate::layout_state::decode_position(
                 widget,
                 plan.positions[widget.key()],

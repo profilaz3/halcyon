@@ -68,8 +68,9 @@ pub(crate) fn project(state: &State, show_text: bool) -> Messages {
     }
 }
 impl Applet {
-    pub(super) fn messages_heading(&self) -> String {
+    pub(super) fn messages_heading(&self, compact: bool) -> String {
         match self.snapshot.messages.as_ref() {
+            Some(m) if compact && m.unread > 0 => format!("Messages ({})", m.unread),
             Some(m) if m.unread > 0 => format!("Messages · {} unread", m.unread),
             _ => "Messages".into(),
         }
@@ -83,7 +84,7 @@ impl Applet {
         };
         Content {
             // The panel shows the count, leaving personal text inside the open card.
-            title: self.messages_heading(),
+            title: self.messages_heading(false),
             meta: if m.away {
                 format!("{} away", m.phone)
             } else {
@@ -93,8 +94,16 @@ impl Applet {
         }
     }
     pub(super) fn messages_extra(&self) -> f32 {
-        // Keep room for incoming conversations while the popup is open.
-        ROWS as f32 * (ROW + GAP) + FOOTER - (HEIGHT - 50.)
+        let Some(messages) = &self.snapshot.messages else {
+            return 0.;
+        };
+        // A setup message wraps to a few lines above its action.
+        let body = if let Some((_, hint)) = &messages.status {
+            if hint.is_empty() { FOOTER } else { 104. }
+        } else {
+            messages.threads.len().min(ROWS) as f32 * (ROW + GAP) + FOOTER
+        };
+        (body - (HEIGHT - 50.)).max(0.)
     }
     pub(super) fn messages_view<'a>(
         &'a self,
@@ -110,11 +119,13 @@ impl Applet {
         let mut list = widget::column([]).spacing(GAP);
         if let Some((title, hint)) = &m.status {
             list = list.push(self.text(title, 13., ink));
-            list = list.push(
-                widget::text(hint.clone())
-                    .size(12.)
-                    .class(cosmic::theme::Text::Color(quiet)),
-            );
+            if !hint.is_empty() {
+                list = list.push(
+                    widget::text(hint.clone())
+                        .size(12.)
+                        .class(cosmic::theme::Text::Color(quiet)),
+                );
+            }
         } else {
             for (i, thread) in m.threads.iter().take(ROWS).enumerate() {
                 let name = if thread.unread {
@@ -258,7 +269,6 @@ mod tests {
         app.kind = Kind::Messages;
         app.popup = Some(window::Id::unique());
         app.held = true;
-        app.popup_extra = app.messages_extra();
         app.motion.retarget(1., false, Instant::now());
         let (tx, mut rx) = tokio::sync::mpsc::channel(4);
         app.commands = Some(tx);
@@ -278,6 +288,7 @@ mod tests {
         for state in states {
             for show_text in [true, false] {
                 app.snapshot.messages = Some(project(&state, show_text));
+                app.popup_extra = app.messages_extra();
                 let size = Size::new(app.frame().popup_width(), app.popup_height());
                 let mut ui = crate::native_test::Native::new(size);
                 let view = || app.capsule(true);
@@ -359,7 +370,6 @@ mod tests {
         app.kind = Kind::Messages;
         app.popup = Some(window::Id::unique());
         app.held = true;
-        app.popup_extra = app.messages_extra();
         app.motion.retarget(1., false, Instant::now());
         let sample = crate::messages::sample();
         for (name, state, show_text) in [
@@ -376,6 +386,7 @@ mod tests {
             ("setup", State::NoPhone, true),
         ] {
             app.snapshot.messages = Some(project(&state, show_text));
+            app.popup_extra = app.messages_extra();
             let size = Size::new(app.frame().popup_width(), app.popup_height());
             let mut ui = crate::native_test::Native::new(size);
             ui.capture(

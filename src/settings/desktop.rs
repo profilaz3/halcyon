@@ -497,6 +497,14 @@ impl DesktopEditor {
     pub fn draft(&self, kind: PanelKind) -> Option<&PanelDraft> {
         self.drafts.get(&kind)
     }
+    pub fn can_place_applet(&self, id: &str) -> bool {
+        id != crate::activity_island::APPLET_ID
+            || self.selected == PanelKind::Panel
+                && self.current().is_some_and(|draft| {
+                    draft.anchor().known() == Some(&crate::desktop::panels::Anchor::Top)
+                })
+    }
+
     pub fn current(&self) -> Option<&PanelDraft> {
         self.drafts.get(&self.selected)
     }
@@ -893,6 +901,7 @@ impl DesktopEditor {
                     self.picker = None;
                 }
             }
+            Message::AddToBar(id) | Message::Add(_, id) if !self.can_place_applet(&id) => {}
             Message::AddToBar(id) => {
                 let region = self.usual_region();
                 self.edit_applets(|regions| Some(regions.add(region, id)));
@@ -1574,6 +1583,23 @@ mod tests {
             index: 0,
         }));
         assert!(!editor.starter().contains(island));
+    }
+
+    #[test]
+    fn activity_applet_can_only_be_added_to_the_top_panel() {
+        let fixture = Fixture::new("activity-host-placement");
+        let panel = PanelKind::Panel.namespace();
+        fixture.user(&panel, "anchor", "Top");
+        let mut editor = editor(&fixture);
+        let island = crate::activity_island::APPLET_ID;
+        editor.update(Message::Select(PanelKind::Dock));
+        assert!(!editor.can_place_applet(island));
+        editor.update(Message::Add(Region::Center, island.into()));
+        assert!(!editor.dirty());
+        editor.update(Message::Select(PanelKind::Panel));
+        assert!(editor.can_place_applet(island));
+        editor.update(Message::Anchor(Anchor::Bottom));
+        assert!(!editor.can_place_applet(island));
     }
 
     #[test]

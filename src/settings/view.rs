@@ -1170,16 +1170,6 @@ impl Settings {
                 appearance.border_opacity as u16,
                 AppearanceControl::Border,
             ),
-            separator(),
-            split(
-                detail(
-                    "Easier to read",
-                    "Adds a little more background behind small text on busy wallpapers",
-                ),
-                container(toggler(appearance.contrast_assist).on_toggle(Message::ContrastAssist))
-                    .id(cosmic::widget::Id::new("contrast-assist"))
-                    .into(),
-            ),
         ])
     }
     fn style_slider(

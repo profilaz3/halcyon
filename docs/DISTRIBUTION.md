@@ -176,15 +176,18 @@ intact rather than leaving an active source without its key.
 
 ## The Islands panel
 
-The Islands panel is part of the main Halcyon package; there is nothing extra to
-download. Open **Home** or **Activity island** and choose **Switch at next sign-in**.
-The card shows when the switch is ready. Sign out and back in, then open
-**Panel layout** from Home and select the **Islands** shape. The
-per-user helper checks native compatibility, ownership and previous failures
-before staging the switch.
+For music, timers and notifications on the standard COSMIC top panel, open
+**Activity island → Add Activity island**. The applet works in the current session.
+
+For floating groups, open **Home** and choose **Switch at next sign-in**. Halcyon
+checks the packaged panel’s compatibility, ownership and previous failures.
+When the card says the switch is ready, sign out and back in. Open **Panel
+layout** from Home and select the **Islands** shape. If you chose that shape
+during setup, the wizard saves it and offers the same switch on its final screen.
 
 If **Dock and panel** says the Islands panel isn't installed, reinstall Halcyon
-from the same place you got it, then sign out and back in.
+from the same place you got it. The main package includes the Islands panel.
+Reopen **Home** to see the next action for your installation.
 
 ### Separate companion in earlier releases
 

@@ -595,12 +595,14 @@ fn calendar_details_and_private_mode_work_in_both_agendas() {
     cards.config.calendar_show_tomorrow = true;
     let key = event.details_key();
     let height = cards.calendar_natural_height();
-    let _ = cards.update(Message::Open(key.clone()));
+    let _ = cards.update(Message::AgendaLink(Widget::Glance, key.clone()));
     assert!(cards.event_details_open(&event));
-    assert!(cards.calendar_natural_height() >= height + 184.);
+    assert_eq!(cards.calendar_natural_height(), height, "details leave the desktop still");
+    let (id, source) = cards.reading_window.expect("an event opens its own reading window");
+    assert_eq!(source, Widget::Glance);
     let mut native = Native::new(Size::new(360., 600.));
     native.capture(
-        cards.calendar_card(),
+        cards.view_window(id),
         &cosmic::Theme::dark(),
         "calendar-event-details",
     );
@@ -615,8 +617,16 @@ fn calendar_details_and_private_mode_work_in_both_agendas() {
             &format!("calendar-glance-{density:?}"),
         );
     }
-    let _ = cards.update(Message::Open(key.clone()));
+    let escape = || Message::KeyInput(
+        id,
+        cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Escape),
+        cosmic::iced::keyboard::Modifiers::default(),
+    );
+    let _ = cards.update(escape());
     assert!(!cards.event_details_open(&event));
+    assert_eq!(cards.reading_window, Some((id, Widget::Glance)));
+    let _ = cards.update(escape());
+    assert!(cards.reading_window.is_none());
     cards.config.calendar_private = true;
     let _ = cards.update(Message::Open(key));
     assert!(!cards.event_details_open(&event));

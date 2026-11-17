@@ -404,11 +404,12 @@ impl Settings {
         }
         parts.extend(self.updated_card());
         parts.extend(self.ignored_settings_banner());
-        parts.extend([
-            picture.into(),
-            self.home_detail(selected),
-            self.home_tiles(selected),
-        ]);
+        parts.extend(self.widgets_stopped_banner(false));
+        parts.push(picture.into());
+        if let Some(page) = selected {
+            parts.push(self.home_detail(page));
+        }
+        parts.push(self.home_tiles(selected));
         let body = column::with_children(parts).spacing(12);
         container(activate(body.into()))
             .id(cosmic::widget::Id::new("home"))
@@ -875,22 +876,8 @@ impl Settings {
 
     /// Under the picture: the chosen part's icon, name, how it is set now,
     /// and Open.
-    fn home_detail(&self, selected: Option<Page>) -> Element<'_, Message> {
+    fn home_detail(&self, page: Page) -> Element<'_, Message> {
         let accent = self.settings_accent();
-        let Some(page) = selected else {
-            return container(label(
-                "Pick a part of the picture to see how it is set.",
-                CAPTION,
-                MUTED,
-            ))
-            .id(cosmic::widget::Id::new("home-detail"))
-            .padding([12, 14])
-            .height(60)
-            .width(Length::Fill)
-            .align_y(Alignment::Center)
-            .class(cosmic::theme::Container::Card)
-            .into();
-        };
         let badge = container(icon::from_name(page.nav_icon()).size(18).icon())
             .width(34)
             .height(34)
@@ -1055,6 +1042,10 @@ impl Settings {
                     .count();
                 if !config.widgets_visible {
                     "Hidden".into()
+                } else if self.widgets_stopped() {
+                    format!("Stopped · {shown} selected")
+                } else if !self.service_known {
+                    format!("{shown} selected")
                 } else if shown == 1 {
                     "1 on the desktop".into()
                 } else {

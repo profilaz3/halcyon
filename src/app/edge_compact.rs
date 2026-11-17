@@ -224,6 +224,13 @@ impl Cards {
         if self.item_held(item) {
             return (title, Some("Hidden".into()));
         }
+        if self.drawer_focus() == Some(DrawerItem::Entry(index))
+            && item
+                .as_widget()
+                .is_some_and(|widget| self.can_interact_with_tool(widget))
+        {
+            return (title, Some("Shift+Enter".into()));
+        }
         if let Some(on) = self.item_state(item) {
             return (title, Some(if on { "On" } else { "Off" }.into()));
         }
