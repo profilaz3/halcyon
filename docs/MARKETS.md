@@ -2,6 +2,8 @@
 
 Markets shows up to five stocks, their quoted prices and daily percentage changes, and a daily price chart for the selected stock. It uses the same appearance, transparency, resizing and display placement settings as other widgets.
 
+Resizing adapts the content without scrolling inside the widget. All watchlist rows remain visible, the chart fills the remaining space, and smaller sizes use shorter labels and fewer secondary details.
+
 ## Set up
 
 1. Open Halcyon settings and search for **Markets** or **stocks**.
