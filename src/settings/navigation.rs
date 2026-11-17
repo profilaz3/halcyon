@@ -768,6 +768,16 @@ const SEARCH: &[SearchHit] = &[
     DEVICES,
     MESSAGES,
     MESSAGES_TEXT,
+    hit(
+        Page::Markets,
+        "Markets",
+        "stocks stock watchlist shares price charts finance twelve data",
+        false,
+    )
+    .names_page(),
+    hit(Page::Markets, "Symbols", "stock ticker exchange", false),
+    hit(Page::Markets, "Watchlist", "stocks shares list", false),
+    hit(Page::Markets, "Twelve Data", "provider api key connection", false),
     DOCK_SEE_THROUGH,
     hit(
         Page::DesktopPanel,
@@ -2606,6 +2616,7 @@ pub(super) fn widget_of(page: Page) -> Option<crate::drawer::Widget> {
         Page::Focus => Widget::Focus,
         Page::Devices => Widget::Devices,
         Page::Messages => Widget::Messages,
+        Page::Markets => Widget::Markets,
         _ => return None,
     })
 }
@@ -2623,6 +2634,7 @@ pub(super) fn widget_page(widget: crate::drawer::Widget) -> Page {
         Widget::Focus => Page::Focus,
         Widget::Devices => Page::Devices,
         Widget::Messages => Page::Messages,
+        Widget::Markets => Page::Markets,
     }
 }
 

@@ -79,6 +79,7 @@ pub(super) struct Tools {
     pub devices: Vec<crate::devices::Device>,
     /// The phone's conversations, while the widget or island needs them.
     pub messages: crate::messages::State,
+    pub markets: crate::markets::State,
 }
 
 impl Tools {
@@ -104,6 +105,7 @@ impl Tools {
             audio_bins: [0.; crate::tools::visualizer::BINS],
             devices: Vec::new(),
             messages: crate::messages::State::default(),
+            markets: crate::markets::State::default(),
         }
     }
     pub(super) fn sample() -> Self {
@@ -128,6 +130,7 @@ impl Tools {
             audio_bins: [0.; crate::tools::visualizer::BINS],
             devices: Vec::new(),
             messages: crate::messages::State::default(),
+            markets: crate::markets::State::default(),
         }
     }
     /// No note being written, saved, checked or waiting for Undo.
@@ -267,6 +270,12 @@ impl Cards {
             Widget::Devices => cards::devices(
                 &self.tools.devices,
                 &self.config,
+                Some(self.widget_size(widget)),
+            ),
+            Widget::Markets => cards::markets(
+                &self.tools.markets,
+                &self.config,
+                Some(on_desktop as fn(Action) -> Message),
                 Some(self.widget_size(widget)),
             ),
             Widget::Messages => cards::messages(
@@ -604,6 +613,22 @@ impl Cards {
                     return Task::batch([save, self.music_art_task()]);
                 }
                 return self.music_art_task();
+            }
+            Action::MarketsOpen => return self.update(Message::SettingsPage("markets")),
+            Action::MarketSelect(symbol) => {
+                if !self.config.markets.symbols.contains(&symbol) {
+                    return Task::none();
+                }
+                return self.save_config_later(
+                    "Selected stock",
+                    super::config_writes::Failure::notice(
+                        "Couldn’t select this stock",
+                        "Your choice wasn’t saved.",
+                        None,
+                    ),
+                    None,
+                    move || Config::save_tool(Widget::Markets, serde_json::json!({"selected": symbol})),
+                );
             }
             Action::MessagesOpen => return self.open_messages(),
             Action::NoteCopy => {

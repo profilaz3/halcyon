@@ -101,6 +101,7 @@ pub struct Config {
     pub focus: FocusPreferences,
     pub devices: DevicesPreferences,
     pub messages: MessagesPreferences,
+    pub markets: crate::markets::Preferences,
     /// The edge sidebar slides in and out; off, it appears and hides at
     /// once (Pop!_OS › Motion).
     pub sidebar_slide: bool,
@@ -169,6 +170,7 @@ impl Default for Config {
             focus: FocusPreferences::default(),
             devices: DevicesPreferences::default(),
             messages: MessagesPreferences::default(),
+            markets: crate::markets::Preferences::default(),
             sidebar_slide: true,
             edge_menu: edge_menu::EdgeMenu::default(),
             settings_animations: true,
@@ -276,6 +278,7 @@ impl Config {
     }
     /// Old files infer the source; explicit policy is authoritative thereafter.
     fn normalize_policy(&mut self) {
+        self.markets.normalize();
         if let Some(policy) = self.appearance.color_policy {
             self.appearance.wallpaper_colors = policy == ColorPolicy::Wallpaper;
             if policy == ColorPolicy::Theme {
@@ -407,6 +410,7 @@ impl Config {
             Widget::Focus => return self.focus.enabled,
             Widget::Devices => return self.devices.enabled,
             Widget::Messages => return self.messages.enabled,
+            Widget::Markets => return self.markets.enabled,
             _ => {}
         }
         self.enabled_widgets.iter().any(|key| key == widget.key())
@@ -1821,6 +1825,7 @@ impl RefreshIntervals {
             | Widget::Notes
             | Widget::Focus
             | Widget::Devices
+            | Widget::Markets
             | Widget::Messages => self.clock,
         }
     }
@@ -1837,6 +1842,7 @@ impl RefreshIntervals {
             | Widget::Notes
             | Widget::Focus
             | Widget::Devices
+            | Widget::Markets
             | Widget::Messages => (1, 60),
             Widget::Weather => (300, 10800),
             Widget::Calendar => (60, 3600),
@@ -1855,6 +1861,7 @@ impl RefreshIntervals {
             | Widget::Notes
             | Widget::Focus
             | Widget::Devices
+            | Widget::Markets
             | Widget::Messages => &[1, 15, 30, 60],
         }
     }

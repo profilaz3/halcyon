@@ -107,7 +107,7 @@ const OFF_DESKTOP: [f32; 2] = [-10000., 0.];
 
 /// Who keeps their spot when two widgets would overlap: earlier ones stay,
 /// later ones move clear.
-const PLACEMENT_ORDER: [Widget; 11] = [
+const PLACEMENT_ORDER: [Widget; 12] = [
     Widget::Glance,
     Widget::Clock,
     Widget::Weather,
@@ -117,6 +117,7 @@ const PLACEMENT_ORDER: [Widget; 11] = [
     Widget::Focus,
     Widget::Devices,
     Widget::Messages,
+    Widget::Markets,
     Widget::Notes,
     Widget::Music,
 ];
@@ -343,6 +344,7 @@ impl Cards {
                 Widget::Focus => 11,
                 Widget::Devices => 13,
                 Widget::Messages => 14,
+                Widget::Markets => 15,
             }],
         )
     }
@@ -2213,6 +2215,7 @@ impl Cards {
             | Widget::Notes
             | Widget::Focus
             | Widget::Devices
+            | Widget::Markets
             | Widget::Messages => {
                 self.tool_card(widget)
             }

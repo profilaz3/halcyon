@@ -19,9 +19,10 @@ pub enum Widget {
     Devices,
     /// The phone's latest text messages, through KDE Connect.
     Messages,
+    Markets,
 }
 impl Widget {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Calendar,
         Self::Projects,
         Self::Devbox,
@@ -33,6 +34,7 @@ impl Widget {
         Self::Focus,
         Self::Devices,
         Self::Messages,
+        Self::Markets,
     ];
     /// The widgets that existed before desktop tools; their surfaces share
     /// one geometry and are recreated together.
@@ -47,16 +49,17 @@ impl Widget {
     pub const CARDS: [Self; 4] = [Self::Calendar, Self::Projects, Self::Devbox, Self::Weather];
     /// Tools keep their visibility in their own config section (like Glance)
     /// and have a surface of their own while shown, placed freely.
-    pub const TOOLS: [Self; 5] = [
+    pub const TOOLS: [Self; 6] = [
         Self::Music,
         Self::Notes,
         Self::Focus,
         Self::Devices,
         Self::Messages,
+        Self::Markets,
     ];
     /// Every widget past the daily ones, as Settings lists them under More
     /// widgets: on the Widgets page and in setup.
-    pub const MORE: [Self; 7] = [
+    pub const MORE: [Self; 8] = [
         Self::Devbox,
         Self::Projects,
         Self::Music,
@@ -64,6 +67,7 @@ impl Widget {
         Self::Focus,
         Self::Devices,
         Self::Messages,
+        Self::Markets,
     ];
     pub fn is_tool(self) -> bool {
         Self::TOOLS.contains(&self)
@@ -86,6 +90,7 @@ impl Widget {
             Self::Focus => "focus",
             Self::Devices => "devices",
             Self::Messages => "messages",
+            Self::Markets => "markets",
         }
     }
     pub fn title(self) -> &'static str {
@@ -101,6 +106,7 @@ impl Widget {
             Self::Focus => "Focus timer",
             Self::Devices => "Devices",
             Self::Messages => "Messages",
+            Self::Markets => "Markets",
         }
     }
     pub fn icon(self) -> &'static str {
@@ -116,6 +122,7 @@ impl Widget {
             Self::Focus => "alarm-symbolic",
             Self::Devices => "bluetooth-symbolic",
             Self::Messages => "chat-symbolic",
+            Self::Markets => "utilities-system-monitor-symbolic",
         }
     }
     pub fn parse(key: &str) -> Option<Self> {

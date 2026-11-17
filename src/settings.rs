@@ -93,6 +93,7 @@ pub enum Page {
     Focus,
     Devices,
     Messages,
+    Markets,
     General,
     Desktop,
     /// The dock's editor. The panel's is the same page on the other bar.
@@ -160,7 +161,7 @@ impl Page {
     ];
     /// Pinned below the roots, at the bottom of the sidebar.
     const PINNED: Self = Self::Changes;
-    const ALL: [Self; 39] = [
+    const ALL: [Self; 40] = [
         Self::Home,
         Self::Overview,
         Self::WidgetLayout,
@@ -178,6 +179,7 @@ impl Page {
         Self::Focus,
         Self::Devices,
         Self::Messages,
+        Self::Markets,
         Self::General,
         Self::Desktop,
         Self::DesktopDock,
@@ -340,6 +342,7 @@ impl Page {
             Self::Focus => Some(Widget::Focus),
             Self::Devices => Some(Widget::Devices),
             Self::Messages => Some(Widget::Messages),
+            Self::Markets => Some(Widget::Markets),
             _ => None,
         }
     }
@@ -362,6 +365,7 @@ impl Page {
             Self::Focus => "focus",
             Self::Devices => "devices",
             Self::Messages => "messages",
+            Self::Markets => "markets",
             Self::General => "general",
             Self::Desktop => "desktop",
             Self::DesktopDock => "desktop-dock",
@@ -405,6 +409,7 @@ impl Page {
             Self::Focus => "Focus timer",
             Self::Devices => "Devices",
             Self::Messages => "Messages",
+            Self::Markets => "Markets",
             Self::General => "Halcyon",
             Self::Desktop => "Desktop",
             Self::DesktopDock => "Dock",
@@ -538,6 +543,7 @@ impl Page {
             Self::Focus => "alarm-symbolic",
             Self::Devices => "bluetooth-symbolic",
             Self::Messages => "chat-symbolic",
+            Self::Markets => "utilities-system-monitor-symbolic",
             Self::General => "preferences-system-symbolic",
             Self::DesktopWallpaper => "preferences-desktop-wallpaper-symbolic",
             Self::WeatherEffects => "weather-showers-symbolic",
@@ -1594,7 +1600,7 @@ impl cosmic::Application for Settings {
         };
         let tools = page
             .tool()
-            .map(|tool| app.tools.open(tool))
+            .map(|tool| app.tools.open(tool, &app.config))
             .unwrap_or_else(Task::none);
         let calendar = if page == Page::Calendar {
             app.calendar.check(false)
@@ -3974,7 +3980,7 @@ impl Settings {
                 }
                 let tools = page
                     .tool()
-                    .map(|tool| self.tools.open(tool))
+                    .map(|tool| self.tools.open(tool, &self.config))
                     .unwrap_or_else(Task::none);
                 self.reorder.cancel();
                 self.devbox_reorder.cancel();
@@ -7659,6 +7665,7 @@ mod tests {
     include!("settings/clock_gallery_tests.rs");
     include!("settings/devices_tests.rs");
     include!("settings/messages_tests.rs");
+    include!("settings/markets_tests.rs");
     include!("settings/icon_packs_tests.rs");
     include!("settings/glance_off_tests.rs");
     include!("settings/looks_tests.rs");

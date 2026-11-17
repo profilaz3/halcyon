@@ -34,6 +34,80 @@ fn choice_row<'a>(
 }
 
 impl Settings {
+    pub(super) fn markets_page(&self) -> Element<'_, Message> {
+        let editor = &self.tools;
+        let preview = cards::markets(
+            &editor.market_preview,
+            &self.config,
+            None,
+            Some(self.tool_preview_size(Widget::Markets)),
+        );
+        let mut controls = vec![
+            label("Example prices and chart", 13., FG),
+            group(
+                Some("Watchlist"),
+                vec![
+                    group_row_state(
+                        "Symbols",
+                        "Up to five stocks, separated by commas. Select a stock on the widget to see its chart.",
+                        text_input("AAPL, MSFT, NVDA", &editor.market_symbols)
+                            .on_input(|s| edit(Edit::MarketSymbols(s)))
+                            .width(Length::Fill)
+                            .into(),
+                    ),
+                    button::text("Save watchlist")
+                        .on_press(edit(Edit::MarketSaveSymbols))
+                        .into(),
+                ],
+            ),
+            group(
+                Some("Twelve Data"),
+                vec![
+                    button::text("Get an API key")
+                        .on_press(Message::OpenNoteLink(
+                            "https://twelvedata.com/account/api-keys",
+                        ))
+                        .into(),
+                    label(
+                        "Use your own Twelve Data API key. Available exchanges and delays depend on your plan. Your key is stored in the desktop keyring, not in settings or exports.",
+                        13.,
+                        FG,
+                    ),
+                    text_input("API key", &editor.market_key.0)
+                        .password()
+                        .on_input(|s| edit(Edit::MarketKey(crate::markets::Secret(s))))
+                        .width(Length::Fill)
+                        .into(),
+                    row::with_children(vec![
+                        button::text(if editor.market_busy {
+                            "Working…"
+                        } else {
+                            "Save API key"
+                        })
+                        .on_press_maybe((!editor.market_busy).then(|| edit(Edit::MarketSaveKey)))
+                        .into(),
+                        button::text("Remove API key")
+                            .on_press_maybe(
+                                (!editor.market_busy).then(|| edit(Edit::MarketRemoveKey)),
+                            )
+                            .into(),
+                    ])
+                    .spacing(8)
+                    .into(),
+                    label(
+                        "Quotes refresh every 15 minutes while the widget is visible. Charts show up to 30 daily prices; the latest point may change during a trading session. Quote timestamps remain visible when markets are closed.",
+                        13.,
+                        FG,
+                    ),
+                ],
+            ),
+        ];
+        if let Some(status) = &editor.market_status {
+            controls.push(label(status, 13., FG));
+        }
+        self.widget_template(Widget::Markets, "Markets", Some(preview), controls)
+    }
+
     fn tool_preview_size(&self, widget: Widget) -> [f32; 2] {
         let [width, height] = self
             .config

@@ -301,6 +301,7 @@ pub enum Message {
     Devices(Vec<crate::devices::Device>),
     /// The phone's conversations, from `crate::messages`.
     Messages(crate::messages::State),
+    Markets(crate::markets::State),
     MusicArt(String, Result<crate::tools::music::Art, String>),
     ToolDone(Result<(), String>),
     MusicControlDone(Result<Vec<crate::tools::music::Player>, String>),
@@ -406,7 +407,7 @@ static POINTER: std::sync::Mutex<Option<(window::Id, cosmic::iced::Point)>> =
 pub struct Cards {
     activity: crate::activity_island::bridge::Owner,
     core: Core,
-    ids: [window::Id; 15],
+    ids: [window::Id; 16],
     layout_editor: layout::LayoutEditor,
     surface_geometry: Option<layout::SurfaceGeometry>,
     displays: crate::displays::Registry,
@@ -703,6 +704,12 @@ impl cosmic::Application for Cards {
         if self.devices_demand() {
             subscriptions.push(crate::devices::subscription().map(Message::Devices));
         }
+        if self.provider_visible(Widget::Markets) {
+            subscriptions.push(
+                crate::markets::subscription(self.config.markets.clone(), self.tools.markets.clone())
+                    .map(Message::Markets),
+            );
+        }
         if self.messages_demand() {
             subscriptions.push(crate::messages::subscription().map(Message::Messages));
         }
@@ -964,6 +971,14 @@ impl cosmic::Application for Cards {
         self.rain
             .watch_sync(self.display_generation, Instant::now());
         let glass = self.glass_sync();
+        if !self.provider_visible(Widget::Markets)
+            || self.tools.markets.source.as_ref().is_some_and(|source| {
+                source.symbols != self.config.markets.symbols
+                    || source.credential_revision != self.config.markets.credential_revision
+            })
+        {
+            self.tools.markets = crate::markets::State::default();
+        }
         if !self.messages_demand() {
             self.tools.messages = crate::messages::State::default();
         }
@@ -2074,6 +2089,14 @@ impl Cards {
             Message::Devices(devices) => {
                 self.tools.devices = devices;
                 Task::none()
+            }
+            Message::Markets(state) => {
+                if self.provider_visible(Widget::Markets)
+                    && state.source.as_ref() == Some(&self.config.markets)
+                {
+                    self.tools.markets = state;
+                }
+                return Task::none();
             }
             Message::Messages(state) => {
                 self.tools.messages = if self.messages_demand() {

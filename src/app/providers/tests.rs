@@ -34,6 +34,42 @@ fn snapshot(location: Location) -> WeatherSnapshot {
 }
 
 #[test]
+fn markets_rejects_old_watchlists_and_credentials_and_clears_hidden_data() {
+    if isolated(
+        "app::providers::tests::markets_rejects_old_watchlists_and_credentials_and_clears_hidden_data",
+    ) {
+        return;
+    }
+    let mut config = config();
+    config.markets.enabled = true;
+    let (mut cards, _) = Cards::init(Core::default(), config);
+    assert!(cards.provider_visible(Widget::Markets));
+    let mut state = crate::tools::cards::sample_markets();
+    state.source = Some(cards.config.markets.clone());
+    let _ = cards.update(Message::Markets(state.clone()));
+    assert_eq!(cards.tools.markets.quotes.len(), 3);
+
+    cards.config.markets.symbols = vec!["IBM".into()];
+    cards.config.markets.selected = "IBM".into();
+    let _ = cards.update(Message::Markets(state.clone()));
+    assert!(cards.tools.markets.quotes.is_empty());
+
+    cards.config.markets = state.source.clone().unwrap();
+    let _ = cards.update(Message::Markets(state.clone()));
+    assert_eq!(cards.tools.markets.quotes.len(), 3);
+    cards.config.markets.credential_revision += 1;
+    let _ = cards.update(Message::Markets(state.clone()));
+    assert!(cards.tools.markets.quotes.is_empty());
+
+    cards.config.markets = state.source.clone().unwrap();
+    let _ = cards.update(Message::Markets(state.clone()));
+    cards.config.widgets_visible = false;
+    let _ = cards.update(Message::Markets(state));
+    assert!(!cards.provider_visible(Widget::Markets));
+    assert!(cards.tools.markets.quotes.is_empty());
+}
+
+#[test]
 fn fb07_runtime_city_switch_rejects_old_delivery_without_unblocking_new_work() {
     if isolated(
         "app::providers::tests::fb07_runtime_city_switch_rejects_old_delivery_without_unblocking_new_work",

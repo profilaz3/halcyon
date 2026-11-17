@@ -3,6 +3,8 @@
 //! configuration, like every other widget, and an optional action mapper:
 //! without one the card is drawn without controls that respond.
 mod devices;
+mod markets;
+pub use markets::{markets, sample as sample_markets};
 pub(crate) mod messages;
 pub(crate) mod recipe;
 use super::{focus, music, notes};
@@ -49,6 +51,8 @@ pub enum Action {
     FocusMinutes(u16),
     /// Open the phone's conversations, or KDE Connect to set it up.
     MessagesOpen,
+    MarketsOpen,
+    MarketSelect(String),
 }
 
 pub const NOTE_EDITOR: &str = "desktop-cards-note-editor";
@@ -82,6 +86,7 @@ pub fn size(widget: Widget, config: &Config) -> [f32; 2] {
         Widget::Notes => config.notes.size.card(),
         // Room for the four newest conversations.
         Widget::Messages => [320., 260.],
+        Widget::Markets => [360., 420.],
         _ => [280., 160.],
     }
 }

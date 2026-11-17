@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The daily widgets, then [`Widget::MORE`] (a test keeps them together).
-pub const CHOICES: [Widget; 10] = [
+pub const CHOICES: [Widget; 11] = [
     Widget::Clock,
     Widget::Weather,
     Widget::Calendar,
@@ -17,9 +17,10 @@ pub const CHOICES: [Widget; 10] = [
     Widget::Projects,
     Widget::Devices,
     Widget::Messages,
+    Widget::Markets,
 ];
 const DAILY: [Widget; 3] = [Widget::Clock, Widget::Weather, Widget::Calendar];
-const VISIBILITY: [&str; 12] = [
+const VISIBILITY: [&str; 13] = [
     "/widgets_visible",
     "/enabled_widgets",
     "/glance/enabled",
@@ -32,6 +33,7 @@ const VISIBILITY: [&str; 12] = [
     "/focus/enabled",
     "/devices/enabled",
     "/messages/enabled",
+    "/markets/enabled",
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -388,6 +390,7 @@ impl Draft {
         config.focus.enabled = self.selected(Widget::Focus);
         config.devices.enabled = self.selected(Widget::Devices);
         config.messages.enabled = self.selected(Widget::Messages);
+        config.markets.enabled = self.selected(Widget::Markets);
         for (key, destination) in &self.destinations {
             config
                 .widget_monitors
@@ -755,7 +758,7 @@ mod tests {
             }
         }
         d.group(true);
-        assert_eq!(d.active().len(), 8);
+        assert_eq!(d.active().len(), CHOICES.len() - DAILY.len() + 1);
         assert!(!d.active().contains(&Widget::Clock));
         let projected = d.config(&c);
         assert!(
@@ -766,7 +769,7 @@ mod tests {
         assert_eq!(projected.project_roots, c.project_roots);
         assert_eq!(projected.location, c.location);
         d.group(false);
-        assert_eq!(d.active().len(), 10);
+        assert_eq!(d.active().len(), CHOICES.len());
         let p = d.plan(&c, s, &Registry::default(), [24.; 4]);
         assert!(p.error.is_none(), "{:?}", p.error);
         let patch = d.patch(&p, &Registry::default()).unwrap();

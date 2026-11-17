@@ -47,9 +47,20 @@ pub enum Message {
     Done(Result<(), String>),
     /// Open KDE Connect, to pair a phone for Messages.
     OpenKdeConnect,
+    MarketSymbols(String),
+    MarketSaveSymbols,
+    MarketKey(crate::markets::Secret),
+    MarketSaveKey,
+    MarketRemoveKey,
+    MarketKeyDone(bool, Result<(), crate::markets::Problem>),
 }
 
 pub struct ToolsEditor {
+    pub market_symbols: String,
+    pub market_key: crate::markets::Secret,
+    pub market_busy: bool,
+    pub market_status: Option<String>,
+    pub market_preview: crate::markets::State,
     /// What this window sees on the session bus; `None` until asked.
     pub feed: Option<music::Feed>,
     pub visualizer_draft: Option<crate::tools::visualizer::Preferences>,
@@ -89,6 +100,11 @@ impl Default for ToolsEditor {
             .unwrap_or_default();
         let draft = notes::load_draft();
         let mut editor = Self {
+            market_symbols: String::new(),
+            market_key: crate::markets::Secret::default(),
+            market_busy: false,
+            market_status: None,
+            market_preview: crate::tools::cards::sample_markets(),
             feed: None,
             visualizer_draft: None,
             recent: Vec::new(),
@@ -279,8 +295,11 @@ impl ToolsEditor {
     }
 
     /// Opening a tools page: Music looks for players.
-    pub fn open(&mut self, tab: Widget) -> Task<crate::settings::Message> {
+    pub fn open(&mut self, tab: Widget, config: &Config) -> Task<crate::settings::Message> {
         self.tab = tab;
+        if tab == Widget::Markets {
+            self.market_symbols = config.markets.symbols.join(", ");
+        }
         self.refresh();
         if tab == Widget::Music {
             return self.query();
@@ -376,6 +395,75 @@ impl ToolsEditor {
         config: &Config,
     ) -> (Task<crate::settings::Message>, Option<Saved>) {
         match message {
+            Message::MarketSymbols(value) => {
+                self.market_symbols = value.chars().take(200).collect();
+            }
+            Message::MarketKey(value) => {
+                if !self.market_busy {
+                    self.market_key = value;
+                }
+            }
+            Message::MarketSaveSymbols => match crate::markets::symbols(&self.market_symbols) {
+                Ok(symbols) => {
+                    self.market_status = None;
+                    return (
+                        Task::none(),
+                        Some(Saved::Tool(
+                            Widget::Markets,
+                            "symbols",
+                            serde_json::json!(symbols),
+                        )),
+                    );
+                }
+                Err(error) => self.market_status = Some(error.into()),
+            },
+            Message::MarketSaveKey | Message::MarketRemoveKey => {
+                if self.market_busy {
+                    return (Task::none(), None);
+                }
+                let save = matches!(message, Message::MarketSaveKey);
+                self.market_busy = true;
+                self.market_status = None;
+                let key = std::mem::take(&mut self.market_key);
+                return (
+                    cosmic::task::future(async move {
+                        let result = if save {
+                            crate::markets::save_key(key).await
+                        } else {
+                            crate::markets::remove_key().await
+                        };
+                        crate::settings::Message::Tools(Message::MarketKeyDone(save, result))
+                    }),
+                    None,
+                );
+            }
+            Message::MarketKeyDone(save, result) => {
+                self.market_busy = false;
+                match result {
+                    Ok(()) => {
+                        self.market_status = Some(
+                            if save {
+                                "API key saved in your desktop keyring."
+                            } else {
+                                "API key removed."
+                            }
+                            .into(),
+                        );
+                        let revision = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map_or(1, |d| d.as_millis() as u64);
+                        return (
+                            Task::none(),
+                            Some(Saved::Tool(
+                                Widget::Markets,
+                                "credential_revision",
+                                revision.into(),
+                            )),
+                        );
+                    }
+                    Err(problem) => self.market_status = Some(problem.text().into()),
+                }
+            }
             Message::NoteSaved(text, result) => {
                 return (Task::none(), self.note_saved(text, result));
             }
@@ -611,6 +699,7 @@ impl ToolsEditor {
             | Action::NoteUndoExpired(_)
             | Action::NoteAction(_)
             // The preview's conversations are samples; nothing to open.
+            | Action::MarketsOpen | Action::MarketSelect(_)
             | Action::MessagesOpen => Task::none(),
         }
     }

@@ -25,6 +25,8 @@ Wallpapers, light and dark themes, accent colors, fonts, icons and surface finis
 
 The widget builder customizes Clock, Weather, Calendar, System monitor, Music and Focus. Notes, Git project status and Daily overview are also included. Widgets support moving, resizing, ordering and assignment to different displays.
 
+[Markets](docs/MARKETS.md) adds a stock watchlist with daily price charts, using your own Twelve Data API key.
+
 [![Illustration of individual Clock, Weather, System monitor, Focus, Music and Notes widgets](docs/presentation/070-readme/widgets-elements-dark.png)](docs/presentation/070-readme/widgets-elements-dark.png)
 
 [Native widget builder](docs/screenshots/055/widget-builder.png)

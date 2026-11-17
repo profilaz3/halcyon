@@ -387,6 +387,7 @@ impl Cards {
                     | Widget::Music
                     | Widget::Focus
                     | Widget::Devices
+                    | Widget::Markets
                     | Widget::Messages => {}
                 }
             }
