@@ -36,8 +36,11 @@ impl<M> canvas::Program<M, cosmic::Theme> for Chart<'_> {
             .map(|p| p.close)
             .fold(f64::NEG_INFINITY, f64::max);
         let spread = high - low;
-        let path = canvas::Path::new(|path| {
-            for (i, p) in self.points.iter().enumerate() {
+        let points: Vec<Point> = self
+            .points
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
                 let x =
                     3. + i as f32 / (self.points.len() - 1) as f32 * (bounds.width - 6.).max(0.);
                 let y = if spread > 0. {
@@ -45,14 +48,31 @@ impl<M> canvas::Program<M, cosmic::Theme> for Chart<'_> {
                 } else {
                     0.5
                 };
-                let point = Point::new(x, 5. + y * (bounds.height - 10.).max(0.));
-                if i == 0 {
-                    path.move_to(point);
-                } else {
-                    path.line_to(point);
-                }
+                Point::new(x, 5. + y * (bounds.height - 10.).max(0.))
+            })
+            .collect();
+        let last = points[points.len() - 1];
+        let trace = |builder: &mut canvas::path::Builder| {
+            builder.move_to(points[0]);
+            for &point in &points[1..] {
+                builder.line_to(point);
             }
+        };
+        let area = canvas::Path::new(|builder| {
+            trace(builder);
+            builder.line_to(Point::new(last.x, bounds.height));
+            builder.line_to(Point::new(points[0].x, bounds.height));
+            builder.close();
         });
+        frame.fill(
+            &area,
+            Color {
+                a: 0.09,
+                ..self.color
+            },
+        );
+        let path = canvas::Path::new(trace);
+        frame.fill(&canvas::Path::circle(last, 2.6), self.color);
         frame.stroke(
             &path,
             canvas::Stroke::default()
@@ -244,32 +264,33 @@ pub fn markets<'a, M: Clone + 'static>(
     // A fixed-height status keeps errors and old quote timestamps visible, too.
     let status = if let Some(problem) = &state.problem {
         use crate::markets::Problem;
-        match problem {
+        Some(match problem {
             Problem::Setup => "Connect API key",
             Problem::Locked => "Keyring locked",
             Problem::Keyring => "Keyring unavailable",
             Problem::Network => "Offline · cached",
             Problem::RateLimit => "Data limit reached",
             Problem::Provider | Problem::InvalidData => "Data unavailable",
-        }
+        })
     } else if !state.unavailable.is_empty() {
-        "Some quotes unavailable"
+        Some("Some quotes unavailable")
     } else {
-        match selected.and_then(|q| q.market_open) {
-            Some(true) => "Market open",
-            Some(false) => "Market closed",
-            None => "Status unavailable",
-        }
+        selected
+            .and_then(|q| q.market_open)
+            .map(|open| if open { "Market open" } else { "Market closed" })
     };
     let at = selected
         .and_then(|q| chrono::DateTime::from_timestamp(q.timestamp, 0))
         .map(|d| d.format("%b %-d, %H:%M UTC").to_string());
-    content = content.push(line(
-        at.map(|at| format!("{at} · {status}"))
-            .unwrap_or_else(|| status.into()),
-        11.,
-        p.foreground,
-    ));
+    let details = at
+        .as_deref()
+        .into_iter()
+        .chain(status)
+        .collect::<Vec<_>>()
+        .join(" · ");
+    if !details.is_empty() {
+        content = content.push(line(details, 11., p.foreground));
+    }
     frame(content.push(footer()).into(), config, height)
 }
 
@@ -288,7 +309,7 @@ pub fn sample() -> State {
         change: None,
         percent: Some(percent),
         timestamp: 1794859200,
-        market_open: Some(false),
+        market_open: None,
     })
     .collect();
     State {

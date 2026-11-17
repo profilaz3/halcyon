@@ -105,7 +105,7 @@ sudo dnf install ./cosmic-ext-halcyon-*.x86_64.rpm
 
 Fresh installations configure the signed update source. Future updates arrive through **COSMIC Store → Updates**, APT or DNF. Automatic installation follows your OS settings; disabled or modified sources stay that way.
 
-To activate the optional panel component, open **Dock and panel**, set **Shape** to **Islands** and choose **Switch at next sign-in**, then sign out and back in when convenient. Halcyon and the panel component update together.
+To activate the optional Islands panel, open **Home** or **Activity island** and choose **Switch at next sign-in**. Sign out and back in when convenient. Once the panel is active, choose **Panel layout** on Home to set its shape, or open **Activity island** to add it to your top panel. Halcyon and the panel component update together.
 
 [Installation & updates](docs/DISTRIBUTION.md) · [Fedora package details](docs/FEDORA-PACKAGING.md)
 

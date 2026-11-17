@@ -8,11 +8,11 @@ Resizing adapts the content without scrolling inside the widget. All watchlist r
 
 1. Open Halcyon settings and search for **Markets** or **stocks**.
 2. Enable the Markets widget.
-3. Leave **Public data · no API key** selected. Quotes and charts are requested directly from Yahoo Finance without an account or saved credential.
+3. Leave **Yahoo Finance** selected under **Data source**. Quotes and charts are requested directly from Yahoo Finance without an account or saved credential.
 4. Enter up to five Yahoo symbols separated by commas, such as `AAPL, MSFT, NVDA`, and choose **Save watchlist**. Yahoo uses symbols such as `BRK-B` and `VOD.L`; Twelve Data's `SYMBOL:EXCHANGE` notation is not accepted by the public source.
 5. Select a stock on the desktop widget to show its chart. **Edit** opens Markets settings again.
 
-To use Twelve Data instead, select **Twelve Data · own API key**, choose **Get an API key**, and save your key in the password field. Your desktop keyring may ask to unlock. This is optional.
+To use Twelve Data instead, select **Twelve Data**, choose **Get an API key**, and save your key in the password field. Your desktop keyring may ask to unlock. This is optional.
 
 The settings preview always contains labeled example data. It does not contact the provider.
 

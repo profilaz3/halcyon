@@ -52,6 +52,8 @@ fn markets_widget_settings_preserve_watchlist_and_render_native_charts() {
                 .any(|t| t.contains("Example prices"))
         );
     }
+    let mut native = crate::native_test::Native::new(Size::new(1100., 800.));
+    assert!(native.text_all(app.settings_view(), "Save API key").is_empty());
     send_settings(
         &mut app,
         Message::Tools(Edit::MarketProvider(crate::markets::Provider::TwelveData)),
@@ -60,6 +62,7 @@ fn markets_widget_settings_preserve_watchlist_and_render_native_charts() {
         Config::load().markets.provider,
         crate::markets::Provider::TwelveData
     );
+    assert_eq!(native.text_all(app.settings_view(), "Save API key").len(), 1);
     send_settings(
         &mut app,
         Message::Tools(Edit::MarketProvider(crate::markets::Provider::Public)),
@@ -129,6 +132,8 @@ fn markets_widget_settings_preserve_watchlist_and_render_native_charts() {
         let text = native.all_text(card());
         assert!(text.iter().any(|s| s.contains("190.12 USD")));
         assert!(text.iter().any(|s| s.contains("30 trading sessions")));
+        assert!(text.iter().any(|s| s.ends_with("UTC")));
+        assert!(!text.iter().any(|s| s.contains("Market closed") || s.contains("Status unavailable")));
         assert!(native.scrollables(card()).is_empty());
         native.capture(
             card(),

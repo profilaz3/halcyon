@@ -388,7 +388,7 @@ impl Settings {
         let width = self.content_width();
         // 16:9, and short enough that the chosen part's row stays in view.
         let height = (width * 9. / 16.)
-            .min((self.window.height - 250.).max(200.))
+            .min((self.window.height - 395.).max(165.))
             .max(160.);
         let picture = container(self.home_scene(height, selected, Picks::Select))
             .id(cosmic::widget::Id::new("home-picture"))
@@ -398,6 +398,7 @@ impl Settings {
             "Everything Halcyon changes, in one picture. Pick a part to change it.",
         )];
         // Settings opens here, so first-run setup and what's new wait here.
+        parts.push(self.islands_activation_card());
         if self.offers_setup() {
             parts.push(self.setup_card());
         }

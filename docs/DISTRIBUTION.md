@@ -177,8 +177,9 @@ intact rather than leaving an active source without its key.
 ## The Islands panel
 
 The Islands panel is part of the main Halcyon package; there is nothing extra to
-download. To use it, open **Dock and panel**, set **Shape** to **Islands** and
-choose **Switch at next sign-in**. Islands start the next time you sign in. The
+download. Open **Home** or **Activity island** and choose **Switch at next sign-in**.
+The card shows when the switch is ready. Sign out and back in, then open
+**Panel layout** from Home and select the **Islands** shape. The
 per-user helper checks native compatibility, ownership and previous failures
 before staging the switch.
 

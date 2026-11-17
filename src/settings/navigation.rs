@@ -956,6 +956,13 @@ const SEARCH: &[SearchHit] = &[
     .bar(crate::desktop::panels::PanelKind::Panel),
     ACTIVITY_ISLAND,
     hit(
+        Page::ActivityIsland,
+        "Islands panel",
+        "enable islands activate reinstall setup switch sign out sign in",
+        false,
+    )
+    .at("islands-activation"),
+    hit(
         Page::DesktopWindows,
         "Tile windows automatically",
         "windows tiling tile arranging gaps focus controls snapping",

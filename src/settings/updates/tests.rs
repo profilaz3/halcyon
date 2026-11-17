@@ -901,6 +901,54 @@ fn native_updates_clicks_renders_failure_unknown_and_absence() {
             status: Some(crate::desktop::islands::CompatibilityStatus::Disabled),
             diagnostics: String::new(),
         };
+        // Both setup entry points expose the actual activation action above the fold.
+        for page in [Page::Home, Page::ActivityIsland] {
+            app.page = page;
+            crate::settings::navigation::select(&mut app.nav_model, page);
+            native.scroll(app.settings_view(), "settings-content", 0.);
+            let bounds = native.bounds(app.settings_view(), "enable-islands");
+            assert!(bounds.y >= 0. && bounds.y + bounds.height <= size.height);
+            assert!(native.duplicate_ids(app.settings_view()).is_empty());
+            assert!(
+                ui_click(&app, &mut native, "enable-islands")
+                    .iter()
+                    .any(|m| matches!(
+                        m,
+                        SettingsMessage::Updates(Message::Islands(islands::Message::Enable))
+                    ))
+            );
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("islands-journey-{}-{suffix}", page.key()),
+            );
+            let disabled = app.desktop.islands.installation.clone();
+            if let Installation::Installed {
+                enabled, status, ..
+            } = &mut app.desktop.islands.installation
+            {
+                *enabled = true;
+                *status = Some(crate::desktop::islands::CompatibilityStatus::LogoutRequired);
+            }
+            native.bounds(app.settings_view(), "sign-out-islands");
+            native.bounds(app.settings_view(), "disable-islands");
+            native.capture(
+                app.settings_view(),
+                &theme,
+                &format!("islands-pending-{}-{suffix}", page.key()),
+            );
+            app.desktop.islands.compatible = true;
+            native.text_bounds(app.settings_view(), "Active");
+            assert!(
+                native
+                    .try_bounds(app.settings_view(), "sign-out-islands")
+                    .is_none()
+            );
+            app.desktop.islands.compatible = false;
+            app.desktop.islands.installation = disabled;
+        }
+        app.page = Page::DesktopDock;
+        crate::settings::navigation::select(&mut app.nav_model, app.page);
         penumbra_setup_actions(&mut app, &mut native);
         native.capture(
             app.settings_view(),

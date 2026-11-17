@@ -42,14 +42,33 @@ impl Settings {
             None,
             Some(self.tool_preview_size(Widget::Markets)),
         );
+        use crate::markets::Provider;
+        let provider = self.config.markets.provider;
+        let sources = [
+            ("Yahoo Finance", Provider::Public),
+            ("Twelve Data", Provider::TwelveData),
+        ];
+        let source_controls = segmented(
+            sources
+                .into_iter()
+                .map(|(name, source)| {
+                    (
+                        name.into(),
+                        provider == source,
+                        Some(edit(Edit::MarketProvider(source))),
+                    )
+                })
+                .collect(),
+            self.settings_accent(),
+        );
+        let source_note = match provider {
+            Provider::Public => {
+                "Public quotes without signup. Yahoo’s unofficial feed may be delayed."
+            }
+            Provider::TwelveData => "Exchange coverage and delays depend on your Twelve Data plan.",
+        };
         let mut controls = vec![
             label("Example prices and chart", 13., FG),
-            group(Some("Data source"), vec![
-                label(format!("Using {}", self.config.markets.provider.label()), 13., FG),
-                button::text("Public data · no API key").on_press(edit(Edit::MarketProvider(crate::markets::Provider::Public))).into(),
-                button::text("Twelve Data · own API key").on_press(edit(Edit::MarketProvider(crate::markets::Provider::TwelveData))).into(),
-                label("Public stock prices and daily charts work without signup through Yahoo Finance. This is an unofficial feed and may be delayed or unavailable. Updates run every 15 minutes while the widget is visible. Use Yahoo symbols such as AAPL, BRK-B or VOD.L.", 13., FG),
-            ]),
             group(
                 Some("Watchlist"),
                 vec![
@@ -67,7 +86,13 @@ impl Settings {
                 ],
             ),
             group(
-                Some("Twelve Data"),
+                Some("Data source"),
+                vec![source_controls, label(source_note, 13., FG)],
+            ),
+        ];
+        if provider == Provider::TwelveData {
+            controls.push(group(
+                None,
                 vec![
                     button::text("Get an API key")
                         .on_press(Message::OpenNoteLink(
@@ -75,7 +100,7 @@ impl Settings {
                         ))
                         .into(),
                     label(
-                        "Optional: select Twelve Data above to use your own API key. Available exchanges and delays depend on your plan. Your key is stored in the desktop keyring, not in settings or exports.",
+                        "Save your Twelve Data API key in your desktop keyring.",
                         13.,
                         FG,
                     ),
@@ -100,14 +125,14 @@ impl Settings {
                     ])
                     .spacing(8)
                     .into(),
-                    label(
-                        "Quotes refresh every 15 minutes while the widget is visible. Charts show up to 30 daily prices; the latest point may change during a trading session. Quote timestamps remain visible when markets are closed.",
-                        13.,
-                        FG,
-                    ),
                 ],
-            ),
-        ];
+            ));
+        }
+        controls.push(label(
+            "Updates every 15 minutes while visible · up to 30 trading sessions",
+            12.,
+            MUTED,
+        ));
         if let Some(status) = &editor.market_status {
             controls.push(label(status, 13., FG));
         }
