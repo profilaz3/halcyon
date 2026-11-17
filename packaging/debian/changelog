@@ -1,3 +1,10 @@
+cosmic-ext-halcyon (0.7.6) unstable; urgency=high
+
+  * Fix the Appearance crash caused by repeated Music and Focus previews.
+  * Recover missing COSMIC session metadata when enabling Islands from the launcher.
+
+ -- profilaz3 <261673162+profilaz3@users.noreply.github.com>  Tue, 17 Nov 2026 01:30:00 +0000
+
 cosmic-ext-halcyon (0.7.5) unstable; urgency=medium
 
   * Add phone messages through KDE Connect as a widget, an island activity, or both.

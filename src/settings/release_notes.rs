@@ -19,6 +19,23 @@ pub(super) struct Release {
 
 pub(super) const RELEASES: &[Release] = &[
     Release {
+        version: "0.7.6",
+        notes: &[
+            Note {
+                title: "Appearance opens reliably",
+                body: "Fix a crash when opening Appearance with Music or Focus widgets enabled.",
+                place: None,
+                link: None,
+            },
+            Note {
+                title: "Enable Islands from the launcher",
+                body: "Find your COSMIC session when Halcyon starts from the app launcher, without repeated sign-outs.",
+                place: None,
+                link: None,
+            },
+        ],
+    },
+    Release {
         version: "0.7.5",
         notes: &[
             Note {

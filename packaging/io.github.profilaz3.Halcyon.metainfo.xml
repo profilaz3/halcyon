@@ -43,6 +43,12 @@
   </provides>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.7.6" date="2026-11-17">
+      <description><ul>
+        <li>Fix an Appearance crash with Music or Focus widgets enabled.</li>
+        <li>Detect the COSMIC session when enabling Islands from a desktop-launched app.</li>
+      </ul></description>
+    </release>
     <release version="0.7.5" date="2026-11-16">
       <description><ul>
         <li>Phone messages through KDE Connect as a desktop widget, an Activity island entry, or both.</li>
