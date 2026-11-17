@@ -1,5 +1,6 @@
 //! Expanded readings live in a regular resizable window, leaving desktop cards stationary.
 use super::*;
+use cosmic::ApplicationExt;
 
 pub(super) fn summary_line(
     value: impl Into<String>,
@@ -46,18 +47,20 @@ impl Cards {
             self.reading_window = Some((id, widget));
             return Task::batch([
                 window::gain_focus(id),
-                self.core
-                    .set_title(Some(id), format!("{} · Halcyon", widget.title())),
+                self.set_window_title(format!("{} · Halcyon", widget.title()), id),
             ]);
         }
         let (id, open) = window::open(window::Settings {
             size: cosmic::iced::Size::new(520., 480.),
+            platform_specific: window::settings::PlatformSpecific {
+                application_id: "io.github.profilaz3.Halcyon".into(),
+                ..Default::default()
+            },
             ..Default::default()
         });
         self.reading_window = Some((id, widget));
         open.discard().chain(Task::batch([
-            self.core
-                .set_title(Some(id), format!("{} · Halcyon", widget.title())),
+            self.set_window_title(format!("{} · Halcyon", widget.title()), id),
             cosmic::iced::widget::operation::focus(cosmic::widget::Id::new("reading-close")),
         ]))
     }
