@@ -215,6 +215,8 @@ def inspect(home, library, installed, versions, initial):
             manifest, catalog = verify_bundle(library, 'companion-manifest.json', context=context)
             # Disabled management needs no OS or live-process measurement.
             if initial['enabled']:
+                from runtime_identity import recover_session_environment
+                os.environ.update(recover_session_environment())
                 from runtime_compatibility import enabled as family_policy, family, Session, validate_platform
                 if family_policy(catalog):
                     validate_platform(catalog)
