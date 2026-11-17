@@ -7878,6 +7878,7 @@ mod tests {
         if matches!(
             name,
             "rain_native_settings_preview_commit_undo_and_clipping"
+                | "appearance_navigation_preserves_valid_widget_state"
                 | "weather_scenes_native_toggle_apply_undo_and_status"
                 | "weather_strength_and_adjust_native_controls"
                 | "weather_effects_open_from_wallpaper_and_lead_back"
