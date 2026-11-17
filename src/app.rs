@@ -66,10 +66,9 @@ pub(crate) fn settings_recipe_preview(
     size: [f32; 2],
 ) -> cosmic::Element<'static, Message> {
     if recipe.tool() {
-        return crate::tools::cards::recipe::sample(
+        return crate::tools::cards::recipe::miniature(
             config,
             recipe,
-            crate::tools::cards::recipe::PreviewState::Active,
             size,
         )
         .map(|_| Message::Preview);

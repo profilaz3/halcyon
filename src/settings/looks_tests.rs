@@ -1020,6 +1020,55 @@ fn looks_without_their_picture_offer_to_get_the_pictures() {
     );
 }
 
+/// Carry the native widget cache across pages containing repeated previews.
+#[test]
+fn appearance_navigation_preserves_valid_widget_state() {
+    let name = "appearance_navigation_preserves_valid_widget_state";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let root = isolated_root();
+    Config::save_changes(serde_json::json!({
+        "enabled_widgets": ["music", "focus"],
+        "recipes": {
+            "music": crate::recipes::Recipe::template(crate::recipes::Kind::Music, 0),
+            "focus": crate::recipes::Recipe::template(crate::recipes::Kind::Focus, 0)
+        }
+    }))
+    .unwrap();
+    let mut app = looks_desktop(&root);
+    let size = Size::new(1280., 900.);
+    send_settings(&mut app, Message::Resized(size));
+    for backend in ["tiny-skia", "wgpu"] {
+        let mut native = crate::native_test::Native::with_backend(size, backend);
+        for page in [
+            Page::Overview,
+            Page::Themes,
+            Page::DesktopProfiles,
+            Page::Themes,
+        ] {
+            send_settings(&mut app, Message::Page(page));
+            looks_drive(&mut app);
+            native.render(app.settings_view(), &cosmic::Theme::dark());
+            native.event(
+                app.settings_view(),
+                cosmic::iced::Event::Window(cosmic::iced::window::Event::RedrawRequested(
+                    std::time::Instant::now(),
+                )),
+                cosmic::iced::Point::ORIGIN,
+            );
+            native.focus_stops(app.settings_view());
+        }
+    }
+}
+
 /// Appearance starts with looks, names what looks, themes and styles each
 /// change, calls the time of day page by its name, and on a fresh install
 /// marks Soft, the style the widgets are drawn in, as Current.

@@ -13,6 +13,34 @@ pub(super) fn fit<'a>(child: Element<'a, Message>, height: f32) -> Element<'a, M
     })
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repeated_recipe_thumbnails_keep_independent_state() {
+        let config = Config::default();
+        let recipe = crate::recipes::Recipe::template(crate::recipes::Kind::Focus, 0);
+        let view = || -> Element<'_, Message> {
+            let pictures: Vec<_> = (0..3)
+                .map(|_| {
+                    thumbnail(
+                        crate::app::settings_recipe_preview(&config, &recipe, false, [360., 240.])
+                            .map(|_| Message::Preview),
+                        [360., 240.],
+                        [240., 160.],
+                    )
+                })
+                .collect();
+            column::with_children(pictures).into()
+        };
+        let mut native = crate::native_test::Native::new(Size::new(800., 600.));
+        for _ in 0..3 {
+            native.render(view(), &cosmic::Theme::dark());
+        }
+    }
+}
+
 /// Scale the real component at its logical viewport into a desktop miniature.
 /// Like compact samples, this adapter deliberately has no event forwarding.
 pub(super) fn thumbnail<'a>(

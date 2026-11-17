@@ -303,8 +303,11 @@ fn refusal(stdout: &str, stderr: &str) -> Option<&'static str> {
             "Islands files in your home folder were changed outside Halcyon. Check Islands diagnostics before retrying."
         }
         "busy" => "Islands is already being changed. Try again in a moment.",
-        "session_unknown" | "not_cosmic_session" => {
-            "Couldn’t identify your COSMIC session. Sign out and back in, then try again."
+        "session_unknown" => {
+            "Couldn’t identify the COSMIC session for this display. Open Halcyon from COSMIC’s app launcher and try again."
+        }
+        "not_cosmic_session" => {
+            "Islands needs a COSMIC desktop session. Open Halcyon in COSMIC and try again."
         }
         "unsupported_data_location" => {
             "Islands needs the default data folder. Unset XDG_DATA_HOME for your session, then try again."

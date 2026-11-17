@@ -4,6 +4,23 @@ use super::*;
 use crate::recipes::{Arrangement, Finish, Kind, Part, Recipe, TimerFace};
 use cosmic::widget::{button, slider, svg};
 
+#[derive(Clone, Copy)]
+enum ControlIds {
+    Named,
+    Local,
+}
+impl ControlIds {
+    fn id(self, name: &'static str) -> cosmic::widget::Id {
+        match self {
+            Self::Named => cosmic::widget::Id::new(name),
+            // Miniatures can repeat the same card in one widget tree. Named
+            // IDs share saved state across the whole tree, so each miniature
+            // needs local identities instead.
+            Self::Local => cosmic::widget::Id::unique(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PreviewState {
     #[default]
@@ -171,7 +188,7 @@ fn timeline_style(p: Palette) -> cosmic::style::iced::Slider {
 fn action<'a, M: Clone + 'static>(
     name: &'static str,
     title: &'static str,
-    id: &'static str,
+    id: cosmic::widget::Id,
     message: Option<M>,
     p: Palette,
     primary: bool,
@@ -179,7 +196,7 @@ fn action<'a, M: Clone + 'static>(
 ) -> Element<'a, M> {
     cosmic::widget::tooltip(
         button::icon(icon::from_name(name).size(18))
-            .id(cosmic::widget::Id::new(id))
+            .id(id)
             .padding(9)
             .class(button_style(p, primary, preview))
             .on_press_maybe(message),
@@ -257,6 +274,17 @@ pub(super) fn music<'a, M: Clone + 'static>(
     on: Option<fn(Action) -> M>,
     dimensions: Option<[f32; 2]>,
 ) -> Element<'a, M> {
+    music_with_ids(view, config, recipe, on, dimensions, ControlIds::Named)
+}
+
+fn music_with_ids<'a, M: Clone + 'static>(
+    view: MusicView<'_>,
+    config: &Config,
+    recipe: &Recipe,
+    on: Option<fn(Action) -> M>,
+    dimensions: Option<[f32; 2]>,
+    ids: ControlIds,
+) -> Element<'a, M> {
     let _scope = crate::widget_style::scope(config);
     let p = palette(config, recipe);
     let size = crate::widget_presentation::viewport(
@@ -324,7 +352,7 @@ pub(super) fn music<'a, M: Clone + 'static>(
                 .content_fit(cosmic::iced::ContentFit::Contain)
                 .border_radius([12.; 4]),
         )
-        .id(cosmic::widget::Id::new("music-artwork"))
+        .id(ids.id("music-artwork"))
         .width(art_size)
         .height(art_size)
         .clip(true)
@@ -353,10 +381,10 @@ pub(super) fn music<'a, M: Clone + 'static>(
                     row::with_children(vec![
                         container(line(state, 11., if view.problem { WARN } else { p.accent })).width(Length::Fill).into(),
                         if matches!(view.feed, Some(music::Feed::Players(players)) if players.len() > 1) {
-                            button::custom(line(player.name().to_string(), 11., p.muted)).width(80.).id(cosmic::widget::Id::new("music-source")).class(button_style(p, false, on.is_none())).padding([0,4]).on_press_maybe(on.map(|on| on(Action::MusicCycle))).into()
+                            button::custom(line(player.name().to_string(), 11., p.muted)).width(80.).id(ids.id("music-source")).class(button_style(p, false, on.is_none())).padding([0,4]).on_press_maybe(on.map(|on| on(Action::MusicCycle))).into()
                         } else { cosmic::widget::space().width(0).into() },
                         if view.manually_selected {
-                            button::text("Auto").id(cosmic::widget::Id::new("music-auto")).class(button_style(p, false, on.is_none())).padding([0,4]).on_press_maybe(on.map(|on| on(Action::MusicAuto))).into()
+                            button::text("Auto").id(ids.id("music-auto")).class(button_style(p, false, on.is_none())).padding([0,4]).on_press_maybe(on.map(|on| on(Action::MusicAuto))).into()
                         } else { cosmic::widget::space().width(0).into() },
                     ]).spacing(4).align_y(Alignment::Center).into(),
                     button::custom(line(
@@ -367,7 +395,7 @@ pub(super) fn music<'a, M: Clone + 'static>(
                         },
                         20.,
                         p.foreground,
-                    )).id(cosmic::widget::Id::new("music-open-player")).class(cosmic::theme::Button::Link)
+                    )).id(ids.id("music-open-player")).class(cosmic::theme::Button::Link)
                         .padding(0).height(25.).width(Length::Fill)
                         .on_press_maybe(transport(music::Command::Raise, player.can_raise)).into(),
                     line(
@@ -388,7 +416,7 @@ pub(super) fn music<'a, M: Clone + 'static>(
                     action(
                         "media-skip-backward-symbolic",
                         "Previous track",
-                        "music-previous",
+                        ids.id("music-previous"),
                         transport(
                             music::Command::Previous,
                             player.can_control && player.can_previous,
@@ -404,7 +432,7 @@ pub(super) fn music<'a, M: Clone + 'static>(
                             "media-playback-start-symbolic"
                         },
                         if playing { "Pause" } else { "Play" },
-                        "music-play-pause",
+                        ids.id("music-play-pause"),
                         transport(
                             if playing {
                                 music::Command::Pause
@@ -425,7 +453,7 @@ pub(super) fn music<'a, M: Clone + 'static>(
                     action(
                         "media-skip-forward-symbolic",
                         "Next track",
-                        "music-next",
+                        ids.id("music-next"),
                         transport(music::Command::Next, player.can_control && player.can_next),
                         p,
                         false,
@@ -461,7 +489,7 @@ pub(super) fn music<'a, M: Clone + 'static>(
                 );
                 column::with_children(vec![
                     container(bar)
-                        .id(cosmic::widget::Id::new("music-progress"))
+                        .id(ids.id("music-progress"))
                         .height(12)
                         .align_y(Alignment::Center)
                         .into(),
@@ -542,6 +570,30 @@ pub(super) fn focus<'a, M: Clone + 'static>(
     on: Option<fn(Action) -> M>,
     dimensions: Option<[f32; 2]>,
     preview: bool,
+) -> Element<'a, M> {
+    focus_with_ids(
+        session,
+        config,
+        recipe,
+        now_ms,
+        today,
+        on,
+        dimensions,
+        preview,
+        ControlIds::Named,
+    )
+}
+
+fn focus_with_ids<'a, M: Clone + 'static>(
+    session: &focus::Session,
+    config: &Config,
+    recipe: &Recipe,
+    now_ms: i64,
+    today: &str,
+    on: Option<fn(Action) -> M>,
+    dimensions: Option<[f32; 2]>,
+    preview: bool,
+    ids: ControlIds,
 ) -> Element<'a, M> {
     let _scope = crate::widget_style::scope(config);
     let p = palette(config, recipe);
@@ -629,7 +681,7 @@ pub(super) fn focus<'a, M: Clone + 'static>(
         timer
     };
     let timer: Element<'a, M> = container(timer)
-        .id(cosmic::widget::Id::new("focus-recipe-time"))
+        .id(ids.id("focus-recipe-time"))
         .width(timer_width)
         .align_x(Alignment::Center)
         .into();
@@ -648,7 +700,7 @@ pub(super) fn focus<'a, M: Clone + 'static>(
             Part::Timer => timer.take().unwrap(),
             Part::TimerControls => {
                 let main = button::text(primary)
-                    .id(cosmic::widget::Id::new("focus-toggle"))
+                    .id(ids.id("focus-toggle"))
                     .class(button_style(p, true, preview))
                     .padding([8, 16])
                     .on_press_maybe(on.map(|on| on(Action::FocusToggle)))
@@ -657,7 +709,7 @@ pub(super) fn focus<'a, M: Clone + 'static>(
                     action(
                         "media-skip-forward-symbolic",
                         "Skip phase",
-                        "focus-skip",
+                        ids.id("focus-skip"),
                         on.map(|on| on(Action::FocusSkip)),
                         p,
                         false,
@@ -666,7 +718,7 @@ pub(super) fn focus<'a, M: Clone + 'static>(
                     action(
                         "view-refresh-symbolic",
                         "Reset timer",
-                        "focus-reset",
+                        ids.id("focus-reset"),
                         on.map(|on| on(Action::FocusReset)),
                         p,
                         false,
@@ -759,6 +811,31 @@ pub fn sample(
     state: PreviewState,
     size: [f32; 2],
 ) -> Element<'static, Action> {
+    sample_with_ids(config, recipe, state, size, ControlIds::Named)
+}
+
+/// A decorative copy that can safely appear beside other copies of the card.
+pub(crate) fn miniature(
+    config: &Config,
+    recipe: &Recipe,
+    size: [f32; 2],
+) -> Element<'static, Action> {
+    sample_with_ids(
+        config,
+        recipe,
+        PreviewState::Active,
+        size,
+        ControlIds::Local,
+    )
+}
+
+fn sample_with_ids(
+    config: &Config,
+    recipe: &Recipe,
+    state: PreviewState,
+    size: [f32; 2],
+    ids: ControlIds,
+) -> Element<'static, Action> {
     if recipe.kind == Kind::Music {
         let now = Instant::now();
         let mut player = sample_player(now);
@@ -772,7 +849,7 @@ pub fn sample(
             music::Feed::Players(vec![player.clone()])
         };
         let art = sample_art();
-        music(
+        music_with_ids(
             MusicView {
                 feed: Some(&feed),
                 player: (state != PreviewState::NoPlayer).then_some(&player),
@@ -786,6 +863,7 @@ pub fn sample(
             recipe,
             None,
             Some(size),
+            ids,
         )
     } else {
         let mut session = focus::Session {
@@ -810,7 +888,7 @@ pub fn sample(
                 ends_at: 3 * 60_000 + 12_000,
             };
         }
-        focus(
+        focus_with_ids(
             &session,
             config,
             recipe,
@@ -819,6 +897,7 @@ pub fn sample(
             None,
             Some(size),
             true,
+            ids,
         )
     }
 }
@@ -897,7 +976,7 @@ pub(super) fn circular<'a, M: Clone + 'static>(
             action(
                 "media-skip-backward-symbolic",
                 "Previous",
-                "music-previous",
+                cosmic::widget::Id::new("music-previous"),
                 transport(
                     music::Command::Previous,
                     player.can_control && player.can_previous,
@@ -913,7 +992,7 @@ pub(super) fn circular<'a, M: Clone + 'static>(
                     "media-playback-start-symbolic"
                 },
                 if playing { "Pause" } else { "Play" },
-                "music-play-pause",
+                cosmic::widget::Id::new("music-play-pause"),
                 transport(
                     if playing {
                         music::Command::Pause
@@ -934,7 +1013,7 @@ pub(super) fn circular<'a, M: Clone + 'static>(
             action(
                 "media-skip-forward-symbolic",
                 "Next",
-                "music-next",
+                cosmic::widget::Id::new("music-next"),
                 transport(music::Command::Next, player.can_control && player.can_next),
                 p,
                 false,

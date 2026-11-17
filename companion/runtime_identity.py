@@ -594,6 +594,60 @@ def running_identity(catalog, proc=Path('/proc'), session=None, uid=None, sysroo
     return result
 
 
+def recover_session_environment(env=None, *, proc=Path('/proc'), compositor=Path('/usr/bin/cosmic-comp')):
+    """Recover missing login metadata from this display's compositor peer.
+
+    Desktop applications started by the user service manager can lack
+    XDG_SESSION_ID. Never guess the user's primary session: another display
+    may belong to a different login. This only supplies metadata; callers
+    still perform the normal bundle, process and runtime qualification.
+    """
+    import socket
+    import struct
+    env = os.environ if env is None else env
+    if env.get('XDG_SESSION_ID'):
+        return {}
+    runtime, display = env.get('XDG_RUNTIME_DIR'), env.get('WAYLAND_DISPLAY')
+    if not runtime or not display:
+        return {}
+    try:
+        runtime = Path(runtime).resolve(strict=True)
+        address = Path(display)
+        if not address.is_absolute(): address = runtime/address
+        if address.parent.resolve(strict=True) != runtime:
+            return {}
+        info = address.stat()
+        uid = os.getuid()
+        if not stat.S_ISSOCK(info.st_mode) or info.st_uid != uid:
+            return {}
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(.3)
+            client.connect(str(address))
+            pid, owner, _ = struct.unpack('3i', client.getsockopt(
+                socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize('3i')))
+            if owner != uid:
+                return {}
+            process = proc/str(pid)
+            before = _stat(process)
+            if process.stat().st_uid != uid or (process/'exe').resolve(strict=True) != compositor.resolve(strict=True):
+                return {}
+            values = dict(item.split(b'=', 1) for item in _proc_bytes(process/'environ', 1024*1024).split(b'\0') if b'=' in item)
+            session = values.get(b'XDG_SESSION_ID', b'').decode('ascii')
+            if (not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', session)
+                    or b'COSMIC' not in values.get(b'XDG_CURRENT_DESKTOP', b'').split(b':')
+                    or values.get(b'XDG_SESSION_TYPE') != b'wayland'
+                    or Path(os.fsdecode(values.get(b'XDG_RUNTIME_DIR', b''))).resolve(strict=True) != runtime
+                    or _stat(process) != before
+                    or (process/'exe').resolve(strict=True) != compositor.resolve(strict=True)):
+                return {}
+            after = address.stat()
+            if (info.st_dev, info.st_ino) != (after.st_dev, after.st_ino):
+                return {}
+            return {'XDG_SESSION_ID': session}
+    except (OSError, ValueError, UnicodeError):
+        return {}
+
+
 def host_identity(binary_sha256):
     """Read-only IPC-owner process identity, independent of installation."""
     import json

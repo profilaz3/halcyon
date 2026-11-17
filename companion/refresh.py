@@ -160,6 +160,9 @@ def _stage_locked(home, library, *, session, fixture, boundary, enable, context,
                 return response('blocked', 'package_absent')
     if not fixture and manifest['package_version'] != fields[1]:
         return response('blocked', 'package_version_mismatch')
+    if not fixture and session is None:
+        from runtime_identity import recover_session_environment
+        os.environ.update(recover_session_environment())
     current = session if session is not None else session_identity()
     if not current:
         return response('blocked', 'session_unknown')
