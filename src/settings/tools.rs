@@ -47,6 +47,7 @@ pub enum Message {
     Done(Result<(), String>),
     /// Open KDE Connect, to pair a phone for Messages.
     OpenKdeConnect,
+    MarketProvider(crate::markets::Provider),
     MarketSymbols(String),
     MarketSaveSymbols,
     MarketKey(crate::markets::Secret),
@@ -395,6 +396,17 @@ impl ToolsEditor {
         config: &Config,
     ) -> (Task<crate::settings::Message>, Option<Saved>) {
         match message {
+            Message::MarketProvider(provider) => {
+                self.market_status = None;
+                return (
+                    Task::none(),
+                    Some(Saved::Tool(
+                        Widget::Markets,
+                        "provider",
+                        serde_json::json!(provider),
+                    )),
+                );
+            }
             Message::MarketSymbols(value) => {
                 self.market_symbols = value.chars().take(200).collect();
             }

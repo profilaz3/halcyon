@@ -95,7 +95,16 @@ pub fn markets<'a, M: Clone + 'static>(
                 .on_press(action(Action::MarketsOpen)),
         );
     }
-    let footer = || line("Twelve Data · prices may be delayed", 11., p.foreground);
+    let footer = || {
+        line(
+            format!(
+                "{} · prices may be delayed",
+                config.markets.provider.label()
+            ),
+            11.,
+            p.foreground,
+        )
+    };
     let mut content = column::with_children(vec![title.into()])
         .spacing(gap)
         .width(Length::Fill)
@@ -108,7 +117,11 @@ pub fn markets<'a, M: Clone + 'static>(
             .unwrap_or(if state.loading {
                 "Fetching your watchlist…"
             } else {
-                "Connect Twelve Data to see your stocks."
+                if config.markets.provider == crate::markets::Provider::Public {
+                    "Public stock data will appear here. No API key needed."
+                } else {
+                    "Connect Twelve Data to see your stocks."
+                }
             });
         content = content.push(label(message, 13., p.foreground));
         if let Some(action) = action {

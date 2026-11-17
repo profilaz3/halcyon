@@ -4,6 +4,8 @@ use cosmic::iced::{Subscription, futures::SinkExt};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+mod public;
+
 fn attributes() -> std::collections::HashMap<&'static str, &'static str> {
     std::collections::HashMap::from([
         ("application", "cosmic-desktop-cards"),
@@ -136,12 +138,7 @@ impl Budget {
         None
     }
 }
-async fn request(
-    client: &reqwest::Client,
-    endpoint: &str,
-    symbol: &str,
-    key: &Secret,
-) -> Result<serde_json::Value, Problem> {
+async fn reserve_request() {
     static BUDGET: std::sync::OnceLock<tokio::sync::Mutex<Budget>> = std::sync::OnceLock::new();
     let mut budget = BUDGET
         .get_or_init(|| tokio::sync::Mutex::new(Budget::default()))
@@ -151,6 +148,14 @@ async fn request(
         tokio::time::sleep(delay).await;
     }
     drop(budget);
+}
+async fn request(
+    client: &reqwest::Client,
+    endpoint: &str,
+    symbol: &str,
+    key: &Secret,
+) -> Result<serde_json::Value, Problem> {
+    reserve_request().await;
     let mut query = vec![("symbol", symbol)];
     let mut auth = reqwest::header::HeaderValue::from_str(&format!("apikey {}", key.0))
         .map_err(|_| Problem::Setup)?;
@@ -212,6 +217,21 @@ pub fn subscription(mut preferences: Preferences, seed: State) -> Subscription<S
             loop {
                 let reuse_quotes = state.fresh_for(&preferences);
                 state.source = Some(preferences.clone());
+                if preferences.provider == Provider::Public {
+                    state.loading = true;
+                    let _ = output.send(state.clone()).await;
+                    if let Ok(client) = &client {
+                        public::refresh(client, &preferences, &mut state, reuse_quotes).await;
+                    } else {
+                        state.problem = Some(Problem::Network);
+                    }
+                    state.loading = false;
+                    if output.send(state.clone()).await.is_err() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_secs(15 * 60)).await;
+                    continue;
+                }
                 let key = read_key().await;
                 if let (Ok(client), Ok(key)) = (&client, &key) {
                     state.loading = true;
@@ -279,9 +299,26 @@ pub fn subscription(mut preferences: Preferences, seed: State) -> Subscription<S
 
 pub const MAX_SYMBOLS: usize = 5;
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum Provider {
+    #[default]
+    Public,
+    TwelveData,
+}
+impl Provider {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Public => "Yahoo Finance",
+            Self::TwelveData => "Twelve Data",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(default)]
 pub struct Preferences {
+    pub provider: Provider,
     pub enabled: bool,
     pub symbols: Vec<String>,
     pub selected: String,
@@ -292,6 +329,7 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
+            provider: Provider::Public,
             enabled: false,
             symbols: vec!["AAPL".into(), "MSFT".into(), "NVDA".into()],
             selected: "AAPL".into(),
@@ -383,11 +421,11 @@ impl Problem {
             Self::Setup => "Connect Twelve Data in Markets settings.",
             Self::Locked => "Unlock your desktop keyring in Markets settings.",
             Self::Keyring => "The desktop keyring is unavailable. Try connecting again.",
-            Self::Network => "Couldn’t reach Twelve Data. Prices will retry automatically.",
+            Self::Network => "Couldn’t reach the data provider. Prices will retry automatically.",
             Self::RateLimit => {
                 "The data limit was reached. Updates are paused until the next refresh."
             }
-            Self::Provider => "This symbol or data is unavailable on your provider plan.",
+            Self::Provider => "This symbol or data is unavailable from this data source.",
             Self::InvalidData => "The provider returned incomplete price data.",
         }
     }
@@ -398,6 +436,7 @@ pub struct State {
     pub source: Option<Preferences>,
     pub received_at: Option<std::time::Instant>,
     pub quotes: Vec<Quote>,
+    pub public_charts: std::collections::BTreeMap<String, Vec<Point>>,
     pub chart_symbol: String,
     pub chart: Vec<Point>,
     pub problem: Option<Problem>,
@@ -408,7 +447,8 @@ pub struct State {
 impl State {
     fn fresh_for(&self, preferences: &Preferences) -> bool {
         self.source.as_ref().is_some_and(|p| {
-            p.symbols == preferences.symbols
+            p.provider == preferences.provider
+                && p.symbols == preferences.symbols
                 && p.credential_revision == preferences.credential_revision
         }) && self
             .received_at
@@ -527,6 +567,9 @@ mod tests {
         let mut state = crate::tools::cards::sample_markets();
         state.source = Some(preferences.clone());
         state.received_at = Some(std::time::Instant::now());
+        preferences.provider = Provider::TwelveData;
+        assert!(!state.fresh_for(&preferences));
+        preferences.provider = Provider::Public;
         preferences.selected = "MSFT".into();
         assert!(state.fresh_for(&preferences));
         preferences.credential_revision = 1;

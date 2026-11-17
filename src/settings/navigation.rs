@@ -775,6 +775,7 @@ const SEARCH: &[SearchHit] = &[
         false,
     )
     .names_page(),
+    hit(Page::Markets, "Data source", "public yahoo free no key provider", false),
     hit(Page::Markets, "Symbols", "stock ticker exchange", false),
     hit(Page::Markets, "Watchlist", "stocks shares list", false),
     hit(Page::Markets, "Twelve Data", "provider api key connection", false),

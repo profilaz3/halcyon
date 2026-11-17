@@ -49,6 +49,12 @@ fn markets_rejects_old_watchlists_and_credentials_and_clears_hidden_data() {
     let _ = cards.update(Message::Markets(state.clone()));
     assert_eq!(cards.tools.markets.quotes.len(), 3);
 
+    cards.config.markets.provider = crate::markets::Provider::TwelveData;
+    let _ = cards.update(Message::Markets(state.clone()));
+    assert!(cards.tools.markets.quotes.is_empty());
+    cards.config.markets.provider = crate::markets::Provider::Public;
+    let _ = cards.update(Message::Markets(state.clone()));
+
     cards.config.markets.symbols = vec!["IBM".into()];
     cards.config.markets.selected = "IBM".into();
     let _ = cards.update(Message::Markets(state.clone()));

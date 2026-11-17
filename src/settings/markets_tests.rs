@@ -17,6 +17,10 @@ fn markets_widget_settings_preserve_watchlist_and_render_native_charts() {
     use crate::drawer::Widget;
     use crate::settings::tools::Message as Edit;
     assert!(!Config::default().widget_enabled(Widget::Markets));
+    assert_eq!(
+        Config::default().markets.provider,
+        crate::markets::Provider::Public
+    );
     assert!(Widget::TOOLS.contains(&Widget::Markets));
     assert_eq!(
         crate::desktop::store::widget::tool_of("/markets/enabled"),
@@ -48,6 +52,22 @@ fn markets_widget_settings_preserve_watchlist_and_render_native_charts() {
                 .any(|t| t.contains("Example prices"))
         );
     }
+    send_settings(
+        &mut app,
+        Message::Tools(Edit::MarketProvider(crate::markets::Provider::TwelveData)),
+    );
+    assert_eq!(
+        Config::load().markets.provider,
+        crate::markets::Provider::TwelveData
+    );
+    send_settings(
+        &mut app,
+        Message::Tools(Edit::MarketProvider(crate::markets::Provider::Public)),
+    );
+    assert_eq!(
+        Config::load().markets.provider,
+        crate::markets::Provider::Public
+    );
     send_settings(&mut app, Message::Widget(Widget::Markets, true));
     assert!(Config::load().widget_enabled(Widget::Markets));
     send_settings(

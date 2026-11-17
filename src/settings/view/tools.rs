@@ -44,6 +44,12 @@ impl Settings {
         );
         let mut controls = vec![
             label("Example prices and chart", 13., FG),
+            group(Some("Data source"), vec![
+                label(format!("Using {}", self.config.markets.provider.label()), 13., FG),
+                button::text("Public data · no API key").on_press(edit(Edit::MarketProvider(crate::markets::Provider::Public))).into(),
+                button::text("Twelve Data · own API key").on_press(edit(Edit::MarketProvider(crate::markets::Provider::TwelveData))).into(),
+                label("Public stock prices and daily charts work without signup through Yahoo Finance. This is an unofficial feed and may be delayed or unavailable. Updates run every 15 minutes while the widget is visible. Use Yahoo symbols such as AAPL, BRK-B or VOD.L.", 13., FG),
+            ]),
             group(
                 Some("Watchlist"),
                 vec![
@@ -69,7 +75,7 @@ impl Settings {
                         ))
                         .into(),
                     label(
-                        "Use your own Twelve Data API key. Available exchanges and delays depend on your plan. Your key is stored in the desktop keyring, not in settings or exports.",
+                        "Optional: select Twelve Data above to use your own API key. Available exchanges and delays depend on your plan. Your key is stored in the desktop keyring, not in settings or exports.",
                         13.,
                         FG,
                     ),

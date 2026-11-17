@@ -973,7 +973,8 @@ impl cosmic::Application for Cards {
         let glass = self.glass_sync();
         if !self.provider_visible(Widget::Markets)
             || self.tools.markets.source.as_ref().is_some_and(|source| {
-                source.symbols != self.config.markets.symbols
+                source.provider != self.config.markets.provider
+                    || source.symbols != self.config.markets.symbols
                     || source.credential_revision != self.config.markets.credential_revision
             })
         {
