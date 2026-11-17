@@ -171,13 +171,15 @@ fn markets_resize_keeps_every_stock_and_chart_visible_without_scrolling() {
     let mut config = Config::default();
     config.appearance.family = Some(crate::desktop_theme::Family::DarkGlass);
     config.appearance.opacity = 30;
-    let mut state = crate::tools::cards::sample_markets();
     for symbol in ["AMZN", "TSLA"] {
-        let mut quote = state.quotes[0].clone();
-        quote.symbol = symbol.into();
-        state.quotes.push(quote);
         config.markets.symbols.push(symbol.into());
     }
+    let mut state = crate::tools::cards::sample_markets_for(&config.markets);
+    let date_ranges = ["%b %-d", "%b %-d, %Y"].map(|format| {
+        let first = state.chart.first().unwrap().date.format(format);
+        let last = state.chart.last().unwrap().date.format(format);
+        format!("{first} to {last}")
+    });
     for dims in [[280., 300.], [300., 360.], [360., 420.], [520., 600.]] {
         for offline in [false, true] {
             state.problem = offline.then_some(crate::markets::Problem::Network);
@@ -204,10 +206,10 @@ fn markets_resize_keeps_every_stock_and_chart_visible_without_scrolling() {
                 .iter()
                 .find(|t| t.contains("30 trading sessions"))
                 .unwrap();
-            let dates = text
+            let dates = date_ranges
                 .iter()
-                .find(|t| t.starts_with("Oct 1") && t.contains(" to "))
-                .unwrap();
+                .find(|range| text.contains(range))
+                .unwrap_or_else(|| panic!("missing chart date range at {dims:?}: {text:?}"));
             let top = native.text_bounds(card(), caption);
             let bottom = native.text_bounds(card(), dates);
             assert!(

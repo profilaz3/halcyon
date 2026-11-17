@@ -393,10 +393,15 @@ impl Settings {
         let picture = container(self.home_scene(height, selected, Picks::Select))
             .id(cosmic::widget::Id::new("home-picture"))
             .width(Length::Fill);
-        let mut parts = vec![heading(
-            "Home",
-            "Everything Halcyon changes, in one picture. Pick a part to change it.",
-        )];
+        let header = if self.widgets_stopped() {
+            split(
+                heading("Home", "Your desktop widgets are stopped."),
+                self.start_widgets_button(),
+            )
+        } else {
+            heading("Home", "Pick a part of the desktop to change it.")
+        };
+        let mut parts = vec![header];
         // Settings opens here, so first-run setup and what's new wait here.
         parts.push(self.islands_activation_card());
         if self.offers_setup() {
@@ -404,7 +409,6 @@ impl Settings {
         }
         parts.extend(self.updated_card());
         parts.extend(self.ignored_settings_banner());
-        parts.extend(self.widgets_stopped_banner(false));
         parts.push(picture.into());
         if let Some(page) = selected {
             parts.push(self.home_detail(page));

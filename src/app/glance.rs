@@ -1884,8 +1884,23 @@ mod tests {
         assert!(regions[0][0] > 150);
     }
     #[test]
-    fn short_viewport_keeps_scrolled_event_targets_interactive() {
+    fn short_viewport_keeps_agenda_and_weather_interactive_and_clock_click_through() {
+        use cosmic::iced::{Event, Point, mouse};
         let mut cards = app();
+        let today = Local::now().date_naive();
+        cards.calendar_today = Some(CalendarData {
+            month: today.format("%Y-%m").to_string(),
+            events: (0..8)
+                .map(|n| CalendarEvent {
+                    title: format!("Meeting {n}"),
+                    start: today.to_string(),
+                    end: (today + Days::days(1)).to_string(),
+                    all_day: true,
+                    ..Default::default()
+                })
+                .collect(),
+            ..CalendarData::default()
+        });
         for style in [GlanceStyle::Transparent, GlanceStyle::Panel] {
             for density in [GlanceDensity::Compact, GlanceDensity::Comfortable] {
                 cards.config.glance.style = style;
@@ -1901,14 +1916,54 @@ mod tests {
                     .config
                     .widget_positions
                     .insert("glance".into(), position);
-                assert_eq!(cards.glance_size()[1], 100.);
-                // Events, Join and the calendar heading can scroll through
-                // the old clock region; no visible portion may pass clicks
-                // through to the desktop while this outer scroller is used.
-                assert_eq!(
-                    cards.glance_input_rects(),
-                    vec![[0, 0, width.ceil() as u32, 100]]
-                );
+                let [width, height] = cards.glance_size();
+                assert_eq!(height, 100.);
+                let mut native = crate::native_test::Native::new(Size::new(width, height));
+                assert!(native.scrollables(cards.glance()).is_empty());
+                native.text_bounds(cards.glance(), "Meeting 0");
+                let regions = cards.glance_input_rects();
+                let receives_input = |p: Point| {
+                    regions.iter().any(|&[x, y, w, h]| {
+                        p.x >= x as f32
+                            && p.x < (x + w) as f32
+                            && p.y >= y as f32
+                            && p.y < (y + h) as f32
+                    })
+                };
+                let time =
+                    crate::config::time_of_day(&cards.clock_at, cards.config.clock.format_24h);
+                assert!(!receives_input(
+                    native.text_bounds(cards.glance(), &time).center()
+                ));
+                let agenda = native
+                    .all_text(cards.glance())
+                    .into_iter()
+                    .find(|text| text.ends_with("Open agenda"))
+                    .unwrap();
+                for label in ["Choose city", agenda.as_str()] {
+                    let bounds = native.text_bounds(cards.glance(), label);
+                    assert!(
+                        bounds.y + bounds.height <= height,
+                        "{label}: {bounds:?} at {height}"
+                    );
+                    let point = bounds.center();
+                    assert!(
+                        receives_input(point),
+                        "{label}: {point:?} outside {regions:?}"
+                    );
+                    let (messages, _) = native.event(
+                        cards.glance(),
+                        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                        point,
+                    );
+                    assert!(
+                        messages.iter().any(|message| match label {
+                            "Choose city" => matches!(message, Message::WeatherSettings),
+                            _ => matches!(message, Message::ReadingDetails(Widget::Glance)),
+                        }),
+                        "{label}: {messages:?}"
+                    );
+                }
             }
         }
     }
