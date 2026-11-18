@@ -198,7 +198,7 @@ struct Feed {
 }
 impl std::hash::Hash for Feed {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        std::hash::Hash::hash(&self.preferences, state);
+        std::hash::Hash::hash(&self.preferences.feed_key(), state);
     }
 }
 
@@ -255,7 +255,8 @@ async fn refresh(
         .iter()
         .partition(|symbol| currency_pair(symbol).is_some());
     let selected = &preferences.selected;
-    let needs_stock_chart = preferences.provider == Provider::TwelveData
+    let needs_stock_chart = preferences.show_chart
+        && preferences.provider == Provider::TwelveData
         && stocks.contains(&selected)
         && (!reuse
             || (!state.charts.contains_key(selected) && !state.unavailable.contains_key(selected)));
@@ -309,7 +310,8 @@ async fn refresh(
                         // Twelve Data supplies charts separately. Refresh the next selected
                         // stock on demand and preserve the current trace if its request fails.
                         state.charts.retain(|symbol, _| {
-                            currency_pair(symbol).is_some() || symbol == selected
+                            currency_pair(symbol).is_some()
+                                || (preferences.show_chart && symbol == selected)
                         });
                         for symbol in stocks {
                             let result = if let Some(problem) = &stop {
@@ -388,6 +390,10 @@ pub struct Preferences {
     pub enabled: bool,
     pub symbols: Vec<String>,
     pub selected: String,
+    pub show_change: bool,
+    pub show_chart: bool,
+    pub show_date: bool,
+    pub show_details: bool,
     /// Changes after explicit keyring setup, restarting the desktop feed.
     pub credential_revision: u64,
 }
@@ -401,6 +407,10 @@ impl Default for Preferences {
                 .map(String::from)
                 .into(),
             selected: "EUR/USD".into(),
+            show_change: true,
+            show_chart: false,
+            show_date: false,
+            show_details: false,
             credential_revision: 0,
         }
     }
@@ -439,6 +449,31 @@ pub fn symbols(input: &str) -> Result<Vec<String>, &'static str> {
 }
 
 impl Preferences {
+    /// Only Twelve Data needs a separate stock-chart request.
+    pub(crate) fn feed_key(&self) -> impl std::hash::Hash + Eq + '_ {
+        (
+            self.enabled,
+            self.provider,
+            &self.symbols,
+            &self.selected,
+            self.credential_revision,
+            self.provider == Provider::TwelveData
+                && self.show_chart
+                && currency_pair(&self.selected).is_none(),
+        )
+    }
+
+    /// Includes frame padding, the heading, each quote row and optional metadata.
+    pub fn quote_height(&self) -> f32 {
+        90. + 24. * self.symbols.len().saturating_sub(1) as f32
+            + 20. * f32::from(self.show_date)
+            + 20. * f32::from(self.show_details)
+    }
+
+    pub fn height_limit(&self) -> Option<f32> {
+        (!self.show_chart).then(|| self.quote_height())
+    }
+
     pub fn normalize(&mut self) {
         self.symbols = symbols(&self.symbols.join(",")).unwrap_or_default();
         if !self.symbols.contains(&self.selected) {
@@ -485,6 +520,18 @@ pub enum Problem {
     InvalidData,
 }
 impl Problem {
+    pub fn short(&self, cached: bool) -> &'static str {
+        match self {
+            Self::Setup => "Connect API key",
+            Self::Locked => "Keyring locked",
+            Self::Keyring => "Keyring unavailable",
+            Self::Network if cached => "Offline · cached",
+            Self::Network => "Offline",
+            Self::RateLimit => "Data limit reached",
+            Self::Provider | Self::InvalidData => "Data unavailable",
+        }
+    }
+
     pub fn text(&self) -> &'static str {
         match self {
             Self::Setup => "Connect Twelve Data in Markets settings.",

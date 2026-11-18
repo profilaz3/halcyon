@@ -143,7 +143,7 @@ pub fn minimum_size(widget: crate::drawer::Widget) -> Size {
         Devices => [260., 140.],
         Messages => [300., 220.],
         Weather | Devbox | Projects => [300., 180.],
-        Markets => [280., 300.],
+        Markets => [280., 90.],
     }
 }
 
@@ -158,6 +158,52 @@ pub fn sized(widget: crate::drawer::Widget, requested: Size, screen: Size) -> Si
         };
         value.clamp(min[axis].min(max), max)
     })
+}
+
+/// Small quote lists hug their content; a chart needs room to draw its history.
+fn market_viewport(
+    widget: crate::drawer::Widget,
+    mut size: Size,
+    quote_limit: Option<f32>,
+) -> Size {
+    if widget == crate::drawer::Widget::Markets {
+        size[1] = match quote_limit {
+            Some(limit) => size[1].min(limit),
+            None => size[1].max(300.),
+        };
+    }
+    size
+}
+
+pub fn fitted_size(
+    widget: crate::drawer::Widget,
+    requested: Size,
+    screen: Size,
+    markets_limit: Option<f32>,
+) -> Size {
+    sized(
+        widget,
+        market_viewport(widget, requested, markets_limit),
+        screen,
+    )
+}
+
+pub fn fitted_resize(
+    widget: crate::drawer::Widget,
+    position: Point,
+    requested: Size,
+    screen: Size,
+    snapping: bool,
+    markets_limit: Option<f32>,
+) -> Size {
+    let requested = market_viewport(widget, requested, markets_limit);
+    let mut size = resize(widget, position, requested, screen, snapping);
+    if widget == crate::drawer::Widget::Markets
+        && let Some(limit) = markets_limit
+    {
+        size[1] = size[1].min(limit);
+    }
+    size
 }
 
 /// Resize from the lower-right corner, keeping the top-left anchored. Include

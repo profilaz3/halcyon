@@ -217,6 +217,21 @@ mod tests {
             eur_usd.price,
             state.quotes[1].price
         );
+        let mut one = config.clone();
+        one.markets.symbols.truncate(1);
+        one.markets.show_change = false;
+        for (style, name) in [(&config, "ecb-watchlist"), (&one, "ecb-price-only")] {
+            let size = cards::size(crate::drawer::Widget::Markets, style);
+            let mut native = Native::new(Size::new(size[0], size[1]));
+            native.capture(
+                cards::markets(&state, style, Some(|a| a), Some(size)),
+                &cosmic::Theme::dark(),
+                name,
+            );
+        }
+        config.markets.show_chart = true;
+        config.markets.show_date = true;
+        config.markets.show_details = true;
         for (size, name) in [([280., 300.], "ecb-compact"), ([520., 400.], "ecb-wide")] {
             let mut native = Native::new(Size::new(size[0], size[1]));
             let view = || cards::markets(&state, &config, Some(|a| a), Some(size));

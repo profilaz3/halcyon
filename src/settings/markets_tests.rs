@@ -42,7 +42,7 @@ fn markets_widget_settings_preserve_watchlist_and_render_native_charts() {
         assert!(native.duplicate_ids(app.settings_view()).is_empty());
         let input = native.bounds(app.settings_view(), "market-symbol-input");
         assert!(input.y >= 0. && input.y + input.height <= size.height);
-        let save = native.text_bounds(app.settings_view(), "Save watchlist");
+        let save = native.text_bounds(app.settings_view(), "Add");
         assert!(save.y + save.height <= size.height);
 
         native.capture(
@@ -78,11 +78,23 @@ fn markets_widget_settings_preserve_watchlist_and_render_native_charts() {
     );
     send_settings(&mut app, Message::Widget(Widget::Markets, true));
     assert!(Config::load().widget_enabled(Widget::Markets));
-    send_settings(
-        &mut app,
-        Message::Tools(Edit::MarketSymbols("msft, eur/gbp, aapl, MSFT".into())),
-    );
-    send_settings(&mut app, Message::Tools(Edit::MarketSaveSymbols));
+    send_settings(&mut app, Message::Tools(Edit::MarketSymbols("JPY/GBP".into())));
+    send_settings(&mut app, Message::Tools(Edit::MarketAdd));
+    assert_eq!(Config::load().markets.symbols.len(), 5);
+    assert!(app.tools.watchlist_error.is_some());
+    for (key, value) in [("show_change", false), ("show_chart", true), ("show_date", true), ("show_details", true)] {
+        send_settings(&mut app, Message::Tools(Edit::Option(Widget::Markets, key, value.into())));
+    }
+    let display = Config::load().markets;
+    assert!(!display.show_change && display.show_chart && display.show_date && display.show_details);
+    for symbol in ["NVDA", "MSFT", "EUR/USD"] {
+        send_settings(&mut app, Message::Tools(Edit::MarketRemove(symbol.into())));
+    }
+    send_settings(&mut app, Message::Tools(Edit::MarketSymbols("msft".into())));
+    send_settings(&mut app, Message::Tools(Edit::MarketAdd));
+    send_settings(&mut app, Message::Tools(Edit::MarketMove("MSFT".into(), -1)));
+    send_settings(&mut app, Message::Tools(Edit::MarketMove("MSFT".into(), -1)));
+    assert!(app.tools.market_symbols.is_empty());
     assert_eq!(Config::load().markets.symbols, ["MSFT", "EUR/GBP", "AAPL"]);
     assert_eq!(app.tools.market_preview.source.as_ref().unwrap(), &app.config.markets);
     assert_eq!(app.tools.market_preview.chart_symbol, app.config.markets.selected);
@@ -107,8 +119,13 @@ fn markets_widget_settings_preserve_watchlist_and_render_native_charts() {
         &mut app,
         Message::Tools(Edit::MarketSymbols("https://invalid.example".into())),
     );
-    send_settings(&mut app, Message::Tools(Edit::MarketSaveSymbols));
+    send_settings(&mut app, Message::Tools(Edit::MarketAdd));
     assert_eq!(Config::load().markets.symbols, ["MSFT", "EUR/GBP", "AAPL"]);
+    for symbol in ["MSFT", "AAPL", "EUR/GBP"] {
+        send_settings(&mut app, Message::Tools(Edit::MarketRemove(symbol.into())));
+    }
+    assert_eq!(Config::load().markets.symbols, ["EUR/GBP"]);
+    assert_eq!(Config::load().markets.selected, "EUR/GBP");
     let key = "synthetic-test-key-not-a-credential";
     send_settings(
         &mut app,
@@ -129,6 +146,9 @@ fn markets_widget_settings_preserve_watchlist_and_render_native_charts() {
         Err(crate::markets::Problem::Setup)
     );
     let mut config = Config::default();
+    config.markets.show_chart = true;
+    config.markets.show_date = true;
+    config.markets.show_details = true;
     config.markets.symbols = vec!["IBM".into()];
     config.markets.selected = "IBM".into();
     config.appearance.family = Some(crate::desktop_theme::Family::DarkGlass);
@@ -176,6 +196,9 @@ fn markets_resize_keeps_every_stock_and_chart_visible_without_scrolling() {
     let mut config = Config::default();
     config.appearance.family = Some(crate::desktop_theme::Family::DarkGlass);
     config.appearance.opacity = 30;
+    config.markets.show_chart = true;
+    config.markets.show_date = true;
+    config.markets.show_details = true;
     config.markets.symbols = ["AAPL", "MSFT", "NVDA", "AMZN", "TSLA"].map(String::from).into();
     config.markets.selected = "AAPL".into();
     let mut state = crate::tools::cards::sample_markets_for(&config.markets);
@@ -252,6 +275,8 @@ fn markets_currency_resizes_and_cycles_the_mixed_watchlist() {
     use crate::tools::cards::{Action, markets, sample_markets_for};
     use cosmic::iced::{Event, mouse};
     let mut config = Config::default();
+    config.markets.show_chart = true;
+    config.markets.show_date = true;
     config.markets.symbols = ["EUR/USD", "EUR/GBP", "AAPL"].map(String::from).into();
     config.markets.selected = "EUR/USD".into();
     let state = sample_markets_for(&config.markets);
@@ -279,4 +304,66 @@ fn markets_currency_resizes_and_cycles_the_mixed_watchlist() {
         let (messages, _) = native.event(view(), Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)), point);
         assert!(messages.iter().any(|m| matches!(m, Action::MarketSelect(s) if s == "EUR/GBP")));
     }
+}
+
+#[test]
+fn markets_defaults_to_watchlist_and_fits_the_saved_chart_viewport() {
+    use crate::drawer::Widget;
+    use crate::tools::cards::{markets, sample_markets_for};
+    let mut config = Config::default();
+    config.markets = serde_json::from_value(serde_json::json!({
+        "symbols": ["EUR/USD", "EUR/GBP", "GBP/USD"], "selected": "EUR/USD"
+    }))
+    .unwrap();
+    let state = sample_markets_for(&config.markets);
+    let requested = [520., 400.];
+    let fitted = |config: &Config| {
+        crate::layout::fitted_size(
+            Widget::Markets,
+            requested,
+            [1920., 1080.],
+            config.markets.height_limit(),
+        )
+    };
+    for count in [3, 1] {
+        config.markets.symbols.truncate(count);
+        let height = config.markets.quote_height();
+        assert_eq!(fitted(&config), [520., height]);
+        let size = crate::tools::cards::size(Widget::Markets, &config);
+        assert_eq!(size[1], height);
+        let mut native = crate::native_test::Native::new(Size::new(size[0], height));
+        let view = || markets(&state, &config, Some(|a| a), Some(size));
+        let text = native.all_text(view());
+        assert!(text.iter().any(|s| s == "EUR/USD"));
+        assert!(text.iter().any(|s| s == "1.0854 USD"));
+        assert!(text.iter().any(|s| s.ends_with('%')));
+        assert!(!text.iter().any(|s| s.starts_with("Published")
+            || s.starts_with("Low ")
+            || s.contains("reference rate")
+            || s == "Last 30 days"));
+        assert!(native.scrollables(view()).is_empty());
+    }
+    config.markets.show_change = false;
+    let size = crate::tools::cards::size(Widget::Markets, &config);
+    let mut native = crate::native_test::Native::new(Size::new(size[0], size[1]));
+    let view = || markets(&state, &config, Some(|a| a), Some(size));
+    assert!(!native.all_text(view()).iter().any(|s| s.contains('%')));
+    let mut offline = state.clone();
+    offline.problem = Some(crate::markets::Problem::Network);
+    let cached = || markets(&offline, &config, Some(|a| a), Some(size));
+    assert!(native.all_text(cached()).iter().any(|s| s == "Offline · cached"));
+
+    config.markets.show_date = true;
+    config.markets.show_details = true;
+    let mut native =
+        crate::native_test::Native::new(Size::new(360., config.markets.quote_height()));
+    let view = || markets(&state, &config, Some(|a| a), None);
+    let text = native.all_text(view());
+    assert!(text.iter().any(|s| s.starts_with("Published")));
+    assert!(text.iter().any(|s| s.contains("reference rate")));
+    assert!(!text.iter().any(|s| s == "Last 30 days"));
+    config.markets.show_chart = true;
+    assert_eq!(fitted(&config), requested);
+    assert_eq!(crate::layout::fitted_size(Widget::Markets, [280., 90.], [1920., 1080.], config.markets.height_limit()), [280., 300.]);
+
 }

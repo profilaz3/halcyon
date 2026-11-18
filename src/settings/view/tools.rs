@@ -67,23 +67,91 @@ impl Settings {
             }
             Provider::TwelveData => "Twelve Data supplies stock prices. Currency pairs use the ECB and need no API key.",
         };
+        let markets = &self.config.markets;
+        let add = row::with_children(vec![
+            text_input("Stock or pair, e.g. EUR/USD", &editor.market_symbols)
+                .id("market-symbol-input".into())
+                .on_input(|s| edit(Edit::MarketSymbols(s)))
+                .on_submit(|_| edit(Edit::MarketAdd))
+                .width(Length::Fill)
+                .into(),
+            button::text("Add")
+                .on_press_maybe(
+                    (!editor.market_symbols.trim().is_empty()).then(|| edit(Edit::MarketAdd)),
+                )
+                .into(),
+        ])
+        .spacing(6)
+        .align_y(Alignment::Center);
+        let mut watchlist = vec![add.into()];
+        if let Some(error) = &editor.watchlist_error {
+            watchlist.push(label(error, 13., WARN));
+        }
+        for (index, symbol) in markets.symbols.iter().enumerate() {
+            let mut item = row::with_children(vec![
+                container(label(symbol, 14., FG)).width(Length::Fill).into(),
+            ])
+            .spacing(4)
+            .align_y(Alignment::Center);
+            for (icon_name, hint, enabled, message) in [
+                (
+                    "go-up-symbolic",
+                    "Move up",
+                    index > 0,
+                    Edit::MarketMove(symbol.clone(), -1),
+                ),
+                (
+                    "go-down-symbolic",
+                    "Move down",
+                    index + 1 < markets.symbols.len(),
+                    Edit::MarketMove(symbol.clone(), 1),
+                ),
+                (
+                    "list-remove-symbolic",
+                    "Remove",
+                    markets.symbols.len() > 1,
+                    Edit::MarketRemove(symbol.clone()),
+                ),
+            ] {
+                let name = format!("{hint} {symbol}");
+                let control = button::icon(icon::from_name(icon_name).size(16))
+                    .extra_small()
+                    .name(name.clone())
+                    .id(format!("market-{icon_name}-{symbol}").into())
+                    .on_press_maybe(enabled.then(|| edit(message)));
+                item = item.push(super::tip::tip(control, &name));
+            }
+            watchlist.push(item.into());
+        }
         let mut controls = vec![
+            group(Some("Watchlist"), watchlist),
             group(
-                Some("Watchlist"),
+                Some("Show on widget"),
                 vec![
-                    group_row_state(
-                        "Symbols",
-                        "Enter up to five stocks or currency pairs, separated by commas. Use EUR/USD for dollars per euro.",
-                        text_input("EUR/USD, EUR/GBP, AAPL", &editor.market_symbols)
-                            .id("market-symbol-input".into())
-                            .on_submit(|_| edit(Edit::MarketSaveSymbols))
-                            .on_input(|s| edit(Edit::MarketSymbols(s)))
-                            .width(Length::Fill)
-                            .into(),
+                    switch(
+                        "Daily change",
+                        "Percentage change since the previous quote",
+                        markets.show_change,
+                        |value| option(Widget::Markets, "show_change", value),
                     ),
-                    button::text("Save watchlist")
-                        .on_press(edit(Edit::MarketSaveSymbols))
-                        .into(),
+                    switch(
+                        "Price chart",
+                        "Price history for the selected item",
+                        markets.show_chart,
+                        |value| option(Widget::Markets, "show_chart", value),
+                    ),
+                    switch(
+                        "Publication date",
+                        "Date of the rate or time of the stock quote",
+                        markets.show_date,
+                        |value| option(Widget::Markets, "show_date", value),
+                    ),
+                    switch(
+                        "Source and chart details",
+                        "Provider, chart dates, and low and high prices when space permits",
+                        markets.show_details,
+                        |value| option(Widget::Markets, "show_details", value),
+                    ),
                 ],
             ),
             group(
@@ -138,7 +206,7 @@ impl Settings {
             controls.push(label(status, 13., FG));
         }
         let preview = column::with_children(vec![
-            container(label("Example prices and chart", 13., FG))
+            container(label("Example prices", 13., FG))
                 .id("markets-sample").width(Length::Fill).into(),
             self.preview_stage(container(preview).max_width(360.).into()),
         ]).spacing(6);
@@ -157,7 +225,14 @@ impl Settings {
             .widget_sizes
             .get(widget.key())
             .copied()
-            .map(|size| crate::layout::sized(widget, size, self.placement.screen()))
+            .map(|size| {
+                crate::layout::fitted_size(
+                    widget,
+                    size,
+                    self.placement.screen(),
+                    self.config.markets.height_limit(),
+                )
+            })
             .unwrap_or_else(|| cards::size(widget, &self.config));
         [
             width.min(if self.window.width >= 990. {

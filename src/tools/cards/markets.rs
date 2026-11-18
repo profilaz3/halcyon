@@ -103,16 +103,27 @@ pub fn markets<'a, M: Clone + 'static>(
     } else {
         &config.markets
     };
-    let [width, height] = size.unwrap_or([360., 420.]);
+    let options = &config.markets;
+    let [width, requested_height] =
+        size.unwrap_or_else(|| super::size(crate::drawer::Widget::Markets, config));
+    let height = options
+        .height_limit()
+        .map_or(requested_height, |limit| requested_height.min(limit));
+    let show_chart = options.show_chart && height >= 220.;
+    let show_date = options.show_date && height >= 108.;
+    let show_source = options.show_details && height >= if show_date { 128. } else { 108. };
     // Reserve room for every stock before adding optional chart details.
     let detailed =
         width >= 320. && height >= 360. + preferences.symbols.len().saturating_sub(3) as f32 * 22.;
     let pair = currency_pair(&preferences.selected);
-    let compact = (width < 320. || (width < 420. && height < 340.))
-        && preferences
-            .symbols
-            .iter()
-            .any(|s| currency_pair(s).is_some());
+    let compact = height < options.quote_height()
+        || (show_chart
+            && (width < 320. || (width < 420. && height < 340.))
+            && preferences
+                .symbols
+                .iter()
+                .any(|s| currency_pair(s).is_some()))
+        || (show_chart && height < 76. + 24. * preferences.symbols.len() as f32 + 70.);
     let selected = state
         .quotes
         .iter()
@@ -124,6 +135,17 @@ pub fn markets<'a, M: Clone + 'static>(
         cosmic::iced::widget::space().width(Length::Fill).into(),
     ])
     .height(26.);
+    if !state.quotes.is_empty() {
+        let issue = state
+            .unavailable
+            .get(&preferences.selected)
+            .or(state.problem.as_ref())
+            .map(|problem| problem.short(selected.is_some()))
+            .or_else(|| (!state.unavailable.is_empty()).then_some("Partial data"));
+        if let Some(issue) = issue {
+            title = title.push(line(issue, 11., p.foreground));
+        }
+    }
     if compact && preferences.symbols.len() > 1 {
         let position = preferences
             .symbols
@@ -151,7 +173,12 @@ pub fn markets<'a, M: Clone + 'static>(
             if pair.is_some() {
                 "ECB · daily reference rate".into()
             } else {
-                format!("{} · prices may be delayed", preferences.provider.label())
+                let status = match selected.and_then(|q| q.market_open) {
+                    Some(true) => "Market open",
+                    Some(false) => "Market closed",
+                    None => "prices may be delayed",
+                };
+                format!("{} · {status}", preferences.provider.label())
             },
             11.,
             p.foreground,
@@ -179,15 +206,30 @@ pub fn markets<'a, M: Clone + 'static>(
                     "Connect Twelve Data to see your stocks."
                 }
             });
-        content = content.push(label(message, 13., p.foreground));
-        if let Some(action) = action {
-            content =
-                content.push(button::text("Set up Markets").on_press(action(Action::MarketsOpen)));
+        if height < 170. {
+            let short = state
+                .unavailable
+                .get(&preferences.selected)
+                .or(state.problem.as_ref())
+                .map(|p| p.short(false))
+                .unwrap_or(if state.loading {
+                    "Updating quotes…"
+                } else {
+                    "Waiting for quotes"
+                });
+            return frame(
+                content.push(line(short, 13., p.foreground)).into(),
+                config,
+                height,
+            );
         }
-        content = content.push(cosmic::iced::widget::space().height(Length::Fill));
-        return frame(content.push(footer()).into(), config, height);
+        content = content.push(label(message, 13., p.foreground));
+        if show_source {
+            content = content.push(footer());
+        }
+        return frame(content.into(), config, height);
     }
-    if compact {
+    if compact && show_chart {
         content = content.push(line(&preferences.selected, 22., p.foreground));
         if let Some(quote) = selected {
             let value = if let Some((base, counter)) = pair {
@@ -196,7 +238,9 @@ pub fn markets<'a, M: Clone + 'static>(
                 format!("{:.2} {}", quote.price, quote.currency)
             };
             content = content.push(line(value, 17., p.foreground));
-            if let Some(change) = quote.percent {
+            if options.show_change
+                && let Some(change) = quote.percent
+            {
                 let reference = if pair.is_some() {
                     "previous rate"
                 } else {
@@ -211,7 +255,11 @@ pub fn markets<'a, M: Clone + 'static>(
         }
     } else {
         let mut watchlist = column::with_children(Vec::new()).spacing(2);
-        for symbol in &preferences.symbols {
+        for symbol in preferences
+            .symbols
+            .iter()
+            .filter(|s| !compact || *s == &preferences.selected)
+        {
             let quote = state.quotes.iter().find(|q| &q.symbol == symbol);
             let price = quote
                 .map(|q| {
@@ -224,16 +272,12 @@ pub fn markets<'a, M: Clone + 'static>(
                     }
                 })
                 .unwrap_or_else(|| "No quote".into());
-            let change = quote
-                .and_then(|q| q.percent)
-                .map(|n| format!("{n:+.2}%"))
-                .unwrap_or_else(|| "n/a".into());
             let ink = if symbol == &preferences.selected {
                 p.accent
             } else {
                 p.foreground
             };
-            let cells = row::with_children(vec![
+            let mut cells = row::with_children(vec![
                 container(line(symbol, 13., ink))
                     .width(Length::FillPortion(3))
                     .into(),
@@ -241,13 +285,20 @@ pub fn markets<'a, M: Clone + 'static>(
                     .width(Length::FillPortion(5))
                     .align_x(cosmic::iced::Alignment::End)
                     .into(),
-                container(line(change, 11., p.foreground))
-                    .width(Length::FillPortion(2))
-                    .align_x(cosmic::iced::Alignment::End)
-                    .into(),
             ])
             .spacing(4)
             .align_y(cosmic::iced::Alignment::Center);
+            if options.show_change {
+                let change = quote
+                    .and_then(|q| q.percent)
+                    .map(|n| format!("{n:+.2}%"))
+                    .unwrap_or_else(|| "n/a".into());
+                cells = cells.push(
+                    container(line(change, 11., p.foreground))
+                        .width(Length::FillPortion(2))
+                        .align_x(cosmic::iced::Alignment::End),
+                );
+            }
             // The whole bounded row selects the stock, including at compact sizes.
             watchlist = watchlist.push(
                 button::custom(cells)
@@ -260,7 +311,7 @@ pub fn markets<'a, M: Clone + 'static>(
         }
         content = content.push(watchlist);
     }
-    if let Some(quote) = selected {
+    if show_chart && let Some(quote) = selected {
         if detailed {
             let summary = if let Some((base, counter)) = pair {
                 format!("1 {base} = {} {counter}", rate(quote.price))
@@ -287,7 +338,7 @@ pub fn markets<'a, M: Clone + 'static>(
                 .width(Length::Fill)
                 .height(Length::Fill),
             );
-            if detailed {
+            if detailed && options.show_details {
                 let low = state
                     .chart
                     .iter()
@@ -311,7 +362,7 @@ pub fn markets<'a, M: Clone + 'static>(
             let date_format = if detailed { "%b %-d, %Y" } else { "%b %-d" };
             let first = state.chart.first().unwrap().date.format(date_format);
             let last = state.chart.last().unwrap().date.format(date_format);
-            if !compact {
+            if !compact && options.show_details {
                 content = content.push(line(format!("{first} to {last}"), 11., p.foreground));
             }
         } else {
@@ -328,55 +379,24 @@ pub fn markets<'a, M: Clone + 'static>(
                 .height(Length::Fill),
             );
         }
-    } else {
+    } else if show_chart {
         content = content
             .push(container(line("Quote unavailable", 12., p.foreground)).height(Length::Fill));
     }
-    // A fixed-height status keeps errors and old quote timestamps visible, too.
-    let status = if !state.unavailable.is_empty()
-        && !state.unavailable.contains_key(&preferences.selected)
+    if show_date
+        && let Some(at) = selected.and_then(|q| chrono::DateTime::from_timestamp(q.timestamp, 0))
     {
-        Some("Some quotes unavailable")
-    } else if let Some(problem) = state
-        .unavailable
-        .get(&preferences.selected)
-        .or(state.problem.as_ref())
-    {
-        use crate::markets::Problem;
-        Some(match problem {
-            Problem::Setup => "Connect API key",
-            Problem::Locked => "Keyring locked",
-            Problem::Keyring => "Keyring unavailable",
-            Problem::Network => "Offline · cached",
-            Problem::RateLimit => "Data limit reached",
-            Problem::Provider | Problem::InvalidData => "Data unavailable",
-        })
-    } else if !state.unavailable.is_empty() {
-        Some("Some quotes unavailable")
-    } else {
-        selected
-            .and_then(|q| q.market_open)
-            .map(|open| if open { "Market open" } else { "Market closed" })
-    };
-    let at = selected
-        .and_then(|q| chrono::DateTime::from_timestamp(q.timestamp, 0))
-        .map(|d| {
-            if pair.is_some() {
-                d.format("Published %b %-d, %Y").to_string()
-            } else {
-                d.format("%b %-d, %H:%M UTC").to_string()
-            }
-        });
-    let details = at
-        .as_deref()
-        .into_iter()
-        .chain(status)
-        .collect::<Vec<_>>()
-        .join(" · ");
-    if !details.is_empty() {
-        content = content.push(line(details, 11., p.foreground));
+        let format = if pair.is_some() {
+            "Published %b %-d, %Y"
+        } else {
+            "%b %-d, %H:%M UTC"
+        };
+        content = content.push(line(at.format(format).to_string(), 11., p.foreground));
     }
-    frame(content.push(footer()).into(), config, height)
+    if show_source {
+        content = content.push(footer());
+    }
+    frame(content.into(), config, height)
 }
 
 fn rate(value: f64) -> String {

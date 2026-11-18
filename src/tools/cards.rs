@@ -86,7 +86,10 @@ pub fn size(widget: Widget, config: &Config) -> [f32; 2] {
         Widget::Notes => config.notes.size.card(),
         // Room for the four newest conversations.
         Widget::Messages => [320., 260.],
-        Widget::Markets => [360., 420.],
+        Widget::Markets => [
+            if !config.markets.show_chart && config.markets.symbols.len() == 1 { 280. } else { 360. },
+            config.markets.height_limit().unwrap_or(420.),
+        ],
         _ => [280., 160.],
     }
 }

@@ -231,7 +231,7 @@ fn default_positions(mut state: Snapshot, config: &Config) -> Snapshot {
     // Tool recipes can change their automatic dimensions before the running
     // desktop publishes a new snapshot (including a saved Setup preview).
     for geometry in &mut state.widgets {
-        if let Some(widget @ (Widget::Music | Widget::Focus)) = Widget::parse(&geometry.key) {
+        if let Some(widget @ (Widget::Music | Widget::Focus | Widget::Markets)) = Widget::parse(&geometry.key) {
             let natural = crate::tools::cards::size(widget, config);
             let natural = [
                 natural[0].min((state.screen[0] - 48.).max(1.)),
@@ -499,7 +499,7 @@ pub fn project(mut state: Snapshot, config: &Config) -> Snapshot {
         if let Some(size) = config.widget_sizes.get(&g.key) {
             let widget = Widget::parse(&g.key).unwrap();
             // Explicit card dimensions are a viewport; summaries adapt within it.
-            g.size = layout::sized(widget, *size, state.screen);
+            g.size = layout::fitted_size(widget, *size, state.screen, config.markets.height_limit());
         }
     }
     state = default_positions(state, config);

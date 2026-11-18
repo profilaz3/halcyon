@@ -49,7 +49,9 @@ pub enum Message {
     OpenKdeConnect,
     MarketProvider(crate::markets::Provider),
     MarketSymbols(String),
-    MarketSaveSymbols,
+    MarketAdd,
+    MarketRemove(String),
+    MarketMove(String, i8),
     MarketKey(crate::markets::Secret),
     MarketSaveKey,
     MarketRemoveKey,
@@ -61,6 +63,7 @@ pub struct ToolsEditor {
     pub market_key: crate::markets::Secret,
     pub market_busy: bool,
     pub market_status: Option<String>,
+    pub watchlist_error: Option<String>,
     pub market_preview: crate::markets::State,
     /// What this window sees on the session bus; `None` until asked.
     pub feed: Option<music::Feed>,
@@ -105,6 +108,7 @@ impl Default for ToolsEditor {
             market_key: crate::markets::Secret::default(),
             market_busy: false,
             market_status: None,
+            watchlist_error: None,
             market_preview: crate::tools::cards::sample_markets(),
             feed: None,
             visualizer_draft: None,
@@ -299,7 +303,9 @@ impl ToolsEditor {
     pub fn open(&mut self, tab: Widget, config: &Config) -> Task<crate::settings::Message> {
         self.tab = tab;
         if tab == Widget::Markets {
-            self.market_symbols = config.markets.symbols.join(", ");
+            self.market_symbols.clear();
+            self.watchlist_error = None;
+            self.market_status = None;
             self.market_preview = crate::tools::cards::sample_markets_for(&config.markets);
         }
         self.refresh();
@@ -410,15 +416,48 @@ impl ToolsEditor {
             }
             Message::MarketSymbols(value) => {
                 self.market_symbols = value.chars().take(200).collect();
+                self.watchlist_error = None;
             }
             Message::MarketKey(value) => {
                 if !self.market_busy {
                     self.market_key = value;
                 }
             }
-            Message::MarketSaveSymbols => match crate::markets::symbols(&self.market_symbols) {
-                Ok(symbols) => {
-                    self.market_status = None;
+            Message::MarketAdd => {
+                let mut symbols = config.markets.symbols.clone();
+                match crate::markets::symbols(&self.market_symbols) {
+                    Err(error) => self.watchlist_error = Some(error.into()),
+                    Ok(items) => {
+                        for symbol in items {
+                            if !symbols.contains(&symbol) {
+                                symbols.push(symbol);
+                            }
+                        }
+                        if symbols.len() > crate::markets::MAX_SYMBOLS {
+                            self.watchlist_error = Some(
+                                "The watchlist holds five items. Remove one to add another.".into(),
+                            );
+                        } else if symbols == config.markets.symbols {
+                            self.watchlist_error = Some("Already in your watchlist.".into());
+                        } else {
+                            self.watchlist_error = None;
+                            return (
+                                Task::none(),
+                                Some(Saved::Tool(
+                                    Widget::Markets,
+                                    "symbols",
+                                    serde_json::json!(symbols),
+                                )),
+                            );
+                        }
+                    }
+                }
+            }
+            Message::MarketRemove(symbol) => {
+                let mut symbols = config.markets.symbols.clone();
+                if symbols.len() > 1 && symbols.contains(&symbol) {
+                    symbols.retain(|s| s != &symbol);
+                    self.watchlist_error = None;
                     return (
                         Task::none(),
                         Some(Saved::Tool(
@@ -428,8 +467,25 @@ impl ToolsEditor {
                         )),
                     );
                 }
-                Err(error) => self.market_status = Some(error.into()),
-            },
+            }
+            Message::MarketMove(symbol, direction) => {
+                let mut symbols = config.markets.symbols.clone();
+                if let Some(index) = symbols.iter().position(|s| s == &symbol)
+                    && let Some(next) = index.checked_add_signed(isize::from(direction))
+                    && next < symbols.len()
+                {
+                    symbols.swap(index, next);
+                    self.watchlist_error = None;
+                    return (
+                        Task::none(),
+                        Some(Saved::Tool(
+                            Widget::Markets,
+                            "symbols",
+                            serde_json::json!(symbols),
+                        )),
+                    );
+                }
+            }
             Message::MarketSaveKey | Message::MarketRemoveKey => {
                 if self.market_busy {
                     return (Task::none(), None);

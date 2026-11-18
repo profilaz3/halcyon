@@ -777,6 +777,7 @@ const SEARCH: &[SearchHit] = &[
     .names_page(),
     hit(Page::Markets, "Data source", "public yahoo ECB exchange rates free no key provider", false),
     hit(Page::Markets, "Symbols", "stock ticker exchange", false),
+    hit(Page::Markets, "Show on widget", "daily change price chart publication date source details", false),
     hit(Page::Markets, "Watchlist", "stocks shares currency pairs EUR/USD list", false),
     hit(Page::Markets, "Twelve Data", "provider api key connection", false),
     DOCK_SEE_THROUGH,
