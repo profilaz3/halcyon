@@ -89,7 +89,7 @@ impl Settings {
         }
         for (index, symbol) in markets.symbols.iter().enumerate() {
             let mut item = row::with_children(vec![
-                container(label(symbol, 14., FG)).width(Length::Fill).into(),
+                container(line(symbol, 14., FG)).width(Length::Fill).into(),
             ])
             .spacing(4)
             .align_y(Alignment::Center);
@@ -124,36 +124,36 @@ impl Settings {
             watchlist.push(item.into());
         }
         let mut controls = vec![
-            group(Some("Watchlist"), watchlist),
-            group(
+            self.search_target("markets-watchlist", group(Some("Watchlist"), watchlist)),
+            self.search_target("markets-display", group(
                 Some("Show on widget"),
                 vec![
-                    switch(
+                    self.search_target("markets-change", switch(
                         "Daily change",
                         "Percentage change since the previous quote",
                         markets.show_change,
                         |value| option(Widget::Markets, "show_change", value),
-                    ),
-                    switch(
+                    )),
+                    self.search_target("markets-chart", switch(
                         "Price chart",
                         "Price history for the selected item",
                         markets.show_chart,
                         |value| option(Widget::Markets, "show_chart", value),
-                    ),
-                    switch(
+                    )),
+                    self.search_target("markets-date", switch(
                         "Publication date",
                         "Date of the rate or time of the stock quote",
                         markets.show_date,
                         |value| option(Widget::Markets, "show_date", value),
-                    ),
-                    switch(
+                    )),
+                    self.search_target("markets-details", switch(
                         "Source and chart details",
                         "Provider, chart dates, and low and high prices when space permits",
                         markets.show_details,
                         |value| option(Widget::Markets, "show_details", value),
-                    ),
+                    )),
                 ],
-            ),
+            )),
             group(
                 Some("Data source"),
                 vec![source_controls, label(source_note, 13., FG)],
