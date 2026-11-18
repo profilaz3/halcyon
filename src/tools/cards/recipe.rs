@@ -556,7 +556,7 @@ fn music_with_ids<'a, M: Clone + 'static>(
                 config,
                 p,
                 view.art.filter(|_| visible.contains(&Part::Artwork)),
-                [f32::from(PADDING) + art_size * 0.86, size[1] * 0.5],
+                [f32::from(PADDING) + art_size * 0.78, size[1] * 0.5],
                 art_size + 28.,
                 if recipe.finish.is_some() {
                     18.

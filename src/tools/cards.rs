@@ -761,9 +761,9 @@ pub fn music_visualized<'a, M: Clone + 'static>(
             p,
             cover,
             if wide {
-                [f32::from(PADDING) + sleeve * 0.86, height * 0.5]
+                [f32::from(PADDING) + sleeve * 0.78, height * 0.5]
             } else {
-                [f32::from(PADDING) + 38., (height * 0.5 - 25.).max(24.)]
+                [f32::from(PADDING) + 34., (height * 0.5 - 25.).max(24.)]
             },
             if wide {
                 sleeve * 1.12
@@ -1476,6 +1476,10 @@ mod tests {
             assert!(
                 (165..190).all(|x| delta(x, 26) > 20),
                 "{backend} should show a continuous band of light beside a muted sleeve"
+            );
+            assert!(
+                delta(230, 26) <= 40,
+                "{backend} should soften the reflection across the track details"
             );
             assert!(
                 delta(510, 78).abs() <= 1,

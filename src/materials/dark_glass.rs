@@ -165,7 +165,7 @@ fn reflected_color(rgb: [u8; 3]) -> [f32; 4] {
     let [r, g, b] = rgb.map(|channel| f32::from(channel) / peak);
     let color = Color::from_rgb(r, g, b);
     let mut linear = color.into_linear();
-    linear[3] = (0.17 / color.relative_luminance().max(0.01)).min(0.76);
+    linear[3] = (0.11 / color.relative_luminance().max(0.01)).min(0.50);
     linear
 }
 
