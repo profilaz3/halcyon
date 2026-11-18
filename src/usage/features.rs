@@ -39,9 +39,9 @@ fn effect(config: &Config) -> &'static str {
     }
 }
 
-fn theme_style(config: &Config) -> &'static str {
+fn theme_style(config: &Config) -> Option<&'static str> {
     use crate::desktop_theme::Family;
-    match config.appearance.family {
+    Some(match config.appearance.family {
         None => "default",
         Some(Family::Soft) => "soft",
         Some(Family::Outline) => "outline",
@@ -57,7 +57,9 @@ fn theme_style(config: &Config) -> &'static str {
         Some(Family::Retro) => "retro",
         Some(Family::Pastel) => "pastel",
         Some(Family::Bauhaus) => "bauhaus",
-    }
+        // The current report schema has no category for these styles.
+        Some(Family::MicaSlate | Family::TapeDeck | Family::Porcelain) => return None,
+    })
 }
 
 /// True when any listed bar has it on, false when every listed bar is known
@@ -104,7 +106,7 @@ pub(crate) fn snapshot(
         }),
         visualizer: config.map(|c| c.music.enabled && c.music.visualizer.active()),
         wallpaper_depth: config.map(|c| c.clock.depth),
-        theme_style: config.map(theme_style),
+        theme_style: config.and_then(theme_style),
         automation,
     }
 }

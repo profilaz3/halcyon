@@ -112,8 +112,13 @@ pub(super) fn has_island(draft: &PanelDraft) -> bool {
     })
 }
 
-/// The island pill: round artwork and a level meter on a dark capsule.
-fn island_pill<'a>(size: [f32; 2], dark: bool, accent: Color) -> Element<'a, Message> {
+/// The resting island leaves the panel visible in Follow the theme mode.
+pub(super) fn island_pill<'a>(
+    size: [f32; 2],
+    style: crate::activity_island::preferences::IslandStyle,
+    accent: Color,
+) -> Element<'a, Message> {
+    let (surface, accent) = style.preview_colors(accent);
     let h = size[1];
     let art = container(text::body(""))
         .width(h * 0.6)
@@ -152,11 +157,6 @@ fn island_pill<'a>(size: [f32; 2], dark: bool, accent: Color) -> Element<'a, Mes
     let meter = row::with_children(vec![level(0.3), level(0.5), level(0.38)])
         .spacing((h * 0.08).max(1.) as u16)
         .align_y(Alignment::End);
-    let surface = if dark {
-        Color::from_rgb(0.02, 0.03, 0.03)
-    } else {
-        Color::from_rgb(0.12, 0.13, 0.15)
-    };
     container(
         row::with_children(vec![
             art.into(),
@@ -171,11 +171,11 @@ fn island_pill<'a>(size: [f32; 2], dark: bool, accent: Color) -> Element<'a, Mes
     .align_y(Alignment::Center)
     .class(cosmic::theme::Container::custom(move |_| {
         cosmic::iced::widget::container::Style {
-            background: Some(Background::Color(surface)),
+            background: surface.map(Background::Color),
             border: Border {
                 radius: (h / 2.).into(),
                 color: Color::from_rgba(1., 1., 1., 0.12),
-                width: 1.,
+                width: if surface.is_some() { 1. } else { 0. },
             },
             ..Default::default()
         }
@@ -637,13 +637,11 @@ impl Settings {
                     )
                 }
             });
-            let dark_island =
-                config.activity_island.style == crate::activity_island::preferences::IslandStyle::Dark;
             if let Some(rect) = island_rect {
                 let size = [rect.width, rect.height];
                 layers.push(
                     pin(hotspot(
-                        island_pill(size, dark_island, accent),
+                        island_pill(size, config.activity_island.style, accent),
                         Page::ActivityIsland,
                         part_id(Page::ActivityIsland),
                         "Activity island".into(),
@@ -763,7 +761,7 @@ impl Settings {
             let lit_island = |rect: Rectangle| -> Element<'static, Message> {
                 pin(quiet(island_pill(
                     [rect.width, rect.height],
-                    dark_island,
+                    config.activity_island.style,
                     accent,
                 )))
                 .position(rect.position())

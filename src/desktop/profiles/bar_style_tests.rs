@@ -17,7 +17,7 @@ const RAIN_BARS: Finish = Finish {
 
 /// Bar opacity, radius, padding, spacing, island gap, floating and the
 /// least opacity a glass material may give the bars, per style.
-const EXPECTED: [(Family, f32, u32, u32, u32, u16, bool, u8); 14] = [
+const EXPECTED: [(Family, f32, u32, u32, u32, u16, bool, u8); Family::ALL.len()] = [
     (Family::Soft, 0.94, 20, 8, 6, 12, true, 85),
     (Family::Outline, 0.98, 5, 6, 4, 8, false, 90),
     (Family::Paper, 1., 12, 8, 6, 12, false, 90),
@@ -32,6 +32,9 @@ const EXPECTED: [(Family, f32, u32, u32, u32, u16, bool, u8); 14] = [
     (Family::Retro, 1., 8, 6, 6, 10, true, 95),
     (Family::Pastel, 0.9, 28, 8, 8, 14, true, 80),
     (Family::Bauhaus, 1., 0, 6, 6, 8, false, 100),
+    (Family::MicaSlate, 0.94, 8, 6, 8, 8, false, 92),
+    (Family::TapeDeck, 0.84, 4, 4, 4, 6, true, 74),
+    (Family::Porcelain, 0.98, 28, 8, 10, 16, true, 94),
 ];
 
 /// See-through by design: glass cards or cards with no surface at all.

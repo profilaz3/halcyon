@@ -51,6 +51,7 @@ pub(super) enum SearchOpen {
     None,
     City,
     Effects,
+    Styles,
     Readability,
     /// The widget material's see-through control.
     Transparency,
@@ -530,6 +531,12 @@ const SEARCH: &[SearchHit] = &[
         "widget cards card styles shape corners borders type soft outline paper bare glass dark glass shader grain sheen tinted frosted midnight terminal neon editorial retro pastel bauhaus",
         false,
     ),
+    hit(Page::Themes, "Mica Slate", "windows 11 fluent blue graphite style", false)
+        .open(SearchOpen::Styles).at("preset-theme-mica-slate"),
+    hit(Page::Themes, "Tape Deck", "hifi stereo amber charcoal instruments style", false)
+        .open(SearchOpen::Styles).at("preset-theme-tape-deck"),
+    hit(Page::Themes, "Porcelain", "ceramic cobalt rounded light style", false)
+        .open(SearchOpen::Styles).at("preset-theme-porcelain"),
     hit(
         Page::Themes,
         "Accent color",
@@ -2112,6 +2119,7 @@ mod tests {
             match renamed.open {
                 SearchOpen::City => assert!(app.city_editing),
                 SearchOpen::Effects => assert!(app.system_appearance.effects),
+                SearchOpen::Styles => assert!(app.open_sections.contains("appearance-all-styles")),
                 SearchOpen::Readability | SearchOpen::Transparency => {
                     assert!(app.material_adjust);
                     assert_eq!(app.material_target, crate::materials::Target::Widgets);

@@ -36,6 +36,19 @@ const DARK_INK: Color = Color::from_rgb(0.961, 0.961, 0.969);
 const DARK_QUIET: Color = Color::from_rgb(0.588, 0.588, 0.612);
 const DARK_FAINT: Color = Color::from_rgb(0.357, 0.357, 0.373);
 
+impl IslandStyle {
+    /// The resting surface and meter for the miniature island in Settings.
+    pub(crate) fn preview_colors(self, accent: Color) -> (Option<Color>, Color) {
+        match self {
+            Self::Theme => (None, accent),
+            Self::Dark => {
+                let palette = Palette::dark();
+                (Some(palette.surface), palette.readable(accent))
+            }
+        }
+    }
+}
+
 /// Under "Follow the theme" the host owns the resting background, including
 /// Islands finishes, and the open surface uses the panel's native palette. The
 /// Dark style paints its own near-black pill at rest and open.

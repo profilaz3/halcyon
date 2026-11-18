@@ -2802,6 +2802,9 @@ impl Settings {
                 if hit.open == navigation::SearchOpen::City {
                     self.city_editing = true;
                 }
+                if hit.open == navigation::SearchOpen::Styles {
+                    self.open_sections.insert("appearance-all-styles");
+                }
                 if let navigation::SearchOpen::Metric(metric) = hit.open {
                     if !self.devbox_details.contains(&metric) {
                         self.devbox_details.push(metric);
