@@ -18,6 +18,27 @@ const releases = async () => new Response(JSON.stringify([
   {tag_name: 'v0.7.0-rc1', published_at: at(8).toISOString(), draft: false, prerelease: true},
 ]));
 
+test('the partial UTC day becomes history only after midnight, including new and per-method counts', async () => {
+  const env = {DB: createD1()};
+  const before = new Date('2026-11-18T23:59:00Z'), after = new Date('2026-11-19T00:01:00Z');
+  const direct = i => report(i, {version: '0.6.1', installed_app_version: '0.6.1',
+    package_format: i === 2 ? 'rpm' : 'deb', update_channel: i === 2 ? 'dnf' : 'apt'});
+  await post(env, direct(1), new Date(+before - 86400000));
+  for (const i of [1, 1, 2]) await post(env, direct(i), before);
+  const partial = await maintain(env.DB, before, {fetchImpl: releases});
+  assert.equal(partial.days.at(-1), '2026-11-17');
+  assert.equal(partial.by_segment.all.today, 2);
+  assert.equal(partial.by_segment.all.today_new, 1);
+  assert.equal(partial.by_segment.deb.today_new, 0);
+  assert.equal(partial.by_segment.rpm.today_new, 1);
+  const next = await maintain(env.DB, after, {fetchImpl: releases});
+  assert.equal(next.days.at(-1), '2026-11-18');
+  assert.equal(next.by_segment.all.yesterday, 2);
+  assert.equal(next.by_segment.all.new.at(-1), 1);
+  assert.equal(next.by_segment.all.today, 0);
+  assert.equal(next.by_segment.all.today_new, 0);
+});
+
 test('versions sort numerically with pre-releases first', () => {
   assert.deepEqual(['0.10.0', '0.9.1', '0.9.1-rc1', '0.2.0'].sort(compareVersions), ['0.2.0', '0.9.1-rc1', '0.9.1', '0.10.0']);
 });
