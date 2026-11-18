@@ -199,11 +199,13 @@ impl std::hash::Hash for Feed {
     }
 }
 
+const QUOTE_INTERVAL: Duration = Duration::from_secs(15 * 60);
+
 pub fn subscription(mut preferences: Preferences, seed: State) -> Subscription<State> {
     preferences.normalize();
     Subscription::run_with(Feed { preferences, seed }, |feed| {
         let preferences = feed.preferences.clone();
-        let seed = if feed.seed.fresh_for(&preferences) {
+        let seed = if feed.seed.same_quote_source(&preferences) {
             feed.seed.clone()
         } else {
             State::default()
@@ -229,7 +231,8 @@ pub fn subscription(mut preferences: Preferences, seed: State) -> Subscription<S
                     if output.send(state.clone()).await.is_err() {
                         break;
                     }
-                    tokio::time::sleep(Duration::from_secs(15 * 60)).await;
+                    tokio::time::sleep(state.next_refresh(reuse_quotes, std::time::Instant::now()))
+                        .await;
                     continue;
                 }
                 let key = read_key().await;
@@ -291,7 +294,8 @@ pub fn subscription(mut preferences: Preferences, seed: State) -> Subscription<S
                 if output.send(state.clone()).await.is_err() {
                     break;
                 }
-                tokio::time::sleep(Duration::from_secs(15 * 60)).await;
+                tokio::time::sleep(state.next_refresh(reuse_quotes, std::time::Instant::now()))
+                    .await;
             }
         })
     })
@@ -445,14 +449,29 @@ pub struct State {
 }
 
 impl State {
-    fn fresh_for(&self, preferences: &Preferences) -> bool {
+    fn same_quote_source(&self, preferences: &Preferences) -> bool {
         self.source.as_ref().is_some_and(|p| {
             p.provider == preferences.provider
                 && p.symbols == preferences.symbols
                 && p.credential_revision == preferences.credential_revision
-        }) && self
-            .received_at
-            .is_some_and(|at| at.elapsed() < Duration::from_secs(15 * 60))
+        })
+    }
+
+    // Chart selection restarts the stream. Keep the original quote deadline
+    // when reusing its snapshot, even if loading the new chart took a while.
+    fn next_refresh(&self, reused: bool, now: std::time::Instant) -> Duration {
+        if reused && let Some(at) = self.received_at {
+            QUOTE_INTERVAL.saturating_sub(now.saturating_duration_since(at))
+        } else {
+            QUOTE_INTERVAL
+        }
+    }
+
+    fn fresh_for(&self, preferences: &Preferences) -> bool {
+        self.same_quote_source(preferences)
+            && self
+                .received_at
+                .is_some_and(|at| at.elapsed() < QUOTE_INTERVAL)
             && self.unavailable.is_empty()
             && preferences
                 .symbols
@@ -579,6 +598,30 @@ mod tests {
         assert!(!state.fresh_for(&preferences));
         state.unavailable.push("AAPL".into());
         assert!(!state.fresh_for(&Preferences::default()));
+    }
+
+    #[test]
+    fn chart_changes_keep_old_quotes_and_the_original_refresh_deadline() {
+        let mut preferences = Preferences::default();
+        let mut state = crate::tools::cards::sample_markets();
+        let now = std::time::Instant::now();
+        let at = now - Duration::from_secs(14 * 60);
+        state.received_at = Some(at);
+        preferences.selected = "MSFT".into();
+        assert!(state.fresh_for(&preferences));
+        assert_eq!(state.next_refresh(true, now), Duration::from_secs(60));
+        assert_eq!(
+            state.next_refresh(true, at + QUOTE_INTERVAL),
+            Duration::ZERO
+        );
+
+        state.received_at = Some(now - QUOTE_INTERVAL);
+        state.unavailable.push("AAPL".into());
+        assert!(!state.fresh_for(&preferences));
+        assert!(state.same_quote_source(&preferences));
+        assert_eq!(state.next_refresh(false, now), QUOTE_INTERVAL);
+        preferences.credential_revision += 1;
+        assert!(!state.same_quote_source(&preferences));
     }
 
     #[test]

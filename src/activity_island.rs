@@ -669,25 +669,6 @@ impl Application for Applet {
         all.push(notifications::subscription().map(Message::Notes));
         all.push(transfers::subscription().map(|u| Message::Live(live::Msg::Transfer(u))));
         all.push(downloads::subscription().map(|u| Message::Live(live::Msg::Transfer(u))));
-        let clock = (self.popup.is_some()
-            && self.kind == Kind::Music
-            && self.music_progress().is_some()
-            && self.snapshot.music.as_ref().is_some_and(|m| m.playing))
-            || (self.kind == Kind::Focus
-                && self.snapshot.focus.running
-                && self
-                    .snapshot
-                    .focus
-                    .ends_at_ms
-                    .is_some_and(|end| end > self.now_ms))
-            || (self.kind == Kind::Calendar
-                && self
-                    .snapshot
-                    .calendar
-                    .as_ref()
-                    .is_some_and(|c| c.ends_at_ms > self.now_ms))
-            // A running timer counts once a second, open or closed.
-            || (self.kind == Kind::Timer && self.timer().is_some_and(|t| t.running()));
         if let Some(at) = self
             .hover_deadline
             .into_iter()
@@ -700,7 +681,7 @@ impl Application for Applet {
             .chain(self.start_deadline)
             .chain(self.cleared.as_ref().filter(|c| !c.done).map(|c| c.until))
             .chain(self.ui.jobs.deadline())
-            .chain(clock.then_some(self.next_clock))
+            .chain(self.visible_clock_interval().map(|_| self.next_clock))
             .min()
         {
             all.push(crate::schedule::wake_at(at).map(Message::Wake));
@@ -1109,29 +1090,7 @@ impl Applet {
                     return open;
                 }
                 if self.popup == Some(id) {
-                    let cleared = self.finish_clear();
-                    self.cleared = None;
-                    self.popup = None;
-                    self.devices.close();
-                    self.held = false;
-                    self.hovered = false;
-                    self.popup_entered = false;
-                    self.hover_deadline = None;
-                    self.leave_deadline = None;
-                    self.now_ms = chrono::Utc::now().timestamp_millis();
-                    self.arm_pause_grace();
-                    self.kind = self.automatic_kind();
-                    self.from_activities = None;
-                    self.chooser = false;
-                    self.list = false;
-                    self.reset_inbox();
-                    self.ui.view = live::View::Card;
-                    self.shelf_closed();
-                    self.batch.clear();
-                    self.revealed = false;
-                    self.motion.retarget(0., false, now);
-                    self.arm_pending(now + PENDING_PAUSE);
-                    return cleared;
+                    return self.popup_closed();
                 }
             }
             Message::Frame(at) => {
@@ -1221,9 +1180,9 @@ impl Applet {
                 if self.reveal_deadline.is_some() {
                     return reveal;
                 }
-                let interval = if self.kind == Kind::Calendar { 60 } else { 1 };
-                self.next_clock =
-                    crate::schedule::next_clock_tick(now, Duration::from_secs(interval));
+                if let Some(interval) = self.visible_clock_interval() {
+                    self.next_clock = crate::schedule::next_clock_tick(now, interval);
+                }
                 if self.hover_deadline.is_some_and(|at| at <= now) {
                     self.hover_deadline = None;
                     return self.update(Message::Open);
@@ -1256,7 +1215,8 @@ impl Applet {
             Message::Notes(event) => {
                 // A notification with a percentage is a job as well.
                 let job = self.note_transfer(&event, now);
-                return Task::batch([job, self.note_event(event, now)]);
+                let notification = self.note_event(event, now);
+                return Task::batch([job, notification, self.resize_popup()]);
             }
             Message::Live(msg) => {
                 if self.chooser && matches!(msg, live::Msg::TimerPicker) {
@@ -1300,7 +1260,7 @@ impl Applet {
                 let follow = match next {
                     Some(kind) if self.popup.is_some() => {
                         self.kind = kind;
-                        Task::none()
+                        self.resize_popup()
                     }
                     _ => self.update(Message::Close),
                 };
@@ -1343,7 +1303,13 @@ impl Applet {
                 if !self.notes_shown() || (self.notes.is_empty() && !self.has_recent()) {
                     return Task::none();
                 }
+                if self.chooser {
+                    self.from_activities = Some(ActivitySelection::Card);
+                }
                 self.chooser = false;
+                self.ui.view = live::View::Card;
+                self.shelf.open = false;
+                self.devices.close();
                 self.batch.clear();
                 self.reveal_deadline = None;
                 self.revealed = false;
@@ -1455,6 +1421,10 @@ impl Applet {
                 self.from_activities = self.chooser.then_some(ActivitySelection::Card);
                 self.chooser = false;
                 self.list = false;
+                self.reset_inbox();
+                if kind != Kind::Devices {
+                    self.devices.close();
+                }
                 self.ui.view = live::View::Card;
                 self.shelf.open = false;
                 self.batch.clear();
@@ -1503,7 +1473,7 @@ impl Applet {
                 }
                 keyboard::Key::Named(
                     named @ (keyboard::key::Named::ArrowLeft | keyboard::key::Named::ArrowRight),
-                ) if self.popup.is_some() && self.held && self.scrubbing() => {
+                ) if self.popup.is_some() && self.held && self.scrub_position().is_some() => {
                     let step = if named == keyboard::key::Named::ArrowLeft {
                         -live::SEEK_STEP
                     } else {
@@ -1675,6 +1645,31 @@ impl Applet {
     fn live(&self) -> bool {
         self.commands.is_some() && !self.snapshot.focus.key.is_empty()
     }
+    fn showing_activity_card(&self) -> bool {
+        self.live() && !self.chooser && self.ui.view == live::View::Card
+            && !self.shelf_shown() && !self.listing()
+    }
+    /// Wake for the time shown on the visible card. Source changes and activity
+    /// boundaries keep their own deadlines while a chooser or a detail is open.
+    fn visible_clock_interval(&self) -> Option<Duration> {
+        if !self.showing_activity_card() {
+            return None;
+        }
+        let seconds = match self.kind {
+            Kind::Music
+                if self.popup.is_some()
+                    && self.music_progress().is_some()
+                    && self.snapshot.music.as_ref().is_some_and(|m| m.playing) => 1,
+            Kind::Focus
+                if self.snapshot.focus.running
+                    && self.snapshot.focus.ends_at_ms.is_some_and(|end| end > self.now_ms) => 1,
+            Kind::Timer if self.timer().is_some_and(|t| t.running()) => 1,
+            Kind::Calendar
+                if self.snapshot.calendar.as_ref().is_some_and(|c| c.ends_at_ms > self.now_ms) => 60,
+            _ => return None,
+        };
+        Some(Duration::from_secs(seconds))
+    }
     fn refresh_deadline(&mut self, now: Instant) {
         self.priority_deadline = self
             .snapshot
@@ -1780,7 +1775,9 @@ impl Applet {
         self.open_popup_sized()
     }
     fn popup_dimensions(&self) -> (f32, f32) {
-        if self.chooser {
+        if !self.live() {
+            (0., 0.)
+        } else if self.chooser {
             (0., self.chooser_extra())
         } else if self.list || self.menu.is_some() {
             (if self.list { self.list_wide() } else { 0. }, self.list_extra())
@@ -1794,10 +1791,11 @@ impl Applet {
     /// keeping its grab, the selected activity and any change received meanwhile.
     fn resize_popup(&mut self) -> Task<Message> {
         let Some(id) = self.popup else { return Task::none(); };
+        if self.promote_popup.is_some() || self.motion.target() == 0. {
+            return Task::none();
+        }
         let (wide, extra) = self.popup_dimensions();
-        if self.promote_popup.is_none() && self.motion.target() > 0.
-            && ((wide - self.popup_wide).abs() > 0.5 || (extra - self.popup_extra).abs() > 0.5)
-        {
+        if (wide - self.popup_wide).abs() > 0.5 || (extra - self.popup_extra).abs() > 0.5 {
             self.promote_popup = Some(id);
             return self.update(Message::Surface(cosmic::surface::action::destroy_popup(id)));
         }
@@ -1855,7 +1853,10 @@ impl Applet {
             ),
         ))
     }
-    fn destroy_popup(&mut self) -> Task<Message> {
+    /// Both a compositor dismissal and our Collapse action end the same visit.
+    fn popup_closed(&mut self) -> Task<Message> {
+        let now = Instant::now();
+        let had_popup = self.popup.take().is_some();
         let cleared = self.finish_clear();
         self.cleared = None;
         self.promote_popup = None;
@@ -1865,26 +1866,36 @@ impl Applet {
         self.list = false;
         self.reset_inbox();
         self.ui.view = live::View::Card;
+        self.devices.close();
         self.shelf_closed();
         self.arm_pause_grace();
         self.hover_deadline = None;
         self.leave_deadline = None;
+        self.reveal_deadline = None;
         self.hovered = false;
         self.popup_entered = false;
         self.batch.clear();
         self.revealed = false;
+        self.selected_source = None;
+        self.motion.retarget(0., false, now);
         self.now_ms = chrono::Utc::now().timestamp_millis();
         self.kind = self.automatic_kind();
-        if self.popup.is_some() {
-            self.arm_pending(Instant::now() + PENDING_PAUSE);
-        }
-        if let Some(id) = self.popup.take() {
-            return Task::batch([
-                cleared,
-                self.update(Message::Surface(cosmic::surface::action::destroy_popup(id))),
-            ]);
+        if had_popup {
+            self.arm_pending(now + PENDING_PAUSE);
         }
         cleared
+    }
+    fn destroy_popup(&mut self) -> Task<Message> {
+        let id = self.popup;
+        let closed = self.popup_closed();
+        if let Some(id) = id {
+            Task::batch([
+                closed,
+                self.update(Message::Surface(cosmic::surface::action::destroy_popup(id))),
+            ])
+        } else {
+            closed
+        }
     }
     /// Clear all keeps the island open, in hand and at a card's size, while
     /// Undo can still bring the notifications back.

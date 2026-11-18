@@ -337,6 +337,7 @@ pub enum Message {
     EdgeTip(Option<drawer::DrawerItem>),
     /// An item of the customized edge menu, by its place in the list.
     EdgeItem(usize),
+    EdgeAvailability(std::sync::Arc<Vec<crate::config::edge_menu::Item>>, Vec<bool>),
     /// "Customize this menu": the edge menu's page in Settings.
     EdgeCustomize,
     /// Widgets › Show widgets, from the edge menu.
@@ -430,6 +431,9 @@ pub struct Cards {
     surface_inputs: Option<[Vec<[u32; 4]>; 6]>,
     /// Inside `update` (which also runs nested for some messages).
     updating: bool,
+    /// A dispatched message changed what the Activity island can display.
+    activity_dirty: bool,
+    config_writes: config_writes::Writes,
     /// The card surfaces need rebuilding at the end of this update.
     rebuild_pending: bool,
     /// The edge menu's surface is open. It is closed while the menu is
@@ -577,6 +581,8 @@ impl cosmic::Application for Cards {
             display_generation: 0,
             surface_inputs: None,
             updating: false,
+            activity_dirty: false,
+            config_writes: Default::default(),
             rebuild_pending: false,
             controls_open: false,
             work_area: [None; 2],
@@ -659,7 +665,6 @@ impl cosmic::Application for Cards {
             crate::activity_island::timer::load_from(&path, chrono::Utc::now().timestamp_millis())
         });
         app.publish_activity();
-        app.refresh_edge_available();
         tasks.push(cosmic::task::future(async {
             tokio::time::sleep(std::time::Duration::from_secs(20)).await;
             Message::Activity(crate::activity_island::bridge::Event::Settled)
@@ -932,22 +937,6 @@ impl cosmic::Application for Cards {
         // refused, leaving a surface with a stale size and input region.
         // Surface work runs beside the update's other work (an artwork or
         // weather download), never queued behind it.
-        let activity_dirty = matches!(
-            &msg,
-            Message::Activity(_)
-                | Message::MusicFeed(_)
-                | Message::Devices(_)
-                | Message::Messages(_)
-                | Message::MusicControlDone(_)
-                | Message::FocusCommand(_)
-                | Message::MusicArt(..)
-                | Message::Tool(_)
-                | Message::Calendar(..)
-                | Message::PreviewCalendar(_)
-                | Message::FilesChanged
-                | Message::SystemMotion(_)
-                | Message::Woke(..)
-        );
         let outer = !self.updating;
         let input = restart::input(&msg);
         self.updating = true;
@@ -996,7 +985,7 @@ impl cosmic::Application for Cards {
         if !self.messages_demand() {
             self.tools.messages = crate::messages::State::default();
         }
-        if activity_dirty {
+        if std::mem::take(&mut self.activity_dirty) {
             self.publish_activity();
         }
         Task::batch([task, surfaces, backdrop, depth, spectrum, rain, glass])
@@ -1128,16 +1117,15 @@ impl Cards {
             return Task::none();
         }
         self.controls_open = needed;
-        if needed {
-            // Apps installed or removed, folders made or gone since.
-            self.refresh_edge_available();
-        }
         let destroy =
             cosmic::iced::platform_specific::shell::commands::layer_surface::destroy_layer_surface(
                 self.ids[2],
             );
         if needed {
-            destroy.chain(self.controls_surface(self.ids[2], self.sidebar.margin()))
+            Task::batch([
+                destroy.chain(self.controls_surface(self.ids[2], self.sidebar.margin())),
+                self.refresh_edge_available(),
+            ])
         } else {
             destroy
         }
@@ -1241,12 +1229,10 @@ impl Cards {
             self.paused_layout = Some(std::mem::take(&mut self.layout_editor));
         }
         self.pause_note();
-        // Sidebar reordering only previews in config until release. Retiring its
-        // surface cancels that preview before replacement geometry is computed.
-        if let Some(drag) = self.sidebar.drag.take() {
-            self.config.widget_order = drag.original_order.iter().map(|w| w.key().into()).collect();
-        }
-        self.sidebar.hide();
+        // Old tool surfaces are destroyed below. Their replacements must not
+        // take exclusive keyboard focus on another display.
+        self.interacting_tool = None;
+        self.retire_drawer();
         if self
             .paused_layout
             .as_ref()
@@ -1300,6 +1286,23 @@ impl Cards {
         .discard()
     }
     fn handle_update(&mut self, msg: Message) -> Task<Message> {
+        self.activity_dirty |= matches!(
+            &msg,
+            Message::Activity(_)
+                | Message::MusicFeed(_)
+                | Message::Devices(_)
+                | Message::Messages(_)
+                | Message::MusicControlDone(_)
+                | Message::FocusCommand(_)
+                | Message::MusicArt(..)
+                | Message::Tool(_)
+                | Message::Calendar(..)
+                | Message::PreviewCalendar(_)
+                | Message::ConfigSaved(_)
+                | Message::FilesChanged
+                | Message::SystemMotion(_)
+                | Message::Woke(..)
+        );
         match msg {
             Message::Activity(event) => self.activity_message(event),
             Message::RainLifecycle(state) => {
@@ -1734,6 +1737,13 @@ impl Cards {
                 Task::none()
             }
             Message::EdgeItem(index) => self.edge_item(index),
+            Message::EdgeAvailability(items, available) => {
+                if self.edge.checking.as_ref().is_some_and(|pending| std::sync::Arc::ptr_eq(pending, &items)) {
+                    self.edge.available = available;
+                    self.edge.checking = None;
+                }
+                Task::none()
+            }
             Message::EdgeCustomize => self.customize_edge_menu(),
             Message::SetWidgetsVisible(visible) => self.set_widgets_visible(visible),
             Message::SetDnd(on) => self.set_dnd(on),
@@ -1861,11 +1871,7 @@ impl Cards {
                 Task::none()
             }
             Message::HideControls => {
-                if let Some(drag) = self.sidebar.drag.take() {
-                    self.config.widget_order =
-                        drag.original_order.iter().map(|w| w.key().into()).collect();
-                }
-                self.sidebar.hide();
+                self.hide_drawer();
                 Task::none()
             }
             Message::FocusWidget(widget) => {
@@ -2928,19 +2934,19 @@ impl Cards {
             .unwrap_or_default()
     }
     fn earlier_control(&self, count: usize, p: Palette) -> Element<'_, Message> {
-        container(action(
-            if self.show_earlier {
-                "Hide earlier ↑".into()
-            } else {
-                format!("Earlier · {count} ↓")
-            },
-            Message::ToggleEarlier,
-            p.muted,
-        ))
-        .id(cosmic::widget::Id::new("calendar-earlier"))
-        .height(22.)
-        .align_y(Alignment::Center)
-        .into()
+        let title = if self.show_earlier {
+            "Hide earlier ↑".into()
+        } else {
+            format!("Earlier · {count} ↓")
+        };
+        cosmic::widget::button::custom(label(&title, 12., p.muted))
+            .name(title)
+            .id(cosmic::widget::Id::new("calendar-earlier"))
+            .class(cosmic::theme::Button::Text)
+            .padding([2, 8])
+            .height(22.)
+            .on_press(Message::ToggleEarlier)
+            .into()
     }
     /// The same toggle, sized to sit beside a day heading.
     fn earlier_inline(&self, count: usize, p: Palette) -> Element<'_, Message> {

@@ -6,7 +6,7 @@ use crate::config::edge_menu::{
     MAX_ROUNDNESS, MIN_COLUMNS, MIN_HANDLE, MIN_HANDLE_OPACITY, MIN_OPACITY, OpenOn, Side, Speed,
     Style,
 };
-use crate::settings::edge_menu::{Edit, Field, common_folders, folder_item, listed};
+use crate::settings::edge_menu::{Edit, Field, folder_item, listed};
 
 fn edit(message: Edit) -> Message {
     Message::EdgeMenu(message)
@@ -845,7 +845,11 @@ impl Settings {
                     .class(text_style(if available { FG } else { MUTED }))
                     .into(),
                 label(
-                    if available {
+                    if page.available.get(index).is_none()
+                        && matches!(item.kind, Kind::App { .. } | Kind::Folder { .. })
+                    {
+                        format!("{} · Checking…", kind_title(item))
+                    } else if available {
                         kind_title(item).to_string()
                     } else {
                         format!("{} · Unavailable", kind_title(item))
@@ -976,9 +980,9 @@ impl Settings {
             .map(|action| tile(Item::action(action), None))
             .collect();
         let looks = page
-            .looks
+            .entries
             .iter()
-            .flatten()
+            .flat_map(|entries| &entries.looks)
             .map(|(look, name)| {
                 tile(
                     Item::new(Kind::Look {
@@ -1006,14 +1010,24 @@ impl Settings {
             })
             .collect();
         if apps.is_empty() {
-            apps.push(label("No apps match", CAPTION, MUTED));
+            apps.push(label(
+                if page.entries.is_none() {
+                    "Loading apps…"
+                } else {
+                    "No apps match"
+                },
+                CAPTION,
+                MUTED,
+            ));
         }
-        let mut folders: Vec<Element<'_, Message>> = common_folders()
-            .into_iter()
+        let mut folders: Vec<Element<'_, Message>> = page
+            .entries
+            .iter()
+            .flat_map(|entries| &entries.folders)
             .map(|(name, path)| {
-                let mut item = folder_item(&path);
+                let mut item = folder_item(path);
                 if let Kind::Folder { name: own, .. } = &mut item.kind {
-                    *own = name;
+                    own.clone_from(name);
                 }
                 tile(item, None)
             })

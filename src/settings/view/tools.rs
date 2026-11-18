@@ -67,25 +67,26 @@ impl Settings {
             }
             Provider::TwelveData => "Exchange coverage and delays depend on your Twelve Data plan.",
         };
-        let mut controls = vec![
-            group(
-                Some("Watchlist"),
-                vec![
-                    group_row_state(
-                        "Symbols",
-                        "Up to five stocks, separated by commas. Select a stock on the widget to see its chart.",
-                        text_input("AAPL, MSFT, NVDA", &editor.market_symbols)
-                            .id("market-symbol-input".into())
-                            .on_submit(|_| edit(Edit::MarketSaveSymbols))
-                            .on_input(|s| edit(Edit::MarketSymbols(s)))
-                            .width(Length::Fill)
-                            .into(),
-                    ),
-                    button::text("Save watchlist")
-                        .on_press(edit(Edit::MarketSaveSymbols))
-                        .into(),
-                ],
+        let mut watchlist = vec![
+            group_row_state(
+                "Symbols",
+                "Up to five stocks, separated by commas. Select a stock on the widget to see its chart.",
+                text_input("AAPL, MSFT, NVDA", &editor.market_symbols)
+                    .id("market-symbol-input".into())
+                    .on_submit(|_| edit(Edit::MarketSaveSymbols))
+                    .on_input(|s| edit(Edit::MarketSymbols(s)))
+                    .width(Length::Fill)
+                    .into(),
             ),
+            button::text("Save watchlist")
+                .on_press(edit(Edit::MarketSaveSymbols))
+                .into(),
+        ];
+        if let Some(problem) = editor.market_symbols_error {
+            watchlist.push(label(problem, 13., ERROR));
+        }
+        let mut controls = vec![
+            group(Some("Watchlist"), watchlist),
             group(
                 Some("Data source"),
                 vec![source_controls, label(source_note, 13., FG)],

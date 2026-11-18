@@ -329,6 +329,40 @@ fn architecture_output_demand_preserves_background_consumers() {
 }
 
 #[test]
+fn open_readers_keep_only_their_provider_active_after_the_desktop_is_hidden() {
+    let (mut cards, _) = Cards::init(Core::default(), config());
+    cards.config.widgets_visible = false;
+    cards.config.project_roots = vec!["/example".into()];
+    for widget in [
+        Widget::Projects,
+        Widget::Devbox,
+        Widget::Calendar,
+        Widget::Glance,
+    ] {
+        let _ = cards.update(Message::ReadingDetails(widget));
+        assert_eq!(
+            cards.provider_visible(Widget::Projects),
+            widget == Widget::Projects
+        );
+        assert_eq!(
+            cards.provider_visible(Widget::Devbox),
+            widget == Widget::Devbox
+        );
+        assert_eq!(
+            cards.calendar_demand(),
+            matches!(widget, Widget::Calendar | Widget::Glance)
+        );
+        assert!(!cards.provider_visible(Widget::Weather));
+        assert!(cards.next_wake().is_some());
+    }
+    let _ = cards.update(Message::CloseReading);
+    assert!(!cards.provider_visible(Widget::Projects));
+    assert!(!cards.provider_visible(Widget::Devbox));
+    assert!(!cards.calendar_demand());
+    assert!(cards.next_wake().is_none());
+}
+
+#[test]
 fn messages_follow_either_surface_and_release_private_cache() {
     if isolated("app::providers::tests::messages_follow_either_surface_and_release_private_cache") {
         return;

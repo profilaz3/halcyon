@@ -493,16 +493,12 @@ impl Applet {
     pub(super) fn list_card_extra(&self, extra: f32) -> f32 {
         (self.list_layout(LIST_ROOM + extra).height - LIST_ROOM).clamp(0., extra)
     }
-    /// A popup's size is fixed when it opens: reopen it in hand when the
-    /// list has grown past it.
+    /// A list action keeps the popup in hand and fits the selected rows.
     pub(super) fn fit_list(&mut self) -> Task<Message> {
-        match self.popup {
-            Some(id) if self.popup_extra + 0.5 < self.list_extra() => {
-                self.held = true;
-                self.promote_popup = Some(id);
-                self.update(Message::Surface(cosmic::surface::action::destroy_popup(id)))
-            }
-            _ => Task::none(),
+        if self.popup.is_some() {
+            self.hold_popup()
+        } else {
+            Task::none()
         }
     }
     /// Keeps a notification that left the list, unless its app is muted.
@@ -635,7 +631,7 @@ impl Applet {
                 let dismiss = cosmic::task::future(async move {
                     Message::SettingsOpened(notifications::dismiss(ids).await)
                 });
-                return Task::batch([follow, dismiss]);
+                return Task::batch([follow, dismiss, self.resize_popup()]);
             }
             Message::RecentToggle => {
                 self.recent_open = !self.recent_open;
@@ -645,7 +641,6 @@ impl Applet {
                 self.list_from = from;
                 self.expanded = None;
                 self.reveal_deadline = None;
-                self.held = true;
                 return self.fit_list();
             }
             Message::RowHover(row, true) => self.hover_row = Some(row),
@@ -666,6 +661,7 @@ impl Applet {
                 if self.notes.is_empty() {
                     return self.update(Message::Close);
                 }
+                return self.fit_list();
             }
             Message::RecentOpen(id) => {
                 let Some(recent) = self.recent.iter_mut().find(|r| r.note.id == id) else {
@@ -714,11 +710,11 @@ impl Applet {
                 });
                 self.reveal_deadline = None;
                 self.revealed = false;
-                self.held = true;
                 return self.fit_list();
             }
             Message::MenuClose => {
                 self.menu = None;
+                return self.fit_list();
             }
             Message::NoteRule(rule) => {
                 let Some(target) = self.menu.take() else {
@@ -737,7 +733,7 @@ impl Applet {
                     entry: target.entry,
                     rule,
                 }));
-                return Task::batch([follow, save]);
+                return Task::batch([follow, save, self.resize_popup()]);
             }
             _ => {}
         }

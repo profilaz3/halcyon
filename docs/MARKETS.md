@@ -14,11 +14,11 @@ Resizing adapts the content without scrolling inside the widget. All watchlist r
 
 To use Twelve Data instead, select **Twelve Data**, choose **Get an API key**, and save your key in the password field. Your desktop keyring may ask to unlock. This is optional.
 
-The settings preview always contains labeled example data. It does not contact the provider.
+The settings preview works offline and uses labeled example prices for your saved symbols. It follows changes made through Undo or another editor. You can visit another settings page and return to an unfinished watchlist before saving it.
 
 ## Prices and updates
 
-Quotes refresh every 15 minutes while the widget is visible. Selecting another stock reuses recent quotes. The public source caches all watchlist charts, so switching stocks does not make another request while that cache is fresh. Requests are paced to limit traffic. With Twelve Data, other applications using the same key share your provider allowance.
+Quotes refresh every 15 minutes while the widget is visible. Selecting another stock keeps the same refresh deadline. The public source reuses the watchlist’s cached charts while they are fresh. Requests are paced to limit traffic. With Twelve Data, other applications using the same key share your provider allowance.
 
 Charts show up to 30 daily price points in chronological order, with dates and a low/high scale. The latest daily point can change while a trading session is in progress. Prices are shown in the instrument's currency, without conversion. The selected quote displays its provider timestamp in UTC and market status when available.
 

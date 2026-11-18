@@ -4,6 +4,13 @@ use crate::providers::weather::{Completion, Demand, Key, State};
 
 impl Cards {
     pub(super) fn provider_visible(&self, kind: Widget) -> bool {
+        if matches!(kind, Widget::Devbox | Widget::Projects)
+            && self
+                .reading_window
+                .is_some_and(|(_, widget)| widget == kind)
+        {
+            return true;
+        }
         if !self.config.data_visible(kind) {
             return false;
         }
@@ -26,6 +33,9 @@ impl Cards {
     /// visibility remains the demand boundary even when its own output is gone.
     pub(super) fn calendar_demand(&self) -> bool {
         self.config.data_visible(Widget::Calendar)
+            || self
+                .reading_window
+                .is_some_and(|(_, widget)| matches!(widget, Widget::Calendar | Widget::Glance))
             || (self.activity.clients > 0 && self.config.activity_island.calendar)
     }
     /// Keep watching an available empty Music widget so a new player is found.

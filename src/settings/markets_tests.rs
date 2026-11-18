@@ -109,6 +109,28 @@ fn markets_widget_settings_preserve_watchlist_and_render_native_charts() {
     );
     send_settings(&mut app, Message::Tools(Edit::MarketSaveSymbols));
     assert_eq!(Config::load().markets.symbols, ["MSFT", "AAPL"]);
+    let error = app.tools.market_symbols_error.expect("invalid symbol feedback");
+    let feedback = native.text_bounds(app.settings_view(), error);
+    assert!(feedback.y < native.text_bounds(app.settings_view(), "Data source").y);
+    send_settings(&mut app, Message::Tools(Edit::MarketSymbols("IBM".into())));
+    assert!(app.tools.market_symbols_error.is_none());
+    Config::save_tool(Widget::Markets, serde_json::json!({"symbols": ["AMD"]})).unwrap();
+    send_settings(&mut app, Message::Tick);
+    assert_eq!(app.tools.market_symbols, "IBM", "keep unsubmitted input");
+    assert_eq!(app.tools.market_preview.chart_symbol, "AMD");
+    send_settings(&mut app, Message::Page(Page::Clock));
+    send_settings(&mut app, Message::Page(Page::Markets));
+    assert_eq!(app.tools.market_symbols, "IBM");
+    assert_eq!(app.tools.market_preview.chart_symbol, "AMD");
+    send_settings(&mut app, Message::Tools(Edit::MarketSaveSymbols));
+    assert_eq!(app.tools.market_preview.chart_symbol, "IBM");
+    send_settings(&mut app, Message::UndoDesktop);
+    assert_eq!(Config::load().markets.selected, "AMD");
+    assert_eq!(app.tools.market_preview.chart_symbol, "AMD");
+    assert_eq!(app.tools.market_symbols, "AMD");
+    Config::save_tool(Widget::Markets, serde_json::json!({"symbols": ["NVDA", "IBM"]})).unwrap();
+    send_settings(&mut app, Message::Tick);
+    assert_eq!(app.tools.market_symbols, "NVDA, IBM");
     let key = "synthetic-test-key-not-a-credential";
     send_settings(
         &mut app,

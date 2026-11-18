@@ -9,6 +9,7 @@ use crate::config::edge_menu::{
     Speed, Style,
 };
 use crate::desktop::apps::{AppCatalog, AppInfo};
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub enum Edit {
@@ -43,6 +44,8 @@ pub enum Edit {
     /// The Add picker open or closed.
     Picker(bool),
     AppSearch(String),
+    PickerLoaded(u64, Arc<PickerEntries>),
+    AvailabilityChecked(Arc<Vec<Item>>, Vec<bool>),
     ChooseFolder,
     FolderChosen(Result<Option<std::path::PathBuf>, String>),
     DragStart(usize),
@@ -76,6 +79,13 @@ impl Field {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct PickerEntries {
+    pub apps: Vec<AppInfo>,
+    pub looks: Vec<(ProfileRef, String)>,
+    pub folders: Vec<(String, std::path::PathBuf)>,
+}
+
 pub struct EdgeMenuPage {
     /// A slider's value while it moves.
     pub draft: Option<(Field, u32)>,
@@ -83,9 +93,12 @@ pub struct EdgeMenuPage {
     pub title: Option<(usize, String)>,
     pub picker: bool,
     pub search: String,
-    /// Installed apps, read when the picker first opens.
-    pub apps: Option<Vec<AppInfo>>,
-    pub looks: Option<Vec<(ProfileRef, String)>>,
+    /// App, folder and Look choices, read together on the first open.
+    pub entries: Option<Arc<PickerEntries>>,
+    picker_generation: u64,
+    picker_loading: bool,
+    checked: Option<Arc<Vec<Item>>>,
+    pub(super) checking: Option<Arc<Vec<Item>>>,
     /// Dragging a row of the list, by its place.
     pub reorder: Reorder<usize>,
     pub folder_pending: bool,
@@ -99,8 +112,11 @@ impl Default for EdgeMenuPage {
             title: None,
             picker: false,
             search: String::new(),
-            apps: None,
-            looks: None,
+            entries: None,
+            picker_generation: 0,
+            picker_loading: false,
+            checked: None,
+            checking: None,
             reorder: Reorder::new(),
             folder_pending: false,
             available: Vec::new(),
@@ -140,7 +156,7 @@ fn looks() -> Vec<(ProfileRef, String)> {
 }
 
 /// The folders offered before "Choose a folder": home and the usual ones.
-pub(super) fn common_folders() -> Vec<(String, std::path::PathBuf)> {
+fn common_folders() -> Vec<(String, std::path::PathBuf)> {
     [
         ("Home", dirs::home_dir()),
         ("Documents", dirs::document_dir()),
@@ -155,30 +171,76 @@ pub(super) fn common_folders() -> Vec<(String, std::path::PathBuf)> {
 }
 
 impl EdgeMenuPage {
-    pub fn open(&mut self, config: &Config) {
-        self.refresh(config);
+    pub fn open(&mut self, config: &Config) -> Task<Message> {
+        self.checked = None;
+        Task::batch([self.refresh(config), self.load_picker()])
     }
-    /// Which items can run: re-read when the list changes.
-    pub fn refresh(&mut self, config: &Config) {
-        self.available = match &config.edge_menu.items {
-            Some(items) => crate::app::edge_availability(items, catalog),
-            None => Vec::new(),
+
+    pub fn leave(&mut self) {
+        self.checking = None;
+        self.picker_loading = false;
+    }
+
+    /// A list edit during a probe is coalesced. Its completion starts the latest list.
+    pub fn refresh(&mut self, config: &Config) -> Task<Message> {
+        let Some(items) = config.edge_menu.items.as_ref() else {
+            self.available.clear();
+            self.checked = None;
+            return Task::none();
         };
-    }
-    pub fn load_picker(&mut self) {
-        if self.apps.is_none() {
-            self.apps = Some(catalog().sorted().into_iter().cloned().collect());
+        if self.checked.as_deref() == Some(items) {
+            return Task::none();
         }
-        if self.looks.is_none() {
-            self.looks = Some(looks());
+        self.checked = None;
+        self.available.clear();
+        if self.checking.is_some() {
+            return Task::none();
         }
+        let items = Arc::new(items.clone());
+        if !items
+            .iter()
+            .any(|item| matches!(item.kind, Kind::App { .. } | Kind::Folder { .. }))
+        {
+            self.available = crate::app::edge_availability(&items, catalog);
+            self.checked = Some(items);
+            return Task::none();
+        }
+        self.checking = Some(items.clone());
+        cosmic::task::future(async move {
+            let scan = items.clone();
+            let result =
+                tokio::task::spawn_blocking(move || crate::app::edge_availability(&scan, catalog))
+                    .await
+                    .unwrap_or_default();
+            Message::EdgeMenu(Edit::AvailabilityChecked(items, result))
+        })
     }
+
+    fn load_picker(&mut self) -> Task<Message> {
+        if !self.picker || self.entries.is_some() || self.picker_loading {
+            return Task::none();
+        }
+        self.picker_generation = self.picker_generation.wrapping_add(1);
+        let generation = self.picker_generation;
+        self.picker_loading = true;
+        cosmic::task::future(async move {
+            let entries = tokio::task::spawn_blocking(|| PickerEntries {
+                apps: catalog().sorted().into_iter().cloned().collect(),
+                looks: looks(),
+                folders: common_folders(),
+            })
+            .await
+            .unwrap_or_default();
+            Message::EdgeMenu(Edit::PickerLoaded(generation, Arc::new(entries)))
+        })
+    }
+
     /// The apps matching the search, by name.
     pub fn matching_apps(&self) -> Vec<&AppInfo> {
         let query = self.search.trim().to_lowercase();
-        self.apps
+        self.entries
             .iter()
-            .flatten()
+            .flat_map(|data| &data.apps)
             .filter(|app| {
                 query.is_empty()
                     || app.name.to_lowercase().contains(&query)
@@ -219,7 +281,10 @@ pub(super) fn listed(items: &[Item], item: &Item) -> bool {
 impl Settings {
     pub(super) fn edge_menu_update(&mut self, edit: Edit) -> Task<Message> {
         // A typed title is kept before anything else changes the list.
-        if !matches!(edit, Edit::TitleText(..)) {
+        if !matches!(
+            edit,
+            Edit::TitleText(..) | Edit::PickerLoaded(..) | Edit::AvailabilityChecked(..)
+        ) {
             self.commit_edge_title();
         }
         match edit {
@@ -302,7 +367,29 @@ impl Settings {
             Edit::Picker(open) => {
                 self.edge_menu.picker = open;
                 if open {
-                    self.edge_menu.load_picker();
+                    return self.edge_menu.load_picker();
+                }
+                self.edge_menu.picker_loading = false;
+            }
+            Edit::PickerLoaded(generation, entries) => {
+                let page = &mut self.edge_menu;
+                if page.picker_loading && generation == page.picker_generation {
+                    page.entries = Some(entries);
+                    page.picker_loading = false;
+                }
+            }
+            Edit::AvailabilityChecked(items, available) => {
+                let page = &mut self.edge_menu;
+                if page
+                    .checking
+                    .as_ref()
+                    .is_some_and(|pending| Arc::ptr_eq(pending, &items))
+                {
+                    page.checking = None;
+                    if self.config.edge_menu.items.as_ref() == Some(&items) {
+                        page.available = available;
+                        page.checked = Some(items);
+                    }
                 }
             }
             Edit::AppSearch(text) => self.edge_menu.search = text,
@@ -374,7 +461,6 @@ impl Settings {
         match Config::save_edge_menu(changes) {
             Ok(config) => {
                 self.config = config;
-                self.edge_menu.refresh(&self.config);
                 self.saved();
             }
             Err(error) => self.failed(error),

@@ -61,6 +61,7 @@ pub struct ToolsEditor {
     pub market_key: crate::markets::Secret,
     pub market_busy: bool,
     pub market_status: Option<String>,
+    pub market_symbols_error: Option<&'static str>,
     pub market_preview: crate::markets::State,
     /// What this window sees on the session bus; `None` until asked.
     pub feed: Option<music::Feed>,
@@ -105,7 +106,8 @@ impl Default for ToolsEditor {
             market_key: crate::markets::Secret::default(),
             market_busy: false,
             market_status: None,
-            market_preview: crate::tools::cards::sample_markets(),
+            market_symbols_error: None,
+            market_preview: crate::markets::State::default(),
             feed: None,
             visualizer_draft: None,
             recent: Vec::new(),
@@ -295,12 +297,24 @@ impl ToolsEditor {
         }
     }
 
+    /// Refresh saved examples and untouched input while keeping an unsaved watchlist.
+    pub fn sync_markets(&mut self, prefs: &crate::markets::Preferences) {
+        let old = self.market_preview.source.as_ref();
+        if old == Some(prefs) {
+            return;
+        }
+        if old.is_none_or(|saved| self.market_symbols == saved.symbols.join(", ")) {
+            self.market_symbols = prefs.symbols.join(", ");
+            self.market_symbols_error = None;
+        }
+        self.market_preview = crate::tools::cards::sample_markets_for(prefs);
+    }
+
     /// Opening a tools page: Music looks for players.
     pub fn open(&mut self, tab: Widget, config: &Config) -> Task<crate::settings::Message> {
         self.tab = tab;
         if tab == Widget::Markets {
-            self.market_symbols = config.markets.symbols.join(", ");
-            self.market_preview = crate::tools::cards::sample_markets_for(&config.markets);
+            self.sync_markets(&config.markets);
         }
         self.refresh();
         if tab == Widget::Music {
@@ -409,6 +423,7 @@ impl ToolsEditor {
                 );
             }
             Message::MarketSymbols(value) => {
+                self.market_symbols_error = None;
                 self.market_symbols = value.chars().take(200).collect();
             }
             Message::MarketKey(value) => {
@@ -418,7 +433,7 @@ impl ToolsEditor {
             }
             Message::MarketSaveSymbols => match crate::markets::symbols(&self.market_symbols) {
                 Ok(symbols) => {
-                    self.market_status = None;
+                    self.market_symbols_error = None;
                     return (
                         Task::none(),
                         Some(Saved::Tool(
@@ -428,7 +443,7 @@ impl ToolsEditor {
                         )),
                     );
                 }
-                Err(error) => self.market_status = Some(error.into()),
+                Err(error) => self.market_symbols_error = Some(error),
             },
             Message::MarketSaveKey | Message::MarketRemoveKey => {
                 if self.market_busy {

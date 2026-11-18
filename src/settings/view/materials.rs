@@ -183,8 +183,9 @@ impl Settings {
                 status,
                 desktop::WARN,
                 vec![
-                    button::text("Set up")
-                        .on_press(Message::OpenIslandsGuide)
+                    button::text("Islands panel setup")
+                        .id("material-panel-setup".into())
+                        .on_press(Message::SearchResult(crate::settings::navigation::ISLANDS_PANEL))
                         .into(),
                     button::text("Check again")
                         .on_press(Message::DesktopEditor(

@@ -91,6 +91,8 @@ impl Cards {
             && self.pending_arrange.is_none()
             && self.arrange_display.is_none()
             && self.menu.is_none()
+            && self.interacting_tool.is_none()
+            && self.config_writes.pending == 0
             && self.calendar_details.is_none()
             && self.reading_window.is_none()
             && self.notice.is_none()
@@ -211,7 +213,7 @@ mod tests {
     #[test]
     fn update_restart_waits_for_whatever_is_in_use() {
         let now = Instant::now();
-        let busy: [(&str, fn(&mut Cards)); 8] = [
+        let busy: [(&str, fn(&mut Cards)); 9] = [
             ("the drawer", |cards| cards.sidebar.visible = true),
             ("the drawer opened from the keyboard", |cards| {
                 cards.sidebar.focus = Some(0)
@@ -219,6 +221,9 @@ mod tests {
             ("the widget controls", |cards| cards.controls_open = true),
             ("the layout editor", |cards| {
                 cards.layout_editor.active = true
+            }),
+            ("a widget using the keyboard", |cards| {
+                cards.interacting_tool = Some(Widget::Focus);
             }),
             ("a widget menu", |cards| {
                 cards.menu = Some((window::Id::unique(), Widget::Clock))
@@ -265,6 +270,52 @@ mod tests {
             assert_eq!(cards.restart.at, None, "{what}: disarmed");
             assert!(cards.restart.updated.is_some(), "{what}: still waiting");
         }
+    }
+
+    #[test]
+    fn update_waits_for_each_pending_configuration_save() {
+        use cosmic::iced::futures::{StreamExt, executor::block_on};
+        if crate::displays::test_support::isolated(
+            "app::restart::tests::update_waits_for_each_pending_configuration_save",
+        ) {
+            return;
+        }
+        let mut cards = cards();
+        let now = Instant::now();
+        waiting(&mut cards, now);
+        let queue_save = |cards: &mut Cards, minutes| {
+            let mut config = cards.config.clone();
+            config.focus.focus_minutes = minutes;
+            cards.save_config_later(
+                "Save widget settings",
+                config_writes::Failure::notice("Save failed", "", None),
+                None,
+                move || Ok(config),
+            )
+        };
+        let first = queue_save(&mut cards, 35);
+        let second = queue_save(&mut cards, 50);
+        let deliver = |cards: &mut Cards, task| {
+            let mut stream = cosmic::iced::runtime::task::into_stream(task).unwrap();
+            let Some(cosmic::iced::runtime::Action::Output(cosmic::Action::App(message))) =
+                block_on(stream.next())
+            else {
+                panic!("expected the completed configuration save");
+            };
+            drop(cards.update(message));
+        };
+        assert_eq!(cards.config_writes.pending, 2);
+        cards.arm_restart(now);
+        assert!(cards.restart.at.is_none());
+        // Simulate the newer task delivering its successful save first.
+        deliver(&mut cards, second);
+        assert_eq!(cards.config_writes.pending, 1);
+        assert!(cards.restart.at.is_none());
+        assert_eq!(cards.config.focus.focus_minutes, 50);
+        deliver(&mut cards, first);
+        assert_eq!(cards.config.focus.focus_minutes, 50);
+        assert_eq!(cards.config_writes.pending, 0);
+        assert!(cards.restart.at.is_some());
     }
 
     #[test]

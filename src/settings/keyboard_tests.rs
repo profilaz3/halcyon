@@ -411,6 +411,25 @@ fn ax10_escape_closes_one_thing_at_a_time_from_the_inside_out() {
     let _ = app.update(Message::Escape);
     assert!(!app.search_open);
 
+    use crate::settings::tests::native_send;
+    let wide = Size::new(1100., 720.);
+    let compact = Size::new(820., 600.);
+    let mut native = Native::new(wide);
+    native_send(&mut app, &mut native, Message::Resized(wide));
+    native_send(&mut app, &mut native, Message::FocusSearch);
+    native_send(&mut app, &mut native, Message::SearchSettings("clock".into()));
+    native.size = compact;
+    native_send(&mut app, &mut native, Message::Resized(compact));
+    let field = native.bounds(app.settings_view(), "settings-search");
+    assert!(native.focused(app.settings_view()).is_some_and(|focus| focus.intersects(&field)));
+    native_send(&mut app, &mut native, Message::SearchSettings(String::new()));
+    assert!(app.search_open);
+    crate::settings::tests::native_click(&mut app, &mut native, "close-settings-search");
+    assert!(!app.search_open);
+    let _ = app.update(Message::FocusSearch);
+    let _ = app.update(Message::Resized(Size::new(1100., 720.)));
+    assert!(!app.search_open);
+
     // An explanation left open on another page isn't on screen to close.
     app.explained = Some((Page::Clock, 1));
     assert_eq!(app.escape_closes(), None);

@@ -687,6 +687,9 @@ fn penumbra_setup_actions(app: &mut Settings, native: &mut crate::native_test::N
             SettingsMessage::Updates(Message::Islands(islands::Message::Enable))
         )
     ));
+    app.desktop.islands.compatible = true;
+    assert_eq!(app.panel_host(), crate::settings::view::Host::Running);
+    app.desktop.islands.compatible = false;
     app.updates.islands.phase = islands::Phase::Idle;
     app.installation_busy = true;
     assert!(
@@ -704,6 +707,7 @@ fn penumbra_setup_actions(app: &mut Settings, native: &mut crate::native_test::N
         status: Some(CompatibilityStatus::LogoutRequired),
         diagnostics: String::new(),
     };
+    app.updates.islands.phase = islands::Phase::Failed(Failure::IslandsRefused("Earlier failure."));
     native.text_bounds(
         app.settings_view(),
         "Ready. Sign out and back in to see it.",
@@ -725,6 +729,16 @@ fn penumbra_setup_actions(app: &mut Settings, native: &mut crate::native_test::N
         &cosmic::Theme::dark(),
         &format!("panel-host-sign-in-{}", native.size.width),
     );
+
+    app.updates.islands.phase = islands::Phase::Disabling;
+    native.text_bounds(app.settings_view(), "Restoring the COSMIC panel for your next sign-in…");
+    app.updates.islands.phase = islands::Phase::DisableFailed(Failure::IslandsRefused("Could not undo."));
+    native.text_bounds(app.settings_view(), "Could not undo.");
+    assert!(clicked(
+        ui_click(app, native, "retry-islands"),
+        &|m| matches!(m, SettingsMessage::Updates(Message::Islands(islands::Message::Disable)))
+    ));
+    app.updates.islands.phase = islands::Phase::Idle;
 
     // Nothing on this page can fix a manual install; Troubleshooting can explain.
     app.desktop.islands.installation = Installation::Installed {

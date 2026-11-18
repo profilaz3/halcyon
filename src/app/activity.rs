@@ -653,5 +653,17 @@ mod tests {
         let a = cards.activity_snapshot();
         let b = cards.activity_snapshot();
         assert_eq!(a, b);
+
+        // A click reaches the dispatcher through its originating surface.
+        // The bridge must publish the pause without waiting for a timer tick.
+        cards.output_known = true;
+        cards.publish_activity();
+        assert!(cards.activity.published().focus.ends_at_ms.is_some());
+        let _ = cards.update(Message::SurfaceMessage(
+            cards.display_generation,
+            Box::new(Message::Tool(crate::tools::cards::Action::FocusToggle)),
+        ));
+        assert!(!cards.tools.focus.running());
+        assert_eq!(cards.activity.published().focus.ends_at_ms, None);
     }
 }

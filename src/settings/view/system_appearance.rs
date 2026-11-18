@@ -717,8 +717,8 @@ impl Settings {
         } else {
             (
                 "Kept off because COSMIC’s panel can stop working with it. The Islands panel that comes with Halcyon can be frosted.",
-                "Set up",
-                Message::OpenIslandsGuide,
+                "Islands panel setup",
+                Message::SearchResult(crate::settings::navigation::ISLANDS_PANEL),
             )
         }
     }

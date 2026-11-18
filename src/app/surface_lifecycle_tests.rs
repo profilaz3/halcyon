@@ -943,3 +943,48 @@ fn edge_menu_displays_choose_which_outputs_get_a_strip() {
     assert!(cards.edge.others.is_empty());
     assert!(cards.is_edge_strip(cards.ids[3]));
 }
+
+#[test]
+fn an_open_edge_menu_tracks_its_display_through_resize_and_disconnect() {
+    if isolated(
+        "app::surface_lifecycle_tests::an_open_edge_menu_tracks_its_display_through_resize_and_disconnect",
+    ) {
+        return;
+    }
+    let mut config = Config::default();
+    config.edge_menu.displays = crate::config::edge_menu::Displays::All;
+    let (mut cards, mut desk, wire) = start(config);
+    let external = wire.output(2);
+    desk.send(
+        &mut cards,
+        Message::OutputChanged(
+            OutputEvent::Created(Some(info(Some("DP-2"), (1920, 1080)))),
+            external.clone(),
+        ),
+    );
+    let strip = cards.edge.others[0].id;
+    desk.send(&mut cards, Message::EdgeHover(strip, true));
+    desk.send(&mut cards, Message::ShowControls);
+    assert!(cards.controls_open);
+    desk.send(
+        &mut cards,
+        Message::OutputChanged(
+            OutputEvent::InfoUpdate(info(Some("DP-2"), (800, 400))),
+            external.clone(),
+        ),
+    );
+    assert_eq!(cards.edge.others[0].id, strip);
+    assert_eq!(cards.edge_screen_height(), 400.);
+    assert!(cards.controls_height() <= 400);
+    desk.send(
+        &mut cards,
+        Message::OutputChanged(OutputEvent::Removed, external),
+    );
+    assert!(!cards.controls_open);
+    assert!(!cards.sidebar.edge_hovered);
+    assert!(cards.edge.menu_output.is_none());
+    desk.send(&mut cards, Message::DrawerToggle);
+    assert!(cards.controls_open);
+    let primary = &cards.selected_output.as_ref().unwrap().handle;
+    assert!(matches!(&desk.open[&cards.ids[2]].output, IcedOutput::Output(o) if o == primary));
+}
