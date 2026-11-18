@@ -58,7 +58,9 @@ fn theme_style(config: &Config) -> Option<&'static str> {
         Some(Family::Pastel) => "pastel",
         Some(Family::Bauhaus) => "bauhaus",
         // The current report schema has no category for these styles.
-        Some(Family::MicaSlate | Family::TapeDeck | Family::Porcelain) => return None,
+        Some(Family::MicaSlate | Family::TapeDeck | Family::Porcelain | Family::Blueprint) => {
+            return None;
+        }
     })
 }
 

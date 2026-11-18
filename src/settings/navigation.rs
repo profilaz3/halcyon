@@ -537,6 +537,8 @@ const SEARCH: &[SearchHit] = &[
         .open(SearchOpen::Styles).at("preset-theme-tape-deck"),
     hit(Page::Themes, "Porcelain", "ceramic cobalt rounded light style", false)
         .open(SearchOpen::Styles).at("preset-theme-porcelain"),
+    hit(Page::Themes, "Blueprint", "drafting cyan square ink blue style", false)
+        .open(SearchOpen::Styles).at("preset-theme-blueprint"),
     hit(
         Page::Themes,
         "Accent color",

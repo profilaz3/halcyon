@@ -269,6 +269,42 @@ fn unset_window_surfaces_follow_the_style_and_wallpaper_tint() {
 }
 
 #[test]
+fn personal_style_keeps_fonts_materials_and_the_previous_family_when_restored() {
+    let (fixture, store, installed) = reported("personal-style-restore", true);
+    crate::desktop::islands::fixture_installed(&fixture.0);
+    let path = store.app_config().unwrap();
+    let original = json!({
+        "appearance":{"family":"frosted","opacity":77,"corner_radius":13},
+        "clock_font":"Noto Sans Mono", "widget_font":"Noto Sans",
+        "materials":{"widgets":{"kind":"smoked","opacity":65,"tint":30}},
+        "material_motion":false
+    });
+    fs::write(path, original.to_string()).unwrap();
+    let saved = capture_personal(&store, "My tinted glass").unwrap().profile;
+    let saved = import(&export(&saved).unwrap().bytes).unwrap();
+    let style = saved.widget_style.as_ref().unwrap();
+    assert_eq!(style["clock_font"], original["clock_font"]);
+    assert_eq!(style["widget_font"], original["widget_font"]);
+    assert_eq!(Family::parse("theme-frosted"), Some(Family::Frosted));
+    let changed = json!({"appearance":{"family":"blueprint"},
+        "materials":{"shared":{"kind":"liquid","opacity":75,"tint":10}},
+        "widget_positions":{"weather":[0.6,0.4]}});
+    fs::write(path, changed.to_string()).unwrap();
+    let proposal = plan(&store, &installed, &saved, &[Domain::WidgetStyle].into());
+    assert!(proposal.can_apply(), "{:?}", proposal.blocking_reasons());
+    apply(&store, &proposal).unwrap();
+    let (raw, cfg) = crate::desktop::wallpaper::automatic::read_config(&store).unwrap();
+    assert_eq!(cfg.appearance.family, Some(Family::Frosted));
+    assert_eq!((cfg.appearance.opacity, cfg.appearance.corner_radius), (77, 13));
+    assert_eq!(raw["materials"]["widgets"], original["materials"]["widgets"]);
+    assert!(cfg.materials.shared.is_none());
+    assert!(!cfg.material_motion);
+    assert_eq!(raw["clock_font"], original["clock_font"]);
+    assert_eq!(raw["widget_font"], original["widget_font"]);
+    assert_eq!(raw["widget_positions"], changed["widget_positions"]);
+}
+
+#[test]
 fn material_survives_theme_apply_and_captured_setup_restores_native_bars() {
     use crate::materials::{Finish, Kind, Target};
     let (fixture, store, installed) = reported("material-profile", true);

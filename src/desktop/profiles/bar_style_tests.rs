@@ -35,6 +35,7 @@ const EXPECTED: [(Family, f32, u32, u32, u32, u16, bool, u8); Family::ALL.len()]
     (Family::MicaSlate, 0.94, 8, 6, 8, 8, false, 92),
     (Family::TapeDeck, 0.84, 4, 4, 4, 6, true, 74),
     (Family::Porcelain, 0.98, 28, 8, 10, 16, true, 94),
+    (Family::Blueprint, 0.96, 0, 6, 8, 14, false, 90),
 ];
 
 /// See-through by design: glass cards or cards with no surface at all.

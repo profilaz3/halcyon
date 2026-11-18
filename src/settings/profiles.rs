@@ -2208,7 +2208,7 @@ impl ProfilesEditor {
                     let text = match &action {
                         NameAction::Capture => "My desktop".to_string(),
                         NameAction::SaveMix => "My mix".to_string(),
-                        NameAction::CaptureTheme => "My theme".to_string(),
+                        NameAction::CaptureTheme => "My style".to_string(),
                         NameAction::Rename(_) => self.selected_name().unwrap_or_default(),
                         NameAction::Duplicate => {
                             let name = self.selected_name().unwrap_or_default();
@@ -2326,7 +2326,7 @@ impl ProfilesEditor {
         let result: Result<(Option<ProfileId>, Vec<String>), profiles::ProfileError> =
             match &edit.action {
                 NameAction::CaptureTheme => {
-                    profiles::themes::capture(store, &name).and_then(|capture| {
+                    profiles::themes::capture_personal(store, &name).and_then(|capture| {
                         library
                             .create(&capture.profile)
                             .map(|id| (Some(id), capture.warnings))

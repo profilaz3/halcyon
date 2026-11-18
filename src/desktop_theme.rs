@@ -34,6 +34,7 @@ pub enum Family {
     MicaSlate,
     TapeDeck,
     Porcelain,
+    Blueprint,
 }
 
 /// What surrounds a card besides its border.
@@ -638,8 +639,34 @@ const PORCELAIN: StyleSpec = StyleSpec {
     ..PAPER
 };
 
+const BLUEPRINT: StyleSpec = StyleSpec {
+    id: "blueprint",
+    title: "Blueprint",
+    description: "Cyan rules, square ink-blue panels and a bold drafting clock",
+    accent: [100, 213, 243],
+    surface: (0.28, 0.8, 0.075, (0., 0.)),
+    geometry: (84, 0, 50),
+    border_width: 2.,
+    clock: FontSpec {
+        names: &["DejaVu Sans Mono"],
+        generic: Generic::Mono,
+        weight: Weight::Bold,
+    },
+    bar: BarSpec {
+        opacity: 0.96,
+        radius: 0,
+        padding: 6,
+        spacing: 8,
+        island_gap: 14,
+        floating: false,
+        glass_floor: 90,
+    },
+    wallpaper: ([12, 31, 55], [23, 73, 99]),
+    ..SOFT
+};
+
 impl Family {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::Soft,
         Self::Outline,
         Self::Paper,
@@ -657,6 +684,7 @@ impl Family {
         Self::MicaSlate,
         Self::TapeDeck,
         Self::Porcelain,
+        Self::Blueprint,
     ];
     pub fn spec(self) -> &'static StyleSpec {
         match self {
@@ -677,6 +705,7 @@ impl Family {
             Self::MicaSlate => &MICA_SLATE,
             Self::TapeDeck => &TAPE_DECK,
             Self::Porcelain => &PORCELAIN,
+            Self::Blueprint => &BLUEPRINT,
         }
     }
     pub fn id(self) -> &'static str {
@@ -702,6 +731,7 @@ impl Family {
             Self::MicaSlate => "theme-mica-slate",
             Self::TapeDeck => "theme-tape-deck",
             Self::Porcelain => "theme-porcelain",
+            Self::Blueprint => "theme-blueprint",
         }
     }
     pub fn title(self) -> &'static str {

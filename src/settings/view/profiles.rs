@@ -1333,7 +1333,7 @@ impl Settings {
         row::with_children(vec![
             text_input(
                 if self.page == Page::Themes {
-                    "Theme name"
+                    "Style name"
                 } else {
                     "Look name"
                 },
@@ -1369,7 +1369,7 @@ impl Settings {
         let mut items: Vec<Element<'_, Message>> = vec![split(
             label(
                 if self.page == Page::Themes {
-                    "Your themes"
+                    "Your saved styles"
                 } else {
                     "Your looks"
                 },
@@ -1388,12 +1388,12 @@ impl Settings {
                     )))
                     .into(),
                 button::text(if self.page == Page::Themes {
-                    "Save style…"
+                    "Save current style…"
                 } else {
                     "Save look…"
                 })
                 .leading_icon(icon::from_name("list-add-symbolic").size(14))
-                .on_press_maybe(writable.then_some(edit(Edit::Name(Some(
+                .on_press_maybe((writable && !editor.busy()).then_some(edit(Edit::Name(Some(
                     if self.page == Page::Themes {
                         NameAction::CaptureTheme
                     } else {
@@ -1471,11 +1471,11 @@ impl Settings {
                         .into(),
                     );
                 } else {
-                    items.push(container(column::with_children(vec![
-                        icon::from_name("document-save-symbolic").size(32).into(),
-                        label("Keep a look you love", 20., FG),
-                        label("Save your current settings, then come back to them whenever you like.", 14., MUTED),
-                    ]).spacing(12)).padding([28, 16]).width(Length::Fill).into());
+                    items.push(label(
+                        "Save the style on your desktop to use it again later.",
+                        14.,
+                        MUTED,
+                    ));
                 }
             }
             Ok(entries) => {

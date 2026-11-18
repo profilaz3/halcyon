@@ -132,6 +132,7 @@ impl Settings {
         ));
         rows.push(self.appearance_looks());
         rows.push(self.theme_stage(&look));
+        rows.push(self.library_section());
         if !themes::named().is_empty() {
             rows.push(self.appearance_themes());
         }
@@ -172,15 +173,6 @@ impl Settings {
                         .into(),
                 ],
             ));
-        }
-        // Saving and sharing happen in Looks. Themes saved by earlier
-        // versions stay reachable here.
-        if editor.library().is_ok_and(|entries| {
-            entries
-                .iter()
-                .any(|entry| entry.profile.as_ref().is_ok_and(|p| p.appearance_only))
-        }) {
-            rows.push(self.library_section());
         }
         column::with_children(rows).spacing(20).into()
     }
@@ -1416,6 +1408,7 @@ mod tests {
             ("Windows 11", Family::MicaSlate),
             ("tape deck", Family::TapeDeck),
             ("porcelain", Family::Porcelain),
+            ("blueprint", Family::Blueprint),
         ] {
             let hit = crate::settings::navigation::search(query)[0];
             assert_eq!(hit.anchor(), format!("preset-{}", family.preset()));

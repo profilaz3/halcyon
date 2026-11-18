@@ -1393,6 +1393,8 @@ fn appearance_shows_one_row_of_styles_and_every_style_on_request() {
     let size = Size::new(1024., 720.);
     let (mut app, _) = Settings::init(Core::default(), Page::Themes);
     let _ = app.update(Message::Resized(size));
+    let mut native = crate::native_test::Native::new(size);
+    assert!(!native.text_all(app.settings_view(), "Save current style…").is_empty());
     let shown = |app: &Settings| {
         let mut native = crate::native_test::Native::new(size);
         crate::desktop_theme::Family::ALL
