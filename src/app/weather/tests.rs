@@ -329,3 +329,49 @@ fn outlook_resizes_uses_actual_units_and_handles_missing_or_stale_readings() {
     assert!(!text.iter().any(|s| s == "Today"));
     assert!(text.iter().any(|s| s.contains("Refresh failed")));
 }
+
+#[test]
+fn classic_reflows_the_forecast_with_the_widget() {
+    let config = configured();
+    let weather = super::super::settings_preview::weather_sample(now().date_naive());
+    let p = Presentation::new(
+        &config,
+        Snapshot {
+            weather: Some(&weather),
+            updated_at: None,
+            failed: false,
+        },
+        now(),
+    );
+    for size in [[300., 180.], [360., 320.], [510., 180.], [560., 180.]] {
+        let mut native = Native::new(Size::new(size[0], size[1]));
+        let view = || p.view(Context::Live, size);
+        let today = native.text_bounds(view(), "Today");
+        let tomorrow = native.text_bounds(view(), "Tomorrow");
+        let city = native.text_bounds(view(), "Example city");
+        if size[0] >= 510. {
+            let heading = native.text_bounds(view(), "Forecast");
+            assert!(today.x > size[0] / 2. && (heading.y - city.y).abs() < 2.);
+            assert!(tomorrow.y > today.y && (today.x - tomorrow.x).abs() < 1.);
+        } else if size[1] >= 260. {
+            assert!(tomorrow.y > today.y && (today.x - tomorrow.x).abs() < 1.);
+        } else {
+            assert!(tomorrow.x > today.x && (today.y - tomorrow.y).abs() < 1.);
+        }
+        assert!(native.scrollables(view()).is_empty());
+        for (label, bounds) in native.placed_text(view()) {
+            assert!(
+                bounds.x >= 0.
+                    && bounds.y >= 0.
+                    && bounds.x + bounds.width <= size[0] + 1.
+                    && bounds.y + bounds.height <= size[1] + 1.,
+                "{label}: {bounds:?}"
+            );
+        }
+        native.capture(
+            view(),
+            &cosmic::Theme::dark(),
+            &format!("classic-reflow-{}x{}", size[0], size[1]),
+        );
+    }
+}
