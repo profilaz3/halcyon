@@ -4,7 +4,9 @@
 //! without one the card is drawn without controls that respond.
 mod devices;
 mod markets;
-pub use markets::{markets, sample as sample_markets, sample_for as sample_markets_for};
+pub use markets::{markets, sample_for as sample_markets_for};
+#[cfg(test)]
+pub use markets::sample as sample_markets;
 pub(crate) mod messages;
 pub(crate) mod recipe;
 use super::{focus, music, notes};

@@ -294,6 +294,7 @@ pub fn markets<'a, M: Clone + 'static>(
     frame(content.push(footer()).into(), config, height)
 }
 
+#[cfg(test)]
 pub fn sample() -> State {
     sample_for(&crate::markets::Preferences::default())
 }
