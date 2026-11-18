@@ -301,7 +301,7 @@ impl Settings {
             split(
                 section_title(
                     "Style",
-                    "Widget cards, dock, panel and Activity Island",
+                    "Shape, type and finish for widgets, dock, panel and Activity island",
                 ),
                 button::text(if all {
                     "Show fewer".to_string()
