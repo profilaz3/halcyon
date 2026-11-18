@@ -868,9 +868,10 @@ impl Cards {
     fn open_messages(&mut self) -> Task<Message> {
         use crate::messages::State;
         let entry = match self.tools.messages {
-            State::Ready { .. } | State::Away { .. } | State::Asking { .. } => {
-                "org.kde.kdeconnect.sms"
-            }
+            State::Ready { .. }
+            | State::Stale { .. }
+            | State::Away { .. }
+            | State::Asking { .. } => "org.kde.kdeconnect.sms",
             State::Stopped | State::NoPhone | State::NoSms { .. } => "org.kde.kdeconnect.app",
             State::Starting | State::NoService => "",
         };

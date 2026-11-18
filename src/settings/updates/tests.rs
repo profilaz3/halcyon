@@ -922,6 +922,19 @@ fn native_updates_clicks_renders_failure_unknown_and_absence() {
                 &theme,
                 &format!("islands-journey-{}-{suffix}", page.key()),
             );
+            if page == Page::Home {
+                let clicks = ui_click(&app, &mut native, "keep-standard-panel");
+                assert!(clicks.iter().any(|m| matches!(m, SettingsMessage::KeepStandardPanel)));
+                for message in clicks {
+                    crate::settings::tests::send_settings(&mut app, message);
+                }
+                assert!(crate::config::Config::load().islands_offer_dismissed);
+                assert!(
+                    native
+                        .try_bounds(app.settings_view(), "enable-islands")
+                        .is_none()
+                );
+            }
             let disabled = app.desktop.islands.installation.clone();
             if let Installation::Installed {
                 enabled, status, ..
@@ -947,6 +960,7 @@ fn native_updates_clicks_renders_failure_unknown_and_absence() {
             app.desktop.islands.compatible = false;
             app.desktop.islands.installation = disabled;
         }
+        app.save(serde_json::json!({"islands_offer_dismissed": false}));
         app.page = Page::DesktopDock;
         crate::settings::navigation::select(&mut app.nav_model, app.page);
         penumbra_setup_actions(&mut app, &mut native);

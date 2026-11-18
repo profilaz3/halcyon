@@ -197,18 +197,29 @@ impl Settings {
             Host::Switching => vec![label("Getting the Islands panel ready…", 12., MUTED)],
             Host::Switch => vec![
                 label(switch_hint.to_owned(), 12., MUTED),
-                actions(vec![
-                    (if self.wizard.is_some() {
-                        button::suggested("Finish and switch at next sign-in")
-                    } else if self.page == Page::ActivityIsland {
-                        button::standard("Switch at next sign-in")
-                    } else {
-                        button::suggested("Switch at next sign-in")
-                    })
-                    .id("enable-islands".into())
-                    .on_press(update(Panel::Enable))
-                    .into(),
-                ]),
+                actions({
+                    let mut buttons = vec![
+                        (if self.wizard.is_some() {
+                            button::suggested("Finish and switch at next sign-in")
+                        } else if self.page == Page::ActivityIsland {
+                            button::standard("Switch at next sign-in")
+                        } else {
+                            button::suggested("Switch at next sign-in")
+                        })
+                        .id("enable-islands".into())
+                        .on_press(update(Panel::Enable))
+                        .into(),
+                    ];
+                    if self.page == Page::Home && self.wizard.is_none() {
+                        buttons.push(
+                            button::text("Keep standard panel")
+                                .id("keep-standard-panel".into())
+                                .on_press(Message::KeepStandardPanel)
+                                .into(),
+                        );
+                    }
+                    buttons
+                }),
             ],
             Host::SignIn => {
                 let mut buttons = vec![

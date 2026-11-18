@@ -92,8 +92,12 @@ pub(crate) fn status(state: &State) -> Option<(String, &'static str)> {
             format!("{phone} isn't connected"),
             "Messages show when your phone and this computer are on the same network",
         ),
+        State::Stale { threads, .. } if threads.is_empty() => (
+            "Couldn’t refresh messages".into(),
+            "Halcyon will try KDE Connect again",
+        ),
         State::Ready { threads, .. } if threads.is_empty() => ("No messages yet".into(), ""),
-        State::Away { .. } | State::Ready { .. } => return None,
+        State::Away { .. } | State::Stale { .. } | State::Ready { .. } => return None,
     })
 }
 
@@ -189,6 +193,11 @@ pub fn messages<'a, M: Clone + 'a>(
             .into(),
     ];
     match (state, state.phone()) {
+        (State::Stale { threads, .. }, _) if !threads.is_empty() => header.push(label(
+            "Last known messages",
+            crate::widget_style::META,
+            p.muted,
+        )),
         (State::Away { threads, .. }, Some(phone)) if !threads.is_empty() => header.push(label(
             format!("{phone} away"),
             crate::widget_style::META,
@@ -235,7 +244,7 @@ pub fn messages<'a, M: Clone + 'a>(
         None => {
             let now = chrono::Local::now();
             let format_24h = config.clock.format_24h;
-            let away = matches!(state, State::Away { .. });
+            let away = matches!(state, State::Away { .. } | State::Stale { .. });
             let p = if away {
                 // Read earlier: quieter, so it doesn't pass for live.
                 Palette {

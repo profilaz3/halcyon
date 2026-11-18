@@ -727,23 +727,11 @@ impl Settings {
                 "Save a copy",
                 writable.then_some(edit(Edit::Name(Some(NameAction::Duplicate)))),
             ));
-            if let Selection::Saved(id) = selection {
+            if !matches!(selection, Selection::Saved(_)) {
                 actions.push(action(
-                    "document-edit-symbolic",
-                    "Rename",
-                    writable.then(|| edit(Edit::Name(Some(NameAction::Rename(id.clone()))))),
-                ));
-            }
-            actions.push(action(
-                "document-save-as-symbolic",
-                "Export…",
-                (writable && !editor.busy()).then_some(edit(Edit::Export)),
-            ));
-            if matches!(selection, Selection::Saved(id) if id.as_str() != themes::BEFORE_THEMES) {
-                actions.push(action(
-                    "user-trash-symbolic",
-                    "Delete…",
-                    writable.then_some(edit(Edit::Delete(false))),
+                    "document-save-as-symbolic",
+                    "Export…",
+                    (writable && !editor.busy()).then_some(edit(Edit::Export)),
                 ));
             }
         }
@@ -760,7 +748,10 @@ impl Settings {
             .into(),
         ];
         if editor.name.as_ref().is_some_and(|name| {
-            !matches!(name.action, NameAction::Capture | NameAction::CaptureTheme)
+            !matches!(
+                name.action,
+                NameAction::Capture | NameAction::CaptureTheme | NameAction::Rename(_)
+            )
         }) {
             items.push(self.name_field("Save"));
         }

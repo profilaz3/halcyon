@@ -96,8 +96,16 @@ fn markets_widget_settings_preserve_watchlist_and_render_native_charts() {
     send_settings(&mut app, Message::Tools(Edit::MarketMove("MSFT".into(), -1)));
     assert!(app.tools.market_symbols.is_empty());
     assert_eq!(Config::load().markets.symbols, ["MSFT", "EUR/GBP", "AAPL"]);
-    assert_eq!(app.tools.market_preview.source.as_ref().unwrap(), &app.config.markets);
-    assert_eq!(app.tools.market_preview.chart_symbol, app.config.markets.selected);
+    assert_eq!(
+        app.tools.market_preview.source.as_ref().unwrap(),
+        &app.config.markets
+    );
+    assert!(
+        app.tools
+            .market_preview
+            .charts
+            .contains_key(&app.config.markets.selected)
+    );
     assert_eq!(app.tools.market_preview.quotes.len(), 3);
     for pointer in [
         "/markets/symbols",
@@ -203,8 +211,16 @@ fn markets_resize_keeps_every_stock_and_chart_visible_without_scrolling() {
     config.markets.selected = "AAPL".into();
     let mut state = crate::tools::cards::sample_markets_for(&config.markets);
     let date_ranges = ["%b %-d", "%b %-d, %Y"].map(|format| {
-        let first = state.chart.first().unwrap().date.format(format);
-        let last = state.chart.last().unwrap().date.format(format);
+        let first = state.charts[&config.markets.selected]
+            .first()
+            .unwrap()
+            .date
+            .format(format);
+        let last = state.charts[&config.markets.selected]
+            .last()
+            .unwrap()
+            .date
+            .format(format);
         format!("{first} to {last}")
     });
     for dims in [[280., 300.], [300., 360.], [360., 420.], [520., 600.]] {

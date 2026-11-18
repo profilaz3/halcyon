@@ -409,6 +409,7 @@ pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/settings_animations", "Settings animation", Style, boolean;
     "/show_explanations", "Show explanations", Style, boolean;
     "/setup_dismissed", "Setup guide", Style, boolean;
+    "/islands_offer_dismissed", "Islands panel setup reminder", Style, boolean;
     "/setup_followup_weather_dismissed", "Weather setup reminder", Style, boolean;
     "/setup_followup_calendar_dismissed", "Calendar setup reminder", Style, boolean;
     "/setup_followup_projects_dismissed", "Projects setup reminder", Style, boolean;

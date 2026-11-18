@@ -166,10 +166,9 @@ mod tests {
         state.received_at = Some(std::time::Instant::now());
         preferences.selected = "EUR/GBP".into();
         assert!(state.fresh_for(&preferences));
-        state.select_chart(&preferences.selected);
-        assert_eq!(state.chart[0].close, 0.75);
+        assert_eq!(state.charts[&preferences.selected][0].close, 0.75);
         state.record("EUR/GBP", Err(Problem::Network));
-        assert_eq!(state.charts["EUR/GBP"], state.chart);
+        assert_eq!(state.charts["EUR/GBP"][0].close, 0.75);
         assert_eq!(state.quotes.len(), 2);
         assert_eq!(state.unavailable["EUR/GBP"], Problem::Network);
     }
@@ -210,10 +209,10 @@ mod tests {
         assert_eq!(state.quotes.len(), 3);
         let eur_usd = &state.quotes[0];
         assert!((eur_usd.price / state.quotes[1].price - state.quotes[2].price).abs() < 1e-10);
-        assert!((2..=30).contains(&state.chart.len()));
+        assert!((2..=30).contains(&state.charts["EUR/USD"].len()));
         println!(
             "Published {}: EUR/USD {}, EUR/GBP {}",
-            state.chart.last().unwrap().date,
+            state.charts["EUR/USD"].last().unwrap().date,
             eur_usd.price,
             state.quotes[1].price
         );

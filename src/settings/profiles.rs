@@ -118,6 +118,10 @@ pub enum Message {
     /// The Look studio: a look made part by part.
     Studio(studio::Edit),
     Select(Selection),
+    StyleMenu(ProfileId),
+    ExportStyle(ProfileId),
+    ConfirmStyleDelete(ProfileId, bool),
+    DeleteStyle(ProfileId),
     /// Local browser/view state; never included in a desktop transaction.
     Collection(bool),
     Compare(bool),
@@ -210,6 +214,8 @@ impl Message {
             self,
             Self::NameSubmit
                 | Self::Package(packages::Edit::Export)
+                | Self::ExportStyle(_)
+                | Self::DeleteStyle(_)
                 | Self::Delete(true)
                 | Self::Import
                 | Self::Export
@@ -621,6 +627,8 @@ pub struct ProfilesEditor {
     pub hold: bool,
     pub name: Option<NameEdit>,
     pub confirm_delete: bool,
+    pub style_menu: Option<ProfileId>,
+    pub confirm_style_delete: bool,
     /// Automation rules that apply the profile being deleted.
     pub rules_using: usize,
     pending: Option<(u64, Pending)>,
@@ -1487,6 +1495,8 @@ impl ProfilesEditor {
         self.highlight = None;
         self.hold = false;
         self.confirm_delete = false;
+        self.style_menu = None;
+        self.confirm_style_delete = false;
         self.name = None;
         self.notes.clear();
         self.notice = None;
@@ -2010,6 +2020,16 @@ impl ProfilesEditor {
             );
         }
     }
+    fn saved_profile(&self, id: &ProfileId) -> Option<&Profile> {
+        self.library()
+            .ok()?
+            .iter()
+            .find(|entry| entry.id == *id)?
+            .profile
+            .as_ref()
+            .ok()
+    }
+
     fn selected_name(&self) -> Option<String> {
         if let Some(profile) = self.profile() {
             return Some(profile.name.clone());
@@ -2058,6 +2078,33 @@ impl ProfilesEditor {
                     self.icon_art.clear();
                 }
                 self.icon_art.extend(drawn);
+            }
+            Message::StyleMenu(id) => {
+                self.name = None;
+                self.confirm_delete = false;
+                self.confirm_style_delete = false;
+                self.style_menu = (self.style_menu.as_ref() != Some(&id)).then_some(id);
+            }
+            Message::ExportStyle(id) => {
+                return self.export(self.saved_profile(&id).cloned());
+            }
+            Message::ConfirmStyleDelete(id, confirm) => {
+                if self.style_menu.as_ref() == Some(&id)
+                    && id.as_str() != profiles::themes::BEFORE_THEMES
+                {
+                    self.name = None;
+                    self.confirm_style_delete = confirm;
+                    self.rules_using = self.rules_using(&id);
+                }
+            }
+            Message::DeleteStyle(id) => {
+                if self.confirm_style_delete
+                    && self.style_menu.as_ref() == Some(&id)
+                    && id.as_str() != profiles::themes::BEFORE_THEMES
+                {
+                    self.confirm_style_delete = false;
+                    self.delete(id);
+                }
             }
             Message::Select(selection) => {
                 if self.owner == previews::PreviewKind::Theme {
@@ -2204,12 +2251,16 @@ impl ProfilesEditor {
             }
             Message::Name(action) => {
                 self.confirm_delete = false;
+                self.confirm_style_delete = false;
                 self.name = action.map(|action| {
                     let text = match &action {
                         NameAction::Capture => "My desktop".to_string(),
                         NameAction::SaveMix => "My mix".to_string(),
                         NameAction::CaptureTheme => "My style".to_string(),
-                        NameAction::Rename(_) => self.selected_name().unwrap_or_default(),
+                        NameAction::Rename(id) => self
+                            .saved_profile(id)
+                            .map(|p| p.name.clone())
+                            .unwrap_or_default(),
                         NameAction::Duplicate => {
                             let name = self.selected_name().unwrap_or_default();
                             let copy = format!("{name} copy");
@@ -2236,9 +2287,18 @@ impl ProfilesEditor {
                 self.name = None;
                 self.confirm_delete =
                     !self.confirm_delete && matches!(self.selection, Selection::Saved(_));
-                self.rules_using = self.rules_using();
+                if let Selection::Saved(id) = &self.selection {
+                    self.rules_using = self.rules_using(id);
+                }
             }
-            Message::Delete(true) => self.delete(),
+            Message::Delete(true) => {
+                if self.confirm_delete
+                    && let Selection::Saved(id) = self.selection.clone()
+                {
+                    self.confirm_delete = false;
+                    self.delete(id);
+                }
+            }
             Message::Import | Message::ImportTheme => {
                 if self.pending.is_some() {
                     return Outcome::None;
@@ -2246,7 +2306,7 @@ impl ProfilesEditor {
                 let id = self.request(Pending::Import(matches!(message, Message::ImportTheme)));
                 return Outcome::Dialog(Request::Import { id });
             }
-            Message::Export => return self.export(),
+            Message::Export => return self.export(self.profile().cloned()),
             Message::Imported(id, result) => return self.imported(id, result),
             Message::Exported(id, result) => self.exported(id, result),
             Message::Apply => return self.apply(),
@@ -2369,18 +2429,18 @@ impl ProfilesEditor {
         match result {
             Ok((created, warnings)) => {
                 self.reload_library();
-                match created {
-                    Some(id) => self.select(Selection::Saved(id)),
-                    None => {
+                match (created, &edit.action) {
+                    (Some(id), _) => self.select(Selection::Saved(id)),
+                    (None, NameAction::Rename(id))
+                        if self.selection == Selection::Saved(id.clone()) =>
+                    {
                         if let Some(profile) = &mut self.theme_override {
                             profile.name = name.clone();
                         }
-                        if let Selection::Saved(id) = &self.selection {
-                            let id = id.clone();
-                            self.load(&id);
-                            self.replan();
-                        }
+                        self.load(id);
+                        self.replan();
                     }
+                    _ => {}
                 }
                 self.name = None;
                 self.notes = warnings;
@@ -2397,9 +2457,9 @@ impl ProfilesEditor {
         }
     }
 
-    /// How many automation rules apply the selected saved profile.
-    fn rules_using(&self) -> usize {
-        let (Some(store), Selection::Saved(id)) = (self.store(), &self.selection) else {
+    /// How many automation rules apply this saved profile.
+    fn rules_using(&self, id: &ProfileId) -> usize {
+        let Some(store) = self.store() else {
             return 0;
         };
         let target = crate::automation::ProfileRef::Saved(id.as_str().into());
@@ -2412,23 +2472,18 @@ impl ProfilesEditor {
         })
     }
 
-    fn delete(&mut self) {
-        let Selection::Saved(id) = self.selection.clone() else {
-            self.confirm_delete = false;
-            return;
-        };
-        if !self.confirm_delete {
-            return;
-        }
-        self.confirm_delete = false;
+    fn delete(&mut self, id: ProfileId) {
         let Some(store) = self.store() else {
             return;
         };
-        let name = self.selected_name();
+        let name = self.saved_profile(&id).map(|p| p.name.clone());
         match ProfileLibrary::new(store).delete(&id) {
             Ok(()) => {
                 self.reload_library();
-                self.select(Selection::Current);
+                self.style_menu = None;
+                if self.selection == Selection::Saved(id) {
+                    self.select(Selection::Current);
+                }
                 self.notice = Some(Notice::Done(match name {
                     Some(name) => format!("Deleted “{name}”"),
                     None => "Removed a saved look that couldn’t be read".into(),
@@ -2438,7 +2493,7 @@ impl ProfilesEditor {
         }
     }
 
-    fn export(&mut self) -> Outcome {
+    fn export(&mut self, profile: Option<Profile>) -> Outcome {
         if self.pending.is_some() {
             return Outcome::None;
         }
@@ -2450,7 +2505,7 @@ impl ProfilesEditor {
             return Outcome::None;
         }
         let confine = store.fixture_root().map(Path::to_path_buf);
-        let Some(mut profile) = self.profile().cloned() else {
+        let Some(mut profile) = profile else {
             return Outcome::None;
         };
         // Older looks may name Halcyon's overlay, which exists only here.

@@ -113,6 +113,7 @@ pub struct Config {
     pub show_explanations: bool,
     pub activity_island: crate::activity_island::preferences::Preferences,
     pub setup_dismissed: bool,
+    pub islands_offer_dismissed: bool,
     /// First-run setup was finished, skipped or cancelled.
     pub onboarded: bool,
 }
@@ -177,6 +178,7 @@ impl Default for Config {
             show_explanations: false,
             activity_island: Default::default(),
             setup_dismissed: false,
+            islands_offer_dismissed: false,
             onboarded: false,
         }
     }

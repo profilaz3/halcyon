@@ -403,7 +403,9 @@ impl Settings {
         };
         let mut parts = vec![header];
         // Settings opens here, so first-run setup and what's new wait here.
-        parts.push(self.islands_activation_card());
+        if !self.config.islands_offer_dismissed || self.panel_host() != Host::Switch {
+            parts.push(self.islands_activation_card());
+        }
         if self.offers_setup() {
             parts.push(self.setup_card());
         }

@@ -1487,6 +1487,10 @@ impl Settings {
                     {
                         continue;
                     }
+                    if self.page == Page::Themes {
+                        items.push(self.saved_style_row(entry));
+                        continue;
+                    }
                     let selected = *editor.selection() == Selection::Saved(entry.id.clone());
                     let (name, tone) = match &entry.profile {
                         Ok(profile) => (profile.name.clone(), if selected { FG } else { MUTED }),
@@ -1538,6 +1542,83 @@ impl Settings {
             }
         }
         section(items)
+    }
+
+    fn saved_style_row(
+        &self,
+        entry: &crate::desktop::profiles::ProfileEntry,
+    ) -> Element<'_, Message> {
+        let editor = &self.profiles;
+        let id = &entry.id;
+        let name = entry
+            .profile
+            .as_ref()
+            .map_or("Unreadable style", |profile| profile.name.as_str());
+        let ready = editor.writable() && !editor.busy();
+        let readable = entry.profile.is_ok();
+        let menu = editor.style_menu.as_ref() == Some(id);
+        let apply = button::text("Apply")
+            .name(format!("Apply {name}"))
+            .id(cosmic::widget::Id::new(format!(
+                "apply-style-{}",
+                id.as_str()
+            )))
+            .on_press_maybe(
+                (ready && readable && !self.native_busy)
+                    .then(|| edit(Edit::Select(Selection::Saved(id.clone())))),
+            );
+        let more = button::icon(icon::from_name("view-more-symbolic").size(16))
+            .name(format!("Manage {name}"))
+            .id(cosmic::widget::Id::new(format!(
+                "manage-style-{}",
+                id.as_str()
+            )))
+            .on_press(edit(Edit::StyleMenu(id.clone())))
+            .apply(|control| super::tip::tip(control, "Manage saved style"));
+        let mut rows = vec![split(
+            label(name.to_owned(), 16., FG),
+            row::with_children(vec![apply.into(), more.into()])
+                .spacing(6)
+                .into(),
+        )];
+        if menu {
+            let mut actions = vec![
+                button::text("Rename…")
+                    .on_press_maybe(
+                        (ready && readable)
+                            .then(|| edit(Edit::Name(Some(NameAction::Rename(id.clone()))))),
+                    )
+                    .into(),
+                button::text("Export…")
+                    .on_press_maybe(
+                        (ready && readable).then(|| edit(Edit::ExportStyle(id.clone()))),
+                    )
+                    .into(),
+            ];
+            if id.as_str() != crate::desktop::profiles::themes::BEFORE_THEMES {
+                actions.push(
+                    button::text("Delete…")
+                        .on_press_maybe(
+                            ready.then(|| edit(Edit::ConfirmStyleDelete(id.clone(), true))),
+                        )
+                        .into(),
+                );
+            }
+            rows.push(row::with_children(actions).spacing(6).wrap().into());
+            if editor.name.as_ref().is_some_and(
+                |name| matches!(&name.action, NameAction::Rename(target) if target == id),
+            ) {
+                rows.push(self.name_field("Save"));
+            }
+            if editor.confirm_style_delete {
+                rows.push(self.delete_confirm_actions(
+                    format!("“{name}”"),
+                    Edit::ConfirmStyleDelete(id.clone(), false),
+                    Edit::DeleteStyle(id.clone()),
+                ));
+            }
+        }
+        column::with_children(rows).spacing(6).into()
     }
 
     /// The selection: miniature, name and actions, parts to include, what
@@ -1929,6 +2010,15 @@ impl Settings {
     }
 
     pub(super) fn delete_confirm(&self, name: String) -> Element<'_, Message> {
+        self.delete_confirm_actions(name, Edit::Delete(false), Edit::Delete(true))
+    }
+
+    fn delete_confirm_actions(
+        &self,
+        name: String,
+        cancel: Edit,
+        delete: Edit,
+    ) -> Element<'_, Message> {
         let rules = match self.profiles.rules_using {
             0 => String::new(),
             1 => " An automation rule uses it and will stop working.".into(),
@@ -1945,12 +2035,8 @@ impl Settings {
             ),
             WARN,
             vec![
-                button::text("Cancel")
-                    .on_press(edit(Edit::Delete(false)))
-                    .into(),
-                button::destructive("Delete")
-                    .on_press(edit(Edit::Delete(true)))
-                    .into(),
+                button::text("Cancel").on_press(edit(cancel)).into(),
+                button::destructive("Delete").on_press(edit(delete)).into(),
             ],
         )
     }

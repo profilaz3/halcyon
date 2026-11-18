@@ -1389,6 +1389,41 @@ fn widget_fonts_list_installed_families_and_save_a_choice() {
 }
 
 #[test]
+fn saved_style_menu_opens_without_changing_the_desktop() {
+    if child("saved_style_menu_opens_without_changing_the_desktop") {
+        return;
+    }
+    use crate::desktop::{DesktopStore, profiles as records};
+    use crate::settings::tests::{native_click, settle_settings};
+    let store = DesktopStore::from_env().unwrap();
+    let profile = records::themes::record(crate::desktop_theme::Family::Bare);
+    let id = records::ProfileLibrary::new(&store)
+        .create(&profile)
+        .unwrap();
+    let (mut app, initial) = Settings::init(Core::default(), Page::Themes);
+    settle_settings(&mut app, initial);
+    let size = Size::new(820., 600.);
+    let _ = app.update(Message::Resized(size));
+    let mut native = Native::new(size);
+    let before = std::fs::read(Config::path().unwrap()).unwrap();
+    let selection = app.profiles.selection().clone();
+    native.bounds(app.settings_view(), &format!("apply-style-{}", id.as_str()));
+    native_click(
+        &mut app,
+        &mut native,
+        &format!("manage-style-{}", id.as_str()),
+    );
+    for action in ["Rename…", "Export…", "Delete…"] {
+        assert!(
+            !native.text_all(app.settings_view(), action).is_empty(),
+            "{action}"
+        );
+    }
+    assert_eq!(app.profiles.selection(), &selection);
+    assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
+}
+
+#[test]
 fn appearance_shows_one_row_of_styles_and_every_style_on_request() {
     let size = Size::new(1024., 720.);
     let (mut app, _) = Settings::init(Core::default(), Page::Themes);

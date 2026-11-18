@@ -220,7 +220,6 @@ pub fn subscription(mut preferences: Preferences, seed: State) -> Subscription<S
             loop {
                 state.source = Some(preferences.clone());
                 state.loading = true;
-                state.select_chart(&preferences.selected);
                 if output.send(state.clone()).await.is_err() {
                     break;
                 }
@@ -282,7 +281,6 @@ async fn refresh(
                 state.record(symbol, result);
             }
             state.ecb_checked_at = Some(std::time::Instant::now());
-            state.select_chart(selected);
             let _ = output.send(state.clone()).await;
         }
     }
@@ -299,7 +297,6 @@ async fn refresh(
                     };
                     limited = matches!(result, Err(Problem::RateLimit));
                     state.record(symbol, result);
-                    state.select_chart(selected);
                     let _ = output.send(state.clone()).await;
                 }
             }
@@ -353,7 +350,6 @@ async fn refresh(
             },
         }
     }
-    state.select_chart(selected);
     if !reuse {
         state.received_at = Some(std::time::Instant::now());
     }
@@ -455,11 +451,11 @@ impl Preferences {
             self.enabled,
             self.provider,
             &self.symbols,
-            &self.selected,
             self.credential_revision,
-            self.provider == Provider::TwelveData
+            (self.provider == Provider::TwelveData
                 && self.show_chart
-                && currency_pair(&self.selected).is_none(),
+                && currency_pair(&self.selected).is_none())
+            .then_some(&self.selected),
         )
     }
 
@@ -554,8 +550,6 @@ pub struct State {
     pub received_at: Option<std::time::Instant>,
     pub quotes: Vec<Quote>,
     pub charts: std::collections::BTreeMap<String, Vec<Point>>,
-    pub chart_symbol: String,
-    pub chart: Vec<Point>,
     pub problem: Option<Problem>,
     pub unavailable: std::collections::BTreeMap<String, Problem>,
     pub loading: bool,
@@ -575,11 +569,6 @@ impl State {
             && self
                 .received_at
                 .is_some_and(|at| at.elapsed() < REFRESH_INTERVAL)
-    }
-
-    fn select_chart(&mut self, symbol: &str) {
-        self.chart_symbol = symbol.into();
-        self.chart = self.charts.get(symbol).cloned().unwrap_or_default();
     }
 
     fn store_quote(&mut self, quote: Quote) {
@@ -700,6 +689,24 @@ mod tests {
         );
         assert_eq!(budget.reserve(now + Duration::from_secs(61)), None);
         assert_eq!(budget.0.len(), 1);
+    }
+
+    #[test]
+    fn public_stock_selection_keeps_an_inflight_feed() {
+        let mut a = Preferences {
+            selected: "AAPL".into(),
+            show_chart: true,
+            ..Default::default()
+        };
+        let mut b = a.clone();
+        b.selected = "MSFT".into();
+        assert!(a.feed_key() == b.feed_key());
+        a.provider = Provider::TwelveData;
+        b.provider = Provider::TwelveData;
+        assert!(a.feed_key() != b.feed_key());
+        a.show_chart = false;
+        b.show_chart = false;
+        assert!(a.feed_key() == b.feed_key());
     }
 
     #[test]

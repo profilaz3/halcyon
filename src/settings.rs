@@ -937,6 +937,7 @@ pub enum Message {
     Calendar(calendar::Message),
     /// Hides the Home card that offers setup ("Set up later").
     SetupDismissed(bool),
+    KeepStandardPanel,
     /// Hides the Home card about an update without opening its notes.
     NotesSeen,
     /// Opens a web page a release note names.
@@ -2751,6 +2752,9 @@ impl Settings {
                 self.setup_kept = false;
                 self.wizard = Some(open_wizard());
                 self.desktop.read_for_preview();
+            }
+            Message::KeepStandardPanel => {
+                self.save(json!({"islands_offer_dismissed": true}));
             }
             Message::SetupDismissed(on) => {
                 self.save(json!({"setup_dismissed": on}));
