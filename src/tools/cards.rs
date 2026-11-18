@@ -453,7 +453,7 @@ fn cover_light(
     config: &Config,
     palette: Palette,
     cover: Option<&Handle>,
-    center: [f32; 2],
+    artwork_id: cosmic::widget::Id,
     spread: f32,
     radius: f32,
 ) -> Option<crate::materials::AlbumLight> {
@@ -464,7 +464,7 @@ fn cover_light(
         && crate::widget_style::luminance(palette.background) < 0.27)
         .then(|| crate::materials::AlbumLight {
             cover: cover.cloned(),
-            center,
+            artwork_id,
             spread,
             radius,
             animate: config.material_motion,
@@ -586,7 +586,7 @@ pub fn music_visualized<'a, M: Clone + 'static>(
             .width(Length::Fill);
             let mut top: Vec<Element<'a, M>> = Vec::new();
             let sleeve_view = |side: f32| -> Element<'a,M> {
-                match cover {
+                let image: Element<'a, M> = match cover {
                     Some(handle) => cosmic::widget::image(handle.clone())
                         .width(side).height(side)
                         .content_fit(cosmic::iced::ContentFit::Cover)
@@ -597,7 +597,10 @@ pub fn music_visualized<'a, M: Clone + 'static>(
                         .size(20).icon().into(),
                         Color { a: 0.12, ..p.accent }, p.muted, [12, 12], 9.,
                     )).center_x(side).center_y(side).into(),
-                }
+                };
+                container(image)
+                    .id(cosmic::widget::Id::new("music-artwork"))
+                    .into()
             };
             if config.music.show_artwork && !wide {
                 top.push(sleeve_view(44.));
@@ -760,11 +763,7 @@ pub fn music_visualized<'a, M: Clone + 'static>(
             config,
             p,
             cover,
-            if wide {
-                [f32::from(PADDING) + sleeve * 0.78, height * 0.5]
-            } else {
-                [f32::from(PADDING) + 34., (height * 0.5 - 25.).max(24.)]
-            },
+            cosmic::widget::Id::new("music-artwork"),
             if wide {
                 sleeve * 1.12
             } else {
@@ -789,7 +788,7 @@ fn last_played<'a, M: Clone + 'static>(
     let resumer = last.resumer(live);
     let mut top: Vec<Element<'a, M>> = Vec::new();
     if config.music.show_artwork {
-        top.push(match art {
+        let image: Element<'a, M> = match art {
             Some(handle) => cosmic::widget::image(handle.clone())
                 .width(44.)
                 .height(44.)
@@ -813,7 +812,8 @@ fn last_played<'a, M: Clone + 'static>(
             .width(44.)
             .height(44.)
             .into(),
-        });
+        };
+        top.push(container(image).id(cosmic::widget::Id::new("music-artwork")).into());
     }
     let resume = on.zip(resumer).map(|(on, player)| {
         on(Action::Music(music::TransportRequest {
@@ -1426,16 +1426,25 @@ mod tests {
         let now = Instant::now();
         let player = recipe::sample_player(now);
         let feed = music::Feed::Players(vec![player.clone()]);
-        let art = Handle::from_rgba(32, 32, [53, 40, 82, 255].repeat(32 * 32));
-        let size = [520., 164.];
-        let mut config = Config::default();
-        config.appearance.family = Some(crate::desktop_theme::Family::DarkGlass);
-        config.material_motion = false;
+        let art = Handle::from_rgba(256, 256, [53, 40, 82, 255].repeat(256 * 256));
         for backend in ["tiny-skia", "wgpu"] {
-            let mut ui = Native::with_backend(Size::new(size[0], size[1]), backend);
-            let mut capture = |cfg: &Config| {
-                let card = || {
-                    music::<Action>(
+            for (size, progress, template) in [
+                ([520., 164.], true, None),
+                ([360., 140.], true, None),
+                ([360., 140.], false, None),
+                ([520., 220.], true, Some(1)),
+                ([320., 400.], true, Some(0)),
+            ] {
+                let mut config = Config::default();
+                config.appearance.family = Some(crate::desktop_theme::Family::DarkGlass);
+                config.material_motion = false;
+                config.music.show_progress = progress;
+                config.recipes.music = template.map(|i| {
+                    crate::recipes::Recipe::template(crate::recipes::Kind::Music, i)
+                });
+                let mut ui = Native::with_backend(Size::new(size[0], size[1]), backend);
+                let mut capture = |cfg: &Config| {
+                    let card = || music::<Action>(
                         MusicView {
                             feed: Some(&feed),
                             player: Some(&player),
@@ -1448,43 +1457,47 @@ mod tests {
                         cfg,
                         None,
                         Some(size),
-                    )
-                };
-                let _ = ui.event(
-                    card(),
-                    Event::Window(window::Event::RedrawRequested(now)),
-                    Point::ORIGIN,
-                );
-                let pixels = ui.render(card(), &cosmic::Theme::dark());
-                if cfg.music.album_light {
-                    ui.capture(
-                        card(),
-                        &cosmic::Theme::dark(),
-                        &format!("album-lit-music-{backend}"),
                     );
+                    let bounds = ui.bounds(card(), "music-artwork");
+                    let _ = ui.event(
+                        card(),
+                        Event::Window(window::Event::RedrawRequested(now)),
+                        Point::ORIGIN,
+                    );
+                    let pixels = ui.render(card(), &cosmic::Theme::dark());
+                    if cfg.music.album_light && size == [520., 164.] {
+                        ui.capture(
+                            card(),
+                            &cosmic::Theme::dark(),
+                            &format!("album-lit-music-{backend}"),
+                        );
+                    }
+                    (bounds, pixels)
+                };
+                config.music.album_light = true;
+                let (cover, lit) = capture(&config);
+                config.music.album_light = false;
+                let (_, plain) = capture(&config);
+                let delta = |x: f32, y: f32| {
+                    let i = (size[0] as usize * y as usize + x as usize) * 4;
+                    i16::from(lit[i + 2]) - i16::from(plain[i + 2])
+                };
+                let left = cover.x - 4.;
+                let right = cover.x + cover.width + 3.;
+                let cy = cover.center_y();
+                let context = format!("{backend} {size:?} progress={progress} template={template:?}");
+                for y in [cy - 12., cy + 11.] {
+                    let (l, r) = (delta(left, y), delta(right, y));
+                    assert!(l > 12 && r > 12 && (l - r).abs() <= 8,
+                        "{context}: expected a balanced glow beside the cover, got {l} and {r}");
                 }
-                pixels
-            };
-            config.music.album_light = true;
-            let lit = capture(&config);
-            config.music.album_light = false;
-            let plain = capture(&config);
-            let delta = |x: usize, y: usize| {
-                let i = (520 * y + x) * 4;
-                lit[i + 2] as i16 - plain[i + 2] as i16
-            };
-            assert!(
-                (165..190).all(|x| delta(x, 26) > 20),
-                "{backend} should show a continuous band of light beside a muted sleeve"
-            );
-            assert!(
-                delta(230, 26) <= 40,
-                "{backend} should soften the reflection across the track details"
-            );
-            assert!(
-                delta(510, 78).abs() <= 1,
-                "{backend} should keep the far edge neutral"
-            );
+                assert!((delta(left, cy - 12.) - delta(left, cy + 11.)).abs() <= 8,
+                    "{context}: the vertical glow should follow the artwork row");
+                if size == [520., 164.] {
+                    assert!(delta(230., 26.) <= 40, "{context}: keep track details readable");
+                    assert!(delta(510., 78.).abs() <= 1, "{context}: keep the far edge neutral");
+                }
+            }
         }
     }
 

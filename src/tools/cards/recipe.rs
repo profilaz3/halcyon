@@ -361,6 +361,7 @@ fn music_with_ids<'a, M: Clone + 'static>(
         })
     };
     let mut pieces: Vec<Element<'a, M>> = Vec::new();
+    let artwork_id = ids.id("music-artwork");
     let artwork = || {
         container(
             cosmic::widget::image(view.art.unwrap().clone())
@@ -369,7 +370,7 @@ fn music_with_ids<'a, M: Clone + 'static>(
                 .content_fit(cosmic::iced::ContentFit::Contain)
                 .border_radius([12.; 4]),
         )
-        .id(ids.id("music-artwork"))
+        .id(artwork_id.clone())
         .width(art_size)
         .height(art_size)
         .clip(true)
@@ -380,7 +381,7 @@ fn music_with_ids<'a, M: Clone + 'static>(
             Part::Artwork if split => continue,
             Part::Artwork => {
                 let sleeve = centered(artwork());
-                match cover_light(config, p, view.art, [-1., art_size * 0.5], art_size * 0.84, 10.) {
+                match cover_light(config, p, view.art, artwork_id.clone(), art_size * 0.84, 10.) {
                     Some(light) => crate::materials::album_light(sleeve, light),
                     None => sleeve,
                 }
@@ -556,7 +557,7 @@ fn music_with_ids<'a, M: Clone + 'static>(
                 config,
                 p,
                 view.art.filter(|_| visible.contains(&Part::Artwork)),
-                [f32::from(PADDING) + art_size * 0.78, size[1] * 0.5],
+                artwork_id,
                 art_size + 28.,
                 if recipe.finish.is_some() {
                     18.

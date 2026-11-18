@@ -1,6 +1,6 @@
 //! Grain and an edge glint behind widget content. No wallpaper capture or idle clock.
 use cosmic::iced::widget::shader::{self, Action, Viewport};
-use cosmic::iced::{Color, Event, Rectangle, mouse, wgpu, window};
+use cosmic::iced::{Color, Event, Point, Rectangle, mouse, wgpu, window};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -91,8 +91,7 @@ impl<M> shader::Program<M> for Program {
 /// the same decoded thumbnail and hue calculation as the Activity Island.
 pub struct AlbumLight {
     pub cover: Option<cosmic::widget::image::Handle>,
-    /// Light origin in logical points. A negative x centres it in a stacked row.
-    pub center: [f32; 2],
+    pub artwork_id: cosmic::widget::Id,
     pub spread: f32,
     pub radius: f32,
     pub animate: bool,
@@ -102,6 +101,7 @@ const FADE: Duration = Duration::from_millis(420);
 
 #[derive(Default)]
 pub struct AlbumState {
+    pub(super) center: Option<Point>,
     cover: Option<cosmic::iced::advanced::image::Id>,
     mask: std::cell::RefCell<Option<([f32; 6], cosmic::iced::advanced::svg::Handle)>>,
     from: [f32; 4],
@@ -117,7 +117,6 @@ impl AlbumState {
         renderer: &mut cosmic::Renderer,
         bounds: Rectangle,
         viewport: &Rectangle,
-        center: [f32; 2],
         spread: f32,
         radius: f32,
     ) {
@@ -130,8 +129,7 @@ impl AlbumState {
             return;
         }
         let (w, h) = (bounds.width, bounds.height);
-        let x = if center[0] < 0. { w / 2. } else { center[0] };
-        let y = center[1];
+        let Some(Point { x, y }) = self.center else { return };
         let extent = spread * 2.;
         let shape = [w, h, x, y, extent, radius];
         let mut cached = self.mask.borrow_mut();
@@ -210,11 +208,7 @@ impl<M> shader::Program<M> for AlbumLight {
 
     fn draw(&self, state: &AlbumState, _: mouse::Cursor, bounds: Rectangle) -> Primitive {
         let [r, g, b, a] = state.color(Instant::now());
-        let x = if self.center[0] < 0. {
-            bounds.width * 0.5
-        } else {
-            self.center[0]
-        };
+        let center = state.center.unwrap_or_default();
         Primitive {
             params: [
                 bounds.width,
@@ -224,9 +218,9 @@ impl<M> shader::Program<M> for AlbumLight {
                 r,
                 g,
                 b,
-                a,
-                x,
-                self.center[1],
+                if state.center.is_some() { a } else { 0. },
+                center.x,
+                center.y,
                 self.spread,
                 1.,
             ],
@@ -355,7 +349,7 @@ mod tests {
         let cover = |rgba: [u8; 4]| Some(Handle::from_rgba(8, 8, rgba.repeat(64)));
         let mut light = AlbumLight {
             cover: cover([20, 68, 246, 255]),
-            center: [42., 48.],
+            artwork_id: cosmic::widget::Id::new("music-artwork"),
             spread: 85.,
             radius: 16.,
             animate: true,
