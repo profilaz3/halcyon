@@ -2448,19 +2448,26 @@ mod tests {
             assert_eq!(hit.anchor(), anchor, "{query}");
             assert!(!hit.advanced, "{query}");
         }
-        // Memory and Disk show bars, so only CPU, Network and GPU have a
-        // history graph to find.
+        // Within System Monitor, only CPU, Network and GPU show history graphs.
         let hits = search("history");
-        assert_eq!(hits.len(), 4);
+        let mut metric_anchors: Vec<_> = hits
+            .iter()
+            .filter(|hit| hit.page == Page::Devbox)
+            .map(|hit| hit.anchor())
+            .collect();
+        metric_anchors.sort_unstable();
         assert_eq!(
-            hits.iter()
-                .filter(|hit| hit.page == Page::Devbox && !hit.advanced)
-                .count(),
-            3
+            metric_anchors,
+            ["devbox-cpu", "devbox-gpu", "devbox-network"]
         );
         assert!(
             hits.iter()
                 .any(|hit| hit.page == Page::Changes && hit.label == "Changes")
+        );
+        let chart = search("price history")[0];
+        assert_eq!(
+            (chart.page, chart.anchor()),
+            (Page::Markets, "markets-chart")
         );
     }
 }
