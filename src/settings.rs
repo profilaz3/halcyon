@@ -657,6 +657,23 @@ pub enum FontTarget {
     GlanceText,
     GlanceClock,
 }
+#[derive(Debug, Clone, Copy)]
+pub enum WeatherOutlookPart {
+    Artwork,
+    Range,
+    Forecast,
+}
+
+impl WeatherOutlookPart {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Artwork => "outlook_artwork",
+            Self::Range => "outlook_range",
+            Self::Forecast => "outlook_forecast",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     AppSettingsPage(AppSettingsPage),
@@ -908,6 +925,8 @@ pub enum Message {
     GlanceFollowStyle(bool),
     WeatherDewPoint(bool),
     WeatherFahrenheit(bool),
+    WeatherLayout(crate::config::WeatherLayout),
+    WeatherOutlookPart(WeatherOutlookPart, bool),
     CityInput(String),
     /// Weather takes the city already chosen for time of day.
     UseScheduleCity,
@@ -4371,24 +4390,10 @@ impl Settings {
                     }));
                 }
             }
-            Message::WeatherFahrenheit(value) => {
-                match Config::save_weather(json!({"fahrenheit": value})) {
-                    Ok(config) => {
-                        self.config = config;
-                        self.saved();
-                    }
-                    Err(error) => self.failed(error),
-                }
-            }
-            Message::WeatherDewPoint(value) => {
-                match Config::save_weather(json!({"show_dew_point": value})) {
-                    Ok(config) => {
-                        self.config = config;
-                        self.saved();
-                    }
-                    Err(error) => self.failed(error),
-                }
-            }
+            Message::WeatherLayout(layout) => self.save_weather(json!({"layout": layout})),
+            Message::WeatherOutlookPart(part, on) => self.save_weather(json!({(part.key()): on})),
+            Message::WeatherFahrenheit(on) => self.save_weather(json!({"fahrenheit": on})),
+            Message::WeatherDewPoint(on) => self.save_weather(json!({"show_dew_point": on})),
             Message::Notice(value) => {
                 self.notice = value;
                 self.notice_editing = true;
@@ -6209,6 +6214,15 @@ impl Settings {
     }
     fn save_activity(&mut self, changes: serde_json::Value) {
         match Config::save_activity_preferences(changes) {
+            Ok(config) => {
+                self.config = config;
+                self.saved();
+            }
+            Err(error) => self.failed(error),
+        }
+    }
+    fn save_weather(&mut self, changes: serde_json::Value) {
+        match Config::save_weather(changes) {
             Ok(config) => {
                 self.config = config;
                 self.saved();

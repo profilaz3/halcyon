@@ -103,13 +103,13 @@ pub(super) fn weather_sample(today: NaiveDate) -> Weather {
             is_day: 1,
         },
         daily: data::Daily {
-            time: (0..3)
+            time: (0..4)
                 .map(|offset| (today + Days::days(offset)).format("%Y-%m-%d").to_string())
                 .collect(),
-            temperature_2m_max: vec![23., 22., 24.],
-            temperature_2m_min: vec![14., 13., 15.],
-            weather_code: vec![2, 3, 0],
-            precipitation_probability_max: vec![Some(10.), Some(25.), Some(0.)],
+            temperature_2m_max: vec![23., 22., 24., 19.],
+            temperature_2m_min: vec![14., 13., 15., 12.],
+            weather_code: vec![2, 3, 0, 61],
+            precipitation_probability_max: vec![Some(10.), Some(25.), Some(0.), Some(75.)],
         },
     };
     weather
@@ -117,9 +117,10 @@ pub(super) fn weather_sample(today: NaiveDate) -> Weather {
 
 /// The desktop's own latest reading for the chosen city, as its card shows
 /// it, its age included once it is old. Nothing is fetched.
-pub(crate) fn settings_weather_reading(
+pub(crate) fn settings_weather_reading_sized(
     config: &Config,
     reading: &WeatherSnapshot,
+    size: [f32; 2],
 ) -> Element<'static, Message> {
     weather::Presentation::new(
         config,
@@ -130,10 +131,7 @@ pub(crate) fn settings_weather_reading(
         },
         Local::now(),
     )
-    .view(
-        crate::widget_presentation::Context::LocalPreview,
-        crate::widget_presentation::WEATHER_SIZE,
-    )
+    .view(crate::widget_presentation::Context::LocalPreview, size)
 }
 /// Projects preview needs only immutable sample readings and the chosen style.
 /// The caller maps every action to Preview, so links and refresh stay inactive.

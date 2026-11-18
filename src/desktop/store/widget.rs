@@ -393,6 +393,10 @@ pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/widget_display", "Widget display", Layout, |v| v.is_null() || v.as_str().is_some_and(crate::displays::valid_name);
     "/appearance/match_wallpaper", "Matching wallpaper", Style, boolean;
     "/appearance/match_cosmic_colors", "Follow COSMIC colors", Style, boolean;
+    "/weather/layout", "Weather layout", Style, |v| matches!(v.as_str(), Some("saved" | "classic" | "outlook"));
+    "/weather/outlook_artwork", "Weather artwork", Style, boolean;
+    "/weather/outlook_range", "Daily temperature range", Style, boolean;
+    "/weather/outlook_forecast", "Outlook forecast", Style, boolean;
     "/weather/show_dew_point", "Weather dew point", Style, boolean;
     "/weather/fahrenheit", "Weather units", Style, boolean;
     "/placement/columns", "Arrangement grid", Layout, |v| int_in(v,12,24);

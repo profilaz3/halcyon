@@ -37,6 +37,7 @@ enum Content {
 #[derive(Clone)]
 pub(super) struct Presentation {
     recipe_config: Option<Config>,
+    outlook: Option<outlook::Outlook>,
     now: chrono::NaiveDateTime,
     title: String,
     content: Content,
@@ -117,7 +118,16 @@ impl Presentation {
             None => Content::Loading,
         };
         Self {
-            recipe_config: config.recipes.weather.as_ref().map(|_| config.clone()),
+            recipe_config: config
+                .recipes
+                .weather
+                .as_ref()
+                .filter(|_| config.weather.layout == crate::config::WeatherLayout::Saved)
+                .map(|_| config.clone()),
+            outlook: snapshot
+                .weather
+                .filter(|_| config.weather.layout == crate::config::WeatherLayout::Outlook)
+                .map(|w| outlook::Outlook::new(config, w, now.date_naive())),
             now: now.naive_local(),
             title: config
                 .location
@@ -204,6 +214,18 @@ impl Presentation {
         }
         let p = self.palette;
         let size = crate::widget_presentation::viewport(size, self.metrics().natural);
+        if let (
+            Some(outlook),
+            Content::Reading {
+                temperature,
+                description,
+                status,
+                ..
+            },
+        ) = (&self.outlook, &self.content)
+        {
+            return outlook.view(self, size, temperature, description, status.as_deref());
+        }
         let title = self.label(self.title.clone(), crate::widget_style::TITLE, p.foreground);
         let mut rows = vec![match &self.content {
             Content::Reading {
@@ -346,5 +368,6 @@ impl Presentation {
     }
 }
 
+mod outlook;
 #[cfg(test)]
 mod tests;

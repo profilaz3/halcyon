@@ -350,6 +350,11 @@ pub(super) fn segmented<'a>(
         .into_iter()
         .map(|(title, selected, message)| {
             let id = match &message {
+                Some(Message::WeatherLayout(layout)) => cosmic::widget::Id::new(match layout {
+                    crate::config::WeatherLayout::Classic => "weather-layout-classic",
+                    crate::config::WeatherLayout::Outlook => "weather-layout-outlook",
+                    crate::config::WeatherLayout::Saved => "weather-layout-saved",
+                }),
                 Some(Message::DesktopEditor(crate::settings::desktop::Message::RadiusChoice(
                     radius,
                 ))) => cosmic::widget::Id::new(format!("native-bar-radius-{radius}")),

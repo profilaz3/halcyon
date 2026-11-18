@@ -76,6 +76,9 @@ pub(crate) fn settings_recipe_preview(
     }
     let mut config = config.clone();
     config.recipes.set(recipe.kind, Some(recipe.clone()));
+    if recipe.kind == crate::recipes::Kind::Weather {
+        config.weather.layout = crate::config::WeatherLayout::Saved;
+    }
     config.location = (!missing).then(|| crate::config::Location {
         name: "Sample city".into(),
         latitude: 0.,
@@ -143,7 +146,7 @@ pub(crate) use edge::{
 };
 pub(crate) use settings_preview::{
     SettingsSamples, settings_devbox_preview, settings_projects_preview, settings_weather_preview,
-    settings_weather_preview_at, settings_weather_preview_sized, settings_weather_reading,
+    settings_weather_preview_at, settings_weather_preview_sized, settings_weather_reading_sized,
 };
 #[cfg(test)]
 mod calendar_display_tests;

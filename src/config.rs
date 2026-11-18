@@ -1233,9 +1233,23 @@ pub enum ColorPolicy {
     Custom,
 }
 
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WeatherLayout {
+    /// Follow the saved widget design, or show Classic when there is none.
+    #[default]
+    Saved,
+    Classic,
+    Outlook,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct WeatherPreferences {
+    pub layout: WeatherLayout,
+    pub outlook_artwork: bool,
+    pub outlook_range: bool,
+    pub outlook_forecast: bool,
     /// Shared by the standalone weather card and Daily overview.
     pub show_dew_point: bool,
     /// Show °F and mph. Readings are kept in °C and km/h and converted
@@ -1245,6 +1259,10 @@ pub struct WeatherPreferences {
 impl Default for WeatherPreferences {
     fn default() -> Self {
         Self {
+            layout: WeatherLayout::Saved,
+            outlook_artwork: true,
+            outlook_range: true,
+            outlook_forecast: true,
             show_dew_point: false,
             fahrenheit: fahrenheit_region(),
         }

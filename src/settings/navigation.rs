@@ -592,6 +592,8 @@ const SEARCH: &[SearchHit] = &[
     )
     .at("devbox-reorder-anchor"),
     WEATHER_LOCATION,
+    hit(Page::Weather, "Widget layout", "weather classic outlook art forecast range compare saved design", false)
+        .at("weather-layout"),
     hit(
         Page::Weather,
         "Units",

@@ -110,6 +110,8 @@ fn message_scope(config: &Config, message: &Message) -> Vec<String> {
         }
         Message::ClockFormat(_) => add(&["clock", "format_24h"]),
         Message::ClockDate(_) => add(&["clock", "show_date"]),
+        Message::WeatherLayout(_) => add(&["weather", "layout"]),
+        Message::WeatherOutlookPart(part, _) => add(&["weather", part.key()]),
         Message::WeatherDewPoint(_) => add(&["weather", "show_dew_point"]),
         Message::WeatherFahrenheit(_) => add(&["weather", "fahrenheit"]),
         Message::ClockAlignment(_) => add(&["clock", "alignment"]),

@@ -95,7 +95,8 @@ async fn fetch_weather_from(
             ),
             ("daily", "temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max".into()),
             ("timezone", "auto".into()),
-            ("forecast_days", "3".into()),
+            // Today supplies the range; Outlook can show the following three days.
+            ("forecast_days", "4".into()),
         ])
         .send()
         .await

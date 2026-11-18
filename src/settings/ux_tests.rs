@@ -403,6 +403,49 @@ fn review_r2_native_theme_preview_never_falls_back_to_obsolete_home_pixels() {
 }
 
 #[test]
+fn weather_layout_comparison_and_choices_preserve_a_saved_design() {
+    use crate::config::WeatherLayout;
+    if child("weather_layout_comparison_and_choices_preserve_a_saved_design") {
+        return;
+    }
+    let recipe = crate::recipes::Recipe::template(crate::recipes::Kind::Weather, 0);
+    let path = Config::path().unwrap();
+    let mut raw: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    raw["recipes"] = serde_json::json!({"weather": recipe});
+    std::fs::write(&path, serde_json::to_vec(&raw).unwrap()).unwrap();
+    let (mut app, _) = Settings::init(Core::default(), Page::Weather);
+    let size = Size::new(820., 600.);
+    let _ = app.update(Message::Resized(size));
+    let mut native = Native::new(size);
+    let before = std::fs::read(&path).unwrap();
+    reveal_click(&mut app, &mut native, "weather-compare");
+    assert!(app.open_sections.contains("weather-compare"));
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    for (id, layout) in [
+        ("weather-layout-outlook", WeatherLayout::Outlook),
+        ("weather-layout-classic", WeatherLayout::Classic),
+        ("weather-layout-saved", WeatherLayout::Saved),
+    ] {
+        reveal_click(&mut app, &mut native, id);
+        let config = Config::try_load().unwrap();
+        assert_eq!(config.weather.layout, layout);
+        assert_eq!(config.recipes.weather.as_ref(), Some(&recipe));
+        if layout == WeatherLayout::Outlook {
+            for part in [
+                WeatherOutlookPart::Artwork,
+                WeatherOutlookPart::Range,
+                WeatherOutlookPart::Forecast,
+            ] {
+                reveal_click(&mut app, &mut native, &format!("weather-{}", part.key()));
+            }
+        }
+    }
+    let prefs = Config::try_load().unwrap().weather;
+    assert!(!prefs.outlook_artwork && !prefs.outlook_range && !prefs.outlook_forecast);
+}
+
+#[test]
 fn dew_point_switch_saves_and_undoes_without_touching_other_preferences() {
     if child("dew_point_switch_saves_and_undoes_without_touching_other_preferences") {
         return;

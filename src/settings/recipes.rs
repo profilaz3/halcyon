@@ -331,6 +331,15 @@ impl Editor {
                 }
                 let mut patch = crate::desktop::store::WidgetPatch::new();
                 patch.set(self.draft.kind.pointer(), original, Some(value))?;
+                if self.draft.kind == crate::recipes::Kind::Weather
+                    && raw.pointer("/weather/layout").is_some()
+                {
+                    patch.set(
+                        "/weather/layout",
+                        crate::desktop::store::widget::get(&raw, "/weather/layout"),
+                        None,
+                    )?;
+                }
                 crate::desktop::actions::commit(
                     &store,
                     &crate::desktop::DesktopPatch::new(),
