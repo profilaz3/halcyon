@@ -91,7 +91,7 @@ impl<M> shader::Program<M> for Program {
 /// the same decoded thumbnail and hue calculation as the Activity Island.
 pub struct AlbumLight {
     pub cover: Option<cosmic::widget::image::Handle>,
-    /// Centre of the cover, in logical points. A negative x centres it.
+    /// Light origin in logical points. A negative x centres it in a stacked row.
     pub center: [f32; 2],
     pub spread: f32,
     pub radius: f32,
@@ -144,7 +144,7 @@ impl AlbumState {
         if let Some((_, mask)) = cached.as_ref() {
             let mut svg = Svg::new(mask.clone());
             svg.color = Some(Color::from_linear_rgba(r, g, b, 1.));
-            svg.opacity = a * 0.38;
+            svg.opacity = a;
             renderer.draw_svg(svg, bounds, clip);
         }
     }
@@ -156,6 +156,17 @@ impl AlbumState {
         let t = t * t * (3. - 2. * t);
         std::array::from_fn(|i| self.from[i] + (self.target[i] - self.from[i]) * t)
     }
+}
+
+/// A dark sleeve can carry a strong hue. Lift its value for the reflected
+/// light, keeping the hue and limiting luminance behind the white controls.
+fn reflected_color(rgb: [u8; 3]) -> [f32; 4] {
+    let peak = rgb.into_iter().max().unwrap_or(0).max(1) as f32;
+    let [r, g, b] = rgb.map(|channel| f32::from(channel) / peak);
+    let color = Color::from_rgb(r, g, b);
+    let mut linear = color.into_linear();
+    linear[3] = (0.17 / color.relative_luminance().max(0.01)).min(0.76);
+    linear
 }
 
 impl<M> shader::Program<M> for AlbumLight {
@@ -179,7 +190,7 @@ impl<M> shader::Program<M> for AlbumLight {
             state.target = match self.cover.as_ref() {
                 Some(cosmic::widget::image::Handle::Rgba { pixels, .. }) => {
                     crate::activity_island::tint::dominant(pixels)
-                        .map(|[r, g, b]| Color::from_rgb8(r, g, b).into_linear())
+                        .map(reflected_color)
                         .unwrap_or_default()
                 }
                 _ => Default::default(),

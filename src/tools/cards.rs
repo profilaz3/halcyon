@@ -761,9 +761,9 @@ pub fn music_visualized<'a, M: Clone + 'static>(
             p,
             cover,
             if wide {
-                [f32::from(PADDING) + sleeve * 0.5, height * 0.5]
+                [f32::from(PADDING) + sleeve * 0.86, height * 0.5]
             } else {
-                [f32::from(PADDING) + 22., (height * 0.5 - 25.).max(24.)]
+                [f32::from(PADDING) + 38., (height * 0.5 - 25.).max(24.)]
             },
             if wide {
                 sleeve * 1.12
@@ -1426,7 +1426,7 @@ mod tests {
         let now = Instant::now();
         let player = recipe::sample_player(now);
         let feed = music::Feed::Players(vec![player.clone()]);
-        let art = Handle::from_rgba(32, 32, [18, 64, 245, 255].repeat(32 * 32));
+        let art = Handle::from_rgba(32, 32, [53, 40, 82, 255].repeat(32 * 32));
         let size = [520., 164.];
         let mut config = Config::default();
         config.appearance.family = Some(crate::desktop_theme::Family::DarkGlass);
@@ -1474,8 +1474,8 @@ mod tests {
                 lit[i + 2] as i16 - plain[i + 2] as i16
             };
             assert!(
-                (155..176).any(|x| delta(x, 78) > 3),
-                "{backend} should light the glass to the right of the sleeve"
+                (165..190).all(|x| delta(x, 26) > 20),
+                "{backend} should show a continuous band of light beside a muted sleeve"
             );
             assert!(
                 delta(510, 78).abs() <= 1,

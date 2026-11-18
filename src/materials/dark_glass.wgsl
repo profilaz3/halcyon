@@ -20,7 +20,7 @@ struct Vertex { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f3
     if params.album.w > 0. {
         let delta = (p - params.album.xy) / max(params.album.z, 1.);
         let falloff = exp(-dot(delta, delta) * 1.65);
-        let alpha = inside * falloff * params.accent.a * 0.38;
+        let alpha = inside * falloff * params.accent.a;
         return vec4(params.accent.rgb * alpha, alpha);
     }
     let rim = exp(-abs(distance + 1.) * 0.65);
