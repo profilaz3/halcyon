@@ -148,6 +148,15 @@ fn mix(a: Color, b: Color, amount: f32) -> Color {
 /// The shared card look: palette background and opacity, accent outline
 /// and the configured corners.
 pub fn frame<'a, M: 'a>(content: Element<'a, M>, config: &Config, height: f32) -> Element<'a, M> {
+    frame_with_light(content, config, height, None)
+}
+
+fn frame_with_light<'a, M: 'a>(
+    content: Element<'a, M>,
+    config: &Config,
+    height: f32,
+    light: Option<crate::materials::AlbumLight>,
+) -> Element<'a, M> {
     let _style = crate::widget_style::scope(config);
     let p = config.palette();
     let appearance = config.appearance;
@@ -165,8 +174,13 @@ pub fn frame<'a, M: 'a>(content: Element<'a, M>, config: &Config, height: f32) -
     )
     .padding(PADDING)
     .width(Length::Fill)
-    .height(Length::Fixed(height))
-    .class(cosmic::theme::Container::custom(move |_| {
+    .height(Length::Fixed(height));
+    let card = match light {
+        Some(light) => container(crate::materials::album_light(content.into(), light))
+            .width(Length::Fill).height(height),
+        None => content,
+    };
+    let content = card.class(cosmic::theme::Container::custom(move |_| {
         cosmic::iced::widget::container::Style {
             text_color: Some(p.foreground),
             icon_color: Some(p.foreground),
@@ -434,6 +448,29 @@ pub fn music<'a, M: Clone + 'static>(
     )
 }
 
+/// Decorations follow the actual cover and leave clear faces and contrast assistance alone.
+fn cover_light(
+    config: &Config,
+    palette: Palette,
+    cover: Option<&Handle>,
+    artwork_id: cosmic::widget::Id,
+    spread: f32,
+    radius: f32,
+) -> Option<crate::materials::AlbumLight> {
+    (config.music.album_light
+        && config.music_artwork()
+        && !config.appearance.contrast_assist
+        && palette.background.a > 0.
+        && crate::widget_style::luminance(palette.background) < 0.27)
+        .then(|| crate::materials::AlbumLight {
+            cover: cover.cloned(),
+            artwork_id,
+            spread,
+            radius,
+            animate: config.material_motion,
+        })
+}
+
 pub fn music_visualized<'a, M: Clone + 'static>(
     view: MusicView<'a>,
     config: &Config,
@@ -449,7 +486,8 @@ pub fn music_visualized<'a, M: Clone + 'static>(
     }
     let _style = crate::widget_style::scope(config);
     let p = config.palette();
-    let [_, height] = dimensions.unwrap_or_else(|| size(Widget::Music, config));
+    let [width, height] = dimensions.unwrap_or_else(|| size(Widget::Music, config));
+    let sleeve = (height - f32::from(PADDING) * 2.).clamp(84., 164.);
     let act = |action: Action, allowed: bool| on.filter(|_| allowed).map(|on| on(action));
     let live: &[music::Player] = match view.feed {
         Some(music::Feed::Players(players)) => players,
@@ -463,6 +501,11 @@ pub fn music_visualized<'a, M: Clone + 'static>(
         (_, Some(player)) => !player.has_track(),
         _ => true,
     });
+    let live_track = matches!((view.feed, view.player), (Some(music::Feed::Players(_)), Some(_)));
+    let cover = view.art.filter(|_| last.is_some() || live_track);
+    // Keep the wide layout stable while a player's new cover is loading.
+    let wide = width >= 440. && height >= 130. && config.music.show_artwork && last.is_none()
+        && (cover.is_some() || view.player.is_some_and(|p| p.art_url.is_some()));
     let content: Element<'a, M> = match (view.feed, view.player, last) {
         (_, _, Some(last)) => last_played(last, live, view.art, config, on, p),
         (None, _, _) => idle_player("Nothing playing", "Start a music app", config, p),
@@ -515,7 +558,7 @@ pub fn music_visualized<'a, M: Clone + 'static>(
                 press(
                     line(
                         title,
-                        15.,
+                        if wide { 21. } else { 15. },
                         if player.has_track() {
                             p.foreground
                         } else {
@@ -542,35 +585,25 @@ pub fn music_visualized<'a, M: Clone + 'static>(
             .spacing(3)
             .width(Length::Fill);
             let mut top: Vec<Element<'a, M>> = Vec::new();
-            if config.music.show_artwork {
-                top.push(match view.art {
+            let sleeve_view = |side: f32| -> Element<'a,M> {
+                let image: Element<'a, M> = match cover {
                     Some(handle) => cosmic::widget::image(handle.clone())
-                        .width(44.)
-                        .height(44.)
+                        .width(side).height(side)
                         .content_fit(cosmic::iced::ContentFit::Cover)
-                        .border_radius([9.; 4])
-                        .into(),
+                        .border_radius([9.; 4]).into(),
                     None => container(tinted(
-                        icon::from_name(if player.site().is_some() {
-                            "video-x-generic-symbolic"
-                        } else {
-                            "multimedia-audio-player-symbolic"
-                        })
-                        .size(20)
-                        .icon()
-                        .into(),
-                        Color {
-                            a: 0.12,
-                            ..p.accent
-                        },
-                        p.muted,
-                        [12, 12],
-                        9.,
-                    ))
-                    .width(44.)
-                    .height(44.)
-                    .into(),
-                });
+                        icon::from_name(if player.site().is_some() { "video-x-generic-symbolic" }
+                            else { "multimedia-audio-player-symbolic" })
+                        .size(20).icon().into(),
+                        Color { a: 0.12, ..p.accent }, p.muted, [12, 12], 9.,
+                    )).center_x(side).center_y(side).into(),
+                };
+                container(image)
+                    .id(cosmic::widget::Id::new("music-artwork"))
+                    .into()
+            };
+            if config.music.show_artwork && !wide {
+                top.push(sleeve_view(44.));
             }
             top.push(detail.into());
             let source = row::with_children(vec![
@@ -703,18 +736,41 @@ pub fn music_visualized<'a, M: Clone + 'static>(
                     .into(),
                 );
             }
-            column::with_children(parts).spacing(6).into()
+            let detail = column::with_children(parts).spacing(6).width(Length::Fill);
+            if wide {
+                row::with_children(vec![
+                    sleeve_view(sleeve),
+                    detail.into(),
+                ])
+                .spacing(16)
+                .align_y(Alignment::Center)
+                .into()
+            } else {
+                detail.into()
+            }
         }
     };
     // Idle or not, the card fills its slot, so arranging places what the
     // desktop shows and nothing moves when playback starts.
-    frame(
+    frame_with_light(
         container(content)
             .height(Length::Fill)
             .align_y(Alignment::Center)
             .into(),
         config,
         height,
+        cover_light(
+            config,
+            p,
+            cover,
+            cosmic::widget::Id::new("music-artwork"),
+            if wide {
+                sleeve * 1.12
+            } else {
+                82.
+            },
+            crate::widget_style::radius(config.appearance.corner_radius),
+        ),
     )
 }
 
@@ -732,7 +788,7 @@ fn last_played<'a, M: Clone + 'static>(
     let resumer = last.resumer(live);
     let mut top: Vec<Element<'a, M>> = Vec::new();
     if config.music.show_artwork {
-        top.push(match art {
+        let image: Element<'a, M> = match art {
             Some(handle) => cosmic::widget::image(handle.clone())
                 .width(44.)
                 .height(44.)
@@ -756,7 +812,8 @@ fn last_played<'a, M: Clone + 'static>(
             .width(44.)
             .height(44.)
             .into(),
-        });
+        };
+        top.push(container(image).id(cosmic::widget::Id::new("music-artwork")).into());
     }
     let resume = on.zip(resumer).map(|(on, player)| {
         on(Action::Music(music::TransportRequest {
@@ -1361,6 +1418,89 @@ mod tests {
     use crate::native_test::Native;
     use cosmic::iced::{Event, Point, Size, mouse};
     use std::collections::HashMap;
+    #[test]
+    fn album_light_is_visible_beyond_the_cover_on_both_renderers() {
+        use crate::native_test::Native;
+        use cosmic::iced::{Event, Point, Size, window};
+
+        let now = Instant::now();
+        let player = recipe::sample_player(now);
+        let feed = music::Feed::Players(vec![player.clone()]);
+        let art = Handle::from_rgba(256, 256, [53, 40, 82, 255].repeat(256 * 256));
+        for backend in ["tiny-skia", "wgpu"] {
+            for (size, progress, template) in [
+                ([520., 164.], true, None),
+                ([360., 140.], true, None),
+                ([360., 140.], false, None),
+                ([520., 220.], true, Some(1)),
+                ([320., 400.], true, Some(0)),
+            ] {
+                let mut config = Config::default();
+                config.appearance.family = Some(crate::desktop_theme::Family::DarkGlass);
+                config.material_motion = false;
+                config.music.show_progress = progress;
+                config.recipes.music = template.map(|i| {
+                    crate::recipes::Recipe::template(crate::recipes::Kind::Music, i)
+                });
+                let mut ui = Native::with_backend(Size::new(size[0], size[1]), backend);
+                let mut capture = |cfg: &Config| {
+                    let card = || music::<Action>(
+                        MusicView {
+                            feed: Some(&feed),
+                            player: Some(&player),
+                            art: Some(&art),
+                            now,
+                            manually_selected: false,
+                            problem: false,
+                            last: None,
+                        },
+                        cfg,
+                        None,
+                        Some(size),
+                    );
+                    let bounds = ui.bounds(card(), "music-artwork");
+                    let _ = ui.event(
+                        card(),
+                        Event::Window(window::Event::RedrawRequested(now)),
+                        Point::ORIGIN,
+                    );
+                    let pixels = ui.render(card(), &cosmic::Theme::dark());
+                    if cfg.music.album_light && size == [520., 164.] {
+                        ui.capture(
+                            card(),
+                            &cosmic::Theme::dark(),
+                            &format!("album-lit-music-{backend}"),
+                        );
+                    }
+                    (bounds, pixels)
+                };
+                config.music.album_light = true;
+                let (cover, lit) = capture(&config);
+                config.music.album_light = false;
+                let (_, plain) = capture(&config);
+                let delta = |x: f32, y: f32| {
+                    let i = (size[0] as usize * y as usize + x as usize) * 4;
+                    i16::from(lit[i + 2]) - i16::from(plain[i + 2])
+                };
+                let left = cover.x - 4.;
+                let right = cover.x + cover.width + 3.;
+                let cy = cover.center_y();
+                let context = format!("{backend} {size:?} progress={progress} template={template:?}");
+                for y in [cy - 12., cy + 11.] {
+                    let (l, r) = (delta(left, y), delta(right, y));
+                    assert!(l > 12 && r > 12 && (l - r).abs() <= 8,
+                        "{context}: expected a balanced glow beside the cover, got {l} and {r}");
+                }
+                assert!((delta(left, cy - 12.) - delta(left, cy + 11.)).abs() <= 8,
+                    "{context}: the vertical glow should follow the artwork row");
+                if size == [520., 164.] {
+                    assert!(delta(230., 26.) <= 40, "{context}: keep track details readable");
+                    assert!(delta(510., 78.).abs() <= 1, "{context}: keep the far edge neutral");
+                }
+            }
+        }
+    }
+
     #[test]
     fn copying_a_note_does_not_enter_editing_or_toggle_its_checklist() {
         let config = Config::default();

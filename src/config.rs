@@ -1638,6 +1638,7 @@ pub struct MusicPreferences {
     /// for example `spotify`; `None` follows whichever player is playing.
     pub player: Option<String>,
     pub show_artwork: bool,
+    pub album_light: bool,
     pub show_progress: bool,
 }
 impl Default for MusicPreferences {
@@ -1647,6 +1648,7 @@ impl Default for MusicPreferences {
             enabled: false,
             player: None,
             show_artwork: true,
+            album_light: true,
             show_progress: true,
         }
     }

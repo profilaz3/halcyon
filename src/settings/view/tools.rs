@@ -313,6 +313,15 @@ impl Settings {
                 )
             },
         ]);
+        own.push(self.search_target("music-album-light", group(
+            Some("Album lighting"),
+            vec![switch(
+                "Light the card with the album cover",
+                "Adds a soft reflection to dark widget backgrounds when artwork is visible",
+                self.config.music.album_light,
+                |value| option(Widget::Music, "album_light", value),
+            )],
+        )));
         self.widget_template(Widget::Music, "Music", Some(preview), own)
     }
 

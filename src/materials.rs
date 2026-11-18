@@ -115,7 +115,8 @@ pub fn background(color: Color, finish: Option<Finish>) -> Background {
 
 mod dark_glass;
 mod sheen;
-pub use sheen::{dark_glass, sheen};
+pub use dark_glass::AlbumLight;
+pub use sheen::{album_light, dark_glass, sheen};
 
 #[cfg(test)]
 mod tests {

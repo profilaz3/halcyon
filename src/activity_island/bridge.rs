@@ -35,6 +35,10 @@ pub struct Snapshot {
     pub calendar_reason: Option<String>,
     pub music_problem: bool,
     pub reduced_motion: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub music_pinned: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub messages_pinned: bool,
     /// The quick timer. The desktop owns it so `halcyon-ctl` reaches it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timer: Option<super::timer::Timer>,
@@ -133,6 +137,8 @@ pub enum Command {
     /// Try the calendar again now.
     RefreshCalendar,
     OpenMessages,
+    PinMusic,
+    PinMessages,
 }
 #[derive(Clone, Debug)]
 pub enum Event {
@@ -379,12 +385,10 @@ pub fn socket_path() -> Option<PathBuf> {
         let path = crate::config::Config::path()?;
         let digest = Sha256::digest(path.as_os_str().as_encoded_bytes());
         let key: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
-        format!("preview-{key}-v5.sock")
+        format!("preview-{key}-v6.sock")
     } else {
-        // v5: per-app notification rules, the quick timer, seeking and
-        // the artwork tint. A mismatched applet and desktop wait for each
-        // other, never misread.
-        "session-v5.sock".into()
+        // v6 adds pin commands and visibility to the strict wire format.
+        "session-v6.sock".into()
     };
     Some(directory.join(name))
 }
