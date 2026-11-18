@@ -313,6 +313,17 @@ impl Settings {
                 )
             },
         ]);
+        if self.config.music_artwork() {
+            own.push(group(
+                Some("Album lighting"),
+                vec![switch(
+                    "Light the card with the album cover",
+                    "A soft reflection on dark widget backgrounds",
+                    self.config.music.album_light,
+                    |value| option(Widget::Music, "album_light", value),
+                )],
+            ));
+        }
         self.widget_template(Widget::Music, "Music", Some(preview), own)
     }
 

@@ -91,13 +91,30 @@ fn surface<'a, M: 'a>(
     p: Palette,
     size: [f32; 2],
 ) -> Element<'a, M> {
+    surface_with_light(content, config, recipe, p, size, None)
+}
+
+fn surface_with_light<'a, M: 'a>(
+    content: Element<'a, M>,
+    config: &Config,
+    recipe: &Recipe,
+    p: Palette,
+    size: [f32; 2],
+    light: Option<crate::materials::AlbumLight>,
+) -> Element<'a, M> {
     if recipe.finish.is_none() {
-        return frame(content, config, size[1]);
+        return frame_with_light(content, config, size[1], light);
     }
-    container(content)
+    let body = container(content)
         .padding(PADDING)
         .width(size[0])
-        .height(size[1])
+        .height(size[1]);
+    let body = match light {
+        Some(light) => container(crate::materials::album_light(body.into(), light))
+            .width(size[0]).height(size[1]),
+        None => body,
+    };
+    body
         .clip(true)
         .class(cosmic::theme::Container::custom(move |_| {
             cosmic::iced::widget::container::Style {
@@ -361,7 +378,13 @@ fn music_with_ids<'a, M: Clone + 'static>(
     for part in &visible {
         let child = match part {
             Part::Artwork if split => continue,
-            Part::Artwork => centered(artwork()),
+            Part::Artwork => {
+                let sleeve = centered(artwork());
+                match cover_light(config, p, view.art, [-1., art_size * 0.5], art_size * 0.84, 10.) {
+                    Some(light) => crate::materials::album_light(sleeve, light),
+                    None => sleeve,
+                }
+            }
             Part::Track => {
                 let state = if view.problem {
                     "Control failed · try again"
@@ -519,7 +542,7 @@ fn music_with_ids<'a, M: Clone + 'static>(
     } else {
         body
     };
-    surface(
+    surface_with_light(
         container(body)
             .height(Length::Fill)
             .align_y(Alignment::Center)
@@ -528,6 +551,22 @@ fn music_with_ids<'a, M: Clone + 'static>(
         recipe,
         p,
         size,
+        if split {
+            cover_light(
+                config,
+                p,
+                view.art.filter(|_| visible.contains(&Part::Artwork)),
+                [f32::from(PADDING) + art_size * 0.5, size[1] * 0.5],
+                art_size + 28.,
+                if recipe.finish.is_some() {
+                    18.
+                } else {
+                    crate::widget_style::radius(config.appearance.corner_radius)
+                },
+            )
+        } else {
+            None
+        },
     )
 }
 

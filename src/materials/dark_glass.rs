@@ -78,6 +78,146 @@ impl<M> shader::Program<M> for Program {
                 accent[1],
                 accent[2],
                 0.,
+                0.,
+                0.,
+                0.,
+                0.,
+            ],
+            resources: state.resources.clone(),
+        }
+    }
+}
+/// A small pool of reflected light behind the cover. Its colour comes from
+/// the same decoded thumbnail and hue calculation as the Activity Island.
+pub struct AlbumLight {
+    pub cover: Option<cosmic::widget::image::Handle>,
+    /// Centre of the cover, in logical points. A negative x centres it.
+    pub center: [f32; 2],
+    pub spread: f32,
+    pub radius: f32,
+    pub animate: bool,
+}
+
+const FADE: Duration = Duration::from_millis(420);
+
+#[derive(Default)]
+pub struct AlbumState {
+    cover: Option<cosmic::iced::advanced::image::Id>,
+    mask: std::cell::RefCell<Option<([f32; 6], cosmic::iced::advanced::svg::Handle)>>,
+    from: [f32; 4],
+    target: [f32; 4],
+    start: Option<Instant>,
+    resources: Arc<Mutex<Option<Resources>>>,
+}
+
+impl AlbumState {
+    /// Tiny-skia renders the same local wash using a cached radial mask.
+    pub(super) fn draw_software(
+        &self,
+        renderer: &mut cosmic::Renderer,
+        bounds: Rectangle,
+        viewport: &Rectangle,
+        center: [f32; 2],
+        spread: f32,
+        radius: f32,
+    ) {
+        use cosmic::iced::advanced::svg::{Handle, Renderer as _, Svg};
+        let [r, g, b, a] = self.color(Instant::now());
+        let Some(clip) = bounds.intersection(viewport) else {
+            return;
+        };
+        if a <= 0. {
+            return;
+        }
+        let (w, h) = (bounds.width, bounds.height);
+        let x = if center[0] < 0. { w / 2. } else { center[0] };
+        let y = center[1];
+        let extent = spread * 2.;
+        let shape = [w, h, x, y, extent, radius];
+        let mut cached = self.mask.borrow_mut();
+        if cached.as_ref().is_none_or(|(old, _)| *old != shape) {
+            let mask = format!(
+                r##"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}"><defs><radialGradient id="a" gradientUnits="userSpaceOnUse" cx="{x}" cy="{y}" r="{extent}"><stop stop-color="white"/><stop offset=".25" stop-color="white" stop-opacity=".66"/><stop offset=".5" stop-color="white" stop-opacity=".19"/><stop offset=".75" stop-color="white" stop-opacity=".024"/><stop offset="1" stop-color="white" stop-opacity="0"/></radialGradient></defs><rect width="{w}" height="{h}" rx="{radius}" fill="url(#a)"/></svg>"##
+            );
+            *cached = Some((shape, Handle::from_memory(mask.into_bytes())));
+        }
+        if let Some((_, mask)) = cached.as_ref() {
+            let mut svg = Svg::new(mask.clone());
+            svg.color = Some(Color::from_linear_rgba(r, g, b, 1.));
+            svg.opacity = a * 0.38;
+            renderer.draw_svg(svg, bounds, clip);
+        }
+    }
+
+    fn color(&self, now: Instant) -> [f32; 4] {
+        let t = self.start.map_or(1., |start| {
+            (now.saturating_duration_since(start).as_secs_f32() / FADE.as_secs_f32()).min(1.)
+        });
+        let t = t * t * (3. - 2. * t);
+        std::array::from_fn(|i| self.from[i] + (self.target[i] - self.from[i]) * t)
+    }
+}
+
+impl<M> shader::Program<M> for AlbumLight {
+    type State = AlbumState;
+    type Primitive = Primitive;
+
+    fn update(
+        &self,
+        state: &mut AlbumState,
+        event: &Event,
+        _: Rectangle,
+        _: mouse::Cursor,
+    ) -> Option<Action<M>> {
+        let Event::Window(window::Event::RedrawRequested(now)) = event else {
+            return None;
+        };
+        let id = self.cover.as_ref().map(|cover| cover.id());
+        if state.cover != id {
+            state.cover = id;
+            state.from = state.color(*now);
+            state.target = match self.cover.as_ref() {
+                Some(cosmic::widget::image::Handle::Rgba { pixels, .. }) => {
+                    crate::activity_island::tint::dominant(pixels)
+                        .map(|[r, g, b]| Color::from_rgb8(r, g, b).into_linear())
+                        .unwrap_or_default()
+                }
+                _ => Default::default(),
+            };
+            state.start = (self.animate && state.target != state.from).then_some(*now);
+        }
+        if self.animate
+            && state
+                .start
+                .is_some_and(|start| now.saturating_duration_since(start) < FADE)
+        {
+            return Some(Action::request_redraw_at(*now + FRAME));
+        }
+        state.start = None;
+        None
+    }
+
+    fn draw(&self, state: &AlbumState, _: mouse::Cursor, bounds: Rectangle) -> Primitive {
+        let [r, g, b, a] = state.color(Instant::now());
+        let x = if self.center[0] < 0. {
+            bounds.width * 0.5
+        } else {
+            self.center[0]
+        };
+        Primitive {
+            params: [
+                bounds.width,
+                bounds.height,
+                self.radius,
+                -1.,
+                r,
+                g,
+                b,
+                a,
+                x,
+                self.center[1],
+                self.spread,
+                1.,
             ],
             resources: state.resources.clone(),
         }
@@ -85,7 +225,7 @@ impl<M> shader::Program<M> for Program {
 }
 #[derive(Debug)]
 pub struct Primitive {
-    params: [f32; 8],
+    params: [f32; 12],
     resources: Arc<Mutex<Option<Resources>>>,
 }
 #[derive(Debug)]
@@ -163,7 +303,7 @@ impl shader::Primitive for Primitive {
         let resources = slot.get_or_insert_with(|| {
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Widget glass uniforms"),
-                size: 32,
+                size: 48,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
@@ -198,6 +338,46 @@ impl shader::Primitive for Primitive {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn album_light_follows_the_cover_and_settles() {
+        use cosmic::widget::image::Handle;
+        let cover = |rgba: [u8; 4]| Some(Handle::from_rgba(8, 8, rgba.repeat(64)));
+        let mut light = AlbumLight {
+            cover: cover([20, 68, 246, 255]),
+            center: [42., 48.],
+            spread: 85.,
+            radius: 16.,
+            animate: true,
+        };
+        let mut state = AlbumState::default();
+        let start = Instant::now();
+        let redraw = |light: &AlbumLight, state: &mut AlbumState, now: Instant| {
+            <AlbumLight as shader::Program<()>>::update(
+                light,
+                state,
+                &Event::Window(window::Event::RedrawRequested(now)),
+                Rectangle::with_size(cosmic::iced::Size::new(360., 140.)),
+                mouse::Cursor::Unavailable,
+            )
+        };
+        assert!(redraw(&light, &mut state, start).is_some());
+        assert!(state.target[2] > state.target[0]);
+        let middle = start + FADE / 2;
+        let previous = state.color(middle);
+        light.cover = cover([245, 65, 16, 255]);
+        assert!(redraw(&light, &mut state, middle).is_some());
+        assert_eq!(
+            state.from, previous,
+            "a track change continues from the displayed colour"
+        );
+        assert!(redraw(&light, &mut state, middle + FADE).is_none());
+        assert!(state.target[0] > state.target[2]);
+        light.animate = false;
+        light.cover = cover([128, 128, 128, 255]);
+        assert!(redraw(&light, &mut state, middle + FADE).is_none());
+        assert_eq!(state.color(middle + FADE), [0.; 4]);
+    }
+
     #[test]
     fn glass_is_idle_until_hover_and_obeys_reduced_motion() {
         let mut program = Program {

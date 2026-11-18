@@ -5542,3 +5542,45 @@ fn calendar_error_card_says_why_and_tries_again() {
             .is_none()
     );
 }
+
+#[test]
+fn pin_actions_reach_the_desktop_from_both_open_cards() {
+    for (kind, id) in [
+        (Kind::Music, "activity-pin-music"),
+        (Kind::Messages, "activity-pin-messages"),
+    ] {
+        let mut app = app();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        app.commands = Some(tx);
+        app.snapshot.preferences.media = true;
+        app.snapshot.preferences.messages = true;
+        app.snapshot.music = Some(music());
+        app.snapshot.messages = Some(super::messages::project(&crate::messages::sample(), true));
+        app.kind = kind;
+        app.held = true;
+        app.popup = Some(window::Id::unique());
+        app.motion.retarget(1., false, Instant::now());
+        app.popup_extra = app.live_extra();
+        let size = cosmic::iced::Size::new(app.frame().popup_width(), app.popup_height());
+        let mut ui = crate::native_test::Native::new(size);
+        let bounds = ui.bounds(app.capsule(true), id);
+        assert!(bounds.x >= 0. && bounds.x + bounds.width <= size.width + 1.);
+        assert!(
+            bounds.y >= 0. && bounds.y + bounds.height <= size.height + 1.,
+            "{id} out of bounds {bounds:?} in {size:?}"
+        );
+        let messages = click(&mut ui, &app, id);
+        assert!(
+            messages.iter().any(|m| matches!(m, Message::Control(_))),
+            "{id} produced {messages:?}"
+        );
+        for message in messages {
+            let _ = app.update(message);
+        }
+        assert!(matches!(
+            (kind, rx.try_recv().unwrap()),
+            (Kind::Music, Command::PinMusic) | (Kind::Messages, Command::PinMessages)
+        ));
+        assert!(!app.held);
+    }
+}

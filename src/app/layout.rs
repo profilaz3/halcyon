@@ -2,6 +2,7 @@ use super::*;
 #[cfg(test)]
 #[path = "layout_foundation_tests.rs"]
 mod foundation_tests;
+mod pinning;
 use cosmic::cctk::sctk::reexports::protocols::xdg::shell::client::xdg_positioner::{
     Anchor as PopupAnchor, Gravity,
 };
@@ -163,6 +164,7 @@ struct LayoutDrag {
 #[derive(Default)]
 pub(super) struct LayoutEditor {
     pub active: bool,
+    pub(super) pinning: Option<(Widget, [f32; 2])>,
     pub grid: crate::config::PlacementPreferences,
     saved_grid: crate::config::PlacementPreferences,
     baseline: BTreeMap<String, [f32; 2]>,
@@ -224,6 +226,7 @@ impl LayoutEditor {
     }
 
     pub(super) fn pause_for_output_change(&mut self) {
+        self.pinning = None;
         self.active = false;
         if self.error.is_some() {
             self.exit_failed = true;
@@ -585,6 +588,7 @@ impl Cards {
     /// clicks through, so they never cover a tool or another card.
     pub(super) fn arrange_hides_surface(&self, widget: Widget) -> bool {
         self.layout_editor.active
+            && self.layout_editor.pinning.is_none()
             && (self.arranging_widget(widget)
                 || (widget == Widget::Weather
                     && !self.custom_layout()
@@ -1074,6 +1078,22 @@ impl Cards {
     pub(super) fn apply_arrange_pick(&mut self) {
         if !self.layout_editor.active {
             return;
+        }
+        if let Some(widget) = self.pending_pin.take()
+            && self.addable_widgets().contains(&widget)
+        {
+            let size = self.widget_size(widget);
+            self.layout_editor.pinning = Some((
+                widget,
+                crate::layout::clamp(
+                    [
+                        (self.screen_size[0] - size[0]) / 2.,
+                        (self.screen_size[1] - size[1]) / 2.,
+                    ],
+                    size,
+                    self.screen_size,
+                ),
+            ));
         }
         if let Some(widget) = self.arrange_pick.take()
             && self.arranging_widget(widget)
@@ -1825,6 +1845,20 @@ impl Cards {
         self.layout_editor.error = None;
     }
     pub(super) fn layout_pointer(&mut self, event: mouse::Event) -> Task<Message> {
+        if let Some((widget, _)) = self.layout_editor.pinning {
+            match event {
+                mouse::Event::CursorMoved { position } => {
+                    let [w, h] = self.widget_size(widget);
+                    self.move_pin(widget, [position.x - w / 2., position.y - h / 2.]);
+                }
+                mouse::Event::ButtonPressed(mouse::Button::Left) => return self.place_pin(),
+                mouse::Event::ButtonPressed(mouse::Button::Right) => {
+                    return self.finish_arrange(false);
+                }
+                _ => {}
+            }
+            return Task::none();
+        }
         match event {
             mouse::Event::CursorMoved { position } => {
                 self.layout_editor.pointer = position;
@@ -2007,6 +2041,19 @@ impl Cards {
             return Task::none();
         }
         use keyboard::key::Named;
+        if let Some((widget, [x, y])) = self.layout_editor.pinning {
+            let step = if shift { 32. } else { 8. };
+            match key.as_ref() {
+                keyboard::Key::Named(Named::Escape) => return self.finish_arrange(false),
+                keyboard::Key::Named(Named::Enter) => return self.place_pin(),
+                keyboard::Key::Named(Named::ArrowLeft) => self.move_pin(widget, [x - step, y]),
+                keyboard::Key::Named(Named::ArrowRight) => self.move_pin(widget, [x + step, y]),
+                keyboard::Key::Named(Named::ArrowUp) => self.move_pin(widget, [x, y - step]),
+                keyboard::Key::Named(Named::ArrowDown) => self.move_pin(widget, [x, y + step]),
+                _ => {}
+            }
+            return Task::none();
+        }
         match key {
             // Asking whether to discard: Esc again is the safe answer.
             keyboard::Key::Named(Named::Escape) if self.layout_editor.confirm_discard => {
@@ -2221,7 +2268,19 @@ impl Cards {
                 self.tool_card(widget)
             }
         };
-        let card = if self.interacting_tool == Some(widget) { container(card).id("tool-controls").into() } else { card };
+        let card = if self
+            .pin_highlight
+            .is_some_and(|(pinned, _)| pinned == widget)
+        {
+            self.pin_outline(card)
+        } else {
+            card
+        };
+        let card = if self.interacting_tool == Some(widget) {
+            container(card).id("tool-controls").into()
+        } else {
+            card
+        };
         let card = self.with_menu(widget, card);
         // Matches the surface's shadow margin (see the layer surface sizes).
         let m = crate::widget_style::shadow_margin(&self.config);
@@ -2234,6 +2293,9 @@ impl Cards {
     pub(super) fn layout_view(&self) -> Element<'_, Message> {
         if !self.layout_editor.active {
             return empty_surface();
+        }
+        if let Some((widget, at)) = self.layout_editor.pinning {
+            return self.pin_view(widget, at);
         }
         let p = self.config.surface_palette();
         let background = container(text::body(""))

@@ -12,6 +12,7 @@ pub fn sheen<'a, Message: 'a>(
         content,
         animate,
         glass: None,
+        album: None,
         backing: None,
     })
 }
@@ -27,6 +28,7 @@ pub fn dark_glass<'a, Message: 'a>(
         animate: false,
         // Three nested translucent fills feather the edge of the reading area.
         backing: (backing > 0.).then(|| (radius, 1. - (1. - backing).cbrt())),
+        album: None,
         glass: Some(
             cosmic::iced::widget::shader(super::dark_glass::Program {
                 accent,
@@ -37,10 +39,23 @@ pub fn dark_glass<'a, Message: 'a>(
         ),
     })
 }
+pub fn album_light<'a, M: 'a>(
+    content: Element<'a, M>,
+    program: super::dark_glass::AlbumLight,
+) -> Element<'a, M> {
+    Element::new(Sheen {
+        content,
+        animate: false,
+        backing: None,
+        album: Some((program.center, program.spread, program.radius)),
+        glass: Some(cosmic::iced::widget::shader(program).into()),
+    })
+}
 struct Sheen<'a, Message> {
     content: Element<'a, Message>,
     animate: bool,
     glass: Option<Element<'a, Message>>,
+    album: Option<([f32; 2], f32, f32)>,
     backing: Option<(f32, f32)>,
 }
 #[derive(Default)]
@@ -173,7 +188,14 @@ impl<Message> Widget<Message, Theme, Renderer> for Sheen<'_, Message> {
         viewport: &Rectangle,
     ) {
         // Decoration is behind the card and its fully opaque text and controls.
-        if let Some(glass) = &self.glass {
+        if let Some((center, spread, radius)) = self.album
+            && matches!(renderer, Renderer::Secondary(_))
+        {
+            let state = tree.children[1]
+                .state
+                .downcast_ref::<super::dark_glass::AlbumState>();
+            state.draw_software(renderer, layout.bounds(), viewport, center, spread, radius);
+        } else if let Some(glass) = &self.glass {
             glass.as_widget().draw(
                 &tree.children[1],
                 renderer,

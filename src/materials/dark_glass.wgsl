@@ -1,5 +1,5 @@
 // Procedural decoration only: the native card and its content draw above this.
-struct Params { size_radius_phase: vec4<f32>, accent: vec4<f32> }
+struct Params { size_radius_phase: vec4<f32>, accent: vec4<f32>, album: vec4<f32> }
 @group(0) @binding(0) var<uniform> params: Params;
 struct Vertex { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> }
 @vertex fn vertex(@builtin(vertex_index) id: u32) -> Vertex {
@@ -17,6 +17,12 @@ struct Vertex { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f3
     let distance = length(max(q, vec2(0.))) + min(max(q.x, q.y), 0.) - radius;
     let inside = 1. - smoothstep(-0.8, 0.2, distance);
     if inside <= 0. { discard; }
+    if params.album.w > 0. {
+        let delta = (p - params.album.xy) / max(params.album.z, 1.);
+        let falloff = exp(-dot(delta, delta) * 1.65);
+        let alpha = inside * falloff * params.accent.a * 0.38;
+        return vec4(params.accent.rgb * alpha, alpha);
+    }
     let rim = exp(-abs(distance + 1.) * 0.65);
     let grain = fract(sin(dot(floor(p), vec2(12.9898, 78.233))) * 43758.5453);
     let wash = pow(max(0., 1. - in.uv.y), 3.) * 0.055;

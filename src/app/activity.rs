@@ -107,6 +107,8 @@ impl Cards {
             .and_then(|p| p.art_url.as_ref())
             .and_then(|url| self.activity.tints.iter().find(|(u, ..)| u == url));
         Snapshot {
+            music_pinned: self.config.widget_visible(Widget::Music),
+            messages_pinned: self.config.widget_visible(Widget::Messages),
             calendar_minute: if calendar.is_some() {
                 now.div_euclid(60_000)
             } else {
@@ -282,6 +284,12 @@ impl Cards {
             }
             // The island's Try again on a calendar that couldn't refresh.
             Event::Command(Command::RefreshCalendar) => self.retry_calendar_now(),
+            Event::Command(Command::PinMusic) if self.config.activity_island.media => {
+                return self.pin_from_island(Widget::Music);
+            }
+            Event::Command(Command::PinMessages) if self.config.activity_island.messages => {
+                return self.pin_from_island(Widget::Messages);
+            }
             Event::Command(Command::OpenMessages) => {
                 if self.config.activity_island.messages {
                     return self.update_tool(crate::tools::cards::Action::MessagesOpen);
