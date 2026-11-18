@@ -179,7 +179,7 @@ impl Applet {
                 quiet,
             ));
         }
-        list = list.push(self.label_button(
+        let open = self.label_button(
             palette,
             "activity-messages-open",
             &m.action,
@@ -187,7 +187,22 @@ impl Applet {
             reveal,
             Role::Primary,
             Some(Message::Control(Command::OpenMessages)),
-        ));
+        );
+        let pin_label = if self.snapshot.messages_pinned {
+            "Show on desktop"
+        } else {
+            "Pin to desktop"
+        };
+        let pin = self.label_button(
+            palette,
+            "activity-pin-messages",
+            pin_label,
+            accent,
+            reveal,
+            Role::Quiet,
+            Some(Message::Control(Command::PinMessages)),
+        );
+        list = list.push(widget::row([open, pin]).spacing(6));
         list.width(Length::Fill).into()
     }
 }

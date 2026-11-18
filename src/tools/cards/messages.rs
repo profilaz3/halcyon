@@ -281,11 +281,17 @@ pub fn messages<'a, M: Clone + 'a>(
     .spacing(GAP)
     .height(Length::Fill)
     .into();
-    let content = super::press(
-        content,
-        on_action.map(|on| on(Action::MessagesOpen)),
-        "Open KDE Connect messages",
-    );
+    let content = match on_action {
+        Some(on) => cosmic::widget::button::custom(content)
+            .name("Open KDE Connect messages")
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(0)
+            .class(cosmic::theme::Button::Text)
+            .on_press(on(Action::MessagesOpen))
+            .into(),
+        None => content,
+    };
     frame(content, config, height)
 }
 

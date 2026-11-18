@@ -33,7 +33,7 @@ The widget builder customizes Clock, Weather, Calendar, System monitor, Music an
 
 ## 3. Dock and panel customization
 
-Applet arrangement, spacing, size, opacity, corners and auto-hide. **Islands** separates applets into floating groups; **Penumbra** fades bar backgrounds into the wallpaper. Both are optional and included in the package. The **Activity island** (beta) shows music, meetings, notifications and camera or microphone use on a standard COSMIC top panel or a floating Islands panel.
+Applet arrangement, spacing, size, opacity, corners and auto-hide. **Islands** separates applets into floating groups; **Penumbra** fades bar backgrounds into the wallpaper. Both are optional and included in the package. The **Activity island** (beta) shows music, meetings, notifications and camera or microphone use on a standard COSMIC top panel or a floating Islands panel. Open Music or Messages in the Activity island and choose **Pin to desktop**. Click to place the widget, or use the arrow keys and Enter. Esc cancels. **Show on desktop** highlights a widget you already pinned.
 
 [![Illustration of Islands, Penumbra, Activity island states and an icon-only edge menu with a handle](docs/presentation/070-readme/panel-elements-dark.png)](docs/presentation/070-readme/panel-elements-dark.png)
 
@@ -47,7 +47,7 @@ Rain, snow, fog and cloud shadows, with effect-specific controls and three quali
 
 ## 5. Audio visualization
 
-A spectrum with adjustable size, position and opacity, including placement behind the dock. Circular Music styles include radial bars, orbit dots and pulse rings. Visualizers use the system audio output and stop capturing when playback stops.
+A spectrum with adjustable size, position and opacity, including placement behind the dock. Circular Music styles include radial bars, orbit dots and pulse rings. Visualizers use the system audio output and stop capturing when playback stops. On dark Music cards, album artwork casts a soft reflection that changes color with the track. You can switch off **Album lighting** in Music settings.
 
 [![Illustrated close-up of radial bars, orbit dots, pulse rings and a separate audio spectrum](docs/presentation/070-readme/audio-elements-dark.png)](docs/presentation/070-readme/audio-elements-dark.png)
 

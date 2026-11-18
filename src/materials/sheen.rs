@@ -1,7 +1,7 @@
 //! A 220 ms edge glint on pointer entry; no text animation or idle redraws.
 use cosmic::iced::advanced::widget::{Operation, Tree, tree};
 use cosmic::iced::advanced::{Clipboard, Layout, Shell, Widget, layout, overlay, renderer};
-use cosmic::iced::{Event, Length, Rectangle, Size, Vector, mouse, window};
+use cosmic::iced::{Event, Length, Point, Rectangle, Size, Vector, mouse, window};
 use cosmic::{Element, Renderer, Theme};
 
 pub fn sheen<'a, Message: 'a>(
@@ -12,6 +12,7 @@ pub fn sheen<'a, Message: 'a>(
         content,
         animate,
         glass: None,
+        album: None,
         backing: None,
     })
 }
@@ -27,6 +28,7 @@ pub fn dark_glass<'a, Message: 'a>(
         animate: false,
         // Three nested translucent fills feather the edge of the reading area.
         backing: (backing > 0.).then(|| (radius, 1. - (1. - backing).cbrt())),
+        album: None,
         glass: Some(
             cosmic::iced::widget::shader(super::dark_glass::Program {
                 accent,
@@ -37,11 +39,41 @@ pub fn dark_glass<'a, Message: 'a>(
         ),
     })
 }
+pub fn album_light<'a, M: 'a>(
+    content: Element<'a, M>,
+    program: super::dark_glass::AlbumLight,
+) -> Element<'a, M> {
+    Element::new(Sheen {
+        content,
+        animate: false,
+        backing: None,
+        album: Some((program.artwork_id.clone(), program.spread, program.radius)),
+        glass: Some(cosmic::iced::widget::shader(program).into()),
+    })
+}
 struct Sheen<'a, Message> {
     content: Element<'a, Message>,
     animate: bool,
     glass: Option<Element<'a, Message>>,
+    album: Option<(cosmic::widget::Id, f32, f32)>,
     backing: Option<(f32, f32)>,
+}
+struct FindArtwork<'a> {
+    id: &'a cosmic::widget::Id,
+    center: Option<Point>,
+}
+impl Operation for FindArtwork<'_> {
+    fn container(&mut self, id: Option<&cosmic::widget::Id>, bounds: Rectangle) {
+        if id == Some(self.id) {
+            self.center = Some(bounds.center());
+        }
+    }
+
+    fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn Operation)) {
+        if self.center.is_none() {
+            visit(self);
+        }
+    }
 }
 #[derive(Default)]
 struct State {
@@ -93,9 +125,16 @@ impl<Message> Widget<Message, Theme, Renderer> for Sheen<'_, Message> {
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
-        self.content
-            .as_widget_mut()
-            .layout(&mut tree.children[0], renderer, limits)
+        let content = self.content.as_widget_mut();
+        let node = content.layout(&mut tree.children[0], renderer, limits);
+        if let Some((id, _, _)) = &self.album {
+            let mut artwork = FindArtwork { id, center: None };
+            let layout = Layout::new(&node);
+            content.operate(&mut tree.children[0], layout, renderer, &mut artwork);
+            tree.children[1].state.downcast_mut::<super::dark_glass::AlbumState>().center =
+                artwork.center.map(|point| Point::ORIGIN + (point - layout.position()));
+        }
+        node
     }
     fn operate(
         &mut self,
@@ -173,7 +212,14 @@ impl<Message> Widget<Message, Theme, Renderer> for Sheen<'_, Message> {
         viewport: &Rectangle,
     ) {
         // Decoration is behind the card and its fully opaque text and controls.
-        if let Some(glass) = &self.glass {
+        if let Some((_, spread, radius)) = &self.album
+            && matches!(renderer, Renderer::Secondary(_))
+        {
+            let state = tree.children[1]
+                .state
+                .downcast_ref::<super::dark_glass::AlbumState>();
+            state.draw_software(renderer, layout.bounds(), viewport, *spread, *radius);
+        } else if let Some(glass) = &self.glass {
             glass.as_widget().draw(
                 &tree.children[1],
                 renderer,

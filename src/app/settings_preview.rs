@@ -215,6 +215,8 @@ impl SettingsSamples {
             arrange_display: None,
             pending_arrange: None,
             arrange_pick: None,
+            pending_pin: None,
+            pin_highlight: None,
             widget_outputs: Vec::new(),
             extra_probes: Vec::new(),
             display_positions: Default::default(),

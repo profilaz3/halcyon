@@ -179,7 +179,9 @@ impl Cards {
     pub(super) fn tool_shown(&self, widget: Widget) -> bool {
         self.widget_available(widget)
             && self.config.widget_visible(widget)
-            && (widget != Widget::Music || self.layout_editor.active || self.music_present())
+            && (widget != Widget::Music
+                || (self.layout_editor.active && self.layout_editor.pinning.is_none())
+                || self.music_present())
     }
 
     /// Something the Music card can show: a player playing, or paused with
@@ -452,7 +454,14 @@ impl Cards {
         let id = self.widget_id(widget);
         Task::batch([
             set_keyboard_interactivity(id, KeyboardInteractivity::None),
-            set_layer(id, Layer::Bottom),
+            set_layer(
+                id,
+                if self.pin_highlight.is_some_and(|(w, _)| w == widget) {
+                    Layer::Top
+                } else {
+                    Layer::Bottom
+                },
+            ),
         ])
     }
 
@@ -983,7 +992,7 @@ impl Cards {
 
     fn tool_surface(&self, widget: Widget, size: [u32; 2]) -> Task<Message> {
         let position = if self.tool_shown(widget)
-            && !(self.layout_editor.active && self.arranging_widget(widget))
+            && !self.arrange_hides_surface(widget)
         {
             self.placed_position(widget)
         } else {
@@ -994,7 +1003,11 @@ impl Cards {
         get_layer_surface(SctkLayerSurfaceSettings {
             id: self.widget_id(widget),
             output: self.widget_layer_output(widget),
-            layer: if editing { Layer::Top } else { Layer::Bottom },
+            layer: if editing || self.pin_highlight.is_some_and(|(w, _)| w == widget) {
+                Layer::Top
+            } else {
+                Layer::Bottom
+            },
             keyboard_interactivity: if editing {
                 KeyboardInteractivity::Exclusive
             } else {
@@ -1078,7 +1091,7 @@ impl Cards {
                 continue;
             }
             let point = if self.tool_shown(widget)
-                && !(self.layout_editor.active && self.arranging_widget(widget))
+                && !self.arrange_hides_surface(widget)
             {
                 self.placed_position(widget)
             } else {

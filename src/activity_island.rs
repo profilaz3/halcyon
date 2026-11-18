@@ -1465,11 +1465,15 @@ impl Applet {
                 return self.hold_popup();
             }
             Message::Control(command) => {
+                let pin = matches!(command, Command::PinMusic | Command::PinMessages);
                 if let Some(tx) = &self.commands {
                     if tx.try_send(command).is_err() {
                         self.problem = Some("Please try again".into());
                     } else {
                         self.problem = None;
+                        if pin {
+                            return self.update(Message::Close);
+                        }
                     }
                 } else {
                     self.problem = Some("Halcyon is reconnecting".into());
@@ -2640,12 +2644,31 @@ impl Applet {
                         self.tip(palette, button, label, widget::tooltip::Position::Top)
                     };
                     let key = || m.key.clone();
-                    // The transport sits centred, the output button at the
-                    // end, balanced by an empty cell at the start.
+                    let pin_label = if self.snapshot.music_pinned {
+                        "Show on desktop"
+                    } else {
+                        "Pin to desktop"
+                    };
+                    let pin = self.tip(
+                        palette,
+                        widget::button::icon(
+                            widget::icon::from_name("view-pin-symbolic").symbolic(true),
+                        )
+                        .id(widget::Id::new("activity-pin-music"))
+                        .name(pin_label)
+                        .icon_size(16)
+                        .padding(12)
+                        .width(40)
+                        .height(44)
+                        .class(capsule_button(palette, tint, reveal, Role::Quiet))
+                        .on_press(Message::Control(Command::PinMusic)),
+                        pin_label,
+                        widget::tooltip::Position::Top,
+                    );
                     row = row
                         .width(Length::Fill)
                         .spacing(0)
-                        .push(widget::Space::new().width(40))
+                        .push(pin)
                         .push(widget::Space::new().width(Length::Fill))
                         .push(transport(
                             "media-skip-backward-symbolic",

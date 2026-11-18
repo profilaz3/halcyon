@@ -233,6 +233,7 @@ pub enum Message {
     Arrange,
     ResetLayout,
     LayoutPress(Widget),
+    PinHighlightExpired(Instant),
     LayoutResizePress(Widget),
     LayoutSelect(Widget),
     LayoutResize([i8; 2]),
@@ -419,6 +420,8 @@ pub struct Cards {
     pending_arrange: Option<crate::displays::WlOutput>,
     /// The widget the next Arrange opens with picked.
     arrange_pick: Option<Widget>,
+    pending_pin: Option<Widget>,
+    pin_highlight: Option<(Widget, Instant)>,
     widget_outputs: Vec<Option<crate::displays::Output>>,
     extra_probes: Vec<monitors::Probe>,
     display_positions: std::collections::BTreeMap<String, [f32; 2]>,
@@ -569,6 +572,8 @@ impl cosmic::Application for Cards {
             arrange_display: None,
             pending_arrange: None,
             arrange_pick: None,
+            pending_pin: None,
+            pin_highlight: None,
             widget_outputs: Vec::new(),
             extra_probes: Vec::new(),
             display_positions: Default::default(),
@@ -932,6 +937,13 @@ impl cosmic::Application for Cards {
         // refused, leaving a surface with a stale size and input region.
         // Surface work runs beside the update's other work (an artwork or
         // weather download), never queued behind it.
+        let pinned = |config: &Config| {
+            (
+                config.widget_visible(Widget::Music),
+                config.widget_visible(Widget::Messages),
+            )
+        };
+        let previous_pins = pinned(&self.config);
         let activity_dirty = matches!(
             &msg,
             Message::Activity(_)
@@ -996,7 +1008,7 @@ impl cosmic::Application for Cards {
         if !self.messages_demand() {
             self.tools.messages = crate::messages::State::default();
         }
-        if activity_dirty {
+        if activity_dirty || pinned(&self.config) != previous_pins {
             self.publish_activity();
         }
         Task::batch([task, surfaces, backdrop, depth, spectrum, rain, glass])
@@ -1165,6 +1177,7 @@ impl Cards {
                 .find(|o| &o.handle == expected);
             self.arrange_display = output.and_then(|o| self.displays.key(o));
             if output.is_none() {
+                self.pending_pin = None;
                 self.pending_arrange = None;
             }
         }
@@ -1601,14 +1614,17 @@ impl Cards {
                 }
             }
             Message::Arrange => {
+                self.pending_pin = None;
                 self.arrange_pick = None;
                 self.arrange()
             }
             Message::ArrangeDisplay(display) => {
+                self.pending_pin = None;
                 self.arrange_pick = None;
                 self.arrange_on_display(display)
             }
             Message::ArrangePick(display, widget) => {
+                self.pending_pin = None;
                 self.arrange_pick = Some(widget);
                 let task = match display {
                     Some(display) => self.arrange_on_display(display),
@@ -1619,6 +1635,15 @@ impl Cards {
                 task
             }
             Message::ResetLayout => self.reset_layout(),
+            Message::PinHighlightExpired(deadline) => {
+                if self
+                    .pin_highlight
+                    .is_some_and(|(_, current)| current == deadline)
+                {
+                    return self.clear_pin_highlight();
+                }
+                Task::none()
+            }
             Message::LayoutPress(widget) => {
                 self.layout_editor.adding = false;
                 self.layout_press(widget);
