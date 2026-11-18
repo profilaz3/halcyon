@@ -2156,7 +2156,7 @@ impl Cards {
             }
             Message::Markets(state) => {
                 if self.provider_visible(Widget::Markets)
-                    && state.source.as_ref() == Some(&self.config.markets)
+                    && state.source.as_ref().is_some_and(|p| p.feed_key() == self.config.markets.feed_key())
                 {
                     self.tools.markets = state;
                 }

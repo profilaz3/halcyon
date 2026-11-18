@@ -6138,6 +6138,7 @@ impl Settings {
         Task::none()
     }
     fn update_tools(&mut self, message: tools::Message) -> Task<Message> {
+        let adding_market = matches!(message, tools::Message::MarketAdd);
         let (task, saved) = self.tools.update(message, &self.config);
         let close = if matches!(&saved, Some(tools::Saved::Note(_))) {
             let requested = std::mem::take(&mut self.tools.close_after_save);
@@ -6153,8 +6154,8 @@ impl Settings {
                     Ok(config) => {
                         if widget == Widget::Markets {
                             self.tools.market_preview = crate::tools::cards::sample_markets_for(&config.markets);
-                            if key == "symbols" {
-                                self.tools.market_symbols = config.markets.symbols.join(", ");
+                            if adding_market {
+                                self.tools.market_symbols.clear();
                             }
                         }
                         self.config = config;

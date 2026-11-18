@@ -127,6 +127,7 @@ impl Geometry {
 }
 
 pub(super) struct PlacementEditor {
+    markets_limit: Option<f32>,
     displays: crate::displays::Registry,
     pub(super) display: Option<String>,
     contexts: crate::config::monitors::Contexts,
@@ -249,6 +250,7 @@ impl PlacementEditor {
     fn from_geometry(config: &Config, geometry: Geometry) -> Self {
         let config = config.on_displays(&geometry.snapshot.widget_displays);
         Self {
+            markets_limit: config.markets.height_limit(),
             displays: Default::default(),
             display: geometry
                 .snapshot
@@ -321,6 +323,7 @@ impl PlacementEditor {
         self.refresh(config);
     }
     pub(super) fn refresh(&mut self, config: &Config) {
+        self.markets_limit = config.markets.height_limit();
         let next = Geometry::on_live_display(config, self.display.as_deref(), &self.displays);
         let next_contexts = if config.multi_monitor() || next.snapshot.monitors.len() > 1 {
             next.snapshot.widget_displays.clone()
@@ -683,7 +686,7 @@ impl PlacementEditor {
         Some(
             self.sizes
                 .get(key)
-                .map(|size| crate::layout::sized(Widget::parse(key).unwrap(), *size, self.screen()))
+                .map(|size| crate::layout::fitted_size(Widget::parse(key).unwrap(), *size, self.screen(), self.markets_limit))
                 .unwrap_or(automatic.size),
         )
     }
@@ -793,7 +796,7 @@ impl PlacementEditor {
         let Some(position) = self.position(key) else {
             return;
         };
-        let size = crate::layout::resize(widget, position, requested, self.screen(), self.snap);
+        let size = crate::layout::fitted_resize(widget, position, requested, self.screen(), self.snap, self.markets_limit);
         self.materialize();
         self.sizes.insert(key.into(), size);
         self.positions.insert(

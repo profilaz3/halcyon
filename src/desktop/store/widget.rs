@@ -168,7 +168,7 @@ macro_rules! fields {
 }
 
 /// Every member a profile, its Undo or its recovery may write.
-pub static FIELDS: [WidgetField; 120] = fields![
+pub static FIELDS: [WidgetField; 124] = fields![
     "/recipes/music", "Music recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Music);
     "/recipes/focus", "Focus recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Focus);
     "/recipes/devbox", "System recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::System);
@@ -251,6 +251,10 @@ pub static FIELDS: [WidgetField; 120] = fields![
     "/music/show_artwork", "Music artwork", Style, boolean;
     "/music/album_light", "Album lighting", Style, boolean;
     "/music/show_progress", "Music progress", Style, boolean;
+    "/markets/show_change", "Markets daily change", Style, boolean;
+    "/markets/show_chart", "Markets chart", Style, boolean;
+    "/markets/show_date", "Markets publication date", Style, boolean;
+    "/markets/show_details", "Markets source and chart details", Style, boolean;
     "/notes/size", "Notes size", Style, notes_size;
     "/enabled_widgets", "Visible widgets", Layout, widget_list;
     "/widget_order", "Widget order", Layout, widget_list;
@@ -296,8 +300,8 @@ pub static FIELDS: [WidgetField; 120] = fields![
 // captured or exported by the profile library.
 pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/markets/provider", "Market data source", Style, |v| matches!(v.as_str(), Some("public" | "twelve_data"));
-    "/markets/symbols", "Stock watchlist", Style, |v| serde_json::from_value::<Vec<String>>(v.clone()).is_ok_and(|s| crate::markets::symbols(&s.join(",")).is_ok_and(|valid| valid == s));
-    "/markets/selected", "Selected stock", Style, |v| v.as_str().is_some_and(|s| s.is_empty() || crate::markets::symbols(s).is_ok_and(|valid| valid == [s]));
+    "/markets/symbols", "Markets watchlist", Style, |v| serde_json::from_value::<Vec<String>>(v.clone()).is_ok_and(|s| crate::markets::symbols(&s.join(",")).is_ok_and(|valid| valid == s));
+    "/markets/selected", "Selected watchlist item", Style, |v| v.as_str().is_some_and(|s| s.is_empty() || crate::markets::symbols(s).is_ok_and(|valid| valid == [s]));
     "/markets/credential_revision", "Markets connection", Style, |v| v.as_u64().is_some();
     "/edge_menu/enabled", "Edge menu", Style, boolean;
     "/edge_menu/side", "Edge menu side", Style, |v| matches!(v.as_str(), Some("left" | "right"));

@@ -1,45 +1,12 @@
 //! Best-effort, keyless public quotes. Requests go directly to Yahoo Finance.
 use super::*;
 
-pub(super) async fn refresh(
+pub(super) async fn fetch(
     client: &reqwest::Client,
-    preferences: &Preferences,
-    state: &mut State,
-    reuse: bool,
-) {
-    if !reuse {
-        state.problem = None;
-        state.unavailable.clear();
-        for symbol in &preferences.symbols {
-            match fetch(client, symbol).await {
-                Ok((quote, chart)) => {
-                    state.quotes.retain(|q| &q.symbol != symbol);
-                    state.quotes.push(quote);
-                    state.public_charts.insert(symbol.clone(), chart);
-                }
-                Err(problem) => {
-                    state.unavailable.push(symbol.clone());
-                    let stop = problem == Problem::RateLimit;
-                    state.problem = Some(problem);
-                    if stop {
-                        break;
-                    }
-                }
-            }
-        }
-        state.received_at = state.unavailable.is_empty().then(std::time::Instant::now);
-    }
-    state.chart_symbol = preferences.selected.clone();
-    state.chart = state
-        .public_charts
-        .get(&preferences.selected)
-        .cloned()
-        .unwrap_or_default();
-}
-
-async fn fetch(client: &reqwest::Client, symbol: &str) -> Result<(Quote, Vec<Point>), Problem> {
+    symbol: &str,
+) -> Result<(Quote, Vec<Point>), Problem> {
     if crate::tools::preview()
-        || symbol.contains(':')
+        || symbol.contains([':', '/'])
         || symbols(symbol).as_deref() != Ok(&[symbol.to_string()])
     {
         return Err(Problem::Provider);
@@ -183,28 +150,12 @@ mod tests {
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .unwrap();
-            let preferences = Preferences::default();
-            let mut state = State::default();
-            refresh(&client, &preferences, &mut state, false).await;
-            assert_eq!(state.problem, None);
-            assert_eq!(state.quotes.len(), 3);
-            assert_eq!(state.public_charts.len(), 3);
-            assert!(
-                state
-                    .quotes
-                    .iter()
-                    .all(|q| q.price > 0. && !q.currency.is_empty())
-            );
-            assert!(
-                state
-                    .public_charts
-                    .values()
-                    .all(|p| p.len() >= 2 && p.len() <= 30)
-            );
-            let mut selected = preferences;
-            selected.selected = "MSFT".into();
-            refresh(&client, &selected, &mut state, true).await;
-            assert_eq!(state.chart, state.public_charts["MSFT"]);
+            for symbol in ["AAPL", "MSFT", "NVDA"] {
+                let (quote, chart) = fetch(&client, symbol).await.unwrap();
+                assert_eq!(quote.symbol, symbol);
+                assert!(quote.price > 0. && !quote.currency.is_empty());
+                assert!((2..=30).contains(&chart.len()));
+            }
         });
     }
     fn sample() -> serde_json::Value {

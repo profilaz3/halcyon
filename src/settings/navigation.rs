@@ -771,13 +771,17 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::Markets,
         "Markets",
-        "stocks stock watchlist shares price charts finance twelve data",
+        "stocks stock watchlist shares currency currencies exchange rates forex ECB price charts finance twelve data",
         false,
     )
     .names_page(),
-    hit(Page::Markets, "Data source", "public yahoo free no key provider", false),
-    hit(Page::Markets, "Symbols", "stock ticker exchange", false),
-    hit(Page::Markets, "Watchlist", "stocks shares list", false),
+    hit(Page::Markets, "Data source", "public yahoo ECB exchange rates free no key provider", false),
+    hit(Page::Markets, "Show on widget", "markets display options", false).at("markets-display"),
+    hit(Page::Markets, "Daily change", "markets percentage previous quote", false).at("markets-change"),
+    hit(Page::Markets, "Price chart", "markets graph price history", false).at("markets-chart"),
+    hit(Page::Markets, "Publication date", "markets quote time timestamp", false).at("markets-date"),
+    hit(Page::Markets, "Source and chart details", "markets provider chart dates low high prices", false).at("markets-details"),
+    hit(Page::Markets, "Watchlist", "stocks symbols ticker shares exchange currency pairs EUR/USD list", false).at("markets-watchlist"),
     hit(Page::Markets, "Twelve Data", "provider api key connection", false),
     DOCK_SEE_THROUGH,
     hit(
@@ -2444,19 +2448,26 @@ mod tests {
             assert_eq!(hit.anchor(), anchor, "{query}");
             assert!(!hit.advanced, "{query}");
         }
-        // Memory and Disk show bars, so only CPU, Network and GPU have a
-        // history graph to find.
+        // Within System Monitor, only CPU, Network and GPU show history graphs.
         let hits = search("history");
-        assert_eq!(hits.len(), 4);
+        let mut metric_anchors: Vec<_> = hits
+            .iter()
+            .filter(|hit| hit.page == Page::Devbox)
+            .map(|hit| hit.anchor())
+            .collect();
+        metric_anchors.sort_unstable();
         assert_eq!(
-            hits.iter()
-                .filter(|hit| hit.page == Page::Devbox && !hit.advanced)
-                .count(),
-            3
+            metric_anchors,
+            ["devbox-cpu", "devbox-gpu", "devbox-network"]
         );
         assert!(
             hits.iter()
                 .any(|hit| hit.page == Page::Changes && hit.label == "Changes")
+        );
+        let chart = search("price history")[0];
+        assert_eq!(
+            (chart.page, chart.anchor()),
+            (Page::Markets, "markets-chart")
         );
     }
 }

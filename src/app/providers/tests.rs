@@ -47,7 +47,7 @@ fn markets_rejects_old_watchlists_and_credentials_and_clears_hidden_data() {
     let mut state = crate::tools::cards::sample_markets();
     state.source = Some(cards.config.markets.clone());
     let _ = cards.update(Message::Markets(state.clone()));
-    assert_eq!(cards.tools.markets.quotes.len(), 3);
+    assert_eq!(cards.tools.markets.quotes.len(), cards.config.markets.symbols.len());
 
     cards.config.markets.provider = crate::markets::Provider::TwelveData;
     let _ = cards.update(Message::Markets(state.clone()));
@@ -62,7 +62,7 @@ fn markets_rejects_old_watchlists_and_credentials_and_clears_hidden_data() {
 
     cards.config.markets = state.source.clone().unwrap();
     let _ = cards.update(Message::Markets(state.clone()));
-    assert_eq!(cards.tools.markets.quotes.len(), 3);
+    assert_eq!(cards.tools.markets.quotes.len(), cards.config.markets.symbols.len());
     cards.config.markets.credential_revision += 1;
     let _ = cards.update(Message::Markets(state.clone()));
     assert!(cards.tools.markets.quotes.is_empty());

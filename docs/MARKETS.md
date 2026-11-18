@@ -1,31 +1,30 @@
 # Markets widget
 
-Markets shows up to five stocks, their quoted prices and daily percentage changes, and a daily price chart for the selected stock. It uses the same appearance, transparency, resizing and display placement settings as other widgets.
-
-Resizing adapts the content without scrolling inside the widget. All watchlist rows remain visible, the chart fills the remaining space, and smaller sizes use shorter labels and fewer secondary details.
+Follow up to five stocks and currency pairs in one watchlist. New watchlists include EUR/USD, EUR/GBP, AAPL, MSFT and NVDA. Existing watchlists keep their saved symbols and selection.
 
 ## Set up
 
-1. Open Halcyon settings and search for **Markets** or **stocks**.
-2. Enable the Markets widget.
-3. Leave **Yahoo Finance** selected under **Data source**. Quotes and charts are requested directly from Yahoo Finance without an account or saved credential.
-4. Enter up to five Yahoo symbols separated by commas, such as `AAPL, MSFT, NVDA`, and choose **Save watchlist**. Yahoo uses symbols such as `BRK-B` and `VOD.L`; Twelve Data's `SYMBOL:EXCHANGE` notation is not accepted by the public source.
-5. Select a stock on the desktop widget to show its chart. **Edit** opens Markets settings again.
+1. Open Halcyon settings, search for **Markets** or **exchange rates**, and enable the widget.
+2. Under **Watchlist**, enter a stock or pair and choose **Add**. You can also paste several symbols separated by commas. Use the arrows to change their order and the remove button to take an item off the list. At least one item stays on the widget.
+3. Under **Show on widget**, choose what you want to see. The default shows each symbol, its price and its daily change. Turn off **Daily change** for prices alone. **Price chart**, **Publication date**, and **Source and chart details** are off by default.
+4. Select a row to choose the item for the optional chart or publication date. At small sizes **Next** cycles through items when the list doesn't fit. Choose **Edit** to return to settings. The preview uses example prices.
 
-To use Twelve Data instead, select **Twelve Data**, choose **Get an API key**, and save your key in the password field. Your desktop keyring may ask to unlock. This is optional.
+With the chart off, the card fits its list. If you previously resized a chart, turning it back on restores the saved chart space. A failed update still shows a short status beside cached quotes.
 
-The settings preview always contains labeled example data. It does not contact the provider.
+## Currency rates
 
-## Prices and updates
+Currency pairs use public European Central Bank reference rates. Both currencies must be covered by the ECB. Halcyon calculates cross rates from values published on the same date. The percentage change is relative to the previous published rate for that pair.
 
-Quotes refresh every 15 minutes while the widget is visible. Selecting another stock reuses recent quotes. The public source caches all watchlist charts, so switching stocks does not make another request while that cache is fresh. Requests are paced to limit traffic. With Twelve Data, other applications using the same key share your provider allowance.
+The chart covers the most recent 30 calendar days ending on the publication date. Only published observations appear. With **Publication date** enabled, the card shows the last published date, including on weekends and holidays. The ECB provides rates for information purposes. [ECB rates, publication schedule and history](https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html)
 
-Charts show up to 30 daily price points in chronological order, with dates and a low/high scale. The latest daily point can change while a trading session is in progress. Prices are shown in the instrument's currency, without conversion. The selected quote displays its provider timestamp in UTC and market status when available.
+## Stocks
 
-The default Yahoo Finance feed is public but unofficial: access and formats may change, and no uptime guarantee is implied. Coverage and delays depend on the instrument. With the optional Twelve Data source, coverage and quotas depend on your [plan](https://twelvedata.com/pricing). The widget labels prices as potentially delayed. If a request fails, it keeps any cached prices with their timestamps and displays the problem; it does not substitute example prices. Cache is held only in memory and cleared when the widget is hidden.
+Yahoo Finance supplies public stock quotes and charts without signup. Its unofficial feed can change, and coverage and delays depend on the instrument. Enter Yahoo symbols such as `BRK-B` or `VOD.L`. Twelve Data also supports `SYMBOL:EXCHANGE` notation.
 
-## Credentials and privacy
+To use Twelve Data for stocks, select it under **Data source**, choose **Get an API key** and save your key. The desktop keyring may ask to unlock. Stock charts show up to 30 trading sessions in the instrument’s currency. **Publication date** shows the provider timestamp in UTC. **Source and chart details** includes market status when supplied. [Twelve Data coverage and plans](https://twelvedata.com/pricing)
 
-Public-data updates never read the keyring or sends a Twelve Data key. When you choose Twelve Data, its API key is saved in the desktop's Secret Service keyring. Halcyon never saves it in its configuration or profile exports. Background updates do not prompt to unlock the keyring; use Markets settings to save the key again after unlocking if needed. **Remove API key** deletes Halcyon's saved Markets credential.
+## Updates and privacy
 
-The watchlist and selected stock are saved on this computer and excluded from shared appearance profiles. Quotes are requested directly from the selected provider over HTTPS. Yahoo Finance receives requested symbols but no API key; Twelve Data receives its API key and requested symbols. Halcyon does not send the watchlist through its usage reporting.
+Halcyon checks for updates every 15 minutes while the widget is visible. One ECB history download serves all currency pairs without sending your watchlist. Stock requests send the relevant stock symbols directly to the selected provider. Switching rows reuses recently fetched data. On a failed refresh, cached quotes keep their original dates. Hiding the widget clears the in-memory cache.
+
+Only Twelve Data stock requests use your API key. The key stays in the desktop Secret Service keyring. Background updates do not prompt to unlock it. **Remove API key** deletes the saved credential. The watchlist and selection stay on this computer and are excluded from shared appearance profiles and usage reporting.

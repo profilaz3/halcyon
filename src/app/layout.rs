@@ -361,7 +361,7 @@ impl Cards {
         sizes
             .get(widget.key())
             .copied()
-            .map(|size| crate::layout::sized(widget, size, self.widget_screen(widget)))
+            .map(|size| crate::layout::fitted_size(widget, size, self.widget_screen(widget), self.config.markets.height_limit()))
     }
     pub(super) fn widget_size(&self, widget: Widget) -> [f32; 2] {
         if let Some(size) = self.explicit_size(widget) {
@@ -1557,12 +1557,8 @@ impl Cards {
     }
     fn put_layout_size(&mut self, widget: Widget, requested: [f32; 2]) {
         let point = self.position_from(widget, &self.layout_editor.draft);
-        let size = crate::layout::resize(
-            widget,
-            point,
-            requested,
-            self.screen_size,
-            self.layout_editor.grid.snap,
+        let size = crate::layout::fitted_resize(
+            widget, point, requested, self.screen_size, self.layout_editor.grid.snap, self.config.markets.height_limit(),
         );
         self.layout_editor.sizes.insert(widget.key().into(), size);
         self.layout_editor.draft.insert(
