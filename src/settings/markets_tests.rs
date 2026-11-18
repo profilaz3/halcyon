@@ -27,7 +27,7 @@ fn markets_widget_settings_preserve_watchlist_and_render_native_charts() {
         Some("markets")
     );
     assert_eq!(navigation::widget_page(Widget::Markets), Page::Markets);
-    for query in ["stocks", "watchlist", "price charts"] {
+    for query in ["stocks", "currency", "exchange rates", "watchlist", "price charts"] {
         assert!(
             navigation::search(query)
                 .iter()
@@ -80,13 +80,13 @@ fn markets_widget_settings_preserve_watchlist_and_render_native_charts() {
     assert!(Config::load().widget_enabled(Widget::Markets));
     send_settings(
         &mut app,
-        Message::Tools(Edit::MarketSymbols("msft, aapl, MSFT".into())),
+        Message::Tools(Edit::MarketSymbols("msft, eur/gbp, aapl, MSFT".into())),
     );
     send_settings(&mut app, Message::Tools(Edit::MarketSaveSymbols));
-    assert_eq!(Config::load().markets.symbols, ["MSFT", "AAPL"]);
+    assert_eq!(Config::load().markets.symbols, ["MSFT", "EUR/GBP", "AAPL"]);
     assert_eq!(app.tools.market_preview.source.as_ref().unwrap(), &app.config.markets);
     assert_eq!(app.tools.market_preview.chart_symbol, app.config.markets.selected);
-    assert_eq!(app.tools.market_preview.quotes.len(), 2);
+    assert_eq!(app.tools.market_preview.quotes.len(), 3);
     for pointer in [
         "/markets/symbols",
         "/markets/selected",
@@ -108,7 +108,7 @@ fn markets_widget_settings_preserve_watchlist_and_render_native_charts() {
         Message::Tools(Edit::MarketSymbols("https://invalid.example".into())),
     );
     send_settings(&mut app, Message::Tools(Edit::MarketSaveSymbols));
-    assert_eq!(Config::load().markets.symbols, ["MSFT", "AAPL"]);
+    assert_eq!(Config::load().markets.symbols, ["MSFT", "EUR/GBP", "AAPL"]);
     let key = "synthetic-test-key-not-a-credential";
     send_settings(
         &mut app,
@@ -133,7 +133,12 @@ fn markets_widget_settings_preserve_watchlist_and_render_native_charts() {
     config.markets.selected = "IBM".into();
     config.appearance.family = Some(crate::desktop_theme::Family::DarkGlass);
     config.appearance.opacity = 30;
-    let sample = crate::tools::cards::sample_markets();
+    let fixture = crate::markets::Preferences {
+        symbols: vec!["AAPL".into()],
+        selected: "AAPL".into(),
+        ..Default::default()
+    };
+    let sample = crate::tools::cards::sample_markets_for(&fixture);
     for dims in [[360., 420.], [280., 300.]] {
         let mut native = crate::native_test::Native::new(Size::new(dims[0], dims[1]));
         let card = || crate::tools::cards::markets::<Message>(&sample, &config, None, Some(dims));
@@ -171,9 +176,8 @@ fn markets_resize_keeps_every_stock_and_chart_visible_without_scrolling() {
     let mut config = Config::default();
     config.appearance.family = Some(crate::desktop_theme::Family::DarkGlass);
     config.appearance.opacity = 30;
-    for symbol in ["AMZN", "TSLA"] {
-        config.markets.symbols.push(symbol.into());
-    }
+    config.markets.symbols = ["AAPL", "MSFT", "NVDA", "AMZN", "TSLA"].map(String::from).into();
+    config.markets.selected = "AAPL".into();
     let mut state = crate::tools::cards::sample_markets_for(&config.markets);
     let date_ranges = ["%b %-d", "%b %-d, %Y"].map(|format| {
         let first = state.chart.first().unwrap().date.format(format);
@@ -240,5 +244,39 @@ fn markets_resize_keeps_every_stock_and_chart_visible_without_scrolling() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn markets_currency_resizes_and_cycles_the_mixed_watchlist() {
+    use crate::tools::cards::{Action, markets, sample_markets_for};
+    use cosmic::iced::{Event, mouse};
+    let mut config = Config::default();
+    config.markets.symbols = ["EUR/USD", "EUR/GBP", "AAPL"].map(String::from).into();
+    config.markets.selected = "EUR/USD".into();
+    let state = sample_markets_for(&config.markets);
+    for dims in [[280., 300.], [520., 400.]] {
+        let view = || markets(&state, &config, Some(|a| a), Some(dims));
+        let mut native = crate::native_test::Native::new(Size::new(dims[0], dims[1]));
+        let text = native.all_text(view());
+        assert!(text.iter().any(|s| s == "1 EUR = 1.0854 USD"));
+        assert!(text.iter().any(|s| s.starts_with("Published ") && !s.contains("UTC")));
+        assert!(text.iter().any(|s| s == "Last 30 days"));
+        assert!(native.scrollables(view()).is_empty());
+        for (label, rect) in native.placed_text(view()) {
+            assert!(rect.x >= 0. && rect.y >= 0. && rect.x + rect.width <= dims[0] + 0.5
+                && rect.y + rect.height <= dims[1] + 0.5, "{label}: {rect:?} at {dims:?}");
+        }
+        let target = if dims[0] < 320. {
+            assert!(!text.iter().any(|s| s == "AAPL"));
+            "Next"
+        } else {
+            assert!(text.iter().any(|s| s == "AAPL"));
+            "EUR/GBP"
+        };
+        let point = native.text_bounds(view(), target).center();
+        let _ = native.event(view(), Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)), point);
+        let (messages, _) = native.event(view(), Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)), point);
+        assert!(messages.iter().any(|m| matches!(m, Action::MarketSelect(s) if s == "EUR/GBP")));
     }
 }

@@ -1,10 +1,13 @@
-//! A personal stock watchlist. Provider timestamps, currency and missing data
+//! A personal stock and currency watchlist. Provider timestamps, currency and missing data
 //! are retained; an unavailable quote is never presented as a zero price.
 use cosmic::iced::{Subscription, futures::SinkExt};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+mod ecb;
 mod public;
+
+const REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
 fn attributes() -> std::collections::HashMap<&'static str, &'static str> {
     std::collections::HashMap::from([
@@ -203,7 +206,7 @@ pub fn subscription(mut preferences: Preferences, seed: State) -> Subscription<S
     preferences.normalize();
     Subscription::run_with(Feed { preferences, seed }, |feed| {
         let preferences = feed.preferences.clone();
-        let seed = if feed.seed.fresh_for(&preferences) {
+        let seed = if feed.seed.same_watchlist(&preferences) {
             feed.seed.clone()
         } else {
             State::default()
@@ -215,86 +218,149 @@ pub fn subscription(mut preferences: Preferences, seed: State) -> Subscription<S
                 .redirect(reqwest::redirect::Policy::none())
                 .build();
             loop {
-                let reuse_quotes = state.fresh_for(&preferences);
                 state.source = Some(preferences.clone());
-                if preferences.provider == Provider::Public {
-                    state.loading = true;
-                    let _ = output.send(state.clone()).await;
-                    if let Ok(client) = &client {
-                        public::refresh(client, &preferences, &mut state, reuse_quotes).await;
-                    } else {
-                        state.problem = Some(Problem::Network);
-                    }
-                    state.loading = false;
-                    if output.send(state.clone()).await.is_err() {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_secs(15 * 60)).await;
-                    continue;
+                state.loading = true;
+                state.select_chart(&preferences.selected);
+                if output.send(state.clone()).await.is_err() {
+                    break;
                 }
-                let key = read_key().await;
-                if let (Ok(client), Ok(key)) = (&client, &key) {
-                    state.loading = true;
-                    state.problem = None;
-                    state.unavailable.clear();
+                if let Ok(client) = &client {
+                    refresh(client, &preferences, &mut state, &mut output).await;
+                } else {
+                    state.problem = Some(Problem::Network);
+                    state.received_at = Some(std::time::Instant::now());
+                }
+                state.loading = false;
+                if output.send(state.clone()).await.is_err() {
+                    break;
+                }
+                let delay = state.received_at.map_or(REFRESH_INTERVAL, |at| {
+                    REFRESH_INTERVAL.saturating_sub(at.elapsed())
+                });
+                tokio::time::sleep(delay).await;
+            }
+        })
+    })
+}
+
+async fn refresh(
+    client: &reqwest::Client,
+    preferences: &Preferences,
+    state: &mut State,
+    output: &mut cosmic::iced::futures::channel::mpsc::Sender<State>,
+) {
+    let reuse = state.fresh_for(preferences);
+    let (pairs, stocks): (Vec<_>, Vec<_>) = preferences
+        .symbols
+        .iter()
+        .partition(|symbol| currency_pair(symbol).is_some());
+    let selected = &preferences.selected;
+    let needs_stock_chart = preferences.provider == Provider::TwelveData
+        && stocks.contains(&selected)
+        && (!reuse
+            || (!state.charts.contains_key(selected) && !state.unavailable.contains_key(selected)));
+    if reuse && !needs_stock_chart {
+        return;
+    }
+
+    if !reuse {
+        state.problem = None;
+        let reuse_ecb = state
+            .ecb_checked_at
+            .is_some_and(|at| at.elapsed() < REFRESH_INTERVAL);
+        state
+            .unavailable
+            .retain(|symbol, _| reuse_ecb && currency_pair(symbol).is_some());
+        if !pairs.is_empty() && !reuse_ecb {
+            let history = ecb::History::fetch(client).await;
+            for symbol in pairs {
+                let result = history
+                    .as_ref()
+                    .map_err(Clone::clone)
+                    .and_then(|h| h.quote(symbol));
+                state.record(symbol, result);
+            }
+            state.ecb_checked_at = Some(std::time::Instant::now());
+            state.select_chart(selected);
+            let _ = output.send(state.clone()).await;
+        }
+    }
+
+    if !stocks.is_empty() {
+        match preferences.provider {
+            Provider::Public => {
+                let mut limited = false;
+                for symbol in stocks {
+                    let result = if limited {
+                        Err(Problem::RateLimit)
+                    } else {
+                        public::fetch(client, symbol).await
+                    };
+                    limited = matches!(result, Err(Problem::RateLimit));
+                    state.record(symbol, result);
+                    state.select_chart(selected);
                     let _ = output.send(state.clone()).await;
-                    if !reuse_quotes {
-                        for symbol in &preferences.symbols {
-                            let result = match request(client, "quote", symbol, key).await {
-                                Ok(value) => parse_quote(&value, symbol),
-                                Err(p) => Err(p),
+                }
+            }
+            Provider::TwelveData => match read_key().await {
+                Ok(key) => {
+                    let mut stop: Option<Problem> = None;
+                    if !reuse {
+                        // Twelve Data supplies charts separately. Refresh the next selected
+                        // stock on demand and preserve the current trace if its request fails.
+                        state.charts.retain(|symbol, _| {
+                            currency_pair(symbol).is_some() || symbol == selected
+                        });
+                        for symbol in stocks {
+                            let result = if let Some(problem) = &stop {
+                                Err(problem.clone())
+                            } else {
+                                request(client, "quote", symbol, &key)
+                                    .await
+                                    .and_then(|v| parse_quote(&v, symbol))
                             };
                             match result {
-                                Ok(quote) => {
-                                    state.quotes.retain(|q| &q.symbol != symbol);
-                                    state.quotes.push(quote);
-                                }
+                                Ok(quote) => state.store_quote(quote),
                                 Err(problem) => {
-                                    state.unavailable.push(symbol.clone());
-                                    let stop =
-                                        matches!(problem, Problem::RateLimit | Problem::Setup);
-                                    state.problem = Some(problem);
-                                    if stop {
-                                        break;
+                                    if matches!(problem, Problem::Setup | Problem::RateLimit) {
+                                        stop = Some(problem.clone());
                                     }
+                                    state.failed(symbol, problem);
                                 }
                             }
                             let _ = output.send(state.clone()).await;
                         }
-                        state.received_at =
-                            state.unavailable.is_empty().then(std::time::Instant::now);
                     }
-                    if !preferences.selected.is_empty()
-                        && !matches!(state.problem, Some(Problem::RateLimit | Problem::Setup))
-                    {
-                        let chart = match request(client, "time_series", &preferences.selected, key)
+                    if needs_stock_chart && stop.is_none() {
+                        match request(client, "time_series", selected, &key)
                             .await
+                            .and_then(|v| parse_chart(&v, selected))
                         {
-                            Ok(v) => parse_chart(&v, &preferences.selected),
-                            Err(p) => Err(p),
-                        };
-                        match chart {
                             Ok(points) => {
-                                state.chart = points;
-                                state.chart_symbol = preferences.selected.clone();
+                                state.charts.insert(selected.clone(), points);
                             }
-                            Err(problem) => {
-                                state.problem = Some(problem);
-                            }
+                            Err(problem) => state.failed(selected, problem),
                         }
                     }
-                    state.loading = false;
-                } else {
-                    state.loading = false;
-                    state.problem = Some(key.err().unwrap_or(Problem::Network));
                 }
-                if output.send(state.clone()).await.is_err() {
-                    break;
+                Err(problem) => {
+                    for symbol in stocks {
+                        state.failed(symbol, problem.clone());
+                    }
                 }
-                tokio::time::sleep(Duration::from_secs(15 * 60)).await;
-            }
-        })
-    })
+            },
+        }
+    }
+    state.select_chart(selected);
+    if !reuse {
+        state.received_at = Some(std::time::Instant::now());
+    }
+}
+
+pub fn currency_pair(symbol: &str) -> Option<(&str, &str)> {
+    let (base, counter) = symbol.split_once('/')?;
+    let code = |s: &str| s.len() == 3 && s.bytes().all(|b| b.is_ascii_uppercase());
+    (code(base) && code(counter) && base != counter).then_some((base, counter))
 }
 
 pub const MAX_SYMBOLS: usize = 5;
@@ -331,8 +397,10 @@ impl Default for Preferences {
         Self {
             provider: Provider::Public,
             enabled: false,
-            symbols: vec!["AAPL".into(), "MSFT".into(), "NVDA".into()],
-            selected: "AAPL".into(),
+            symbols: ["EUR/USD", "EUR/GBP", "AAPL", "MSFT", "NVDA"]
+                .map(String::from)
+                .into(),
+            selected: "EUR/USD".into(),
             credential_revision: 0,
         }
     }
@@ -345,26 +413,27 @@ pub fn symbols(input: &str) -> Result<Vec<String>, &'static str> {
         .filter(|v| !v.is_empty())
     {
         let value = value.to_ascii_uppercase();
-        if value.len() > 32
-            || !value
-                .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || b".-:".contains(&c))
-            || !value
-                .bytes()
-                .next()
-                .is_some_and(|c| c.is_ascii_alphanumeric())
+        if currency_pair(&value).is_none()
+            && (value.len() > 32
+                || !value
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b".-:".contains(&c))
+                || !value
+                    .bytes()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric()))
         {
-            return Err("Use stock symbols such as AAPL, MSFT or BRK.B.");
+            return Err("Use a stock symbol such as AAPL or a currency pair such as EUR/USD.");
         }
         if !result.contains(&value) {
             result.push(value);
         }
         if result.len() > MAX_SYMBOLS {
-            return Err("Choose up to five stocks.");
+            return Err("Choose up to five stocks or currency pairs.");
         }
     }
     if result.is_empty() {
-        return Err("Add at least one stock symbol.");
+        return Err("Add at least one stock or currency pair.");
     }
     Ok(result)
 }
@@ -433,31 +502,56 @@ impl Problem {
 
 #[derive(Clone, Debug, Default)]
 pub struct State {
+    pub ecb_checked_at: Option<std::time::Instant>,
     pub source: Option<Preferences>,
     pub received_at: Option<std::time::Instant>,
     pub quotes: Vec<Quote>,
-    pub public_charts: std::collections::BTreeMap<String, Vec<Point>>,
+    pub charts: std::collections::BTreeMap<String, Vec<Point>>,
     pub chart_symbol: String,
     pub chart: Vec<Point>,
     pub problem: Option<Problem>,
-    pub unavailable: Vec<String>,
+    pub unavailable: std::collections::BTreeMap<String, Problem>,
     pub loading: bool,
 }
 
 impl State {
-    fn fresh_for(&self, preferences: &Preferences) -> bool {
+    fn same_watchlist(&self, preferences: &Preferences) -> bool {
         self.source.as_ref().is_some_and(|p| {
             p.provider == preferences.provider
                 && p.symbols == preferences.symbols
                 && p.credential_revision == preferences.credential_revision
-        }) && self
-            .received_at
-            .is_some_and(|at| at.elapsed() < Duration::from_secs(15 * 60))
-            && self.unavailable.is_empty()
-            && preferences
-                .symbols
-                .iter()
-                .all(|s| self.quotes.iter().any(|q| &q.symbol == s))
+        })
+    }
+
+    fn fresh_for(&self, preferences: &Preferences) -> bool {
+        self.same_watchlist(preferences)
+            && self
+                .received_at
+                .is_some_and(|at| at.elapsed() < REFRESH_INTERVAL)
+    }
+
+    fn select_chart(&mut self, symbol: &str) {
+        self.chart_symbol = symbol.into();
+        self.chart = self.charts.get(symbol).cloned().unwrap_or_default();
+    }
+
+    fn store_quote(&mut self, quote: Quote) {
+        self.quotes.retain(|q| q.symbol != quote.symbol);
+        self.quotes.push(quote);
+    }
+
+    fn record(&mut self, symbol: &str, result: Result<(Quote, Vec<Point>), Problem>) {
+        match result {
+            Ok((quote, points)) => {
+                self.store_quote(quote);
+                self.charts.insert(symbol.into(), points);
+            }
+            Err(problem) => self.failed(symbol, problem),
+        }
+    }
+
+    fn failed(&mut self, symbol: &str, problem: Problem) {
+        self.unavailable.insert(symbol.into(), problem);
     }
 }
 
@@ -577,8 +671,11 @@ mod tests {
         preferences.credential_revision = 0;
         preferences.symbols = vec!["OTHER".into()];
         assert!(!state.fresh_for(&preferences));
-        state.unavailable.push("AAPL".into());
-        assert!(!state.fresh_for(&Preferences::default()));
+        state.unavailable.insert("AAPL".into(), Problem::Network);
+        assert!(
+            state.fresh_for(&Preferences::default()),
+            "changing selection should not retry a failed provider early"
+        );
     }
 
     #[test]
@@ -587,11 +684,19 @@ mod tests {
             symbols(" aapl,MSFT AAPL BRK.B ").unwrap(),
             ["AAPL", "MSFT", "BRK.B"]
         );
+        assert_eq!(
+            symbols("eur/usd, gbp/jpy, EUR/USD AAPL").unwrap(),
+            ["EUR/USD", "GBP/JPY", "AAPL"]
+        );
         for bad in [
             "",
             "A,B,C,D,E,F",
             "https://example.com",
             "AAPL?apikey=secret",
+            "EUR/EUR",
+            "USD/12A",
+            "EUR//USD",
+            "USD/GBP/JPY",
         ] {
             assert!(symbols(bad).is_err(), "{bad}");
         }

@@ -295,8 +295,8 @@ pub static FIELDS: [WidgetField; 119] = fields![
 // captured or exported by the profile library.
 pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/markets/provider", "Market data source", Style, |v| matches!(v.as_str(), Some("public" | "twelve_data"));
-    "/markets/symbols", "Stock watchlist", Style, |v| serde_json::from_value::<Vec<String>>(v.clone()).is_ok_and(|s| crate::markets::symbols(&s.join(",")).is_ok_and(|valid| valid == s));
-    "/markets/selected", "Selected stock", Style, |v| v.as_str().is_some_and(|s| s.is_empty() || crate::markets::symbols(s).is_ok_and(|valid| valid == [s]));
+    "/markets/symbols", "Markets watchlist", Style, |v| serde_json::from_value::<Vec<String>>(v.clone()).is_ok_and(|s| crate::markets::symbols(&s.join(",")).is_ok_and(|valid| valid == s));
+    "/markets/selected", "Selected watchlist item", Style, |v| v.as_str().is_some_and(|s| s.is_empty() || crate::markets::symbols(s).is_ok_and(|valid| valid == [s]));
     "/markets/credential_revision", "Markets connection", Style, |v| v.as_u64().is_some();
     "/edge_menu/enabled", "Edge menu", Style, boolean;
     "/edge_menu/side", "Edge menu side", Style, |v| matches!(v.as_str(), Some("left" | "right"));

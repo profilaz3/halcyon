@@ -63,9 +63,9 @@ impl Settings {
         );
         let source_note = match provider {
             Provider::Public => {
-                "Public quotes without signup. Yahoo’s unofficial feed may be delayed."
+                "Yahoo supplies stock prices without signup. Currency pairs always use daily ECB reference rates."
             }
-            Provider::TwelveData => "Exchange coverage and delays depend on your Twelve Data plan.",
+            Provider::TwelveData => "Twelve Data supplies stock prices. Currency pairs use the ECB and need no API key.",
         };
         let mut controls = vec![
             group(
@@ -73,8 +73,8 @@ impl Settings {
                 vec![
                     group_row_state(
                         "Symbols",
-                        "Up to five stocks, separated by commas. Select a stock on the widget to see its chart.",
-                        text_input("AAPL, MSFT, NVDA", &editor.market_symbols)
+                        "Enter up to five stocks or currency pairs, separated by commas. Use EUR/USD for dollars per euro.",
+                        text_input("EUR/USD, EUR/GBP, AAPL", &editor.market_symbols)
                             .id("market-symbol-input".into())
                             .on_submit(|_| edit(Edit::MarketSaveSymbols))
                             .on_input(|s| edit(Edit::MarketSymbols(s)))
@@ -130,7 +130,7 @@ impl Settings {
             ));
         }
         controls.push(label(
-            "Updates every 15 minutes while visible · up to 30 trading sessions",
+            "Checks every 15 minutes while visible. The ECB publishes rates on working days.",
             12.,
             MUTED,
         ));

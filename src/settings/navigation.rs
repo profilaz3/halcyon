@@ -771,13 +771,13 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::Markets,
         "Markets",
-        "stocks stock watchlist shares price charts finance twelve data",
+        "stocks stock watchlist shares currency currencies exchange rates forex ECB price charts finance twelve data",
         false,
     )
     .names_page(),
-    hit(Page::Markets, "Data source", "public yahoo free no key provider", false),
+    hit(Page::Markets, "Data source", "public yahoo ECB exchange rates free no key provider", false),
     hit(Page::Markets, "Symbols", "stock ticker exchange", false),
-    hit(Page::Markets, "Watchlist", "stocks shares list", false),
+    hit(Page::Markets, "Watchlist", "stocks shares currency pairs EUR/USD list", false),
     hit(Page::Markets, "Twelve Data", "provider api key connection", false),
     DOCK_SEE_THROUGH,
     hit(

@@ -690,9 +690,9 @@ impl Cards {
                     return Task::none();
                 }
                 return self.save_config_later(
-                    "Selected stock",
+                    "Selected watchlist item",
                     super::config_writes::Failure::notice(
-                        "Couldn’t select this stock",
+                        "Couldn’t select this watchlist item",
                         "Your choice wasn’t saved.",
                         None,
                     ),

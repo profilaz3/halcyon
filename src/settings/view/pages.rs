@@ -109,7 +109,7 @@ impl Settings {
             Widget::Focus => "A timer for focused work and breaks.",
             Widget::Devices => "The battery of your headphones, mouse and phone.",
             Widget::Messages => "Your phone’s newest text messages, through KDE Connect.",
-            Widget::Markets => "A personal stock watchlist with price charts.",
+            Widget::Markets => "Stocks and currency pairs with daily charts.",
             Widget::Projects => "For people who write code: what changed in each project.",
             Widget::Devbox => "How busy your computer is.",
         };
