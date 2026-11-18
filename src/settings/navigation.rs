@@ -85,7 +85,7 @@ impl SearchHit {
     pub(super) fn object_tab(self) -> ObjectTab {
         match self.anchor {
             "widget-design" | "dock-advanced" | "dock-corners" | "music-visualizers"
-            | "music-spectrum" => {
+            | "music-spectrum" | "music-album-light" => {
                 ObjectTab::Design
             }
             _ => ObjectTab::Content,
@@ -1305,6 +1305,8 @@ const ROWS: &[SearchHit] = &[
     hit(Page::Glance, "Text", "", false),
     hit(Page::Glance, "Tomorrow’s events", "", false),
     hit(Page::Music, "Album art", "", false),
+    hit(Page::Music, "Album lighting", "album-lit glass artwork tint glow", false).at("music-album-light"),
+    hit(Page::Music, "Light the card with the album cover", "reflection", false).at("music-album-light"),
     hit(Page::Music, "Around the cover", "", false),
     hit(Page::Music, "Card", "", false),
     hit(Page::Messages, "Show in activity island", "panel phone sms", false),
