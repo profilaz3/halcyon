@@ -1,4 +1,4 @@
-//! The profile record (`desktop-cards-profile`, up to version 25).
+//! The profile record (`desktop-cards-profile`, up to version 26).
 //!
 //! Version 2 adds the `windows` and `workspaces` sections and per-variant
 //! window `gaps` under Appearance; version 3 adds `wallpaper` and
@@ -56,7 +56,9 @@ pub const FORMAT: &str = "desktop-cards-profile";
 /// The app icon shape and folder tint require version 22.
 /// Weather layout and Outlook presentation choices require version 23.
 /// Rain confined to widget glass requires version 24. Editable glass finishes use version 25.
-pub const VERSION: u32 = 25;
+/// Following the current theme for glass tint requires version 26.
+pub const VERSION: u32 = 26;
+pub const VERSION_25: u32 = 25;
 pub const VERSION_24: u32 = 24;
 pub const VERSION_23: u32 = 23;
 pub const VERSION_22: u32 = 22;
@@ -1052,6 +1054,12 @@ impl Profile {
             .find(|(pointer, _)| widget::tool_of(pointer).is_some())
             .map(|(pointer, _)| widget::field(pointer).map_or(pointer, |field| field.label))
     }
+    fn has_theme_glass_tint(&self) -> bool {
+        self.widget_style
+            .as_ref()
+            .and_then(|v| v.pointer("/rain/glass/color"))
+            .is_some_and(Value::is_null)
+    }
     fn has_glass_finish(&self) -> bool {
         self.widget_style
             .as_ref()
@@ -1076,8 +1084,11 @@ impl Profile {
     }
     /// The version this record is written as.
     pub fn written_version(&self) -> u32 {
-        if self.has_glass_finish() {
+        if self.has_theme_glass_tint() {
             return VERSION;
+        }
+        if self.has_glass_finish() {
+            return VERSION_25;
         }
         if self.has_widget_glass() {
             return VERSION_24;
@@ -1362,7 +1373,12 @@ impl Profile {
                 ));
             }
         }
-        if self.has_glass_finish() && self.version < VERSION {
+        if self.has_theme_glass_tint() && self.version < VERSION {
+            return Err(ProfileError::Invalid(
+                "Theme-linked widget glass tint needs look format version 26".into(),
+            ));
+        }
+        if self.has_glass_finish() && self.version < VERSION_25 {
             return Err(ProfileError::Invalid(
                 "Editable widget glass needs look format version 25".into(),
             ));

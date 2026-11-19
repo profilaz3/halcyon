@@ -27,7 +27,8 @@ pub struct Glass {
     pub frost: u8,
     /// Radius of the wallpaper blur in logical pixels.
     pub blur: u8,
-    pub color: [u8; 3],
+    /// An explicit swatch. None follows the active widget theme.
+    pub color: Option<[u8; 3]>,
     pub tint: u8,
     pub opacity: u8,
     /// None follows the widget style's corners.
@@ -39,8 +40,8 @@ impl Default for Glass {
             mode: GlassMode::Polished,
             frost: 0,
             blur: 0,
-            color: [81, 102, 138],
-            tint: 0,
+            color: None,
+            tint: 12,
             opacity: 65,
             radius: None,
         }
@@ -85,8 +86,11 @@ mod tests {
             serde_json::from_str(r#"{"enabled":true,"effect":"lens"}"#).unwrap();
         assert!(old.active_glass().is_none());
         assert!(serde_json::to_value(&old).unwrap().get("glass").is_none());
+        let legacy: Glass = serde_json::from_str(r#"{"color":[81,102,138],"tint":0}"#).unwrap();
+        assert_eq!(legacy.color, Some([81, 102, 138]));
+        assert_eq!(legacy.tint, 0);
         let glass = Glass {
-            color: [188, 25, 150],
+            color: Some([188, 25, 150]),
             tint: 50,
             radius: Some(0),
             ..Glass::default()

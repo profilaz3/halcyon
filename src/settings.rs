@@ -5776,7 +5776,7 @@ impl Settings {
             Target::GlassTint => {
                 let mut p = self.wallpaper.effect().unwrap_or(&self.config.rain).clone();
                 if let Some(g) = &mut p.glass {
-                    g.color = rgb.map(|c| (c * 255.).round() as u8);
+                    g.color = Some(rgb.map(|c| (c * 255.).round() as u8));
                     if g.tint == 0 {
                         g.tint = 20;
                     }
@@ -11453,6 +11453,7 @@ mod tests {
         let saved = Config::load().rain;
         let glass = saved.active_glass().expect("picked Frosted");
         assert_eq!(glass.mode, GlassMode::Frosted);
+        assert!(glass.color.is_none() && glass.tint > 0);
         assert!(glass.blur > 0);
         native.scroll(app.settings_view(), "settings-content", -10000.);
         native.capture(
@@ -11468,13 +11469,18 @@ mod tests {
         );
         drive_wallpaper(&mut app);
         let dyed = Config::load().rain.active_glass().unwrap();
-        assert_eq!(dyed.color, [204, 51, 153]);
+        assert_eq!(dyed.color, Some([204, 51, 153]));
         assert!(dyed.tint > 0);
         native.capture(
             app.settings_view(),
             &controls_theme(&app.config),
             "widget-glass-tint",
         );
+        native_click(&mut app, &mut native, "glass-tint-theme");
+        drive_wallpaper(&mut app);
+        assert_eq!(Config::load().rain, saved);
+        send_settings(&mut app, Message::UndoDesktop);
+        assert_eq!(Config::load().rain.active_glass(), Some(dyed));
         send_settings(&mut app, Message::UndoDesktop);
         assert_eq!(Config::load().rain, saved);
         native_click(&mut app, &mut native, "widget-glass-tab-shape");

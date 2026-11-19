@@ -1483,6 +1483,16 @@ fn widget_glass_refracts_only_inside_rounded_panes() {
     );
     let custom = |glass, card| material_view(true, 85, card, 3., Effect::Lens, Some(glass));
     let polished = super::Glass::default();
+    let tinted = |accent, color| {
+        scene.set_panes(gpu::Panes { theme_accent: accent, ..panes.clone() });
+        custom(super::Glass { color, tint: 70, ..polished }, false)
+    };
+    let red_theme = ui.render(tinted([192, 50, 70], None), &theme);
+    let blue_theme = ui.render(tinted([35, 60, 225], None), &theme);
+    assert_ne!(&red_theme[center..center + 4], &blue_theme[center..center + 4]);
+    let fixed = ui.render(tinted([35, 60, 225], Some([192, 50, 70])), &theme);
+    assert_eq!(fixed, red_theme, "an explicit tint is independent of theme changes");
+    scene.set_panes(gpu::Panes { theme_accent: config.widget_theme_accent(), ..panes.clone() });
     let clear = ui.render(custom(polished, false), &theme);
     for variant in [
         super::Glass {
@@ -1495,7 +1505,7 @@ fn widget_glass_refracts_only_inside_rounded_panes() {
         },
         super::Glass {
             tint: 80,
-            color: [255, 0, 0],
+            color: Some([255, 0, 0]),
             ..polished
         },
         polished.preset(super::GlassMode::Smoked),

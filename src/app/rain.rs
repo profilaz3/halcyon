@@ -623,8 +623,12 @@ impl Cards {
             .iter()
             .filter_map(|s| Some((s.id, s.output.handle.clone(), s.image.clone()?)))
             .collect();
+        let theme_accent = self.config.widget_theme_accent();
         for (rain_id, output, scene) in scenes {
-            let mut panes = gpu::Panes::default();
+            let mut panes = gpu::Panes {
+                theme_accent,
+                ..Default::default()
+            };
             for widget in Widget::ALL {
                 if !self.output_known
                     || !self.tool_shown(widget)

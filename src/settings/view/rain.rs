@@ -499,6 +499,7 @@ impl Settings {
         if p.confined_to_widgets() {
             scene.set_panes(crate::rain::gpu::Panes {
                 rects: vec![[0.18, 0.22, 0.64, 0.56]],
+                theme_accent: self.config.widget_theme_accent(),
                 radius: p
                     .glass
                     .and_then(|g| g.radius)

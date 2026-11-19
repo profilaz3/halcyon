@@ -22,6 +22,7 @@ pub struct Panes {
     pub rects: Vec<[f32; 4]>,
     pub pointer: Option<[f32; 2]>,
     pub radius: f32,
+    pub theme_accent: [u8; 3],
 }
 const MAX_PANES: usize = 12;
 pub struct Scene {
@@ -1204,7 +1205,8 @@ impl shader::Primitive for Primitive {
                         super::GlassMode::Polished => 2.,
                         super::GlassMode::Frosted => 3.,
                     };
-                    let [r, g, b] = glass.color;
+                    let [r, g, b] = glass.color
+                        .unwrap_or_else(|| self.scene.panes.lock().unwrap().theme_accent);
                     let color = cosmic::iced::Color::from_rgb8(r, g, b);
                     let tint = if pipeline.background_format.is_srgb() {
                         color.into_linear()

@@ -101,18 +101,32 @@ impl Settings {
                 )),
                 GlassTab::Tint => {
                     let target = color_well::Target::GlassTint;
-                    let mut tint = vec![group_row(
+                    let swatch = g.color.unwrap_or_else(|| self.config.widget_theme_accent());
+                    let mut tint = vec![group_row_state(
                         "Tint color",
-                        "",
+                        if g.color.is_some() {
+                            "Custom color"
+                        } else {
+                            "Follows theme accent"
+                        },
                         self.color_button(
                             "glass-tint-color",
                             target,
-                            Some(color_well::rgb(g.color)),
+                            Some(color_well::rgb(swatch)),
                             true,
                         ),
                     )];
                     if let Some(picker) = self.color_panel(target, &[]) {
                         tint.push(picker);
+                    } else if g.color.is_some() {
+                        let mut next = lens.clone();
+                        next.glass = Some(Glass { color: None, ..g });
+                        tint.push(
+                            button::text("Use theme accent")
+                                .id(cosmic::widget::Id::new("glass-tint-theme"))
+                                .on_press(set(next))
+                                .into(),
+                        );
                     }
                     tint.push(make_slider("Tint strength", "%", 100, g.tint, |g, n| {
                         g.tint = n
@@ -246,6 +260,7 @@ impl Settings {
             scene.set_panes(crate::rain::gpu::Panes {
                 rects: vec![[(w - cw) / (2. * w), (h - ch) / (2. * h), cw / w, ch / h]],
                 radius: crate::widget_style::corner_radius(&cfg) / h,
+                theme_accent: cfg.widget_theme_accent(),
                 ..Default::default()
             });
             layers.push(
