@@ -2,17 +2,51 @@
 //! Icon artwork scales around its center. The button, running indicator,
 //! drag target and rectangle the compositor uses to minimize a window stay put.
 use cosmic::iced::{
-    Event, Length, Rectangle, Size, Transformation,
+    Event, Length, Point, Rectangle, Size, Transformation,
     advanced::{
         Clipboard, Layout, Renderer as _, Shell, Widget, layout, renderer,
         widget::{Tree, tree},
     },
     mouse, window,
 };
-use cosmic::{Element, Renderer, Theme};
+use cosmic::{Element, Renderer, Theme, theme::Button, widget::button};
 use std::time::Instant;
 
 const REST: f32 = 0.77;
+const PEAK: f32 = REST * 1.45;
+
+fn hover_scale(bounds: Rectangle, pointer: Point, horizontal: bool) -> f32 {
+    let offset = pointer - bounds.center();
+    let (along, across, length, thickness) = if horizontal {
+        (offset.x, offset.y, bounds.width, bounds.height)
+    } else {
+        (offset.y, offset.x, bounds.height, bounds.width)
+    };
+    if across.abs() > thickness * 0.85 {
+        return REST;
+    }
+    let t = (1. - along.abs() / (length * 2.1).max(1.)).clamp(0., 1.);
+    REST + (PEAK - REST) * t * t * (3. - 2. * t)
+}
+
+pub fn button_style() -> Button {
+    // The running indicator shows the active app. Keep the native outline for
+    // keyboard focus and leave the area around pointer-driven artwork clear.
+    let appearance = |focused, theme: &Theme| button::Style {
+        background: None,
+        ..button::Catalog::active(theme, focused, false, &Button::AppletIcon)
+    };
+    Button::Custom {
+        active: Box::new(appearance),
+        hovered: Box::new(appearance),
+        pressed: Box::new(appearance),
+        disabled: Box::new(|theme| button::Style {
+            background: None,
+            ..button::Catalog::disabled(theme, &Button::AppletIcon)
+        }),
+    }
+}
+
 #[derive(Debug)]
 struct Motion {
     scale: f32,
@@ -108,23 +142,9 @@ impl<M> Widget<M, Theme, Renderer> for Magnify<'_, M> {
             ) => Instant::now(),
             _ => return,
         };
-        let b = layout.bounds();
-        let target = if matches!(event, Event::Mouse(mouse::Event::CursorLeft)) {
-            REST
-        } else {
-            cursor.position().map_or(REST, |p| {
-                let c = b.center();
-                let (along, across, extent, cross) = if self.horizontal {
-                    (p.x - c.x, p.y - c.y, b.width, b.height)
-                } else {
-                    (p.y - c.y, p.x - c.x, b.height, b.width)
-                };
-                if across.abs() > cross * 0.85 {
-                    return REST;
-                }
-                let t = (1. - along.abs() / (extent * 2.1).max(1.)).clamp(0., 1.);
-                REST + (1. - REST) * t * t * (3. - 2. * t)
-            })
+        let target = match (event, cursor.position()) {
+            (Event::Mouse(mouse::Event::CursorLeft), _) | (_, None) => REST,
+            (_, Some(pointer)) => hover_scale(layout.bounds(), pointer, self.horizontal),
         };
         let changed = (target - motion.target).abs() > f32::EPSILON;
         motion.target = target;
@@ -182,16 +202,58 @@ impl<M> Widget<M, Theme, Renderer> for Magnify<'_, M> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cosmic::widget::button::Catalog;
     use std::time::Duration;
+
+    #[test]
+    fn hover_peaks_at_45_percent_on_either_dock_axis() {
+        let slot = Rectangle::new(Point::ORIGIN, Size::new(48., 48.));
+        let center = slot.center();
+        for horizontal in [true, false] {
+            let scale_at = |distance| {
+                let pointer = if horizontal {
+                    Point::new(center.x + distance, center.y)
+                } else {
+                    Point::new(center.x, center.y + distance)
+                };
+                hover_scale(slot, pointer, horizontal)
+            };
+            assert!((scale_at(0.) / REST - 1.45).abs() < 0.0001);
+            assert!(REST < scale_at(72.) && scale_at(72.) < scale_at(0.));
+            assert_eq!(scale_at(-72.), scale_at(72.));
+            assert_eq!(scale_at(144.), REST);
+        }
+    }
+
+    #[test]
+    fn pointer_and_selection_leave_only_the_artwork_visible() {
+        let style = button_style();
+        for theme in [Theme::dark(), Theme::light_hc()] {
+            for selected in [false, true] {
+                for state in [
+                    theme.active(false, selected, &style),
+                    theme.hovered(false, selected, &style),
+                    theme.pressed(false, selected, &style),
+                    theme.disabled(&style),
+                ] {
+                    assert!(state.background.is_none() && state.overlay.is_none());
+                    assert_eq!(state.border_width, 0.);
+                    assert_eq!(state.outline_width, 0.);
+                }
+            }
+            assert!(theme.active(true, false, &style).outline_width > 0.);
+        }
+    }
+
     #[test]
     fn growth_reversal_and_exit_settle_without_idle_frames() {
         let start = Instant::now();
         let mut state = Motion::default();
-        state.target = 1.;
+        state.target = PEAK;
         for i in 0..8 {
             let old = state.scale;
             assert!(state.advance(start + Duration::from_millis(i * 16)));
-            assert!(state.scale >= old && state.scale < 1.);
+            assert!(state.scale >= old && state.scale < PEAK);
         }
         let peak = state.scale;
         state.target = REST;
@@ -200,7 +262,7 @@ mod tests {
             state.advance(start + Duration::from_millis(i * 16));
             assert!(state.scale <= before);
         }
-        assert!(peak > 0.93);
+        assert!(peak > 1.);
         assert_eq!(state.scale, REST);
         assert!(state.last.is_none());
     }
