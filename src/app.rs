@@ -337,6 +337,7 @@ pub enum Message {
     Peek(Option<(String, Vec<Widget>)>),
     PeekPage(usize),
     PeekInside,
+    PeekEscape(window::Id),
     PeekFrame,
     /// A click on an edge strip: the menu opens at once, on its display.
     EdgeClick(window::Id),
@@ -833,6 +834,10 @@ impl cosmic::Application for Cards {
                 }) if status == cosmic::iced::event::Status::Ignored => {
                     Some(Message::KeyInput(id, key, modifiers))
                 }
+                cosmic::iced::Event::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
+                    key: cosmic::iced::keyboard::Key::Named(cosmic::iced::keyboard::key::Named::Escape),
+                    ..
+                }) => Some(Message::PeekEscape(id)),
                 cosmic::iced::Event::Window(window::Event::Unfocused) => {
                     Some(Message::Unfocused(id))
                 }
@@ -867,6 +872,7 @@ impl cosmic::Application for Cards {
                     message,
                 )| {
                     match &message {
+                        Message::PeekEscape(id) => (Some(*id) == peek).then_some(message),
                         Message::KeyInput(id, key, modifiers) => {
                             if Some(*id) == reading || Some(*id) == peek {
                                 return Some(message);
@@ -1823,6 +1829,13 @@ impl Cards {
                 save
             }
             Message::PeekInside => Task::none(),
+            Message::PeekEscape(id) => {
+                if self.peek.as_ref().is_some_and(|peek| peek.id == id) {
+                    self.close_peek()
+                } else {
+                    Task::none()
+                }
+            }
             Message::PeekFrame => {
                 if let Some(p) = &mut self.peek {
                     p.entering = self.config.settings_animations

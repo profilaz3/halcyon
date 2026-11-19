@@ -1879,10 +1879,12 @@ fn peek_reuses_data_and_closes_every_overlay() {
             let mut ui = Native::new(Size::new(1040., 640.));
             ui.capture(cards.view_window(id), &cosmic::Theme::dark(), "widget-peek");
         }
-        let _ = cards.update(if cycle % 2 == 0 {
-            Message::KeyInput(id, Key::Named(Named::Escape), Modifiers::empty())
-        } else {
-            Message::Peek(None)
+        let _ = cards.update(Message::PeekEscape(window::Id::unique()));
+        assert_eq!(cards.peek.as_ref().map(|p| p.id), Some(id));
+        let _ = cards.update(match cycle % 3 {
+            0 => Message::KeyInput(id, Key::Named(Named::Escape), Modifiers::empty()),
+            1 => Message::PeekEscape(id),
+            _ => Message::Peek(None),
         });
         assert!(cards.peek.is_none());
         assert!(!cards.config.music.enabled);
