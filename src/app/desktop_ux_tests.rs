@@ -48,7 +48,16 @@ fn isolated(name: &str) -> bool {
 }
 
 fn cards() -> Cards {
-    let (cards, _) = Cards::init(Core::default(), Config::load());
+    let (mut cards, _) = Cards::init(Core::default(), Config::load());
+    let check = cards.refresh_edge_available();
+    if cards.edge.checking.is_some() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _guard = runtime.enter();
+        config_writes::finish(&mut cards, check);
+    }
     cards
 }
 
@@ -744,6 +753,52 @@ fn custom_menu_config(root: &std::path::Path) -> (Config, std::path::PathBuf) {
         .push(serde_json::json!({"type": "hologram", "depth": 3}));
     std::fs::write(Config::path().unwrap(), value.to_string()).unwrap();
     (Config::load(), folder)
+}
+
+#[test]
+fn edge_availability_uses_one_background_check_and_ignores_a_replaced_list() {
+    if isolated("edge_availability_uses_one_background_check_and_ignores_a_replaced_list") {
+        return;
+    }
+    let root = std::path::PathBuf::from(std::env::var_os("DESKTOP_CARDS_DESKTOP_ROOT").unwrap());
+    let (config, _) = custom_menu_config(&root);
+    let (mut cards, _) = Cards::init(Core::default(), config);
+    assert!(
+        cards.edge.checking.is_none(),
+        "a closed menu does not scan applications at startup"
+    );
+    let first = cards.refresh_edge_available();
+    let original = cards.edge.checking.clone().unwrap();
+    drop(cards.refresh_edge_available());
+    assert!(std::sync::Arc::ptr_eq(
+        cards.edge.checking.as_ref().unwrap(),
+        &original
+    ));
+    assert!(!cards.edge_available(1));
+    assert!(
+        cards.edge_item_message(5).is_some(),
+        "widget controls work during the scan"
+    );
+
+    let old_menu = cards.config.edge_menu.clone();
+    cards.config.edge_menu.items.as_mut().unwrap().swap(1, 2);
+    drop(cards.edge_menu_changed(&old_menu));
+    let second = cards.refresh_edge_available();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let _guard = runtime.enter();
+    config_writes::finish(&mut cards, first);
+    assert!(!cards.edge_available(1));
+    assert!(
+        cards.edge.checking.is_some(),
+        "the old result cannot finish the new scan"
+    );
+    config_writes::finish(&mut cards, second);
+    assert!(!cards.edge_available(1));
+    assert!(cards.edge_available(2));
+    assert!(cards.edge.checking.is_none());
 }
 
 /// Each item of a customized menu sends the message the desktop already

@@ -382,6 +382,13 @@ pub(super) const STARTUP: SearchHit = hit(
     false,
 )
 .names_page();
+pub(super) const ISLANDS_PANEL: SearchHit = hit(
+    Page::ActivityIsland,
+    "Islands panel",
+    "enable islands activate reinstall setup switch sign out sign in",
+    false,
+)
+.at("islands-activation");
 pub(super) const ACTIVITY_ISLAND: SearchHit = hit(
     Page::ActivityIsland,
     "Activity island",
@@ -996,13 +1003,7 @@ const SEARCH: &[SearchHit] = &[
     .at("dock-visibility")
     .bar(crate::desktop::panels::PanelKind::Panel),
     ACTIVITY_ISLAND,
-    hit(
-        Page::ActivityIsland,
-        "Islands panel",
-        "enable islands activate reinstall setup switch sign out sign in",
-        false,
-    )
-    .at("islands-activation"),
+    ISLANDS_PANEL,
     hit(
         Page::DesktopWindows,
         "Tile windows automatically",

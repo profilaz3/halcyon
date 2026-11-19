@@ -1288,7 +1288,7 @@ pub fn run(page: &str) -> cosmic::iced::Result {
     let page = first.unwrap_or(page);
     let page = if page == "setup" {
         OPEN_WIZARD.store(true, std::sync::atomic::Ordering::Relaxed);
-        "overview"
+        "home"
     } else {
         page
     };
@@ -1597,7 +1597,7 @@ impl cosmic::Application for Settings {
             let _ = app.profiles.enter(kind);
         }
         app.arranging = app.canvas.is_some() && page == Page::Overview;
-        app.open_page_editor(page);
+        let page_editor = app.open_page_editor(page);
         if matches!(
             page,
             Page::Home
@@ -1650,6 +1650,7 @@ impl cosmic::Application for Settings {
             Task::batch([
                 title,
                 service,
+                page_editor,
                 media,
                 icons,
                 gallery,
@@ -2500,10 +2501,17 @@ impl cosmic::Application for Settings {
         if matches!(self.page, Page::Calendar | Page::Projects | Page::Glance) {
             self.samples.update(&self.config);
         }
-        if self.page == Page::EdgeMenu {
-            self.samples
-                .update_edge(&self.config, self.edge_menu.available.clone());
-        }
+        let edge_scan = if self.page == Page::EdgeMenu {
+            let scan = self.edge_menu.refresh(&self.config);
+            self.samples.update_edge(
+                &self.config,
+                self.edge_menu.available.clone(),
+                self.edge_menu.checking.clone(),
+            );
+            scan
+        } else {
+            Task::none()
+        };
         #[cfg(test)]
         if let Some(before) = before
             && !self.error
@@ -2540,7 +2548,7 @@ impl cosmic::Application for Settings {
         let wallpaper = self.instant_wallpaper_apply();
         let inhibit = self.shortcuts_inhibit_sync();
         Task::batch(
-            [task, depth, stage, instant, wallpaper, inhibit]
+            [task, depth, stage, instant, wallpaper, inhibit, edge_scan]
                 .into_iter()
                 .chain(std::mem::take(&mut self.native_tasks)),
         )
@@ -2922,15 +2930,15 @@ impl Settings {
                 if self.wizard.is_some() {
                     return self.update_wizard(wizard::Message::Back);
                 }
+                if !self.search_query.trim().is_empty() || self.search_open {
+                    self.search_open = false;
+                    return self.handle(Message::SearchSettings(String::new()));
+                }
                 if self.history.is_empty()
                     && self.page == Page::General
                     && self.support.report.is_some()
                 {
                     return self.update_support(support::Message::Preview(false));
-                }
-                if !self.search_query.trim().is_empty() || self.search_open {
-                    self.search_open = false;
-                    return self.handle(Message::SearchSettings(String::new()));
                 }
                 if self.history.is_empty()
                     && self.page == Page::DesktopProfiles
@@ -3423,12 +3431,24 @@ impl Settings {
                 }
                 return Task::none();
             }
-            Message::Resized(size) => self.window = size,
+            Message::Resized(size) => {
+                let was_rail = self.rail();
+                self.window = size;
+                let rail = self.rail();
+                let has_query = !self.search_query.trim().is_empty();
+                self.search_open = rail && (self.search_open || has_query);
+                if rail != was_rail && has_query {
+                    return cosmic::widget::text_input::focus(navigation::search_id());
+                }
+            }
             Message::Tick => {
                 self.refresh_usage();
                 self.calendar.refresh();
                 match Config::try_load() {
-                    Ok(config) => self.config = config,
+                    Ok(config) => {
+                        self.tools.sync_markets(&config.markets);
+                        self.config = config;
+                    }
                     Err(error)
                         if Config::path()
                             .as_deref()
@@ -4029,7 +4049,10 @@ impl Settings {
                         ));
                     }
                 }
-                self.open_page_editor(page);
+                if from == Page::EdgeMenu && page != Page::EdgeMenu {
+                    self.edge_menu.leave();
+                }
+                let page_editor = self.open_page_editor(page);
                 if !self.error {
                     self.status = if matches!(page, Page::Overview | Page::WidgetLayout)
                         && self.placement.dirty()
@@ -4079,6 +4102,7 @@ impl Settings {
                 };
                 return Task::batch([
                     held,
+                    page_editor,
                     scroll,
                     reveal,
                     navigation::reveal_in_sidebar(page),
@@ -5306,6 +5330,8 @@ impl Settings {
                 self.desktop.check_islands();
                 self.profiles.refresh();
                 if !self.desktop.islands.installation.installed()
+                    && self.config.materials.get(self.material_target).is_none()
+                    && self.material_draft.is_none()
                     && matches!(
                         self.material_target,
                         crate::materials::Target::Dock | crate::materials::Target::Panel
@@ -5772,12 +5798,11 @@ impl Settings {
                 self.setup_kept = true;
                 self.save(json!({"onboarded": true}));
                 self.record_notes_seen();
-                let page = self.handle(Message::Page(Page::Overview));
                 self.kept_note = Some((
                     "Setup choices kept. Your desktop stays as it is.".into(),
                     navigation::KeptTarget::SetupChoices,
                 ));
-                page
+                Task::none()
             }
             wizard::Outcome::Skipped => {
                 // Setup stays unfinished: Home keeps offering it.
@@ -5786,7 +5811,7 @@ impl Settings {
                 if let Some(store) = &store {
                     wizard::Wizard::forget(store);
                 }
-                self.handle(Message::Page(Page::Overview))
+                Task::none()
             }
             wizard::Outcome::Applied { changed, startup } => {
                 let refresh = if changed {
@@ -5832,8 +5857,7 @@ impl Settings {
             wizard::Outcome::Done { service } => {
                 self.end_setup();
                 let refresh = self.after_desktop_change();
-                let page = self.handle(Message::Page(Page::Overview));
-                Task::batch([refresh, page, self.restore_service(service)])
+                Task::batch([refresh, self.restore_service(service)])
             }
         }
     }
@@ -5870,6 +5894,7 @@ impl Settings {
     /// Returns the Wallpaper page's media work the refresh started.
     fn after_desktop_change(&mut self) -> Task<Message> {
         if let Ok(config) = Config::try_load() {
+            self.tools.sync_markets(&config.markets);
             self.config = config;
         }
         self.refresh_corners();
@@ -5955,7 +5980,7 @@ impl Settings {
                 .map(|message| cosmic::Application::update(self, message)),
         )
     }
-    fn open_page_editor(&mut self, page: Page) {
+    fn open_page_editor(&mut self, page: Page) -> Task<Message> {
         if page == Page::Appearance && !self.native_worker_needed() {
             self.material_native = crate::desktop::actions::history_store()
                 .is_ok_and(|s| crate::desktop::materials::native_support(&s));
@@ -5991,9 +6016,13 @@ impl Settings {
             Page::DesktopMotion => self.motion.open(),
             Page::DesktopWindowRules => self.window_rules.open(),
             Page::EdgeMenu => {
-                self.edge_menu.open(&self.config);
-                self.samples
-                    .update_edge(&self.config, self.edge_menu.available.clone());
+                let scan = self.edge_menu.open(&self.config);
+                self.samples.update_edge(
+                    &self.config,
+                    self.edge_menu.available.clone(),
+                    self.edge_menu.checking.clone(),
+                );
+                return scan;
             }
             Page::DesktopShortcuts => self.shortcuts.open(),
             // Clock reads it too: the hills and its stage need the picture.
@@ -6009,6 +6038,7 @@ impl Settings {
             Page::Changes => self.desktop_recovery.refresh(),
             _ => {}
         }
+        Task::none()
     }
     /// Windows uses the same completion path as the other inspectors.
     fn update_windows(&mut self, message: windows::Message) {
@@ -6335,7 +6365,7 @@ impl Settings {
                 match Config::save_tool(widget, json!({ key: value })) {
                     Ok(config) => {
                         if widget == Widget::Markets {
-                            self.tools.market_preview = crate::tools::cards::sample_markets_for(&config.markets);
+                            self.tools.sync_markets(&config.markets);
                             if adding_market {
                                 self.tools.market_symbols.clear();
                             }

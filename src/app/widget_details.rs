@@ -76,13 +76,13 @@ impl Cards {
             ),
             Widget::Projects => self.full_projects(),
             Widget::Calendar | Widget::Glance => {
-                if let Some(event) = self
-                    .calendar
-                    .iter()
-                    .chain(self.calendar_today.iter())
-                    .chain(self.calendar_ahead.iter())
-                    .flat_map(|c| &c.events)
-                    .find(|e| self.event_details_open(e))
+                if self.calendar_details.is_some()
+                    && !self.config.calendar_private
+                    && let Some(event) = self.calendar.iter()
+                        .chain(self.calendar_today.iter())
+                        .chain(self.calendar_ahead.iter())
+                        .flat_map(|calendar| &calendar.events)
+                        .find(|event| self.event_details_open(event))
                 {
                     return self.reading_frame(&event.title, self.event_details_view(event, p));
                 }
@@ -92,6 +92,16 @@ impl Cards {
                 } else {
                     self.calendar_days(today)
                 };
+                if days.is_empty() {
+                    return self
+                        .reading_frame("Agenda", label("No agenda days selected", 13., p.muted));
+                }
+                if days
+                    .iter()
+                    .all(|day| self.calendar_month_data(*day).is_none())
+                {
+                    return self.reading_frame("Agenda", self.missing_agenda(p));
+                }
                 let mut rows = Vec::new();
                 for day in days {
                     rows.push(label(
@@ -107,8 +117,12 @@ impl Cards {
                     if agenda.earlier > 0 {
                         rows.push(self.earlier_control(agenda.earlier, p));
                     }
-                    if agenda.events.is_empty() {
-                        rows.push(label("No events", 13., p.muted));
+                    if agenda.events.is_empty() && agenda.earlier == 0 {
+                        rows.push(if self.calendar_month_data(day).is_none() {
+                            self.missing_agenda(p)
+                        } else {
+                            label("No events", 13., p.muted)
+                        });
                     }
                     for event in agenda.events {
                         let private = self.config.calendar_private;
@@ -195,6 +209,24 @@ impl Cards {
         .into()
     }
 
+    fn missing_agenda(&self, p: Palette) -> Element<'static, Message> {
+        let action = if let Some((reason, fix)) = self.calendar_needs_you() {
+            format!("{reason} · {fix} →")
+        } else if !self.calendar_connection.connected() {
+            "Connect your calendar →".into()
+        } else if self.calendar_problem.is_some() {
+            "Check calendar connection →".into()
+        } else {
+            return label("Checking calendar…", 13., p.muted);
+        };
+        cosmic::widget::button::custom(label(&action, 13., p.accent))
+            .name(action)
+            .class(cosmic::theme::Button::Text)
+            .padding([2, 0])
+            .on_press(Message::CalendarSettings)
+            .into()
+    }
+
     pub(super) fn compact_agenda(
         &self,
         widget: Widget,
@@ -245,25 +277,13 @@ impl Cards {
             );
         }
         if entries.is_empty() {
-            if !self.calendar_connection.connected()
-                && self.calendar.is_none()
-                && self.calendar_today.is_none()
+            if days
+                .iter()
+                .any(|day| self.calendar_month_data(*day).is_none())
             {
-                return action(
-                    "Connect your calendar →",
-                    Message::CalendarSettings,
-                    p.accent,
-                );
+                return self.missing_agenda(p);
             }
-            rows.push(label(
-                if self.calendar.is_none() && self.calendar_today.is_none() {
-                    "Checking calendar…"
-                } else {
-                    "No upcoming events"
-                },
-                13.,
-                p.muted,
-            ));
+            rows.push(label("No upcoming events", 13., p.muted));
         }
         let more = entries.len().saturating_sub(capacity);
         rows.push(action(

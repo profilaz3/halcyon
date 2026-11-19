@@ -50,7 +50,9 @@ impl Settings {
         if state.busy() {
             return Host::Switching;
         }
-        if let Phase::Failed(error) = &state.phase {
+        if let Phase::DisableFailed(error) = &state.phase
+            && islands::can_disable(installation)
+        {
             return Host::Failed(error.label());
         }
         if self.desktop.islands.compatible {
@@ -78,6 +80,9 @@ impl Settings {
             }
         ) {
             return Host::SignIn;
+        }
+        if let Phase::Failed(error) = &state.phase {
+            return Host::Failed(error.label());
         }
         if islands::can_enable(installation) {
             return match self.panel_verified() {
@@ -194,7 +199,15 @@ impl Settings {
         let rows: Vec<Element<'_, Message>> = match self.panel_host() {
             Host::Running => return None,
             Host::Checking => vec![label("Checking the Islands panel…", 12., MUTED)],
-            Host::Switching => vec![label("Getting the Islands panel ready…", 12., MUTED)],
+            Host::Switching => vec![label(
+                if self.updates.islands.phase == Phase::Disabling {
+                    "Restoring the COSMIC panel for your next sign-in…"
+                } else {
+                    "Getting the Islands panel ready…"
+                },
+                12.,
+                MUTED,
+            )],
             Host::Switch => vec![
                 label(switch_hint.to_owned(), 12., MUTED),
                 actions({
@@ -249,12 +262,19 @@ impl Settings {
                 ]
             }
             Host::Failed(reason) => {
-                let retry = if islands::can_enable(&self.desktop.islands.installation)
-                    && self.panel_verified()
-                {
-                    Panel::Enable
-                } else {
-                    Panel::Recheck
+                let installation = &self.desktop.islands.installation;
+                let retry = match &self.updates.islands.phase {
+                    Phase::DisableFailed(_)
+                        if self.panel_verified() && islands::can_disable(installation) =>
+                    {
+                        Panel::Disable
+                    }
+                    Phase::Failed(_)
+                        if self.panel_verified() && islands::can_enable(installation) =>
+                    {
+                        Panel::Enable
+                    }
+                    _ => Panel::Recheck,
                 };
                 vec![banner(
                     reason,

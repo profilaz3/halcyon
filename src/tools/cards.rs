@@ -6,7 +6,9 @@ mod devices;
 mod folder;
 mod markets;
 pub use folder::folder;
-pub use markets::{markets, sample as sample_markets, sample_for as sample_markets_for};
+pub use markets::{markets, sample_for as sample_markets_for};
+#[cfg(test)]
+pub use markets::sample as sample_markets;
 pub(crate) mod messages;
 pub(crate) mod recipe;
 use super::{focus, music, notes};

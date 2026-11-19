@@ -7,7 +7,7 @@ Follow up to five stocks and currency pairs in one watchlist. New watchlists inc
 1. Open Halcyon settings, search for **Markets** or **exchange rates**, and enable the widget.
 2. Under **Watchlist**, enter a stock or pair and choose **Add**. You can also paste several symbols separated by commas. Use the arrows to change their order and the remove button to take an item off the list. At least one item stays on the widget.
 3. Under **Show on widget**, choose what you want to see. The default shows each symbol, its price and its daily change. Turn off **Daily change** for prices alone. **Price chart**, **Publication date**, and **Source and chart details** are off by default.
-4. Select a row to choose the item for the optional chart or publication date. At small sizes **Next** cycles through items when the list doesn't fit. Choose **Edit** to return to settings. The preview uses example prices.
+4. Select a row to choose the item for the optional chart or publication date. At small sizes **Next** cycles through items when the list doesn't fit. Choose **Edit** to return to settings. The offline preview uses example prices for the saved watchlist and follows changes made through Undo or another editor.
 
 With the chart off, the card fits its list. If you previously resized a chart, turning it back on restores the saved chart space. A failed update still shows a short status beside cached quotes.
 
@@ -25,6 +25,6 @@ To use Twelve Data for stocks, select it under **Data source**, choose **Get an 
 
 ## Updates and privacy
 
-Halcyon checks for updates every 15 minutes while the widget is visible. One ECB history download serves all currency pairs without sending your watchlist. Stock requests send the relevant stock symbols directly to the selected provider. Switching rows reuses recently fetched data. On a failed refresh, cached quotes keep their original dates. Hiding the widget clears the in-memory cache.
+Halcyon checks for updates every 15 minutes while the widget is visible. One ECB history download serves all currency pairs without sending your watchlist. Stock requests send the relevant stock symbols directly to the selected provider. Switching rows reuses recently fetched data and keeps the original refresh deadline. On a failed refresh, cached quotes keep their original dates. Hiding the widget clears the in-memory cache.
 
 Only Twelve Data stock requests use your API key. The key stays in the desktop Secret Service keyring. Background updates do not prompt to unlock it. **Remove API key** deletes the saved credential. The watchlist and selection stay on this computer and are excluded from shared appearance profiles and usage reporting.

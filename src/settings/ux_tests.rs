@@ -136,8 +136,29 @@ fn ux_native_shared_finish_sets_scope_and_busy_status_is_visible() {
     let _ = app.update(Message::OpenWidgetFinish);
     assert_eq!(app.page, Page::Appearance);
     assert_eq!(app.material_target, crate::materials::Target::Widgets);
+    use crate::desktop::islands::Installation;
+    use crate::materials::{Finish, Kind, Target};
+    let saved = Finish::new(Kind::Frosted);
+    app.config.materials.panel = Some(saved);
+    let _ = app.update(Message::MaterialTarget(Target::Panel));
+    app.material_adjust = true;
+    let _ = app.update(Message::MaterialValue(false, 45));
+    let draft = app.material_draft;
+    assert!(draft.is_some());
+    let _ = app.update(Message::InstallationReady(
+        app.installation_generation,
+        Installation::Absent,
+    ));
+    assert_eq!(app.material_target, Target::Panel);
+    assert_eq!(app.material_draft, draft);
+    assert!(app.material_adjust);
+    let size = Size::new(820., 600.);
+    let _ = app.update(Message::Resized(size));
+    let mut native = Native::new(size);
+    crate::settings::tests::native_click(&mut app, &mut native, "material-panel-setup");
+    assert_eq!(app.page, Page::ActivityIsland);
+    assert_eq!(app.search_selected.unwrap().anchor(), "islands-activation");
     app.native_busy = true;
-    let mut native = Native::new(Size::new(820., 600.));
     assert!(
         native
             .try_bounds(app.settings_view(), "settings-saving")

@@ -62,9 +62,19 @@ impl Failure {
     }
 }
 
+/// The worker writes in submission order, but its individual tasks can deliver
+/// their replies in a different order. Keep the latest confirmed configuration.
+#[derive(Default)]
+pub(super) struct Writes {
+    submitted: u64,
+    confirmed: u64,
+    pub pending: usize,
+}
+
 /// A finished background write.
 #[derive(Debug, Clone)]
 pub struct Saved {
+    sequence: u64,
     pub result: Result<Box<Config>, String>,
     pub failure: Failure,
     /// Runs on the UI thread before a failure is shown, to undo a change the
@@ -92,6 +102,9 @@ impl Cards {
         revert: Option<Revert>,
         write: impl FnOnce() -> Result<Config, String> + Send + 'static,
     ) -> Task<Message> {
+        self.config_writes.submitted += 1;
+        self.config_writes.pending += 1;
+        let sequence = self.config_writes.submitted;
         #[cfg(test)]
         QUEUED.with(|queued| queued.set(queued.get() + 1));
         let nonblocking = crate::config::settings_lock_operation() & libc::LOCK_NB != 0;
@@ -127,6 +140,7 @@ impl Cards {
                 Err(error) => (Err(error), false),
             };
             Message::ConfigSaved(Box::new(Saved {
+                sequence,
                 result: result.map(Box::new),
                 failure,
                 revert,
@@ -136,12 +150,20 @@ impl Cards {
     }
 
     pub(super) fn config_saved(&mut self, saved: Saved) -> Task<Message> {
+        self.config_writes.pending -= 1;
+        let superseded = saved.sequence < self.config_writes.confirmed;
         match saved.result {
-            Ok(config) => self.apply_config(*config),
+            Ok(_) if superseded => Task::none(),
+            Ok(config) => {
+                self.config_writes.confirmed = saved.sequence;
+                self.apply_config(*config)
+            }
             Err(error) => {
                 match saved.revert {
-                    Some(Revert::WidgetOrder(order)) => self.config.widget_order = order,
-                    None => {}
+                    Some(Revert::WidgetOrder(order)) if !superseded => {
+                        self.config.widget_order = order;
+                    }
+                    _ => {}
                 }
                 eprintln!("{}: {error}", saved.failure.title);
                 if saved.damaged {

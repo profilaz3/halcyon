@@ -109,7 +109,7 @@ impl Default for ToolsEditor {
             market_busy: false,
             market_status: None,
             watchlist_error: None,
-            market_preview: crate::tools::cards::sample_markets(),
+            market_preview: crate::markets::State::default(),
             feed: None,
             visualizer_draft: None,
             recent: Vec::new(),
@@ -299,14 +299,18 @@ impl ToolsEditor {
         }
     }
 
+    /// A saved watchlist can change while an unsubmitted Add field is being edited.
+    pub fn sync_markets(&mut self, prefs: &crate::markets::Preferences) {
+        if self.market_preview.source.as_ref() != Some(prefs) {
+            self.market_preview = crate::tools::cards::sample_markets_for(prefs);
+        }
+    }
+
     /// Opening a tools page: Music looks for players.
     pub fn open(&mut self, tab: Widget, config: &Config) -> Task<crate::settings::Message> {
         self.tab = tab;
         if tab == Widget::Markets {
-            self.market_symbols.clear();
-            self.watchlist_error = None;
-            self.market_status = None;
-            self.market_preview = crate::tools::cards::sample_markets_for(&config.markets);
+            self.sync_markets(&config.markets);
         }
         self.refresh();
         if tab == Widget::Music {

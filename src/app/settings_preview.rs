@@ -224,6 +224,8 @@ impl SettingsSamples {
             display_generation: 0,
             surface_inputs: None,
             updating: false,
+            activity_dirty: false,
+            config_writes: Default::default(),
             rebuild_pending: false,
             controls_open: false,
             work_area: [None; 2],
@@ -395,9 +397,15 @@ impl SettingsSamples {
     }
     /// The edge menu with `config`'s items; `available` says which of
     /// them can run.
-    pub fn update_edge(&mut self, config: &Config, available: Vec<bool>) {
+    pub fn update_edge(
+        &mut self,
+        config: &Config,
+        available: Vec<bool>,
+        checking: Option<std::sync::Arc<Vec<crate::config::edge_menu::Item>>>,
+    ) {
         self.edge.config = config.clone();
         self.edge.edge.available = available;
+        self.edge.edge.checking = checking;
     }
     /// The open edge menu, as on the desktop, and its size.
     pub fn edge_menu_view(&self) -> (Element<'_, Message>, [f32; 2]) {

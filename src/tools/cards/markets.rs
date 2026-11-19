@@ -416,6 +416,7 @@ fn rate(value: f64) -> String {
     text
 }
 
+#[cfg(test)]
 pub fn sample() -> State {
     sample_for(&crate::markets::Preferences::default())
 }

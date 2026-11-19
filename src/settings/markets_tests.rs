@@ -134,6 +134,18 @@ fn markets_widget_settings_preserve_watchlist_and_render_native_charts() {
     }
     assert_eq!(Config::load().markets.symbols, ["EUR/GBP"]);
     assert_eq!(Config::load().markets.selected, "EUR/GBP");
+    send_settings(&mut app, Message::Tools(Edit::MarketSymbols("IBM".into())));
+    Config::save_tool(Widget::Markets, serde_json::json!({"symbols": ["AMD"], "selected": "AMD"})).unwrap();
+    send_settings(&mut app, Message::Tick);
+    assert_eq!(app.tools.market_symbols, "IBM");
+    assert_eq!(app.tools.market_preview.source.as_ref().unwrap().selected, "AMD");
+    send_settings(&mut app, Message::Page(Page::Clock));
+    send_settings(&mut app, Message::Page(Page::Markets));
+    assert_eq!(app.tools.market_symbols, "IBM");
+    send_settings(&mut app, Message::Tools(Edit::MarketAdd));
+    assert_eq!(Config::load().markets.symbols, ["AMD", "IBM"]);
+    send_settings(&mut app, Message::UndoDesktop);
+    assert_eq!(app.tools.market_preview.source.as_ref().unwrap().symbols, ["AMD"]);
     let key = "synthetic-test-key-not-a-credential";
     send_settings(
         &mut app,

@@ -233,10 +233,7 @@ pub fn subscription(mut preferences: Preferences, seed: State) -> Subscription<S
                 if output.send(state.clone()).await.is_err() {
                     break;
                 }
-                let delay = state.received_at.map_or(REFRESH_INTERVAL, |at| {
-                    REFRESH_INTERVAL.saturating_sub(at.elapsed())
-                });
-                tokio::time::sleep(delay).await;
+                tokio::time::sleep(state.next_refresh(std::time::Instant::now())).await;
             }
         })
     })
@@ -566,6 +563,12 @@ impl State {
             .is_some_and(|p| p.quote_key() == preferences.quote_key())
     }
 
+    fn next_refresh(&self, now: std::time::Instant) -> Duration {
+        self.received_at.map_or(REFRESH_INTERVAL, |at| {
+            REFRESH_INTERVAL.saturating_sub(now.saturating_duration_since(at))
+        })
+    }
+
     fn fresh_for(&self, preferences: &Preferences) -> bool {
         self.same_watchlist(preferences)
             && self
@@ -735,6 +738,22 @@ mod tests {
             state.fresh_for(&Preferences::default()),
             "changing selection should not retry a failed provider early"
         );
+    }
+
+    #[test]
+    fn selecting_a_row_keeps_the_quote_deadline_and_failed_rows_keep_their_cache() {
+        let mut state = crate::tools::cards::sample_markets();
+        let mut prefs = state.source.clone().unwrap();
+        let now = std::time::Instant::now();
+        state.received_at = Some(now - REFRESH_INTERVAL + Duration::from_secs(60));
+        prefs.selected = prefs.symbols[1].clone();
+        assert!(state.fresh_for(&prefs));
+        assert_eq!(state.next_refresh(now), Duration::from_secs(60));
+        assert_eq!(state.next_refresh(now + Duration::from_secs(60)), Duration::ZERO);
+        state.received_at = Some(now - REFRESH_INTERVAL);
+        state.unavailable.insert(prefs.selected.clone(), Problem::Network);
+        assert!(!state.fresh_for(&prefs));
+        assert!(state.same_watchlist(&prefs));
     }
 
     #[test]
