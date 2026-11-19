@@ -79,7 +79,7 @@ pub(crate) fn settings_weather_preview_at(
     size: [f32; 2],
     now: chrono::DateTime<Local>,
 ) -> Element<'static, Message> {
-    let weather = weather_sample(now.date_naive());
+    let weather = weather_sample(weather::forecast_day(now, None, config));
     weather::Presentation::new(
         config,
         weather::Snapshot {
@@ -93,6 +93,7 @@ pub(crate) fn settings_weather_preview_at(
 }
 pub(super) fn weather_sample(today: NaiveDate) -> Weather {
     let weather = Weather {
+        timezone: None,
         current: data::Current {
             temperature_2m: 21.,
             apparent_temperature: 20.,
@@ -365,7 +366,7 @@ impl SettingsSamples {
                 overview.weather_at = Some(reading.updated_at.clone());
             }
             None => {
-                overview.weather = Some(weather_sample(today));
+                overview.weather = Some(weather_sample(weather::forecast_day(Local::now(), None, config)));
                 overview.weather_at = None;
             }
         }

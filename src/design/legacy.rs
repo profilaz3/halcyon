@@ -14,10 +14,6 @@ pub(super) fn pointers() -> impl Iterator<Item = &'static str> {
                 || matches!(
                     *p,
                     "/widget_display"
-                        | "/weather/layout"
-                        | "/weather/outlook_artwork"
-                        | "/weather/outlook_range"
-                        | "/weather/outlook_forecast"
                         | "/weather/show_dew_point"
                         | "/placement/columns"
                         | "/widgets_visible"

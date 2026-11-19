@@ -1355,7 +1355,7 @@ pub(crate) mod tests {
                 .find(|look| look.id == id)
                 .unwrap_or_else(|| panic!("resources/looks/{id}.json loads"));
             assert_eq!(look.profile.name, saved.name);
-            assert_eq!(look.profile.version, super::super::VERSION);
+            assert_eq!(look.profile.version, super::super::format::VERSION_22);
             assert!(!look.description.contains(['\u{2013}', '\u{2014}']));
             assert_eq!(
                 look.profile

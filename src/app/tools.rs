@@ -399,7 +399,17 @@ impl Cards {
         }
     }
 
+    pub(super) fn has_reading(&self, widget: Widget) -> bool {
+        matches!(widget, Widget::Calendar | Widget::Devbox | Widget::Projects)
+            || (widget == Widget::Glance && self.config.glance.show_calendar)
+    }
+
     pub(super) fn can_interact_with_tool(&self, widget: Widget) -> bool {
+        if self.has_reading(widget) {
+            return self.config.widget_visible(widget)
+                && self.widget_available(widget)
+                && !self.layout_editor.active;
+        }
         matches!(
             widget,
             Widget::Music | Widget::Focus | Widget::Notes | Widget::Markets | Widget::Messages
@@ -435,6 +445,9 @@ impl Cards {
             Task::none()
         };
         self.sidebar.hide();
+        if self.has_reading(widget) {
+            return leave.chain(release_drawer).chain(self.update(Message::ReadingDetails(widget)));
+        }
         self.interacting_tool = Some(widget);
         let id = self.widget_id(widget);
         leave

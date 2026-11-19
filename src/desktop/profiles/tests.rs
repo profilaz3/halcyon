@@ -971,7 +971,7 @@ fn windows_workspaces_profile_roundtrip_and_legacy_import() {
             format::VERSION_19
         } else if matches!(preset.id, "halcyon" | "calm" | "rose" | "tidal" | "carbon") {
             // An app icon shape or accent folders need the newest record.
-            format::VERSION
+            format::VERSION_22
         } else if preset.id == "paper-studio" {
             format::VERSION_9
         } else {
@@ -1858,7 +1858,7 @@ fn icon_shape_and_tint_apply_build_the_overlay_and_undo_restores_them() {
     let exported = export(&shaped).unwrap();
     let text = String::from_utf8(exported.bytes.clone()).unwrap();
     assert!(!text.contains("Halcyon-Shaped"), "{text}");
-    assert_eq!(import(&exported.bytes).unwrap().version, VERSION);
+    assert_eq!(import(&exported.bytes).unwrap().version, format::VERSION_22);
     // Applying the same look again changes nothing and builds nothing.
     let again = super::plan(&store, &installed, &circle, &appearance_only());
     assert!(again.icon_build().is_none());
@@ -2086,4 +2086,67 @@ fn looks_carry_every_clock_face_and_typeface_through_apply_and_undo() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn setup_restores_outlook_and_keeps_the_inactive_weather_recipe() {
+    let desk = desk(
+        "weather-layout-setup",
+        Srgb::new(0.3, 0.4, 0.7),
+        Srgb::new(0.2, 0.4, 0.7),
+        "teal",
+    );
+    let mut raw: Value = serde_json::from_slice(&fs::read(&desk.config).unwrap()).unwrap();
+    let recipe = crate::recipes::Recipe::template(crate::recipes::Kind::Weather, 0);
+    raw["weather"] = json!({"layout":"outlook","outlook_artwork":false});
+    raw["recipes"] = json!({"weather":recipe});
+    fs::write(&desk.config, raw.to_string()).unwrap();
+    let saved = capture(&desk.store(), "Outlook weather").unwrap().profile;
+    let saved = import(&export(&saved).unwrap().bytes).unwrap();
+    let style = saved.widget_style.as_ref().unwrap();
+    assert!(style.pointer("/recipes/weather").is_some());
+    assert_eq!(style.pointer("/weather/layout"), Some(&json!("outlook")));
+    assert_eq!(saved.written_version(), 23);
+    raw.as_object_mut().unwrap().remove("weather");
+    raw.as_object_mut().unwrap().remove("recipes");
+    fs::write(&desk.config, raw.to_string()).unwrap();
+    let doc = crate::design::Document::from_legacy(&raw).unwrap();
+    fs::write(
+        crate::design::storage::path(&desk.config),
+        serde_json::to_vec(&doc).unwrap(),
+    )
+    .unwrap();
+    let store = desk.store();
+    let proposal = plan(
+        &store,
+        &desk.installed(),
+        &saved,
+        &[Domain::WidgetStyle].into(),
+    );
+    assert!(proposal.can_apply(), "{:?}", proposal.blocking_reasons());
+    apply(&store, &proposal).unwrap();
+    let config: crate::config::Config = serde_json::from_str(
+        &crate::design::storage::projected_text(&desk.config)
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(config.weather.layout, crate::config::WeatherLayout::Outlook);
+    assert!(!config.weather.outlook_artwork);
+    assert!(config.recipes.weather.is_some());
+
+    // Before format 23, providing a recipe was the selection mechanism.
+    let mut legacy = saved.clone();
+    legacy.widget_style.as_mut().unwrap().as_object_mut().unwrap().remove("weather");
+    legacy.version = legacy.written_version();
+    assert!(legacy.version < 23);
+    let legacy = import(&export(&legacy).unwrap().bytes).unwrap();
+    let proposal = plan(&store, &desk.installed(), &legacy, &[Domain::WidgetStyle].into());
+    assert!(proposal.can_apply(), "{:?}", proposal.blocking_reasons());
+    apply(&store, &proposal).unwrap();
+    let config: crate::config::Config = serde_json::from_str(
+        &crate::design::storage::projected_text(&desk.config).unwrap().unwrap(),
+    ).unwrap();
+    assert_eq!(config.weather.layout, crate::config::WeatherLayout::Saved);
+    assert_eq!(config.recipes.weather.as_ref(), Some(&recipe));
 }

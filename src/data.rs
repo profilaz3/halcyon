@@ -7,6 +7,8 @@ use std::time::Duration;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Weather {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
     pub current: Current,
     pub daily: Daily,
 }
@@ -1615,6 +1617,7 @@ print(json.dumps({'updated_at': json.dumps(observed), 'projects': [row, slow], '
             location: location.clone(),
             updated_at: "2026-10-17T16:00:00+02:00".into(),
             weather: Weather {
+                timezone: None,
                 current: Current {
                     temperature_2m: 14.,
                     apparent_temperature: 12.,

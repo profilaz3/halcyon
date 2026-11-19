@@ -1,4 +1,4 @@
-//! The profile record (`desktop-cards-profile`, up to version 22).
+//! The profile record (`desktop-cards-profile`, up to version 23).
 //!
 //! Version 2 adds the `windows` and `workspaces` sections and per-variant
 //! window `gaps` under Appearance; version 3 adds `wallpaper` and
@@ -54,7 +54,9 @@ pub const FORMAT: &str = "desktop-cards-profile";
 /// Clock scene lighting requires version 20; wallpaper rain keeps 19.
 /// A one-line description requires version 21.
 /// The app icon shape and folder tint require version 22.
-pub const VERSION: u32 = 22;
+/// Weather layout and Outlook presentation choices require version 23.
+pub const VERSION: u32 = 23;
+pub const VERSION_22: u32 = 22;
 pub const VERSION_21: u32 = 21;
 pub const VERSION_20: u32 = 20;
 pub const VERSION_19: u32 = 19;
@@ -1047,6 +1049,9 @@ impl Profile {
             .find(|(pointer, _)| widget::tool_of(pointer).is_some())
             .map(|(pointer, _)| widget::field(pointer).map_or(pointer, |field| field.label))
     }
+    fn has_weather_layout(&self) -> bool {
+        self.widget_style.as_ref().is_some_and(|v| v.get("weather").is_some())
+    }
     fn has_icon_style(&self) -> bool {
         self.appearance
             .as_ref()
@@ -1054,8 +1059,11 @@ impl Profile {
     }
     /// The version this record is written as.
     pub fn written_version(&self) -> u32 {
-        if self.has_icon_style() {
+        if self.has_weather_layout() {
             return VERSION;
+        }
+        if self.has_icon_style() {
+            return VERSION_22;
         }
         if self.description.is_some() {
             return VERSION_21;
@@ -1331,7 +1339,10 @@ impl Profile {
                 ));
             }
         }
-        if self.has_icon_style() && self.version < VERSION {
+        if self.has_weather_layout() && self.version < VERSION {
+            return Err(ProfileError::Invalid("Weather layout needs look format version 23".into()));
+        }
+        if self.has_icon_style() && self.version < VERSION_22 {
             return Err(ProfileError::Invalid(
                 "An app icon shape or folder tint needs look format version 22".into(),
             ));

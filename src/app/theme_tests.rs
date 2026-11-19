@@ -39,6 +39,7 @@ fn shared_theme_native_widgets_remain_visible_on_light_and_dark_wallpapers() {
     cfg.glance.density = crate::config::GlanceDensity::Compact;
     let (mut cards, _) = Cards::init(Core::default(), cfg);
     cards.weather = Some(Weather {
+        timezone: None,
         current: data::Current {
             temperature_2m: 21.,
             apparent_temperature: 20.,

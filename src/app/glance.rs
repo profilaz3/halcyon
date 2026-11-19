@@ -588,7 +588,8 @@ impl Cards {
         let mut rows = Vec::new();
         match (&self.config.location, &self.weather) {
             (_, Some(weather)) => {
-                let forecast = forecast_index(&weather.daily, Local::now().date_naive());
+                let today = weather::forecast_day(Local::now(), weather.timezone.as_deref(), &self.config);
+                let forecast = forecast_index(&weather.daily, today);
                 let temperature_size = if block {
                     28.
                 } else if compact {

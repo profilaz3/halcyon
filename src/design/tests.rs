@@ -240,10 +240,6 @@ fn architecture_local_design_ownership_stays_separate_from_export_scope() {
     use std::collections::BTreeSet;
     let mut local_design: BTreeSet<String> = [
         "/widget_display",
-        "/weather/layout",
-        "/weather/outlook_artwork",
-        "/weather/outlook_forecast",
-        "/weather/outlook_range",
         "/weather/show_dew_point",
         "/placement/columns",
         "/widgets_visible",

@@ -2345,6 +2345,12 @@ fn plan_widgets(
             return None;
         }
     };
+    // Older recipes selected their composition, including an explicit reset.
+    if members.iter().any(|(key, _)| *key == "/recipes/weather")
+        && !members.iter().any(|(key, _)| *key == "/weather/layout")
+    {
+        members.push(("/weather/layout", Some(serde_json::json!("saved"))));
+    }
     // Old profiles chose a visible palette before Follow desktop existed.
     // Keep that intent when applying one to a desktop-following setup.
     // A newly captured profile includes the source and therefore wins.

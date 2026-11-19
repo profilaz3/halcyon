@@ -235,7 +235,7 @@ pub fn markets<'a, M: Clone + 'static>(
             let value = if let Some((base, counter)) = pair {
                 format!("1 {base} = {} {counter}", rate(quote.price))
             } else {
-                format!("{:.2} {}", quote.price, quote.currency)
+                stock_price(quote)
             };
             content = content.push(line(value, 17., p.foreground));
             if options.show_change
@@ -265,10 +265,8 @@ pub fn markets<'a, M: Clone + 'static>(
                 .map(|q| {
                     if currency_pair(symbol).is_some() {
                         format!("{} {}", rate(q.price), q.currency)
-                    } else if q.price < 1. {
-                        format!("{:.4} {}", q.price, q.currency)
                     } else {
-                        format!("{:.2} {}", q.price, q.currency)
+                        stock_price(q)
                     }
                 })
                 .unwrap_or_else(|| "No quote".into());
@@ -396,6 +394,14 @@ pub fn markets<'a, M: Clone + 'static>(
         content = content.push(footer());
     }
     frame(content.into(), config, height)
+}
+
+fn stock_price(quote: &crate::markets::Quote) -> String {
+    if quote.price > 0. && quote.price < 0.0001 {
+        return format!("{:.3e} {}", quote.price, quote.currency);
+    }
+    let precision = if quote.price < 1. { 4 } else { 2 };
+    format!("{:.*} {}", precision, quote.price, quote.currency)
 }
 
 fn rate(value: f64) -> String {

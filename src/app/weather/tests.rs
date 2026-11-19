@@ -428,3 +428,39 @@ fn classic_forecast_keeps_partial_and_subzero_readings_on_resize() {
         );
     }
 }
+
+#[test]
+fn weather_uses_selected_city_day_in_both_layouts() {
+    let mut config = configured();
+    config.location.as_mut().unwrap().timezone = Some("Asia/Tokyo".into());
+    let at = chrono::Utc
+        .with_ymd_and_hms(2026, 1, 3, 18, 0, 0)
+        .unwrap()
+        .with_timezone(&Local);
+    let city_day = at.with_timezone(&chrono_tz::Asia::Tokyo).date_naive();
+
+    assert_eq!(
+        forecast_day(at, Some("America/Los_Angeles"), &config),
+        city_day.pred_opt().unwrap()
+    );
+    assert_eq!(forecast_day(at, Some("unrecognized"), &config), city_day);
+    let weather = super::super::settings_preview::weather_sample(city_day);
+    let snap = Snapshot {
+        weather: Some(&weather),
+        updated_at: None,
+        failed: false,
+    };
+    let p = Presentation::new(&config, snap, at);
+    let Content::Reading { forecast, .. } = p.content else {
+        panic!()
+    };
+    assert_eq!(forecast[0].title, "Today");
+    config.weather.layout = crate::config::WeatherLayout::Outlook;
+    let p = Presentation::new(&config, snap, at);
+    let mut n = Native::new(Size::new(560., 180.));
+    assert!(
+        n.all_text(p.view(Context::Live, [560., 180.]))
+            .iter()
+            .any(|v| v == "Today")
+    );
+}

@@ -168,12 +168,16 @@ macro_rules! fields {
 }
 
 /// Every member a profile, its Undo or its recovery may write.
-pub static FIELDS: [WidgetField; 124] = fields![
+pub static FIELDS: [WidgetField; 128] = fields![
     "/recipes/music", "Music recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Music);
     "/recipes/focus", "Focus recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Focus);
     "/recipes/devbox", "System recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::System);
     "/recipes/calendar", "Calendar recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Calendar);
     "/recipes/clock", "Clock recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Clock);
+    "/weather/layout", "Weather layout", Style, |v| matches!(v.as_str(), Some("saved" | "classic" | "outlook"));
+    "/weather/outlook_artwork", "Weather artwork", Style, boolean;
+    "/weather/outlook_range", "Daily temperature range", Style, boolean;
+    "/weather/outlook_forecast", "Outlook forecast", Style, boolean;
     "/recipes/weather", "Weather recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Weather);
     "/moments/active", "Active moment", Style, |v| v.is_null() || matches!(v.as_str(), Some("day" | "night"));
     "/moments/day/family", "Day widget style", Style, |v| serde_json::from_value::<Option<crate::desktop_theme::Family>>(v.clone()).is_ok();
@@ -393,10 +397,6 @@ pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/widget_display", "Widget display", Layout, |v| v.is_null() || v.as_str().is_some_and(crate::displays::valid_name);
     "/appearance/match_wallpaper", "Matching wallpaper", Style, boolean;
     "/appearance/match_cosmic_colors", "Follow COSMIC colors", Style, boolean;
-    "/weather/layout", "Weather layout", Style, |v| matches!(v.as_str(), Some("saved" | "classic" | "outlook"));
-    "/weather/outlook_artwork", "Weather artwork", Style, boolean;
-    "/weather/outlook_range", "Daily temperature range", Style, boolean;
-    "/weather/outlook_forecast", "Outlook forecast", Style, boolean;
     "/weather/show_dew_point", "Weather dew point", Style, boolean;
     "/weather/fahrenheit", "Weather units", Style, boolean;
     "/placement/columns", "Arrangement grid", Layout, |v| int_in(v,12,24);

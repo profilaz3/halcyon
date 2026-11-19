@@ -2235,7 +2235,8 @@ impl Cards {
             item(hide, "widget-menu-hide", MenuPick::Hide),
         ];
         if self.can_interact_with_tool(widget) {
-            choices.insert(0, item("Use widget controls".into(), "widget-menu-interact", MenuPick::Interact));
+            let label = if self.has_reading(widget) { "Open full reading" } else { "Use widget controls" };
+            choices.insert(0, item(label.into(), "widget-menu-interact", MenuPick::Interact));
         }
         container(column::with_children(choices))
         .padding(MENU_PADDING as u16)

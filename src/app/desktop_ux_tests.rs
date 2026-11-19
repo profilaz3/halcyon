@@ -1832,3 +1832,31 @@ fn keyboard_enters_focus_card_starts_timer_and_leaves_on_escape() {
     ));
     assert!(cards.interacting_tool.is_none());
 }
+
+#[test]
+fn shift_enter_opens_full_widget_readings() {
+    if isolated("shift_enter_opens_full_widget_readings") {
+        return;
+    }
+    let mut cards = cards();
+    cards.config.enabled_widgets = vec!["calendar".into(), "devbox".into(), "projects".into()];
+    cards.config.glance.show_calendar = true;
+    for widget in [
+        Widget::Calendar,
+        Widget::Devbox,
+        Widget::Projects,
+        Widget::Glance,
+    ] {
+        cards.config.glance.enabled = widget == Widget::Glance;
+        let _ = cards.update(Message::DrawerToggle);
+        let index = cards
+            .drawer_items()
+            .iter()
+            .position(|item| *item == drawer::DrawerItem::Widget(widget))
+            .unwrap();
+        cards.sidebar.focus = Some(index);
+        press(&mut cards, Key::Named(Named::Enter), Modifiers::SHIFT);
+        assert_eq!(cards.reading_window.map(|(_, w)| w), Some(widget));
+        let _ = cards.update(Message::CloseReading);
+    }
+}

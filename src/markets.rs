@@ -445,13 +445,17 @@ pub fn symbols(input: &str) -> Result<Vec<String>, &'static str> {
 }
 
 impl Preferences {
+    fn quote_key(&self) -> (Provider, Vec<&str>, u64) {
+        let mut symbols: Vec<_> = self.symbols.iter().map(String::as_str).collect();
+        symbols.sort_unstable();
+        (self.provider, symbols, self.credential_revision)
+    }
+
     /// Only Twelve Data needs a separate stock-chart request.
     pub(crate) fn feed_key(&self) -> impl std::hash::Hash + Eq + '_ {
         (
             self.enabled,
-            self.provider,
-            &self.symbols,
-            self.credential_revision,
+            self.quote_key(),
             (self.provider == Provider::TwelveData
                 && self.show_chart
                 && currency_pair(&self.selected).is_none())
@@ -556,12 +560,10 @@ pub struct State {
 }
 
 impl State {
-    fn same_watchlist(&self, preferences: &Preferences) -> bool {
-        self.source.as_ref().is_some_and(|p| {
-            p.provider == preferences.provider
-                && p.symbols == preferences.symbols
-                && p.credential_revision == preferences.credential_revision
-        })
+    pub(crate) fn same_watchlist(&self, preferences: &Preferences) -> bool {
+        self.source
+            .as_ref()
+            .is_some_and(|p| p.quote_key() == preferences.quote_key())
     }
 
     fn fresh_for(&self, preferences: &Preferences) -> bool {
@@ -718,6 +720,9 @@ mod tests {
         preferences.provider = Provider::TwelveData;
         assert!(!state.fresh_for(&preferences));
         preferences.provider = Provider::Public;
+        preferences.symbols.reverse();
+        let original = Preferences::default();
+        assert!(preferences.feed_key() == original.feed_key());
         preferences.selected = "MSFT".into();
         assert!(state.fresh_for(&preferences));
         preferences.credential_revision = 1;

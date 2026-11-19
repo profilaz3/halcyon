@@ -50,14 +50,38 @@ pub(super) struct Presentation {
     style: crate::widget_style::Context,
 }
 
+pub(super) fn forecast_day(
+    now: chrono::DateTime<Local>,
+    provider: Option<&str>,
+    config: &Config,
+) -> NaiveDate {
+    provider
+        .into_iter()
+        .chain(
+            config
+                .location
+                .as_ref()
+                .and_then(|loc| loc.timezone.as_deref()),
+        )
+        .find_map(|name| name.parse::<chrono_tz::Tz>().ok())
+        .map_or_else(
+            || now.date_naive(),
+            |zone| now.with_timezone(&zone).date_naive(),
+        )
+}
+
 impl Presentation {
     pub fn new(config: &Config, snapshot: Snapshot<'_>, now: chrono::DateTime<Local>) -> Self {
         let _scope = crate::widget_style::scope(config);
         let resolved = crate::widget_style::presentation(config, config.palette(), false);
         let palette = resolved.palette();
+        let today = forecast_day(
+            now,
+            snapshot.weather.and_then(|w| w.timezone.as_deref()),
+            config,
+        );
         let content = match snapshot.weather {
             Some(w) => {
-                let today = now.date_naive();
                 let forecast = weather_forecast_days(&w.daily, today)
                     .take(4)
                     .map(|(i, day)| Forecast {
@@ -133,7 +157,7 @@ impl Presentation {
             outlook: snapshot
                 .weather
                 .filter(|_| config.weather.layout == crate::config::WeatherLayout::Outlook)
-                .map(|w| outlook::Outlook::new(config, w, now.date_naive())),
+                .map(|w| outlook::Outlook::new(config, w, today)),
             now: now.naive_local(),
             title: config
                 .location

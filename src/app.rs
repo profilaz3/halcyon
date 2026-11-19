@@ -1000,11 +1000,8 @@ impl cosmic::Application for Cards {
             .watch_sync(self.display_generation, Instant::now());
         let glass = self.glass_sync();
         if !self.provider_visible(Widget::Markets)
-            || self.tools.markets.source.as_ref().is_some_and(|source| {
-                source.provider != self.config.markets.provider
-                    || source.symbols != self.config.markets.symbols
-                    || source.credential_revision != self.config.markets.credential_revision
-            })
+            || (self.tools.markets.source.is_some()
+                && !self.tools.markets.same_watchlist(&self.config.markets))
         {
             self.tools.markets = crate::markets::State::default();
         }

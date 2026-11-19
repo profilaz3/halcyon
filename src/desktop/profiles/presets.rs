@@ -290,7 +290,7 @@ fn finish_profile(id: &str, profile: &mut Profile) {
         appearance.icon_shape = finish.icon_shape;
         appearance.folder_tint = finish.folder_tint;
         if appearance.has_icon_style() {
-            profile.version = profile.version.max(super::format::VERSION);
+            profile.version = profile.version.max(super::format::VERSION_22);
         }
         for variant in [appearance.light.as_mut(), appearance.dark.as_mut()]
             .into_iter()
@@ -1349,7 +1349,7 @@ mod tests {
             assert_eq!(
                 p.profile.version,
                 if shaped {
-                    super::super::format::VERSION
+                    super::super::format::VERSION_22
                 } else {
                     super::super::format::VERSION_9
                 }
@@ -1583,7 +1583,7 @@ mod tests {
                     assert!(["Cosmic", "Pop"].contains(&icons), "{}", preset.id);
                     // Shapes and tints come with the look and need no download.
                     if look.has_icon_style() {
-                        assert!(profile.version >= super::super::VERSION, "{}", preset.id);
+                        assert!(profile.version >= super::super::format::VERSION_22, "{}", preset.id);
                     }
                     for variant in [&look.light, &look.dark] {
                         let variant = variant.as_ref().unwrap();

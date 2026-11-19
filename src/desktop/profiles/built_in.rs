@@ -391,7 +391,7 @@ mod tests {
         assert!(!built.removed.contains(&SHAPED_THEME));
         let text = std::str::from_utf8(&built.bytes).unwrap();
         let loaded = parse_built_in("harbor-shaped", text).unwrap();
-        assert_eq!(loaded.version, crate::desktop::profiles::VERSION);
+        assert_eq!(loaded.version, crate::desktop::profiles::format::VERSION_22);
         assert_eq!(loaded.appearance, look.appearance);
         // Exported again, it is byte for byte the same file.
         assert_eq!(

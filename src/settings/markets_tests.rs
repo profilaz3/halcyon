@@ -383,3 +383,30 @@ fn markets_defaults_to_watchlist_and_fits_the_saved_chart_viewport() {
     assert_eq!(crate::layout::fitted_size(Widget::Markets, [280., 90.], [1920., 1080.], config.markets.height_limit()), [280., 300.]);
 
 }
+
+#[test]
+fn markets_quote_precision_survives_resize() {
+    use crate::tools::cards::{markets, sample_markets_for};
+    let mut config = Config::default();
+    config.markets.symbols = vec![
+        "AAPL".into(),
+        "MSFT".into(),
+        "NVDA".into(),
+        "EUR/USD".into(),
+        "IBM".into(),
+    ];
+    config.markets.selected = "AAPL".into();
+    config.markets.show_chart = true;
+    let mut state = sample_markets_for(&config.markets);
+    state
+        .quotes
+        .iter_mut()
+        .find(|q| q.symbol == "AAPL")
+        .unwrap()
+        .price = 0.0042;
+    for (size, expected) in [([520., 400.], "0.0042 USD"), ([300., 300.], "0.0042 USD")] {
+        let mut n = crate::native_test::Native::new(Size::new(size[0], size[1]));
+        let labels = n.all_text(markets(&state, &config, Some(|a| a), Some(size)));
+        assert!(labels.iter().any(|s| s == expected), "{labels:?}");
+    }
+}
