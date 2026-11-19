@@ -93,7 +93,8 @@ function timeChart(body, opts) {
     txt(svg, m.l - 6, y(v) + 3.5, stacked ? Math.round(v * 100) + '%' : fmt(v), {'text-anchor': 'end'});
   }
   const step = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(iw / 80))));
-  for (let i = n - 1; i >= 0; i -= step) txt(svg, x(i), H - 6, fmtDay(days[i]), {'text-anchor': i === n - 1 && n > 1 ? 'end' : 'middle'});
+  const dateLabel = i => fmtDay(days[i]) + (opts.partial && i === n - 1 ? ' · partial' : '');
+  for (let i = n - 1; i >= 0; i -= step) txt(svg, x(i), H - 6, dateLabel(i), {'text-anchor': i === n - 1 && n > 1 ? 'end' : 'middle'});
   // One marker per day: releases shipped the same day share a line and a label.
   const marks = new Map();
   for (const r of data.releases) {
@@ -137,12 +138,16 @@ function timeChart(body, opts) {
   } else {
     const values = series[0].values;
     let line = '';
-    values.forEach((v, i) => { line += (i ? 'L' : 'M') + x(i).toFixed(1) + ',' + y(v).toFixed(1); });
-    if (n > 1) el('path', {d: line + `L${x(n - 1)},${y(0)}L${x(0)},${y(0)}Z`, fill: css('s1'), 'fill-opacity': .1}, svg);
-    el('path', {d: line, fill: 'none', stroke: css('s1'), 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round'}, svg);
+    const completed = opts.partial ? n - 1 : n;
+    for (let i = 0; i < completed; i++) line += (i ? 'L' : 'M') + x(i).toFixed(1) + ',' + y(values[i]).toFixed(1);
+    if (completed > 1) {
+      el('path', {d: line + `L${x(completed - 1)},${y(0)}L${x(0)},${y(0)}Z`, fill: css('s1'), 'fill-opacity': .1}, svg);
+      el('path', {d: line, fill: 'none', stroke: css('s1'), 'stroke-width': 2, 'stroke-linejoin': 'round'}, svg);
+    }
+    if (opts.partial && n > 1) el('line', {x1: x(n - 2), y1: y(values[n - 2]), x2: x(n - 1), y2: y(values[n - 1]), stroke: css('s1'), 'stroke-width': 2, 'stroke-dasharray': '4 4'}, svg);
     el('circle', {cx: x(n - 1), cy: y(values[n - 1]), r: 4, fill: css('s1'), stroke: css('surface'), 'stroke-width': 2}, svg);
     txt(svg, x(n - 1) - 8, y(values[n - 1]) - 10, fmt(values[n - 1]), {class: 'lbl-strong', 'text-anchor': 'end'});
-    opts.tipRows = i => series.map((ser, k) => ({label: ser.name, value: fmt(ser.values[i]), color: k ? null : css('s1')}));
+    opts.tipRows = i => series.map((ser, k) => ({label: ser.name, value: ser.values[i] == null ? 'Pending' : fmt(ser.values[i]), color: k ? null : css('s1')}));
   }
   const cross = el('line', {y1: m.t, y2: m.t + ih, stroke: css('muted'), 'stroke-width': 1, visibility: 'hidden'}, svg);
   const dot = el('circle', {r: 4, fill: css('s1'), stroke: css('surface'), 'stroke-width': 2, visibility: 'hidden'}, svg);
@@ -152,7 +157,7 @@ function timeChart(body, opts) {
     cur = i;
     cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i)); cross.setAttribute('visibility', 'visible');
     if (!stacked) { dot.setAttribute('cx', x(i)); dot.setAttribute('cy', y(series[0].values[i])); dot.setAttribute('visibility', 'visible'); }
-    showTip(cx, cy, fmtDay(days[i]), opts.tipRows(i));
+    showTip(cx, cy, dateLabel(i), opts.tipRows(i));
   };
   const hide = () => { cross.setAttribute('visibility', 'hidden'); dot.setAttribute('visibility', 'hidden'); hideTip(); };
   const index = clientX => { const r = svg.getBoundingClientRect(); return Math.max(0, Math.min(n - 1, Math.round((clientX - r.left - m.l) / iw * (n - 1)))); };
@@ -227,10 +232,15 @@ function kpis() {
   const tiles = [];
   const delta = (cur, prev) => prev ? cur / prev - 1 : null;
   const partial = !w.complete && data.history_start ? `since ${fmtDay(data.history_start)}, when reporting began` : null;
-  tiles.push({hero: true, label: `Active installations, last ${state.range} days`, value: fmt(w.active),
+  const currentDay = new Date().toISOString().slice(0, 10) === data.today;
+  const cutoff = new Date(data.generated_at).toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit', timeZone: 'UTC'});
+  tiles.push({hero: true, label: currentDay ? 'Active today so far' : `Active on ${fmtDay(data.today)} so far`, value: fmt(s.today),
+    note: `${fmtDay(data.today)} through ${cutoff} UTC`});
+  tiles.push({label: `Active installations, last ${state.range} days`, value: fmt(w.active),
     delta: delta(w.active, w.previous), vs: `previous ${state.range} days`, note: partial || 'not enough history to compare yet'});
-  tiles.push({label: 'Active yesterday', value: s.yesterday === null ? 'n/a' : fmt(s.yesterday),
-    delta: s.week_earlier ? delta(s.yesterday, s.week_earlier) : null, vs: 'the same day a week earlier', note: `${fmt(s.today)} so far today (UTC)`});
+  const lastDay = data.days.at(-1);
+  tiles.push({label: currentDay ? 'Active yesterday' : 'Last completed day', value: s.yesterday === null ? 'n/a' : fmt(s.yesterday),
+    delta: s.week_earlier ? delta(s.yesterday, s.week_earlier) : null, vs: 'the same day a week earlier', note: lastDay ? `${fmtDay(lastDay)} · full UTC day` : 'No completed day yet'});
   tiles.push({label: `New, last ${state.range} days`, value: fmt(w.new), delta: delta(w.new, w.previous_new), vs: `previous ${state.range} days`,
     note: 'first report received in this period'});
   tiles.push({label: 'Still active after 4 weeks', value: data.retention_4w === null ? 'n/a' : pct(data.retention_4w), delta: null,
@@ -258,11 +268,10 @@ function kpis() {
 
 const renderers = {
   'c-active'(body) {
-    const {days, from} = view(), s = seg();
-    if (!days.length) return empty(body, 'The first complete day appears here tomorrow.');
-    const active = s.active.slice(from), fresh = s.new.slice(from);
-    if (tableMode['c-active']) return body.appendChild(table(['Date', 'Active', 'New'], days.map((d, i) => [fmtDay(d), fmt(active[i]), fmt(fresh[i])]).reverse()));
-    timeChart(body, {days, height: 260, label: 'Daily active installations',
+    const s = seg(), days = [...data.days, data.today].slice(-state.range);
+    const active = [...s.active, s.today].slice(-state.range), fresh = [...s.new, s.today_new].slice(-state.range);
+    if (tableMode['c-active']) return body.appendChild(table(['Date (UTC)', 'Active', 'New'], days.map((d, i) => [fmtDay(d) + (d === data.today ? ' · partial' : ''), fmt(active[i]), fresh[i] == null ? 'Pending' : fmt(fresh[i])]).reverse()));
+    timeChart(body, {days, height: 260, label: 'Daily active installations, final day partial', partial: true,
       series: [{name: 'Active', values: active}, {name: 'New', values: fresh}]});
   },
   'c-versions'(body) {
@@ -471,39 +480,38 @@ function renderAll() {
   }
 }
 
-function setup() {
+const rangeButtons = [...document.querySelectorAll('#range button')];
+function updateFilters() {
   const select = $('segment');
+  if (!data.by_segment[state.segment]) state.segment = 'all';
+  select.replaceChildren();
   for (const s of data.segments) { const o = html('option', '', s.name); o.value = s.id; select.appendChild(o); }
+  select.value = state.segment;
   select.hidden = data.segments.length < 2;
-  select.addEventListener('change', () => { state.segment = select.value; renderAll(); });
   const updated = new Date(data.generated_at);
   $('sub').textContent = `${data.since_version ? `Halcyon ${data.since_version} and newer` : 'Installations that share usage data'} · updated hourly, last at ${updated.toLocaleString('en-GB', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'UTC'})} UTC`;
   $('history').textContent = data.history_start ? `Daily history starts ${fmtDay(data.history_start)}` : '';
-  document.querySelectorAll('.tbl-toggle').forEach(b => b.addEventListener('click', () => {
-    const id = b.closest('.card').id;
-    tableMode[id] = !tableMode[id];
-    renderAll();
-  }));
-  // A range longer than the history repeats the shortest one that covers it.
-  const buttons = [...document.querySelectorAll('#range button')];
-  const covers = Math.min(...buttons.map(b => Number(b.dataset.v)).filter(v => v >= data.days.length), Infinity);
-  const choose = b => {
-    state.range = Number(b.dataset.v);
-    buttons.forEach(o => o.setAttribute('aria-pressed', String(o === b)));
-    renderAll();
-  };
-  for (const b of buttons) {
+  const covers = Math.min(...rangeButtons.map(b => Number(b.dataset.v)).filter(v => v >= data.days.length + 1), Infinity);
+  state.range = Math.min(state.range, covers);
+  for (const b of rangeButtons) {
     b.disabled = Number(b.dataset.v) > covers;
-    if (b.disabled && data.history_start) b.title = `Reporting began ${fmtDay(data.history_start)}`;
-    b.addEventListener('click', () => choose(b));
+    b.title = b.disabled && data.history_start ? `Reporting began ${fmtDay(data.history_start)}` : '';
+    b.setAttribute('aria-pressed', String(Number(b.dataset.v) === state.range));
   }
-  if (Number.isFinite(covers) && state.range > covers) {
-    state.range = covers;
-    buttons.forEach(o => o.setAttribute('aria-pressed', String(Number(o.dataset.v) === covers)));
-  }
-  let timer;
-  window.addEventListener('resize', () => { clearTimeout(timer); timer = setTimeout(renderAll, 120); });
 }
+$('segment').addEventListener('change', e => { state.segment = e.target.value; renderAll(); });
+for (const b of rangeButtons) b.addEventListener('click', () => {
+  state.range = Number(b.dataset.v);
+  rangeButtons.forEach(other => other.setAttribute('aria-pressed', String(other === b)));
+  renderAll();
+});
+document.querySelectorAll('.tbl-toggle').forEach(b => b.addEventListener('click', () => {
+  const id = b.closest('.card').id;
+  tableMode[id] = !tableMode[id];
+  renderAll();
+}));
+let resizeTimer;
+window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderAll, 120); });
 
 const themeBtn = $('theme');
 const isDark = () => document.documentElement.dataset.theme
@@ -519,14 +527,31 @@ try { const saved = localStorage.getItem('theme'); if (saved === 'light' || save
 syncTheme();
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { syncTheme(); renderAll(); });
 
-fetch('/api/summary.json', {headers: {Accept: 'application/json'}})
-  .then(r => r.ok ? r.json() : Promise.reject(new Error(r.status === 503 ? 'The first numbers are being prepared. Check back within the hour.' : 'Could not load the numbers.')))
-  .then(summary => {
-    data = summary;
+let loading = false;
+async function refresh() {
+  if (loading) return;
+  loading = true;
+  try {
+    const response = await fetch('/api/summary.json', {headers: {Accept: 'application/json'}});
+    if (!response.ok) throw new Error(response.status === 503 ? 'The first numbers are being prepared. Check back within the hour.' : 'Could not load the numbers.');
+    const summary = await response.json();
+    if (!data || data.generated_at !== summary.generated_at) {
+      data = summary;
+      $('content').hidden = false;
+      updateFilters();
+      renderAll();
+    } else kpis(); // At UTC midnight the latest snapshot may still belong to yesterday.
     $('status').hidden = true;
-    $('content').hidden = false;
-    setup();
-    renderAll();
-  })
-  .catch(error => { $('status').textContent = error.message || 'Could not load the numbers.'; });
+  } catch (error) {
+    if (data) kpis();
+    $('status').textContent = data ? 'Could not refresh. Showing the last available update.' : error.message;
+    $('status').hidden = false;
+  } finally {
+    loading = false;
+  }
+}
+const refreshVisible = () => { if (!document.hidden) refresh(); };
+document.addEventListener('visibilitychange', refreshVisible);
+window.setInterval(refreshVisible, 5 * 60 * 1000);
+refresh();
 })();
