@@ -602,17 +602,21 @@ fn hourly_blend() -> f32 { return smoothstep(PERIOD-BLEND,PERIOD,p.frame.y); }
             let offset = -normal / aspect * thickness * curve * (0.20 + 1.35 * p.motion.w);
             let bent = scene_at(clamp(v.uv + offset, vec2(0.), vec2(1.)), 0.);
             let surround = scene_at(clamp(v.uv - offset * 0.6, vec2(0.), vec2(1.)), 1.);
-            let fresnel = exp(distance / (1.35 * p.tint.w));
-            let light = dot(normal, vec2(-0.55, -0.835));
-            var glint = fresnel * (0.22 + 0.72 * pow(abs(light), 5.));
+            // At grazing angles the polished lip reflects more of its surroundings.
+            // A high, broad light catches the upper shoulder; the far shoulder is shaded.
+            let lip = exp(distance / (1.7 * p.tint.w));
+            let facing = dot(normal, vec2(-0.55, -0.835));
+            let key = max(facing, 0.);
+            let fresnel = curve * mix(0.04, 0.68, lip * lip);
+            var shine = 0.14 * key * key;
             let pointer = p.pane.zw;
             if all(pointer >= v.rect.xy) && all(pointer <= v.rect.xy + v.rect.zw) {
                 let delta = (pointer - v.uv) * aspect / max(0.001, min(half_size.x,half_size.y));
-                glint += 0.65 * exp(-dot(delta, delta) * 2.5) * sqrt(fresnel);
+                shine += 0.18 * exp(-dot(delta, delta) * 3.);
             }
-            var rgb = mix(bent, surround, curve * 0.17);
-            rgb *= 1. - curve * (1. - fresnel) * 0.13;
-            rgb = mix(rgb, mix(surround, vec3(1.), 0.85), min(glint,1.));
+            let reflection = mix(surround, vec3(1.), shine);
+            let shade = curve * (1. - 0.5 * lip) * mix(0.15, 0.035, key);
+            let rgb = mix(bent * (1. - shade), reflection, fresnel);
             return vec4(rgb, 1.);
         }
     }
