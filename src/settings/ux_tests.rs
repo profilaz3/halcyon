@@ -2383,7 +2383,7 @@ fn ux_native_nine_roots_and_every_old_route_resolves() {
             Page::General
         ]
     );
-    for (page, root) in [
+    let routes = [
         (Page::Home, Page::Home),
         (Page::Overview, Page::Overview),
         (Page::WidgetLayout, Page::Overview),
@@ -2401,6 +2401,7 @@ fn ux_native_nine_roots_and_every_old_route_resolves() {
         (Page::Devices, Page::Overview),
         (Page::Messages, Page::Overview),
         (Page::Markets, Page::Overview),
+        (Page::Folder, Page::Overview),
         (Page::EdgeMenu, Page::Overview),
         (Page::Builder, Page::Overview),
         (Page::DesktopWallpaper, Page::DesktopWallpaper),
@@ -2425,11 +2426,12 @@ fn ux_native_nine_roots_and_every_old_route_resolves() {
         (Page::DesktopMotion, Page::DesktopMotion),
         (Page::PendingChanges, Page::Changes),
         (Page::Changes, Page::Changes),
-    ] {
+    ];
+    assert_eq!(Page::ALL.len(), routes.len(), "a new route must be mapped here too");
+    for (page, root) in routes {
         assert_eq!(page.sidebar(), root, "{page:?}");
         assert_eq!(Page::parse(page.key()).sidebar(), root, "{page:?}");
     }
-    assert_eq!(Page::ALL.len(), 40, "a new route must be mapped here too");
     for (alias, page) in [
         ("home", Page::Home),
         ("panel", Page::DesktopPanel),

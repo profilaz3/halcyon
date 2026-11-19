@@ -228,6 +228,7 @@ pub(crate) fn item_title(item: &Item) -> String {
         Kind::Action { action, .. } => {
             Action::parse(action).map_or_else(|| named(action, "Action"), |a| a.title().into())
         }
+        Kind::Peek { name, .. } => named(name, "Peek widgets"),
         Kind::Look { name, .. } => named(name, "Look"),
         Kind::App { app, name, .. } => named(name, app),
         Kind::Folder { path, name } => named(
@@ -254,6 +255,7 @@ pub(crate) fn item_icon(item: &Item) -> (String, bool) {
         Kind::Action { action, .. } => {
             symbolic(Action::parse(action).map_or("dialog-question-symbolic", Action::icon))
         }
+        Kind::Peek { icon, .. } => (icon.clone(), true),
         Kind::Look { .. } => symbolic("applications-graphics-symbolic"),
         Kind::App { icon, .. } if !icon.trim().is_empty() => (icon.clone(), false),
         Kind::App { .. } => symbolic("application-x-executable-symbolic"),
@@ -278,7 +280,7 @@ pub(crate) fn availability(items: &[Item], apps: impl FnOnce() -> AppCatalog) ->
             Kind::Action { .. } => item.as_action().is_some(),
             Kind::App { app, .. } => catalog.as_ref().is_some_and(|c| c.get(app).is_some()),
             Kind::Folder { path, .. } => std::path::Path::new(path).is_dir(),
-            Kind::Look { .. } | Kind::Separator | Kind::Title { .. } => true,
+            Kind::Peek { .. } | Kind::Look { .. } | Kind::Separator | Kind::Title { .. } => true,
             Kind::Unknown(_) => false,
         })
         .collect()
@@ -747,6 +749,9 @@ impl Cards {
                 Action::Focus => Message::FocusCommand("toggle".into()),
                 Action::WeatherEffect => Message::SetWeatherEffect(!self.config.rain.enabled),
             },
+            Kind::Peek { name, widgets, .. } => {
+                Message::Peek(Some((name.clone(), widgets.clone())))
+            }
             Kind::Look { look, name } => Message::ApplyLook(look.clone(), name.clone()),
             Kind::App { app, .. } => Message::LaunchApp(app.clone()),
             Kind::Folder { path, .. } => Message::Open(path.clone()),
@@ -859,7 +864,7 @@ impl Cards {
                     .map_err(|e| LookFailure::failed(e.to_string()))?;
                 let installed = crate::desktop::profiles::Installed::discover(&store);
                 let held = crate::automation::read_hold(&store);
-                match crate::automation::run::run_chosen(&store, &installed, &look, &name, &held) {
+                match crate::automation::run::run_chosen(&store, &installed, &look, &name, &held, crate::automation::run::Invocation::EdgeMenu) {
                     crate::automation::run::Ran::Applied { .. }
                     | crate::automation::run::Ran::AlreadySet => Ok(()),
                     crate::automation::run::Ran::Waiting(parts) => {

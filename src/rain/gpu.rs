@@ -20,11 +20,12 @@ use std::{
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Panes {
     pub rects: Vec<[f32; 4]>,
+    pub finishes: Vec<Option<(Option<super::Glass>, u8, f32)>>,
     pub pointer: Option<[f32; 2]>,
     pub radius: f32,
     pub theme_accent: [u8; 3],
 }
-const MAX_PANES: usize = 12;
+const MAX_PANES: usize = 16;
 pub struct Scene {
     pub pixels: Pixels,
     resources: Mutex<Option<Resources>>,
@@ -392,6 +393,7 @@ struct Resources {
     _background: wgpu::Texture,
     uniform: wgpu::Buffer,
     panes: Option<Panes>,
+    pane_scale: f32,
     params: wgpu::BindGroup,
     instances: wgpu::Buffer,
     fields: Fields,
@@ -785,7 +787,7 @@ impl Resources {
         let view = background.create_view(&Default::default());
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Rain uniforms"),
-            size: (UNIFORM + 16 * (MAX_PANES + 1)) as u64,
+            size: (UNIFORM + 16 + 64 * MAX_PANES) as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -836,6 +838,7 @@ impl Resources {
             _background: background,
             uniform,
             panes: None,
+            pane_scale: 0.,
             params,
             instances,
             fields,
@@ -1113,7 +1116,14 @@ impl shader::Primitive for Primitive {
         }
         let mut slot = self.scene.resources.lock().unwrap();
         let effect = self.preferences.effect;
-        let custom_glass = self.preferences.active_glass().is_some();
+        let custom_glass = effect == Effect::Lens
+            && (self.preferences.glass.is_some()
+                || self.preferences.finishes.links.keys().any(|w| {
+                    self.preferences
+                        .finishes
+                        .linked(*w)
+                        .is_some_and(|f| f.glass.is_some())
+                }));
         if slot.as_ref().is_none_or(|r| {
             r.device != *device
                 || r.rain != (effect == Effect::Rain)
@@ -1199,30 +1209,12 @@ impl shader::Primitive for Primitive {
                 p.fog.color.rgb(),
             ),
             Effect::Lens => {
-                let (optics, tint) = p.glass.map_or(([0.; 4], [0.; 4]), |glass| {
-                    let mode = match glass.mode {
-                        super::GlassMode::Smoked => 1.,
-                        super::GlassMode::Polished => 2.,
-                        super::GlassMode::Frosted => 3.,
-                    };
-                    let [r, g, b] = glass.color
-                        .unwrap_or_else(|| self.scene.panes.lock().unwrap().theme_accent);
-                    let color = cosmic::iced::Color::from_rgb8(r, g, b);
-                    let tint = if pipeline.background_format.is_srgb() {
-                        color.into_linear()
-                    } else {
-                        [color.r, color.g, color.b, 1.]
-                    };
-                    (
-                        [
-                            mode,
-                            f32::from(glass.frost) / 100.,
-                            f32::from(glass.blur) * scale,
-                            f32::from(glass.tint) / 100.,
-                        ],
-                        tint,
-                    )
-                });
+                let (optics, tint) = glass_optics(
+                    p.glass,
+                    self.scene.panes.lock().unwrap().theme_accent,
+                    scale,
+                    pipeline.background_format.is_srgb(),
+                );
                 (0, 0, 0, 0, 5., optics, tint)
             }
             Effect::Clouds => (
@@ -1288,15 +1280,30 @@ impl shader::Primitive for Primitive {
         if p.confined_to_widgets() {
             let panes = self.scene.panes.lock().unwrap();
             let count = panes.rects.len().min(MAX_PANES);
-            if r.panes.as_ref() != Some(&*panes) {
+            if r.panes.as_ref() != Some(&*panes) || r.pane_scale != scale {
+                r.pane_scale = scale;
                 r.panes = Some(panes.clone());
                 let [x, y] = panes.pointer.unwrap_or([-1.; 2]);
                 let header = [1., panes.radius, x, y];
-                let bytes = floats(
-                    header
-                        .into_iter()
-                        .chain(panes.rects[..count].iter().flatten().copied()),
-                );
+                let mut data = Vec::with_capacity(4 + count * 16);
+                data.extend(header);
+                for (i, rect) in panes.rects.iter().take(count).enumerate() {
+                    data.extend(rect);
+                    if let Some((glass, bend, radius)) = panes.finishes.get(i).copied().flatten() {
+                        let (optics, tint) = glass_optics(
+                            glass,
+                            panes.theme_accent,
+                            scale,
+                            pipeline.background_format.is_srgb(),
+                        );
+                        data.extend(optics);
+                        data.extend(tint);
+                        data.extend([1., radius, f32::from(bend) / 100., 0.]);
+                    } else {
+                        data.extend([0.; 12]);
+                    }
+                }
+                let bytes = floats(data.into_iter());
                 queue.write_buffer(&r.uniform, UNIFORM as u64, &bytes);
             }
         } else if r.panes.take().is_some() {
@@ -1444,6 +1451,38 @@ fn condensation_step(last: Option<f32>, time: f32) -> f32 {
 }
 /// Bytes of one uniform block: the frame's values, then where the picture
 /// behind the glass lies.
+fn glass_optics(
+    glass: Option<super::Glass>,
+    accent: [u8; 3],
+    scale: f32,
+    srgb: bool,
+) -> ([f32; 4], [f32; 4]) {
+    glass.map_or(([0.; 4], [0.; 4]), |glass| {
+        let mode = match glass.mode {
+            super::GlassMode::Smoked => 1.,
+            super::GlassMode::Polished => 2.,
+            super::GlassMode::Frosted => 3.,
+            super::GlassMode::Crystal => 4.,
+        };
+        let [r, g, b] = glass.color.unwrap_or_else(|| accent);
+        let color = cosmic::iced::Color::from_rgb8(r, g, b);
+        let tint = if srgb {
+            color.into_linear()
+        } else {
+            [color.r, color.g, color.b, 1.]
+        };
+        (
+            [
+                mode,
+                f32::from(glass.frost) / 100.,
+                f32::from(glass.blur) * scale,
+                f32::from(glass.tint) / 100.,
+            ],
+            tint,
+        )
+    })
+}
+
 const UNIFORM: usize = 112;
 fn block(values: &[f32; 24], rect: [f32; 4]) -> Vec<u8> {
     floats(values.iter().copied().chain(rect))

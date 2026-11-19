@@ -237,6 +237,7 @@ impl SettingsSamples {
             projects_error: false,
             projects_reserved: None,
             next_projects: Instant::now(),
+            peek: None,
             reading_window: None,
             interacting_tool: None,
             expanded_projects: Default::default(),

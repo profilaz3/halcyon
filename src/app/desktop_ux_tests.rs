@@ -1860,3 +1860,31 @@ fn shift_enter_opens_full_widget_readings() {
         let _ = cards.update(Message::CloseReading);
     }
 }
+
+#[test]
+fn peek_reuses_data_and_closes_every_overlay() {
+    if isolated("peek_reuses_data_and_closes_every_overlay") {
+        return;
+    }
+    let mut cards = cards();
+    cards.config.music.enabled = false;
+    for cycle in 0..25 {
+        let _ = cards.update(Message::Peek(Some((
+            "Desk check".into(),
+            vec![Widget::Music, Widget::Calendar],
+        ))));
+        assert!(cards.music_demand() && cards.calendar_demand());
+        let id = cards.peek.as_ref().unwrap().id;
+        if cycle == 0 && std::env::var_os("HALCYON_CUSTOMIZATION_EVIDENCE").is_some() {
+            let mut ui = Native::new(Size::new(1040., 640.));
+            ui.capture(cards.view_window(id), &cosmic::Theme::dark(), "widget-peek");
+        }
+        let _ = cards.update(if cycle % 2 == 0 {
+            Message::KeyInput(id, Key::Named(Named::Escape), Modifiers::empty())
+        } else {
+            Message::Peek(None)
+        });
+        assert!(cards.peek.is_none());
+        assert!(!cards.config.music.enabled);
+    }
+}

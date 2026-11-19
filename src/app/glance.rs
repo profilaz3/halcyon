@@ -1071,6 +1071,7 @@ impl Cards {
             .into()
     }
     pub(super) fn glance(&self) -> Element<'_, Message> {
+        let _card = crate::widget_style::for_card(crate::drawer::Widget::Glance);
         let _style = crate::widget_style::scope(&self.config);
         let _fonts = crate::widget_style::fonts(
             self.config.glance.font.as_deref(),

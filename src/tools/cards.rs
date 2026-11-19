@@ -3,7 +3,9 @@
 //! configuration, like every other widget, and an optional action mapper:
 //! without one the card is drawn without controls that respond.
 mod devices;
+mod folder;
 mod markets;
+pub use folder::folder;
 pub use markets::{markets, sample as sample_markets, sample_for as sample_markets_for};
 pub(crate) mod messages;
 pub(crate) mod recipe;
@@ -86,6 +88,7 @@ pub fn size(widget: Widget, config: &Config) -> [f32; 2] {
         Widget::Notes => config.notes.size.card(),
         // Room for the four newest conversations.
         Widget::Messages => [320., 260.],
+        Widget::Folder => [344., 234.],
         Widget::Markets => [
             if !config.markets.show_chart && config.markets.symbols.len() == 1 { 280. } else { 360. },
             config.markets.height_limit().unwrap_or(420.),

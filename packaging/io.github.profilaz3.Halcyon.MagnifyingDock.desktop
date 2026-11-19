@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Magnifying app list
+Comment=Favorites and running apps with pointer-responsive dock icons
+Exec=halcyon-magnifying-app-list
+Icon=com.system76.CosmicAppList
+Terminal=false
+NoDisplay=true
+X-CosmicApplet=true
+X-MinimizeApplet=5
+X-OverflowPriority=100
+X-OverflowMinSize=4
+X-HostWaylandDisplay=true

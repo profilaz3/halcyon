@@ -1412,6 +1412,7 @@ impl Cards {
         }
     }
     pub(super) fn projects_card(&self) -> Element<'_, Message> {
+        let _card = crate::widget_style::for_card(crate::drawer::Widget::Projects);
         self.projects_presentation().view(
             self.card_height(Widget::Projects),
             !self.custom_layout() || self.explicit_size(Widget::Projects).is_some(),

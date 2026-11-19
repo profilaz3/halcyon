@@ -80,6 +80,7 @@ pub(super) struct Tools {
     /// The phone's conversations, while the widget or island needs them.
     pub messages: crate::messages::State,
     pub markets: crate::markets::State,
+    pub folder: crate::folder::Listing,
 }
 
 impl Tools {
@@ -106,6 +107,7 @@ impl Tools {
             devices: Vec::new(),
             messages: crate::messages::State::default(),
             markets: crate::markets::State::default(),
+            folder: Default::default(),
         }
     }
     pub(super) fn sample() -> Self {
@@ -131,6 +133,7 @@ impl Tools {
             devices: Vec::new(),
             messages: crate::messages::State::default(),
             markets: crate::markets::State::default(),
+            folder: Default::default(),
         }
     }
     /// No note being written, saved, checked or waiting for Undo.
@@ -222,6 +225,10 @@ impl Cards {
     }
 
     pub(super) fn tool_card(&self, widget: Widget) -> Element<'_, Message> {
+        self.tool_card_at(widget, self.widget_size(widget))
+    }
+    pub(super) fn tool_card_at(&self, widget: Widget, size: [f32; 2]) -> Element<'_, Message> {
+        let _card = crate::widget_style::for_card(widget);
         match widget {
             Widget::Music => {
                 let player = self.current_player();
@@ -253,7 +260,7 @@ impl Cards {
                     },
                     &self.config,
                     Some(on_desktop),
-                    Some(self.widget_size(widget)),
+                    Some(size),
                     self.tools.audio_bins,
                 )
             }
@@ -267,24 +274,35 @@ impl Cards {
                 },
                 &self.config,
                 (!self.tools.checking_note).then_some(on_desktop as fn(Action) -> Message),
-                Some(self.widget_size(widget)),
+                Some(size),
             ),
             Widget::Devices => cards::devices(
                 &self.tools.devices,
                 &self.config,
-                Some(self.widget_size(widget)),
+                Some(size),
+            ),
+            Widget::Folder => cards::folder(
+                &self.tools.folder,
+                &self.config,
+                size,
+                |p| {
+                    reqwest::Url::from_file_path(p)
+                        .ok()
+                        .map(|url| Message::Open(url.into()))
+                },
+                Some(Message::SettingsPage("folder")),
             ),
             Widget::Markets => cards::markets(
                 &self.tools.markets,
                 &self.config,
                 Some(on_desktop as fn(Action) -> Message),
-                Some(self.widget_size(widget)),
+                Some(size),
             ),
             Widget::Messages => cards::messages(
                 &self.tools.messages,
                 &self.config,
                 Some(on_desktop as fn(Action) -> Message),
-                Some(self.widget_size(widget)),
+                Some(size),
             ),
             _ => cards::focus(
                 &self.tools.focus,
@@ -292,7 +310,7 @@ impl Cards {
                 focus::now_ms(),
                 &focus::today(),
                 Some(on_desktop),
-                Some(self.widget_size(widget)),
+                Some(size),
             ),
         }
     }
@@ -412,7 +430,12 @@ impl Cards {
         }
         matches!(
             widget,
-            Widget::Music | Widget::Focus | Widget::Notes | Widget::Markets | Widget::Messages
+            Widget::Music
+                | Widget::Focus
+                | Widget::Notes
+                | Widget::Markets
+                | Widget::Folder
+                | Widget::Messages
         ) && self.tool_shown(widget)
             && !self.layout_editor.active
             && !(widget == Widget::Notes && self.note_lifted())
@@ -481,10 +504,10 @@ impl Cards {
     /// Whether the note surface holds the keyboard above windows.
     fn note_lifted(&self) -> bool {
         self.tools.draft.as_ref().is_some_and(|draft| draft.typing)
-            && self.config.widget_visible(Widget::Notes)
+            && (self.peek_note_surface().is_some() || (self.config.widget_visible(Widget::Notes)
             && self.widget_available(Widget::Notes)
             && self.placed_position(Widget::Notes)[0] >= 0.
-            && !(self.layout_editor.active && self.arranging_widget(Widget::Notes))
+            && !(self.layout_editor.active && self.arranging_widget(Widget::Notes))))
     }
 
     /// Hiding the note or arranging the desktop pauses its draft: the
@@ -497,12 +520,15 @@ impl Cards {
 
     /// The note surface while it holds the keyboard for typing.
     pub(super) fn note_typing_surface(&self) -> Option<window::Id> {
-        self.note_lifted().then(|| self.widget_id(Widget::Notes))
+        self.note_lifted().then(|| self.peek_note_surface().unwrap_or_else(|| self.widget_id(Widget::Notes)))
     }
 
     /// The pointer left the note while typing: keep the keys here, but let
     /// a click on another window take them (DT-04).
     pub(super) fn note_pointer_left(&mut self) -> Task<Message> {
+        if self.peek_note_surface().is_some() {
+            return Task::none();
+        }
         let id = self.widget_id(Widget::Notes);
         match &mut self.tools.draft {
             Some(draft) if draft.typing && !draft.on_demand => {
@@ -537,6 +563,13 @@ impl Cards {
     }
 
     fn note_editing(&self, editing: bool) -> Task<Message> {
+        if self.peek_note_surface().is_some() {
+            return if editing {
+                cosmic::iced::widget::operation::focus(cosmic::widget::Id::new(cards::NOTE_EDITOR))
+            } else {
+                Task::none()
+            };
+        }
         let id = self.widget_id(Widget::Notes);
         let mut tasks = vec![
             set_layer(id, if editing { Layer::Top } else { Layer::Bottom }),

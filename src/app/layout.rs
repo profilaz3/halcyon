@@ -109,7 +109,7 @@ const OFF_DESKTOP: [f32; 2] = [-10000., 0.];
 
 /// Who keeps their spot when two widgets would overlap: earlier ones stay,
 /// later ones move clear.
-const PLACEMENT_ORDER: [Widget; 12] = [
+const PLACEMENT_ORDER: [Widget; 13] = [
     Widget::Glance,
     Widget::Clock,
     Widget::Weather,
@@ -120,6 +120,7 @@ const PLACEMENT_ORDER: [Widget; 12] = [
     Widget::Devices,
     Widget::Messages,
     Widget::Markets,
+    Widget::Folder,
     Widget::Notes,
     Widget::Music,
 ];
@@ -349,6 +350,7 @@ impl Cards {
                 Widget::Devices => 13,
                 Widget::Messages => 14,
                 Widget::Markets => 15,
+                Widget::Folder => 16,
             }],
         )
     }
@@ -2245,11 +2247,8 @@ impl Cards {
         .class(cosmic::theme::Container::Dropdown)
         .into()
     }
-    pub(super) fn individual_widget(&self, widget: Widget) -> Element<'_, Message> {
-        if !self.config.widget_visible(widget) || !self.widget_available(widget) {
-            return empty_surface();
-        }
-        let card = match widget {
+    pub(super) fn widget_face(&self, widget: Widget) -> Element<'_, Message> {
+        match widget {
             Widget::Clock => self.clock(),
             Widget::Weather => self.weather_card(),
             Widget::Devbox => self.devbox(),
@@ -2260,11 +2259,18 @@ impl Cards {
             | Widget::Notes
             | Widget::Focus
             | Widget::Devices
+            | Widget::Folder
             | Widget::Markets
             | Widget::Messages => {
                 self.tool_card(widget)
             }
-        };
+        }
+    }
+    pub(super) fn individual_widget(&self, widget: Widget) -> Element<'_, Message> {
+        if !self.config.widget_visible(widget) || !self.widget_available(widget) {
+            return empty_surface();
+        }
+        let card = self.widget_face(widget);
         let card = if self
             .pin_highlight
             .is_some_and(|(pinned, _)| pinned == widget)

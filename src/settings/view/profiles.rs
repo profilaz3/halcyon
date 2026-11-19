@@ -375,6 +375,7 @@ pub(in crate::settings) fn card_at<'a>(
         Widget::Notes => ("Notes", "Plan the next release"),
         Widget::Devices => ("80%", "Headphones"),
         Widget::Messages => ("Sam Rivera", "Running late"),
+        Widget::Folder => ("Recent files", "Folder"),
         Widget::Markets => ("AAPL", "Example stock chart"),
     };
     let main_size = if matches!(widget, Widget::Clock | Widget::Glance | Widget::Weather) {
@@ -1779,6 +1780,144 @@ impl Settings {
         ));
         column::with_children(content).spacing(16).into()
     }
+    pub(in crate::settings) fn workspace_apps<'a>(
+        &'a self,
+        id: &crate::desktop::profiles::ProfileId,
+        profile: &crate::desktop::profiles::Profile,
+    ) -> Element<'a, Message> {
+        use crate::settings::workspace_launch::Edit as W;
+        let action = Message::LaunchWorkspace;
+        let state = &self.workspace_launch;
+        let mut rows = Vec::new();
+        if state.edit.as_ref() == Some(id) {
+            rows.push(label(
+                "Apps open in this order when you start the workspace.",
+                13.,
+                MUTED,
+            ));
+            for (index, app) in state.selected.iter().enumerate() {
+                let info = state.catalog.as_ref().and_then(|c| c.get(app));
+                let name = info.map_or(app.as_str(), |a| a.name.as_str());
+                let glyph = info.map_or("application-x-executable-symbolic", |a| a.icon.as_str());
+                let unavailable = if info.is_none() && state.catalog.is_some() {
+                    " · Unavailable"
+                } else {
+                    ""
+                };
+                rows.push(
+                    row::with_children(vec![
+                        icon::from_name(glyph).size(20).icon().into(),
+                        container(label(format!("{name}{unavailable}"), 14., FG))
+                            .width(Length::Fill)
+                            .into(),
+                        button::text("Move up")
+                            .on_press_maybe((index > 0).then_some(action(W::Earlier(index))))
+                            .into(),
+                        button::text("Remove")
+                            .on_press(action(W::Toggle(app.clone())))
+                            .into(),
+                    ])
+                    .spacing(6)
+                    .align_y(Alignment::Center)
+                    .into(),
+                );
+            }
+            rows.push(
+                text_input("Find an installed app", &state.query)
+                    .on_input(|v| Message::LaunchWorkspace(W::Search(v)))
+                    .into(),
+            );
+            if let Some(catalog) = state.catalog.as_ref() {
+                let query = state.query.trim().to_lowercase();
+                let mut found = 0;
+                for item in state
+                    .ordered
+                    .iter()
+                    .filter_map(|id| catalog.get(id))
+                    .filter(|a| {
+                        !state.selected.contains(&a.id)
+                            && (a.name.to_lowercase().contains(&query)
+                                || a.id.to_lowercase().contains(&query))
+                    })
+                    .take(7)
+                {
+                    rows.push(
+                        button::text(item.name.clone())
+                            .leading_icon(icon::from_name(item.icon.as_str()).size(16))
+                            .on_press_maybe(
+                                (state.selected.len() < 12)
+                                    .then(|| action(W::Toggle(item.id.clone()))),
+                            )
+                            .into(),
+                    );
+                    found += 1;
+                }
+                if found == 0 {
+                    rows.push(label(
+                        if query.is_empty() && !state.selected.is_empty() {
+                            "All available apps have been added"
+                        } else {
+                            "No matching apps"
+                        },
+                        13.,
+                        MUTED,
+                    ));
+                }
+            } else {
+                rows.push(label("Reading installed apps…", 13., MUTED));
+            }
+            rows.push(
+                row::with_children(vec![
+                    button::suggested("Save apps")
+                        .on_press(action(W::Save))
+                        .into(),
+                    button::text("Cancel").on_press(action(W::Cancel)).into(),
+                ])
+                .spacing(6)
+                .into(),
+            );
+        } else {
+            let n = profile.workspace_apps.len();
+            let title = match n {
+                0 => "Choose apps to open with this Look".into(),
+                1 => "1 workspace app".into(),
+                _ => format!("{n} workspace apps"),
+            };
+            let mut controls = vec![
+                button::text("Choose apps…")
+                    .on_press_maybe(
+                        (state.running.is_none() && self.profiles.writable())
+                            .then(|| action(W::Manage(id.clone()))),
+                    )
+                    .into(),
+            ];
+            if n > 0 {
+                controls.push(
+                    button::suggested(if state.running.as_ref() == Some(id) {
+                        "Starting…"
+                    } else {
+                        "Start workspace"
+                    })
+                    .on_press_maybe(
+                        (state.running.is_none() && !self.native_busy && !self.profiles.busy())
+                            .then(|| action(W::Start(id.clone()))),
+                    )
+                    .into(),
+                );
+            }
+            rows.push(group_row(
+                "Workspace",
+                &title,
+                row::with_children(controls).spacing(6).wrap().into(),
+            ));
+        }
+        if let Some((owner, report)) = &state.report
+            && owner == id
+        {
+            rows.push(label(report.clone(), 13., FG));
+        }
+        group(None, rows)
+    }
     fn selection_details(&self) -> Element<'_, Message> {
         let editor = &self.profiles;
         let accent = self.settings_accent();
@@ -1829,6 +1968,11 @@ impl Settings {
                     )
                     .into(),
             );
+        }
+        if let Selection::Saved(id) = selection
+            && id.as_str() != "before-themes"
+        {
+            items.push(self.workspace_apps(id, profile));
         }
         if let Selection::Saved(id) = selection {
             library_actions.push(

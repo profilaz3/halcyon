@@ -35,6 +35,20 @@ impl Settings {
             );
         }
         parts.extend(sections);
+        let finish = group_row(
+            "Glass finish",
+            self.config
+                .rain
+                .finishes
+                .linked(widget)
+                .map_or("Shared finish", |f| f.name.as_str()),
+            button::text("Choose…")
+                .on_press(Message::Rain(
+                    crate::settings::rain::Edit::OpenWidgetFinish(widget),
+                ))
+                .into(),
+        );
+        parts.push(self.search_target("widget-glass-finish", finish));
         parts.push(self.widget_extras(widget));
         self.search_target(
             "widget-design",

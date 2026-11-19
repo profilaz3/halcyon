@@ -1,16 +1,36 @@
 # Desktop customization tracker
 
-Opened 2026-11-19. The five items below are requested features. Research and first-slice plans are recorded here. Implementation, native prototypes and performance measurements are pending for all five.
+Reviewed on 2026-11-19. All five features are implemented. The table links to captures of the native controls. The research and original acceptance criteria follow the implementation notes.
 
-| Feature | Next decision or experiment | Prototype | Implementation | Verification |
-| --- | --- | --- | --- | --- |
-| Reusable glass finishes | Render two linked cards and one independent card on the same output | Pending | Pending | Pending |
-| Widget Peek with a custom button | Open and dismiss a two-widget overlay from an editable button | Pending | Pending | Pending |
-| Folder widget | Compare a small folder and a 10,000-entry folder at compact and wide sizes | Pending | Pending | Pending |
-| Dock magnification | Establish who draws each icon and whether growing icons can draw beyond the applet bounds | Pending | Pending | Pending |
-| Setups that launch a workspace | Launch an installed app once from an explicitly invoked setup | Pending | Pending | Pending |
+| Feature | Where to find it | What the improvement pass verified |
+| --- | --- | --- |
+| Reusable glass finishes | Any widget’s settings → Glass finish → Choose… | Link, rename, copy, remove and Undo preserve the intended assignments. Mixed finishes render in the same wallpaper pass. [Finish editor](screenshots/desktop-customization/glass-library.png) |
+| Widget Peek | Edge menu editor → Actions → Peek widgets | Selected cards work over an open window. The same shortcut, Escape and an outside click dismiss Peek. [Peek over a text editor](screenshots/desktop-customization/widget-peek.png) |
+| Folder | Widgets → Folder → Choose folder | Compact bounds show whole file rows. Wide bounds switch to tiles and image previews. [Compact](screenshots/desktop-customization/folder-compact.png) · [Wide](screenshots/desktop-customization/folder-wide.png) |
+| Dock magnification | Dock → Dock magnification → Apply | Four native favorites grew, shrank and launched from their original hit targets. The applet follows reduced motion. [Pointer and dock recording](screenshots/desktop-customization/dock-motion.mp4) |
+| Setups that launch a workspace | Looks → select a saved Look → Choose apps… → Start workspace | The app list survives export/import. Starting applies the Look and requests apps in order. Unavailable entries are reported individually. [App picker](screenshots/desktop-customization/workspace-apps.png) |
 
-Start with finishes. Peek and Folder can then use real saved finishes in their visual tests. Run the dock feasibility experiment early because it crosses the panel/applet boundary. For each row, record the prototype commit or PR, a native capture, the before/after measurements and any revised decision here before marking it verified.
+## Findings and decisions
+
+**Glass.** The reference image shows undisturbed wallpaper in the center and a reflection of the surroundings at the curved edge. The GNOME implementation samples wallpaper aligned with the window and includes scenery beyond the rim. Halcyon’s optional **Crystal** finish uses its existing wallpaper texture and a narrow refracting shoulder. The default has zero blur, 30% surface opacity and a subtle tint inherited from the theme. Its edge is static when the pointer moves. The editor previews the selected widget and the draft optics together. [Reference renderer](https://raw.githubusercontent.com/xnoviiq/MacOS-26-Gnome/main/extensions/liquidglass-widgets%40local/lib/glass.js) · [Dark wallpaper](screenshots/desktop-customization/crystal-dark.png) · [Bright wallpaper](screenshots/desktop-customization/crystal-light.png) · [Sunset](screenshots/desktop-customization/crystal-sunset.png)
+
+**Peek.** A full-width tray hid too much of the current application. The tray now fits the selected cards and pages through larger selections. A live test opened Peek above a focused GTK editor, started the Focus timer, dismissed Peek with Escape and typed into the editor again. The same session completed 25 open/close cycles. Hidden cards can supply their data while Peek is open. Notes edits use the overlay’s keyboard focus.
+
+**Folder.** A 10,000-entry local directory took 21 ms for one warm scan on the development machine at a six-entry capacity. The worker retains the newest entries that fit and releases its watcher when the widget and Peek are hidden. Wide tiles reuse bounded thumbnails and reserve the same space while decoding. Missing folders offer a fresh choice. Folder paths stay local when sharing a Look.
+
+**Dock.** The applet owns the native icons, the panel owns its allocated space. Magnification scales each icon within its existing slot, giving neighboring icons a smaller rise and preserving their click targets. In a private 1280 × 800 COSMIC session the hovered icon grew from 34 to 45 pixels wide, its neighbor from 30 to 32, and the first icon returned to 34 on exit. With system animations disabled it stayed at 46 pixels throughout. A timing-only traversal produced 307 Wayland frame-callback intervals with an 8 ms median and a 9 ms p95. The animation coalesces new pointer positions until the next paint. An idle sample with four favorites and animations enabled used 0.00 CPU seconds over 60 seconds at process-counter resolution. The measurements used software rendering. Physical display presentation at 120 or 144 Hz still needs measurement.
+
+**Workspace.** App selection and starting the workspace are separate actions. Saving, importing and scheduling a Look are passive with respect to its app list. An explicit start uses desktop entry IDs, checks for pending Look edits and continues past missing apps. The review found that explicit Look changes had been routed through the scheduled-action transaction. Manual workspace starts and edge-menu selections now record their own Undo entries. Undo restores the Look and leaves running applications alone. GIO launched two controlled desktop entries in the integration test. A Flatpak-style entry was covered by the launcher fixture.
+
+## Review verdict
+
+The visual and interaction review meets the 9/10 target for the glass editor, Peek, Folder and workspace picker on the tested desktop. The strongest evidence is the rendered light/dark comparison, focus returning to the editor after Peek, whole rows at both Folder sizes, and explicit launches surviving a missing app. Dock interaction meets the target in nested COSMIC. Its physical high-refresh pacing is still ungraded. Physical multi-monitor hot unplug and a real installed Flatpak’s window activation also remain outside the measurements above.
+
+## Design review
+
+Give each feature one obvious entry point and a reversible first action. A saved finish keeps its identity when renamed. Peek opens on the user's display and dismisses predictably. Folder picks up the system file associations and preserves the user's place across changes. Dock icons keep stable click targets through a reversal. Starting a workspace is a separate, explicit gesture.
+
+Review each slice for visual fit, interaction and accessibility, failure recovery, and resource use. Record observed behavior, native evidence and outstanding measurements separately. A high score requires evidence in all four areas.
 
 ## Reusable glass finishes
 

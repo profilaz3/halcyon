@@ -14,7 +14,13 @@ fn set(p: Preferences) -> Message {
 
 impl Settings {
     pub(super) fn widget_glass_editor(&self) -> Element<'_, Message> {
-        let p = self.wallpaper.effect().unwrap_or(&self.config.rain);
+        let base = self.wallpaper.effect().unwrap_or(&self.config.rain);
+        let id = self
+            .rain
+            .current_finish
+            .filter(|id| base.finishes.entries.contains_key(id));
+        let p = base.edit_finish(id);
+        let set = |next| set(base.store_finish(next, id));
         let enabled = p.enabled && p.effect == Effect::Lens;
         let mut lens = p.clone();
         lens.enabled = true;
@@ -53,6 +59,21 @@ impl Settings {
                 )
             })
             .collect();
+        if let Some(f) = id.and_then(|id| base.finishes.entries.get(&id)) {
+            rows.push(label(
+                format!(
+                    "Editing {} · {} linked",
+                    f.name,
+                    base.finishes
+                        .links
+                        .values()
+                        .filter(|v| Some(**v) == id)
+                        .count()
+                ),
+                13.,
+                MUTED,
+            ));
+        }
         rows.push(segmented(choices, self.settings_accent()));
         if p.weather {
             rows.push(label(
@@ -87,7 +108,7 @@ impl Settings {
                     if let Some(glass) = &mut next.glass {
                         change(glass, value);
                     }
-                    Message::Rain(Edit::Draft(next))
+                    Message::Rain(Edit::Draft(base.store_finish(next, id)))
                 })
             };
             match self.rain.glass_tab {
@@ -155,14 +176,15 @@ impl Settings {
         }
         if enabled
             && (p.glass.is_none()
-                || (glass.mode == GlassMode::Polished && self.rain.glass_tab == GlassTab::Surface))
+                || (matches!(glass.mode, GlassMode::Polished | GlassMode::Crystal)
+                    && self.rain.glass_tab == GlassTab::Surface))
         {
             let next = lens.clone();
             controls.push(
                 self.glass_slider("Edge refraction", "%", 100, p.refraction, move |value| {
                     let mut next = next.clone();
                     next.refraction = value;
-                    Message::Rain(Edit::Draft(next))
+                    Message::Rain(Edit::Draft(base.store_finish(next, id)))
                 }),
             );
         }
@@ -182,12 +204,24 @@ impl Settings {
             rows.push(preview);
             rows.extend(controls);
         }
+        rows.push(
+            button::text(if self.rain.library_open {
+                "Close saved finishes"
+            } else {
+                "Saved finishes…"
+            })
+            .on_press(Message::Rain(Edit::Library))
+            .into(),
+        );
+        if self.rain.library_open {
+            rows.push(self.finish_library(base, id));
+        }
         if enabled {
-            let mut off = p.clone();
+            let mut off = base.clone();
             off.enabled = false;
             rows.push(
                 button::text("Turn off widget glass")
-                    .on_press(set(off))
+                    .on_press(Message::Rain(Edit::Set(off)))
                     .into(),
             );
         }
@@ -199,6 +233,93 @@ impl Settings {
                 .into(),
         );
         column::with_children(rows).spacing(14).into()
+    }
+
+    fn finish_library<'a>(&'a self, p: &'a Preferences, id: Option<u32>) -> Element<'a, Message> {
+        let lib = &p.finishes;
+        let name = &self.rain.finish_name;
+        let action = |v| Message::Rain(v);
+        let mut rows = Vec::new();
+        let widget = self.rain.finish_widget;
+        let mut choose = |key: Option<u32>, title: String| {
+            let selected = key == id;
+            let mut buttons = vec![
+                button::text(if selected { "Editing" } else { "Edit" })
+                    .on_press_maybe((!selected).then_some(action(Edit::SelectFinish(key))))
+                    .into(),
+            ];
+            if let Some(w) = widget {
+                let linked = lib.links.get(&w).copied() == key;
+                buttons.push(
+                    button::text(if linked {
+                        "In use".to_string()
+                    } else {
+                        format!("Use on {}", w.title())
+                    })
+                    .on_press_maybe((!linked).then_some(action(Edit::LinkFinish(w, key))))
+                    .into(),
+                );
+            }
+            rows.push(group_row(
+                &title,
+                "",
+                row::with_children(buttons).spacing(4).into(),
+            ));
+        };
+        choose(None, "Shared finish".into());
+        for (&key, f) in &lib.entries {
+            choose(Some(key), f.name.clone());
+        }
+        rows.push(
+            text_input("Finish name", name)
+                .on_input(|v| Message::Rain(Edit::FinishName(v)))
+                .into(),
+        );
+        let mut actions = vec![
+            button::suggested(if id.is_some() {
+                "Save as copy"
+            } else {
+                "Save finish"
+            })
+            .on_press_maybe(
+                (lib.entries.len() < 32
+                    && (lib.valid_name(name, None)
+                        || id.is_some_and(|id| lib.entries[&id].name == name.trim())))
+                .then_some(action(Edit::StoreFinish { copy: true })),
+            )
+            .into(),
+        ];
+        if let Some(key) = id {
+            actions.push(
+                button::text("Rename")
+                    .on_press_maybe(
+                        (lib.valid_name(name, id) && name.trim() != lib.entries[&key].name)
+                            .then_some(action(Edit::StoreFinish { copy: false })),
+                    )
+                    .into(),
+            );
+            actions.push(
+                button::text(if self.rain.confirm_remove {
+                    "Confirm removal"
+                } else {
+                    "Remove…"
+                })
+                .on_press(action(Edit::RemoveFinish))
+                .into(),
+            );
+            if self.rain.confirm_remove {
+                let n = lib.links.values().filter(|v| **v == key).count();
+                rows.push(label(
+                    format!(
+                        "{n} linked widgets will use the shared finish. You can undo this change."
+                    ),
+                    13.,
+                    MUTED,
+                ));
+            }
+        }
+        rows.push(row::with_children(actions).spacing(6).into());
+        group(Some("Saved finishes"), rows)
     }
 
     fn glass_slider<'a>(
@@ -249,6 +370,7 @@ impl Settings {
         let ch = 160.;
         let mut cfg = self.config.clone();
         cfg.rain = prefs.clone();
+        let _finish = crate::widget_style::for_glass_preview(prefs.active_glass());
         let mut layers = vec![
             cosmic::widget::image(handle.clone())
                 .content_fit(cosmic::iced::ContentFit::Fill)
@@ -276,12 +398,81 @@ impl Settings {
                 .into(),
             );
         }
-        let card = crate::tools::cards::messages::<Message>(
-            &crate::messages::sample(),
-            &cfg,
-            None,
-            Some([cw, ch]),
-        );
+        use crate::tools::cards;
+        let size = Some([cw, ch]);
+        let target = self.rain.finish_widget.unwrap_or(Widget::Messages);
+        let card: Element<'_, Message> = match target {
+            Widget::Music => {
+                let now = std::time::Instant::now();
+                let (feed, player) = cards::recipe::paused_sample();
+                cards::music(
+                    cards::MusicView {
+                        feed: Some(feed),
+                        player: Some(player),
+                        art: Some(cards::recipe::sample_art()),
+                        now,
+                        manually_selected: false,
+                        problem: false,
+                        last: None,
+                    },
+                    &cfg,
+                    None,
+                    size,
+                )
+            }
+            Widget::Folder => {
+                let sample = crate::folder::sample();
+                cfg.folder.path = Some(sample.source.clone());
+                cfg.folder.show_hidden = false;
+                cards::folder(&sample, &cfg, [cw, ch], |_| None, None)
+            }
+            Widget::Weather => {
+                crate::app::settings_weather_preview_sized(&cfg, [cw, ch]).map(|_| Message::Preview)
+            }
+            Widget::Clock => {
+                crate::app::settings_clock_preview(&cfg, [cw, ch]).map(|_| Message::Preview)
+            }
+            Widget::Devbox => crate::app::settings_devbox_preview(&cfg).map(|_| Message::Preview),
+            Widget::Projects => {
+                crate::app::settings_projects_preview(&cfg).map(|_| Message::Preview)
+            }
+            Widget::Markets => cards::markets(&self.tools.market_preview, &cfg, None, size),
+            Widget::Devices => cards::devices(&cards::sample_devices(), &cfg, size),
+            Widget::Focus => cards::focus(
+                &Default::default(),
+                &cfg,
+                0,
+                "",
+                None::<fn(cards::Action) -> Message>,
+                size,
+            ),
+            Widget::Calendar => self.samples.calendar_view().map(|_| Message::Preview),
+            Widget::Glance => self.samples.overview_view().map(|_| Message::Preview),
+            Widget::Notes => {
+                static SAMPLE: std::sync::OnceLock<crate::tools::notes::Note> =
+                    std::sync::OnceLock::new();
+                let note = SAMPLE.get_or_init(|| {
+                    let mut n = crate::tools::notes::Note::default();
+                    n.text = "Plan the next studio session".into();
+                    n
+                });
+                cards::notes(
+                    cards::NotesView {
+                        note: Ok(note),
+                        editing: None,
+                        paused: false,
+                        problem: None,
+                        discarded: false,
+                    },
+                    &cfg,
+                    None,
+                    size,
+                )
+            }
+            Widget::Messages => {
+                cards::messages::<Message>(&crate::messages::sample(), &cfg, None, size)
+            }
+        };
         layers.push(
             container(container(card).width(cw))
                 .center_x(w)

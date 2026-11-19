@@ -15,6 +15,7 @@ fn edit(message: Edit) -> Message {
 /// What kind of item a row is, under its name.
 fn kind_title(item: &Item) -> &'static str {
     match &item.kind {
+        Kind::Peek { .. } => "Widget Peek",
         Kind::Widget { .. } => "Widget",
         Kind::Action { .. } => "Action",
         Kind::Look { .. } => "Look",
@@ -824,6 +825,80 @@ impl Settings {
         .on_press(edit(Edit::DragStart(index)))
         .interaction(cosmic::iced::mouse::Interaction::Grab);
         let name: Element<'_, Message> = match (&item.kind, &page.title) {
+            (
+                Kind::Peek {
+                    name,
+                    icon: selected_icon,
+                    widgets,
+                },
+                draft,
+            ) => {
+                let title = draft
+                    .as_ref()
+                    .filter(|(at, _)| *at == index)
+                    .map_or(name, |(_, v)| v);
+                let mut elements = vec![
+                    text_input("Button label", title.clone())
+                        .on_input(move |v| edit(Edit::TitleText(index, v)))
+                        .on_submit(move |_| edit(Edit::Commit))
+                        .into(),
+                ];
+                let glyphs = [
+                    ("view-grid-symbolic", "Grid"),
+                    ("user-desktop-symbolic", "Desktop"),
+                    ("starred-symbolic", "Star"),
+                ];
+                elements.push(
+                    row::with_children(
+                        glyphs
+                            .into_iter()
+                            .map(|(glyph, name)| {
+                                button::text(name)
+                                    .on_press_maybe(
+                                        (glyph != selected_icon)
+                                            .then(|| edit(Edit::PeekIcon(index, glyph.into()))),
+                                    )
+                                    .into()
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                    .spacing(4)
+                    .wrap()
+                    .into(),
+                );
+                elements.push(
+                    row::with_children(
+                        Widget::ALL
+                            .into_iter()
+                            .map(|w| {
+                                let on = widgets.contains(&w);
+                                let b = if on {
+                                    button::suggested(w.title())
+                                } else {
+                                    button::standard(w.title())
+                                };
+                                b.on_press_maybe(
+                                    (!on || widgets.len() > 1)
+                                        .then(|| edit(Edit::PeekWidget(index, w))),
+                                )
+                                .into()
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                    .spacing(4)
+                    .wrap()
+                    .into(),
+                );
+                elements.push(
+                    button::text("Set keyboard shortcut…")
+                        .on_press(Message::PeekShortcut)
+                        .into(),
+                );
+                column::with_children(elements)
+                    .spacing(6)
+                    .width(Length::Fill)
+                    .into()
+            }
             (Kind::Title { .. }, Some((at, text))) if *at == index => {
                 text_input("Section title", text.clone())
                     .on_input(move |text| edit(Edit::TitleText(index, text)))
@@ -974,6 +1049,7 @@ impl Settings {
         let actions = Action::ALL
             .into_iter()
             .map(|action| tile(Item::action(action), None))
+            .chain(std::iter::once_with(|| tile(Item::peek(), None)))
             .collect();
         let looks = page
             .looks

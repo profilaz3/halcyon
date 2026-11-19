@@ -52,7 +52,7 @@ def build(args):
         raise ValueError('An armored public signing key is required')
     with tempfile.TemporaryDirectory(prefix='halcyon-rpm-') as temporary:
         top = Path(temporary); payload = top/'payload'
-        app.stage_application(payload,args.binary,wallpapers,args.google_client,PACKAGE)
+        app.stage_application(payload,args.binary,wallpapers,args.google_client,PACKAGE,getattr(args,"magnifying_dock",None))
         native.stage_payload(payload,args.islands_binary,args.islands_manifest,evr,
                              args.islands_licenses,args.islands_catalog,owner=PACKAGE,strip_binary=False)
         metadata = dict(format='halcyon-installation',version=1,app_version=args.version,
@@ -121,6 +121,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('binary','islands-binary','islands-manifest','islands-licenses','islands-catalog','provenance','public-key','out'):
         parser.add_argument('--'+name,type=Path,required=True)
+    parser.add_argument('--magnifying-dock',type=Path)
     parser.add_argument('--version',required=True)
     parser.add_argument('--release',default='0.1.next')
     parser.add_argument('--fedora',default='43')

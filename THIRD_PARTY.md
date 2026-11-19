@@ -44,6 +44,11 @@ System76's COSMIC Panel. The native patch retains its SPDX license notice;
 the full GPL version 3 text is in `LICENSE`. Halcyon's Penumbra controls retain
 the original preference format for interoperability.
 
+The optional magnifying dock applet builds System76's COSMIC App List at
+revision `779f920c34d7a309acc12d9bba5bc0c53b0abc53` with Halcyon's icon
+magnification patch. The applet is licensed under GPL-3.0-only. The build
+recipe and modifications are in `companion/magnifying-dock/`. [Upstream source and license](https://github.com/pop-os/cosmic-applets/tree/779f920c34d7a309acc12d9bba5bc0c53b0abc53).
+
 The rain-on-glass wallpaper effect's water lens outline and lighting
 (`lens_shape` and `lens_light` in `src/rain/glass.wgsl`) are adapted from the
 rain-glass shader in [motixo/cosmic-forge-shaders](https://github.com/motixo/cosmic-forge-shaders)

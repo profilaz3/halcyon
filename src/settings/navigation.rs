@@ -483,7 +483,7 @@ pub(super) const GET_MORE_ICONS: SearchHit = hit(
 pub(super) const WIDGET_GLASS: SearchHit = hit(
     Page::WeatherEffects,
     "Widget glass",
-    "edit widget glass smoked polished frosted blur liquid lens tint color shape corner radius",
+    "edit widget glass smoked polished crystal frosted blur liquid lens tint color shape corner radius",
     false,
 )
 .open(SearchOpen::WidgetGlass);
@@ -794,6 +794,23 @@ const SEARCH: &[SearchHit] = &[
         false,
     )
     .names_page(),
+    hit(Page::Folder, "Local folder", "folder widget choose recent files thumbnails directory", false),
+    hit(Page::Folder, "Show hidden files", "dotfiles folder visibility", false),
+    hit(Page::Appearance, "Widget glass", "crystal shared finish", false),
+    hit(Page::WeatherEffects, "Rain on widget glass", "raindrops wallpaper widgets only", false),
+    finish_hit(Page::Calendar),
+    finish_hit(Page::Clock),
+    finish_hit(Page::Devbox),
+    finish_hit(Page::Devices),
+    finish_hit(Page::Focus),
+    finish_hit(Page::Folder),
+    finish_hit(Page::Glance),
+    finish_hit(Page::Markets),
+    finish_hit(Page::Messages),
+    finish_hit(Page::Music),
+    finish_hit(Page::Notes),
+    finish_hit(Page::Projects),
+    finish_hit(Page::Weather),
     hit(Page::Markets, "Data source", "public yahoo ECB exchange rates free no key provider", false),
     hit(Page::Markets, "Show on widget", "markets display options", false).at("markets-display"),
     hit(Page::Markets, "Daily change", "markets percentage previous quote", false).at("markets-change"),
@@ -1489,6 +1506,10 @@ pub(super) const UNCHECKED_LABELS: &[(&str, &str)] = &[
          window_tone_native_captures reveals it",
     ),
 ];
+
+const fn finish_hit(page: Page) -> SearchHit {
+    hit(page, "Glass finish", "saved shared finish crystal refraction material", false).at("widget-glass-finish")
+}
 
 const fn hit(page: Page, label: &'static str, terms: &'static str, advanced: bool) -> SearchHit {
     SearchHit {
@@ -2664,6 +2685,7 @@ pub(super) fn widget_of(page: Page) -> Option<crate::drawer::Widget> {
         Page::Devices => Widget::Devices,
         Page::Messages => Widget::Messages,
         Page::Markets => Widget::Markets,
+        Page::Folder => Widget::Folder,
         _ => return None,
     })
 }
@@ -2682,6 +2704,7 @@ pub(super) fn widget_page(widget: crate::drawer::Widget) -> Page {
         Widget::Devices => Page::Devices,
         Widget::Messages => Page::Messages,
         Widget::Markets => Page::Markets,
+        Widget::Folder => Page::Folder,
     }
 }
 

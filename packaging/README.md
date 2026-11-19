@@ -85,6 +85,19 @@ helper bytes. The old download pin remains solely for historical split-package
 verification; the app no longer downloads a companion.
 
 Prefer `python3 scripts/install.py` for per-user source work; it adds no APT source.
+To include dock magnification, build the pinned COSMIC app-list companion before
+running the installer or packaging commands. The installers pick up the executable
+next to `target/release/halcyon`. Both package builders also accept an explicit
+`--magnifying-dock PATH`. People can enable it in Settings → Dock after installation.
+
+```sh
+python3 companion/magnifying-dock/build.py
+```
+
+For an offline build with Cargo dependencies already available, pass
+`--offline --source PATH_TO_COSMIC_APPLETS`. Set `CARGO_TARGET_DIR` to reuse
+compiled dependencies across applet builds.
+
 The Debian builder requires an explicit mode:
 
 ```sh
@@ -145,6 +158,15 @@ libcosmic.
 ```sh
 git archive --format=tar --prefix=main/ HEAD | tar -x -C SOURCE
 python3 packaging/source_closure.py vendor --tree SOURCE/main --into SOURCE/dependencies/main --offline-check
+```
+
+For a package containing the magnifying applet, include its patched source and
+locked dependencies in the same archive. Build that tree with
+`cargo build --locked --offline --release -p cosmic-app-list`.
+
+```sh
+python3 companion/magnifying-dock/build.py --prepare-source SOURCE/magnifying-dock
+python3 packaging/source_closure.py vendor --tree SOURCE/magnifying-dock --into SOURCE/dependencies/magnifying-dock --offline-check
 ```
 
 `source_closure.py check --tree SOURCE/main --offline-check` checks an extracted

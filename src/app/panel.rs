@@ -403,6 +403,7 @@ impl Cards {
                     | Widget::Music
                     | Widget::Focus
                     | Widget::Devices
+                    | Widget::Folder
                     | Widget::Markets
                     | Widget::Messages => {}
                 }
@@ -600,6 +601,7 @@ impl Cards {
             // or a new sign-in.
             "refresh-calendar" => Some(Message::RefreshCalendar),
             "close" => Some(Message::HideControls),
+            "peek" => Some(Message::Peek(None)),
             "drawer" => Some(Message::DrawerToggle),
             "rail" => Some(Message::ShowControls),
             "open" => match value["widget"].as_str() {

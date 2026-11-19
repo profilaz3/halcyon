@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The daily widgets, then [`Widget::MORE`] (a test keeps them together).
-pub const CHOICES: [Widget; 11] = [
+pub const CHOICES: [Widget; 12] = [
     Widget::Clock,
     Widget::Weather,
     Widget::Calendar,
@@ -18,9 +18,10 @@ pub const CHOICES: [Widget; 11] = [
     Widget::Devices,
     Widget::Messages,
     Widget::Markets,
+    Widget::Folder,
 ];
 const DAILY: [Widget; 3] = [Widget::Clock, Widget::Weather, Widget::Calendar];
-const VISIBILITY: [&str; 13] = [
+const VISIBILITY: [&str; 14] = [
     "/widgets_visible",
     "/enabled_widgets",
     "/glance/enabled",
@@ -34,6 +35,7 @@ const VISIBILITY: [&str; 13] = [
     "/devices/enabled",
     "/messages/enabled",
     "/markets/enabled",
+    "/folder/enabled",
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -391,6 +393,7 @@ impl Draft {
         config.devices.enabled = self.selected(Widget::Devices);
         config.messages.enabled = self.selected(Widget::Messages);
         config.markets.enabled = self.selected(Widget::Markets);
+        config.folder.enabled = self.selected(Widget::Folder);
         for (key, destination) in &self.destinations {
             config
                 .widget_monitors

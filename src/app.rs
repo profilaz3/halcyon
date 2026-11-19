@@ -138,6 +138,7 @@ mod activity;
 mod history;
 mod layout;
 mod panel;
+mod peek;
 mod projects;
 mod providers;
 mod settings_preview;
@@ -307,6 +308,7 @@ pub enum Message {
     /// The phone's conversations, from `crate::messages`.
     Messages(crate::messages::State),
     Markets(crate::markets::State),
+    Folder(crate::folder::Listing),
     MusicArt(String, Result<crate::tools::music::Art, String>),
     ToolDone(Result<(), String>),
     MusicControlDone(Result<Vec<crate::tools::music::Player>, String>),
@@ -332,6 +334,10 @@ pub enum Message {
     Switched(Vec<(crate::automation::Due, crate::automation::run::Ran)>),
     /// `halcyon --toggle drawer`: open the edge menu for the keyboard, or close it.
     DrawerToggle,
+    Peek(Option<(String, Vec<Widget>)>),
+    PeekPage(usize),
+    PeekInside,
+    PeekFrame,
     /// A click on an edge strip: the menu opens at once, on its display.
     EdgeClick(window::Id),
     /// The pointer onto or off an edge strip.
@@ -414,7 +420,7 @@ static POINTER: std::sync::Mutex<Option<(window::Id, cosmic::iced::Point)>> =
 pub struct Cards {
     activity: crate::activity_island::bridge::Owner,
     core: Core,
-    ids: [window::Id; 16],
+    ids: [window::Id; 17],
     layout_editor: layout::LayoutEditor,
     surface_geometry: Option<layout::SurfaceGeometry>,
     displays: crate::displays::Registry,
@@ -456,6 +462,7 @@ pub struct Cards {
     /// The room Projects took last time, kept until its first reading.
     projects_reserved: Option<projects::Reserved>,
     next_projects: Instant,
+    peek: Option<peek::Peek>,
     reading_window: Option<(window::Id, Widget)>,
     expanded_projects: std::collections::BTreeSet<String>,
     config: Config,
@@ -598,6 +605,7 @@ impl cosmic::Application for Cards {
             projects_error: false,
             projects_reserved: projects::Reserved::load(),
             next_projects: Instant::now(),
+            peek: None,
             reading_window: None,
             expanded_projects: Default::default(),
             config,
@@ -687,8 +695,15 @@ impl cosmic::Application for Cards {
         if self.config.rain.wanted() || self.edge_click_guard() {
             subscriptions.push(crate::rain::desk::watch().map(Message::RainDesk));
         }
-        if self.config.rain.wanted() {
+        if self.config.rain.wanted() || self.peek.is_some() {
             subscriptions.push(crate::rain::lifecycle::watch().map(Message::RainLifecycle));
+        }
+        if self.peek.as_ref().is_some_and(|p| p.entering) {
+            subscriptions.push(
+                cosmic::iced::time::every(Duration::from_millis(16)).map(|_| Message::PeekFrame),
+            );
+        }
+        if self.config.rain.wanted() {
             if let Some(watch) = self.rain.watch() {
                 subscriptions.push(watch.map(Message::RainNudge));
             }
@@ -716,6 +731,18 @@ impl cosmic::Application for Cards {
         }
         if self.devices_demand() {
             subscriptions.push(crate::devices::subscription().map(Message::Devices));
+        }
+        if self.provider_visible(Widget::Folder)
+            && let Some(path) = self.config.folder.path.clone()
+        {
+            subscriptions.push(
+                crate::folder::subscription(
+                    path,
+                    self.config.folder.show_hidden,
+                    self.widget_size(Widget::Folder),
+                )
+                .map(Message::Folder),
+            );
         }
         if self.provider_visible(Widget::Markets) {
             subscriptions.push(
@@ -832,12 +859,16 @@ impl cosmic::Application for Cards {
                 self.note_typing_surface(),
                 self.interacting_tool.map(|widget| self.widget_id(widget)),
                 self.reading_window.map(|(id, _)| id),
+                self.peek.as_ref().map(|p| p.id),
             ))
             .filter_map(
-                |((ids, dragging, arranging, drawer_keys, menu, note, interacting, reading), message)| {
+                |(
+                    (ids, dragging, arranging, drawer_keys, menu, note, interacting, reading, peek),
+                    message,
+                )| {
                     match &message {
                         Message::KeyInput(id, key, modifiers) => {
-                            if Some(*id) == reading {
+                            if Some(*id) == reading || Some(*id) == peek {
                                 return Some(message);
                             }
                             if arranging {
@@ -851,6 +882,9 @@ impl cosmic::Application for Cards {
                             }
                         }
                         Message::Unfocused(id) => {
+                            if Some(*id) == peek {
+                                return Some(message);
+                            }
                             if arranging {
                                 Some(Message::SurfaceInput(
                                     *id,
@@ -870,7 +904,10 @@ impl cosmic::Application for Cards {
                                     .then_some(Message::Pointer(*id, event))
                             }
                         }
-                        Message::SurfaceClosed(id) => (Some(*id) == menu || Some(*id) == reading).then_some(message),
+                        Message::SurfaceClosed(id) => {
+                            (Some(*id) == menu || Some(*id) == reading || Some(*id) == peek)
+                                .then_some(message)
+                        }
                         Message::Pointer(id, event) => {
                             // Motion over Calendar/Weather must not rebuild all five surfaces.
                             // Outside releases still cancel an active sidebar drag.
@@ -915,7 +952,14 @@ impl cosmic::Application for Cards {
         text::body("").into()
     }
     fn view_window(&self, id: window::Id) -> Element<'_, Message> {
-        if let Some((reading, widget)) = self.reading_window && reading == id {
+        if let Some(peek) = &self.peek
+            && peek.id == id
+        {
+            return self.peek_view(peek);
+        }
+        if let Some((reading, widget)) = self.reading_window
+            && reading == id
+        {
             return self.reading_view(widget);
         }
         if let Some(view) = self.rain_view(id) {
@@ -1022,6 +1066,9 @@ impl cosmic::Application for Cards {
         self.rain
             .watch_sync(self.display_generation, Instant::now());
         let glass = self.glass_sync();
+        if !self.provider_visible(Widget::Folder) && !self.tools.folder.entries.is_empty() {
+            self.tools.folder = Default::default();
+        }
         if !self.provider_visible(Widget::Markets)
             || (self.tools.markets.source.is_some()
                 && !self.tools.markets.same_watchlist(&self.config.markets))
@@ -1340,7 +1387,11 @@ impl Cards {
             Message::Activity(event) => self.activity_message(event),
             Message::RainLifecycle(state) => {
                 self.rain.lifecycle = state;
-                Task::none()
+                if state.locked || state.sleeping {
+                    self.close_peek()
+                } else {
+                    Task::none()
+                }
             }
             Message::RainRetired(generation) => self.rain.retired(generation),
             Message::RainNudge(look) => self.rain_watched(look),
@@ -1538,6 +1589,10 @@ impl Cards {
                 Task::none()
             }
             Message::SurfaceResized(id, size) => {
+                if let Some(peek) = self.peek.as_mut().filter(|p| p.id == id) {
+                    peek.size = [size.width, size.height];
+                    return Task::none();
+                }
                 if self.rain.owns(id) {
                     return Task::none();
                 }
@@ -1755,6 +1810,26 @@ impl Cards {
             Message::SetWidgetVisible(widget, visible) => self.set_widget_visible(widget, visible),
             Message::SaveOrder(order) => self.save_widget_order(order),
             Message::ConfigSaved(saved) => self.config_saved(*saved),
+            Message::Peek(choice) => self.toggle_peek(choice),
+            Message::PeekPage(at) => {
+                let save = if self.peek_note_surface().is_some() {
+                    self.note_focus_lost()
+                } else {
+                    Task::none()
+                };
+                if let Some(peek) = &mut self.peek {
+                    peek.page = at.min(peek.widgets.len().saturating_sub(1));
+                }
+                save
+            }
+            Message::PeekInside => Task::none(),
+            Message::PeekFrame => {
+                if let Some(p) = &mut self.peek {
+                    p.entering = self.config.settings_animations
+                        && p.started.elapsed() < Duration::from_millis(116);
+                }
+                Task::none()
+            }
             Message::DrawerToggle => self.drawer_toggle(),
             Message::EdgeClick(id) => {
                 if !self.edge_click_opens(id) {
@@ -1814,6 +1889,21 @@ impl Cards {
                 vec!["settings".into(), "--page".into(), page.into()],
             ),
             Message::KeyInput(id, key, modifiers) => {
+                if self.peek.as_ref().is_some_and(|peek| peek.id == id) {
+                    use cosmic::iced::keyboard::{Key, key::Named};
+                    return match key {
+                        Key::Named(Named::Escape) => self.close_peek(),
+                        Key::Named(Named::Tab) => {
+                            use cosmic::iced::advanced::widget::operation::{focusable, scoped};
+                            if modifiers.shift() {
+                                cosmic::iced::runtime::task::widget(scoped("peek-controls".into(), focusable::focus_previous()))
+                            } else {
+                                cosmic::iced::runtime::task::widget(scoped("peek-controls".into(), focusable::focus_next()))
+                            }
+                        }
+                        _ => Task::none(),
+                    };
+                }
                 if self.reading_window.is_some_and(|(reading, _)| reading == id) {
                     return self.reading_key(key, modifiers.shift());
                 }
@@ -1841,7 +1931,16 @@ impl Cards {
                     _ => Task::none(),
                 }
             }
-            Message::Unfocused(id) if self.interacting_tool.is_some_and(|widget| self.widget_id(widget) == id) => self.leave_tool(),
+            Message::Unfocused(id) if self.peek.as_ref().is_some_and(|peek| peek.id == id) => {
+                self.close_peek()
+            }
+            Message::Unfocused(id)
+                if self
+                    .interacting_tool
+                    .is_some_and(|widget| self.widget_id(widget) == id) =>
+            {
+                self.leave_tool()
+            }
             Message::Unfocused(id) | Message::PointerLeft(id)
                 if Some(id) != self.note_typing_surface() =>
             {
@@ -1858,7 +1957,13 @@ impl Cards {
                 self.reading_window.take().map_or_else(Task::none, |(id, _)| window::close(id))
             }
             Message::SurfaceClosed(id) => {
-                if self.reading_window.is_some_and(|(reading, _)| reading == id) {
+                if self.peek.as_ref().is_some_and(|p| p.id == id) {
+                    self.peek = None;
+                }
+                if self
+                    .reading_window
+                    .is_some_and(|(reading, _)| reading == id)
+                {
                     self.reading_window = None;
                     self.calendar_details = None;
                 }
@@ -2177,6 +2282,15 @@ impl Cards {
                 self.tools.devices = devices;
                 Task::none()
             }
+            Message::Folder(listing) => {
+                if self.provider_visible(Widget::Folder)
+                    && self.config.folder.path.as_ref() == Some(&listing.source)
+                    && self.config.folder.show_hidden == listing.show_hidden
+                {
+                    self.tools.folder = listing;
+                }
+                Task::none()
+            }
             Message::Markets(state) => {
                 if self.provider_visible(Widget::Markets)
                     && state.source.as_ref().is_some_and(|p| p.feed_key() == self.config.markets.feed_key())
@@ -2206,12 +2320,23 @@ impl Cards {
                 }
             }
             Message::OutputChanged(event, output) => {
+                let close_peek = if matches!(&event, crate::displays::OutputEvent::Removed)
+                    && self
+                        .peek
+                        .as_ref()
+                        .is_some_and(|p| p.output.as_ref() == Some(&output))
+                {
+                    self.close_peek()
+                } else {
+                    Task::none()
+                };
                 self.displays.update(event, output);
                 let (count, largest) = self.displays.summary();
                 crate::usage::system::displays(count, largest);
                 let migration = self.reconcile_output();
                 Task::batch([
                     migration,
+                    close_peek,
                     self.automation_displays(),
                     self.identity_scan(),
                     self.refresh_wallpaper_watch(),
@@ -2472,7 +2597,7 @@ impl Opened {
 const NO_GTK_LAUNCH: &str =
     "Opening apps needs the gtk-launch tool, which comes with GTK 3. Install it, then try again.";
 /// `name` on `PATH`, when it is there.
-fn program_path(name: &str) -> Option<std::path::PathBuf> {
+pub(crate) fn program_path(name: &str) -> Option<std::path::PathBuf> {
     std::env::split_paths(&std::env::var_os("PATH")?)
         .map(|dir| dir.join(name))
         .find(|path| path.is_file())
@@ -2922,6 +3047,7 @@ impl Cards {
         })
     }
     fn clock(&self) -> Element<'_, Message> {
+        let _card = crate::widget_style::for_card(Widget::Clock);
         // The rain surface draws the clock behind its glass; this surface
         // keeps its place, empty.
         if self.clock_behind_glass() {
@@ -2943,6 +3069,7 @@ impl Cards {
         })
     }
     fn weather_card(&self) -> Element<'_, Message> {
+        let _card = crate::widget_style::for_card(Widget::Weather);
         weather::Presentation::new(
             &self.config,
             weather::Snapshot {
@@ -3083,6 +3210,7 @@ impl Cards {
         (176. + rows.iter().sum::<f32>() + rows.len().saturating_sub(1) as f32 * 3.).ceil()
     }
     fn calendar_card(&self) -> Element<'_, Message> {
+        let _card = crate::widget_style::for_card(Widget::Calendar);
         if let Some(recipe) = &self.config.recipes.calendar {
             return self.recipe_calendar(recipe);
         }

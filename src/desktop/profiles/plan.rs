@@ -2475,8 +2475,9 @@ pub fn apply_as(
     store: &DesktopStore,
     plan: &ProfilePlan,
     label: &str,
+    source: crate::desktop::store::Source,
 ) -> Result<LatestChange, DesktopError> {
-    apply_with_source(store, plan, label, crate::desktop::store::Source::Scheduled)
+    apply_with_source(store, plan, label, source)
         .map(Applied::logged)
 }
 fn apply_with_source(

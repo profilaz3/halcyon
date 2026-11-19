@@ -86,6 +86,7 @@ fn widget_page(widget: Widget) -> Page {
         Widget::Focus => Page::Focus,
         Widget::Devices => Page::Devices,
         Widget::Messages => Page::Messages,
+        Widget::Folder => Page::Folder,
         Widget::Markets => Page::Markets,
     }
 }
@@ -109,6 +110,7 @@ impl Settings {
             Widget::Focus => "A timer for focused work and breaks.",
             Widget::Devices => "The battery of your headphones, mouse and phone.",
             Widget::Messages => "Your phone’s newest text messages, through KDE Connect.",
+            Widget::Folder => "Recent files from a folder you choose.",
             Widget::Markets => "Stocks and currency pairs with daily charts.",
             Widget::Projects => "For people who write code: what changed in each project.",
             Widget::Devbox => "How busy your computer is.",

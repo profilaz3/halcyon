@@ -13,6 +13,11 @@ pub enum GlassTab {
 pub(super) struct State {
     pub preview: bool,
     pub glass_editor: bool,
+    pub library_open: bool,
+    pub current_finish: Option<u32>,
+    pub finish_name: String,
+    pub confirm_remove: bool,
+    pub finish_widget: Option<crate::drawer::Widget>,
     pub glass_tab: GlassTab,
     pub lifecycle: crate::rain::lifecycle::State,
     /// The Weather widget's last reading for its city, from its cache. The
@@ -63,6 +68,11 @@ impl State {
     pub fn clear(&mut self) {
         self.preview = false;
         self.glass_editor = false;
+        self.library_open = false;
+        self.current_finish = None;
+        self.finish_name.clear();
+        self.confirm_remove = false;
+        self.finish_widget = None;
         self.adjust = None;
         self.lifecycle = Default::default();
         self.image.get_mut().take();
@@ -71,6 +81,15 @@ impl State {
 #[derive(Debug, Clone)]
 pub enum Edit {
     GlassTab(GlassTab),
+    Library,
+    OpenWidgetFinish(crate::drawer::Widget),
+    SelectFinish(Option<u32>),
+    FinishName(String),
+    StoreFinish {
+        copy: bool,
+    },
+    RemoveFinish,
+    LinkFinish(crate::drawer::Widget, Option<u32>),
     Set(Preferences),
     Draft(Preferences),
     Commit,

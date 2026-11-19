@@ -100,7 +100,7 @@ def default_wallpapers():
     return REPO / "assets/wallpapers-jpg"
 
 
-def stage_application(root, binary, wallpapers, google_client, package):
+def stage_application(root, binary, wallpapers, google_client, package, magnifying_dock=None):
     """Shared application payload; native package backends own dependencies and enrollment."""
     usr = root / "usr"
     install(binary, usr / "bin/halcyon", 0o755)
@@ -125,6 +125,11 @@ def stage_application(root, binary, wallpapers, google_client, package):
         install(REPO / "packaging" / name, usr / "share" / directory / name)
     install(REPO / "packaging" / f"{APP_ID}.Activity.desktop",
             usr / "share/applications" / f"{APP_ID}.Activity.desktop")
+    dock_binary = magnifying_dock or binary.with_name("halcyon-magnifying-app-list")
+    if magnifying_dock or dock_binary.is_file():
+        install(dock_binary, usr / "bin/halcyon-magnifying-app-list", 0o755)
+        desktop = f"{APP_ID}.MagnifyingDock.desktop"
+        install(REPO / "packaging" / desktop, usr / "share/applications" / desktop)
     for size in ICON_SIZES:
         name = f"{APP_ID}.png"
         install(REPO / "packaging/icons" / str(size) / name,
@@ -181,7 +186,7 @@ def build(args):
     with tempfile.TemporaryDirectory(prefix="halcyon-deb-") as temp:
         scratch = Path(temp)
         root = scratch / "package"
-        stage_application(root, binary, wallpapers, args.google_client, package)
+        stage_application(root, binary, wallpapers, args.google_client, package, getattr(args, "magnifying_dock", None))
         usr = root / "usr"
         (usr / "share" / PACKAGE / "installation.json").write_text(json.dumps(dict(
             format="halcyon-installation", version=1, app_version=args.version,
@@ -261,6 +266,7 @@ def main():
     parser.add_argument("--google-client", type=Path)
     parser.add_argument("--wallpapers", type=Path,
                         help="directory of <name>.jpg files (default: assets/wallpapers-jpg)")
+    parser.add_argument("--magnifying-dock", type=Path)
     parser.add_argument("--islands-binary", type=Path)
     parser.add_argument("--islands-manifest", type=Path)
     parser.add_argument("--islands-licenses", type=Path)

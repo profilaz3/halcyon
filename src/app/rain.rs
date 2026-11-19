@@ -702,6 +702,16 @@ impl Cards {
                         full,
                     ));
                 }
+                panes
+                    .finishes
+                    .push(self.config.rain.finishes.linked(widget).map(|finish| {
+                        let _card = crate::widget_style::for_card(widget);
+                        (
+                            finish.glass,
+                            finish.refraction,
+                            crate::widget_style::corner_radius(&self.config) / full[1],
+                        )
+                    }));
                 panes.rects.push([
                     (at[0] + inset[0]) / full[0],
                     (at[1] + inset[1]) / full[1],

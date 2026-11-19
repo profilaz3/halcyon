@@ -39,6 +39,8 @@ pub enum Edit {
     MoveDown(usize),
     /// Typing a section title; saved with Enter or the next change.
     TitleText(usize, String),
+    PeekWidget(usize, crate::drawer::Widget),
+    PeekIcon(usize, String),
     Reset,
     /// The Add picker open or closed.
     Picker(bool),
@@ -292,6 +294,32 @@ impl Settings {
                     ));
                 }
             }
+            Edit::PeekWidget(index, w) => {
+                let mut items = self.config.edge_items();
+                if let Some(Item {
+                    kind: Kind::Peek { widgets, .. },
+                    ..
+                }) = items.get_mut(index)
+                {
+                    if !widgets.contains(&w) {
+                        widgets.push(w);
+                    } else if widgets.len() > 1 {
+                        widgets.retain(|v| *v != w);
+                    }
+                    self.save_edge_items(items);
+                }
+            }
+            Edit::PeekIcon(index, value) => {
+                let mut items = self.config.edge_items();
+                if let Some(Item {
+                    kind: Kind::Peek { icon, .. },
+                    ..
+                }) = items.get_mut(index)
+                {
+                    *icon = value;
+                    self.save_edge_items(items);
+                }
+            }
             Edit::TitleText(index, text) => {
                 self.edge_menu.title = Some((index, text.chars().take(40).collect()));
             }
@@ -357,8 +385,10 @@ impl Settings {
             return;
         };
         let mut items = self.config.edge_items();
-        if let Some(Kind::Title { text: old }) = items.get_mut(index).map(|item| &mut item.kind)
+        if let Some(Kind::Title { text: old } | Kind::Peek { name: old, .. }) =
+            items.get_mut(index).map(|item| &mut item.kind)
             && *old != text
+            && !text.trim().is_empty()
         {
             *old = text;
             self.save_edge_items(items);
@@ -413,7 +443,9 @@ pub(super) fn scope(page: &EdgeMenuPage, edit: &Edit) -> Option<&'static str> {
         Edit::Displays(_) => "displays",
         Edit::Output(..) => "outputs",
         Edit::Commit => page.draft?.0.key(),
-        Edit::Add(_)
+        Edit::PeekWidget(..)
+        | Edit::PeekIcon(..)
+        | Edit::Add(_)
         | Edit::Remove(_)
         | Edit::MoveUp(_)
         | Edit::MoveDown(_)

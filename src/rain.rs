@@ -6,7 +6,7 @@ mod benchmark;
 pub mod desk;
 pub use atmosphere::{Clouds, Effect, Fog, FogColor, Snow};
 mod glass;
-pub use glass::{Glass, GlassMode};
+pub use glass::{FinishLibrary, Glass, GlassMode};
 pub mod gpu;
 pub mod lifecycle;
 pub mod simulation;
@@ -48,6 +48,8 @@ pub struct Preferences {
     pub widget_glass: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub glass: Option<Glass>,
+    #[serde(skip_serializing_if = "FinishLibrary::is_empty")]
+    pub finishes: FinishLibrary,
     /// Match the weather: while the Weather widget's reading is current, it
     /// picks the effect. Off by default; `weather::resolve` has the rules.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -81,6 +83,7 @@ impl Default for Preferences {
             enabled: false,
             widget_glass: false,
             glass: None,
+            finishes: FinishLibrary::default(),
             weather: false,
             weather_strength: weather::Strength::Natural,
             mode: Mode::Procedural,
@@ -105,6 +108,7 @@ impl Preferences {
         *self == Self::default()
     }
     pub fn validate(&self) -> Result<(), String> {
+        self.finishes.validate()?;
         if let Some(glass) = self.glass {
             glass.validate()?;
         }
@@ -137,10 +141,32 @@ impl Preferences {
         }
         Ok(())
     }
+    pub fn edit_finish(&self, id: Option<u32>) -> Self {
+        let mut p = self.clone();
+        if let Some(f) = id.and_then(|id| self.finishes.entries.get(&id)) {
+            p.glass = f.glass;
+            p.refraction = f.refraction;
+        }
+        p
+    }
+    pub fn store_finish(&self, mut draft: Self, id: Option<u32>) -> Self {
+        if let Some(f) = id.and_then(|id| draft.finishes.entries.get_mut(&id)) {
+            f.glass = draft.glass;
+            f.refraction = draft.refraction;
+            draft.glass = self.glass;
+            draft.refraction = self.refraction;
+        }
+        draft
+    }
     pub fn reflects_pointer(&self) -> bool {
         self.enabled
             && self.effect == Effect::Lens
-            && self.glass.is_none_or(|g| g.mode == GlassMode::Polished)
+            && (self.glass.is_none_or(|g| g.mode == GlassMode::Polished)
+                || self.finishes.links.keys().any(|w| {
+                    self.finishes
+                        .linked(*w)
+                        .is_some_and(|f| f.glass.is_none_or(|g| g.mode == GlassMode::Polished))
+                }))
     }
     pub fn active_glass(&self) -> Option<Glass> {
         self.glass

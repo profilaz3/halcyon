@@ -102,6 +102,7 @@ pub struct Config {
     pub devices: DevicesPreferences,
     pub messages: MessagesPreferences,
     pub markets: crate::markets::Preferences,
+    pub folder: crate::folder::Preferences,
     /// The edge sidebar slides in and out; off, it appears and hides at
     /// once (Pop!_OS › Motion).
     pub sidebar_slide: bool,
@@ -172,6 +173,7 @@ impl Default for Config {
             devices: DevicesPreferences::default(),
             messages: MessagesPreferences::default(),
             markets: crate::markets::Preferences::default(),
+            folder: Default::default(),
             sidebar_slide: true,
             edge_menu: edge_menu::EdgeMenu::default(),
             settings_animations: true,
@@ -356,7 +358,7 @@ impl Config {
     }
     pub fn palette(&self) -> Palette {
         let glass_palette = |mut p: Palette| {
-            if let Some(glass) = self.rain.active_glass()
+            if let Some(glass) = crate::widget_style::selected_glass(self)
                 && p.background.a > 0.
                 && !self.appearance.contrast_assist
             {
@@ -422,6 +424,7 @@ impl Config {
             Widget::Devices => return self.devices.enabled,
             Widget::Messages => return self.messages.enabled,
             Widget::Markets => return self.markets.enabled,
+            Widget::Folder => return self.folder.enabled,
             _ => {}
         }
         self.enabled_widgets.iter().any(|key| key == widget.key())
@@ -1856,6 +1859,7 @@ impl RefreshIntervals {
             | Widget::Notes
             | Widget::Focus
             | Widget::Devices
+            | Widget::Folder
             | Widget::Markets
             | Widget::Messages => self.clock,
         }
@@ -1873,6 +1877,7 @@ impl RefreshIntervals {
             | Widget::Notes
             | Widget::Focus
             | Widget::Devices
+            | Widget::Folder
             | Widget::Markets
             | Widget::Messages => (1, 60),
             Widget::Weather => (300, 10800),
@@ -1892,6 +1897,7 @@ impl RefreshIntervals {
             | Widget::Notes
             | Widget::Focus
             | Widget::Devices
+            | Widget::Folder
             | Widget::Markets
             | Widget::Messages => &[1, 15, 30, 60],
         }

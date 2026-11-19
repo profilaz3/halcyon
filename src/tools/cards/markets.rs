@@ -92,7 +92,7 @@ impl<M> canvas::Program<M, cosmic::Theme> for Chart<'_> {
 
 pub fn markets<'a, M: Clone + 'static>(
     state: &'a State,
-    config: &'a Config,
+    config: &Config,
     action: Option<fn(Action) -> M>,
     size: Option<[f32; 2]>,
 ) -> Element<'a, M> {

@@ -34,6 +34,7 @@ Usage:
   halcyon --version          Show the version
 
 TARGET is one of:
+    peek      Peek at your selected widgets over the current app
     drawer    The edge menu (use Tab, Enter, Alt+Up or Alt+Down, and Esc)
 {widgets}
 
@@ -46,11 +47,13 @@ More commands, such as start, stop and focus: halcyon-ctl --help",
 #[derive(Debug, PartialEq)]
 pub enum Toggle {
     Drawer,
+    Peek,
     Widget(Widget),
 }
 impl Toggle {
     pub fn parse(target: &str) -> Option<Self> {
         match target {
+            "peek" => Some(Self::Peek),
             "drawer" | "menu" => Some(Self::Drawer),
             "system-monitor" => Some(Self::Widget(Widget::Devbox)),
             "daily-overview" => Some(Self::Widget(Widget::Glance)),
@@ -59,6 +62,7 @@ impl Toggle {
     }
     fn payload(&self) -> serde_json::Value {
         match self {
+            Self::Peek => serde_json::json!({"action": "peek"}),
             Self::Drawer => serde_json::json!({"action": "drawer"}),
             Self::Widget(widget) => serde_json::json!({"action": "toggle", "widget": widget.key()}),
         }

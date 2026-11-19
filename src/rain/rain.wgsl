@@ -15,6 +15,7 @@
 // - full-resolution composition: the beads the condensation allows under
 //   this frame's drops, sharp wallpaper refracted through each drop, fogged
 //   glass between them, rim shading and highlights.
+struct Pane { rect: vec4<f32>, optics: vec4<f32>, tint: vec4<f32>, shape: vec4<f32> };
 struct Params {
     frame: vec4<f32>, // aspect, time, intensity, size
     motion: vec4<f32>, // speed, wind, mist, refraction
@@ -24,7 +25,7 @@ struct Params {
     tint: vec4<f32>, // rgb; w: one output pixel in UV height
     behind: vec4<f32>, // where the picture behind the glass lies, in UV; none when empty
     pane: vec4<f32>, // masked, rounded radius in output heights
-    rects: array<vec4<f32>, 12>, // normalized origin and extent
+    surfaces: array<Pane, 16>, // normalized origin and extent
 };
 @group(0) @binding(0) var<uniform> p: Params;
 @group(1) @binding(0) var background: texture_2d<f32>;
@@ -46,18 +47,19 @@ struct Composition {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) rect: vec4<f32>,
+    @location(2) @interpolate(flat) index: u32,
 }
 @vertex fn composite_vertex(@builtin(vertex_index) index:u32, @builtin(instance_index) pane:u32) -> Composition {
     if p.pane.x == 0. {
         let v = triangle(index);
-        return Composition(v.position, p.crop.xy + v.uv * p.crop.zw, vec4(0.));
+        return Composition(v.position, p.crop.xy + v.uv * p.crop.zw, vec4(0.), 0u);
     }
     let corners = array<vec2<f32>, 6>(
         vec2(0.,0.),vec2(1.,0.),vec2(0.,1.),vec2(0.,1.),vec2(1.,0.),vec2(1.,1.));
-    let rect = p.rects[pane];
+    let rect = p.surfaces[pane].rect;
     let uv = rect.xy + corners[index] * rect.zw;
     let ndc = (uv - p.crop.xy) / p.crop.zw * vec2(2.,-2.) + vec2(-1.,1.);
-    return Composition(vec4(ndc,0.,1.), uv, rect);
+    return Composition(vec4(ndc,0.,1.), uv, rect, pane);
 }
 // Hash without Sine, David Hoskins (MIT): https://www.shadertoy.com/view/4djSRW
 fn hash(n:vec2<f32>) -> f32 {
@@ -580,9 +582,15 @@ fn hourly_blend() -> f32 { return smoothstep(PERIOD-BLEND,PERIOD,p.frame.y); }
 @fragment fn composite(v:Composition)->@location(0) vec4<f32> {
     var pane_bend = vec2(0.);
     if p.pane.x > 0. {
+        let saved = p.surfaces[v.index];
+        let linked = saved.shape.x > 0. && p.style.x == 5.;
+        let optics = select(p.atmosphere, saved.optics, linked);
+        let tint = select(p.tint.rgb, saved.tint.rgb, linked);
+        let bend = select(p.motion.w, saved.shape.z, linked);
+        let pane_radius = select(p.pane.y, saved.shape.y, linked);
         let aspect = vec2(p.frame.x, 1.);
         let half_size = v.rect.zw * aspect * 0.5;
-        let radius = min(p.pane.y, min(half_size.x, half_size.y));
+        let radius = min(pane_radius, min(half_size.x, half_size.y));
         let d = abs((v.uv - v.rect.xy) * aspect - half_size) - half_size + radius;
         let distance = length(max(d, vec2(0.))) + min(max(d.x,d.y),0.) - radius;
         if distance > 0. { discard; }
@@ -593,17 +601,18 @@ fn hourly_blend() -> f32 { return smoothstep(PERIOD-BLEND,PERIOD,p.frame.y); }
         let normal = sign(q) * select(axis, outer / max(length(outer), 1e-6), length(outer) > 1e-6);
         let bevel = min(0.18 * min(half_size.x,half_size.y), 14. * p.tint.w);
         let shoulder = smoothstep(-bevel, 0., distance);
-        pane_bend = -normal / aspect * bevel * shoulder * p.motion.w;
+        pane_bend = -normal / aspect * bevel * shoulder * bend;
         if p.style.x > 4.5 {
-            if p.atmosphere.x > 0. {
+            if optics.x > 0. {
                 let px = p.tint.w;
                 let depth = -distance / px;
                 let clean = scene_at(v.uv, 0.);
                 var uv = v.uv;
                 var reflection = 0.;
-                if p.atmosphere.x == 2. {
+                var rim = vec3(0.);
+                if optics.x == 2. {
                     let lip = 1. - smoothstep(0., 12., depth);
-                    uv = clamp(uv - normal / aspect * px * lip * 21. * p.motion.w, vec2(0.), vec2(1.));
+                    uv = clamp(uv - normal / aspect * px * lip * 21. * bend, vec2(0.), vec2(1.));
                     let key = max(dot(normal, normalize(vec2(-0.7, -0.5))), 0.);
                     reflection = exp(-pow((depth - 1.15) / 0.8, 2.)) * key * key;
                     if all(p.pane.zw >= v.rect.xy) && all(p.pane.zw <= v.rect.xy + v.rect.zw) {
@@ -611,9 +620,29 @@ fn hourly_blend() -> f32 { return smoothstep(PERIOD-BLEND,PERIOD,p.frame.y); }
                         reflection += lip * 0.22 * exp(-dot(delta, delta) * 3.);
                     }
                 }
+                if optics.x == 4. {
+                    // The flat face transmits the picture. A narrow curved edge gathers
+                    // light from the scenery just outside the pane, in its own color.
+                    let shoulder = 1. - smoothstep(0., 8., depth);
+                    let direction = normal / aspect * px;
+                    uv -= direction * (14. * bend * shoulder * shoulder);
+                    if depth < 8. {
+                        let outside = scene_at(clamp(v.uv + direction * (3. + 9. * bend), vec2(0.), vec2(1.)), 1.);
+                        let luma = dot(outside, vec3(0.213, 0.715, 0.072));
+                        let facing = dot(normal, vec2(-0.6, -0.8));
+                        let key = max(facing, 0.);
+                        let local = (v.uv - v.rect.xy) / v.rect.zw;
+                        let window_light = 1. - smoothstep(0.10, 0.78, length(local - vec2(0.16, 0.12)));
+                        let bounce = max(dot(normal, vec2(0.35, 0.936)), 0.);
+                        let glint = exp(-pow((depth - 1.05) / 0.78, 2.));
+                        rim = glint * (outside * (0.32 + 0.82 * key + 0.38 * bounce * luma)
+                            + vec3(0.13 * key * key * window_light))
+                            - shoulder * (1. - key) * (0.035 + 0.075 * luma) * clean;
+                    }
+                }
                 // Sample cached mipmaps at a footprint proportional to the blur radius.
                 // Only the scenery is filtered; the widget draws its content separately.
-                let blur = p.atmosphere.z;
+                let blur = optics.z;
                 var color = scene_at(uv, 0.);
                 if blur > 0. {
                     let lod = max(0., log2(max(1., blur * px * f32(textureDimensions(background).y))));
@@ -622,9 +651,13 @@ fn hourly_blend() -> f32 { return smoothstep(PERIOD-BLEND,PERIOD,p.frame.y); }
                         + scene_at(uv + vec2(offset.x, -offset.y), lod) + scene_at(uv + vec2(-offset.x, offset.y), lod));
                 }
                 let luminance = dot(color, vec3(0.213, 0.715, 0.072));
-                color = mix(color, vec3(luminance * 0.6 + 0.25), p.atmosphere.y);
-                color = mix(color, p.tint.rgb, p.atmosphere.w);
-                if p.atmosphere.x == 1. { color *= 0.75; }
+                color = mix(color, vec3(luminance * 0.6 + 0.25), optics.y);
+                color = mix(color, tint, optics.w);
+                if optics.x == 1. { color *= 0.75; }
+                if optics.x == 4. {
+                    // Compress bright scenery behind pale type, retaining its hue and detail.
+                    color = color / (1. + 0.78 * luminance) + rim;
+                }
                 color += color * (1. - color) * reflection;
                 return vec4(mix(clean, color, smoothstep(0., 1., depth)), 1.);
             }
@@ -632,7 +665,7 @@ fn hourly_blend() -> f32 { return smoothstep(PERIOD-BLEND,PERIOD,p.frame.y); }
             // pick up the color of the actual picture around the widget.
             let thickness = min(min(half_size.x, half_size.y) * 0.34, 35. * p.tint.w);
             let curve = smoothstep(-thickness, 0., distance);
-            let offset = -normal / aspect * thickness * curve * (0.20 + 1.35 * p.motion.w);
+            let offset = -normal / aspect * thickness * curve * (0.20 + 1.35 * bend);
             let bent = scene_at(clamp(v.uv + offset, vec2(0.), vec2(1.)), 0.);
             let surround = scene_at(clamp(v.uv - offset * 0.6, vec2(0.), vec2(1.)), 1.);
             // At grazing angles the polished lip reflects more of its surroundings.

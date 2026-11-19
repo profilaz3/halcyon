@@ -324,6 +324,26 @@ impl Settings {
         // shape or the way back to the bar.
         items.push(self.islands_section(draft));
         items.push(self.bar_style(draft));
+        if editor.selected == PanelKind::Dock
+            && let Setting::Known(regions) = draft.applets()
+        {
+            use crate::desktop::panels::{MAGNIFYING_APP_LIST, STOCK_APP_LIST};
+            let on = regions.contains(MAGNIFYING_APP_LIST);
+            if (on || regions.contains(STOCK_APP_LIST))
+                && (on || editor.catalog.get(MAGNIFYING_APP_LIST).is_some())
+            {
+                items.push(group(
+                    None,
+                    vec![group_row(
+                        "Dock magnification",
+                        "Icons grow toward the pointer and settle as it moves away.",
+                        toggler(on)
+                            .on_toggle(|v| edit(Edit::MagnifyingDock(v)))
+                            .into(),
+                    )],
+                ));
+            }
+        }
         items.push(self.bar_position(draft));
         // Both bars edit their items with the same editor.
         items.push(self.bar_items(draft));

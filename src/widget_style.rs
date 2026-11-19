@@ -78,6 +78,45 @@ impl Drop for Scope {
         GLASS.set(self.5);
     }
 }
+#[derive(Clone, Copy)]
+enum CardFinish {
+    Widget(crate::drawer::Widget),
+    Preview(Option<crate::rain::Glass>),
+}
+thread_local! {
+    static CARD: std::cell::Cell<Option<CardFinish>> = const { std::cell::Cell::new(None) };
+}
+pub struct CardScope(Option<CardFinish>);
+impl Drop for CardScope {
+    fn drop(&mut self) {
+        CARD.set(self.0);
+    }
+}
+pub fn for_card(widget: crate::drawer::Widget) -> CardScope {
+    let current = CARD.get();
+    if !matches!(current, Some(CardFinish::Preview(_))) {
+        CARD.set(Some(CardFinish::Widget(widget)));
+    }
+    CardScope(current)
+}
+/// Apply unsaved optics even when the sample card reads its own desktop configuration.
+pub fn for_glass_preview(glass: Option<crate::rain::Glass>) -> CardScope {
+    CardScope(CARD.replace(Some(CardFinish::Preview(glass))))
+}
+pub fn selected_glass(config: &crate::config::Config) -> Option<crate::rain::Glass> {
+    let widget = match CARD.get() {
+        Some(CardFinish::Preview(glass)) => return glass,
+        Some(CardFinish::Widget(widget)) => Some(widget),
+        None => None,
+    };
+    let p = &config.rain;
+    if !p.enabled || p.effect != crate::rain::Effect::Lens {
+        return None;
+    }
+    widget
+        .and_then(|w| p.finishes.linked(w))
+        .map_or(p.glass, |f| f.glass)
+}
 pub fn scope(config: &crate::config::Config) -> Scope {
     let clock = config.moment_clock();
     let families = Families {
@@ -92,7 +131,7 @@ pub fn scope(config: &crate::config::Config) -> Scope {
         MATERIAL.replace(config.materials.widgets()),
         MOTION.replace(config.material_motion),
         ASSIST.replace(config.appearance.contrast_assist),
-        GLASS.replace(config.rain.active_glass()),
+        GLASS.replace(selected_glass(config)),
     )
 }
 /// One widget's own families over the widget fonts; None keeps the current.
@@ -194,7 +233,7 @@ pub fn rounded_rects(
 }
 /// Room every widget surface keeps around its card for the style's shadow.
 pub fn shadow_margin(config: &crate::config::Config) -> f32 {
-    if (config.rain.active_glass().is_some() && !config.appearance.contrast_assist)
+    if (selected_glass(config).is_some() && !config.appearance.contrast_assist)
         || config.theme_roles().is_some_and(|r| r.dark_glass.is_some())
     {
         return 0.;

@@ -6,6 +6,14 @@ use super::rules::ProfileRef;
 use crate::desktop::profiles::{self, Domain, Installed, Profile, ProfileId, ProfileLibrary};
 use crate::desktop::{DesktopError, DesktopStore};
 use std::collections::BTreeSet;
+use crate::desktop::store::Source;
+
+#[derive(Clone, Copy)]
+pub enum Invocation {
+    Scheduled,
+    EdgeMenu,
+    Workspace,
+}
 
 /// What became of one switch.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -107,14 +115,14 @@ pub fn run(
 ) -> Ran {
     run_for_cause(store, installed, target, name, held, false, None, None)
 }
-/// Applies a Look chosen in the edge menu: the same engine and checks as an
-/// automatic switch, recorded in Undo under its own name.
+/// Applies an explicitly chosen Look with its entry point recorded in Undo.
 pub fn run_chosen(
     store: &DesktopStore,
     installed: &Installed,
     target: &ProfileRef,
     name: &str,
     held: &BTreeSet<Domain>,
+    invocation: Invocation,
 ) -> Ran {
     run_labelled(
         store,
@@ -125,7 +133,7 @@ pub fn run_chosen(
         false,
         None,
         None,
-        chosen_label,
+        invocation,
     )
 }
 /// `timed`: a switch at a set time, with what its rule also switches.
@@ -141,7 +149,7 @@ pub(super) fn run_for_cause(
     timed: Option<super::Also>,
 ) -> Ran {
     run_labelled(
-        store, installed, target, name, held, display, solar, timed, label,
+        store, installed, target, name, held, display, solar, timed, Invocation::Scheduled,
     )
 }
 #[allow(clippy::too_many_arguments)]
@@ -154,7 +162,7 @@ fn run_labelled(
     display: bool,
     solar: Option<(&super::solar::Context, super::solar::Source)>,
     timed: Option<super::Also>,
-    label: fn(&str) -> String,
+    invocation: Invocation,
 ) -> Ran {
     if !store.writable() {
         return Ran::Failed("Automatic switching is off in preview mode.".into());
@@ -183,7 +191,14 @@ fn run_labelled(
             Ok(profile) => profile,
             Err(reason) => return Ran::Failed(reason),
         };
-        let label = label(&profile.name);
+        let (label, source) = match invocation {
+            Invocation::Scheduled => (label(&profile.name), Source::Scheduled),
+            Invocation::EdgeMenu => (chosen_label(&profile.name), Source::Manual),
+            Invocation::Workspace => (
+                format!("Workspace “{}”", profile.name).chars().take(120).collect(),
+                Source::Manual,
+            ),
+        };
         let selected: BTreeSet<Domain> = profile.domains().into_iter().collect();
         let mut plan = profiles::plan(store, installed, &profile, &selected);
         if let Some((context, source)) = solar {
@@ -213,7 +228,7 @@ fn run_labelled(
         if !waits.is_empty() {
             return Ran::Waiting(waits);
         }
-        match profiles::apply_as(store, &plan, &label) {
+        match profiles::apply_as(store, &plan, &label, source) {
             Ok(latest) => {
                 return Ran::Applied {
                     change: latest.id,
