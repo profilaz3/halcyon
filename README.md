@@ -4,6 +4,8 @@
 
 <p align="center">
   <a href="https://github.com/profilaz3/halcyon/releases/latest"><strong>Download</strong></a> ·
+  <a href="#2-widget-design-and-placement">Widgets</a> ·
+  <a href="#7-clock-depth-and-rain-on-glass">Glass and depth</a> ·
   <a href="#install">Install</a> ·
   <a href="https://github.com/profilaz3/halcyon/releases">Release notes</a> ·
   <a href="https://github.com/profilaz3/halcyon/issues">Feedback</a>
@@ -11,25 +13,21 @@
 
 <!-- Stable product overview. See .github/README-MAINTENANCE.md. -->
 
-A native COSMIC application built with **Rust and libcosmic**. Settings and wallpaper effects use GPU rendering.
-
-*The widget gallery and glass examples are native Halcyon captures. The hero and the other illustrated feature panels are concept artwork. [Native gallery and capture details](docs/screenshots/078/README.md) · [Illustration sources](docs/presentation/070-readme/README.md)*
+Music picks up the color of its album cover. Glass widgets catch the wallpaper along their edges. The dock grows under the pointer. Halcyon brings these effects, desktop widgets and saved Looks to COSMIC with **Rust and libcosmic**. [Native screenshots](docs/screenshots/078/README.md)
 
 ## 1. Desktop appearance
 
-Wallpapers, light and dark themes, accent colors, fonts, icons and surface finishes. Mica Slate, Tape Deck, Porcelain and Blueprint coordinate widgets, dock and panel. Existing and personal styles stay available in Appearance.
+Carry one finish across widgets, dock and panel. **Mica Slate** pairs blue-gray glass with shallow corners, **Tape Deck** uses smoked charcoal and amber accents, and **Porcelain** sets cobalt against light ceramic. Save your own colors, fonts and surface choices alongside the built-in styles.
 
 [![Three illustrated desktop appearances: Rainy Lake, Paper and Deep Purple](docs/presentation/070-readme/desktop-configurations.png)](docs/presentation/070-readme/desktop-configurations.png)
 
 ## 2. Widget design and placement
 
-Place, resize and arrange widgets on each display. Weather offers **Classic** and **Outlook** layouts. **Folder** shows recent files as rows or thumbnail tiles. **Widget Peek** brings selected widgets over an open window from an edge menu button or keyboard shortcut. Clock, Calendar, System monitor, Music, Focus, Notes, Projects and Daily overview are also available.
+An album-lit Music player, a Weather forecast and a Focus timer can share a display. Resize a widget and its contents reflow. **Widget Peek** brings your chosen widgets over the current window with a button or shortcut.
 
-Markets follows up to five stocks and currency pairs using public quotes and ECB rates. It starts with prices and daily changes. Add a chart or publication date in Settings. [Markets setup](docs/MARKETS.md)
+[![Illustration of an album-lit Music player beside Weather and Focus, over Halcyon's violet feather](docs/presentation/078-readme/widgets.webp)](docs/presentation/078-readme/widgets.webp)
 
-[![Native Halcyon widgets showing a weather forecast, recent files, album-lit Music and a Markets watchlist](docs/screenshots/078/widgets.png)](docs/screenshots/078/widgets.png)
-
-*Weather, Folder and Music use example content. Markets shows ECB reference rates published November 19, 2026.* [Widget builder](docs/screenshots/055/widget-builder.png) · [Widget Peek over an editor](docs/screenshots/desktop-customization/widget-peek.png)
+Choose **Classic** or **Outlook** for Weather. **Folder** opens recent files, and **Markets** follows up to five stocks or currency pairs with optional charts. [Native widget gallery](docs/screenshots/078/README.md#desktop-widgets) · [Widget Peek in use](docs/screenshots/desktop-customization/widget-peek.png) · [Markets setup](docs/MARKETS.md)
 
 ## 3. Dock and panel customization
 
@@ -65,11 +63,11 @@ Save, combine, import and export wallpapers, styles and layouts. Rules can switc
 
 ## 7. Clock depth and rain on glass
 
-Open **Weather effects → Widget glass** to adjust frost, tint, refraction and corners. A named finish can be shared by several widgets. Tint follows the theme until you choose a color. Choose **Liquid lens** for a curved, refracting edge or **Rain** for moving droplets.
+**Crystal** reveals the wallpaper through the widget. **Frosted** softens it, **Liquid lens** bends it along the edges, and **Rain** adds moving droplets.
 
-[![The same native Messages widget with Crystal and Frosted glass over a lake wallpaper](docs/screenshots/078/glass-finishes.png)](docs/screenshots/078/glass-finishes.png)
+[![Illustration of the Messages widget in Crystal glass with a luminous violet feather visible through it](docs/presentation/078-readme/crystal-glass.webp)](docs/presentation/078-readme/crystal-glass.webp)
 
-*Crystal on the left, Frosted on the right. Both were rendered over the same wallpaper.*
+Open **Weather effects → Widget glass** to adjust frost, refraction, tint and corners. Share a named finish across widgets or give one its own copy. [Compare native Crystal and Frosted glass](docs/screenshots/078/README.md#glass-finishes)
 
 The clock can sit behind the mountains in the wallpaper, between the sky and the ridge. It stays behind the ridge when effects are on, with rain on glass in front of the clock and landscape.
 
@@ -80,6 +78,8 @@ The clock can sit behind the mountains in the wallpaper, between the sky and the
 Looks coordinate wallpaper, colors, widgets, bars and effects in one pick. **Rainy Lake** combines the fog wallpaper, rain, a clock behind the mountains and autohiding bars. **Deep Purple** pairs the night wallpaper with At a glance and Music. **Look Studio** adjusts icon shape and tint. To attach apps, select a saved Look and open **Choose apps…**. **Start workspace** applies the Look and launches the apps in your chosen order. [Workspace app picker](docs/screenshots/desktop-customization/workspace-apps.png)
 
 [![Illustration of Rainy Lake and Deep Purple desktop looks, with Look Studio icon shape and tint examples](docs/presentation/070-readme/looks.png)](docs/presentation/070-readme/looks.png)
+
+*The hero and feature panels are illustrations.* [Artwork and references](docs/presentation/078-readme/README.md) · [Native screenshots](docs/screenshots/078/README.md)
 
 ## Install
 
