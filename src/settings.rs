@@ -2822,6 +2822,9 @@ impl Settings {
                     self.app_settings_page = hit.app_destination();
                     navigation::remember_app_destination(self.app_settings_page);
                 }
+                if hit.page == Page::WeatherEffects {
+                    self.rain.glass_editor = hit.open == navigation::SearchOpen::WidgetGlass;
+                }
                 if hit.open == navigation::SearchOpen::City {
                     self.city_editing = true;
                 }
@@ -3865,6 +3868,7 @@ impl Settings {
                 return Task::batch(tasks);
             }
             Message::Page(page) => {
+                self.rain.glass_editor = false;
                 let reveal_widgets = page == Page::Widgets;
                 // The old Day and night style page opens Time of day ready
                 // for widget styles.
@@ -4480,6 +4484,10 @@ impl Settings {
                 }
             }
             Message::Rain(edit) => match edit {
+                rain::Edit::GlassTab(tab) => {
+                    self.rain.glass_tab = tab;
+                    self.color_well = None;
+                }
                 rain::Edit::Lifecycle(state) => self.rain.lifecycle = state,
                 rain::Edit::Draft(p) if self.page.edits_wallpaper() => {
                     self.wallpaper.begin_gesture();
@@ -5765,6 +5773,16 @@ impl Settings {
         };
         let text = color_well::text(target, rgb);
         let messages = match target {
+            Target::GlassTint => {
+                let mut p = self.wallpaper.effect().unwrap_or(&self.config.rain).clone();
+                if let Some(g) = &mut p.glass {
+                    g.color = rgb.map(|c| (c * 255.).round() as u8);
+                    if g.tint == 0 {
+                        g.tint = 20;
+                    }
+                }
+                vec![Message::Rain(rain::Edit::Set(p))]
+            }
             Target::Accent => vec![
                 Message::Wallpaper(wallpaper::Message::AccentText(text)),
                 Message::Wallpaper(wallpaper::Message::AccentSubmit),
@@ -7931,6 +7949,7 @@ mod tests {
         if matches!(
             name,
             "rain_native_settings_preview_commit_undo_and_clipping"
+                | "widget_glass_editor_previews_saves_and_undoes_a_finish"
                 | "appearance_navigation_preserves_valid_widget_state"
                 | "weather_scenes_native_toggle_apply_undo_and_status"
                 | "weather_strength_and_adjust_native_controls"
@@ -11404,6 +11423,75 @@ mod tests {
             "explicit native accent survives a theme"
         );
         assert_eq!(raw_preferences()["future_field"], 42);
+    }
+
+    #[test]
+    fn widget_glass_editor_previews_saves_and_undoes_a_finish() {
+        if desktop_test_child(
+            "widget_glass_editor_previews_saves_and_undoes_a_finish",
+            DesktopEnv {
+                app_config: true,
+                fixture: true,
+                ..Default::default()
+            },
+        ) {
+            return;
+        }
+        use crate::rain::GlassMode;
+        let (mut app, initial) = Settings::init(Core::default(), Page::Appearance);
+        settle_settings(&mut app, initial);
+        let before = Config::load().rain;
+        send_settings(&mut app, Message::SearchResult(navigation::WIDGET_GLASS));
+        drive_wallpaper(&mut app);
+        assert!(app.rain.glass_editor);
+        assert_eq!(Config::load().rain, before);
+        let size = Size::new(980., 810.);
+        send_settings(&mut app, Message::Resized(size));
+        let mut native = crate::native_test::Native::with_backend(size, "wgpu");
+        native_click(&mut app, &mut native, "widget-glass-frosted");
+        drive_wallpaper(&mut app);
+        let saved = Config::load().rain;
+        let glass = saved.active_glass().expect("picked Frosted");
+        assert_eq!(glass.mode, GlassMode::Frosted);
+        assert!(glass.blur > 0);
+        native.scroll(app.settings_view(), "settings-content", -10000.);
+        native.capture(
+            app.settings_view(),
+            &controls_theme(&app.config),
+            "widget-glass-editor",
+        );
+        native_click(&mut app, &mut native, "widget-glass-tab-tint");
+        native_click(&mut app, &mut native, "glass-tint-color");
+        send_settings(
+            &mut app,
+            Message::ColorWell(color_well::Message::Pick([0.8, 0.2, 0.6])),
+        );
+        drive_wallpaper(&mut app);
+        let dyed = Config::load().rain.active_glass().unwrap();
+        assert_eq!(dyed.color, [204, 51, 153]);
+        assert!(dyed.tint > 0);
+        native.capture(
+            app.settings_view(),
+            &controls_theme(&app.config),
+            "widget-glass-tint",
+        );
+        send_settings(&mut app, Message::UndoDesktop);
+        assert_eq!(Config::load().rain, saved);
+        native_click(&mut app, &mut native, "widget-glass-tab-shape");
+        let mut custom = saved.clone();
+        let g = custom.glass.as_mut().unwrap();
+        g.radius = Some(0);
+        g.blur = 29;
+        send_settings(&mut app, Message::Rain(rain::Edit::Draft(custom.clone())));
+        assert_eq!(Config::load().rain, saved);
+        send_settings(&mut app, Message::Rain(rain::Edit::Commit));
+        drive_wallpaper(&mut app);
+        assert_eq!(Config::load().rain, custom);
+        assert_eq!(crate::widget_style::corner_radius(&Config::load()), 0.);
+        send_settings(&mut app, Message::UndoDesktop);
+        assert_eq!(Config::load().rain, saved);
+        send_settings(&mut app, Message::UndoDesktop);
+        assert_eq!(Config::load().rain, before);
     }
 
     #[test]

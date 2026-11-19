@@ -1328,7 +1328,7 @@ pub(super) fn overview_clock(
         .height(height);
     let body: Element<'static, Message> = if panel {
         let background = palette.background;
-        let radius = f32::from(config.appearance.corner_radius);
+        let radius = crate::widget_style::corner_radius(config);
         body.class(cosmic::theme::Container::custom(move |_| {
             cosmic::iced::widget::container::Style {
                 background: Some(background.into()),

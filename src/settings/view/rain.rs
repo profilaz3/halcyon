@@ -238,6 +238,18 @@ impl Settings {
         // Match the weather on: the weather's effect, or the one picked
         // under Adjust, always has controls.
         if p.enabled || p.weather || self.rain.preview {
+            if effect == Effect::Lens {
+                rows.push(group_row_state(
+                    "Widget glass",
+                    p.glass
+                        .map_or("Classic".to_string(), |g| g.mode.title().to_string()),
+                    button::text("Edit glass")
+                        .on_press(Message::SearchResult(
+                            crate::settings::navigation::WIDGET_GLASS,
+                        ))
+                        .into(),
+                ));
+            }
             if effect == Effect::Rain {
                 let style_help=self.help("rain-style-help","Droplet motion","Flowing uses a procedural GPU shader. Merging simulates large drops that join and leave small trails. Both use your wallpaper and stay behind widgets, windows and the dock.");
                 let style_choices = segmented(
@@ -487,7 +499,11 @@ impl Settings {
         if p.confined_to_widgets() {
             scene.set_panes(crate::rain::gpu::Panes {
                 rects: vec![[0.18, 0.22, 0.64, 0.56]],
-                radius: 0.06,
+                radius: p
+                    .glass
+                    .and_then(|g| g.radius)
+                    .filter(|_| p.effect == Effect::Lens)
+                    .map_or(0.06, |r| f32::from(r) / height),
                 ..Default::default()
             });
         }

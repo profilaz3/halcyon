@@ -1,4 +1,4 @@
-//! The profile record (`desktop-cards-profile`, up to version 24).
+//! The profile record (`desktop-cards-profile`, up to version 25).
 //!
 //! Version 2 adds the `windows` and `workspaces` sections and per-variant
 //! window `gaps` under Appearance; version 3 adds `wallpaper` and
@@ -55,8 +55,9 @@ pub const FORMAT: &str = "desktop-cards-profile";
 /// A one-line description requires version 21.
 /// The app icon shape and folder tint require version 22.
 /// Weather layout and Outlook presentation choices require version 23.
-/// Rain confined to widget glass requires version 24.
-pub const VERSION: u32 = 24;
+/// Rain confined to widget glass requires version 24. Editable glass finishes use version 25.
+pub const VERSION: u32 = 25;
+pub const VERSION_24: u32 = 24;
 pub const VERSION_23: u32 = 23;
 pub const VERSION_22: u32 = 22;
 pub const VERSION_21: u32 = 21;
@@ -1051,6 +1052,12 @@ impl Profile {
             .find(|(pointer, _)| widget::tool_of(pointer).is_some())
             .map(|(pointer, _)| widget::field(pointer).map_or(pointer, |field| field.label))
     }
+    fn has_glass_finish(&self) -> bool {
+        self.widget_style
+            .as_ref()
+            .and_then(|v| v.pointer("/rain/glass"))
+            .is_some_and(Value::is_object)
+    }
     fn has_widget_glass(&self) -> bool {
         self.widget_style.as_ref().is_some_and(|v| {
             v.pointer("/rain/widget_glass").is_some()
@@ -1069,8 +1076,11 @@ impl Profile {
     }
     /// The version this record is written as.
     pub fn written_version(&self) -> u32 {
-        if self.has_widget_glass() {
+        if self.has_glass_finish() {
             return VERSION;
+        }
+        if self.has_widget_glass() {
+            return VERSION_24;
         }
         if self.has_weather_layout() {
             return VERSION_23;
@@ -1352,7 +1362,12 @@ impl Profile {
                 ));
             }
         }
-        if self.has_widget_glass() && self.version < VERSION {
+        if self.has_glass_finish() && self.version < VERSION {
+            return Err(ProfileError::Invalid(
+                "Editable widget glass needs look format version 25".into(),
+            ));
+        }
+        if self.has_widget_glass() && self.version < VERSION_24 {
             return Err(ProfileError::Invalid(
                 "Rain on widget glass needs look format version 24".into(),
             ));

@@ -395,6 +395,7 @@ struct Resources {
     instances: wgpu::Buffer,
     fields: Fields,
     rain: bool,
+    custom_glass: bool,
     effect: Effect,
     last_field: Option<[f32; 24]>,
     dynamic_dirty: bool,
@@ -745,9 +746,10 @@ impl Resources {
         pixels: &Pixels,
         size: [u32; 2],
         effect: Effect,
+        custom_glass: bool,
     ) -> Self {
         let rain = effect == Effect::Rain;
-        let mip_count = if rain {
+        let mip_count = if rain || custom_glass {
             (pixels.width.max(pixels.height).ilog2() + 1).min(7)
         } else {
             1
@@ -836,6 +838,7 @@ impl Resources {
             params,
             instances,
             fields,
+            custom_glass,
             rain,
             effect,
             last_field: None,
@@ -1109,10 +1112,12 @@ impl shader::Primitive for Primitive {
         }
         let mut slot = self.scene.resources.lock().unwrap();
         let effect = self.preferences.effect;
-        if slot
-            .as_ref()
-            .is_none_or(|r| r.device != *device || r.rain != (effect == Effect::Rain))
-        {
+        let custom_glass = self.preferences.active_glass().is_some();
+        if slot.as_ref().is_none_or(|r| {
+            r.device != *device
+                || r.rain != (effect == Effect::Rain)
+                || r.custom_glass != custom_glass
+        }) {
             *slot = Some(Resources::new(
                 device,
                 queue,
@@ -1120,6 +1125,7 @@ impl shader::Primitive for Primitive {
                 &self.scene.pixels,
                 size,
                 effect,
+                custom_glass,
             ));
         }
         let r = slot.as_mut().unwrap();
@@ -1191,7 +1197,32 @@ impl shader::Primitive for Primitive {
                 ],
                 p.fog.color.rgb(),
             ),
-            Effect::Lens => (0, 0, 0, 0, 5., [0.; 4], [0.; 4]),
+            Effect::Lens => {
+                let (optics, tint) = p.glass.map_or(([0.; 4], [0.; 4]), |glass| {
+                    let mode = match glass.mode {
+                        super::GlassMode::Smoked => 1.,
+                        super::GlassMode::Polished => 2.,
+                        super::GlassMode::Frosted => 3.,
+                    };
+                    let [r, g, b] = glass.color;
+                    let color = cosmic::iced::Color::from_rgb8(r, g, b);
+                    let tint = if pipeline.background_format.is_srgb() {
+                        color.into_linear()
+                    } else {
+                        [color.r, color.g, color.b, 1.]
+                    };
+                    (
+                        [
+                            mode,
+                            f32::from(glass.frost) / 100.,
+                            f32::from(glass.blur) * scale,
+                            f32::from(glass.tint) / 100.,
+                        ],
+                        tint,
+                    )
+                });
+                (0, 0, 0, 0, 5., optics, tint)
+            }
             Effect::Clouds => (
                 p.clouds.coverage,
                 0,

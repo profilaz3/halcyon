@@ -51,6 +51,7 @@ mod tip;
 mod tools;
 mod updates;
 mod wallpaper;
+mod widget_glass;
 mod widget_page;
 mod widget_text;
 mod window_rules;
@@ -372,6 +373,17 @@ pub(super) fn segmented<'a>(
                 Some(Message::DesktopEditor(crate::settings::desktop::Message::PanelStyle(
                     crate::settings::desktop::PanelStyle::FullWidth,
                 ))) => cosmic::widget::Id::new("native-shape-full"),
+                Some(Message::Rain(crate::settings::rain::Edit::GlassTab(tab))) => {
+                    cosmic::widget::Id::new(format!("widget-glass-tab-{tab:?}").to_lowercase())
+                }
+                Some(Message::Rain(crate::settings::rain::Edit::Set(p)))
+                    if p.effect == crate::rain::Effect::Lens =>
+                {
+                    cosmic::widget::Id::new(format!(
+                        "widget-glass-{}",
+                        p.glass.map_or("Classic", |g| g.mode.title()).to_lowercase()
+                    ))
+                }
                 Some(Message::Rain(crate::settings::rain::Edit::Adjust(effect))) => {
                     cosmic::widget::Id::new(format!("rain-adjusting-{effect:?}").to_lowercase())
                 }

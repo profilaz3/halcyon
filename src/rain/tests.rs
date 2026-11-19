@@ -1368,11 +1368,11 @@ fn widget_glass_refracts_only_inside_rounded_panes() {
     config.appearance.opacity = 22;
     config.appearance.corner_radius = 24;
     let sample = crate::messages::sample();
-    let view = |wet: bool,
+    let material_view = |wet: bool,
                 refraction: u8,
                 card: bool,
                 time: f32,
-                effect: Effect|
+                effect: Effect, glass: Option<super::Glass>|
      -> cosmic::Element<'_, ()> {
         let mut stack = Stack::new().push(
             picture(wallpaper.clone())
@@ -1386,6 +1386,7 @@ fn widget_glass_refracts_only_inside_rounded_panes() {
                     preferences: Preferences {
                         enabled: true,
                         effect,
+                        glass,
                         widget_glass: true,
                         intensity: 80,
                         mist: 10,
@@ -1402,6 +1403,10 @@ fn widget_glass_refracts_only_inside_rounded_panes() {
             );
         }
         if card {
+            let mut config = config.clone();
+            config.rain.enabled = wet;
+            config.rain.effect = effect;
+            config.rain.glass = glass;
             let widget =
                 crate::tools::cards::messages::<()>(&sample, &config, None, Some([320., 240.]));
             stack = stack.push(
@@ -1411,6 +1416,9 @@ fn widget_glass_refracts_only_inside_rounded_panes() {
             );
         }
         stack.width(Length::Fill).height(Length::Fill).into()
+    };
+    let view = |wet, refraction, card, time, effect| {
+        material_view(wet, refraction, card, time, effect, None)
     };
     let dry = ui.render(view(false, 0, false, 3., Effect::Rain), &theme);
     let wet = ui.render(view(true, 95, false, 3., Effect::Rain), &theme);
@@ -1473,6 +1481,41 @@ fn widget_glass_refracts_only_inside_rounded_panes() {
         &theme,
         "widget-liquid-lens",
     );
+    let custom = |glass, card| material_view(true, 85, card, 3., Effect::Lens, Some(glass));
+    let polished = super::Glass::default();
+    let clear = ui.render(custom(polished, false), &theme);
+    for variant in [
+        super::Glass {
+            blur: 16,
+            ..polished
+        },
+        super::Glass {
+            frost: 75,
+            ..polished
+        },
+        super::Glass {
+            tint: 80,
+            color: [255, 0, 0],
+            ..polished
+        },
+        polished.preset(super::GlassMode::Smoked),
+    ] {
+        let adjusted = ui.render(custom(variant, false), &theme);
+        let changed = adjusted
+            .chunks_exact(4)
+            .zip(clear.chunks_exact(4))
+            .filter(|(a, b)| a != b)
+            .count();
+        assert!(changed > 1000, "{variant:?}: only {changed} changed pixels");
+        assert_eq!(&adjusted[..4], &dry[..4]);
+    }
+    for mode in super::GlassMode::ALL {
+        ui.capture(
+            custom(polished.preset(mode), true),
+            &theme,
+            &format!("widget-glass-{}", mode.title().to_lowercase()),
+        );
+    }
     scene.set_panes(panes);
     if std::env::var_os("HALCYON_WIDGET_GLASS_FRAMES").is_some() {
         for i in 0..48 {

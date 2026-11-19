@@ -47,6 +47,7 @@ impl Area {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum SearchOpen {
+    WidgetGlass,
     #[default]
     None,
     City,
@@ -479,6 +480,13 @@ pub(super) const GET_MORE_ICONS: SearchHit = hit(
     false,
 )
 .at("appearance-icons");
+pub(super) const WIDGET_GLASS: SearchHit = hit(
+    Page::WeatherEffects,
+    "Widget glass",
+    "edit widget glass smoked polished frosted blur liquid lens tint color shape corner radius",
+    false,
+)
+.open(SearchOpen::WidgetGlass);
 pub(super) const WEATHER_EFFECTS: SearchHit = hit(
     Page::WeatherEffects,
     "Weather effects",
@@ -895,6 +903,7 @@ const SEARCH: &[SearchHit] = &[
     .bar(crate::desktop::panels::PanelKind::Panel)
     .section(BAR_ADVANCED),
     WEATHER_EFFECTS,
+    WIDGET_GLASS,
     hit(
         Page::Home,
         "Home",
@@ -2122,6 +2131,7 @@ mod tests {
                 assert_eq!(app.app_settings_page, renamed.app_destination());
             }
             match renamed.open {
+                SearchOpen::WidgetGlass => assert!(app.rain.glass_editor),
                 SearchOpen::City => assert!(app.city_editing),
                 SearchOpen::Effects => assert!(app.system_appearance.effects),
                 SearchOpen::Styles => assert!(app.open_sections.contains("appearance-all-styles")),

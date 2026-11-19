@@ -19,6 +19,7 @@ struct Families {
 }
 thread_local! {
     static ASSIST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static GLASS: std::cell::Cell<Option<crate::rain::Glass>> = const { std::cell::Cell::new(None) };
     static MOTION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static MATERIAL: std::cell::Cell<Option<crate::materials::Finish>> = const { std::cell::Cell::new(None) };
     static CONTEXT: std::cell::Cell<Option<crate::desktop_theme::Roles>> = const { std::cell::Cell::new(None) };
@@ -32,6 +33,7 @@ pub struct Scope(
     Option<crate::materials::Finish>,
     bool,
     bool,
+    Option<crate::rain::Glass>,
 );
 /// An immutable rendering context captured with a component's inputs. Restoring
 /// it while constructing the native tree cannot pick up another preview's style.
@@ -42,6 +44,7 @@ pub struct Context {
     material: Option<crate::materials::Finish>,
     motion: bool,
     assist: bool,
+    glass: Option<crate::rain::Glass>,
 }
 impl Context {
     pub fn capture() -> Self {
@@ -51,6 +54,7 @@ impl Context {
             material: MATERIAL.get(),
             motion: MOTION.get(),
             assist: ASSIST.get(),
+            glass: GLASS.get(),
         }
     }
     pub fn enter(self) -> Scope {
@@ -60,6 +64,7 @@ impl Context {
             MATERIAL.replace(self.material),
             MOTION.replace(self.motion),
             ASSIST.replace(self.assist),
+            GLASS.replace(self.glass),
         )
     }
 }
@@ -70,6 +75,7 @@ impl Drop for Scope {
         MATERIAL.set(self.2);
         MOTION.set(self.3);
         ASSIST.set(self.4);
+        GLASS.set(self.5);
     }
 }
 pub fn scope(config: &crate::config::Config) -> Scope {
@@ -86,6 +92,7 @@ pub fn scope(config: &crate::config::Config) -> Scope {
         MATERIAL.replace(config.materials.widgets()),
         MOTION.replace(config.material_motion),
         ASSIST.replace(config.appearance.contrast_assist),
+        GLASS.replace(config.rain.active_glass()),
     )
 }
 /// One widget's own families over the widget fonts; None keeps the current.
@@ -112,6 +119,9 @@ pub fn fonts(body: Option<&str>, clock: Option<&str>) -> Fonts {
 /// palette `p` (no shadow without a background).
 pub fn edge(p: Palette) -> (f32, cosmic::iced::Shadow) {
     use crate::desktop_theme::Shadow;
+    if GLASS.get().is_some() && !ASSIST.get() {
+        return (0., Default::default());
+    }
     // A filled shadow behind transparent glass makes it unexpectedly opaque.
     if CONTEXT.get().is_some_and(|r| r.dark_glass.is_some()) {
         return (1., cosmic::iced::Shadow::default());
@@ -184,7 +194,9 @@ pub fn rounded_rects(
 }
 /// Room every widget surface keeps around its card for the style's shadow.
 pub fn shadow_margin(config: &crate::config::Config) -> f32 {
-    if config.theme_roles().is_some_and(|r| r.dark_glass.is_some()) {
+    if (config.rain.active_glass().is_some() && !config.appearance.contrast_assist)
+        || config.theme_roles().is_some_and(|r| r.dark_glass.is_some())
+    {
         return 0.;
     }
     if config.materials.widgets().is_some() {
@@ -275,7 +287,10 @@ pub fn presentation(
         surface,
         body: font(),
         display: clock_font(),
-        radius: config.appearance.corner_radius,
+        radius: GLASS
+            .get()
+            .and_then(|g| g.radius)
+            .map_or(config.appearance.corner_radius, u16::from),
         padding: if clock { 4 } else { PADDING },
         gap: 8,
         motion: config.material_motion,
@@ -645,7 +660,14 @@ mod font_tests {
 
 /// Capture while the widget's lexical style scope is active.
 pub fn background(color: Color) -> cosmic::iced::Background {
-    crate::materials::background(color, if ASSIST.get() { None } else { MATERIAL.get() })
+    crate::materials::background(
+        color,
+        if ASSIST.get() || GLASS.get().is_some() {
+            None
+        } else {
+            MATERIAL.get()
+        },
+    )
 }
 pub fn border(color: Color) -> Color {
     MATERIAL.get().map_or(color, |f| {
@@ -695,6 +717,10 @@ fn glass_backing(p: Palette) -> f32 {
 }
 
 pub fn surface<'a, M: 'a>(content: cosmic::Element<'a, M>, p: Palette) -> cosmic::Element<'a, M> {
+    // Custom glass supplies the edge on the wallpaper layer; the native card owns its opacity.
+    if GLASS.get().is_some() {
+        return content;
+    }
     if !ASSIST.get()
         && p.background.a > 0.
         && let Some(glass_radius) = CONTEXT.get().and_then(|roles| roles.dark_glass)
@@ -718,6 +744,9 @@ pub fn surface<'a, M: 'a>(content: cosmic::Element<'a, M>, p: Palette) -> cosmic
 }
 
 pub fn radius(value: u16) -> f32 {
+    if let Some(radius) = GLASS.get().and_then(|g| g.radius) {
+        return f32::from(radius);
+    }
     let radius = f32::from(value.min(32));
     if MATERIAL
         .get()

@@ -595,6 +595,39 @@ fn hourly_blend() -> f32 { return smoothstep(PERIOD-BLEND,PERIOD,p.frame.y); }
         let shoulder = smoothstep(-bevel, 0., distance);
         pane_bend = -normal / aspect * bevel * shoulder * p.motion.w;
         if p.style.x > 4.5 {
+            if p.atmosphere.x > 0. {
+                let px = p.tint.w;
+                let depth = -distance / px;
+                let clean = scene_at(v.uv, 0.);
+                var uv = v.uv;
+                var reflection = 0.;
+                if p.atmosphere.x == 2. {
+                    let lip = 1. - smoothstep(0., 12., depth);
+                    uv = clamp(uv - normal / aspect * px * lip * 21. * p.motion.w, vec2(0.), vec2(1.));
+                    let key = max(dot(normal, normalize(vec2(-0.7, -0.5))), 0.);
+                    reflection = exp(-pow((depth - 1.15) / 0.8, 2.)) * key * key;
+                    if all(p.pane.zw >= v.rect.xy) && all(p.pane.zw <= v.rect.xy + v.rect.zw) {
+                        let delta = (p.pane.zw - v.uv) * aspect / max(0.001, min(half_size.x, half_size.y));
+                        reflection += lip * 0.22 * exp(-dot(delta, delta) * 3.);
+                    }
+                }
+                // Sample cached mipmaps at a footprint proportional to the blur radius.
+                // Only the scenery is filtered; the widget draws its content separately.
+                let blur = p.atmosphere.z;
+                var color = scene_at(uv, 0.);
+                if blur > 0. {
+                    let lod = max(0., log2(max(1., blur * px * f32(textureDimensions(background).y))));
+                    let offset = vec2(1. / aspect.x, 1.) * px * blur * 0.55;
+                    color = 0.25 * (scene_at(uv + offset, lod) + scene_at(uv - offset, lod)
+                        + scene_at(uv + vec2(offset.x, -offset.y), lod) + scene_at(uv + vec2(-offset.x, offset.y), lod));
+                }
+                let luminance = dot(color, vec3(0.213, 0.715, 0.072));
+                color = mix(color, vec3(luminance * 0.6 + 0.25), p.atmosphere.y);
+                color = mix(color, p.tint.rgb, p.atmosphere.w);
+                if p.atmosphere.x == 1. { color *= 0.75; }
+                color += color * (1. - color) * reflection;
+                return vec4(mix(clean, color, smoothstep(0., 1., depth)), 1.);
+            }
             // A clear core and a thicker curved shoulder. The two reflections
             // pick up the color of the actual picture around the widget.
             let thickness = min(min(half_size.x, half_size.y) * 0.34, 35. * p.tint.w);

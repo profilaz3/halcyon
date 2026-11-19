@@ -138,11 +138,11 @@ impl Settings {
             rows.push(group(
                 None,
                 vec![group_row_state(
-                    "Widget glass effects",
-                    "Choose Liquid lens for a clear, curved rim or Rain for moving droplets",
-                    button::text("Weather effects")
+                    "Widget glass",
+                    "Glass finish, backdrop blur, tint and corners",
+                    button::text("Edit glass")
                         .on_press(Message::SearchResult(
-                            crate::settings::navigation::WEATHER_EFFECTS,
+                            crate::settings::navigation::WIDGET_GLASS,
                         ))
                         .into(),
                 )],

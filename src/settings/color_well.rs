@@ -9,6 +9,7 @@ use cosmic::widget::color_picker::{ColorPickerModel, ColorPickerUpdate};
 /// Which color the open picker edits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Target {
+    GlassTint,
     /// The shared accent on Colors & theme.
     Accent,
     /// A theme's own color while choosing "Your color".

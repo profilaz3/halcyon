@@ -679,9 +679,7 @@ impl Cards {
                 if at[0] + size[0] <= 0. || at[1] + size[1] <= 0. {
                     continue;
                 }
-                if self.config.material_motion
-                    && self.config.rain.effect == crate::rain::Effect::Lens
-                {
+                if self.config.material_motion && self.config.rain.reflects_pointer() {
                     let margin = self.shadow_px().0 as f32;
                     let (surface, origin) =
                         if !self.custom_layout() && Widget::CARDS.contains(&widget) {
@@ -757,7 +755,12 @@ impl Cards {
         if !pointer_moved {
             self.sync_rain_panes();
         }
-        if self.rain.widget_glass() && self.config.rain.effect == crate::rain::Effect::Lens {
+        if self
+            .rain
+            .shown
+            .as_ref()
+            .is_some_and(|(p, _)| p.reflects_pointer())
+        {
             self.sync_lens_pointer();
         }
         if self.rain.native_state.is_none()

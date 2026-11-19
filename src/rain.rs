@@ -5,6 +5,8 @@ mod atmosphere;
 mod benchmark;
 pub mod desk;
 pub use atmosphere::{Clouds, Effect, Fog, FogColor, Snow};
+mod glass;
+pub use glass::{Glass, GlassMode};
 pub mod gpu;
 pub mod lifecycle;
 pub mod simulation;
@@ -44,6 +46,8 @@ pub struct Preferences {
     /// Confine the Rain effect to the glass behind desktop widgets.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub widget_glass: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub glass: Option<Glass>,
     /// Match the weather: while the Weather widget's reading is current, it
     /// picks the effect. Off by default; `weather::resolve` has the rules.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -76,6 +80,7 @@ impl Default for Preferences {
         Self {
             enabled: false,
             widget_glass: false,
+            glass: None,
             weather: false,
             weather_strength: weather::Strength::Natural,
             mode: Mode::Procedural,
@@ -100,6 +105,9 @@ impl Preferences {
         *self == Self::default()
     }
     pub fn validate(&self) -> Result<(), String> {
+        if let Some(glass) = self.glass {
+            glass.validate()?;
+        }
         if [
             self.snow.density,
             self.snow.size,
@@ -128,6 +136,15 @@ impl Preferences {
             return Err("Wallpaper effect controls must be within their ranges".into());
         }
         Ok(())
+    }
+    pub fn reflects_pointer(&self) -> bool {
+        self.enabled
+            && self.effect == Effect::Lens
+            && self.glass.is_none_or(|g| g.mode == GlassMode::Polished)
+    }
+    pub fn active_glass(&self) -> Option<Glass> {
+        self.glass
+            .filter(|_| self.enabled && self.effect == Effect::Lens)
     }
     pub fn confined_to_widgets(&self) -> bool {
         self.effect == Effect::Lens || (self.effect == Effect::Rain && self.widget_glass)

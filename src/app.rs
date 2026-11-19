@@ -951,10 +951,7 @@ impl cosmic::Application for Cards {
             Message::Pointer(_, cosmic::iced::mouse::Event::CursorMoved { .. })
                 | Message::PointerLeft(_)
         );
-        if self.config.material_motion
-            && self.config.rain.enabled
-            && self.config.rain.effect == crate::rain::Effect::Lens
-        {
+        if self.config.material_motion && self.config.rain.reflects_pointer() {
             match &msg {
                 Message::Pointer(id, cosmic::iced::mouse::Event::CursorMoved { position }) => {
                     self.rain.lens_pointer = Some((*id, *position))

@@ -355,8 +355,17 @@ impl Config {
         Ok(())
     }
     pub fn palette(&self) -> Palette {
+        let glass_palette = |mut p: Palette| {
+            if let Some(glass) = self.rain.active_glass()
+                && p.background.a > 0.
+                && !self.appearance.contrast_assist
+            {
+                p.background.a = f32::from(glass.opacity) / 100.;
+            }
+            p
+        };
         if let Some(roles) = self.theme_roles() {
-            return roles.card;
+            return glass_palette(roles.card);
         }
         let mut palette = match self.appearance.color_source {
             ColorSource::Desktop => self
@@ -371,11 +380,11 @@ impl Config {
         if self.appearance.contrast_assist {
             palette = crate::widget_style::readable(palette);
         }
-        crate::materials::palette(
+        glass_palette(crate::materials::palette(
             palette,
             self.materials.widgets(),
             self.appearance.contrast_assist,
-        )
+        ))
     }
     /// Personal recipes own their visible parts; built-in preferences stay intact.
     pub fn music_artwork(&self) -> bool {

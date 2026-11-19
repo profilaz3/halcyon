@@ -1,9 +1,19 @@
 use crate::rain::{Preferences, gpu};
 use cosmic::widget::image::Handle;
 use std::{cell::RefCell, sync::Arc};
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GlassTab {
+    #[default]
+    Surface,
+    Tint,
+    Shape,
+}
+
 #[derive(Default)]
 pub(super) struct State {
     pub preview: bool,
+    pub glass_editor: bool,
+    pub glass_tab: GlassTab,
     pub lifecycle: crate::rain::lifecycle::State,
     /// The Weather widget's last reading for its city, from its cache. The
     /// Settings window never fetches weather itself.
@@ -52,6 +62,7 @@ impl State {
     }
     pub fn clear(&mut self) {
         self.preview = false;
+        self.glass_editor = false;
         self.adjust = None;
         self.lifecycle = Default::default();
         self.image.get_mut().take();
@@ -59,6 +70,7 @@ impl State {
 }
 #[derive(Debug, Clone)]
 pub enum Edit {
+    GlassTab(GlassTab),
     Set(Preferences),
     Draft(Preferences),
     Commit,
