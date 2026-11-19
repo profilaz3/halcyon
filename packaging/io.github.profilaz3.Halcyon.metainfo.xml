@@ -43,6 +43,15 @@
   </provides>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.7.8" date="2026-11-19">
+      <description><ul>
+        <li>Follow stocks and ECB currency pairs in Markets. Turn on price charts for individual symbols.</li>
+        <li>Use Folder for recent files and Widget Peek to bring chosen widgets over an open window.</li>
+        <li>Save and reuse glass finishes, try four coordinated desktop styles, and light Music with its album artwork.</li>
+        <li>Choose a Classic or Outlook weather layout and pin Music or Messages from the Activity island.</li>
+        <li>Magnify dock icons on hover and launch a set of apps when starting a saved workspace.</li>
+      </ul></description>
+    </release>
     <release version="0.7.6" date="2026-11-17">
       <description><ul>
         <li>Fix an Appearance crash with Music or Focus widgets enabled.</li>

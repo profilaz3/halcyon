@@ -155,6 +155,18 @@ fn earlier_control_is_reversible_and_shared_with_daily_overview() {
         &theme,
         "utility-calendar-finished-300",
     );
+    let earlier = native.bounds(cards.reading_view(Widget::Calendar), "calendar-earlier");
+    assert!(
+        native
+            .focus_stops(cards.reading_view(Widget::Calendar))
+            .contains(&earlier)
+    );
+    assert!(
+        !native
+            .all_text(cards.reading_view(Widget::Calendar))
+            .iter()
+            .any(|t| t == "No events")
+    );
     let bounds = native.bounds(cards.calendar_card(), "calendar-earlier");
     let messages = click(&mut native, &cards, Widget::Calendar, bounds.center());
     assert!(
@@ -224,6 +236,51 @@ fn earlier_control_is_reversible_and_shared_with_daily_overview() {
     );
 }
 
+#[test]
+fn missing_calendar_month_does_not_look_like_an_empty_agenda() {
+    let (mut cards, _) = Cards::init(Core::default(), Config::default());
+    let day = Local::now().date_naive();
+    cards.calendar = None;
+    cards.calendar_today = None;
+    cards.calendar_ahead = None;
+    cards.calendar_connection = Default::default();
+    let mut native = Native::new(Size::new(520., 480.));
+    let p = cards.config.palette();
+    for widget in [Widget::Glance, Widget::Calendar] {
+        let labels = native.all_text(cards.reading_view(widget));
+        assert!(
+            labels
+                .iter()
+                .any(|label| label == "Connect your calendar →")
+        );
+        assert!(!labels.iter().any(|label| label == "No events"));
+        assert!(
+            native
+                .all_text(cards.compact_agenda(widget, &[day], 58., p))
+                .iter()
+                .any(|label| label == "Connect your calendar →")
+        );
+    }
+    cards.calendar_connection.backend = crate::calendar::Backend::Legacy;
+    cards.calendar_connection.account = "Local calendar".into();
+    assert!(
+        native
+            .all_text(cards.reading_view(Widget::Calendar))
+            .iter()
+            .any(|label| label == "Checking calendar…")
+    );
+    cards.calendar = Some(CalendarData {
+        month: day.format("%Y-%m").to_string(),
+        ..Default::default()
+    });
+    assert!(
+        native
+            .all_text(cards.reading_view(Widget::Calendar))
+            .iter()
+            .any(|label| label == "No events")
+    );
+}
+
 fn checkout(path: &str, branch: &str, changed: usize) -> data::Project {
     serde_json::from_value(serde_json::json!({
         "path":path,"name":"Atlas","title":"Atlas","repository_id":"atlas",
@@ -250,6 +307,19 @@ fn expanding_projects_does_not_open_folders_and_each_branch_targets_its_checkout
             checkout("/worktrees/atlas-layout", "feature/calendar-layout", 3),
         ],
     });
+    cards.projects.as_mut().unwrap().projects[0]
+        .servers
+        .push(data::ProjectServer {
+            port: 8080,
+            web: true,
+        });
+    let mut reader = Native::new(Size::new(520., 480.));
+    let focus = reader.focus_stops(cards.reading_view(Widget::Projects));
+    for id in ["projects-refresh", "project-branches:repository:atlas"] {
+        assert!(focus.contains(&reader.bounds(cards.reading_view(Widget::Projects), id)));
+    }
+    let port = reader.text_bounds(cards.reading_view(Widget::Projects), ":8080 ↗");
+    assert!(focus.iter().any(|r| r.contains(port.center())));
     let theme = cosmic::Theme::dark();
     for width in [300., 360.] {
         cards.expanded_projects.clear();

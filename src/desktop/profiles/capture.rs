@@ -464,7 +464,14 @@ fn capture_widgets(
     let has_clock_presentation = clock_fields
         .iter()
         .any(|pointer| raw.pointer(pointer).is_some());
+    // Only export the new controls when they were configured. Older setups
+    // with a Weather recipe already imply that the recipe is active.
+    let capture_weather = ["layout", "outlook_artwork", "outlook_range", "outlook_forecast"]
+        .iter().any(|key| raw.get("weather").and_then(|w| w.get(*key)).is_some());
     for field in widget::fields(group) {
+        if field.pointer.starts_with("/weather/") && !capture_weather {
+            continue;
+        }
         if field.pointer == "/rain" && raw.get("rain").is_none() {
             continue;
         }
@@ -517,7 +524,14 @@ fn capture_widgets(
         }
         let removable = field.pointer.starts_with("/widget_positions/")
             || field.pointer.starts_with("/widget_sizes/");
-        let value = if removable {
+        let value = if field.pointer == "/weather/layout"
+            && effective.pointer("/weather/layout").and_then(Value::as_str) == Some("saved")
+            && effective.pointer("/recipes/weather").is_none_or(Value::is_null)
+        {
+            // This setup displays Classic. A recipe kept on the receiving
+            // desktop must not take its place or be erased on Apply.
+            Value::String("classic".into())
+        } else if removable {
             // A widget without a saved position uses its default place.
             widget::get(raw, field.pointer).unwrap_or(Value::Null)
         } else {

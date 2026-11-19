@@ -11,7 +11,7 @@ use std::time::Duration;
 /// Widgets newer than the report's schema, left out of `widgets`: naming one
 /// would change what usage sharing sends, and the collector refuses keys it
 /// doesn't know.
-pub const UNREPORTED: [Widget; 2] = [Widget::Messages, Widget::Markets];
+pub const UNREPORTED: [Widget; 3] = [Widget::Messages, Widget::Markets, Widget::Folder];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub(crate) struct Features {
@@ -26,22 +26,23 @@ pub(crate) struct Features {
     pub automation: Option<bool>,
 }
 
-fn effect(config: &Config) -> &'static str {
+fn effect(config: &Config) -> Option<&'static str> {
     use crate::rain::Effect;
     if !config.rain.enabled {
-        return "off";
+        return Some("off");
     }
-    match config.rain.effect {
+    Some(match config.rain.effect {
+        Effect::Lens => return None, // Outside the existing collector vocabulary.
         Effect::Rain => "rain",
         Effect::Snow => "snow",
         Effect::Fog => "fog",
         Effect::Clouds => "clouds",
-    }
+    })
 }
 
-fn theme_style(config: &Config) -> &'static str {
+fn theme_style(config: &Config) -> Option<&'static str> {
     use crate::desktop_theme::Family;
-    match config.appearance.family {
+    Some(match config.appearance.family {
         None => "default",
         Some(Family::Soft) => "soft",
         Some(Family::Outline) => "outline",
@@ -57,7 +58,11 @@ fn theme_style(config: &Config) -> &'static str {
         Some(Family::Retro) => "retro",
         Some(Family::Pastel) => "pastel",
         Some(Family::Bauhaus) => "bauhaus",
-    }
+        // The current report schema has no category for these styles.
+        Some(Family::MicaSlate | Family::TapeDeck | Family::Porcelain | Family::Blueprint) => {
+            return None;
+        }
+    })
 }
 
 /// True when any listed bar has it on, false when every listed bar is known
@@ -89,7 +94,7 @@ pub(crate) fn snapshot(
 ) -> Features {
     let bar = |on: fn(&PanelDraft) -> Option<bool>| bars.and_then(|bars| any_bar(bars, on));
     Features {
-        wallpaper_effect: config.map(effect),
+        wallpaper_effect: config.and_then(effect),
         activity_island: bar(|b| {
             known(b.applets()).map(|r| r.contains(crate::activity_island::APPLET_ID))
         }),
@@ -104,7 +109,7 @@ pub(crate) fn snapshot(
         }),
         visualizer: config.map(|c| c.music.enabled && c.music.visualizer.active()),
         wallpaper_depth: config.map(|c| c.clock.depth),
-        theme_style: config.map(theme_style),
+        theme_style: config.and_then(theme_style),
         automation,
     }
 }

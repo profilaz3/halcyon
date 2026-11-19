@@ -25,7 +25,8 @@ pub(super) struct State {
     cut: Option<Arc<Pixels>>,
     /// The edges panels keep on an output, read now and then rather than on
     /// every update.
-    reserved: Option<(String, Instant, Vec<(crate::desktop::panels::Anchor, u32)>)>,
+    reserved:
+        std::collections::BTreeMap<String, (Instant, Vec<(crate::desktop::panels::Anchor, u32)>)>,
 }
 /// How long the panels' kept edges are trusted before reading them again.
 const PANELS: Duration = Duration::from_secs(20);
@@ -76,26 +77,27 @@ impl Cards {
     /// they say which edges they keep. None when nothing explains the space
     /// kept, so the clock is not placed on a guess.
     pub(super) fn clock_spot(&mut self) -> Option<(crate::displays::Output, [f32; 2], [f32; 2])> {
-        let output = self.widget_output(Widget::Clock)?.clone();
+        self.widget_spot(Widget::Clock)
+    }
+
+    pub(super) fn widget_spot(
+        &mut self,
+        widget: Widget,
+    ) -> Option<(crate::displays::Output, [f32; 2], [f32; 2])> {
+        let output = self.widget_output(widget)?.clone();
         let logical = output.info.logical_size?;
         let logical = [logical.0 as f32, logical.1 as f32];
-        let screen = self.widget_screen(Widget::Clock);
+        let screen = self.widget_screen(widget);
         let name = output.name().map(str::to_owned);
         let reserved = &mut self.glass.reserved;
         let frame = crate::layout_state::output_frame(logical, screen, || {
             let name = name?;
             let now = Instant::now();
-            let fresh = reserved.as_ref().is_some_and(|(n, at, _)| {
-                *n == name && now.saturating_duration_since(*at) < PANELS
-            });
-            if !fresh {
-                *reserved = Some((
-                    name.clone(),
-                    now,
-                    crate::layout_state::reserved_edges(&name),
-                ));
-            }
-            reserved.as_ref().map(|(_, _, edges)| edges.clone())
+            reserved.retain(|_, (at, _)| now.saturating_duration_since(*at) < PANELS);
+            let (_, edges) = reserved
+                .entry(name.clone())
+                .or_insert_with(|| (now, crate::layout_state::reserved_edges(&name)));
+            Some(edges.clone())
         })?;
         Some((output, frame.size, frame.origin))
     }
@@ -106,6 +108,7 @@ impl Cards {
             || self.layout_editor.active
             || !self.config.widget_visible(Widget::Clock)
             || !self.widget_available(Widget::Clock)
+            || self.rain.widget_glass()
             || !crate::depth::behind_glass(&self.config)
             || !self.rain.showing()
         {

@@ -1047,7 +1047,7 @@ dependencies = [
 
 [[package]]
 name = "cosmic-ext-halcyon"
-version = "0.7.6"
+version = "0.7.8"
 dependencies = [
  "base64",
  "chrono",
@@ -1080,6 +1080,7 @@ dependencies = [
  "toml 0.8.23",
  "tract-linalg",
  "tract-onnx",
+ "unicode-segmentation",
  "wayland-protocols-wlr",
  "xkbcommon 0.8.0",
  "zbus",

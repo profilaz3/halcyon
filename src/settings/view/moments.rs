@@ -1,22 +1,11 @@
 use super::*;
 use crate::moments::Phase;
 use crate::settings::moments::Message as Edit;
-const FAMILIES: [&str; 14] = [
-    "Same as Appearance",
-    "Soft",
-    "Outline",
-    "Paper",
-    "Bare",
-    "Glass",
-    "Tinted glass",
-    "Midnight",
-    "Terminal",
-    "Neon",
-    "Editorial",
-    "Retro",
-    "Pastel",
-    "Bauhaus",
-];
+static FAMILIES: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
+    std::iter::once("Same as Appearance")
+        .chain(crate::desktop_theme::Family::ALL.map(|family| family.title()))
+        .collect()
+});
 fn edit(message: Edit) -> Message {
     Message::Moment(message)
 }

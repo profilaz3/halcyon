@@ -743,6 +743,9 @@ impl Settings {
     /// are part of the wallpaper's draft, so its preview, Apply and Undo
     /// work here too.
     pub(super) fn weather_effects_page(&self) -> Element<'_, Message> {
+        if self.rain.glass_editor {
+            return self.widget_glass_editor();
+        }
         let editor = &self.wallpaper;
         let mut items: Vec<Element<'_, Message>> = vec![split(
             heading(

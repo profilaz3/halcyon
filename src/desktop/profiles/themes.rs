@@ -33,6 +33,19 @@ pub const STYLE: &[&str] = &[
     "/glance/style",
     "/glance/opacity",
 ];
+// Personal copies also own the fonts and finishes the user chose independently
+// of a built-in style. Applying a built-in continues to respect those choices.
+const PERSONAL_STYLE: &[&str] = &[
+    "/widget_font",
+    "/clock_font",
+    "/glance/font",
+    "/glance/clock_font",
+    "/materials/shared",
+    "/materials/widgets",
+    "/materials/dock",
+    "/materials/panel",
+    "/material_motion",
+];
 pub fn family(profile: &Profile) -> Option<Family> {
     profile
         .widget_style
@@ -931,7 +944,7 @@ pub fn validate(p: &Profile) -> Result<(), String> {
     }
     if let Some(style) = &p.widget_style {
         for (pointer, _) in super::format::widget_members(style, widget::WidgetGroup::Style)? {
-            if !STYLE.contains(&pointer) {
+            if !STYLE.contains(&pointer) && !PERSONAL_STYLE.contains(&pointer) {
                 return Err(format!("Themes cannot change {}", widget::label(pointer)));
             }
         }
@@ -951,6 +964,15 @@ pub fn validate(p: &Profile) -> Result<(), String> {
     Ok(())
 }
 pub fn capture(store: &DesktopStore, name: &str) -> Result<Capture, ProfileError> {
+    capture_style(store, name, &[])
+}
+
+/// A named snapshot can restore independent widget fonts and materials too.
+pub fn capture_personal(store: &DesktopStore, name: &str) -> Result<Capture, ProfileError> {
+    capture_style(store, name, PERSONAL_STYLE)
+}
+
+fn capture_style(store: &DesktopStore, name: &str, extra: &[&str]) -> Result<Capture, ProfileError> {
     let mut c = super::capture(store, name)?;
     let p = &mut c.profile;
     p.appearance_only = true;
@@ -962,11 +984,18 @@ pub fn capture(store: &DesktopStore, name: &str) -> Result<Capture, ProfileError
     p.workspaces = None;
     p.desktop_icons = None;
     p.wallpaper = None;
-    let original = p.widget_style.take().unwrap_or(json!({}));
     let mut style = json!({});
-    for pointer in STYLE {
-        if let Some(value) = original.pointer(pointer) {
-            widget::put(&mut style, pointer, Some(value.clone())).map_err(ProfileError::Invalid)?;
+    if let Some(original) = p.widget_style.take() {
+        for &pointer in STYLE.iter().chain(extra) {
+            let value = original.pointer(pointer).cloned().or_else(|| match pointer {
+                // A saved style with no material must be able to clear a finish applied later.
+                p if p.starts_with("/materials/") => Some(Value::Null),
+                "/material_motion" => Some(json!(crate::config::Config::default().material_motion)),
+                _ => None,
+            });
+            if let Some(value) = value {
+                widget::put(&mut style, pointer, Some(value)).map_err(ProfileError::Invalid)?;
+            }
         }
     }
     // Explicit null restores the legacy renderer in the saved initial look.
@@ -975,7 +1004,7 @@ pub fn capture(store: &DesktopStore, name: &str) -> Result<Capture, ProfileError
             .map_err(ProfileError::Invalid)?;
     }
     p.widget_style = Some(style);
-    p.version = super::format::VERSION_7;
+    p.version = p.written_version();
     p.validate()?;
     Ok(c)
 }
@@ -1326,7 +1355,7 @@ pub(crate) mod tests {
                 .find(|look| look.id == id)
                 .unwrap_or_else(|| panic!("resources/looks/{id}.json loads"));
             assert_eq!(look.profile.name, saved.name);
-            assert_eq!(look.profile.version, super::super::VERSION);
+            assert_eq!(look.profile.version, super::super::format::VERSION_22);
             assert!(!look.description.contains(['\u{2013}', '\u{2014}']));
             assert_eq!(
                 look.profile

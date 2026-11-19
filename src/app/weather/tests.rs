@@ -129,7 +129,7 @@ fn fb06_weather_freezes_date_status_and_style_without_retaining_provider_data() 
         panic!("reading")
     };
     assert_eq!(status.as_deref(), Some("Saved · 3d ago\nRefresh failed"));
-    assert_eq!(forecast.len(), 3);
+    assert_eq!(forecast.len(), 4);
     assert_eq!(forecast[0].title, "Today");
     assert!(details.contains("Dew point"));
     drop(weather);
@@ -247,4 +247,220 @@ fn fb06_weather_preserves_native_card_state_through_reordering() {
         let pixels = native.render(tree.into(), &cosmic::Theme::dark());
         assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] > 0));
     }
+}
+
+#[test]
+fn outlook_resizes_uses_actual_units_and_handles_missing_or_stale_readings() {
+    let mut config = configured();
+    config.weather.layout = crate::config::WeatherLayout::Outlook;
+    config.weather.fahrenheit = true;
+    let today = now().date_naive();
+    let mut weather = super::super::settings_preview::weather_sample(today);
+    weather.current.temperature_2m = 12.;
+    weather.current.apparent_temperature = 8.;
+    weather.current.weather_code = 61;
+    weather.daily.temperature_2m_min[0] = 8.;
+    weather.daily.temperature_2m_max[0] = 15.;
+    for (width, height, forecast) in [(300., 180., false), (360., 320., true), (560., 180., true)] {
+        let p = Presentation::new(
+            &config,
+            Snapshot {
+                weather: Some(&weather),
+                updated_at: None,
+                failed: false,
+            },
+            now(),
+        );
+        let mut native = Native::new(Size::new(width, height));
+        let view = || p.view(Context::LocalPreview, [width, height]);
+        let text = native.all_text(view());
+        assert!(text.iter().any(|t| t == "54°"));
+        assert!(text.iter().any(|t| t == "Feels like 46°"));
+        assert!(text.iter().any(|t| t == "Today"));
+        assert_eq!(text.iter().any(|t| t == "Forecast"), forecast);
+        assert!(native.scrollables(view()).is_empty());
+        for (s, r) in native.placed_text(view()) {
+            assert!(
+                r.x >= 0.
+                    && r.y >= 0.
+                    && r.x + r.width <= width + 1.
+                    && r.y + r.height <= height + 1.,
+                "{s}: {r:?}"
+            );
+        }
+        native.capture(
+            view(),
+            &cosmic::Theme::dark(),
+            &format!("weather-outlook-{width}x{height}"),
+        );
+    }
+    let mut original = config.clone();
+    original.weather.layout = crate::config::WeatherLayout::Saved;
+    let old_card = Presentation::new(
+        &original,
+        Snapshot {
+            weather: Some(&weather),
+            updated_at: None,
+            failed: false,
+        },
+        now(),
+    );
+    let mut native = Native::new(Size::new(560., 180.));
+    let classic = || old_card.view(Context::LocalPreview, [560., 180.]);
+    assert!(
+        native
+            .all_text(classic())
+            .iter()
+            .any(|s| s.contains("Humidity"))
+    );
+    native.capture(classic(), &cosmic::Theme::dark(), "weather-classic-560x180");
+    weather.daily.temperature_2m_min.clear();
+    let p = Presentation::new(
+        &config,
+        Snapshot {
+            weather: Some(&weather),
+            updated_at: None,
+            failed: true,
+        },
+        now(),
+    );
+    let mut native = Native::new(Size::new(300., 180.));
+    let text = native.all_text(p.view(Context::Live, [300., 180.]));
+    assert!(!text.iter().any(|s| s == "Today"));
+    assert!(text.iter().any(|s| s.contains("Refresh failed")));
+}
+
+#[test]
+fn classic_reflows_the_forecast_with_the_widget() {
+    let config = configured();
+    let weather = super::super::settings_preview::weather_sample(now().date_naive());
+    let p = Presentation::new(
+        &config,
+        Snapshot {
+            weather: Some(&weather),
+            updated_at: None,
+            failed: false,
+        },
+        now(),
+    );
+    for size in [
+        [300., 180.],
+        [420., 235.],
+        [360., 260.],
+        [360., 320.],
+        [510., 180.],
+        [560., 180.],
+        [560., 240.],
+    ] {
+        let mut native = Native::new(Size::new(size[0], size[1]));
+        let view = || p.view(Context::Live, size);
+        let today = native.text_bounds(view(), "Today");
+        let tomorrow = native.text_bounds(view(), "Tomorrow");
+        let labels = native.all_text(view());
+        let fourth_day = size[1] >= 320. || (size[0] >= 510. && size[1] >= 224.);
+        assert_eq!(labels.iter().any(|s| s == "Thu 29"), fourth_day);
+        let city = native.text_bounds(view(), "Example city");
+        if size[0] >= 510. {
+            let heading = native.text_bounds(view(), "Forecast");
+            assert!(today.x > size[0] * 0.4 && (heading.y - city.y).abs() < 2.);
+            assert!(tomorrow.y > today.y && (today.x - tomorrow.x).abs() < 1.);
+        } else if size[1] >= 260. {
+            assert!(tomorrow.y > today.y && (today.x - tomorrow.x).abs() < 1.);
+        } else {
+            assert!(tomorrow.x > today.x && (today.y - tomorrow.y).abs() < 1.);
+        }
+        assert!(native.scrollables(view()).is_empty());
+        for (label, bounds) in native.placed_text(view()) {
+            assert!(
+                bounds.x >= 0.
+                    && bounds.y >= 0.
+                    && bounds.x + bounds.width <= size[0] + 1.
+                    && bounds.y + bounds.height <= size[1] + 1.,
+                "{label}: {bounds:?}"
+            );
+        }
+        native.capture(
+            view(),
+            &cosmic::Theme::dark(),
+            &format!("classic-reflow-{}x{}", size[0], size[1]),
+        );
+    }
+}
+
+#[test]
+fn classic_forecast_keeps_partial_and_subzero_readings_on_resize() {
+    let mut config = configured();
+    config.weather.show_dew_point = true;
+    config.location.as_mut().unwrap().name = "Saint-Rémy-en-Bouzemont-Saint-Genest-et-Isson".into();
+    let mut weather = super::super::settings_preview::weather_sample(now().date_naive());
+    weather.daily.temperature_2m_min = vec![-11., -2., f64::NAN];
+    weather.daily.temperature_2m_max = vec![-3., 4., 9.];
+    weather.daily.weather_code[0] = 95;
+    weather.daily.precipitation_probability_max[0] = None;
+    let p = Presentation::new(
+        &config,
+        Snapshot {
+            weather: Some(&weather),
+            updated_at: None,
+            failed: true,
+        },
+        now(),
+    );
+    for size in [[510., 180.], [320., 320.]] {
+        let mut native = Native::new(Size::new(size[0], size[1]));
+        let view = || p.view(Context::Live, size);
+        let labels = native.all_text(view());
+        for expected in ["-11°", "-3°", "4°", "9°", "Thunderstorms"] {
+            assert!(labels.iter().any(|s| s == expected), "{expected}");
+        }
+        assert!(labels.iter().any(|s| s.contains("Refresh failed")));
+        assert!(!labels.iter().any(|s| s == "Rain 10%"));
+        let details = native.bounds(view(), "weather-details");
+        assert!(
+            details.height >= 14. && details.y + details.height <= size[1] - 12.,
+            "{size:?} {details:?}"
+        );
+        assert!(native.scrollables(view()).is_empty());
+        native.capture(
+            view(),
+            &cosmic::Theme::dark(),
+            &format!("classic-partial-{}x{}", size[0], size[1]),
+        );
+    }
+}
+
+#[test]
+fn weather_uses_selected_city_day_in_both_layouts() {
+    let mut config = configured();
+    config.location.as_mut().unwrap().timezone = Some("Asia/Tokyo".into());
+    let at = chrono::Utc
+        .with_ymd_and_hms(2026, 1, 3, 18, 0, 0)
+        .unwrap()
+        .with_timezone(&Local);
+    let city_day = at.with_timezone(&chrono_tz::Asia::Tokyo).date_naive();
+
+    assert_eq!(
+        forecast_day(at, Some("America/Los_Angeles"), &config),
+        city_day.pred_opt().unwrap()
+    );
+    assert_eq!(forecast_day(at, Some("unrecognized"), &config), city_day);
+    let weather = super::super::settings_preview::weather_sample(city_day);
+    let snap = Snapshot {
+        weather: Some(&weather),
+        updated_at: None,
+        failed: false,
+    };
+    let p = Presentation::new(&config, snap, at);
+    let Content::Reading { forecast, .. } = p.content else {
+        panic!()
+    };
+    assert_eq!(forecast[0].title, "Today");
+    config.weather.layout = crate::config::WeatherLayout::Outlook;
+    let p = Presentation::new(&config, snap, at);
+    let mut n = Native::new(Size::new(560., 180.));
+    assert!(
+        n.all_text(p.view(Context::Live, [560., 180.]))
+            .iter()
+            .any(|v| v == "Today")
+    );
 }

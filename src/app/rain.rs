@@ -9,6 +9,9 @@ use std::sync::Arc;
 #[derive(Default)]
 pub(super) struct State {
     surfaces: Vec<Surface>,
+    // Maps pointer coordinates from each widget window into its wallpaper.
+    pane_windows: Vec<(window::Id, window::Id, [f32; 2], [f32; 2])>,
+    pub(super) lens_pointer: Option<(window::Id, cosmic::iced::Point)>,
     next: u64,
     native_state: Option<(std::path::PathBuf, Option<crate::watch::FileStamp>)>,
     /// What cosmic-bg's state file said, and which cosmic-bg wrote it.
@@ -338,19 +341,31 @@ impl State {
             .name()
             .is_some_and(|name| self.desk.hides(name))
     }
+    pub fn widget_glass(&self) -> bool {
+        self.shown
+            .as_ref()
+            .is_some_and(|(p, _)| p.confined_to_widgets())
+    }
+    fn empty_glass(&self, surface: &Surface) -> bool {
+        self.widget_glass()
+            && surface
+                .image
+                .as_ref()
+                .is_none_or(|scene| !scene.has_panes())
+    }
     /// Whether the surface `id` should animate.
     pub fn running(&self, id: window::Id) -> bool {
         self.surfaces
             .iter()
             .find(|s| s.id == id)
-            .is_some_and(|s| !self.hidden(s))
+            .is_some_and(|s| !self.hidden(s) && !self.empty_glass(s))
     }
     /// Point the watchdog at the surfaces that should be drawing now.
     pub fn watch_sync(&mut self, generation: u64, now: Instant) {
         let wanted = if self.animating() {
             self.surfaces
                 .iter()
-                .filter(|s| !self.hidden(s))
+                .filter(|s| !self.hidden(s) && !self.empty_glass(s))
                 .filter_map(|s| Some((s.id, s.image.clone()?)))
                 .collect()
         } else {
@@ -527,7 +542,8 @@ impl Cards {
     pub(super) fn rain_view(&self, id: window::Id) -> Option<Element<'_, Message>> {
         let surface = self.rain.surfaces.iter().find(|s| s.id == id)?;
         Some(
-            if let Some(scene) = &surface.image
+            if !self.rain.empty_glass(surface)
+                && let Some(scene) = &surface.image
                 && let Some((preferences, level)) = &self.rain.shown
             {
                 crate::rain::visibility::visible(
@@ -537,7 +553,7 @@ impl Cards {
                         running: self.rain.running(id),
                         fixed_time: None,
                         fade: gpu::Fade {
-                            enabled: true,
+                            enabled: preferences.effect != crate::rain::Effect::Lens,
                             hidden: self.rain.retiring.is_some(),
                             level: *level,
                         },
@@ -595,7 +611,134 @@ impl Cards {
         }
         Task::batch([nudge, recreate])
     }
-    pub(super) fn rain_sync(&mut self) -> Task<Message> {
+    /// Place the water under the same card interiors as the desktop renderer.
+    fn sync_rain_panes(&mut self) {
+        if !self.rain.widget_glass() {
+            return;
+        }
+        self.rain.pane_windows.clear();
+        let scenes: Vec<_> = self
+            .rain
+            .surfaces
+            .iter()
+            .filter_map(|s| Some((s.id, s.output.handle.clone(), s.image.clone()?)))
+            .collect();
+        let theme_accent = self.config.widget_theme_accent();
+        for (rain_id, output, scene) in scenes {
+            let mut panes = gpu::Panes {
+                theme_accent,
+                ..Default::default()
+            };
+            for widget in Widget::ALL {
+                if !self.output_known
+                    || !self.tool_shown(widget)
+                    || self
+                        .widget_output(widget)
+                        .is_none_or(|o| o.handle != output)
+                    || (widget == Widget::Clock && crate::depth::behind_glass(&self.config))
+                {
+                    continue;
+                }
+                let Some((_, full, inset)) = self.widget_spot(widget) else {
+                    continue;
+                };
+                let mut at = self.arrange_origin(widget, self.placed_position(widget));
+                let mut size = self.widget_size(widget);
+                if !self.custom_layout() {
+                    match widget {
+                        Widget::Clock => {
+                            at = [self.config.clock_margin() as f32, 88.];
+                        }
+                        Widget::Calendar => {
+                            at = [self.config.calendar_margin() as f32, at[1].max(48.)];
+                            size = [
+                                360.,
+                                self.calendar_natural_height().min(self.card_height(widget)),
+                            ];
+                        }
+                        Widget::Weather | Widget::Projects | Widget::Devbox => {
+                            // Stacked cards share one layer surface. Its input rectangles
+                            // already account for centering, shadow padding and screen clipping.
+                            let Some(index) =
+                                self.visible_cards().iter().position(|w| *w == widget)
+                            else {
+                                continue;
+                            };
+                            let Some(rect) =
+                                self.card_input_rects(Widget::Weather).get(index).copied()
+                            else {
+                                continue;
+                            };
+                            let (margin, _) = self.shadow_px();
+                            at = [
+                                self.widget_screen(widget)[0] - 42. - 360. - margin as f32
+                                    + rect[0] as f32,
+                                48. - margin as f32 + rect[1] as f32,
+                            ];
+                            size = [rect[2] as f32, rect[3] as f32];
+                        }
+                        _ => {}
+                    }
+                }
+                if at[0] + size[0] <= 0. || at[1] + size[1] <= 0. {
+                    continue;
+                }
+                if self.config.material_motion && self.config.rain.reflects_pointer() {
+                    let margin = self.shadow_px().0 as f32;
+                    let (surface, origin) =
+                        if !self.custom_layout() && Widget::CARDS.contains(&widget) {
+                            if widget == Widget::Calendar {
+                                (widget, [self.config.calendar_margin() as f32, 48.])
+                            } else {
+                                (Widget::Weather, [self.widget_screen(widget)[0] - 402., 48.])
+                            }
+                        } else {
+                            (widget, at)
+                        };
+                    self.rain.pane_windows.push((
+                        self.widget_id(surface),
+                        rain_id,
+                        [origin[0] - margin + inset[0], origin[1] - margin + inset[1]],
+                        full,
+                    ));
+                }
+                panes
+                    .finishes
+                    .push(self.config.rain.finishes.linked(widget).map(|finish| {
+                        let _card = crate::widget_style::for_card(widget);
+                        (
+                            finish.glass,
+                            finish.refraction,
+                            crate::widget_style::corner_radius(&self.config) / full[1],
+                        )
+                    }));
+                panes.rects.push([
+                    (at[0] + inset[0]) / full[0],
+                    (at[1] + inset[1]) / full[1],
+                    size[0] / full[0],
+                    size[1] / full[1],
+                ]);
+                panes.radius = crate::widget_style::corner_radius(&self.config) / full[1];
+            }
+            scene.set_panes(panes);
+        }
+    }
+    fn sync_lens_pointer(&self) {
+        let point = self.rain.lens_pointer.and_then(|(id, at)| {
+            let (_, rain_id, origin, full) =
+                self.rain.pane_windows.iter().find(|(w, ..)| *w == id)?;
+            Some((
+                *rain_id,
+                [(at.x + origin[0]) / full[0], (at.y + origin[1]) / full[1]],
+            ))
+        });
+        for surface in &self.rain.surfaces {
+            if let Some(scene) = &surface.image {
+                scene.set_pointer(point.filter(|(id, _)| *id == surface.id).map(|(_, p)| p));
+            }
+        }
+    }
+    pub(super) fn rain_sync(&mut self, pointer_moved: bool) -> Task<Message> {
         if !self.config.rain.wanted() {
             self.rain.lifecycle = Default::default();
         }
@@ -623,6 +766,17 @@ impl Cards {
         }
         self.rain.retiring = None;
         self.rain.shown = Some((p, level));
+        if !pointer_moved {
+            self.sync_rain_panes();
+        }
+        if self
+            .rain
+            .shown
+            .as_ref()
+            .is_some_and(|(p, _)| p.reflects_pointer())
+        {
+            self.sync_lens_pointer();
+        }
         if self.rain.native_state.is_none()
             && let Ok(store) = crate::desktop::DesktopStore::from_env()
             && let Some(path) = media::state_path(&store)
@@ -748,6 +902,46 @@ mod tests {
             rgba: vec![1, 2, 3, 255],
         })
     }
+    #[test]
+    fn widget_glass_sleeps_when_the_widgets_are_hidden() {
+        use crate::displays::{
+            OutputEvent,
+            test_support::{Wire, info, isolated},
+        };
+        if isolated("app::rain::tests::widget_glass_sleeps_when_the_widgets_are_hidden") {
+            return;
+        }
+        let mut config = Config::default();
+        config.rain.enabled = true;
+        config.rain.widget_glass = true;
+        config.messages.enabled = true;
+        let (mut cards, _) = Cards::init(Core::default(), config);
+        let wire = Wire::new();
+        cards.displays.update(
+            OutputEvent::Created(Some(info(Some("DP-1"), (1920, 1080)))),
+            wire.output(1),
+        );
+        let _ = cards.reconcile_output();
+        let _ = cards.update(Message::RainLifecycle(lifecycle::State {
+            ready: true,
+            ..Default::default()
+        }));
+        cards.rain.ready_for_test();
+        cards.output_known = true;
+        cards.sync_rain_panes();
+        let surface = &cards.rain.surfaces[0];
+        let id = surface.id;
+        assert!(surface.image.as_ref().unwrap().has_panes());
+        assert!(cards.rain.running(id));
+        cards.config.widgets_visible = false;
+        cards.sync_rain_panes();
+        assert!(!cards.rain.running(id));
+        cards
+            .rain
+            .watch_sync(cards.display_generation, Instant::now());
+        assert!(cards.rain.watch().is_none());
+    }
+
     /// Frames at 30 a second from `from` for `secs`.
     fn paced(scene: &gpu::Scene, from: Instant, secs: f32) -> Instant {
         let mut at = from;

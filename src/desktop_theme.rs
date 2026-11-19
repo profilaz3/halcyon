@@ -31,6 +31,10 @@ pub enum Family {
     Retro,
     Pastel,
     Bauhaus,
+    MicaSlate,
+    TapeDeck,
+    Porcelain,
+    Blueprint,
 }
 
 /// What surrounds a card besides its border.
@@ -561,8 +565,108 @@ const BAUHAUS: StyleSpec = StyleSpec {
     wallpaper: ([233, 228, 216], [214, 206, 190]),
 };
 
+const MICA_SLATE: StyleSpec = StyleSpec {
+    id: "mica_slate",
+    title: "Mica Slate",
+    description: "Blue-gray layers and soft, shallow corners",
+    accent: [117, 181, 255],
+    surface: (0.31, 0.29, 0.032, (0., -0.004)),
+    geometry: (96, 8, 14),
+    shadow: Shadow::Soft,
+    body: FontSpec {
+        names: &["Segoe UI Variable", "Segoe UI", "Inter", "Noto Sans"],
+        ..SOFT.body
+    },
+    clock: FontSpec {
+        names: &["Segoe UI Variable", "Segoe UI", "Inter", "Noto Sans"],
+        generic: Generic::Sans,
+        weight: Weight::Semibold,
+    },
+    bar: BarSpec {
+        opacity: 0.94,
+        radius: 8,
+        padding: 6,
+        spacing: 8,
+        island_gap: 8,
+        floating: false,
+        glass_floor: 92,
+    },
+    wallpaper: ([19, 38, 72], [74, 110, 159]),
+    ..SOFT
+};
+const TAPE_DECK: StyleSpec = StyleSpec {
+    id: "tape_deck",
+    title: "Tape Deck",
+    description: "Smoked charcoal, amber dials and mono type",
+    accent: [255, 183, 92],
+    surface: (0.22, 0.10, 0.019, (0., 0.005)),
+    geometry: (76, 4, 38),
+    border_width: 1.5,
+    clock: FontSpec {
+        weight: Weight::Semibold,
+        ..TERMINAL.clock
+    },
+    bar: BarSpec {
+        opacity: 0.84,
+        radius: 4,
+        padding: 4,
+        spacing: 4,
+        island_gap: 6,
+        floating: true,
+        glass_floor: 74,
+    },
+    wallpaper: ([19, 25, 25], [91, 65, 43]),
+    ..TERMINAL
+};
+const PORCELAIN: StyleSpec = StyleSpec {
+    id: "porcelain",
+    title: "Porcelain",
+    description: "Cobalt ink on rounded ceramic tiles",
+    accent: [38, 83, 177],
+    surface: (0.966, 0.16, 0.017, (0., -0.003)),
+    geometry: (100, 28, 23),
+    shadow: Shadow::Soft,
+    bar: BarSpec {
+        opacity: 0.98,
+        radius: 28,
+        padding: 8,
+        spacing: 10,
+        island_gap: 16,
+        floating: true,
+        glass_floor: 94,
+    },
+    wallpaper: ([210, 226, 240], [145, 171, 201]),
+    ..PAPER
+};
+
+const BLUEPRINT: StyleSpec = StyleSpec {
+    id: "blueprint",
+    title: "Blueprint",
+    description: "Cyan rules, square ink-blue panels and a bold drafting clock",
+    accent: [100, 213, 243],
+    surface: (0.28, 0.8, 0.075, (0., 0.)),
+    geometry: (84, 0, 50),
+    border_width: 2.,
+    clock: FontSpec {
+        names: &["DejaVu Sans Mono"],
+        generic: Generic::Mono,
+        weight: Weight::Bold,
+    },
+    bar: BarSpec {
+        opacity: 0.96,
+        radius: 0,
+        padding: 6,
+        spacing: 8,
+        island_gap: 14,
+        floating: false,
+        glass_floor: 90,
+    },
+    wallpaper: ([12, 31, 55], [23, 73, 99]),
+    ..SOFT
+};
+
 impl Family {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 18] = [
         Self::Soft,
         Self::Outline,
         Self::Paper,
@@ -577,6 +681,10 @@ impl Family {
         Self::Retro,
         Self::Pastel,
         Self::Bauhaus,
+        Self::MicaSlate,
+        Self::TapeDeck,
+        Self::Porcelain,
+        Self::Blueprint,
     ];
     pub fn spec(self) -> &'static StyleSpec {
         match self {
@@ -594,6 +702,10 @@ impl Family {
             Self::Retro => &RETRO,
             Self::Pastel => &PASTEL,
             Self::Bauhaus => &BAUHAUS,
+            Self::MicaSlate => &MICA_SLATE,
+            Self::TapeDeck => &TAPE_DECK,
+            Self::Porcelain => &PORCELAIN,
+            Self::Blueprint => &BLUEPRINT,
         }
     }
     pub fn id(self) -> &'static str {
@@ -616,6 +728,10 @@ impl Family {
             Self::Retro => "theme-retro",
             Self::Pastel => "theme-pastel",
             Self::Bauhaus => "theme-bauhaus",
+            Self::MicaSlate => "theme-mica-slate",
+            Self::TapeDeck => "theme-tape-deck",
+            Self::Porcelain => "theme-porcelain",
+            Self::Blueprint => "theme-blueprint",
         }
     }
     pub fn title(self) -> &'static str {

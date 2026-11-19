@@ -1129,6 +1129,16 @@ pub fn sample_player(now: Instant) -> music::Player {
     }
 }
 
+/// A stable example track and its matching player feed for Settings previews.
+pub(crate) fn paused_sample() -> &'static (music::Feed, music::Player) {
+    static SAMPLE: std::sync::OnceLock<(music::Feed, music::Player)> = std::sync::OnceLock::new();
+    SAMPLE.get_or_init(|| {
+        let mut player = sample_player(Instant::now());
+        player.status = music::Playback::Paused;
+        (music::Feed::Players(vec![player.clone()]), player)
+    })
+}
+
 /// The bundled cover used by the example song.
 pub fn sample_art() -> &'static Handle {
     static ART: std::sync::OnceLock<Handle> = std::sync::OnceLock::new();

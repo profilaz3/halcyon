@@ -25,9 +25,9 @@ def companion_version(root):
     return version
 
 
-def bundled(root):
+def bundled(root, component='islands'):
     with (root / 'Cargo.toml').open('rb') as source:
-        return tomllib.load(source)['package'].get('metadata', {}).get('halcyon', {}).get('bundled-islands') is True
+        return tomllib.load(source)['package'].get('metadata', {}).get('halcyon', {}).get('bundled-' + component) is True
 
 
 def main_breaks(root):

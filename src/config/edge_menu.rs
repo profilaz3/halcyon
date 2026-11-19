@@ -301,6 +301,26 @@ impl EdgeMenu {
         {
             return Err(format!("The edge menu holds at most {MAX_ITEMS} items"));
         }
+        for item in self.items.iter().flatten() {
+            if let Kind::Peek {
+                name,
+                icon,
+                widgets,
+            } = &item.kind
+                && (name.trim().is_empty()
+                    || name.chars().count() > 40
+                    || icon.len() > 96
+                    || widgets.is_empty()
+                    || widgets.len() > Widget::ALL.len()
+                    || widgets
+                        .iter()
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .len()
+                        != widgets.len())
+            {
+                return Err("Choose a Peek button name and at least one distinct widget".into());
+            }
+        }
         Ok(())
     }
     /// How long the pointer rests on the strip before the menu opens;
@@ -479,6 +499,11 @@ pub enum Kind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         minutes: Option<u32>,
     },
+    Peek {
+        name: String,
+        icon: String,
+        widgets: Vec<Widget>,
+    },
     /// Switch to a Look.
     Look {
         look: ProfileRef,
@@ -523,6 +548,13 @@ impl Item {
             kind,
             extra: Map::new(),
         }
+    }
+    pub fn peek() -> Self {
+        Self::new(Kind::Peek {
+            name: "Peek widgets".into(),
+            icon: "view-grid-symbolic".into(),
+            widgets: vec![Widget::Music, Widget::Calendar],
+        })
     }
     pub fn widget(widget: Widget) -> Self {
         Self::new(Kind::Widget {
@@ -601,7 +633,7 @@ impl<'de> Deserialize<'de> for Item {
 
 /// The edge menu's second group: every widget outside the right column.
 /// A customized menu keeps its own saved list.
-pub const ELSEWHERE: [Widget; 9] = [
+pub const ELSEWHERE: [Widget; 10] = [
     Widget::Calendar,
     Widget::Clock,
     Widget::Glance,
@@ -611,6 +643,7 @@ pub const ELSEWHERE: [Widget; 9] = [
     Widget::Devices,
     Widget::Messages,
     Widget::Markets,
+    Widget::Folder,
 ];
 
 /// The built-in menu as a list: where a customized menu starts. `right` is

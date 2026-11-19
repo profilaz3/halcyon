@@ -51,6 +51,20 @@ fn readable(color: Color, background: Color) -> Color {
     blend(high)
 }
 
+impl Config {
+    /// The theme's source accent, before contrast adjustments for small widget text.
+    pub fn widget_theme_accent(&self) -> [u8; 3] {
+        let appearance = self.moment_appearance();
+        if let Some(family) = appearance.family {
+            return appearance.accent.unwrap_or_else(|| family.accent());
+        }
+        if appearance.color_source == ColorSource::Custom && let Some(rgb) = appearance.accent {
+            return rgb;
+        }
+        crate::desktop_theme::bytes(self.palette().accent)
+    }
+}
+
 impl Palette {
     /// Tint the card from the chosen source color; keep the exact source
     /// in configuration and use readable derived ink for small widget text.

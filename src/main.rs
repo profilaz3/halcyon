@@ -11,6 +11,7 @@ mod desktop_theme;
 mod devices;
 mod displays;
 mod drawer;
+mod folder;
 mod installation;
 mod instance;
 mod layout;

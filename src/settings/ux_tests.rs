@@ -136,8 +136,29 @@ fn ux_native_shared_finish_sets_scope_and_busy_status_is_visible() {
     let _ = app.update(Message::OpenWidgetFinish);
     assert_eq!(app.page, Page::Appearance);
     assert_eq!(app.material_target, crate::materials::Target::Widgets);
+    use crate::desktop::islands::Installation;
+    use crate::materials::{Finish, Kind, Target};
+    let saved = Finish::new(Kind::Frosted);
+    app.config.materials.panel = Some(saved);
+    let _ = app.update(Message::MaterialTarget(Target::Panel));
+    app.material_adjust = true;
+    let _ = app.update(Message::MaterialValue(false, 45));
+    let draft = app.material_draft;
+    assert!(draft.is_some());
+    let _ = app.update(Message::InstallationReady(
+        app.installation_generation,
+        Installation::Absent,
+    ));
+    assert_eq!(app.material_target, Target::Panel);
+    assert_eq!(app.material_draft, draft);
+    assert!(app.material_adjust);
+    let size = Size::new(820., 600.);
+    let _ = app.update(Message::Resized(size));
+    let mut native = Native::new(size);
+    crate::settings::tests::native_click(&mut app, &mut native, "material-panel-setup");
+    assert_eq!(app.page, Page::ActivityIsland);
+    assert_eq!(app.search_selected.unwrap().anchor(), "islands-activation");
     app.native_busy = true;
-    let mut native = Native::new(Size::new(820., 600.));
     assert!(
         native
             .try_bounds(app.settings_view(), "settings-saving")
@@ -400,6 +421,49 @@ fn review_r2_native_theme_preview_never_falls_back_to_obsolete_home_pixels() {
         );
         assert!(app.profiles.can_apply());
     }
+}
+
+#[test]
+fn weather_layout_comparison_and_choices_preserve_a_saved_design() {
+    use crate::config::WeatherLayout;
+    if child("weather_layout_comparison_and_choices_preserve_a_saved_design") {
+        return;
+    }
+    let recipe = crate::recipes::Recipe::template(crate::recipes::Kind::Weather, 0);
+    let path = Config::path().unwrap();
+    let mut raw: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    raw["recipes"] = serde_json::json!({"weather": recipe});
+    std::fs::write(&path, serde_json::to_vec(&raw).unwrap()).unwrap();
+    let (mut app, _) = Settings::init(Core::default(), Page::Weather);
+    let size = Size::new(820., 600.);
+    let _ = app.update(Message::Resized(size));
+    let mut native = Native::new(size);
+    let before = std::fs::read(&path).unwrap();
+    reveal_click(&mut app, &mut native, "weather-compare");
+    assert!(app.open_sections.contains("weather-compare"));
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    for (id, layout) in [
+        ("weather-layout-outlook", WeatherLayout::Outlook),
+        ("weather-layout-classic", WeatherLayout::Classic),
+        ("weather-layout-saved", WeatherLayout::Saved),
+    ] {
+        reveal_click(&mut app, &mut native, id);
+        let config = Config::try_load().unwrap();
+        assert_eq!(config.weather.layout, layout);
+        assert_eq!(config.recipes.weather.as_ref(), Some(&recipe));
+        if layout == WeatherLayout::Outlook {
+            for part in [
+                WeatherOutlookPart::Artwork,
+                WeatherOutlookPart::Range,
+                WeatherOutlookPart::Forecast,
+            ] {
+                reveal_click(&mut app, &mut native, &format!("weather-{}", part.key()));
+            }
+        }
+    }
+    let prefs = Config::try_load().unwrap().weather;
+    assert!(!prefs.outlook_artwork && !prefs.outlook_range && !prefs.outlook_forecast);
 }
 
 #[test]
@@ -1389,10 +1453,47 @@ fn widget_fonts_list_installed_families_and_save_a_choice() {
 }
 
 #[test]
+fn saved_style_menu_opens_without_changing_the_desktop() {
+    if child("saved_style_menu_opens_without_changing_the_desktop") {
+        return;
+    }
+    use crate::desktop::{DesktopStore, profiles as records};
+    use crate::settings::tests::{native_click, settle_settings};
+    let store = DesktopStore::from_env().unwrap();
+    let profile = records::themes::record(crate::desktop_theme::Family::Bare);
+    let id = records::ProfileLibrary::new(&store)
+        .create(&profile)
+        .unwrap();
+    let (mut app, initial) = Settings::init(Core::default(), Page::Themes);
+    settle_settings(&mut app, initial);
+    let size = Size::new(820., 600.);
+    let _ = app.update(Message::Resized(size));
+    let mut native = Native::new(size);
+    let before = std::fs::read(Config::path().unwrap()).unwrap();
+    let selection = app.profiles.selection().clone();
+    native.bounds(app.settings_view(), &format!("apply-style-{}", id.as_str()));
+    native_click(
+        &mut app,
+        &mut native,
+        &format!("manage-style-{}", id.as_str()),
+    );
+    for action in ["Rename…", "Export…", "Delete…"] {
+        assert!(
+            !native.text_all(app.settings_view(), action).is_empty(),
+            "{action}"
+        );
+    }
+    assert_eq!(app.profiles.selection(), &selection);
+    assert_eq!(std::fs::read(Config::path().unwrap()).unwrap(), before);
+}
+
+#[test]
 fn appearance_shows_one_row_of_styles_and_every_style_on_request() {
     let size = Size::new(1024., 720.);
     let (mut app, _) = Settings::init(Core::default(), Page::Themes);
     let _ = app.update(Message::Resized(size));
+    let mut native = crate::native_test::Native::new(size);
+    assert!(!native.text_all(app.settings_view(), "Save current style…").is_empty());
     let shown = |app: &Settings| {
         let mut native = crate::native_test::Native::new(size);
         crate::desktop_theme::Family::ALL
@@ -2303,7 +2404,7 @@ fn ux_native_nine_roots_and_every_old_route_resolves() {
             Page::General
         ]
     );
-    for (page, root) in [
+    let routes = [
         (Page::Home, Page::Home),
         (Page::Overview, Page::Overview),
         (Page::WidgetLayout, Page::Overview),
@@ -2321,6 +2422,7 @@ fn ux_native_nine_roots_and_every_old_route_resolves() {
         (Page::Devices, Page::Overview),
         (Page::Messages, Page::Overview),
         (Page::Markets, Page::Overview),
+        (Page::Folder, Page::Overview),
         (Page::EdgeMenu, Page::Overview),
         (Page::Builder, Page::Overview),
         (Page::DesktopWallpaper, Page::DesktopWallpaper),
@@ -2345,11 +2447,12 @@ fn ux_native_nine_roots_and_every_old_route_resolves() {
         (Page::DesktopMotion, Page::DesktopMotion),
         (Page::PendingChanges, Page::Changes),
         (Page::Changes, Page::Changes),
-    ] {
+    ];
+    assert_eq!(Page::ALL.len(), routes.len(), "a new route must be mapped here too");
+    for (page, root) in routes {
         assert_eq!(page.sidebar(), root, "{page:?}");
         assert_eq!(Page::parse(page.key()).sidebar(), root, "{page:?}");
     }
-    assert_eq!(Page::ALL.len(), 40, "a new route must be mapped here too");
     for (alias, page) in [
         ("home", Page::Home),
         ("panel", Page::DesktopPanel),

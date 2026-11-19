@@ -60,6 +60,8 @@ pub(super) struct EdgeState {
     /// Whether each item of the customized list can run now: its app is
     /// installed, its folder exists, its type is known.
     pub available: Vec<bool>,
+    /// The item list currently being checked by the background worker.
+    pub checking: Option<std::sync::Arc<Vec<Item>>>,
 }
 
 /// "Show widgets" at the top of the List menus while every widget is
@@ -228,6 +230,7 @@ pub(crate) fn item_title(item: &Item) -> String {
         Kind::Action { action, .. } => {
             Action::parse(action).map_or_else(|| named(action, "Action"), |a| a.title().into())
         }
+        Kind::Peek { name, .. } => named(name, "Peek widgets"),
         Kind::Look { name, .. } => named(name, "Look"),
         Kind::App { app, name, .. } => named(name, app),
         Kind::Folder { path, name } => named(
@@ -254,6 +257,7 @@ pub(crate) fn item_icon(item: &Item) -> (String, bool) {
         Kind::Action { action, .. } => {
             symbolic(Action::parse(action).map_or("dialog-question-symbolic", Action::icon))
         }
+        Kind::Peek { icon, .. } => (icon.clone(), true),
         Kind::Look { .. } => symbolic("applications-graphics-symbolic"),
         Kind::App { icon, .. } if !icon.trim().is_empty() => (icon.clone(), false),
         Kind::App { .. } => symbolic("application-x-executable-symbolic"),
@@ -278,7 +282,7 @@ pub(crate) fn availability(items: &[Item], apps: impl FnOnce() -> AppCatalog) ->
             Kind::Action { .. } => item.as_action().is_some(),
             Kind::App { app, .. } => catalog.as_ref().is_some_and(|c| c.get(app).is_some()),
             Kind::Folder { path, .. } => std::path::Path::new(path).is_dir(),
-            Kind::Look { .. } | Kind::Separator | Kind::Title { .. } => true,
+            Kind::Peek { .. } | Kind::Look { .. } | Kind::Separator | Kind::Title { .. } => true,
             Kind::Unknown(_) => false,
         })
         .collect()
@@ -525,7 +529,8 @@ impl Cards {
         }
         for mut strip in wanted {
             if let Some(kept) = old.iter().find(|o| same(o, &strip)) {
-                self.edge.others.push(kept.clone());
+                strip.id = kept.id;
+                self.edge.others.push(strip);
                 continue;
             }
             strip.id = window::Id::unique();
@@ -547,14 +552,16 @@ impl Cards {
             }));
             self.edge.others.push(strip);
         }
-        if self.edge.menu_output.as_ref().is_some_and(|output| {
-            !self
+        if let Some(previous) = self.edge.menu_output.take() {
+            self.edge.menu_output = self
                 .edge
                 .others
                 .iter()
-                .any(|s| s.output.handle == output.handle)
-        }) {
-            self.edge.menu_output = None;
+                .find(|s| s.output.handle == previous.handle)
+                .map(|s| s.output.clone());
+            if self.edge.menu_output.is_none() {
+                self.retire_drawer();
+            }
         }
         Task::batch(tasks)
     }
@@ -625,7 +632,11 @@ impl Cards {
         }
         tasks.push(self.sync_edge_strip());
         if old.items != menu.items || old.classic() != menu.classic() {
-            self.refresh_edge_available();
+            self.edge.available.clear();
+            self.edge.checking = None;
+            if self.controls_open {
+                tasks.push(self.refresh_edge_available());
+            }
             if let Some(focus) = self.sidebar.focus {
                 self.sidebar.focus = Some(focus.min(self.drawer_items().len() - 1));
             }
@@ -644,23 +655,57 @@ impl Cards {
         }
         Task::batch(tasks)
     }
-    pub(super) fn refresh_edge_available(&mut self) {
-        self.edge.available = match &self.config.edge_menu.items {
-            Some(items) => availability(items, AppCatalog::installed),
-            None => Vec::new(),
+    pub(super) fn refresh_edge_available(&mut self) -> Task<Message> {
+        let Some(items) = &self.config.edge_menu.items else {
+            return Task::none();
         };
+        if self.edge.checking.is_some()
+            || !items
+                .iter()
+                .any(|item| matches!(item.kind, Kind::App { .. } | Kind::Folder { .. }))
+        {
+            return Task::none();
+        }
+        let items = std::sync::Arc::new(items.clone());
+        self.edge.checking = Some(items.clone());
+        cosmic::task::future(async move {
+            let scan = items.clone();
+            let result =
+                tokio::task::spawn_blocking(move || availability(&scan, AppCatalog::installed))
+                    .await
+                    .unwrap_or_default();
+            Message::EdgeAvailability(items, result)
+        })
     }
+
     pub(super) fn edge_available(&self, index: usize) -> bool {
         let Some(item) = self
             .config
             .edge_menu
             .items
             .as_ref()
-            .and_then(|i| i.get(index))
+            .and_then(|items| items.get(index))
         else {
             return true;
         };
-        !matches!(item.kind, Kind::Unknown(_)) && self.edge.available.get(index) != Some(&false)
+        match &item.kind {
+            Kind::Widget { .. } => item.as_widget().is_some(),
+            Kind::Action { .. } => item.as_action().is_some(),
+            Kind::Unknown(_) => false,
+            Kind::App { .. } | Kind::Folder { .. } => self.edge.available.get(index) == Some(&true),
+            _ => true,
+        }
+    }
+
+    pub(super) fn unavailable_label(&self, index: usize, item: &Item) -> &'static str {
+        if self.edge.checking.is_some()
+            && self.edge.available.get(index).is_none()
+            && matches!(item.kind, Kind::App { .. } | Kind::Folder { .. })
+        {
+            "Checking…"
+        } else {
+            "Unavailable"
+        }
     }
     /// The menu's height: the built-in menu's, or what the customized list
     /// needs, kept on screen.
@@ -747,6 +792,9 @@ impl Cards {
                 Action::Focus => Message::FocusCommand("toggle".into()),
                 Action::WeatherEffect => Message::SetWeatherEffect(!self.config.rain.enabled),
             },
+            Kind::Peek { name, widgets, .. } => {
+                Message::Peek(Some((name.clone(), widgets.clone())))
+            }
             Kind::Look { look, name } => Message::ApplyLook(look.clone(), name.clone()),
             Kind::App { app, .. } => Message::LaunchApp(app.clone()),
             Kind::Folder { path, .. } => Message::Open(path.clone()),
@@ -859,7 +907,7 @@ impl Cards {
                     .map_err(|e| LookFailure::failed(e.to_string()))?;
                 let installed = crate::desktop::profiles::Installed::discover(&store);
                 let held = crate::automation::read_hold(&store);
-                match crate::automation::run::run_chosen(&store, &installed, &look, &name, &held) {
+                match crate::automation::run::run_chosen(&store, &installed, &look, &name, &held, crate::automation::run::Invocation::EdgeMenu) {
                     crate::automation::run::Ran::Applied { .. }
                     | crate::automation::run::Ran::AlreadySet => Ok(()),
                     crate::automation::run::Ran::Waiting(parts) => {
@@ -1066,7 +1114,7 @@ impl Cards {
         } else if available {
             self.item_caption(item)
         } else {
-            Some("Unavailable".to_string())
+            Some(self.unavailable_label(index, item).to_string())
         };
         let ink = if available && !held {
             p.foreground

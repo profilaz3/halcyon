@@ -34,6 +34,50 @@ fn choice_row<'a>(
 }
 
 impl Settings {
+    pub(super) fn folder_page(&self) -> Element<'_, Message> {
+        let sample = crate::folder::sample();
+        let mut cfg = self.config.clone();
+        cfg.folder.path = Some(sample.source.clone());
+        cfg.folder.show_hidden = false;
+        let preview = cards::folder(
+            &sample,
+            &cfg,
+            self.tool_preview_size(Widget::Folder),
+            |_| None,
+            None,
+        );
+        let chosen = self.config.folder.path.as_deref().map_or_else(
+            || "Choose the folder to show".into(),
+            |p| p.display().to_string(),
+        );
+        self.widget_template(
+            Widget::Folder,
+            "Folder",
+            Some(preview),
+            vec![
+                self.sample_note("folder-sample", None),
+                group(
+                    None,
+                    vec![
+                        group_row(
+                            "Local folder",
+                            &chosen,
+                            button::standard("Choose folder…")
+                                .on_press(Message::ChooseWidgetFolder)
+                                .into(),
+                        ),
+                        group_row(
+                            "Show hidden files",
+                            "",
+                            toggler(self.config.folder.show_hidden)
+                                .on_toggle(|v| option(Widget::Folder, "show_hidden", v))
+                                .into(),
+                        ),
+                    ],
+                ),
+            ],
+        )
+    }
     pub(super) fn markets_page(&self) -> Element<'_, Message> {
         let editor = &self.tools;
         let preview = cards::markets(
@@ -250,13 +294,7 @@ impl Settings {
         let player = tools.current(&self.config);
         // Nothing playing: an example song, paused, so the options below
         // have something to show.
-        static SAMPLE: std::sync::OnceLock<(crate::tools::music::Feed, crate::tools::music::Player)> =
-            std::sync::OnceLock::new();
-        let sample = SAMPLE.get_or_init(|| {
-            let mut player = cards::recipe::sample_player(std::time::Instant::now());
-            player.status = crate::tools::music::Playback::Paused;
-            (crate::tools::music::Feed::Players(vec![player.clone()]), player)
-        });
+        let sample = cards::recipe::paused_sample();
         let example = player.is_none()
             && !matches!(tools.feed, Some(crate::tools::music::Feed::Unavailable(_)));
         let preview = cards::music(

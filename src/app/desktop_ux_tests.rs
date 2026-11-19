@@ -48,7 +48,16 @@ fn isolated(name: &str) -> bool {
 }
 
 fn cards() -> Cards {
-    let (cards, _) = Cards::init(Core::default(), Config::load());
+    let (mut cards, _) = Cards::init(Core::default(), Config::load());
+    let check = cards.refresh_edge_available();
+    if cards.edge.checking.is_some() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _guard = runtime.enter();
+        config_writes::finish(&mut cards, check);
+    }
     cards
 }
 
@@ -744,6 +753,52 @@ fn custom_menu_config(root: &std::path::Path) -> (Config, std::path::PathBuf) {
         .push(serde_json::json!({"type": "hologram", "depth": 3}));
     std::fs::write(Config::path().unwrap(), value.to_string()).unwrap();
     (Config::load(), folder)
+}
+
+#[test]
+fn edge_availability_uses_one_background_check_and_ignores_a_replaced_list() {
+    if isolated("edge_availability_uses_one_background_check_and_ignores_a_replaced_list") {
+        return;
+    }
+    let root = std::path::PathBuf::from(std::env::var_os("DESKTOP_CARDS_DESKTOP_ROOT").unwrap());
+    let (config, _) = custom_menu_config(&root);
+    let (mut cards, _) = Cards::init(Core::default(), config);
+    assert!(
+        cards.edge.checking.is_none(),
+        "a closed menu does not scan applications at startup"
+    );
+    let first = cards.refresh_edge_available();
+    let original = cards.edge.checking.clone().unwrap();
+    drop(cards.refresh_edge_available());
+    assert!(std::sync::Arc::ptr_eq(
+        cards.edge.checking.as_ref().unwrap(),
+        &original
+    ));
+    assert!(!cards.edge_available(1));
+    assert!(
+        cards.edge_item_message(5).is_some(),
+        "widget controls work during the scan"
+    );
+
+    let old_menu = cards.config.edge_menu.clone();
+    cards.config.edge_menu.items.as_mut().unwrap().swap(1, 2);
+    drop(cards.edge_menu_changed(&old_menu));
+    let second = cards.refresh_edge_available();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let _guard = runtime.enter();
+    config_writes::finish(&mut cards, first);
+    assert!(!cards.edge_available(1));
+    assert!(
+        cards.edge.checking.is_some(),
+        "the old result cannot finish the new scan"
+    );
+    config_writes::finish(&mut cards, second);
+    assert!(!cards.edge_available(1));
+    assert!(cards.edge_available(2));
+    assert!(cards.edge.checking.is_none());
 }
 
 /// Each item of a customized menu sends the message the desktop already
@@ -1831,4 +1886,62 @@ fn keyboard_enters_focus_card_starts_timer_and_leaves_on_escape() {
         Modifiers::empty(),
     ));
     assert!(cards.interacting_tool.is_none());
+}
+
+#[test]
+fn shift_enter_opens_full_widget_readings() {
+    if isolated("shift_enter_opens_full_widget_readings") {
+        return;
+    }
+    let mut cards = cards();
+    cards.config.enabled_widgets = vec!["calendar".into(), "devbox".into(), "projects".into()];
+    cards.config.glance.show_calendar = true;
+    for widget in [
+        Widget::Calendar,
+        Widget::Devbox,
+        Widget::Projects,
+        Widget::Glance,
+    ] {
+        cards.config.glance.enabled = widget == Widget::Glance;
+        let _ = cards.update(Message::DrawerToggle);
+        let index = cards
+            .drawer_items()
+            .iter()
+            .position(|item| *item == drawer::DrawerItem::Widget(widget))
+            .unwrap();
+        cards.sidebar.focus = Some(index);
+        press(&mut cards, Key::Named(Named::Enter), Modifiers::SHIFT);
+        assert_eq!(cards.reading_window.map(|(_, w)| w), Some(widget));
+        let _ = cards.update(Message::CloseReading);
+    }
+}
+
+#[test]
+fn peek_reuses_data_and_closes_every_overlay() {
+    if isolated("peek_reuses_data_and_closes_every_overlay") {
+        return;
+    }
+    let mut cards = cards();
+    cards.config.music.enabled = false;
+    for cycle in 0..25 {
+        let _ = cards.update(Message::Peek(Some((
+            "Desk check".into(),
+            vec![Widget::Music, Widget::Calendar],
+        ))));
+        assert!(cards.music_demand() && cards.calendar_demand());
+        let id = cards.peek.as_ref().unwrap().id;
+        if cycle == 0 && std::env::var_os("HALCYON_CUSTOMIZATION_EVIDENCE").is_some() {
+            let mut ui = Native::new(Size::new(1040., 640.));
+            ui.capture(cards.view_window(id), &cosmic::Theme::dark(), "widget-peek");
+        }
+        let _ = cards.update(Message::PeekEscape(window::Id::unique()));
+        assert_eq!(cards.peek.as_ref().map(|p| p.id), Some(id));
+        let _ = cards.update(match cycle % 3 {
+            0 => Message::KeyInput(id, Key::Named(Named::Escape), Modifiers::empty()),
+            1 => Message::PeekEscape(id),
+            _ => Message::Peek(None),
+        });
+        assert!(cards.peek.is_none());
+        assert!(!cards.config.music.enabled);
+    }
 }

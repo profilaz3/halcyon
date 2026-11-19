@@ -47,10 +47,12 @@ impl Area {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum SearchOpen {
+    WidgetGlass,
     #[default]
     None,
     City,
     Effects,
+    Styles,
     Readability,
     /// The widget material's see-through control.
     Transparency,
@@ -368,7 +370,7 @@ pub(super) const DOCK_HIDE_TIMING: SearchHit = hit(
 pub(super) const LOOKS: SearchHit = hit(
     Page::DesktopProfiles,
     "Looks",
-    "setups profiles presets starter looks saved calm evening focus workbench paper rose clean desktop presentation welcome rain snow fog weather mix combine import share file save current export backup",
+    "setups profiles presets starter looks saved calm evening focus workbench paper rose clean desktop presentation welcome rain snow fog weather mix combine import share file save current export backup start workspace choose apps launch",
     false,
 )
 .names_page();
@@ -380,6 +382,13 @@ pub(super) const STARTUP: SearchHit = hit(
     false,
 )
 .names_page();
+pub(super) const ISLANDS_PANEL: SearchHit = hit(
+    Page::ActivityIsland,
+    "Islands panel",
+    "enable islands activate reinstall setup switch sign out sign in",
+    false,
+)
+.at("islands-activation");
 pub(super) const ACTIVITY_ISLAND: SearchHit = hit(
     Page::ActivityIsland,
     "Activity island",
@@ -478,6 +487,25 @@ pub(super) const GET_MORE_ICONS: SearchHit = hit(
     false,
 )
 .at("appearance-icons");
+pub(super) const WEATHER_LAYOUT: SearchHit = hit(
+    Page::Weather, "Widget layout", "weather classic outlook art forecast range compare saved design", false,
+).at("weather-layout");
+pub(super) const LOCAL_FOLDER: SearchHit = hit(
+    Page::Folder, "Local folder", "folder widget choose recent files thumbnails directory", false,
+);
+pub(super) const MARKETS_WATCHLIST: SearchHit = hit(
+    Page::Markets, "Watchlist", "stocks symbols ticker shares exchange currency pairs EUR/USD list", false,
+).at("markets-watchlist");
+pub(super) const DOCK_MAGNIFICATION: SearchHit = hit(
+    Page::DesktopDock, "Dock magnification", "dock icons grow zoom hover magnify", false,
+).at("dock-magnification").bar(PanelKind::Dock);
+pub(super) const WIDGET_GLASS: SearchHit = hit(
+    Page::WeatherEffects,
+    "Widget glass",
+    "edit widget glass smoked polished crystal frosted blur liquid lens tint color shape corner radius",
+    false,
+)
+.open(SearchOpen::WidgetGlass);
 pub(super) const WEATHER_EFFECTS: SearchHit = hit(
     Page::WeatherEffects,
     "Weather effects",
@@ -489,7 +517,7 @@ pub(super) const EDGE_MENU: SearchHit = hit(
     Page::EdgeMenu,
     "Edge menu",
     // It was called Widget controls; that name still finds it.
-    "edge menu widget controls open now flyout sidebar drawer side panel strip screen edge shortcuts apps folders actions customize hover click off disable left right position slide animation",
+    "edge menu widget controls open now flyout sidebar drawer side panel strip screen edge shortcuts apps folders actions widget peek customize hover click off disable left right position slide animation",
     false,
 )
 .names_page();
@@ -530,6 +558,14 @@ const SEARCH: &[SearchHit] = &[
         "widget cards card styles shape corners borders type soft outline paper bare glass dark glass shader grain sheen tinted frosted midnight terminal neon editorial retro pastel bauhaus",
         false,
     ),
+    hit(Page::Themes, "Mica Slate", "windows 11 fluent blue graphite style", false)
+        .open(SearchOpen::Styles).at("preset-theme-mica-slate"),
+    hit(Page::Themes, "Tape Deck", "hifi stereo amber charcoal instruments style", false)
+        .open(SearchOpen::Styles).at("preset-theme-tape-deck"),
+    hit(Page::Themes, "Porcelain", "ceramic cobalt rounded light style", false)
+        .open(SearchOpen::Styles).at("preset-theme-porcelain"),
+    hit(Page::Themes, "Blueprint", "drafting cyan square ink blue style", false)
+        .open(SearchOpen::Styles).at("preset-theme-blueprint"),
     hit(
         Page::Themes,
         "Accent color",
@@ -583,6 +619,7 @@ const SEARCH: &[SearchHit] = &[
     )
     .at("devbox-reorder-anchor"),
     WEATHER_LOCATION,
+    WEATHER_LAYOUT,
     hit(
         Page::Weather,
         "Units",
@@ -775,13 +812,30 @@ const SEARCH: &[SearchHit] = &[
         false,
     )
     .names_page(),
+    LOCAL_FOLDER,
+    hit(Page::Folder, "Show hidden files", "dotfiles folder visibility", false),
+    hit(Page::Appearance, "Widget glass", "crystal shared finish", false),
+    hit(Page::WeatherEffects, "Rain on widget glass", "raindrops wallpaper widgets only", false),
+    finish_hit(Page::Calendar),
+    finish_hit(Page::Clock),
+    finish_hit(Page::Devbox),
+    finish_hit(Page::Devices),
+    finish_hit(Page::Focus),
+    finish_hit(Page::Folder),
+    finish_hit(Page::Glance),
+    finish_hit(Page::Markets),
+    finish_hit(Page::Messages),
+    finish_hit(Page::Music),
+    finish_hit(Page::Notes),
+    finish_hit(Page::Projects),
+    finish_hit(Page::Weather),
     hit(Page::Markets, "Data source", "public yahoo ECB exchange rates free no key provider", false),
     hit(Page::Markets, "Show on widget", "markets display options", false).at("markets-display"),
     hit(Page::Markets, "Daily change", "markets percentage previous quote", false).at("markets-change"),
     hit(Page::Markets, "Price chart", "markets graph price history", false).at("markets-chart"),
     hit(Page::Markets, "Publication date", "markets quote time timestamp", false).at("markets-date"),
     hit(Page::Markets, "Source and chart details", "markets provider chart dates low high prices", false).at("markets-details"),
-    hit(Page::Markets, "Watchlist", "stocks symbols ticker shares exchange currency pairs EUR/USD list", false).at("markets-watchlist"),
+    MARKETS_WATCHLIST,
     hit(Page::Markets, "Twelve Data", "provider api key connection", false),
     DOCK_SEE_THROUGH,
     hit(
@@ -856,6 +910,7 @@ const SEARCH: &[SearchHit] = &[
     .bar(crate::desktop::panels::PanelKind::Panel)
     .section(BAR_ADVANCED),
     DOCK_HIDE_TIMING,
+    DOCK_MAGNIFICATION,
     hit(
         Page::DesktopPanel,
         "Hide timing",
@@ -884,6 +939,7 @@ const SEARCH: &[SearchHit] = &[
     .bar(crate::desktop::panels::PanelKind::Panel)
     .section(BAR_ADVANCED),
     WEATHER_EFFECTS,
+    WIDGET_GLASS,
     hit(
         Page::Home,
         "Home",
@@ -894,7 +950,7 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::WeatherEffects,
         "Moving effect",
-        "wallpaper effects rain snow fog cloud shadows living droplets flakes opacity mist wind refraction animation",
+        "wallpaper effects rain snow fog cloud shadows living droplets flakes opacity mist wind refraction animation rain on widget glass water droplets shader liquid lens clear refractive rim",
         false,
     )
     .at("rain-controls"),
@@ -959,13 +1015,7 @@ const SEARCH: &[SearchHit] = &[
     .at("dock-visibility")
     .bar(crate::desktop::panels::PanelKind::Panel),
     ACTIVITY_ISLAND,
-    hit(
-        Page::ActivityIsland,
-        "Islands panel",
-        "enable islands activate reinstall setup switch sign out sign in",
-        false,
-    )
-    .at("islands-activation"),
+    ISLANDS_PANEL,
     hit(
         Page::DesktopWindows,
         "Tile windows automatically",
@@ -1470,6 +1520,10 @@ pub(super) const UNCHECKED_LABELS: &[(&str, &str)] = &[
     ),
 ];
 
+const fn finish_hit(page: Page) -> SearchHit {
+    hit(page, "Glass finish", "saved shared finish crystal refraction material", false).at("widget-glass-finish")
+}
+
 const fn hit(page: Page, label: &'static str, terms: &'static str, advanced: bool) -> SearchHit {
     SearchHit {
         page,
@@ -1604,7 +1658,8 @@ pub fn find(query: &str) -> Matches {
         }
         // Every word found is in the page's name, typed and not a synonym.
         let names_page = entry.names_page && in_label && aliases == 0;
-        if label.join(" ") == phrase {
+        // “Layout” is the old name for the desktop arrangement editor.
+        if label.join(" ") == phrase || (phrase == "layout" && entry.open == SearchOpen::Arrange) {
             relevance += 100;
         }
         if page.len() == query.len()
@@ -2110,8 +2165,10 @@ mod tests {
                 assert_eq!(app.app_settings_page, renamed.app_destination());
             }
             match renamed.open {
+                SearchOpen::WidgetGlass => assert!(app.rain.glass_editor),
                 SearchOpen::City => assert!(app.city_editing),
                 SearchOpen::Effects => assert!(app.system_appearance.effects),
+                SearchOpen::Styles => assert!(app.open_sections.contains("appearance-all-styles")),
                 SearchOpen::Readability | SearchOpen::Transparency => {
                     assert!(app.material_adjust);
                     assert_eq!(app.material_target, crate::materials::Target::Widgets);
@@ -2425,6 +2482,8 @@ mod tests {
             assert_eq!(hit.open, SearchOpen::Arrange, "{query}");
             assert!(!hit.advanced);
         }
+        let weather = search("weather layout")[0];
+        assert_eq!((weather.page, weather.anchor()), (Page::Weather, "weather-layout"));
         // The editor in this window stays reachable, by its old name too.
         for query in ["arrange in this window", "arrange with keyboard"] {
             let here = search(query)[0];
@@ -2639,6 +2698,7 @@ pub(super) fn widget_of(page: Page) -> Option<crate::drawer::Widget> {
         Page::Devices => Widget::Devices,
         Page::Messages => Widget::Messages,
         Page::Markets => Widget::Markets,
+        Page::Folder => Widget::Folder,
         _ => return None,
     })
 }
@@ -2657,6 +2717,7 @@ pub(super) fn widget_page(widget: crate::drawer::Widget) -> Page {
         Widget::Devices => Page::Devices,
         Widget::Messages => Page::Messages,
         Widget::Markets => Page::Markets,
+        Widget::Folder => Page::Folder,
     }
 }
 

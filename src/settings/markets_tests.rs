@@ -96,8 +96,16 @@ fn markets_widget_settings_preserve_watchlist_and_render_native_charts() {
     send_settings(&mut app, Message::Tools(Edit::MarketMove("MSFT".into(), -1)));
     assert!(app.tools.market_symbols.is_empty());
     assert_eq!(Config::load().markets.symbols, ["MSFT", "EUR/GBP", "AAPL"]);
-    assert_eq!(app.tools.market_preview.source.as_ref().unwrap(), &app.config.markets);
-    assert_eq!(app.tools.market_preview.chart_symbol, app.config.markets.selected);
+    assert_eq!(
+        app.tools.market_preview.source.as_ref().unwrap(),
+        &app.config.markets
+    );
+    assert!(
+        app.tools
+            .market_preview
+            .charts
+            .contains_key(&app.config.markets.selected)
+    );
     assert_eq!(app.tools.market_preview.quotes.len(), 3);
     for pointer in [
         "/markets/symbols",
@@ -126,6 +134,18 @@ fn markets_widget_settings_preserve_watchlist_and_render_native_charts() {
     }
     assert_eq!(Config::load().markets.symbols, ["EUR/GBP"]);
     assert_eq!(Config::load().markets.selected, "EUR/GBP");
+    send_settings(&mut app, Message::Tools(Edit::MarketSymbols("IBM".into())));
+    Config::save_tool(Widget::Markets, serde_json::json!({"symbols": ["AMD"], "selected": "AMD"})).unwrap();
+    send_settings(&mut app, Message::Tick);
+    assert_eq!(app.tools.market_symbols, "IBM");
+    assert_eq!(app.tools.market_preview.source.as_ref().unwrap().selected, "AMD");
+    send_settings(&mut app, Message::Page(Page::Clock));
+    send_settings(&mut app, Message::Page(Page::Markets));
+    assert_eq!(app.tools.market_symbols, "IBM");
+    send_settings(&mut app, Message::Tools(Edit::MarketAdd));
+    assert_eq!(Config::load().markets.symbols, ["AMD", "IBM"]);
+    send_settings(&mut app, Message::UndoDesktop);
+    assert_eq!(app.tools.market_preview.source.as_ref().unwrap().symbols, ["AMD"]);
     let key = "synthetic-test-key-not-a-credential";
     send_settings(
         &mut app,
@@ -203,8 +223,16 @@ fn markets_resize_keeps_every_stock_and_chart_visible_without_scrolling() {
     config.markets.selected = "AAPL".into();
     let mut state = crate::tools::cards::sample_markets_for(&config.markets);
     let date_ranges = ["%b %-d", "%b %-d, %Y"].map(|format| {
-        let first = state.chart.first().unwrap().date.format(format);
-        let last = state.chart.last().unwrap().date.format(format);
+        let first = state.charts[&config.markets.selected]
+            .first()
+            .unwrap()
+            .date
+            .format(format);
+        let last = state.charts[&config.markets.selected]
+            .last()
+            .unwrap()
+            .date
+            .format(format);
         format!("{first} to {last}")
     });
     for dims in [[280., 300.], [300., 360.], [360., 420.], [520., 600.]] {
@@ -366,4 +394,31 @@ fn markets_defaults_to_watchlist_and_fits_the_saved_chart_viewport() {
     assert_eq!(fitted(&config), requested);
     assert_eq!(crate::layout::fitted_size(Widget::Markets, [280., 90.], [1920., 1080.], config.markets.height_limit()), [280., 300.]);
 
+}
+
+#[test]
+fn markets_quote_precision_survives_resize() {
+    use crate::tools::cards::{markets, sample_markets_for};
+    let mut config = Config::default();
+    config.markets.symbols = vec![
+        "AAPL".into(),
+        "MSFT".into(),
+        "NVDA".into(),
+        "EUR/USD".into(),
+        "IBM".into(),
+    ];
+    config.markets.selected = "AAPL".into();
+    config.markets.show_chart = true;
+    let mut state = sample_markets_for(&config.markets);
+    state
+        .quotes
+        .iter_mut()
+        .find(|q| q.symbol == "AAPL")
+        .unwrap()
+        .price = 0.0042;
+    for (size, expected) in [([520., 400.], "0.0042 USD"), ([300., 300.], "0.0042 USD")] {
+        let mut n = crate::native_test::Native::new(Size::new(size[0], size[1]));
+        let labels = n.all_text(markets(&state, &config, Some(|a| a), Some(size)));
+        assert!(labels.iter().any(|s| s == expected), "{labels:?}");
+    }
 }

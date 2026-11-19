@@ -9,7 +9,9 @@ pub enum Phase {
     #[default]
     Idle,
     Enabling,
+    Disabling,
     Failed(Failure),
+    DisableFailed(Failure),
 }
 #[derive(Default)]
 pub struct State {
@@ -19,7 +21,7 @@ pub struct State {
 }
 impl State {
     pub fn busy(&self) -> bool {
-        matches!(self.phase, Phase::Enabling)
+        matches!(self.phase, Phase::Enabling | Phase::Disabling)
     }
     fn reset(&mut self) {
         self.generation = self.generation.wrapping_add(1);
@@ -77,7 +79,7 @@ pub(super) fn update(settings: &mut Settings, value: Message) -> Task<SettingsMe
                     .is_some_and(Identity::can_enable_islands) =>
         {
             state.reset();
-            state.phase = Phase::Enabling;
+            state.phase = Phase::Disabling;
             let (sender, cancel) = watch::channel(false);
             state.cancellation = Some(sender);
             let token = state.generation;
@@ -85,14 +87,16 @@ pub(super) fn update(settings: &mut Settings, value: Message) -> Task<SettingsMe
                 message(Message::Enabled(token, disable(cancel).await))
             });
         }
-        Message::Enabled(token, result)
-            if token == state.generation && state.phase == Phase::Enabling =>
-        {
+        Message::Enabled(token, result) if token == state.generation && state.busy() => {
             state.cancellation = None;
             if let Some(failure) = &result.failure {
                 failure.count("islands");
             }
-            state.phase = result.failure.map(Phase::Failed).unwrap_or_default();
+            state.phase = match result.failure {
+                Some(failure) if state.phase == Phase::Disabling => Phase::DisableFailed(failure),
+                Some(failure) => Phase::Failed(failure),
+                None => Phase::Idle,
+            };
             if let Some(installation) = result.observed {
                 settings.desktop.islands.installation = installation;
             }

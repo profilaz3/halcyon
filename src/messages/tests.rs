@@ -189,6 +189,7 @@ struct Fake {
     sms: AtomicBool,
     asked: AtomicUsize,
     messages: Mutex<Vec<Wire>>,
+    read_failed: AtomicBool,
 }
 
 struct Daemon(Arc<Fake>);
@@ -229,15 +230,19 @@ struct Conversations(Arc<Fake>);
 #[zbus::interface(name = "org.kde.kdeconnect.device.conversations")]
 impl Conversations {
     #[zbus(name = "activeConversations")]
-    fn active_conversations(&self) -> Vec<OwnedValue> {
-        self.0
+    fn active_conversations(&self) -> zbus::fdo::Result<Vec<OwnedValue>> {
+        if self.0.read_failed.load(Ordering::SeqCst) {
+            return Err(zbus::fdo::Error::Failed("Simulated read failure".into()));
+        }
+        Ok(self
+            .0
             .messages
             .lock()
             .unwrap()
             .iter()
             .cloned()
             .map(owned)
-            .collect()
+            .collect())
     }
     #[zbus(name = "requestAllConversationThreads")]
     fn request_all_conversation_threads(&self) {
@@ -349,6 +354,17 @@ fn follows_a_phone_through_kde_connect() {
                 matches!(&back, State::Ready { threads, .. } if threads.len() == 2),
                 "kept while the phone answers: {back:?}"
             );
+            follower.asked.as_mut().unwrap().1 -= ANSWER + Duration::from_secs(1);
+            fake.read_failed.store(true, Ordering::SeqCst);
+            let stale = follower.read(&client).await;
+            assert!(matches!(stale, State::Stale { .. }));
+            assert_eq!(stale.threads(), ready.threads());
+            fake.read_failed.store(false, Ordering::SeqCst);
+            let empty = follower.read(&client).await;
+            assert!(matches!(empty, State::Ready { threads, .. } if threads.is_empty()));
+            fake.reachable.store(false, Ordering::SeqCst);
+            let away = follower.read(&client).await;
+            assert!(matches!(away, State::Away { threads, .. } if threads.is_empty()));
         });
 }
 

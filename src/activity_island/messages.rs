@@ -37,7 +37,10 @@ fn bounded(text: &str, limit: usize) -> String {
 /// Redact before crossing the bridge, including outgoing/attachment metadata.
 pub(crate) fn project(state: &State, show_text: bool) -> Messages {
     Messages {
-        phone: bounded(state.phone().unwrap_or("Phone messages"), 60),
+        phone: match state {
+            State::Stale { phone, .. } => format!("{} · last known", bounded(phone, 46)),
+            _ => bounded(state.phone().unwrap_or("Phone messages"), 60),
+        },
         action: match state {
             State::Starting | State::NoService => "Set up messages",
             State::Stopped | State::NoPhone | State::NoSms { .. } => "Open KDE Connect",
@@ -55,7 +58,7 @@ pub(crate) fn project(state: &State, show_text: bool) -> Messages {
             .map(|thread| Conversation {
                 who: bounded(&thread.who, 60),
                 preview: if show_text {
-                    bounded(&preview(thread, true), 160)
+                    bounded(&preview(thread), 160)
                 } else if thread.unread {
                     "New message".into()
                 } else {
@@ -239,6 +242,15 @@ mod tests {
                 .all(|t| matches!(t.preview.as_str(), "New message" | "Message"))
         );
         assert_eq!(serde_json::from_str::<Messages>(&wire).unwrap(), hidden);
+        let stale = project(
+            &State::Stale {
+                phone: "Phone".into(),
+                threads,
+            },
+            false,
+        );
+        assert_eq!(stale.phone, "Phone · last known");
+        assert!(!serde_json::to_string(&stale).unwrap().contains("PRIVATE"));
     }
     #[test]
     fn island_messages_are_opt_in_and_show_offline_and_setup_states() {
@@ -265,6 +277,10 @@ mod tests {
             },
             State::Asking {
                 phone: "Phone".into(),
+            },
+            State::Stale {
+                phone: "Phone".into(),
+                threads: vec![],
             },
             State::Ready {
                 phone: "Phone".into(),

@@ -1,6 +1,6 @@
 [package]
 name = "cosmic-ext-halcyon"
-version = "0.7.6"
+version = "0.7.8"
 description = "Desktop widgets and themes for COSMIC"
 homepage = "https://github.com/profilaz3/halcyon"
 repository = "https://github.com/profilaz3/halcyon"
@@ -10,6 +10,7 @@ license = "GPL-3.0-or-later AND GPL-3.0-only"
 
 [package.metadata.halcyon]
 bundled-islands = true
+bundled-magnifying-dock = true
 
 [[bin]]
 name = "halcyon"
@@ -41,6 +42,7 @@ tokio = { version = "1", features = ["time", "macros", "sync", "net", "process",
 dirs = "5"
 chrono = { version = "0.4", features = ["clock"] }
 chrono-tz = "=0.10.4"
+unicode-segmentation = "=1.13.3"
 libc = "0.2"
 notify = "8.2"
 ron = "0.12"

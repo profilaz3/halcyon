@@ -220,7 +220,6 @@ pub fn subscription(mut preferences: Preferences, seed: State) -> Subscription<S
             loop {
                 state.source = Some(preferences.clone());
                 state.loading = true;
-                state.select_chart(&preferences.selected);
                 if output.send(state.clone()).await.is_err() {
                     break;
                 }
@@ -234,10 +233,7 @@ pub fn subscription(mut preferences: Preferences, seed: State) -> Subscription<S
                 if output.send(state.clone()).await.is_err() {
                     break;
                 }
-                let delay = state.received_at.map_or(REFRESH_INTERVAL, |at| {
-                    REFRESH_INTERVAL.saturating_sub(at.elapsed())
-                });
-                tokio::time::sleep(delay).await;
+                tokio::time::sleep(state.next_refresh(std::time::Instant::now())).await;
             }
         })
     })
@@ -282,7 +278,6 @@ async fn refresh(
                 state.record(symbol, result);
             }
             state.ecb_checked_at = Some(std::time::Instant::now());
-            state.select_chart(selected);
             let _ = output.send(state.clone()).await;
         }
     }
@@ -299,7 +294,6 @@ async fn refresh(
                     };
                     limited = matches!(result, Err(Problem::RateLimit));
                     state.record(symbol, result);
-                    state.select_chart(selected);
                     let _ = output.send(state.clone()).await;
                 }
             }
@@ -353,7 +347,6 @@ async fn refresh(
             },
         }
     }
-    state.select_chart(selected);
     if !reuse {
         state.received_at = Some(std::time::Instant::now());
     }
@@ -449,17 +442,21 @@ pub fn symbols(input: &str) -> Result<Vec<String>, &'static str> {
 }
 
 impl Preferences {
+    fn quote_key(&self) -> (Provider, Vec<&str>, u64) {
+        let mut symbols: Vec<_> = self.symbols.iter().map(String::as_str).collect();
+        symbols.sort_unstable();
+        (self.provider, symbols, self.credential_revision)
+    }
+
     /// Only Twelve Data needs a separate stock-chart request.
     pub(crate) fn feed_key(&self) -> impl std::hash::Hash + Eq + '_ {
         (
             self.enabled,
-            self.provider,
-            &self.symbols,
-            &self.selected,
-            self.credential_revision,
-            self.provider == Provider::TwelveData
+            self.quote_key(),
+            (self.provider == Provider::TwelveData
                 && self.show_chart
-                && currency_pair(&self.selected).is_none(),
+                && currency_pair(&self.selected).is_none())
+            .then_some(&self.selected),
         )
     }
 
@@ -554,19 +551,21 @@ pub struct State {
     pub received_at: Option<std::time::Instant>,
     pub quotes: Vec<Quote>,
     pub charts: std::collections::BTreeMap<String, Vec<Point>>,
-    pub chart_symbol: String,
-    pub chart: Vec<Point>,
     pub problem: Option<Problem>,
     pub unavailable: std::collections::BTreeMap<String, Problem>,
     pub loading: bool,
 }
 
 impl State {
-    fn same_watchlist(&self, preferences: &Preferences) -> bool {
-        self.source.as_ref().is_some_and(|p| {
-            p.provider == preferences.provider
-                && p.symbols == preferences.symbols
-                && p.credential_revision == preferences.credential_revision
+    pub(crate) fn same_watchlist(&self, preferences: &Preferences) -> bool {
+        self.source
+            .as_ref()
+            .is_some_and(|p| p.quote_key() == preferences.quote_key())
+    }
+
+    fn next_refresh(&self, now: std::time::Instant) -> Duration {
+        self.received_at.map_or(REFRESH_INTERVAL, |at| {
+            REFRESH_INTERVAL.saturating_sub(now.saturating_duration_since(at))
         })
     }
 
@@ -575,11 +574,6 @@ impl State {
             && self
                 .received_at
                 .is_some_and(|at| at.elapsed() < REFRESH_INTERVAL)
-    }
-
-    fn select_chart(&mut self, symbol: &str) {
-        self.chart_symbol = symbol.into();
-        self.chart = self.charts.get(symbol).cloned().unwrap_or_default();
     }
 
     fn store_quote(&mut self, quote: Quote) {
@@ -703,6 +697,24 @@ mod tests {
     }
 
     #[test]
+    fn public_stock_selection_keeps_an_inflight_feed() {
+        let mut a = Preferences {
+            selected: "AAPL".into(),
+            show_chart: true,
+            ..Default::default()
+        };
+        let mut b = a.clone();
+        b.selected = "MSFT".into();
+        assert!(a.feed_key() == b.feed_key());
+        a.provider = Provider::TwelveData;
+        b.provider = Provider::TwelveData;
+        assert!(a.feed_key() != b.feed_key());
+        a.show_chart = false;
+        b.show_chart = false;
+        assert!(a.feed_key() == b.feed_key());
+    }
+
+    #[test]
     fn switching_charts_reuses_quotes_but_a_different_key_or_watchlist_does_not() {
         let mut preferences = Preferences::default();
         let mut state = crate::tools::cards::sample_markets();
@@ -711,6 +723,9 @@ mod tests {
         preferences.provider = Provider::TwelveData;
         assert!(!state.fresh_for(&preferences));
         preferences.provider = Provider::Public;
+        preferences.symbols.reverse();
+        let original = Preferences::default();
+        assert!(preferences.feed_key() == original.feed_key());
         preferences.selected = "MSFT".into();
         assert!(state.fresh_for(&preferences));
         preferences.credential_revision = 1;
@@ -723,6 +738,22 @@ mod tests {
             state.fresh_for(&Preferences::default()),
             "changing selection should not retry a failed provider early"
         );
+    }
+
+    #[test]
+    fn selecting_a_row_keeps_the_quote_deadline_and_failed_rows_keep_their_cache() {
+        let mut state = crate::tools::cards::sample_markets();
+        let mut prefs = state.source.clone().unwrap();
+        let now = std::time::Instant::now();
+        state.received_at = Some(now - REFRESH_INTERVAL + Duration::from_secs(60));
+        prefs.selected = prefs.symbols[1].clone();
+        assert!(state.fresh_for(&prefs));
+        assert_eq!(state.next_refresh(now), Duration::from_secs(60));
+        assert_eq!(state.next_refresh(now + Duration::from_secs(60)), Duration::ZERO);
+        state.received_at = Some(now - REFRESH_INTERVAL);
+        state.unavailable.insert(prefs.selected.clone(), Problem::Network);
+        assert!(!state.fresh_for(&prefs));
+        assert!(state.same_watchlist(&prefs));
     }
 
     #[test]

@@ -208,6 +208,7 @@ fn fb16_model_field_mapping_is_reversible_unique_and_excludes_content() {
         "/calendar_private",
         "/onboarded",
         "/setup_dismissed",
+        "/islands_offer_dismissed",
     ] {
         assert!(!legacy::owned(pointer));
     }

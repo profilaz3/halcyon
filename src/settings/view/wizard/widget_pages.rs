@@ -43,6 +43,7 @@ fn description(widget: Widget) -> &'static str {
         Widget::Glance => "Clock, weather and calendar",
         Widget::Devices => "Battery of connected devices",
         Widget::Messages => "Your phone’s texts",
+        Widget::Folder => "Recent files from a local folder",
         Widget::Markets => "Stocks, currency pairs and charts",
     }
 }

@@ -102,6 +102,7 @@ pub struct Config {
     pub devices: DevicesPreferences,
     pub messages: MessagesPreferences,
     pub markets: crate::markets::Preferences,
+    pub folder: crate::folder::Preferences,
     /// The edge sidebar slides in and out; off, it appears and hides at
     /// once (Pop!_OS › Motion).
     pub sidebar_slide: bool,
@@ -113,6 +114,7 @@ pub struct Config {
     pub show_explanations: bool,
     pub activity_island: crate::activity_island::preferences::Preferences,
     pub setup_dismissed: bool,
+    pub islands_offer_dismissed: bool,
     /// First-run setup was finished, skipped or cancelled.
     pub onboarded: bool,
 }
@@ -171,12 +173,14 @@ impl Default for Config {
             devices: DevicesPreferences::default(),
             messages: MessagesPreferences::default(),
             markets: crate::markets::Preferences::default(),
+            folder: Default::default(),
             sidebar_slide: true,
             edge_menu: edge_menu::EdgeMenu::default(),
             settings_animations: true,
             show_explanations: false,
             activity_island: Default::default(),
             setup_dismissed: false,
+            islands_offer_dismissed: false,
             onboarded: false,
         }
     }
@@ -353,8 +357,17 @@ impl Config {
         Ok(())
     }
     pub fn palette(&self) -> Palette {
+        let glass_palette = |mut p: Palette| {
+            if let Some(glass) = crate::widget_style::selected_glass(self)
+                && p.background.a > 0.
+                && !self.appearance.contrast_assist
+            {
+                p.background.a = f32::from(glass.opacity) / 100.;
+            }
+            p
+        };
         if let Some(roles) = self.theme_roles() {
-            return roles.card;
+            return glass_palette(roles.card);
         }
         let mut palette = match self.appearance.color_source {
             ColorSource::Desktop => self
@@ -369,11 +382,11 @@ impl Config {
         if self.appearance.contrast_assist {
             palette = crate::widget_style::readable(palette);
         }
-        crate::materials::palette(
+        glass_palette(crate::materials::palette(
             palette,
             self.materials.widgets(),
             self.appearance.contrast_assist,
-        )
+        ))
     }
     /// Personal recipes own their visible parts; built-in preferences stay intact.
     pub fn music_artwork(&self) -> bool {
@@ -411,6 +424,7 @@ impl Config {
             Widget::Devices => return self.devices.enabled,
             Widget::Messages => return self.messages.enabled,
             Widget::Markets => return self.markets.enabled,
+            Widget::Folder => return self.folder.enabled,
             _ => {}
         }
         self.enabled_widgets.iter().any(|key| key == widget.key())
@@ -1231,9 +1245,23 @@ pub enum ColorPolicy {
     Custom,
 }
 
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WeatherLayout {
+    /// Follow the saved widget design, or show Classic when there is none.
+    #[default]
+    Saved,
+    Classic,
+    Outlook,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct WeatherPreferences {
+    pub layout: WeatherLayout,
+    pub outlook_artwork: bool,
+    pub outlook_range: bool,
+    pub outlook_forecast: bool,
     /// Shared by the standalone weather card and Daily overview.
     pub show_dew_point: bool,
     /// Show °F and mph. Readings are kept in °C and km/h and converted
@@ -1243,6 +1271,10 @@ pub struct WeatherPreferences {
 impl Default for WeatherPreferences {
     fn default() -> Self {
         Self {
+            layout: WeatherLayout::Saved,
+            outlook_artwork: true,
+            outlook_range: true,
+            outlook_forecast: true,
             show_dew_point: false,
             fahrenheit: fahrenheit_region(),
         }
@@ -1827,6 +1859,7 @@ impl RefreshIntervals {
             | Widget::Notes
             | Widget::Focus
             | Widget::Devices
+            | Widget::Folder
             | Widget::Markets
             | Widget::Messages => self.clock,
         }
@@ -1844,6 +1877,7 @@ impl RefreshIntervals {
             | Widget::Notes
             | Widget::Focus
             | Widget::Devices
+            | Widget::Folder
             | Widget::Markets
             | Widget::Messages => (1, 60),
             Widget::Weather => (300, 10800),
@@ -1863,6 +1897,7 @@ impl RefreshIntervals {
             | Widget::Notes
             | Widget::Focus
             | Widget::Devices
+            | Widget::Folder
             | Widget::Markets
             | Widget::Messages => &[1, 15, 30, 60],
         }

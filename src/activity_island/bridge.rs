@@ -246,6 +246,11 @@ impl Default for Owner {
     }
 }
 impl Owner {
+    #[cfg(test)]
+    pub(crate) fn published(&self) -> Snapshot {
+        self.sender.borrow().clone()
+    }
+
     pub fn publish(&self, next: Snapshot) {
         self.sender.send_if_modified(|old| {
             if *old == next {

@@ -1,0 +1,186 @@
+diff --git a/cosmic-app-list/src/app.rs b/cosmic-app-list/src/app.rs
+index 7267f0f..e5a6ac6 100755
+--- a/cosmic-app-list/src/app.rs
++++ b/cosmic-app-list/src/app.rs
+@@ -189,6 +189,7 @@ impl DockItem {
+     fn as_icon(
+         &self,
+         applet: &Context,
++        magnification: bool,
+         rectangle_tracker: Option<&RectangleTracker<DockItemId>>,
+         interaction_enabled: bool,
+         dnd_source_enabled: bool,
+@@ -258,16 +259,23 @@ impl DockItem {
+             }
+         };
+
++        let icon = || {
++            crate::magnify::icon(
++                cosmic_icon.clone().into(),
++                applet.is_horizontal(),
++                magnification && interaction_enabled,
++            )
++        };
+         let icon_wrapper: Element<_> = match applet.anchor {
+             PanelAnchor::Left => row([
+                 indicator.into(),
+                 horizontal_space().width(Length::Fixed(1.0)).into(),
+-                cosmic_icon.clone().into(),
++                icon(),
+             ])
+             .align_y(Alignment::Center)
+             .into(),
+             PanelAnchor::Right => row([
+-                cosmic_icon.clone().into(),
++                icon(),
+                 horizontal_space().width(Length::Fixed(1.0)).into(),
+                 indicator.into(),
+             ])
+@@ -276,12 +284,12 @@ impl DockItem {
+             PanelAnchor::Top => column([
+                 indicator.into(),
+                 vertical_space().height(Length::Fixed(1.0)).into(),
+-                cosmic_icon.clone().into(),
++                icon(),
+             ])
+             .align_x(Alignment::Center)
+             .into(),
+             PanelAnchor::Bottom => column([
+-                cosmic_icon.clone().into(),
++                icon(),
+                 vertical_space().height(Length::Fixed(1.0)).into(),
+                 indicator.into(),
+             ])
+@@ -292,7 +300,7 @@ impl DockItem {
+         let icon_button = button::custom(icon_wrapper)
+             .padding(app_icon.padding)
+             .selected(is_focused)
+-            .class(app_list_icon_style(is_focused));
++            .class(crate::magnify::button_style());
+
+         let icon_button: Element<_> = if interaction_enabled {
+             mouse_area(
+@@ -360,6 +368,7 @@ pub struct Popup {
+
+ #[derive(Clone, Default)]
+ pub struct CosmicAppList {
++    magnification: bool,
+     core: cosmic::app::Core,
+     popup: Option<Popup>,
+     item_ctr: u32,
+@@ -390,6 +399,7 @@ pub enum PopupType {
+
+ #[derive(Debug, Clone)]
+ pub enum Message {
++    Magnification(bool),
+     Wayland(Box<WaylandUpdate>),
+     PinApp(u32),
+     UnpinApp(u32),
+@@ -574,31 +584,6 @@ fn window_menu_style(selected: bool) -> cosmic::theme::Button {
+     }
+ }
+
+-fn app_list_icon_style(selected: bool) -> cosmic::theme::Button {
+-    Button::Custom {
+-        active: Box::new(move |focused, theme| {
+-            let a = button::Catalog::active(theme, focused, selected, &Button::AppletIcon);
+-            button::Style {
+-                background: if selected {
+-                    Some(Background::Color(
+-                        theme.cosmic().icon_button.selected_state_color().into(),
+-                    ))
+-                } else {
+-                    a.background
+-                },
+-                ..a
+-            }
+-        }),
+-        hovered: Box::new(move |focused, theme| {
+-            button::Catalog::hovered(theme, focused, selected, &Button::AppletIcon)
+-        }),
+-        disabled: Box::new(|theme| button::Catalog::disabled(theme, &Button::AppletIcon)),
+-        pressed: Box::new(move |focused, theme| {
+-            button::Catalog::pressed(theme, focused, selected, &Button::AppletIcon)
+-        }),
+-    }
+-}
+-
+ #[inline]
+ pub fn menu_control_padding() -> Padding {
+     let spacing = theme::spacing();
+@@ -859,6 +844,7 @@ impl cosmic::Application for CosmicAppList {
+         });
+
+         let mut app_list = Self {
++            magnification: true,
+             core,
+             config,
+             gpus,
+@@ -882,6 +868,7 @@ impl cosmic::Application for CosmicAppList {
+
+     fn update(&mut self, message: Self::Message) -> app::Task<Self::Message> {
+         match message {
++            Message::Magnification(on) => self.magnification = on,
+             Message::Popup(id, parent_window_id) => {
+                 if let Some(Popup {
+                     parent,
+@@ -1772,6 +1759,7 @@ impl cosmic::Application for CosmicAppList {
+                     .applet_tooltip::<Message>(
+                         dock_item.as_icon(
+                             &self.core.applet,
++                            self.magnification,
+                             self.rectangle_tracker.as_ref(),
+                             self.popup.is_none(),
+                             self.config.enable_drag_source,
+@@ -1831,6 +1819,7 @@ impl cosmic::Application for CosmicAppList {
+                 index.min(favorites.len()),
+                 item.as_icon(
+                     &self.core.applet,
++                    self.magnification,
+                     None,
+                     false,
+                     self.config.enable_drag_source,
+@@ -1883,6 +1872,7 @@ impl cosmic::Application for CosmicAppList {
+                         .applet_tooltip(
+                             dock_item.as_icon(
+                                 &self.core.applet,
++                                self.magnification,
+                                 self.rectangle_tracker.as_ref(),
+                                 self.popup.is_none(),
+                                 self.config.enable_drag_source,
+@@ -2304,6 +2294,7 @@ impl cosmic::Application for CosmicAppList {
+                         .applet_tooltip(
+                             dock_item.as_icon(
+                                 &self.core.applet,
++                                self.magnification,
+                                 self.rectangle_tracker.as_ref(),
+                                 self.popup.is_none(),
+                                 self.config.enable_drag_source,
+@@ -2411,6 +2402,7 @@ impl cosmic::Application for CosmicAppList {
+                         .applet_tooltip(
+                             dock_item.as_icon(
+                                 &self.core.applet,
++                                self.magnification,
+                                 self.rectangle_tracker.as_ref(),
+                                 self.popup.is_none(),
+                                 self.config.enable_drag_source,
+@@ -2477,6 +2469,7 @@ impl cosmic::Application for CosmicAppList {
+
+     fn subscription(&self) -> Subscription<Message> {
+         Subscription::batch([
++            Subscription::run(crate::magnify::motion_settings).map(Message::Magnification),
+             wayland_subscription().map(|e| Message::Wayland(Box::new(e))),
+             listen_with(|e, _, id| match e {
+                 cosmic::iced::core::Event::PlatformSpecific(event::PlatformSpecific::Wayland(
+diff --git a/cosmic-app-list/src/lib.rs b/cosmic-app-list/src/lib.rs
+index 51079cc..2a56590 100644
+--- a/cosmic-app-list/src/lib.rs
++++ b/cosmic-app-list/src/lib.rs
+@@ -2,6 +2,7 @@
+ // SPDX-License-Identifier: GPL-3.0-only
+
+ mod app;
++mod magnify;
+ mod localize;
+ mod wayland_handler;
+ mod wayland_subscription;

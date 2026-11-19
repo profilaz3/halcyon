@@ -51,6 +51,7 @@ mod tip;
 mod tools;
 mod updates;
 mod wallpaper;
+mod widget_glass;
 mod widget_page;
 mod widget_text;
 mod window_rules;
@@ -350,6 +351,11 @@ pub(super) fn segmented<'a>(
         .into_iter()
         .map(|(title, selected, message)| {
             let id = match &message {
+                Some(Message::WeatherLayout(layout)) => cosmic::widget::Id::new(match layout {
+                    crate::config::WeatherLayout::Classic => "weather-layout-classic",
+                    crate::config::WeatherLayout::Outlook => "weather-layout-outlook",
+                    crate::config::WeatherLayout::Saved => "weather-layout-saved",
+                }),
                 Some(Message::DesktopEditor(crate::settings::desktop::Message::RadiusChoice(
                     radius,
                 ))) => cosmic::widget::Id::new(format!("native-bar-radius-{radius}")),
@@ -367,6 +373,17 @@ pub(super) fn segmented<'a>(
                 Some(Message::DesktopEditor(crate::settings::desktop::Message::PanelStyle(
                     crate::settings::desktop::PanelStyle::FullWidth,
                 ))) => cosmic::widget::Id::new("native-shape-full"),
+                Some(Message::Rain(crate::settings::rain::Edit::GlassTab(tab))) => {
+                    cosmic::widget::Id::new(format!("widget-glass-tab-{tab:?}").to_lowercase())
+                }
+                Some(Message::Rain(crate::settings::rain::Edit::Set(p)))
+                    if p.effect == crate::rain::Effect::Lens =>
+                {
+                    cosmic::widget::Id::new(format!(
+                        "widget-glass-{}",
+                        p.glass.map_or("Classic", |g| g.mode.title()).to_lowercase()
+                    ))
+                }
                 Some(Message::Rain(crate::settings::rain::Edit::Adjust(effect))) => {
                     cosmic::widget::Id::new(format!("rain-adjusting-{effect:?}").to_lowercase())
                 }
@@ -673,6 +690,7 @@ impl Settings {
             Page::Focus => self.focus_page(),
             Page::Devices => self.devices_page(),
             Page::Messages => self.messages_page(),
+            Page::Folder => self.folder_page(),
             Page::Markets => self.markets_page(),
             Page::General => self.general_page(),
             Page::Home => self.home_page(),

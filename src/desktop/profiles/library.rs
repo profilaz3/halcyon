@@ -161,7 +161,7 @@ impl<'a> ProfileLibrary<'a> {
             self.load(&id)?;
             return Ok(());
         }
-        let captured = super::themes::capture(self.store, "Before Themes")?;
+        let captured = super::themes::capture_personal(self.store, "Before Themes")?;
         let bytes = export_local(&captured.profile)?;
         let dir = self.prepare()?;
         let temporary = write_temporary(&dir, &bytes)?;

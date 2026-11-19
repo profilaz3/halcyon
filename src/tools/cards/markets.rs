@@ -92,7 +92,7 @@ impl<M> canvas::Program<M, cosmic::Theme> for Chart<'_> {
 
 pub fn markets<'a, M: Clone + 'static>(
     state: &'a State,
-    config: &'a Config,
+    config: &Config,
     action: Option<fn(Action) -> M>,
     size: Option<[f32; 2]>,
 ) -> Element<'a, M> {
@@ -235,7 +235,7 @@ pub fn markets<'a, M: Clone + 'static>(
             let value = if let Some((base, counter)) = pair {
                 format!("1 {base} = {} {counter}", rate(quote.price))
             } else {
-                format!("{:.2} {}", quote.price, quote.currency)
+                stock_price(quote)
             };
             content = content.push(line(value, 17., p.foreground));
             if options.show_change
@@ -265,10 +265,8 @@ pub fn markets<'a, M: Clone + 'static>(
                 .map(|q| {
                     if currency_pair(symbol).is_some() {
                         format!("{} {}", rate(q.price), q.currency)
-                    } else if q.price < 1. {
-                        format!("{:.4} {}", q.price, q.currency)
                     } else {
-                        format!("{:.2} {}", q.price, q.currency)
+                        stock_price(q)
                     }
                 })
                 .unwrap_or_else(|| "No quote".into());
@@ -320,18 +318,22 @@ pub fn markets<'a, M: Clone + 'static>(
             };
             content = content.push(line(summary, 15., p.foreground));
         }
-        if state.chart_symbol == quote.symbol && state.chart.len() > 1 {
+        if let Some(chart) = state
+            .charts
+            .get(&quote.symbol)
+            .filter(|points| points.len() > 1)
+        {
             let caption = if pair.is_some() {
                 "Last 30 days".into()
             } else if detailed {
-                format!("Last {} trading sessions · daily prices", state.chart.len())
+                format!("Last {} trading sessions · daily prices", chart.len())
             } else {
-                format!("{} · {} trading sessions", quote.symbol, state.chart.len())
+                format!("{} · {} trading sessions", quote.symbol, chart.len())
             };
             content = content.push(line(caption, 12., p.foreground));
             content = content.push(
                 canvas::Canvas::new(Chart {
-                    points: &state.chart,
+                    points: chart,
                     color: p.accent,
                     calendar_days: pair.is_some(),
                 })
@@ -339,13 +341,8 @@ pub fn markets<'a, M: Clone + 'static>(
                 .height(Length::Fill),
             );
             if detailed && options.show_details {
-                let low = state
-                    .chart
-                    .iter()
-                    .map(|p| p.close)
-                    .fold(f64::INFINITY, f64::min);
-                let high = state
-                    .chart
+                let low = chart.iter().map(|p| p.close).fold(f64::INFINITY, f64::min);
+                let high = chart
                     .iter()
                     .map(|p| p.close)
                     .fold(f64::NEG_INFINITY, f64::max);
@@ -360,8 +357,8 @@ pub fn markets<'a, M: Clone + 'static>(
                 ));
             }
             let date_format = if detailed { "%b %-d, %Y" } else { "%b %-d" };
-            let first = state.chart.first().unwrap().date.format(date_format);
-            let last = state.chart.last().unwrap().date.format(date_format);
+            let first = chart.first().unwrap().date.format(date_format);
+            let last = chart.last().unwrap().date.format(date_format);
             if !compact && options.show_details {
                 content = content.push(line(format!("{first} to {last}"), 11., p.foreground));
             }
@@ -399,6 +396,14 @@ pub fn markets<'a, M: Clone + 'static>(
     frame(content.into(), config, height)
 }
 
+fn stock_price(quote: &crate::markets::Quote) -> String {
+    if quote.price > 0. && quote.price < 0.0001 {
+        return format!("{:.3e} {}", quote.price, quote.currency);
+    }
+    let precision = if quote.price < 1. { 4 } else { 2 };
+    format!("{:.*} {}", precision, quote.price, quote.currency)
+}
+
 fn rate(value: f64) -> String {
     // ECB publishes varying precision (e.g. 0.83305 GBP). Retain six
     // significant digits for cross rates and at least four decimal places.
@@ -411,6 +416,7 @@ fn rate(value: f64) -> String {
     text
 }
 
+#[cfg(test)]
 pub fn sample() -> State {
     sample_for(&crate::markets::Preferences::default())
 }
@@ -462,22 +468,21 @@ pub fn sample_for(preferences: &crate::markets::Preferences) -> State {
     }
     dates.reverse();
     let last = dates.len().saturating_sub(1);
+    let chart = dates
+        .into_iter()
+        .enumerate()
+        .map(|(i, date)| {
+            let remaining = (last - i) as f64;
+            PricePoint {
+                date,
+                close: selected_price * (1. - remaining * 0.0015 + (remaining * 0.7).sin() * 0.012),
+            }
+        })
+        .collect();
     State {
         source: Some(preferences.clone()),
         quotes,
-        chart_symbol: preferences.selected.clone(),
-        chart: dates
-            .into_iter()
-            .enumerate()
-            .map(|(i, date)| {
-                let remaining = (last - i) as f64;
-                PricePoint {
-                    date,
-                    close: selected_price
-                        * (1. - remaining * 0.0015 + (remaining * 0.7).sin() * 0.012),
-                }
-            })
-            .collect(),
+        charts: [(preferences.selected.clone(), chart)].into(),
         ..State::default()
     }
 }

@@ -134,6 +134,20 @@ impl Settings {
                 )).width(52).into(),
             ),
         ])];
+        if matches!(target, Target::Shared | Target::Widgets) {
+            rows.push(group(
+                None,
+                vec![group_row_state(
+                    "Widget glass",
+                    "Glass finish, backdrop blur, tint and corners",
+                    button::text("Edit glass")
+                        .on_press(Message::SearchResult(
+                            crate::settings::navigation::WIDGET_GLASS,
+                        ))
+                        .into(),
+                )],
+            ));
+        }
         if scoped {
             rows.push(
                 container(group(None, vec![group_row_state("Use on", state, scopes)]))
@@ -183,8 +197,9 @@ impl Settings {
                 status,
                 desktop::WARN,
                 vec![
-                    button::text("Set up")
-                        .on_press(Message::OpenIslandsGuide)
+                    button::text("Islands panel setup")
+                        .id("material-panel-setup".into())
+                        .on_press(Message::SearchResult(crate::settings::navigation::ISLANDS_PANEL))
                         .into(),
                     button::text("Check again")
                         .on_press(Message::DesktopEditor(

@@ -162,6 +162,7 @@ pub fn apply(manual: &Preferences, effect: Effect, level: Level) -> Preferences 
     p.enabled = true;
     p.effect = effect;
     match effect {
+        Effect::Lens => {}
         Effect::Rain => p.intensity = scale(p.intensity),
         Effect::Snow => p.snow.density = scale(p.snow.density),
         Effect::Fog => p.fog.opacity = scale(p.fog.opacity),

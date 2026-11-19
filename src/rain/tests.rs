@@ -1332,3 +1332,475 @@ fn rain_held_still_while_hidden_resumes_where_it_stopped() {
         );
     }
 }
+
+#[test]
+fn crystal_keeps_music_and_focus_aligned_on_light_and_dark_wallpaper() {
+    if std::env::var_os("HALCYON_RAIN_GPU_TEST").is_none() {
+        return;
+    }
+    use crate::tools::{cards, focus};
+    use cosmic::iced::widget::{Shader, Stack};
+    use cosmic::widget::{container, image as picture, row};
+    let (w, h) = (852u32, 400u32);
+    let theme = cosmic::Theme::dark();
+    let mut ui = crate::native_test::Native::with_backend(Size::new(w as f32, h as f32), "wgpu");
+    let mut config = crate::config::Config::default();
+    config.appearance.family = Some(crate::desktop_theme::Family::DarkGlass);
+    config.appearance.corner_radius = 21;
+    config.rain.enabled = true;
+    config.rain.effect = Effect::Lens;
+    config.rain.refraction = 80;
+    config.rain.glass = Some(Glass::default().preset(GlassMode::Crystal));
+    let now = std::time::Instant::now();
+    let (feed, player) = cards::recipe::paused_sample();
+    let timer = focus::Session::default();
+    let music = |size| cards::music::<()>(
+        cards::MusicView {
+            feed: Some(feed),
+            player: Some(player),
+            art: Some(cards::recipe::sample_art()),
+            now,
+            manually_selected: false,
+            problem: false,
+            last: None,
+        },
+        &config,
+        Some(|_| ()),
+        Some(size),
+    );
+    if std::env::var_os("DESKTOP_CARDS_LAYOUT_EVIDENCE").is_some() {
+        let mut single = crate::native_test::Native::with_backend(Size::new(520., 164.), "wgpu");
+        for time in [now, now + std::time::Duration::from_secs(1)] {
+            single.event(
+                music([520., 164.]),
+                Event::Window(window::Event::RedrawRequested(time)),
+                cosmic::iced::Point::ORIGIN,
+            );
+        }
+        single.capture(music([520., 164.]), &theme, "music-with-artwork");
+    }
+    for (name, file) in [
+        ("dark", "halcyon-workbench.jpg"),
+        ("light", "halcyon-paper.jpg"),
+        ("sunset", "halcyon-rose.jpg"),
+    ] {
+        let pixels = image::open(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("assets/wallpapers")
+                .join(file),
+        )
+        .unwrap()
+        .resize_to_fill(w, h, image::imageops::FilterType::Triangle)
+        .to_rgba8()
+        .into_raw();
+        let wallpaper = picture::Handle::from_rgba(w, h, pixels.clone());
+        let scene = gpu::Scene::new(crate::desktop::wallpaper::media::Pixels {
+            width: w,
+            height: h,
+            rgba: pixels,
+        });
+        scene.set_panes(gpu::Panes {
+            rects: vec![
+                [60. / 852., 0.3, 460. / 852., 0.4],
+                [540. / 852., 0.3, 252. / 852., 0.4],
+            ],
+            radius: 21. / 400.,
+            theme_accent: config.widget_theme_accent(),
+            ..Default::default()
+        });
+        let view = |refraction, show_cards| {
+            let mut preferences = config.rain.clone();
+            preferences.refraction = refraction;
+            let mut stack = Stack::new()
+                .push(
+                    picture(wallpaper.clone())
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                )
+                .push(
+                    Shader::new(gpu::Program {
+                        scene: scene.clone(),
+                        preferences,
+                        running: false,
+                        fixed_time: Some(0.),
+                        fade: Default::default(),
+                    })
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+                );
+            if show_cards {
+                let music = music([460., 160.]);
+                let focus =
+                    cards::focus::<()>(&timer, &config, 0, "2026-11-19", Some(|_| ()), Some([252., 160.]));
+                let pair = row::with_children(vec![
+                    container(music).width(460).height(160).into(),
+                    container(focus).width(252).height(160).into(),
+                ])
+                .spacing(20);
+                stack = stack.push(
+                    container(pair)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill),
+                );
+            }
+            cosmic::Element::from(stack.width(Length::Fill).height(Length::Fill))
+        };
+        let flat = ui.render(view(0, false), &theme);
+        let bent = ui.render(view(80, false), &theme);
+        let sample = |x: usize, y: usize| (y * w as usize + x) * 4;
+        let center = sample(240, 200);
+        assert_eq!(
+            flat[center..center + 4],
+            bent[center..center + 4],
+            "flat face stays aligned"
+        );
+        assert_eq!(flat[..4], bent[..4]);
+        let changed = flat
+            .chunks_exact(4)
+            .zip(bent.chunks_exact(4))
+            .filter(|(a, b)| a != b)
+            .count();
+        assert!(
+            changed > 75,
+            "{name} wallpaper refraction changed {changed} pixels"
+        );
+        ui.capture(view(80, true), &theme, &format!("crystal-{name}"));
+    }
+}
+
+#[test]
+fn crystal_reflects_and_bends_a_wallpaper_stripe_at_each_display_scale() {
+    if std::env::var_os("HALCYON_RAIN_GPU_TEST").is_none() {
+        return;
+    }
+    let (width, height) = (256, 160);
+    // A gold diagonal crosses the left edge at (48, 80). Bending it inward
+    // moves its intersection with a vertical scan line measurably downward.
+    let wallpaper = image::RgbaImage::from_fn(width, height, |x, y| {
+        if (y as i32 - x as i32 - 32).abs() <= 2 {
+            image::Rgba([240, 188, 64, 255])
+        } else {
+            image::Rgba([16, 18, 48, 255])
+        }
+    });
+    let scene = gpu::Scene::new(crate::desktop::wallpaper::media::Pixels {
+        width,
+        height,
+        rgba: wallpaper.into_raw(),
+    });
+    scene.set_panes(gpu::Panes {
+        rects: vec![[48. / 256., 24. / 160., 160. / 256., 112. / 160.]],
+        radius: 20. / 160.,
+        ..Default::default()
+    });
+    let view = |refraction| -> cosmic::Element<'_, ()> {
+        cosmic::iced::widget::Shader::new(gpu::Program {
+            scene: scene.clone(),
+            preferences: Preferences {
+                enabled: true,
+                effect: Effect::Lens,
+                glass: Some(Glass::default().preset(GlassMode::Crystal)),
+                widget_glass: true,
+                refraction,
+                ..Default::default()
+            },
+            fixed_time: Some(0.),
+            running: false,
+            fade: Default::default(),
+        })
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    };
+    let mut ui = crate::native_test::Native::with_backend(Size::new(256., 160.), "wgpu");
+    let theme = cosmic::Theme::dark();
+    let shifts = [1., 1.5, 2.].map(|scale| {
+        let flat = ui.render_scaled(view(0), &theme, scale);
+        let bent = ui.render_scaled(view(100), &theme, scale);
+        let gold_at = |frame: &[u8], x: f64, row: usize| {
+            let stride = (256. * scale) as usize;
+            let column = (x * scale) as usize;
+            let i = 4 * (row * stride + column);
+            frame[i].saturating_sub(frame[i + 2])
+        };
+        // Farther up the bevel the diagonal is entirely outside the pane.
+        // Its reflected gold should only appear next to that stretch of wallpaper.
+        let reflected = ((52. * scale) as usize..(73. * scale) as usize)
+            .map(|y| gold_at(&flat, 49.5, y))
+            .max()
+            .unwrap();
+        assert!(reflected > 30, "missing colored reflection at {scale}×");
+        assert_eq!(gold_at(&flat, 49.5, (101. * scale) as usize), 0);
+        let stripe_y = |frame: &[u8], x: f64, middle: f64| {
+            let mut moment = 0.;
+            let mut sum = 0.;
+            for row in ((middle - 9.) * scale) as usize..((middle + 12.) * scale) as usize {
+                let gold = f64::from(gold_at(frame, x, row));
+                sum += gold;
+                moment += gold * (row as f64 + 0.5) / scale;
+            }
+            assert!(sum > 0., "missing gold stripe at {x} and {scale}×");
+            moment / sum
+        };
+        let shift = stripe_y(&bent, 54.5, 86.) - stripe_y(&flat, 54.5, 86.);
+        assert!(
+            shift > 2.,
+            "stripe bent only {shift:.2} logical pixels at {scale}×"
+        );
+        assert_eq!(stripe_y(&bent, 81., 113.), stripe_y(&flat, 81., 113.));
+        shift
+    });
+    for shift in &shifts[1..] {
+        assert!(
+            (shift - shifts[0]).abs() < 1.,
+            "inconsistent logical displacements {shifts:?}"
+        );
+    }
+}
+
+#[test]
+fn widget_glass_refracts_only_inside_rounded_panes() {
+    if std::env::var_os("HALCYON_RAIN_GPU_TEST").is_none() {
+        return;
+    }
+    use cosmic::iced::widget::{Shader, Stack};
+    use cosmic::widget::{container, image as picture};
+    let (width, height) = (640, 400);
+    let pixels = image::open(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/looks/evening-wallpaper.jpg"
+    ))
+    .unwrap()
+    .resize_to_fill(width, height, image::imageops::FilterType::Triangle)
+    .to_rgba8();
+    let wallpaper = picture::Handle::from_rgba(width, height, pixels.clone().into_raw());
+    let scene = gpu::Scene::new(crate::desktop::wallpaper::media::Pixels {
+        width,
+        height,
+        rgba: pixels.into_raw(),
+    });
+    let panes = gpu::Panes {
+        rects: vec![[0.25, 0.20, 0.50, 0.60]],
+        radius: 24. / height as f32,
+        ..Default::default()
+    };
+    scene.set_panes(panes.clone());
+    let mut ui =
+        crate::native_test::Native::with_backend(Size::new(width as f32, height as f32), "wgpu");
+    let theme = cosmic::Theme::dark();
+    let mut config = crate::config::Config::default();
+    config.appearance.family = Some(crate::desktop_theme::Family::DarkGlass);
+    config.appearance.opacity = 22;
+    config.appearance.corner_radius = 24;
+    let sample = crate::messages::sample();
+    let material_view = |wet: bool,
+                refraction: u8,
+                card: bool,
+                time: f32,
+                effect: Effect, glass: Option<super::Glass>|
+     -> cosmic::Element<'_, ()> {
+        let mut stack = Stack::new().push(
+            picture(wallpaper.clone())
+                .width(Length::Fill)
+                .height(Length::Fill),
+        );
+        if wet {
+            stack = stack.push(
+                Shader::new(gpu::Program {
+                    scene: scene.clone(),
+                    preferences: Preferences {
+                        enabled: true,
+                        effect,
+                        glass,
+                        widget_glass: true,
+                        intensity: 80,
+                        mist: 10,
+                        size: 65,
+                        refraction,
+                        ..Default::default()
+                    },
+                    fixed_time: Some(time),
+                    running: false,
+                    fade: Default::default(),
+                })
+                .width(Length::Fill)
+                .height(Length::Fill),
+            );
+        }
+        if card {
+            let mut config = config.clone();
+            config.rain.enabled = wet;
+            config.rain.effect = effect;
+            config.rain.glass = glass;
+            let widget =
+                crate::tools::cards::messages::<()>(&sample, &config, None, Some([320., 240.]));
+            stack = stack.push(
+                container(container(widget).width(320))
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill),
+            );
+        }
+        stack.width(Length::Fill).height(Length::Fill).into()
+    };
+    let view = |wet, refraction, card, time, effect| {
+        material_view(wet, refraction, card, time, effect, None)
+    };
+    let dry = ui.render(view(false, 0, false, 3., Effect::Rain), &theme);
+    let wet = ui.render(view(true, 95, false, 3., Effect::Rain), &theme);
+    let flat = ui.render(view(true, 0, false, 3., Effect::Rain), &theme);
+    let mut refracted = 0;
+    for (index, (dry, wet)) in dry.chunks_exact(4).zip(wet.chunks_exact(4)).enumerate() {
+        let (x, y) = (index % width as usize, index / width as usize);
+        if !(160..480).contains(&x) || !(80..320).contains(&y) || (x < 164 && y < 84) {
+            assert_eq!(dry, wet, "water escaped at {x},{y}");
+        } else if wet != &flat[index * 4..index * 4 + 4] {
+            refracted += 1;
+        }
+    }
+    assert!(
+        refracted > 1000,
+        "the Refraction control must bend the sampled picture"
+    );
+    ui.capture(
+        view(true, 95, true, 3., Effect::Rain),
+        &theme,
+        "widget-glass-wet",
+    );
+    ui.capture(
+        view(false, 0, true, 3., Effect::Rain),
+        &theme,
+        "widget-glass-dry",
+    );
+    let lens = ui.render(view(true, 85, false, 3., Effect::Lens), &theme);
+    assert_eq!(
+        lens,
+        ui.render(view(true, 85, false, 8., Effect::Lens), &theme),
+        "dry optics stay still"
+    );
+    assert_eq!(&lens[..4], &dry[..4]);
+    let center = ((height / 2 * width + width / 2) * 4) as usize;
+    assert_eq!(
+        &lens[center..center + 4],
+        &dry[center..center + 4],
+        "the clear center preserves the picture"
+    );
+    let bent = ui.render(view(true, 15, false, 3., Effect::Lens), &theme);
+    assert!(
+        lens.chunks_exact(4)
+            .zip(bent.chunks_exact(4))
+            .filter(|(a, b)| a != b)
+            .count()
+            > 1000
+    );
+    scene.set_panes(gpu::Panes {
+        pointer: Some([0.26, 0.51]),
+        ..panes.clone()
+    });
+    assert_ne!(
+        ui.render(view(true, 85, false, 3., Effect::Lens), &theme),
+        lens,
+        "pointer light reaches the nearest edge"
+    );
+    ui.capture(
+        view(true, 85, true, 3., Effect::Lens),
+        &theme,
+        "widget-liquid-lens",
+    );
+    let custom = |glass, card| material_view(true, 85, card, 3., Effect::Lens, Some(glass));
+    let polished = super::Glass::default();
+    let tinted = |accent, color| {
+        scene.set_panes(gpu::Panes { theme_accent: accent, ..panes.clone() });
+        custom(super::Glass { color, tint: 70, ..polished }, false)
+    };
+    let red_theme = ui.render(tinted([192, 50, 70], None), &theme);
+    let blue_theme = ui.render(tinted([35, 60, 225], None), &theme);
+    assert_ne!(&red_theme[center..center + 4], &blue_theme[center..center + 4]);
+    let fixed = ui.render(tinted([35, 60, 225], Some([192, 50, 70])), &theme);
+    assert_eq!(fixed, red_theme, "an explicit tint is independent of theme changes");
+    scene.set_panes(gpu::Panes { theme_accent: config.widget_theme_accent(), ..panes.clone() });
+    let mixed = |swap: bool| {
+        let colored = |color| {
+            Some((
+                Some(super::Glass {
+                    color: Some(color),
+                    tint: 100,
+                    ..polished
+                }),
+                55,
+                0.03,
+            ))
+        };
+        let mut finishes = vec![colored([220, 45, 60]), colored([35, 90, 225])];
+        if swap {
+            finishes.reverse();
+        }
+        scene.set_panes(gpu::Panes {
+            rects: vec![[0.05, 0.2, 0.4, 0.6], [0.55, 0.2, 0.4, 0.6]],
+            finishes,
+            ..panes.clone()
+        });
+        custom(polished, false)
+    };
+    let first = ui.render(mixed(false), &theme);
+    let second = ui.render(mixed(true), &theme);
+    let pixel = |x| ((height / 2 * width + x) * 4) as usize;
+    assert_eq!(
+        &first[pixel(width / 4)..][..3],
+        &second[pixel(width * 3 / 4)..][..3]
+    );
+    assert_ne!(
+        &first[pixel(width / 4)..][..3],
+        &first[pixel(width * 3 / 4)..][..3]
+    );
+    ui.capture(mixed(false), &theme, "linked-glass-finishes");
+    scene.set_panes(panes.clone());
+    let clear = ui.render(custom(polished, false), &theme);
+    for variant in [
+        super::Glass {
+            blur: 16,
+            ..polished
+        },
+        super::Glass {
+            frost: 75,
+            ..polished
+        },
+        super::Glass {
+            tint: 80,
+            color: Some([255, 0, 0]),
+            ..polished
+        },
+        polished.preset(super::GlassMode::Smoked),
+    ] {
+        let adjusted = ui.render(custom(variant, false), &theme);
+        let changed = adjusted
+            .chunks_exact(4)
+            .zip(clear.chunks_exact(4))
+            .filter(|(a, b)| a != b)
+            .count();
+        assert!(changed > 1000, "{variant:?}: only {changed} changed pixels");
+        assert_eq!(&adjusted[..4], &dry[..4]);
+    }
+    for mode in super::GlassMode::ALL {
+        ui.capture(
+            custom(polished.preset(mode), true),
+            &theme,
+            &format!("widget-glass-{}", mode.title().to_lowercase()),
+        );
+    }
+    scene.set_panes(panes);
+    if std::env::var_os("HALCYON_WIDGET_GLASS_FRAMES").is_some() {
+        for i in 0..48 {
+            ui.capture(
+                view(true, 95, true, 3. + i as f32 / 16., Effect::Rain),
+                &theme,
+                &format!("wet-{i:03}"),
+            );
+        }
+    }
+    scene.set_panes(Default::default());
+    assert_eq!(
+        ui.render(view(true, 95, false, 3., Effect::Rain), &theme),
+        dry,
+        "hidden widgets leave the wallpaper dry"
+    );
+}

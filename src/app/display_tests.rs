@@ -203,6 +203,7 @@ fn monitor_pinning_lifecycle_actions() {
     );
     assert!(cards.tool_geometry_known(Widget::Notes));
     bound(&created, &a);
+    cards.interacting_tool = Some(Widget::Focus);
     cards.tools.draft = Some(tools::NoteDraft {
         content: cosmic::widget::text_editor::Content::with_text("unsaved monitor regression"),
         base: String::new(),
@@ -224,6 +225,10 @@ fn monitor_pinning_lifecycle_actions() {
     bound(&created, &b);
     assert!(cards.ids.iter().all(|id| !old_ids.contains(id)));
     assert!(!cards.output_known);
+    assert!(
+        cards.interacting_tool.is_none(),
+        "the new output must not take the keyboard"
+    );
     assert!(!cards.tools.draft.as_ref().unwrap().typing);
     assert!(
         cards

@@ -24,6 +24,7 @@ pub enum Message {
     Margin(u16),
     Extend(bool),
     Opacity(u8),
+    MagnifyingDock(bool),
     Penumbra(bool),
     PenumbraHeight(u32),
     PenumbraMaximizedOpacity(u8),
@@ -901,6 +902,33 @@ impl DesktopEditor {
                     self.picker = None;
                 }
             }
+            Message::MagnifyingDock(on) if self.selected == PanelKind::Dock => {
+                use crate::desktop::panels::{MAGNIFYING_APP_LIST, STOCK_APP_LIST};
+                let (from, to) = if on {
+                    (STOCK_APP_LIST, MAGNIFYING_APP_LIST)
+                } else {
+                    (MAGNIFYING_APP_LIST, STOCK_APP_LIST)
+                };
+                if self.catalog.get(to).is_some() {
+                    self.edit_applets(|regs| {
+                        let mut slot = None;
+                        for (region, list) in [
+                            (Region::Start, &mut regs.start),
+                            (Region::Center, &mut regs.center),
+                            (Region::End, &mut regs.end),
+                        ] {
+                            for (index, id) in list.iter_mut().enumerate() {
+                                if id == from {
+                                    *id = to.into();
+                                    slot = Some(Slot { region, index });
+                                }
+                            }
+                        }
+                        slot
+                    });
+                }
+            }
+            Message::MagnifyingDock(_) => {}
             Message::AddToBar(id) | Message::Add(_, id) if !self.can_place_applet(&id) => {}
             Message::AddToBar(id) => {
                 let region = self.usual_region();

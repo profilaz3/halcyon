@@ -252,6 +252,7 @@ pub(super) fn weather_layers<'a>(
     let area = screen[0] * screen[1];
     let mut layers = Vec::new();
     match rain.effect {
+        Effect::Lens => {}
         Effect::Rain => {
             let count = ((area / 2600.) * strength).clamp(24., 140.) as usize;
             for (x, y, z) in scatter(count, 7) {

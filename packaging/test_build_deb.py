@@ -151,6 +151,31 @@ class PackageTests(unittest.TestCase):
             builder.build(self.args)
         self.assertFalse(self.args.out.exists())
 
+    def test_release_with_dock_requires_and_packages_the_applet_and_launcher(self):
+        (builder.REPO / 'Cargo.toml').write_text(
+            '[package]\nversion = "0.1.0"\n[package.metadata.halcyon]\nbundled-magnifying-dock = true\n'
+        )
+        with self.assertRaisesRegex(ValueError, "Missing dock applet"):
+            self.build()
+        self.assertFalse(self.args.out.exists())
+        launcher = f"{builder.APP_ID}.MagnifyingDock.desktop"
+        (builder.REPO / "packaging" / launcher).write_text("[Desktop Entry]\nExec=halcyon-magnifying-app-list\n")
+        self.args.magnifying_dock = self.root / "applet"
+        shutil.copyfile(shutil.which("true"), self.args.magnifying_dock)
+        shutil.copyfile(shutil.which("true"), self.binary)
+        with self.assertRaisesRegex(ValueError, "Missing dock licenses"):
+            self.build()
+        (builder.REPO / "packaging/licenses/MAGNIFYING_DOCK_LICENSES.txt").write_text("dock notices\n")
+        with patch.object(builder, "dependencies", wraps=builder.dependencies) as scan:
+            package = self.build()
+        self.assertEqual(scan.call_args.args[-1], self.args.magnifying_dock)
+        unpacked = self.root / "unpacked"
+        subprocess.run(["dpkg-deb", "-x", str(package), str(unpacked)], check=True)
+        self.assertEqual((unpacked / "usr/bin/halcyon-magnifying-app-list").read_bytes(),
+                         self.args.magnifying_dock.read_bytes())
+        self.assertTrue((unpacked / "usr/share/applications" / launcher).is_file())
+        self.assertTrue((unpacked / "usr/share/doc" / builder.PACKAGE / "MAGNIFYING_DOCK_LICENSES.txt").is_file())
+
     def test_package_mode_is_explicit_and_development_cannot_enroll(self):
         self.args.release_updates = False
         with self.assertRaisesRegex(ValueError, "choose --release-updates"):
