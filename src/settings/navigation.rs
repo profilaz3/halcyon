@@ -1615,7 +1615,8 @@ pub fn find(query: &str) -> Matches {
         }
         // Every word found is in the page's name, typed and not a synonym.
         let names_page = entry.names_page && in_label && aliases == 0;
-        if label.join(" ") == phrase {
+        // “Layout” is the old name for the desktop arrangement editor.
+        if label.join(" ") == phrase || (phrase == "layout" && entry.open == SearchOpen::Arrange) {
             relevance += 100;
         }
         if page.len() == query.len()
@@ -2437,6 +2438,8 @@ mod tests {
             assert_eq!(hit.open, SearchOpen::Arrange, "{query}");
             assert!(!hit.advanced);
         }
+        let weather = search("weather layout")[0];
+        assert_eq!((weather.page, weather.anchor()), (Page::Weather, "weather-layout"));
         // The editor in this window stays reachable, by its old name too.
         for query in ["arrange in this window", "arrange with keyboard"] {
             let here = search(query)[0];
