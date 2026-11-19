@@ -75,7 +75,7 @@ impl Art {
     }
 }
 
-fn limits(weather: &Weather, i: usize) -> Option<(f64, f64)> {
+pub(super) fn limits(weather: &Weather, i: usize) -> Option<(f64, f64)> {
     let low = *weather.daily.temperature_2m_min.get(i)?;
     let high = *weather.daily.temperature_2m_max.get(i)?;
     (low.is_finite() && high.is_finite() && low <= high).then_some((low, high))
@@ -301,7 +301,12 @@ struct Rail {
     marker: Option<f32>,
     palette: Palette,
 }
-fn rail(start: f32, end: f32, marker: Option<f32>, palette: Palette) -> Element<'static, Message> {
+pub(super) fn rail(
+    start: f32,
+    end: f32,
+    marker: Option<f32>,
+    palette: Palette,
+) -> Element<'static, Message> {
     canvas::Canvas::new(Rail {
         start,
         end,

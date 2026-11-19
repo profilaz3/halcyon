@@ -129,7 +129,7 @@ fn fb06_weather_freezes_date_status_and_style_without_retaining_provider_data() 
         panic!("reading")
     };
     assert_eq!(status.as_deref(), Some("Saved · 3d ago\nRefresh failed"));
-    assert_eq!(forecast.len(), 3);
+    assert_eq!(forecast.len(), 4);
     assert_eq!(forecast[0].title, "Today");
     assert!(details.contains("Dew point"));
     drop(weather);
@@ -343,15 +343,26 @@ fn classic_reflows_the_forecast_with_the_widget() {
         },
         now(),
     );
-    for size in [[300., 180.], [360., 320.], [510., 180.], [560., 180.]] {
+    for size in [
+        [300., 180.],
+        [420., 235.],
+        [360., 260.],
+        [360., 320.],
+        [510., 180.],
+        [560., 180.],
+        [560., 240.],
+    ] {
         let mut native = Native::new(Size::new(size[0], size[1]));
         let view = || p.view(Context::Live, size);
         let today = native.text_bounds(view(), "Today");
         let tomorrow = native.text_bounds(view(), "Tomorrow");
+        let labels = native.all_text(view());
+        let fourth_day = size[1] >= 320. || (size[0] >= 510. && size[1] >= 224.);
+        assert_eq!(labels.iter().any(|s| s == "Thu 29"), fourth_day);
         let city = native.text_bounds(view(), "Example city");
         if size[0] >= 510. {
             let heading = native.text_bounds(view(), "Forecast");
-            assert!(today.x > size[0] / 2. && (heading.y - city.y).abs() < 2.);
+            assert!(today.x > size[0] * 0.4 && (heading.y - city.y).abs() < 2.);
             assert!(tomorrow.y > today.y && (today.x - tomorrow.x).abs() < 1.);
         } else if size[1] >= 260. {
             assert!(tomorrow.y > today.y && (today.x - tomorrow.x).abs() < 1.);
@@ -372,6 +383,48 @@ fn classic_reflows_the_forecast_with_the_widget() {
             view(),
             &cosmic::Theme::dark(),
             &format!("classic-reflow-{}x{}", size[0], size[1]),
+        );
+    }
+}
+
+#[test]
+fn classic_forecast_keeps_partial_and_subzero_readings_on_resize() {
+    let mut config = configured();
+    config.weather.show_dew_point = true;
+    config.location.as_mut().unwrap().name = "Saint-Rémy-en-Bouzemont-Saint-Genest-et-Isson".into();
+    let mut weather = super::super::settings_preview::weather_sample(now().date_naive());
+    weather.daily.temperature_2m_min = vec![-11., -2., f64::NAN];
+    weather.daily.temperature_2m_max = vec![-3., 4., 9.];
+    weather.daily.weather_code[0] = 95;
+    weather.daily.precipitation_probability_max[0] = None;
+    let p = Presentation::new(
+        &config,
+        Snapshot {
+            weather: Some(&weather),
+            updated_at: None,
+            failed: true,
+        },
+        now(),
+    );
+    for size in [[510., 180.], [320., 320.]] {
+        let mut native = Native::new(Size::new(size[0], size[1]));
+        let view = || p.view(Context::Live, size);
+        let labels = native.all_text(view());
+        for expected in ["-11°", "-3°", "4°", "9°", "Thunderstorms"] {
+            assert!(labels.iter().any(|s| s == expected), "{expected}");
+        }
+        assert!(labels.iter().any(|s| s.contains("Refresh failed")));
+        assert!(!labels.iter().any(|s| s == "Rain 10%"));
+        let details = native.bounds(view(), "weather-details");
+        assert!(
+            details.height >= 14. && details.y + details.height <= size[1] - 12.,
+            "{size:?} {details:?}"
+        );
+        assert!(native.scrollables(view()).is_empty());
+        native.capture(
+            view(),
+            &cosmic::Theme::dark(),
+            &format!("classic-partial-{}x{}", size[0], size[1]),
         );
     }
 }
