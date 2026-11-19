@@ -17,7 +17,7 @@
 //   glass between them, rim shading and highlights.
 struct Pane { rect: vec4<f32>, optics: vec4<f32>, tint: vec4<f32>, shape: vec4<f32> };
 struct Params {
-    frame: vec4<f32>, // aspect, time, intensity, size
+    frame: vec4<f32>, // aspect, time, intensity, particle size (display scale for dry lenses)
     motion: vec4<f32>, // speed, wind, mist, refraction
     style: vec4<f32>, // mode, opacity, trails, fade
     crop: vec4<f32>, // visible UV origin/extent; scroll clipping keeps the image fixed
@@ -610,6 +610,7 @@ fn hourly_blend() -> f32 { return smoothstep(PERIOD-BLEND,PERIOD,p.frame.y); }
                 var uv = v.uv;
                 var reflection = 0.;
                 var rim = vec3(0.);
+                var transmission = 1.;
                 if optics.x == 2. {
                     let lip = 1. - smoothstep(0., 12., depth);
                     uv = clamp(uv - normal / aspect * px * lip * 21. * bend, vec2(0.), vec2(1.));
@@ -621,47 +622,65 @@ fn hourly_blend() -> f32 { return smoothstep(PERIOD-BLEND,PERIOD,p.frame.y); }
                     }
                 }
                 if optics.x == 4. {
-                    // The flat face transmits the picture. A narrow curved edge gathers
-                    // light from the scenery just outside the pane, in its own color.
-                    let shoulder = 1. - smoothstep(0., 8., depth);
-                    let direction = normal / aspect * px;
-                    uv -= direction * (14. * bend * shoulder * shoulder);
-                    if depth < 8. {
-                        let outside = scene_at(clamp(v.uv + direction * (3. + 9. * bend), vec2(0.), vec2(1.)), 1.);
-                        let luma = dot(outside, vec3(0.213, 0.715, 0.072));
-                        let facing = dot(normal, vec2(-0.6, -0.8));
-                        let key = max(facing, 0.);
+                    let logical_px = px * p.frame.w;
+                    let width = min(0.26 * min(half_size.x, half_size.y), 12. * logical_px + 0.42 * radius);
+                    if -distance < width {
+                        // Refract a view ray through a rounded glass shoulder (index 1.5)
+                        // and intersect the scenery below. The flat face stays aligned.
+                        let slope = 1. + distance / width;
+                        let cosine = sqrt(max(0., 1. - slope * slope));
+                        let ray = refract(vec3(0., 0., -1.), vec3(normal * slope, cosine), 1. / 1.5);
+                        uv = clamp(uv + (ray.xy / -ray.z) / aspect * (1.55 * width * bend), vec2(0.), vec2(1.));
+
+                        // The bevel reflects scenery across its nearest edge. A tight
+                        // catchlight and a softer reflection both take their hue from it.
+                        let direction = normal / aspect;
+                        let outside_uv = v.uv + direction * (-distance + width * (0.3 + slope));
+                        let outside = scene_at(clamp(outside_uv, vec2(0.), vec2(1.)), 1.);
+                        let grazing = 1. - cosine;
                         let local = (v.uv - v.rect.xy) / v.rect.zw;
-                        let window_light = 1. - smoothstep(0.10, 0.78, length(local - vec2(0.16, 0.12)));
-                        let far_light = 1. - smoothstep(0.04, 0.66, length(local - vec2(0.85, 0.92)));
-                        let bounce = max(dot(normal, vec2(0.35, 0.936)), 0.);
-                        let glint = exp(-pow((depth - 1.05) / 0.78, 2.));
-                        // Narrow reflections of the two light sources curve around opposite corners.
-                        let key_glint = key * window_light;
-                        let far_glint = bounce * far_light;
-                        let light = mix(vec3(0.96, 0.97, 1.0), outside / max(0.16, max(outside.r, max(outside.g, outside.b))), 0.22);
-                        rim = glint * (outside * (0.32 + 0.82 * key + 0.38 * bounce * luma)
-                            + light * (0.60 * key_glint * key_glint + 0.34 * far_glint * far_glint))
-                            - shoulder * (1. - key) * (0.035 + 0.075 * luma) * clean;
+                        let key = max(dot(normal, vec2(0.60, -0.80)), 0.)
+                            * (1. - smoothstep(0., 0.65, length(local - vec2(0.90, 0.08))));
+                        let fill = max(dot(normal, vec2(-0.70, -0.714)), 0.)
+                            * (1. - smoothstep(0., 0.52, length(local - vec2(0.08, 0.08))));
+                        let window = max(key, 0.85 * fill);
+                        let contrast = min(1., 2. * length(outside - clean));
+                        let depth_logical = -distance / logical_px;
+                        let from_glint = (depth_logical - 1.1) / 1.15;
+                        let glint = exp(-from_glint * from_glint);
+                        let peak = max(outside.r, max(outside.g, outside.b));
+                        let hue = outside / max(0.12, peak);
+                        let chroma = (peak - min(outside.r, min(outside.g, outside.b))) / max(0.22, peak);
+                        let ambient = 0.10 + 0.38 * chroma + 0.62 * contrast;
+                        let soft = outside * (0.54 * grazing * grazing + 0.24 * slope * slope) * ambient;
+                        let light = mix(hue, vec3(1.), 0.16 * window);
+                        let specular = ambient * (0.18 + 0.72 * peak)
+                            + window * window * (0.58 + 0.82 * peak);
+                        rim = 1. - exp(-1.5 * (soft + light * glint * specular));
+                        transmission -= 0.18 * slope * slope;
                     }
                 }
                 // Sample cached mipmaps at a footprint proportional to the blur radius.
                 // Only the scenery is filtered; the widget draws its content separately.
                 let blur = optics.z;
-                var color = scene_at(uv, 0.);
+                var color = clean;
                 if blur > 0. {
                     let lod = max(0., log2(max(1., blur * px * f32(textureDimensions(background).y))));
                     let offset = vec2(1. / aspect.x, 1.) * px * blur * 0.55;
                     color = 0.25 * (scene_at(uv + offset, lod) + scene_at(uv - offset, lod)
                         + scene_at(uv + vec2(offset.x, -offset.y), lod) + scene_at(uv + vec2(-offset.x, offset.y), lod));
+                } else if any(uv != v.uv) {
+                    color = scene_at(uv, 0.);
                 }
                 let luminance = dot(color, vec3(0.213, 0.715, 0.072));
                 color = mix(color, vec3(luminance * 0.6 + 0.25), optics.y);
                 color = mix(color, tint, optics.w);
                 if optics.x == 1. { color *= 0.75; }
                 if optics.x == 4. {
-                    // Compress bright scenery behind pale type, retaining its hue and detail.
-                    color = color / (1. + 0.78 * luminance) + rim;
+                    // Neutral-density glass keeps the texture of bright scenery visible
+                    // behind pale type. Reflected light uses the remaining headroom.
+                    color *= transmission * 0.68 / (1. + 0.16 * luminance);
+                    color += (1. - color) * rim;
                 }
                 color += color * (1. - color) * reflection;
                 return vec4(mix(clean, color, smoothstep(0., 1., depth)), 1.);

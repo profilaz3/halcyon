@@ -1469,6 +1469,96 @@ fn crystal_keeps_music_and_focus_aligned_on_light_and_dark_wallpaper() {
 }
 
 #[test]
+fn crystal_reflects_and_bends_a_wallpaper_stripe_at_each_display_scale() {
+    if std::env::var_os("HALCYON_RAIN_GPU_TEST").is_none() {
+        return;
+    }
+    let (width, height) = (256, 160);
+    // A gold diagonal crosses the left edge at (48, 80). Bending it inward
+    // moves its intersection with a vertical scan line measurably downward.
+    let wallpaper = image::RgbaImage::from_fn(width, height, |x, y| {
+        if (y as i32 - x as i32 - 32).abs() <= 2 {
+            image::Rgba([240, 188, 64, 255])
+        } else {
+            image::Rgba([16, 18, 48, 255])
+        }
+    });
+    let scene = gpu::Scene::new(crate::desktop::wallpaper::media::Pixels {
+        width,
+        height,
+        rgba: wallpaper.into_raw(),
+    });
+    scene.set_panes(gpu::Panes {
+        rects: vec![[48. / 256., 24. / 160., 160. / 256., 112. / 160.]],
+        radius: 20. / 160.,
+        ..Default::default()
+    });
+    let view = |refraction| -> cosmic::Element<'_, ()> {
+        cosmic::iced::widget::Shader::new(gpu::Program {
+            scene: scene.clone(),
+            preferences: Preferences {
+                enabled: true,
+                effect: Effect::Lens,
+                glass: Some(Glass::default().preset(GlassMode::Crystal)),
+                widget_glass: true,
+                refraction,
+                ..Default::default()
+            },
+            fixed_time: Some(0.),
+            running: false,
+            fade: Default::default(),
+        })
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    };
+    let mut ui = crate::native_test::Native::with_backend(Size::new(256., 160.), "wgpu");
+    let theme = cosmic::Theme::dark();
+    let shifts = [1., 1.5, 2.].map(|scale| {
+        let flat = ui.render_scaled(view(0), &theme, scale);
+        let bent = ui.render_scaled(view(100), &theme, scale);
+        let gold_at = |frame: &[u8], x: f64, row: usize| {
+            let stride = (256. * scale) as usize;
+            let column = (x * scale) as usize;
+            let i = 4 * (row * stride + column);
+            frame[i].saturating_sub(frame[i + 2])
+        };
+        // Farther up the bevel the diagonal is entirely outside the pane.
+        // Its reflected gold should only appear next to that stretch of wallpaper.
+        let reflected = ((52. * scale) as usize..(73. * scale) as usize)
+            .map(|y| gold_at(&flat, 49.5, y))
+            .max()
+            .unwrap();
+        assert!(reflected > 30, "missing colored reflection at {scale}×");
+        assert_eq!(gold_at(&flat, 49.5, (101. * scale) as usize), 0);
+        let stripe_y = |frame: &[u8], x: f64, middle: f64| {
+            let mut moment = 0.;
+            let mut sum = 0.;
+            for row in ((middle - 9.) * scale) as usize..((middle + 12.) * scale) as usize {
+                let gold = f64::from(gold_at(frame, x, row));
+                sum += gold;
+                moment += gold * (row as f64 + 0.5) / scale;
+            }
+            assert!(sum > 0., "missing gold stripe at {x} and {scale}×");
+            moment / sum
+        };
+        let shift = stripe_y(&bent, 54.5, 86.) - stripe_y(&flat, 54.5, 86.);
+        assert!(
+            shift > 2.,
+            "stripe bent only {shift:.2} logical pixels at {scale}×"
+        );
+        assert_eq!(stripe_y(&bent, 81., 113.), stripe_y(&flat, 81., 113.));
+        shift
+    });
+    for shift in &shifts[1..] {
+        assert!(
+            (shift - shifts[0]).abs() < 1.,
+            "inconsistent logical displacements {shifts:?}"
+        );
+    }
+}
+
+#[test]
 fn widget_glass_refracts_only_inside_rounded_panes() {
     if std::env::var_os("HALCYON_RAIN_GPU_TEST").is_none() {
         return;

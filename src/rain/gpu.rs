@@ -1237,7 +1237,11 @@ impl shader::Primitive for Primitive {
             bounds.width / bounds.height.max(1.),
             self.time,
             f32::from(amount) / 100.,
-            f32::from(size) / 100.,
+            if p.effect == Effect::Lens {
+                scale
+            } else {
+                f32::from(size) / 100.
+            },
             f32::from(speed) / 100.,
             f32::from(wind) / 100.,
             f32::from(p.mist) / 100.,
