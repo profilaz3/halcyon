@@ -41,6 +41,9 @@ impl Quality {
 #[serde(default, deny_unknown_fields)]
 pub struct Preferences {
     pub enabled: bool,
+    /// Confine the Rain effect to the glass behind desktop widgets.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub widget_glass: bool,
     /// Match the weather: while the Weather widget's reading is current, it
     /// picks the effect. Off by default; `weather::resolve` has the rules.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -72,6 +75,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             enabled: false,
+            widget_glass: false,
             weather: false,
             weather_strength: weather::Strength::Natural,
             mode: Mode::Procedural,
@@ -125,8 +129,12 @@ impl Preferences {
         }
         Ok(())
     }
+    pub fn confined_to_widgets(&self) -> bool {
+        self.effect == Effect::Lens || (self.effect == Effect::Rain && self.widget_glass)
+    }
     pub fn has_visible_effect(&self) -> bool {
         match self.effect {
+            Effect::Lens => true,
             Effect::Rain => self.intensity > 0,
             Effect::Snow => self.snow.density > 0 && self.snow.opacity > 0,
             Effect::Fog => self.fog.opacity > 0 && self.fog.height > 0,
@@ -135,6 +143,7 @@ impl Preferences {
     }
     pub fn animates(&self) -> bool {
         match self.effect {
+            Effect::Lens => false,
             Effect::Rain => true,
             Effect::Snow => self.snow.speed > 0,
             Effect::Fog => self.fog.speed > 0,
@@ -152,7 +161,7 @@ impl Preferences {
     /// stop every effect at once, whoever chose it.
     pub fn paused(&self, motion: bool, state: lifecycle::State) -> bool {
         !state.ready
-            || !motion
+            || (!motion && self.effect != Effect::Lens)
             || state.locked
             || state.sleeping
             || (self.pause_on_battery && state.on_battery)

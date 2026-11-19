@@ -26,17 +26,18 @@ pub(crate) struct Features {
     pub automation: Option<bool>,
 }
 
-fn effect(config: &Config) -> &'static str {
+fn effect(config: &Config) -> Option<&'static str> {
     use crate::rain::Effect;
     if !config.rain.enabled {
-        return "off";
+        return Some("off");
     }
-    match config.rain.effect {
+    Some(match config.rain.effect {
+        Effect::Lens => return None, // Outside the existing collector vocabulary.
         Effect::Rain => "rain",
         Effect::Snow => "snow",
         Effect::Fog => "fog",
         Effect::Clouds => "clouds",
-    }
+    })
 }
 
 fn theme_style(config: &Config) -> Option<&'static str> {
@@ -93,7 +94,7 @@ pub(crate) fn snapshot(
 ) -> Features {
     let bar = |on: fn(&PanelDraft) -> Option<bool>| bars.and_then(|bars| any_bar(bars, on));
     Features {
-        wallpaper_effect: config.map(effect),
+        wallpaper_effect: config.and_then(effect),
         activity_island: bar(|b| {
             known(b.applets()).map(|r| r.contains(crate::activity_island::APPLET_ID))
         }),

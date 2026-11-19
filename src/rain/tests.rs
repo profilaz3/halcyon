@@ -1332,3 +1332,161 @@ fn rain_held_still_while_hidden_resumes_where_it_stopped() {
         );
     }
 }
+
+#[test]
+fn widget_glass_refracts_only_inside_rounded_panes() {
+    if std::env::var_os("HALCYON_RAIN_GPU_TEST").is_none() {
+        return;
+    }
+    use cosmic::iced::widget::{Shader, Stack};
+    use cosmic::widget::{container, image as picture};
+    let (width, height) = (640, 400);
+    let pixels = image::open(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/looks/evening-wallpaper.jpg"
+    ))
+    .unwrap()
+    .resize_to_fill(width, height, image::imageops::FilterType::Triangle)
+    .to_rgba8();
+    let wallpaper = picture::Handle::from_rgba(width, height, pixels.clone().into_raw());
+    let scene = gpu::Scene::new(crate::desktop::wallpaper::media::Pixels {
+        width,
+        height,
+        rgba: pixels.into_raw(),
+    });
+    let panes = gpu::Panes {
+        rects: vec![[0.25, 0.20, 0.50, 0.60]],
+        radius: 24. / height as f32,
+        ..Default::default()
+    };
+    scene.set_panes(panes.clone());
+    let mut ui =
+        crate::native_test::Native::with_backend(Size::new(width as f32, height as f32), "wgpu");
+    let theme = cosmic::Theme::dark();
+    let mut config = crate::config::Config::default();
+    config.appearance.family = Some(crate::desktop_theme::Family::DarkGlass);
+    config.appearance.opacity = 22;
+    config.appearance.corner_radius = 24;
+    let sample = crate::messages::sample();
+    let view = |wet: bool,
+                refraction: u8,
+                card: bool,
+                time: f32,
+                effect: Effect|
+     -> cosmic::Element<'_, ()> {
+        let mut stack = Stack::new().push(
+            picture(wallpaper.clone())
+                .width(Length::Fill)
+                .height(Length::Fill),
+        );
+        if wet {
+            stack = stack.push(
+                Shader::new(gpu::Program {
+                    scene: scene.clone(),
+                    preferences: Preferences {
+                        enabled: true,
+                        effect,
+                        widget_glass: true,
+                        intensity: 80,
+                        mist: 10,
+                        size: 65,
+                        refraction,
+                        ..Default::default()
+                    },
+                    fixed_time: Some(time),
+                    running: false,
+                    fade: Default::default(),
+                })
+                .width(Length::Fill)
+                .height(Length::Fill),
+            );
+        }
+        if card {
+            let widget =
+                crate::tools::cards::messages::<()>(&sample, &config, None, Some([320., 240.]));
+            stack = stack.push(
+                container(container(widget).width(320))
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill),
+            );
+        }
+        stack.width(Length::Fill).height(Length::Fill).into()
+    };
+    let dry = ui.render(view(false, 0, false, 3., Effect::Rain), &theme);
+    let wet = ui.render(view(true, 95, false, 3., Effect::Rain), &theme);
+    let flat = ui.render(view(true, 0, false, 3., Effect::Rain), &theme);
+    let mut refracted = 0;
+    for (index, (dry, wet)) in dry.chunks_exact(4).zip(wet.chunks_exact(4)).enumerate() {
+        let (x, y) = (index % width as usize, index / width as usize);
+        if !(160..480).contains(&x) || !(80..320).contains(&y) || (x < 164 && y < 84) {
+            assert_eq!(dry, wet, "water escaped at {x},{y}");
+        } else if wet != &flat[index * 4..index * 4 + 4] {
+            refracted += 1;
+        }
+    }
+    assert!(
+        refracted > 1000,
+        "the Refraction control must bend the sampled picture"
+    );
+    ui.capture(
+        view(true, 95, true, 3., Effect::Rain),
+        &theme,
+        "widget-glass-wet",
+    );
+    ui.capture(
+        view(false, 0, true, 3., Effect::Rain),
+        &theme,
+        "widget-glass-dry",
+    );
+    let lens = ui.render(view(true, 85, false, 3., Effect::Lens), &theme);
+    assert_eq!(
+        lens,
+        ui.render(view(true, 85, false, 8., Effect::Lens), &theme),
+        "dry optics stay still"
+    );
+    assert_eq!(&lens[..4], &dry[..4]);
+    let center = ((height / 2 * width + width / 2) * 4) as usize;
+    assert_eq!(
+        &lens[center..center + 4],
+        &dry[center..center + 4],
+        "the clear center preserves the picture"
+    );
+    let bent = ui.render(view(true, 15, false, 3., Effect::Lens), &theme);
+    assert!(
+        lens.chunks_exact(4)
+            .zip(bent.chunks_exact(4))
+            .filter(|(a, b)| a != b)
+            .count()
+            > 1000
+    );
+    scene.set_panes(gpu::Panes {
+        pointer: Some([0.26, 0.51]),
+        ..panes.clone()
+    });
+    assert_ne!(
+        ui.render(view(true, 85, false, 3., Effect::Lens), &theme),
+        lens,
+        "pointer light reaches the nearest edge"
+    );
+    ui.capture(
+        view(true, 85, true, 3., Effect::Lens),
+        &theme,
+        "widget-liquid-lens",
+    );
+    scene.set_panes(panes);
+    if std::env::var_os("HALCYON_WIDGET_GLASS_FRAMES").is_some() {
+        for i in 0..48 {
+            ui.capture(
+                view(true, 95, true, 3. + i as f32 / 16., Effect::Rain),
+                &theme,
+                &format!("wet-{i:03}"),
+            );
+        }
+    }
+    scene.set_panes(Default::default());
+    assert_eq!(
+        ui.render(view(true, 95, false, 3., Effect::Rain), &theme),
+        dry,
+        "hidden widgets leave the wallpaper dry"
+    );
+}

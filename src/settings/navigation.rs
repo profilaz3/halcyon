@@ -905,7 +905,7 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::WeatherEffects,
         "Moving effect",
-        "wallpaper effects rain snow fog cloud shadows living droplets flakes opacity mist wind refraction animation",
+        "wallpaper effects rain snow fog cloud shadows living droplets flakes opacity mist wind refraction animation rain on widget glass water droplets shader liquid lens clear refractive rim",
         false,
     )
     .at("rain-controls"),

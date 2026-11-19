@@ -254,6 +254,7 @@ impl canvas::Program<Message, cosmic::Theme> for Weather {
                         );
                     }
                 }
+                Effect::Lens => {}
                 Effect::Clouds => {
                     for _ in 0..5 {
                         let radius = w * (0.12 + next() * 0.1);
@@ -1032,6 +1033,7 @@ impl Settings {
                     use crate::rain::Effect;
                     match effect.effect {
                         Effect::Rain => "Rain",
+                        Effect::Lens => "Liquid lens",
                         Effect::Snow => "Snow",
                         Effect::Fog => "Fog",
                         Effect::Clouds => "Cloud shadows",

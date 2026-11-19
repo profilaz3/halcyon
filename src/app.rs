@@ -946,6 +946,32 @@ impl cosmic::Application for Cards {
                 config.widget_visible(Widget::Messages),
             )
         };
+        let pointer_moved = matches!(
+            &msg,
+            Message::Pointer(_, cosmic::iced::mouse::Event::CursorMoved { .. })
+                | Message::PointerLeft(_)
+        );
+        if self.config.material_motion
+            && self.config.rain.enabled
+            && self.config.rain.effect == crate::rain::Effect::Lens
+        {
+            match &msg {
+                Message::Pointer(id, cosmic::iced::mouse::Event::CursorMoved { position }) => {
+                    self.rain.lens_pointer = Some((*id, *position))
+                }
+                Message::PointerLeft(id)
+                    if self
+                        .rain
+                        .lens_pointer
+                        .is_some_and(|(owner, _)| owner == *id) =>
+                {
+                    self.rain.lens_pointer = None
+                }
+                _ => {}
+            }
+        } else {
+            self.rain.lens_pointer = None;
+        }
         let previous_pins = pinned(&self.config);
         let activity_dirty = matches!(
             &msg,
@@ -995,7 +1021,7 @@ impl cosmic::Application for Cards {
         let backdrop = self.clock_backdrop_sync();
         let depth = self.depth_sync();
         let spectrum = self.sync_spectrum();
-        let rain = self.rain_sync();
+        let rain = self.rain_sync(pointer_moved);
         self.rain
             .watch_sync(self.display_generation, Instant::now());
         let glass = self.glass_sync();

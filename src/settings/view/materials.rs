@@ -134,6 +134,20 @@ impl Settings {
                 )).width(52).into(),
             ),
         ])];
+        if matches!(target, Target::Shared | Target::Widgets) {
+            rows.push(group(
+                None,
+                vec![group_row_state(
+                    "Widget glass effects",
+                    "Choose Liquid lens for a clear, curved rim or Rain for moving droplets",
+                    button::text("Weather effects")
+                        .on_press(Message::SearchResult(
+                            crate::settings::navigation::WEATHER_EFFECTS,
+                        ))
+                        .into(),
+                )],
+            ));
+        }
         if scoped {
             rows.push(
                 container(group(None, vec![group_row_state("Use on", state, scopes)]))

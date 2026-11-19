@@ -1566,6 +1566,9 @@ fn rain_setup_capture_keeps_explicit_off_and_applies_with_undo() {
         captured.widget_style.as_ref().unwrap()["rain"]["enabled"],
         false
     );
+    let mut wet = captured.clone();
+    wet.widget_style.as_mut().unwrap()["rain"]["widget_glass"] = true.into();
+    assert_eq!(wet.written_version(), 24);
     raw["rain"]["enabled"] = true.into();
     fs::write(&desk.config, serde_json::to_vec(&raw).unwrap()).unwrap();
     let before = fs::read(&desk.config).unwrap();

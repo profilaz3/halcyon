@@ -37,6 +37,7 @@ impl Settings {
                     Effect::Rain | Effect::Snow => "density",
                     Effect::Fog => "opacity",
                     Effect::Clouds => "coverage",
+                    Effect::Lens => "refraction",
                 };
                 let name = effect.title().to_lowercase();
                 match p.weather_strength.percent(level) {
@@ -82,13 +83,20 @@ impl Settings {
         let p = self.wallpaper.effect().unwrap_or(&self.config.rain);
         let scene = self.effect_scene(p);
         let effect = self.adjusting(p, &scene);
-        const EFFECTS: &[Effect] = &[Effect::Rain, Effect::Snow, Effect::Fog, Effect::Clouds];
+        const EFFECTS: &[Effect] = &[
+            Effect::Rain,
+            Effect::Snow,
+            Effect::Fog,
+            Effect::Clouds,
+            Effect::Lens,
+        ];
         const TITLES: &[&str] = &[
             "None",
             Effect::Rain.title(),
             Effect::Snow.title(),
             Effect::Fog.title(),
             Effect::Clouds.title(),
+            Effect::Lens.title(),
         ];
         // One choice: no effect, or which one. Choosing applies it.
         let next = p.clone();
@@ -100,7 +108,9 @@ impl Settings {
         let mut rows = vec![split(
             detail(
                 "Moving effect",
-                if p.weather {
+                if p.enabled && p.effect == Effect::Lens && !p.weather {
+                    "A clear center and curved edges that refract the wallpaper behind translucent widgets"
+                } else if p.weather {
                     "Plays behind windows and widgets when there’s no current weather reading"
                 } else {
                     "Plays behind windows and widgets"
@@ -117,6 +127,21 @@ impl Settings {
             .width(160)
             .into(),
         )];
+        if effect == Effect::Rain || (!p.enabled && !p.weather) {
+            let next = p.clone();
+            rows.push(split(
+                detail("Rain on widget glass", "Bend the wallpaper through droplets on translucent widgets. The rest of the wallpaper stays dry during rain."),
+                toggler(p.widget_glass).on_toggle(move |on| {
+                    let mut p = next.clone();
+                    p.widget_glass = on;
+                    if on && !p.enabled && !p.weather {
+                        p.enabled = true;
+                        p.effect = Effect::Rain;
+                    }
+                    edit(Edit::Set(p))
+                }).into(),
+            ));
+        }
         let next = p.clone();
         rows.push(split(
             detail_state("Match the weather", self.weather_state(p, &scene)),
@@ -193,6 +218,7 @@ impl Settings {
             let adjust = segmented(
                 EFFECTS
                     .iter()
+                    .filter(|e| **e != Effect::Lens)
                     .map(|&choice| {
                         (
                             choice.title().into(),
@@ -233,6 +259,7 @@ impl Settings {
             }
             let mut adjustments = Vec::new();
             let controls = match effect {
+                Effect::Lens => vec![("refraction", "Refraction", p.refraction)],
                 Effect::Rain => vec![
                     ("intensity", "Density", p.intensity),
                     ("trails", "Trails", p.trails),
@@ -275,6 +302,7 @@ impl Settings {
                             let mut p = next.clone();
                             match effect {
                                 Effect::Rain=>match key { "intensity"=>p.intensity=value, "trails"=>p.trails=value, "size"=>p.size=value, "speed"=>p.speed=value,"mist"=>p.mist=value,_=>p.refraction=value },
+                                Effect::Lens=>p.refraction=value,
                                 Effect::Snow=>match key { "intensity"=>p.snow.density=value,"size"=>p.snow.size=value,"speed"=>p.snow.speed=value,_=>p.snow.opacity=value },
                                 Effect::Fog=>match key { "opacity"=>p.fog.opacity=value,"height"=>p.fog.height=value,_=>p.fog.speed=value },
                                 Effect::Clouds=>match key { "intensity"=>p.clouds.coverage=value,"opacity"=>p.clouds.strength=value,"softness"=>p.clouds.softness=value,_=>p.clouds.speed=value },
@@ -290,7 +318,8 @@ impl Settings {
                 ])
                 .spacing(5)
                 .into();
-                if matches!(key, "intensity" | "trails" | "opacity" | "height")
+                if effect == Effect::Lens
+                    || matches!(key, "intensity" | "trails" | "opacity" | "height")
                     || (effect == Effect::Snow && key == "size")
                 {
                     rows.push(control);
@@ -320,68 +349,72 @@ impl Settings {
                     self.settings_accent(),
                 ));
             }
-            let wind = match effect {
-                Effect::Rain => p.wind,
-                Effect::Snow => p.snow.wind,
-                Effect::Fog => p.fog.wind,
-                Effect::Clouds => p.clouds.wind,
-            };
-            let next = p.clone();
-            adjustments.push(
-                column::with_children(vec![
-                    split(
-                        label("Wind", 13., FG),
-                        label(
-                            if wind == 0 {
-                                "Still".into()
-                            } else {
-                                format!(
-                                    "{} {}%",
-                                    if wind < 0 { "←" } else { "→" },
-                                    wind.unsigned_abs()
-                                )
-                            },
-                            12.,
-                            MUTED,
+            if effect != Effect::Lens {
+                let wind = match effect {
+                    Effect::Lens => unreachable!(),
+                    Effect::Rain => p.wind,
+                    Effect::Snow => p.snow.wind,
+                    Effect::Fog => p.fog.wind,
+                    Effect::Clouds => p.clouds.wind,
+                };
+                let next = p.clone();
+                adjustments.push(
+                    column::with_children(vec![
+                        split(
+                            label("Wind", 13., FG),
+                            label(
+                                if wind == 0 {
+                                    "Still".into()
+                                } else {
+                                    format!(
+                                        "{} {}%",
+                                        if wind < 0 { "←" } else { "→" },
+                                        wind.unsigned_abs()
+                                    )
+                                },
+                                12.,
+                                MUTED,
+                            ),
                         ),
-                    ),
-                    slider(-100..=100, i16::from(wind), move |value| {
-                        let mut p = next.clone();
-                        match effect {
-                            Effect::Rain => p.wind = value as i8,
-                            Effect::Snow => p.snow.wind = value as i8,
-                            Effect::Fog => p.fog.wind = value as i8,
-                            Effect::Clouds => p.clouds.wind = value as i8,
-                        }
-                        edit(Edit::Draft(p))
+                        slider(-100..=100, i16::from(wind), move |value| {
+                            let mut p = next.clone();
+                            match effect {
+                                Effect::Rain => p.wind = value as i8,
+                                Effect::Snow => p.snow.wind = value as i8,
+                                Effect::Lens => unreachable!(),
+                                Effect::Fog => p.fog.wind = value as i8,
+                                Effect::Clouds => p.clouds.wind = value as i8,
+                            }
+                            edit(Edit::Draft(p))
+                        })
+                        .on_release(edit(Edit::Commit))
+                        .width(Length::Fill)
+                        .apply(|v| completed_slider(v.into(), edit(Edit::Commit))),
+                    ])
+                    .spacing(5)
+                    .into(),
+                );
+                adjustments.push(self.help("rain-quality-help","Rendering","Eco uses a smaller effect texture at 30 fps. Balanced uses a sharper field at 30 fps. Smooth uses the same field at 60 fps. The wallpaper stays sharp. Speed at 0% freezes snow, fog and clouds. Animation pauses with the lock screen, sleep and Reduce motion."));
+                adjustments.push(segmented(
+                    [
+                        (Quality::Eco, "Eco"),
+                        (Quality::Balanced, "Balanced"),
+                        (Quality::Smooth, "Smooth"),
+                    ]
+                    .into_iter()
+                    .map(|(quality, title)| {
+                        let mut next = p.clone();
+                        next.quality = quality;
+                        (
+                            title.into(),
+                            p.quality == quality,
+                            Some(edit(Edit::Set(next))),
+                        )
                     })
-                    .on_release(edit(Edit::Commit))
-                    .width(Length::Fill)
-                    .apply(|v| completed_slider(v.into(), edit(Edit::Commit))),
-                ])
-                .spacing(5)
-                .into(),
-            );
-            adjustments.push(self.help("rain-quality-help","Rendering","Eco uses a smaller effect texture at 30 fps. Balanced uses a sharper field at 30 fps. Smooth uses the same field at 60 fps. The wallpaper stays sharp. Speed at 0% freezes snow, fog and clouds. Animation pauses with the lock screen, sleep and Reduce motion."));
-            adjustments.push(segmented(
-                [
-                    (Quality::Eco, "Eco"),
-                    (Quality::Balanced, "Balanced"),
-                    (Quality::Smooth, "Smooth"),
-                ]
-                .into_iter()
-                .map(|(quality, title)| {
-                    let mut next = p.clone();
-                    next.quality = quality;
-                    (
-                        title.into(),
-                        p.quality == quality,
-                        Some(edit(Edit::Set(next))),
-                    )
-                })
-                .collect(),
-                self.settings_accent(),
-            ));
+                    .collect(),
+                    self.settings_accent(),
+                ));
+            }
             let next = p.clone();
             adjustments.push(switch(
                 "Pause on battery",
@@ -403,9 +436,9 @@ impl Settings {
                 column::with_children(adjustments).spacing(14).into(),
             ));
             let state = self.rain.lifecycle;
-            if self.system_reduce_motion {
+            if self.system_reduce_motion && effect != Effect::Lens {
                 rows.push(label("Paused while Reduce motion is on", 12., MUTED));
-            } else if !self.config.material_motion {
+            } else if !self.config.material_motion && effect != Effect::Lens {
                 rows.push(label("Paused because Liquid motion is off", 12., MUTED));
             } else if !state.ready {
                 rows.push(label("Waiting for the desktop session", 12., MUTED));
@@ -451,6 +484,13 @@ impl Settings {
         }
         let handle = self.wallpaper.shown().handle.as_ref()?;
         let scene = self.rain.scene(handle)?;
+        if p.confined_to_widgets() {
+            scene.set_panes(crate::rain::gpu::Panes {
+                rects: vec![[0.18, 0.22, 0.64, 0.56]],
+                radius: 0.06,
+                ..Default::default()
+            });
+        }
         Some(crate::rain::visibility::visible(
             cosmic::iced::widget::Shader::new(crate::rain::gpu::Program {
                 scene,

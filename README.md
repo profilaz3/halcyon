@@ -63,6 +63,8 @@ Save, combine, import and export wallpapers, styles and layouts. Rules can switc
 
 ## 7. Clock depth and rain on glass
 
+For translucent widgets, open **Weather effects**, choose **Liquid lens** under **Moving effect**. The curved rim refracts the wallpaper and catches a highlight near the pointer. Adjust **Refraction** to change the bend. For moving droplets, choose **Rain** and turn on **Rain on widget glass**.
+
 The clock can sit behind the mountains in the wallpaper, between the sky and the ridge. It stays behind the ridge when effects are on, with rain on glass in front of the clock and landscape.
 
 [![Illustration of a clock partly hidden behind a wooded ridge, with rain on glass in front of the clock and landscape](docs/presentation/070-readme/depth-clock-rain.png)](docs/presentation/070-readme/depth-clock-rain.png)
