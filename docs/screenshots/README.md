@@ -1,5 +1,7 @@
 # Release screenshots
 
+The [0.7.8 native gallery](078/README.md) shows Weather, Folder, Music, Markets and two glass finishes.
+
 0.3.0 development captures and provenance: [0.3.0 native captures](030/README.md).
 The files below are historical release evidence, retained under their original names.
 

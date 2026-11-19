@@ -219,8 +219,12 @@ mod tests {
         let mut one = config.clone();
         one.markets.symbols.truncate(1);
         one.markets.show_change = false;
-        for (style, name) in [(&config, "ecb-watchlist"), (&one, "ecb-price-only")] {
-            let size = cards::size(crate::drawer::Widget::Markets, style);
+        for (style, width, name) in [
+            (&config, 360., "ecb-watchlist"),
+            (&config, 520., "ecb-watchlist-wide"),
+            (&one, 280., "ecb-price-only"),
+        ] {
+            let size = [width, cards::size(crate::drawer::Widget::Markets, style)[1]];
             let mut native = Native::new(Size::new(size[0], size[1]));
             native.capture(
                 cards::markets(&state, style, Some(|a| a), Some(size)),

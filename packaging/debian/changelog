@@ -1,3 +1,14 @@
+cosmic-ext-halcyon (0.7.8) unstable; urgency=medium
+
+  * Add Markets with public stock quotes, ECB exchange rates and optional charts.
+  * Add Folder, Widget Peek, reusable glass finishes and coordinated desktop styles.
+  * Add dock icon magnification and launch selected apps with a saved Look.
+  * Add album lighting, pin Music and Messages from the Activity island, and
+    offer Classic and Outlook weather layouts.
+  * Guide Islands activation and improve keyboard access to widgets and readings.
+
+ -- profilaz3 <261673162+profilaz3@users.noreply.github.com>  Thu, 19 Nov 2026 18:38:36 +0000
+
 cosmic-ext-halcyon (0.7.6) unstable; urgency=high
 
   * Fix the Appearance crash caused by repeated Music and Focus previews.

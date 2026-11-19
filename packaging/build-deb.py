@@ -59,7 +59,7 @@ def install(source, destination, mode=0o644):
     destination.chmod(mode)
 
 
-def dependencies(binary, scratch, islands=None):
+def dependencies(binary, scratch, islands=None, dock=None):
     """Give dpkg-shlibdeps its own Debian source context, never the checkout."""
     debian = scratch / "debian"
     debian.mkdir()
@@ -71,7 +71,7 @@ def dependencies(binary, scratch, islands=None):
     detected = ""
     if shutil.which("dpkg-shlibdeps"):
         result = subprocess.run(
-            ["dpkg-shlibdeps", "-O", "-e" + str(binary)] + (["-e" + str(islands)] if islands else []),
+            ["dpkg-shlibdeps", "-O", *["-e" + str(path) for path in (binary, islands, dock) if path]],
             cwd=scratch, capture_output=True, text=True,
         )
         if result.returncode == 0:
@@ -100,6 +100,15 @@ def default_wallpapers():
     return REPO / "assets/wallpapers-jpg"
 
 
+def dock_applet(binary, override, required):
+    path = override or binary.with_name("halcyon-magnifying-app-list")
+    if path.is_file():
+        return path.resolve()
+    if override or required:
+        raise ValueError("Missing dock applet. Build companion/magnifying-dock/build.py or pass --magnifying-dock PATH.")
+    return None
+
+
 def stage_application(root, binary, wallpapers, google_client, package, magnifying_dock=None):
     """Shared application payload; native package backends own dependencies and enrollment."""
     usr = root / "usr"
@@ -125,11 +134,15 @@ def stage_application(root, binary, wallpapers, google_client, package, magnifyi
         install(REPO / "packaging" / name, usr / "share" / directory / name)
     install(REPO / "packaging" / f"{APP_ID}.Activity.desktop",
             usr / "share/applications" / f"{APP_ID}.Activity.desktop")
-    dock_binary = magnifying_dock or binary.with_name("halcyon-magnifying-app-list")
-    if magnifying_dock or dock_binary.is_file():
-        install(dock_binary, usr / "bin/halcyon-magnifying-app-list", 0o755)
+    if magnifying_dock:
+        install(magnifying_dock, usr / "bin/halcyon-magnifying-app-list", 0o755)
         desktop = f"{APP_ID}.MagnifyingDock.desktop"
         install(REPO / "packaging" / desktop, usr / "share/applications" / desktop)
+        notices = REPO / "packaging/licenses/MAGNIFYING_DOCK_LICENSES.txt"
+        if notices.is_file():
+            install(notices, usr / "share/doc" / package / notices.name)
+        elif package == PACKAGE and bundled(REPO, "magnifying-dock"):
+            raise ValueError("Missing dock licenses. Build the applet with --license-output packaging/licenses/MAGNIFYING_DOCK_LICENSES.txt.")
     for size in ICON_SIZES:
         name = f"{APP_ID}.png"
         install(REPO / "packaging/icons" / str(size) / name,
@@ -174,6 +187,8 @@ def build(args):
     binary = args.binary.resolve(strict=True)
     if not binary.is_file():
         raise ValueError("binary must be a regular file")
+    dock = dock_applet(binary, getattr(args, "magnifying_dock", None),
+                      release_updates and bundled(REPO, 'magnifying-dock'))
     wallpaper_dir = args.wallpapers if args.wallpapers is not None else default_wallpapers()
     wallpapers = sorted(path for path in wallpaper_dir.glob("*.jpg") if path.is_file())
     if not wallpapers:
@@ -186,7 +201,7 @@ def build(args):
     with tempfile.TemporaryDirectory(prefix="halcyon-deb-") as temp:
         scratch = Path(temp)
         root = scratch / "package"
-        stage_application(root, binary, wallpapers, args.google_client, package, getattr(args, "magnifying_dock", None))
+        stage_application(root, binary, wallpapers, args.google_client, package, dock)
         usr = root / "usr"
         (usr / "share" / PACKAGE / "installation.json").write_text(json.dumps(dict(
             format="halcyon-installation", version=1, app_version=args.version,
@@ -206,7 +221,7 @@ def build(args):
             update_defaults(root, control)
         if bundled_islands:
             (control / "conffiles").write_text("/etc/xdg/autostart/halcyon-islands-bootstrap.desktop\n")
-        depends = dependencies(binary, scratch, islands_binary)
+        depends = dependencies(binary, scratch, islands_binary, dock)
         # Debian Policy: regular files rounded up to KiB, plus 1 KiB per directory.
         installed_size = 1 + sum(
             math.ceil(path.stat().st_size / 1024) if path.is_file() else 1

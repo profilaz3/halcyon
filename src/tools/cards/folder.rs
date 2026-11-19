@@ -99,7 +99,7 @@ pub fn folder<'a, M: Clone + 'static>(
                     && let Some(h) = entry.thumbnail.clone()
                 {
                     image(h)
-                        .content_fit(cosmic::iced::ContentFit::Cover)
+                        .content_fit(cosmic::iced::ContentFit::Contain)
                         .width(Length::Fill)
                         .height(48.)
                         .into()

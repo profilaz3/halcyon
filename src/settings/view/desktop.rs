@@ -332,7 +332,7 @@ impl Settings {
             if (on || regions.contains(STOCK_APP_LIST))
                 && (on || editor.catalog.get(MAGNIFYING_APP_LIST).is_some())
             {
-                items.push(group(
+                items.push(self.search_target("dock-magnification", group(
                     None,
                     vec![group_row(
                         "Dock magnification",
@@ -341,7 +341,7 @@ impl Settings {
                             .on_toggle(|v| edit(Edit::MagnifyingDock(v)))
                             .into(),
                     )],
-                ));
+                )));
             }
         }
         items.push(self.bar_position(draft));

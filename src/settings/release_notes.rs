@@ -19,6 +19,59 @@ pub(super) struct Release {
 
 pub(super) const RELEASES: &[Release] = &[
     Release {
+        version: "0.7.8",
+        notes: &[
+            Note {
+                title: "Markets watchlist",
+                body: "Follow stocks and ECB currency pairs. Choose just prices or add daily changes and a chart.",
+                place: Some(navigation::MARKETS_WATCHLIST),
+                link: None,
+            },
+            Note {
+                title: "Glass finishes",
+                body: "Adjust frost, tint, refraction and corners. Save a finish and use it across several widgets.",
+                place: Some(navigation::WIDGET_GLASS),
+                link: None,
+            },
+            Note {
+                title: "A folder on your desktop",
+                body: "Open recent files from a local folder. Widen the widget for tiles and image previews.",
+                place: Some(navigation::LOCAL_FOLDER),
+                link: None,
+            },
+            Note {
+                title: "Widget Peek",
+                body: "Bring chosen widgets over your current window with an edge menu button or shortcut.",
+                place: Some(navigation::EDGE_MENU),
+                link: None,
+            },
+            Note {
+                title: "Music and Messages from the island",
+                body: "Pin either activity to the desktop. Music can pick up a soft glow from the album cover.",
+                place: Some(navigation::ACTIVITY_ISLAND),
+                link: None,
+            },
+            Note {
+                title: "Choose a weather layout",
+                body: "Compare Classic and Outlook in Settings and choose how the forecast fits your widget.",
+                place: Some(navigation::WEATHER_LAYOUT),
+                link: None,
+            },
+            Note {
+                title: "Dock magnification",
+                body: "Let dock icons grow as the pointer passes. Reduced motion keeps them still.",
+                place: Some(navigation::DOCK_MAGNIFICATION),
+                link: None,
+            },
+            Note {
+                title: "Start a workspace",
+                body: "Choose apps for a saved Look. Start workspace applies the Look and opens those apps.",
+                place: Some(navigation::LOOKS),
+                link: None,
+            },
+        ],
+    },
+    Release {
         version: "0.7.6",
         notes: &[
             Note {

@@ -90,20 +90,20 @@ its own executable and package bytes.
 network access and podman or docker usable without sudo:
 
 ```sh
-python3 scripts/rpm/container_acceptance.py run --previous 0.6.1 --out ../fb25-acceptance
-python3 scripts/rpm/container_acceptance.py run --previous 0.6.1 --out ../fb25-acceptance --dry-run
+python3 scripts/rpm/container_acceptance.py run --previous 0.7.6 --out ../fedora-acceptance
+python3 scripts/rpm/container_acceptance.py run --previous 0.7.6 --out ../fedora-acceptance --dry-run
 ```
 
 It tests the committed tree only. It vendors the dependencies with
-`packaging/source_closure.py`, builds the application in each container with
+`packaging/source_closure.py`, builds Halcyon and the pinned magnifying dock applet in each container with
 Rust 1.93.0, locked and offline with an empty Cargo home, and reuses the previous
 release's Fedora panel only while the panel source and startup policies are
 unchanged. `build-rpm.py` packages the result with the official public key
 embedded; a throwaway key generated in the container signs the package and the
 local repository. Each target then runs, against that repository:
 
-- fresh install, reinstall, removal and reinstall, checking EVR, `rpm -V`, both
-  executable hashes and the enrollment receipt;
+- fresh install, reinstall, removal and reinstall, checking EVR, `rpm -V`, the app, dock and panel
+  executable hashes, the dock launcher and the enrollment receipt;
 - upgrade from the previous released RPM, with the enrolled source untouched and
   with it disabled by the administrator, keeping the source and user files;
 - rejection of a tampered package, tampered repository metadata and an

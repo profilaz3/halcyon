@@ -79,6 +79,13 @@ installed() {
   check "$1-rpm-verify" rpm -V "$PACKAGE"
   check "$1-app-bytes" hash_is /usr/bin/halcyon "$(json "$target/fedora-build.json" app_sha256)"
   check "$1-panel-bytes" hash_is /usr/lib/cosmic-ext-halcyon-islands/cosmic-panel-islands "$HOST_SHA256"
+  if [ -d "$work/source/magnifying-dock" ]; then
+    check "$1-dock-bytes" hash_is /usr/bin/halcyon-magnifying-app-list "$(json "$target/fedora-build.json" dock_sha256)"
+    check "$1-dock-launcher" test -f /usr/share/applications/io.github.profilaz3.Halcyon.MagnifyingDock.desktop
+    check "$1-dock-notices" test -s /usr/share/doc/cosmic-ext-halcyon/MAGNIFYING_DOCK_LICENSES.txt
+    check "$1-app-notices" test -s /usr/share/doc/cosmic-ext-halcyon/THIRD_PARTY_LICENSES.txt
+    check "$1-panel-notices" test -s /usr/share/doc/cosmic-ext-halcyon-islands/THIRD_PARTY_LICENSES.txt
+  fi
   check "$1-installation-record" test \
     "$(json "/usr/share/$PACKAGE/installation.json" package_version)" = "$evr"
 }
@@ -102,6 +109,13 @@ build() {
   (cd "$source_tree" && CARGO_HOME=/tmp/empty-cargo-home CARGO_TARGET_DIR=/build/target \
     cargo build --release --locked --offline --frozen)
   install -D -m 0755 /build/target/release/halcyon "$target/app/halcyon"
+  local -a dock_args=()
+  if [ -d "$work/source/magnifying-dock" ]; then
+    (cd "$work/source/magnifying-dock" && CARGO_HOME=/tmp/empty-cargo-home CARGO_TARGET_DIR=/build/target \
+      cargo build --release --locked --offline --frozen -p cosmic-app-list)
+    install -m 0755 /build/target/release/cosmic-app-list "$target/app/halcyon-magnifying-app-list"
+    dock_args=(--dock "$target/app/halcyon-magnifying-app-list")
+  fi
   check offline-build-downloaded-nothing \
     test ! -e /tmp/empty-cargo-home/registry -a ! -e /tmp/empty-cargo-home/git
 
@@ -125,7 +139,7 @@ build() {
 
   python3 -I "$tools/container_acceptance.py" provenance --fedora "$fedora" \
     --app "$target/app/halcyon" --host "$islands/cosmic-panel-islands" \
-    --rust "$RUST_TOOLCHAIN" --out "$target/fedora-build.json"
+    --rust "$RUST_TOOLCHAIN" "${dock_args[@]}" --out "$target/fedora-build.json"
 
   # Throwaway signing key. Packages signed with it must never be published.
   export GNUPGHOME=$target/gnupg

@@ -326,6 +326,35 @@ mod tests {
         );
     }
     #[test]
+    fn wide_folder_thumbnails_stay_inside_the_preview_above_the_filename() {
+        let mut listing = sample();
+        let mut config = crate::config::Config::default();
+        config.folder.path = Some(listing.source.clone());
+        let size = [520., 265.];
+        let mut ui = crate::native_test::Native::new(cosmic::iced::Size::new(size[0], size[1]));
+        for (width, height) in [(144, 80), (40, 120)] {
+            listing.entries[2].thumbnail = Some(Handle::from_rgba(
+                width,
+                height,
+                [253, 1, 249, 255].repeat((width * height) as usize),
+            ));
+            let card = crate::tools::cards::folder(&listing, &config, size, |_| Some(()), None);
+            let pixels = ui.render(card, &cosmic::Theme::dark());
+            let thumbnail_height = pixels
+                .chunks_exact(520 * 4)
+                .filter(|row| {
+                    row.chunks_exact(4)
+                        .any(|p| p[0] > 240 && p[1] < 16 && p[2] > 240)
+                })
+                .count();
+            assert!(
+                (1..=48).contains(&thumbnail_height),
+                "{width}×{height}: {thumbnail_height} rows"
+            );
+        }
+    }
+
+    #[test]
     fn folder_native_compact_and_wide_fit_whole_entries() {
         if std::env::var_os("HALCYON_CUSTOMIZATION_EVIDENCE").is_none() {
             return;

@@ -34,13 +34,16 @@ def build(args):
         raise ValueError('Only x86_64 is supported')
     app = module('halcyon_deb_payload',ROOT/'packaging/build-deb.py')
     app.require_main_version(ROOT,args.version)
+    dock = app.dock_applet(args.binary, getattr(args, 'magnifying_dock', None), app.bundled(ROOT, 'magnifying-dock'))
     native = module('halcyon_native_payload',ROOT/'packaging/islands/build-deb.py')
     proof = json.loads(args.provenance.read_text())
     expected = dict(format='halcyon-fedora-build',version=1,fedora=args.fedora,architecture='x86_64',
                     app_sha256=hashlib.sha256(args.binary.read_bytes()).hexdigest(),
                     host_sha256=hashlib.sha256(args.islands_binary.read_bytes()).hexdigest())
+    if dock:
+        expected['dock_sha256'] = hashlib.sha256(dock.read_bytes()).hexdigest()
     if any(proof.get(k) != v for k,v in expected.items()):
-        raise ValueError('Fedora build provenance does not match this target and both executables')
+        raise ValueError('Fedora build provenance does not match this target and its executables')
     catalog = json.loads(args.islands_catalog.read_text())
     if catalog.get('startup_policy', {}).get('platform') != dict(id='fedora', version=args.fedora, architecture='x86_64'):
         raise ValueError('Native startup policy does not match the RPM target')
@@ -52,7 +55,7 @@ def build(args):
         raise ValueError('An armored public signing key is required')
     with tempfile.TemporaryDirectory(prefix='halcyon-rpm-') as temporary:
         top = Path(temporary); payload = top/'payload'
-        app.stage_application(payload,args.binary,wallpapers,args.google_client,PACKAGE,getattr(args,"magnifying_dock",None))
+        app.stage_application(payload,args.binary,wallpapers,args.google_client,PACKAGE,dock)
         native.stage_payload(payload,args.islands_binary,args.islands_manifest,evr,
                              args.islands_licenses,args.islands_catalog,owner=PACKAGE,strip_binary=False)
         metadata = dict(format='halcyon-installation',version=1,app_version=args.version,
@@ -69,7 +72,14 @@ def build(args):
             if not file.is_file(): continue
             relative = '/'+str(file.relative_to(payload))
             if '%' in relative or '\n' in relative or ' ' in relative: raise ValueError('Unexpected RPM payload path')
-            files.append(('%config(noreplace) ' if relative.startswith('/etc/') else '')+relative)
+            flags = ''
+            if relative.startswith('/etc/'):
+                flags = '%config(noreplace) '
+            elif relative.startswith('/usr/share/doc/') and file.name in (
+                    'LICENSE', 'copyright', 'ASSETS.md', 'THIRD_PARTY.md',
+                    'THIRD_PARTY_LICENSES.txt', 'MAGNIFYING_DOCK_LICENSES.txt'):
+                flags = '%license '
+            files.append(flags + relative)
         (top/'payload-files').write_text('\n'.join(files)+'\n')
         spec = top/'halcyon.spec'
         spec.write_text(f'''Name: {PACKAGE}

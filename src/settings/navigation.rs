@@ -370,7 +370,7 @@ pub(super) const DOCK_HIDE_TIMING: SearchHit = hit(
 pub(super) const LOOKS: SearchHit = hit(
     Page::DesktopProfiles,
     "Looks",
-    "setups profiles presets starter looks saved calm evening focus workbench paper rose clean desktop presentation welcome rain snow fog weather mix combine import share file save current export backup",
+    "setups profiles presets starter looks saved calm evening focus workbench paper rose clean desktop presentation welcome rain snow fog weather mix combine import share file save current export backup start workspace choose apps launch",
     false,
 )
 .names_page();
@@ -487,6 +487,18 @@ pub(super) const GET_MORE_ICONS: SearchHit = hit(
     false,
 )
 .at("appearance-icons");
+pub(super) const WEATHER_LAYOUT: SearchHit = hit(
+    Page::Weather, "Widget layout", "weather classic outlook art forecast range compare saved design", false,
+).at("weather-layout");
+pub(super) const LOCAL_FOLDER: SearchHit = hit(
+    Page::Folder, "Local folder", "folder widget choose recent files thumbnails directory", false,
+);
+pub(super) const MARKETS_WATCHLIST: SearchHit = hit(
+    Page::Markets, "Watchlist", "stocks symbols ticker shares exchange currency pairs EUR/USD list", false,
+).at("markets-watchlist");
+pub(super) const DOCK_MAGNIFICATION: SearchHit = hit(
+    Page::DesktopDock, "Dock magnification", "dock icons grow zoom hover magnify", false,
+).at("dock-magnification").bar(PanelKind::Dock);
 pub(super) const WIDGET_GLASS: SearchHit = hit(
     Page::WeatherEffects,
     "Widget glass",
@@ -505,7 +517,7 @@ pub(super) const EDGE_MENU: SearchHit = hit(
     Page::EdgeMenu,
     "Edge menu",
     // It was called Widget controls; that name still finds it.
-    "edge menu widget controls open now flyout sidebar drawer side panel strip screen edge shortcuts apps folders actions customize hover click off disable left right position slide animation",
+    "edge menu widget controls open now flyout sidebar drawer side panel strip screen edge shortcuts apps folders actions widget peek customize hover click off disable left right position slide animation",
     false,
 )
 .names_page();
@@ -607,8 +619,7 @@ const SEARCH: &[SearchHit] = &[
     )
     .at("devbox-reorder-anchor"),
     WEATHER_LOCATION,
-    hit(Page::Weather, "Widget layout", "weather classic outlook art forecast range compare saved design", false)
-        .at("weather-layout"),
+    WEATHER_LAYOUT,
     hit(
         Page::Weather,
         "Units",
@@ -801,7 +812,7 @@ const SEARCH: &[SearchHit] = &[
         false,
     )
     .names_page(),
-    hit(Page::Folder, "Local folder", "folder widget choose recent files thumbnails directory", false),
+    LOCAL_FOLDER,
     hit(Page::Folder, "Show hidden files", "dotfiles folder visibility", false),
     hit(Page::Appearance, "Widget glass", "crystal shared finish", false),
     hit(Page::WeatherEffects, "Rain on widget glass", "raindrops wallpaper widgets only", false),
@@ -824,7 +835,7 @@ const SEARCH: &[SearchHit] = &[
     hit(Page::Markets, "Price chart", "markets graph price history", false).at("markets-chart"),
     hit(Page::Markets, "Publication date", "markets quote time timestamp", false).at("markets-date"),
     hit(Page::Markets, "Source and chart details", "markets provider chart dates low high prices", false).at("markets-details"),
-    hit(Page::Markets, "Watchlist", "stocks symbols ticker shares exchange currency pairs EUR/USD list", false).at("markets-watchlist"),
+    MARKETS_WATCHLIST,
     hit(Page::Markets, "Twelve Data", "provider api key connection", false),
     DOCK_SEE_THROUGH,
     hit(
@@ -899,6 +910,7 @@ const SEARCH: &[SearchHit] = &[
     .bar(crate::desktop::panels::PanelKind::Panel)
     .section(BAR_ADVANCED),
     DOCK_HIDE_TIMING,
+    DOCK_MAGNIFICATION,
     hit(
         Page::DesktopPanel,
         "Hide timing",

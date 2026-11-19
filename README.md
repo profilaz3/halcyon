@@ -13,27 +13,29 @@
 
 A native COSMIC application built with **Rust and libcosmic**. Settings and wallpaper effects use GPU rendering.
 
-*The hero and feature images are generated illustrations. [Native screenshots](docs/screenshots/055/README.md) and [image sources](docs/presentation/070-readme/README.md) are available separately.*
+*The widget gallery and glass examples are native Halcyon captures. The hero and the other illustrated feature panels are concept artwork. [Native gallery and capture details](docs/screenshots/078/README.md) · [Illustration sources](docs/presentation/070-readme/README.md)*
 
 ## 1. Desktop appearance
 
-Wallpapers, light and dark themes, accent colors, fonts, icons and surface finishes. Appearance settings can be coordinated across widgets, dock and panel.
+Wallpapers, light and dark themes, accent colors, fonts, icons and surface finishes. Mica Slate, Tape Deck, Porcelain and Blueprint coordinate widgets, dock and panel. Existing and personal styles stay available in Appearance.
 
 [![Three illustrated desktop appearances: Rainy Lake, Paper and Deep Purple](docs/presentation/070-readme/desktop-configurations.png)](docs/presentation/070-readme/desktop-configurations.png)
 
 ## 2. Widget design and placement
 
-The widget builder customizes Clock, Weather, Calendar, System monitor, Music and Focus. Notes, Git project status and Daily overview are also included. Widgets support moving, resizing, ordering and assignment to different displays.
+Place, resize and arrange widgets on each display. Weather offers **Classic** and **Outlook** layouts. **Folder** shows recent files as rows or thumbnail tiles. **Widget Peek** brings selected widgets over an open window from an edge menu button or keyboard shortcut. Clock, Calendar, System monitor, Music, Focus, Notes, Projects and Daily overview are also available.
 
-[Markets](docs/MARKETS.md) adds stocks and currency pairs in one watchlist with daily charts, using public data without signup, with optional Twelve Data integration.
+Markets follows up to five stocks and currency pairs using public quotes and ECB rates. It starts with prices and daily changes. Add a chart or publication date in Settings. [Markets setup](docs/MARKETS.md)
 
-[![Illustration of individual Clock, Weather, System monitor, Focus, Music and Notes widgets](docs/presentation/070-readme/widgets-elements-dark.png)](docs/presentation/070-readme/widgets-elements-dark.png)
+[![Native Halcyon widgets showing a weather forecast, recent files, album-lit Music and a Markets watchlist](docs/screenshots/078/widgets.png)](docs/screenshots/078/widgets.png)
 
-[Native widget builder](docs/screenshots/055/widget-builder.png)
+*Weather, Folder and Music use example content. Markets shows ECB reference rates published November 19, 2026.* [Widget builder](docs/screenshots/055/widget-builder.png) · [Widget Peek over an editor](docs/screenshots/desktop-customization/widget-peek.png)
 
 ## 3. Dock and panel customization
 
-Applet arrangement, spacing, size, opacity, corners and auto-hide. **Islands** separates applets into floating groups; **Penumbra** fades bar backgrounds into the wallpaper. Both are optional and included in the package. The **Activity island** (beta) shows music, meetings, notifications and camera or microphone use on a standard COSMIC top panel or a floating Islands panel. Open Music or Messages in the Activity island and choose **Pin to desktop**. Click to place the widget, or use the arrow keys and Enter. Esc cancels. **Show on desktop** highlights a widget you already pinned.
+Arrange applets and adjust spacing, size, opacity, corners and auto-hide. Optional **Dock magnification** enlarges icons under the pointer and follows system reduced motion. [See the dock in motion](docs/screenshots/desktop-customization/dock-motion.mp4)
+
+**Islands** separates applets into floating groups; **Penumbra** fades bar backgrounds into the wallpaper. Both are optional and included in the package. The **Activity island** (beta) shows music, meetings, notifications and camera or microphone use on a standard COSMIC top panel or a floating Islands panel. Open Music or Messages in the Activity island and choose **Pin to desktop**. Click to place the widget, or use the arrow keys and Enter. Esc cancels. **Show on desktop** highlights a widget you already pinned.
 
 [![Illustration of Islands, Penumbra, Activity island states and an icon-only edge menu with a handle](docs/presentation/070-readme/panel-elements-dark.png)](docs/presentation/070-readme/panel-elements-dark.png)
 
@@ -63,7 +65,11 @@ Save, combine, import and export wallpapers, styles and layouts. Rules can switc
 
 ## 7. Clock depth and rain on glass
 
-For translucent widgets, open **Weather effects**, choose **Liquid lens** under **Moving effect**. The curved rim refracts the wallpaper and catches a highlight near the pointer. Adjust **Refraction** to change the bend. For moving droplets, choose **Rain** and turn on **Rain on widget glass**.
+Open **Weather effects → Widget glass** to adjust frost, tint, refraction and corners. A named finish can be shared by several widgets. Tint follows the theme until you choose a color. Choose **Liquid lens** for a curved, refracting edge or **Rain** for moving droplets.
+
+[![The same native Messages widget with Crystal and Frosted glass over a lake wallpaper](docs/screenshots/078/glass-finishes.png)](docs/screenshots/078/glass-finishes.png)
+
+*Crystal on the left, Frosted on the right. Both were rendered over the same wallpaper.*
 
 The clock can sit behind the mountains in the wallpaper, between the sky and the ridge. It stays behind the ridge when effects are on, with rain on glass in front of the clock and landscape.
 
@@ -71,7 +77,7 @@ The clock can sit behind the mountains in the wallpaper, between the sky and the
 
 ## 8. Looks
 
-Looks coordinate wallpaper, colors, widgets, bars and effects in one pick. **Rainy Lake** combines the fog wallpaper, rain, a clock behind the mountains and autohiding bars. **Deep Purple** pairs the night wallpaper with At a glance and Music. **Look Studio** adjusts icon shape and tint.
+Looks coordinate wallpaper, colors, widgets, bars and effects in one pick. **Rainy Lake** combines the fog wallpaper, rain, a clock behind the mountains and autohiding bars. **Deep Purple** pairs the night wallpaper with At a glance and Music. **Look Studio** adjusts icon shape and tint. To attach apps, select a saved Look and open **Choose apps…**. **Start workspace** applies the Look and launches the apps in your chosen order. [Workspace app picker](docs/screenshots/desktop-customization/workspace-apps.png)
 
 [![Illustration of Rainy Lake and Deep Purple desktop looks, with Look Studio icon shape and tint examples](docs/presentation/070-readme/looks.png)](docs/presentation/070-readme/looks.png)
 
@@ -146,4 +152,4 @@ Bind `halcyon --toggle drawer` to a key in **COSMIC Settings → Keyboard → Ke
 
 [Calendar setup](docs/CALENDAR.md) · [Report a bug](https://github.com/profilaz3/halcyon/issues) · [Build & contribute](docs/DEVELOPMENT.md) · [Privacy](docs/PRIVACY.md)
 
-[GPL-3.0-or-later AND GPL-3.0-only](LICENSE) · [Third-party notices](THIRD_PARTY.md) · [Screenshots](docs/screenshots/055/README.md) · [Illustration sources](docs/presentation/070-readme/README.md)
+[GPL-3.0-or-later AND GPL-3.0-only](LICENSE) · [Third-party notices](THIRD_PARTY.md) · [Native screenshots](docs/screenshots/078/README.md) · [Illustration sources](docs/presentation/070-readme/README.md)

@@ -1354,6 +1354,31 @@ fn crystal_keeps_music_and_focus_aligned_on_light_and_dark_wallpaper() {
     let now = std::time::Instant::now();
     let (feed, player) = cards::recipe::paused_sample();
     let timer = focus::Session::default();
+    let music = |size| cards::music::<()>(
+        cards::MusicView {
+            feed: Some(feed),
+            player: Some(player),
+            art: Some(cards::recipe::sample_art()),
+            now,
+            manually_selected: false,
+            problem: false,
+            last: None,
+        },
+        &config,
+        Some(|_| ()),
+        Some(size),
+    );
+    if std::env::var_os("DESKTOP_CARDS_LAYOUT_EVIDENCE").is_some() {
+        let mut single = crate::native_test::Native::with_backend(Size::new(520., 164.), "wgpu");
+        for time in [now, now + std::time::Duration::from_secs(1)] {
+            single.event(
+                music([520., 164.]),
+                Event::Window(window::Event::RedrawRequested(time)),
+                cosmic::iced::Point::ORIGIN,
+            );
+        }
+        single.capture(music([520., 164.]), &theme, "music-with-artwork");
+    }
     for (name, file) in [
         ("dark", "halcyon-workbench.jpg"),
         ("light", "halcyon-paper.jpg"),
@@ -1404,20 +1429,7 @@ fn crystal_keeps_music_and_focus_aligned_on_light_and_dark_wallpaper() {
                     .height(Length::Fill),
                 );
             if show_cards {
-                let music = cards::music::<()>(
-                    cards::MusicView {
-                        feed: Some(feed),
-                        player: Some(player),
-                        art: Some(cards::recipe::sample_art()),
-                        now,
-                        manually_selected: false,
-                        problem: false,
-                        last: None,
-                    },
-                    &config,
-                    Some(|_| ()),
-                    Some([460., 160.]),
-                );
+                let music = music([460., 160.]);
                 let focus =
                     cards::focus::<()>(&timer, &config, 0, "2026-11-19", Some(|_| ()), Some([252., 160.]));
                 let pair = row::with_children(vec![

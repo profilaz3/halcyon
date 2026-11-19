@@ -18,7 +18,7 @@ pub(super) async fn fetch(
         ))
         .header(
             reqwest::header::USER_AGENT,
-            "Halcyon/0.7.6 (desktop markets widget)",
+            concat!("Halcyon/", env!("CARGO_PKG_VERSION"), " (desktop markets widget)"),
         )
         .query(&[("range", "3mo"), ("interval", "1d")])
         .send()

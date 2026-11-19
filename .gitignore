@@ -23,6 +23,7 @@ __pycache__/
 
 # Generated at release time from Cargo.lock.
 /packaging/licenses/THIRD_PARTY_LICENSES.txt
+/packaging/licenses/MAGNIFYING_DOCK_LICENSES.txt
 
 # Credentials and local configuration never belong in the repository.
 google-calendar-client.json
