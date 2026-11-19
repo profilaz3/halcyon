@@ -633,10 +633,15 @@ fn hourly_blend() -> f32 { return smoothstep(PERIOD-BLEND,PERIOD,p.frame.y); }
                         let key = max(facing, 0.);
                         let local = (v.uv - v.rect.xy) / v.rect.zw;
                         let window_light = 1. - smoothstep(0.10, 0.78, length(local - vec2(0.16, 0.12)));
+                        let far_light = 1. - smoothstep(0.04, 0.66, length(local - vec2(0.85, 0.92)));
                         let bounce = max(dot(normal, vec2(0.35, 0.936)), 0.);
                         let glint = exp(-pow((depth - 1.05) / 0.78, 2.));
+                        // Narrow reflections of the two light sources curve around opposite corners.
+                        let key_glint = key * window_light;
+                        let far_glint = bounce * far_light;
+                        let light = mix(vec3(0.96, 0.97, 1.0), outside / max(0.16, max(outside.r, max(outside.g, outside.b))), 0.22);
                         rim = glint * (outside * (0.32 + 0.82 * key + 0.38 * bounce * luma)
-                            + vec3(0.13 * key * key * window_light))
+                            + light * (0.60 * key_glint * key_glint + 0.34 * far_glint * far_glint))
                             - shoulder * (1. - key) * (0.035 + 0.075 * luma) * clean;
                     }
                 }
