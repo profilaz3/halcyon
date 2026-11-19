@@ -324,25 +324,30 @@ impl Settings {
         // shape or the way back to the bar.
         items.push(self.islands_section(draft));
         items.push(self.bar_style(draft));
-        if editor.selected == PanelKind::Dock
-            && let Setting::Known(regions) = draft.applets()
-        {
+        if editor.selected == PanelKind::Dock {
             use crate::desktop::panels::{MAGNIFYING_APP_LIST, STOCK_APP_LIST};
-            let on = regions.contains(MAGNIFYING_APP_LIST);
-            if (on || regions.contains(STOCK_APP_LIST))
-                && (on || editor.catalog.get(MAGNIFYING_APP_LIST).is_some())
-            {
-                items.push(self.search_target("dock-magnification", group(
-                    None,
-                    vec![group_row(
-                        "Dock magnification",
-                        "Icons grow toward the pointer and settle as it moves away.",
-                        toggler(on)
-                            .on_toggle(|v| edit(Edit::MagnifyingDock(v)))
-                            .into(),
-                    )],
-                )));
-            }
+            let (on, stock) = match draft.applets() {
+                Setting::Known(regions) => (regions.contains(MAGNIFYING_APP_LIST), regions.contains(STOCK_APP_LIST)),
+                _ => (false, false),
+            };
+            let replacement = if on { STOCK_APP_LIST } else { MAGNIFYING_APP_LIST };
+            let available = (on || stock) && editor.catalog.get(replacement).is_some();
+            let description = match (on, stock, available) {
+                (_, _, true) => "Icons grow toward the pointer and settle as it moves away.",
+                (true, _, false) => "Install the standard COSMIC app list to switch back.",
+                (false, true, false) => "Install the Halcyon magnifying applet to enable this.",
+                _ => "Add the COSMIC app list to this dock to enable magnification.",
+            };
+            items.push(self.search_target("dock-magnification", group(
+                None,
+                vec![group_row(
+                    "Dock magnification",
+                    description,
+                    toggler(on)
+                        .on_toggle_maybe(available.then_some(|v| edit(Edit::MagnifyingDock(v))))
+                        .into(),
+                )],
+            )));
         }
         items.push(self.bar_position(draft));
         // Both bars edit their items with the same editor.
