@@ -92,7 +92,10 @@ fn messages_widget_is_off_until_chosen_and_says_what_to_do() {
         !hidden.iter().any(|t| t.contains("save me a seat")),
         "{hidden:?}"
     );
-    assert!(hidden.iter().any(|t| t == "New message"), "{hidden:?}");
+    assert!(
+        !hidden.iter().any(|t| t == "New message" || t == "Message"),
+        "{hidden:?}"
+    );
     send_settings(&mut app, Message::Widget(Widget::Messages, false));
     assert!(!Config::load().widget_enabled(Widget::Messages));
 
@@ -130,13 +133,17 @@ fn messages_widget_is_off_until_chosen_and_says_what_to_do() {
             },
         ),
     ];
-    for (dims, label) in [(size, "default"), ([420., 340.], "large")] {
+    for (dims, label) in [
+        ([300., 220.], "minimum"),
+        (size, "default"),
+        ([420., 340.], "large"),
+    ] {
         let mut native = crate::native_test::Native::new(Size::new(dims[0], dims[1]));
         let card = |state: &State| {
             crate::tools::cards::messages::<Message>(state, &config, None, Some(dims))
         };
         // The newest conversations fill the card, inside it.
-        let rows = crate::tools::cards::messages_rows(dims[1]);
+        let rows = crate::tools::cards::messages_rows(dims[1], true);
         assert!(rows >= 3, "{label} {rows}");
         let drawn = native.all_text(card(&sample));
         for thread in sample.threads().iter().take(rows) {
@@ -154,14 +161,61 @@ fn messages_widget_is_off_until_chosen_and_says_what_to_do() {
         }
         assert!(drawn.contains(&"2 unread".to_string()), "{drawn:?}");
         assert!(drawn.contains(&"You: Sounds good, see you Friday".to_string()));
+        let away_name = "A phone with a particularly long display name".repeat(3);
+        let away = State::Away {
+            phone: away_name.clone(),
+            threads: sample.threads().to_vec(),
+        };
+        let title = native.text_bounds(card(&away), "Messages");
+        let status = native.text_bounds(card(&away), &format!("Away · {away_name}"));
+        assert!(title.width >= 60. && title.x + title.width <= status.x);
+        assert!(status.x + status.width <= dims[0]);
         let many = State::Ready {
             phone: "Phone".into(),
             threads: sample.threads().iter().cycle().take(24).cloned().collect(),
         };
         let texts = native.all_text(card(&many));
-        let more = texts.iter().find(|t| t.ends_with("more in KDE Connect")).unwrap();
+        let more = texts
+            .iter()
+            .find(|t| t.ends_with("more in KDE Connect"))
+            .unwrap();
         let footer = native.text_bounds(card(&many), more);
-        assert!(footer.y + footer.height <= dims[1], "{label} footer {footer:?}");
+        assert!(
+            footer.y + footer.height <= dims[1],
+            "{label} footer {footer:?}"
+        );
+        let mut private = config.clone();
+        private.messages.show_text = false;
+        let private_card =
+            || crate::tools::cards::messages::<Message>(&many, &private, None, Some(dims));
+        let private_text = native.all_text(private_card());
+        let private_footer = private_text
+            .iter()
+            .find(|t| t.ends_with("more in KDE Connect"))
+            .unwrap();
+        let omitted = |text: &str| {
+            text.split_whitespace()
+                .next()
+                .unwrap()
+                .parse::<usize>()
+                .unwrap()
+        };
+        assert!(
+            omitted(private_footer) < omitted(more),
+            "{label} should fit more senders"
+        );
+        let bounds = native.text_bounds(private_card(), private_footer);
+        assert!(bounds.y + bounds.height <= dims[1]);
+        assert!(
+            !private_text
+                .iter()
+                .any(|t| t.contains("Sounds good") || t.contains("Picture or file"))
+        );
+        native.capture(
+            crate::tools::cards::messages::<Message>(&sample, &private, None, Some(dims)),
+            &cosmic::Theme::dark(),
+            &format!("messages-card-{label}-private-dark"),
+        );
         // Every state that isn't messages says what to do, inside the card.
         for (name, state) in &states {
             if let Some((title, hint)) = crate::tools::cards::messages_status(state) {

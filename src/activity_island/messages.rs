@@ -58,7 +58,7 @@ pub(crate) fn project(state: &State, show_text: bool) -> Messages {
             .map(|thread| Conversation {
                 who: bounded(&thread.who, 60),
                 preview: if show_text {
-                    bounded(&preview(thread, true), 160)
+                    bounded(&preview(thread), 160)
                 } else if thread.unread {
                     "New message".into()
                 } else {

@@ -1080,6 +1080,7 @@ dependencies = [
  "toml 0.8.23",
  "tract-linalg",
  "tract-onnx",
+ "unicode-segmentation",
  "wayland-protocols-wlr",
  "xkbcommon 0.8.0",
  "zbus",
