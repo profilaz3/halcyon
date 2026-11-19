@@ -614,10 +614,11 @@ fn hourly_blend() -> f32 { return smoothstep(PERIOD-BLEND,PERIOD,p.frame.y); }
                 let delta = (pointer - v.uv) * aspect / max(0.001, min(half_size.x,half_size.y));
                 shine += 0.18 * exp(-dot(delta, delta) * 3.);
             }
-            let reflection = mix(surround, vec3(1.), shine);
+            let reflection = surround + surround * (1. - surround) * shine;
             let shade = curve * (1. - 0.5 * lip) * mix(0.15, 0.035, key);
             let rgb = mix(bent * (1. - shade), reflection, fresnel);
-            return vec4(rgb, 1.);
+            let coverage = smoothstep(0., p.tint.w, -distance);
+            return vec4(mix(scene_at(v.uv, 0.), rgb, coverage), 1.);
         }
     }
     let glass=textureSampleLevel(condensation,linear_sampler,v.uv,0.);

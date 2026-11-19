@@ -25,7 +25,7 @@ struct Vertex { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f3
     }
     let rim = exp(-abs(distance + 1.) * 0.65);
     let grain = fract(sin(dot(floor(p), vec2(12.9898, 78.233))) * 43758.5453);
-    let wash = pow(max(0., 1. - in.uv.y), 3.) * 0.055;
+    let wash = pow(max(0., 1. - in.uv.y), 3.) * 0.018;
     let phase = params.size_radius_phase.w;
     var glint = 0.;
     if phase >= 0. {
@@ -33,7 +33,9 @@ struct Vertex { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f3
         glint = exp(-pow((in.uv.x + in.uv.y * 0.3 - center) / 0.12, 2.))
             * sin(phase * 3.14159265) * 0.32;
     }
-    let alpha = inside * (rim * (0.22 + glint) + wash + grain * 0.014);
-    let color = mix(params.accent.rgb, vec3(1.), 0.65);
-    return vec4(color * alpha, alpha);
+    // Feather the reading area continuously along the rounded contour.
+    let backing = params.accent.a * smoothstep(0., 12., -distance);
+    let sheen = rim * glint * 0.45 + wash + grain * 0.008;
+    let alpha = backing + sheen * (1. - backing);
+    return inside * vec4(params.accent.rgb * sheen * (1. - backing), alpha);
 }
