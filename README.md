@@ -63,11 +63,11 @@ Save, combine, import and export wallpapers, styles and layouts. Rules can switc
 
 ## 7. Clock depth and rain on glass
 
-**Crystal** reveals the wallpaper through the widget. **Frosted** softens it, **Liquid lens** bends it along the edges, and **Rain** adds moving droplets.
+With **Crystal** glass, a bright line in your wallpaper bends around the widget’s edge and lends the rim its color. The wallpaper stays aligned behind the text. **Frosted** softens the view, and **Rain** adds moving droplets.
 
 [![Illustration of the Messages widget in Crystal glass with a luminous violet feather visible through it](docs/presentation/078-readme/crystal-glass.webp)](docs/presentation/078-readme/crystal-glass.webp)
 
-Open **Weather effects → Widget glass** to adjust frost, refraction, tint and corners. Share a named finish across widgets or give one its own copy. [Compare native Crystal and Frosted glass](docs/screenshots/078/README.md#glass-finishes)
+Open **Weather effects → Widget glass** to adjust frost, refraction, tint and corners. Share a named finish across widgets or give one its own copy. [See Crystal on the native Messages widget](docs/screenshots/desktop-customization/crystal-feather.webp) · [Compare Crystal and Frosted](docs/screenshots/078/README.md#glass-finishes)
 
 The clock can sit behind the mountains in the wallpaper, between the sky and the ridge. It stays behind the ridge when effects are on, with rain on glass in front of the clock and landscape.
 
