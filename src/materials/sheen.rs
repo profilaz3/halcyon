@@ -1,7 +1,7 @@
 //! A 220 ms edge glint on pointer entry; no text animation or idle redraws.
 use cosmic::iced::advanced::widget::{Operation, Tree, tree};
 use cosmic::iced::advanced::{Clipboard, Layout, Shell, Widget, layout, overlay, renderer};
-use cosmic::iced::{Event, Length, Point, Rectangle, Size, Vector, mouse, window};
+use cosmic::iced::{Event, Length, Rectangle, Size, Vector, mouse, window};
 use cosmic::{Element, Renderer, Theme};
 
 pub fn sheen<'a, Message: 'a>(
@@ -9,11 +9,20 @@ pub fn sheen<'a, Message: 'a>(
     animate: bool,
 ) -> Element<'a, Message> {
     Element::new(Sheen {
-        content,
         animate,
-        glass: None,
-        album: None,
-        backing: None,
+        ..Sheen::plain(content)
+    })
+}
+
+/// Report the sleeve's measured rectangle in Music-card coordinates. The
+/// same named container follows the cover in compact, wide and recipe faces.
+pub fn observe_artwork<'a, M: 'a>(
+    content: Element<'a, M>,
+    report: fn(Option<Rectangle>) -> M,
+) -> Element<'a, M> {
+    Element::new(Sheen {
+        report_artwork: Some((cosmic::widget::Id::new("music-artwork"), report)),
+        ..Sheen::plain(content)
     })
 }
 pub fn dark_glass<'a, Message: 'a>(
@@ -25,6 +34,7 @@ pub fn dark_glass<'a, Message: 'a>(
 ) -> Element<'a, Message> {
     Element::new(Sheen {
         content,
+        report_artwork: None,
         animate: false,
         backing: (backing > 0.).then_some((radius, backing)),
         album: None,
@@ -45,6 +55,7 @@ pub fn album_light<'a, M: 'a>(
 ) -> Element<'a, M> {
     Element::new(Sheen {
         content,
+        report_artwork: None,
         animate: false,
         backing: None,
         album: Some((program.artwork_id.clone(), program.spread, program.radius)),
@@ -57,20 +68,33 @@ struct Sheen<'a, Message> {
     glass: Option<Element<'a, Message>>,
     album: Option<(cosmic::widget::Id, f32, f32)>,
     backing: Option<(f32, f32)>,
+    report_artwork: Option<(cosmic::widget::Id, fn(Option<Rectangle>) -> Message)>,
+}
+impl<'a, M> Sheen<'a, M> {
+    fn plain(content: Element<'a, M>) -> Self {
+        Self {
+            content,
+            animate: false,
+            glass: None,
+            album: None,
+            backing: None,
+            report_artwork: None,
+        }
+    }
 }
 struct FindArtwork<'a> {
     id: &'a cosmic::widget::Id,
-    center: Option<Point>,
+    bounds: Option<Rectangle>,
 }
 impl Operation for FindArtwork<'_> {
     fn container(&mut self, id: Option<&cosmic::widget::Id>, bounds: Rectangle) {
         if id == Some(self.id) {
-            self.center = Some(bounds.center());
+            self.bounds = Some(bounds);
         }
     }
 
     fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn Operation)) {
-        if self.center.is_none() {
+        if self.bounds.is_none() {
             visit(self);
         }
     }
@@ -80,6 +104,8 @@ struct State {
     hover: bool,
     software_mask: std::cell::RefCell<Option<([f32; 3], cosmic::iced::advanced::svg::Handle)>>,
     start: Option<std::time::Instant>,
+    artwork: Option<Rectangle>,
+    reported_artwork: Option<Option<Rectangle>>,
 }
 impl State {
     fn strength(&self) -> f32 {
@@ -128,12 +154,29 @@ impl<Message> Widget<Message, Theme, Renderer> for Sheen<'_, Message> {
     ) -> layout::Node {
         let content = self.content.as_widget_mut();
         let node = content.layout(&mut tree.children[0], renderer, limits);
-        if let Some((id, _, _)) = &self.album {
-            let mut artwork = FindArtwork { id, center: None };
+        let artwork_id = self
+            .album
+            .as_ref()
+            .map(|(id, ..)| id)
+            .or_else(|| self.report_artwork.as_ref().map(|(id, _)| id));
+        if let Some(id) = artwork_id {
+            let mut artwork = FindArtwork { id, bounds: None };
             let layout = Layout::new(&node);
             content.operate(&mut tree.children[0], layout, renderer, &mut artwork);
-            tree.children[1].state.downcast_mut::<super::dark_glass::AlbumState>().center =
-                artwork.center.map(|point| Point::ORIGIN + (point - layout.position()));
+            let local = artwork.bounds.map(|mut b| {
+                b.x -= layout.position().x;
+                b.y -= layout.position().y;
+                b
+            });
+            if self.album.is_some() {
+                tree.children[1]
+                    .state
+                    .downcast_mut::<super::dark_glass::AlbumState>()
+                    .center = local.map(|b| b.center());
+            }
+            if self.report_artwork.is_some() {
+                tree.state.downcast_mut::<State>().artwork = local;
+            }
         }
         node
     }
@@ -182,6 +225,13 @@ impl<Message> Widget<Message, Theme, Renderer> for Sheen<'_, Message> {
             viewport,
         );
         let state = tree.state.downcast_mut::<State>();
+        if let Some((_, report)) = &self.report_artwork
+            && matches!(event, Event::Window(window::Event::RedrawRequested(_)))
+            && state.reported_artwork != Some(state.artwork)
+        {
+            state.reported_artwork = Some(state.artwork);
+            shell.publish(report(state.artwork));
+        }
         let hover = cursor.is_over(layout.bounds());
         if hover != state.hover {
             state.hover = hover;

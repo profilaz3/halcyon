@@ -1671,6 +1671,8 @@ pub struct MusicPreferences {
     pub player: Option<String>,
     pub show_artwork: bool,
     pub album_light: bool,
+    /// Strength of the cover's reflection on a nearby Clock card. Zero is off.
+    pub clock_reflection: u8,
     pub show_progress: bool,
 }
 impl Default for MusicPreferences {
@@ -1681,6 +1683,7 @@ impl Default for MusicPreferences {
             player: None,
             show_artwork: true,
             album_light: true,
+            clock_reflection: 0,
             show_progress: true,
         }
     }
@@ -1688,6 +1691,9 @@ impl Default for MusicPreferences {
 impl MusicPreferences {
     fn validate(&self) -> Result<(), String> {
         self.visualizer.validate()?;
+        if self.clock_reflection > 100 {
+            return Err("Clock reflection must be between 0 and 100%".into());
+        }
         if let Some(player) = &self.player
             && !valid_player_key(player)
         {

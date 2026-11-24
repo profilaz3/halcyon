@@ -159,7 +159,7 @@ impl AlbumState {
 
 /// A dark sleeve can carry a strong hue. Lift its value for the reflected
 /// light, keeping the hue and limiting luminance behind the white controls.
-fn reflected_color(rgb: [u8; 3]) -> [f32; 4] {
+pub(super) fn reflected_color(rgb: [u8; 3]) -> [f32; 4] {
     let peak = rgb.into_iter().max().unwrap_or(0).max(1) as f32;
     let [r, g, b] = rgb.map(|channel| f32::from(channel) / peak);
     let color = Color::from_rgb(r, g, b);

@@ -19,6 +19,8 @@ mod note_history;
 pub enum Message {
     Visualizer(crate::tools::visualizer::Preferences),
     VisualizerSave,
+    ClockReflection(u8),
+    ClockReflectionSave,
     /// A control on a preview card.
     Card(Action),
     Players(Result<Vec<music::Player>, String>),
@@ -68,6 +70,7 @@ pub struct ToolsEditor {
     /// What this window sees on the session bus; `None` until asked.
     pub feed: Option<music::Feed>,
     pub visualizer_draft: Option<crate::tools::visualizer::Preferences>,
+    pub clock_reflection_draft: Option<u8>,
     recent: Vec<String>,
     pub pinned: Option<String>,
     pub music_problem: bool,
@@ -112,6 +115,7 @@ impl Default for ToolsEditor {
             market_preview: crate::markets::State::default(),
             feed: None,
             visualizer_draft: None,
+            clock_reflection_draft: None,
             recent: Vec::new(),
             pinned: None,
             music_problem: false,
@@ -603,6 +607,15 @@ impl ToolsEditor {
             }
             Message::Visualizer(p) => {
                 self.visualizer_draft = Some(p);
+            }
+            Message::ClockReflection(value) => self.clock_reflection_draft = Some(value),
+            Message::ClockReflectionSave => {
+                if let Some(value) = self.clock_reflection_draft.take() {
+                    return (
+                        Task::none(),
+                        Some(Saved::Tool(Widget::Music, "clock_reflection", value.into())),
+                    );
+                }
             }
             Message::VisualizerSave => {
                 if let Some(p) = self.visualizer_draft.take() {

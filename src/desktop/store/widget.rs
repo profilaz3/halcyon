@@ -168,7 +168,7 @@ macro_rules! fields {
 }
 
 /// Every member a profile, its Undo or its recovery may write.
-pub static FIELDS: [WidgetField; 132] = fields![
+pub static FIELDS: [WidgetField; 133] = fields![
     "/recipes/music", "Music recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Music);
     "/recipes/focus", "Focus recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Focus);
     "/recipes/devbox", "System recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::System);
@@ -254,6 +254,7 @@ pub static FIELDS: [WidgetField; 132] = fields![
     "/music/visualizer", "Audio visualizer", Style, |v| serde_json::from_value::<crate::tools::visualizer::Preferences>(v.clone()).is_ok_and(|p| p.validate().is_ok());
     "/music/show_artwork", "Music artwork", Style, boolean;
     "/music/album_light", "Album lighting", Style, boolean;
+    "/music/clock_reflection", "Nearby Clock reflection", Style, percent;
     "/music/show_progress", "Music progress", Style, boolean;
     "/folder/show_hidden", "Hidden files", Style, boolean;
     "/markets/show_change", "Markets daily change", Style, boolean;

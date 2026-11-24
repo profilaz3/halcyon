@@ -426,15 +426,49 @@ impl Settings {
                 )
             },
         ]);
-        own.push(self.search_target("music-album-light", group(
-            Some("Album lighting"),
-            vec![switch(
-                "Light the card with the album cover",
-                "Adds a soft reflection to dark widget backgrounds when artwork is visible",
-                self.config.music.album_light,
-                |value| option(Widget::Music, "album_light", value),
-            )],
-        )));
+        let strength = self
+            .tools
+            .clock_reflection_draft
+            .unwrap_or(self.config.music.clock_reflection);
+        let save_reflection = edit(Edit::ClockReflectionSave);
+        let hint = if self.config.appearance.contrast_assist {
+            "Reflections are paused while Easier to read is on"
+        } else {
+            "Place Music beside a Clock with a Card background"
+        };
+        let strength_label = if strength == 0 {
+            "Off".into()
+        } else {
+            format!("{strength}%")
+        };
+        let reflection = column::with_children(vec![
+            split(
+                detail("Reflection on nearby Clock", hint),
+                label(strength_label, 12., MUTED),
+            ),
+            crate::app::settings_clock_reflection_sample(&self.config, strength)
+                .map(|_| Message::Preview),
+            slider(0..=100, strength, |v| edit(Edit::ClockReflection(v)))
+                .on_release(save_reflection.clone())
+                .width(Length::Fill)
+                .apply(|s| completed_slider(s.into(), save_reflection)),
+        ])
+        .spacing(5);
+        own.push(self.search_target(
+            "music-album-light",
+            group(
+                Some("Album lighting"),
+                vec![
+                    switch(
+                        "Light the card with the album cover",
+                        "Adds a soft reflection to dark widget backgrounds when artwork is visible",
+                        self.config.music.album_light,
+                        |value| option(Widget::Music, "album_light", value),
+                    ),
+                    reflection.into(),
+                ],
+            ),
+        ));
         self.widget_template(Widget::Music, "Music", Some(preview), own)
     }
 

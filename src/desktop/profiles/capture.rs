@@ -483,8 +483,10 @@ fn capture_widgets(
         if field.pointer.starts_with("/moments/") && raw.get("moments").is_none() {
             continue;
         }
-        if matches!(field.pointer, "/clock/depth" | "/clock/lighting")
-            && raw.pointer(field.pointer).is_none()
+        if matches!(
+            field.pointer,
+            "/clock/depth" | "/clock/lighting" | "/music/clock_reflection"
+        ) && raw.pointer(field.pointer).is_none()
         {
             continue;
         }

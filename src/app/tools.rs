@@ -59,6 +59,7 @@ pub(super) struct Tools {
     /// it and offers to resume it.
     pub last_track: Option<music::LastTrack>,
     pub music_problem: bool,
+    pub(super) sleeve_bounds: Option<cosmic::iced::Rectangle>,
     art: Vec<(String, Option<Handle>)>,
     art_loading: Option<String>,
     pub note: Result<notes::Note, String>,
@@ -91,6 +92,7 @@ impl Tools {
             pinned: None,
             last_track: None,
             music_problem: false,
+            sleeve_bounds: None,
             art: Vec::new(),
             art_loading: None,
             note: notes::load(),
@@ -117,6 +119,7 @@ impl Tools {
             pinned: None,
             last_track: None,
             music_problem: false,
+            sleeve_bounds: None,
             art: Vec::new(),
             art_loading: None,
             note: Ok(notes::Note::default()),
@@ -224,6 +227,72 @@ impl Cards {
         )
     }
 
+    fn shown_music_art_url<'a>(&'a self, player: Option<&'a music::Player>) -> Option<&'a str> {
+        if !self.config.music_artwork()
+            || matches!(self.tools.feed, Some(music::Feed::Unavailable(_)))
+        {
+            return None;
+        }
+        if let Some(last) = self
+            .tools
+            .last_track
+            .as_ref()
+            .filter(|_| !player.is_some_and(music::Player::has_track))
+        {
+            return last.art_url.as_deref();
+        }
+        player?.art_url.as_deref()
+    }
+
+    pub(super) fn clock_reflection_enabled(&self) -> bool {
+        self.config.music.clock_reflection > 0
+            && !self.config.appearance.contrast_assist
+            && self.config.music_artwork()
+            && self.tool_shown(Widget::Music)
+            && self.config.widget_visible(Widget::Clock)
+            && self.widget_available(Widget::Clock)
+            && self.same_widget_display(Widget::Music, Widget::Clock)
+    }
+
+    pub(super) fn clock_reflection(&self) -> Option<crate::materials::reflection::Reflection> {
+        if !self.clock_reflection_enabled() {
+            return None;
+        }
+        let sleeve = self.tools.sleeve_bounds?;
+        let url = self.shown_music_art_url(self.current_player())?;
+        let (_, tint, _) = self
+            .activity
+            .tints
+            .iter()
+            .find(|(cached, ..)| cached == url)?;
+        let rect = |widget| {
+            let [x, y] = if self.arrange_hides_surface(widget) {
+                self.arrange_origin(
+                    widget,
+                    self.position_from(widget, self.layout_editor.positions()),
+                )
+            } else if widget == Widget::Clock && !self.custom_layout() {
+                [self.config.clock_margin() as f32, 88.]
+            } else {
+                self.arrange_origin(widget, self.placed_position(widget))
+            };
+            let [width, height] = self.widget_size(widget);
+            (x >= 0. && y >= 0.).then_some(cosmic::iced::Rectangle {
+                x,
+                y,
+                width,
+                height,
+            })
+        };
+        crate::materials::reflection::Reflection::between(
+            rect(Widget::Music)?,
+            sleeve,
+            rect(Widget::Clock)?,
+            (*tint)?,
+            self.config.music.clock_reflection,
+        )
+    }
+
     pub(super) fn tool_card(&self, widget: Widget) -> Element<'_, Message> {
         self.tool_card_at(widget, self.widget_size(widget))
     }
@@ -232,19 +301,8 @@ impl Cards {
         match widget {
             Widget::Music => {
                 let player = self.current_player();
-                // With nothing loaded, the card shows the last track and
-                // its artwork, if that is still cached.
-                let last = self
-                    .tools
-                    .last_track
-                    .as_ref()
-                    .filter(|_| !player.is_some_and(music::Player::has_track));
-                let art_url = match last {
-                    Some(last) => last.art_url.as_deref(),
-                    None => player.and_then(|player| player.art_url.as_deref()),
-                };
-                let art = art_url
-                    .filter(|_| self.config.music_artwork())
+                let art = self
+                    .shown_music_art_url(player)
                     .and_then(|url| self.tools.art(url))
                     .and_then(Option::as_ref);
                 cards::music_visualized(
@@ -1638,6 +1696,172 @@ mod tests {
                 assert!(notes::load().unwrap().text.starts_with("ab"));
             },
         );
+    }
+
+    fn reflecting_widgets() -> (Cards, crate::displays::test_support::Wire) {
+        let mut config = Config::default();
+        config.widgets_visible = true;
+        config.glance.enabled = false;
+        config.enabled_widgets = vec!["clock".into()];
+        config.clock.surface = Some(crate::widget_style::resolver::ClockSurface::Panel);
+        config.music.enabled = true;
+        config.music.clock_reflection = 100;
+        config.material_motion = false;
+        config.widget_positions.insert("music".into(), [0.10, 0.25]);
+        config.widget_positions.insert("clock".into(), [0.50, 0.25]);
+        config.widget_sizes.insert("music".into(), [360., 178.]);
+        config.widget_sizes.insert("clock".into(), [270., 160.]);
+        let (mut cards, _) = Cards::init(Core::default(), config);
+        let output = cards.test_output_ready();
+        cards.screen_size = [1280., 800.];
+        let mut player = cards::recipe::sample_player(Instant::now());
+        let url = "file:///sample-cover.png".to_owned();
+        player.art_url = Some(url.clone());
+        let _ = cards.music_feed(music::Feed::Players(vec![player]));
+        let _ = cards.music_art(
+            url,
+            Ok(music::Art {
+                width: 12,
+                height: 12,
+                rgba: [108, 46, 230, 255].repeat(144),
+            }),
+        );
+        (cards, output)
+    }
+
+    #[test]
+    fn clock_reflection_follows_an_arrange_drag_and_cancel() {
+        if crate::displays::test_support::isolated(
+            "app::tools::tests::clock_reflection_follows_an_arrange_drag_and_cancel",
+        ) {
+            return;
+        }
+        use cosmic::iced::{Point, Rectangle, Size, mouse};
+        let (mut cards, _output) = reflecting_widgets();
+        cards.tools.sleeve_bounds = Some(Rectangle::new(Point::new(12., 14.), Size::new(80., 80.)));
+        assert!(cards.clock_reflection().is_some());
+        let _ = cards.arrange();
+        assert!(cards.arrange_hides_surface(Widget::Clock));
+        let cursor = |x, y| mouse::Event::CursorMoved {
+            position: Point::new(x, y),
+        };
+        let _ = cards.layout_pointer(cursor(540., 250.));
+        cards.layout_press(Widget::Clock);
+        let _ = cards.layout_pointer(cursor(1140., 650.));
+        assert!(
+            cards.clock_reflection().is_none(),
+            "distance follows the active drag"
+        );
+        cards.cancel_layout_drag();
+        assert!(cards.clock_reflection().is_some());
+        let _ = cards.finish_arrange(false);
+    }
+
+    #[test]
+    fn clock_reflection_uses_visible_sleeve_geometry_and_draws_only_the_near_side() {
+        use crate::native_test::Native;
+        use cosmic::iced::{Event, Point, Size, window};
+        let (mut cards, _output) = reflecting_widgets();
+        let [w, h] = cards.widget_size(Widget::Music);
+        let (_, margin) = cards.shadow_px();
+        let mut music_ui = Native::new(Size::new(w + margin as f32, h + margin as f32));
+        let redraw = || Event::Window(window::Event::RedrawRequested(Instant::now()));
+        let original = music_ui.bounds(cards.individual_widget(Widget::Music), "music-artwork");
+        let (messages, _) = music_ui.event(
+            cards.individual_widget(Widget::Music),
+            redraw(),
+            Point::ORIGIN,
+        );
+        let measured = messages
+            .into_iter()
+            .find_map(|m| match m {
+                Message::MusicArtworkBounds(Some(bounds)) => Some(bounds),
+                _ => None,
+            })
+            .expect("visible cover measured on the Music surface");
+        assert_eq!(measured.size(), original.size());
+        let _ = cards.handle_update(Message::MusicArtworkBounds(Some(measured)));
+        assert!(cards.clock_reflection().is_some());
+        assert!(
+            !music_ui
+                .event(
+                    cards.individual_widget(Widget::Music),
+                    redraw(),
+                    Point::ORIGIN
+                )
+                .0
+                .iter()
+                .any(|m| matches!(m, Message::MusicArtworkBounds(_)))
+        );
+
+        let [w, h] = cards.widget_size(Widget::Clock);
+        for backend in ["tiny-skia", "wgpu"] {
+            let mut ui =
+                Native::with_backend(Size::new(w + margin as f32, h + margin as f32), backend);
+            let theme = cosmic::Theme::dark();
+            cards.config.music.clock_reflection = 0;
+            let plain = ui.render(cards.individual_widget(Widget::Clock), &theme);
+            cards.config.music.clock_reflection = 100;
+            let lit = ui.render(cards.individual_widget(Widget::Clock), &theme);
+            let width = ui.size.width as usize;
+            let mut max_near = 0;
+            for (i, (a, b)) in lit.chunks_exact(4).zip(plain.chunks_exact(4)).enumerate() {
+                if i % width < width / 4 {
+                    max_near = max_near.max(i16::from(a[2]) - i16::from(b[2]));
+                } else {
+                    assert_eq!(a, b, "{backend}: clock center and far edge stay neutral");
+                }
+            }
+            assert!(
+                max_near > 12,
+                "{backend}: nearby edge should pick up the violet cover, got {max_near}"
+            );
+        }
+        let mut next = cards.current_player().unwrap().clone();
+        let next_url = "file:///amber-cover.png".to_string();
+        next.art_url = Some(next_url.clone());
+        let _ = cards.music_feed(music::Feed::Players(vec![next]));
+        assert!(
+            cards.clock_reflection().is_none(),
+            "the previous track cannot light a new sleeve"
+        );
+        let _ = cards.music_art(
+            next_url,
+            Ok(music::Art {
+                width: 12,
+                height: 12,
+                rgba: [240, 125, 37, 255].repeat(144),
+            }),
+        );
+        let mut ui = Native::new(Size::new(w + margin as f32, h + margin as f32));
+        let theme = cosmic::Theme::dark();
+        let amber = ui.render(cards.individual_widget(Widget::Clock), &theme);
+        cards.config.music.clock_reflection = 0;
+        let plain = ui.render(cards.individual_widget(Widget::Clock), &theme);
+        assert!(
+            amber
+                .chunks_exact(4)
+                .zip(plain.chunks_exact(4))
+                .any(|(a, b)| {
+                    i16::from(a[0]) - i16::from(b[0]) > 12 + i16::from(a[2]) - i16::from(b[2])
+                }),
+            "the new cover casts warm light"
+        );
+        cards.config.music.clock_reflection = 100;
+        cards
+            .config
+            .widget_positions
+            .insert("clock".into(), [1., 1.]);
+        assert!(cards.clock_reflection().is_none());
+        cards
+            .config
+            .widget_positions
+            .insert("clock".into(), [0.50, 0.25]);
+        cards.config.music.show_artwork = false;
+        assert!(cards.clock_reflection().is_none());
+        cards.config.music.show_artwork = true;
+        cards.config.appearance.contrast_assist = true;
+        assert!(cards.clock_reflection().is_none());
     }
 
     #[test]

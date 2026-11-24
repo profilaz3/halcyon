@@ -1361,6 +1361,7 @@ const ROWS: &[SearchHit] = &[
     hit(Page::Music, "Album art", "", false),
     hit(Page::Music, "Album lighting", "album-lit glass artwork tint glow", false).at("music-album-light"),
     hit(Page::Music, "Light the card with the album cover", "reflection", false).at("music-album-light"),
+    hit(Page::Music, "Reflection on nearby Clock", "album cover glass tint strength", false).at("music-album-light"),
     hit(Page::Music, "Around the cover", "", false),
     hit(Page::Music, "Card", "", false),
     hit(Page::Messages, "Show in activity island", "panel phone sms", false),

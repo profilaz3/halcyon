@@ -6,6 +6,7 @@ use crate::recipes::{Arrangement, Kind, Part, Recipe};
 use crate::widget_presentation::Context;
 #[derive(Clone, Default)]
 pub(super) struct Reading {
+    pub clock_reflection: Option<crate::materials::reflection::Reflection>,
     pub system: Vec<system::Metric>,
     pub city: String,
     pub temperature: String,
@@ -338,26 +339,12 @@ pub(super) fn view(
             .into(),
         );
     }
-    let background = style.surface.value;
-    container(column::with_children(rows).spacing(4))
+    let body = container(column::with_children(rows).spacing(4))
         .width(size[0])
         .height(size[1])
         .padding(INSET as u16)
-        .clip(true)
-        .class(cosmic::theme::Container::custom(move |_| {
-            cosmic::iced::widget::container::Style {
-                background: match background {
-                    crate::widget_style::resolver::Surface::None => None,
-                    crate::widget_style::resolver::Surface::Solid(color) => Some(color.into()),
-                },
-                border: cosmic::iced::Border {
-                    radius: f32::from(style.radius.value).into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
-        }))
-        .into()
+        .clip(true);
+    crate::materials::reflection::panel(body, size, style, reading.clock_reflection)
 }
 
 // Widget surfaces may be light while the application theme is dark (or vice versa).

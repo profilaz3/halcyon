@@ -51,6 +51,58 @@ pub(crate) fn settings_clock_preview_at(
     )
 }
 
+/// A small, fixed pair for the Music strength slider, using the desktop's
+/// actual receiver and the bundled cover. Running apps and saved Clock
+/// preferences are not needed to try the effect.
+pub(crate) fn settings_clock_reflection_sample(
+    config: &Config,
+    strength: u8,
+) -> Element<'static, Message> {
+    use crate::materials::reflection::Reflection;
+    use crate::widget_style::resolver::ClockSurface;
+    use cosmic::iced::{Point, Rectangle, Size};
+    let cover = crate::tools::cards::recipe::sample_art();
+    static TINT: std::sync::OnceLock<Option<[u8; 3]>> = std::sync::OnceLock::new();
+    let tint = TINT.get_or_init(|| match cover {
+        cosmic::widget::image::Handle::Rgba { pixels, .. } => {
+            crate::activity_island::tint::dominant(pixels)
+        }
+        _ => None,
+    });
+    let size = [162., 70.];
+    let sleeve = Rectangle::with_size(Size::new(54., 54.));
+    let music = Rectangle { y: 8., ..sleeve };
+    let clock = Rectangle::new(Point::new(66., 0.), Size::new(size[0], size[1]));
+    let light = tint
+        .filter(|_| !config.appearance.contrast_assist)
+        .and_then(|rgb| Reflection::between(music, sleeve, clock, rgb, strength));
+    let mut sample = config.clone();
+    sample.recipes.clock = None;
+    sample.clock.show_date = false;
+    sample.clock.surface = Some(ClockSurface::Panel);
+    sample.moments.day.clock.surface = sample.clock.surface;
+    sample.moments.night.clock.surface = sample.clock.surface;
+    let _scope = crate::widget_style::for_card(Widget::Clock);
+    let face = clock::view_with_light(
+        &sample,
+        Local::now().naive_local(),
+        size,
+        crate::widget_presentation::Context::LocalPreview,
+        light,
+    );
+    cosmic::widget::row::with_children(vec![
+        cosmic::widget::image(cover.clone())
+            .width(54)
+            .height(54)
+            .border_radius([7.; 4])
+            .into(),
+        face,
+    ])
+    .align_y(Alignment::Center)
+    .spacing(12)
+    .into()
+}
+
 /// A Clock page tile's picture of the clock: the face as a sample, a dial
 /// without its time caption.
 pub(crate) fn settings_clock_tile(
@@ -309,6 +361,7 @@ pub enum Message {
     Messages(crate::messages::State),
     Markets(crate::markets::State),
     Folder(crate::folder::Listing),
+    MusicArtworkBounds(Option<cosmic::iced::Rectangle>),
     MusicArt(String, Result<crate::tools::music::Art, String>),
     ToolDone(Result<(), String>),
     MusicControlDone(Result<Vec<crate::tools::music::Player>, String>),
@@ -2326,6 +2379,10 @@ impl Cards {
                 };
                 self.capture_if_changed()
             }
+            Message::MusicArtworkBounds(bounds) => {
+                self.tools.sleeve_bounds = bounds;
+                Task::none()
+            }
             Message::MusicArt(url, result) => {
                 let task = self.music_art(url, result);
                 Task::batch([task, self.capture_if_changed()])
@@ -3066,6 +3123,12 @@ impl Cards {
         })
     }
     fn clock(&self) -> Element<'_, Message> {
+        self.clock_with_reflection(None)
+    }
+    fn clock_with_reflection(
+        &self,
+        light: Option<crate::materials::reflection::Reflection>,
+    ) -> Element<'_, Message> {
         let _card = crate::widget_style::for_card(Widget::Clock);
         // The rain surface draws the clock behind its glass; this surface
         // keeps its place, empty.
@@ -3080,10 +3143,12 @@ impl Cards {
             return view;
         }
         clock::with_backdrop(self.clock_backdrop.luminance, || {
-            clock::view(
+            clock::view_with_light(
                 &self.config,
                 self.clock_at.naive_local(),
                 self.widget_size(Widget::Clock),
+                crate::widget_presentation::Context::Live,
+                light,
             )
         })
     }

@@ -2270,7 +2270,14 @@ impl Cards {
         if !self.config.widget_visible(widget) || !self.widget_available(widget) {
             return empty_surface();
         }
-        let card = self.widget_face(widget);
+        let card = match widget {
+            Widget::Music if self.clock_reflection_enabled() => crate::materials::observe_artwork(
+                self.tool_card(widget),
+                Message::MusicArtworkBounds,
+            ),
+            Widget::Clock => self.clock_with_reflection(self.clock_reflection()),
+            _ => self.widget_face(widget),
+        };
         let card = if self
             .pin_highlight
             .is_some_and(|(pinned, _)| pinned == widget)

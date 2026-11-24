@@ -408,6 +408,73 @@ fn tool_recipe_loading_another_kind_resets_the_sample_state() {
 }
 
 #[test]
+fn clock_reflection_is_opt_in_and_saves_with_a_look() {
+    if crate::displays::test_support::isolated(
+        "settings::recipes::tests::clock_reflection_is_opt_in_and_saves_with_a_look",
+    ) {
+        return;
+    }
+    use crate::settings::tests::send_settings;
+    use crate::settings::tools::Message as Edit;
+
+    let root = crate::test_env::assert_isolated();
+    crate::test_env::native_worker(&root, true);
+    std::fs::write(
+        Config::path().unwrap(),
+        br#"{"onboarded":true,"setup_dismissed":true,"music":{"enabled":true,"album_light":false}}"#,
+    ).unwrap();
+    let store = crate::desktop::actions::history_store().unwrap();
+    store.migrate_design().unwrap();
+    let capture = || {
+        crate::desktop::profiles::capture(&store, "Music and Clock")
+            .unwrap()
+            .profile
+    };
+    let legacy = capture();
+    let setting = "/music/clock_reflection";
+    assert!(
+        legacy
+            .widget_style
+            .as_ref()
+            .unwrap()
+            .pointer(setting)
+            .is_none()
+    );
+    assert!(legacy.version < 29);
+    let (mut app, _) = Settings::init(Core::default(), Page::Music);
+    assert_eq!(app.config.music.clock_reflection, 0);
+    for strength in [72u8, 0] {
+        let before = Config::try_load().unwrap().music.clock_reflection;
+        send_settings(
+            &mut app,
+            super::super::Message::Tools(Edit::ClockReflection(strength)),
+        );
+        assert_eq!(app.tools.clock_reflection_draft, Some(strength));
+        assert_eq!(Config::try_load().unwrap().music.clock_reflection, before);
+        send_settings(
+            &mut app,
+            super::super::Message::Tools(Edit::ClockReflectionSave),
+        );
+        assert!(!app.error, "{}", app.status);
+        let saved = Config::try_load().unwrap().music;
+        assert_eq!(saved.clock_reflection, strength);
+        assert!(!saved.album_light);
+        let mut look = capture();
+        assert_eq!(look.version, 29);
+        assert_eq!(
+            look.widget_style
+                .as_ref()
+                .unwrap()
+                .pointer(setting)
+                .and_then(|v| v.as_u64()),
+            Some(strength.into())
+        );
+        look.version = 28;
+        assert!(look.validate().is_err());
+    }
+}
+
+#[test]
 fn visualizer_settings_save_reload_undo_and_native_controls() {
     if crate::displays::test_support::isolated(
         "settings::recipes::tests::visualizer_settings_save_reload_undo_and_native_controls",

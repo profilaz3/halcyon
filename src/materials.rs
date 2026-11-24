@@ -114,9 +114,10 @@ pub fn background(color: Color, finish: Option<Finish>) -> Background {
 }
 
 mod dark_glass;
+pub(crate) mod reflection;
 mod sheen;
 pub use dark_glass::AlbumLight;
-pub use sheen::{album_light, dark_glass, sheen};
+pub use sheen::{album_light, dark_glass, observe_artwork, sheen};
 
 #[cfg(test)]
 mod tests {

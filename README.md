@@ -25,6 +25,8 @@ Carry one finish across widgets, dock and panel. **Mica Slate** pairs blue-gray 
 
 An album-lit Music player, a Weather forecast and a Focus timer can share a display. Resize a widget and its contents reflow. **Widget Peek** brings your chosen widgets over the current window with a button or shortcut.
 
+Under **Music → Album lighting**, raise **Reflection on nearby Clock** and place Music beside a Clock with its **Background** set to **Card**. The edge facing the cover picks up its color and fades as you move the widgets apart. The strength starts at **Off**.
+
 [![Illustration of an album-lit Music player beside Weather and Focus, over Halcyon's violet feather](docs/presentation/078-readme/widgets.webp)](docs/presentation/078-readme/widgets.webp)
 
 Choose **Classic** or **Outlook** for Weather. **Folder** opens recent files, and **Markets** follows up to five stocks or currency pairs with optional charts. [Native widget gallery](docs/screenshots/078/README.md#desktop-widgets) · [Widget Peek in use](docs/screenshots/desktop-customization/widget-peek.png) · [Markets setup](docs/MARKETS.md)

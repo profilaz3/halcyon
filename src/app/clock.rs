@@ -580,6 +580,12 @@ impl Frame {
         [top, top + face]
     }
     pub fn view(self) -> Element<'static, Message> {
+        self.view_lit(None)
+    }
+    fn view_lit(
+        self,
+        light: Option<crate::materials::reflection::Reflection>,
+    ) -> Element<'static, Message> {
         let Self {
             presentation,
             reading,
@@ -609,7 +615,7 @@ impl Frame {
                 .into(),
             );
         }
-        container(
+        let body = container(
             column::with_children(content)
                 .spacing(gap)
                 .width(Length::Fill),
@@ -617,29 +623,16 @@ impl Frame {
         .width(size[0])
         .height(size[1])
         .padding(padding)
-        .class(cosmic::theme::Container::custom(move |_| {
-            cosmic::iced::widget::container::Style {
-                background: match presentation.style.surface.value {
-                    Surface::None => None,
-                    Surface::Solid(color) => Some(color.into()),
-                },
-                border: cosmic::iced::Border {
-                    radius: f32::from(presentation.style.radius.value).into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
-        }))
         .align_y(if presentation.preferences.center_vertically {
             Alignment::Center
         } else {
             Alignment::Start
-        })
-        .into()
+        });
+        crate::materials::reflection::panel(body, size, presentation.style, light)
     }
 }
 
-/// Compatibility entry for existing callers; both consumers use the same frame.
+#[cfg(test)]
 pub(crate) fn view(
     config: &Config,
     now: chrono::NaiveDateTime,
@@ -653,17 +646,29 @@ pub(super) fn view_context(
     size: [f32; 2],
     context: crate::widget_presentation::Context,
 ) -> Element<'static, Message> {
+    view_with_light(config, now, size, context, None)
+}
+pub(super) fn view_with_light(
+    config: &Config,
+    now: chrono::NaiveDateTime,
+    size: [f32; 2],
+    context: crate::widget_presentation::Context,
+    light: Option<crate::materials::reflection::Reflection>,
+) -> Element<'static, Message> {
     if let Some(recipe) = config.recipes.clock.as_ref() {
         return super::recipe::view(
             config,
             recipe,
             now,
-            super::recipe::Reading::default(),
+            super::recipe::Reading {
+                clock_reflection: light,
+                ..Default::default()
+            },
             context,
             size,
         );
     }
-    Presentation::new(config).frame(now, size).view()
+    Presentation::new(config).frame(now, size).view_lit(light)
 }
 
 /// The share of a Clock page tile's height a dial fills.

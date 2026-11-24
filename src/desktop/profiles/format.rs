@@ -1,4 +1,4 @@
-//! The profile record (`desktop-cards-profile`, up to version 26).
+//! The profile record (`desktop-cards-profile`, up to version 29).
 //!
 //! Version 2 adds the `windows` and `workspaces` sections and per-variant
 //! window `gaps` under Appearance; version 3 adds `wallpaper` and
@@ -57,7 +57,9 @@ pub const FORMAT: &str = "desktop-cards-profile";
 /// Weather layout and Outlook presentation choices require version 23.
 /// Rain confined to widget glass requires version 24. Editable glass finishes use version 25.
 /// Following the current theme for glass tint requires version 26.
-pub const VERSION: u32 = 28;
+/// Reflections between Music and Clock require version 29.
+pub const VERSION: u32 = 29;
+pub const VERSION_28: u32 = 28;
 pub const VERSION_27: u32 = 27;
 pub const VERSION_26: u32 = 26;
 pub const VERSION_25: u32 = 25;
@@ -1118,8 +1120,11 @@ impl Profile {
     }
     /// The version this record is written as.
     pub fn written_version(&self) -> u32 {
-        if !self.workspace_apps.is_empty() {
+        if self.has_clock_reflection() {
             return VERSION;
+        }
+        if !self.workspace_apps.is_empty() {
+            return VERSION_28;
         }
         if self.has_finish_library() || self.has_folder_widget() {
             return VERSION_27;
@@ -1249,6 +1254,11 @@ impl Profile {
             }
         }
         (profile, omitted)
+    }
+    fn has_clock_reflection(&self) -> bool {
+        self.widget_style
+            .as_ref()
+            .is_some_and(|v| v.pointer("/music/clock_reflection").is_some())
     }
     fn has_lighting(&self) -> bool {
         self.widget_style
@@ -1413,8 +1423,13 @@ impl Profile {
                 ));
             }
         }
+        if self.has_clock_reflection() && self.version < VERSION {
+            return Err(ProfileError::Invalid(
+                "Reflections between Music and Clock need look format version 29.".into(),
+            ));
+        }
         if !self.workspace_apps.is_empty()
-            && (self.version < VERSION || !valid_workspace_apps(&self.workspace_apps))
+            && (self.version < VERSION_28 || !valid_workspace_apps(&self.workspace_apps))
         {
             return Err(ProfileError::Invalid("Workspace apps need look format version 28 and up to 12 distinct desktop-entry IDs.".into()));
         }
@@ -1657,7 +1672,7 @@ pub fn import_local(bytes: &[u8]) -> Result<Profile, ProfileError> {
     // The version a section first appears in.
     let since = |key: &str| {
         if key == "workspace_apps" {
-            Some(VERSION)
+            Some(VERSION_28)
         } else if key == "description" {
             Some(VERSION_21)
         } else if key == "package" {
