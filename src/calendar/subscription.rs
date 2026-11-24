@@ -3,7 +3,10 @@ use super::http::{self, Login};
 use super::*;
 use crate::data::{CalendarData, CalendarEvent};
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Offset, TimeZone, Utc};
-use ical::{parser::ical::component::IcalEvent, property::Property};
+use ical::{
+    parser::ical::component::{IcalCalendar, IcalEvent},
+    property::Property,
+};
 use rrule::{RRuleSet, Tz};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -663,19 +666,67 @@ fn unescape(text: &str, limit: usize) -> String {
     }
     out
 }
-fn datetime(p: &Property, raw: &str, fallback: Option<&str>) -> Result<DateTime<Tz>, Problem> {
+#[derive(Default)]
+struct FeedTimeZones {
+    default: Option<String>,
+    // An alias is usable only if its declarations agree on the IANA location.
+    locations: BTreeMap<String, Option<chrono_tz::Tz>>,
+}
+
+impl FeedTimeZones {
+    fn new(calendar: &IcalCalendar) -> Self {
+        let mut locations = BTreeMap::new();
+        for definition in &calendar.timezones {
+            let properties = &definition.properties;
+            let Some(id) = value(properties, "TZID") else {
+                continue;
+            };
+            if let Some(location) =
+                value(properties, "X-LIC-LOCATION").and_then(|s| s.trim().parse().ok())
+            {
+                // A TZID property is iCalendar TEXT. A quoted TZID parameter
+                // carries commas literally, so decode the declaration first.
+                let mut key = unescape(id, id.len());
+                key.make_ascii_lowercase();
+                let entry = locations.entry(key).or_insert(Some(location));
+                if *entry != Some(location) {
+                    *entry = None;
+                }
+            }
+        }
+        Self {
+            default: value(&calendar.properties, "X-WR-TIMEZONE").map(|id| unescape(id, id.len())),
+            locations,
+        }
+    }
+
+    fn named(&self, id: &str) -> Result<Tz, Problem> {
+        // A calendar can supply a more specific location than the worldwide
+        // Windows default. Preserve native IANA identifiers as written.
+        if let Ok(iana) = id.parse() {
+            return Ok(Tz::Tz(iana));
+        }
+        // MS-OXCICAL §2.1.3.1.1.19.1 matches TZID references case-insensitively.
+        let key = id.to_ascii_lowercase();
+        self.locations
+            .get(&key)
+            .copied()
+            .unwrap_or_else(|| windows_zones::lookup_folded(&key))
+            .map(Tz::Tz)
+            .ok_or(Problem::FeedTimezone)
+    }
+}
+
+fn datetime(p: &Property, raw: &str, zones: &FeedTimeZones) -> Result<DateTime<Tz>, Problem> {
     let normalized = raw.to_ascii_uppercase();
     let raw = normalized.as_str();
     let zone = param(p, "TZID")
-        .or(fallback)
+        .or(zones.default.as_deref())
         .filter(|_| !raw.ends_with('Z') && raw.len() != 8);
-    if zone.is_some_and(|z| z.contains(['\r', '\n', ':', ';'])) {
-        return Err(Problem::FeedTimezone);
-    }
     // Resolve the zone independently of the explicit local date: RFC 5545
     // requires the earlier/pre-gap offset for explicit DATE-TIME values.
     let tz = if let Some(z) = zone {
-        Tz::Tz(z.parse().map_err(|_| Problem::FeedTimezone)?)
+        zones.named(z)?
     } else if raw.ends_with('Z') {
         Tz::UTC
     } else {
@@ -750,13 +801,13 @@ fn duration(text: &str) -> Result<(chrono::Duration, u64), Problem> {
 }
 fn event(
     e: &IcalEvent,
-    fallback: Option<&str>,
+    zones: &FeedTimeZones,
     choice: &CalendarChoice,
 ) -> Result<(DateTime<Tz>, chrono::Duration, u64, CalendarEvent), Problem> {
     let p = &e.properties;
     let start_prop = prop(p, "DTSTART").ok_or(Problem::InvalidFeed)?;
     let raw = start_prop.value.as_deref().ok_or(Problem::InvalidFeed)?;
-    let start = datetime(start_prop, raw, fallback)?;
+    let start = datetime(start_prop, raw, zones)?;
     let all_day = raw.len() == 8;
     let (span, nominal_days) = if let Some(end) = prop(p, "DTEND") {
         let raw_end = end.value.as_deref().ok_or(Problem::InvalidFeed)?;
@@ -769,7 +820,7 @@ fn event(
                 NaiveDate::parse_from_str(raw_end, "%Y%m%d").map_err(|_| Problem::InvalidFeed)?;
             b - a
         } else {
-            datetime(end, raw_end, fallback)? - start
+            datetime(end, raw_end, zones)? - start
         };
         (elapsed, 0)
     } else if let Some(d) = value(p, "DURATION") {
@@ -892,7 +943,7 @@ pub(super) fn parse(
     if parser.next().is_some() || calendar.events.len() > 5000 {
         return Err(Problem::FeedLimit);
     }
-    let zone = value(&calendar.properties, "X-WR-TIMEZONE");
+    let zones = FeedTimeZones::new(&calendar);
     // One highest-sequence record per UID/recurrence identity. A cancelled
     // override suppresses its original occurrence even without DTSTART.
     let mut records: BTreeMap<(String, Option<i64>), &IcalEvent> = BTreeMap::new();
@@ -906,7 +957,7 @@ pub(super) fn parse(
             if param(p, "RANGE").is_some() {
                 return Err(Problem::FeedLimit);
             }
-            Some(datetime(p, p.value.as_deref().ok_or(Problem::InvalidFeed)?, zone)?.timestamp())
+            Some(datetime(p, p.value.as_deref().ok_or(Problem::InvalidFeed)?, &zones)?.timestamp())
         } else {
             None
         };
@@ -934,7 +985,7 @@ pub(super) fn parse(
         if value(&e.properties, "STATUS").is_some_and(|v| v.eq_ignore_ascii_case("CANCELLED")) {
             continue;
         }
-        let (start, span, nominal_days, template) = event(e, zone, choice)?;
+        let (start, span, nominal_days, template) = event(e, &zones, choice)?;
         let mut dates = vec![start];
         if rid.is_none() {
             let mut set = RRuleSet::new(start).rdate(start);
@@ -954,7 +1005,7 @@ pub(super) fn parse(
                     || p.name.eq_ignore_ascii_case("EXDATE")
                 {
                     for raw in p.value.as_deref().ok_or(Problem::InvalidFeed)?.split(',') {
-                        let date = datetime(p, raw, zone)?;
+                        let date = datetime(p, raw, &zones)?;
                         set = if p.name.eq_ignore_ascii_case("RDATE") {
                             set.rdate(date)
                         } else {
@@ -1031,11 +1082,15 @@ mod tests {
             value: None,
         };
         assert_eq!(
-            datetime(&p, "20261025T023000", None).unwrap().to_rfc3339(),
+            datetime(&p, "20261025T023000", &FeedTimeZones::default())
+                .unwrap()
+                .to_rfc3339(),
             "2026-10-25T02:30:00+02:00"
         );
         assert_eq!(
-            datetime(&p, "20260329T023000", None).unwrap().to_rfc3339(),
+            datetime(&p, "20260329T023000", &FeedTimeZones::default())
+                .unwrap()
+                .to_rfc3339(),
             "2026-03-29T03:30:00+02:00"
         );
         let events = parse_events(
@@ -1451,6 +1506,49 @@ mod tests {
         assert_eq!(events[0].start, "2026-10-25T09:00:00+01:00");
         assert_eq!(events[1].title, "Moved");
         assert_eq!(events[1].start, "2026-11-02T11:00:00+01:00");
+    }
+
+    #[test]
+    fn outlook_calendar_default_only_applies_to_unqualified_local_times() {
+        let body = "X-WR-TIMEZONE:Nepal Standard Time\r\n\
+            BEGIN:VEVENT\r\nUID:local\r\nDTSTART:20261019T090000\r\nEND:VEVENT\r\n\
+            BEGIN:VEVENT\r\nUID:london\r\nDTSTART;TZID=GMT Standard Time:20261020T090000\r\nEND:VEVENT\r\n\
+            BEGIN:VEVENT\r\nUID:utc\r\nDTSTART:20261021T090000Z\r\nEND:VEVENT\r\n\
+            BEGIN:VEVENT\r\nUID:date\r\nDTSTART;VALUE=DATE:20261022\r\nEND:VEVENT";
+        let events = parse_events(body);
+        let starts: Vec<_> = events.iter().map(|e| e.start.as_str()).collect();
+        assert_eq!(
+            starts,
+            [
+                "2026-10-19T09:00:00+05:45",
+                "2026-10-20T09:00:00+01:00",
+                "2026-10-21T09:00:00+00:00",
+                "2026-10-22",
+            ]
+        );
+    }
+
+    #[test]
+    fn custom_zone_requires_an_unambiguous_location_in_the_same_feed() {
+        let event = "BEGIN:VEVENT\r\nUID:custom\r\nDTSTART;TZID=\"(UTC+05:30) Chennai, Kolkata\":20261020T090000\r\nEND:VEVENT";
+        let zone = "BEGIN:VTIMEZONE\r\nTZID:(UTC+05:30) CHENNAI\\, Kolkata\r\nX-LIC-LOCATION:Asia/Kolkata\r\n\
+            BEGIN:STANDARD\r\nDTSTART:19700101T000000\r\nTZOFFSETFROM:+0530\r\nTZOFFSETTO:+0530\r\nEND:STANDARD\r\nEND:VTIMEZONE";
+        assert_eq!(
+            parse_events(&format!("{zone}\r\n{event}"))[0].start,
+            "2026-10-20T09:00:00+05:30"
+        );
+        let conflict = zone.replace("Asia/Kolkata", "Asia/Kathmandu");
+        let without_location = zone.replace("X-LIC-LOCATION:Asia/Kolkata\r\n", "");
+        for body in [
+            event.to_string(),
+            format!("{without_location}\r\n{event}"),
+            format!("{zone}\r\n{conflict}\r\n{event}"),
+        ] {
+            assert_eq!(
+                parse(&feed(&body), "2026-10", &choice()).unwrap_err(),
+                Problem::FeedTimezone
+            );
+        }
     }
     #[test]
     fn highest_sequence_wins_and_unrelated_month_is_omitted() {

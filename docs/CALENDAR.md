@@ -31,6 +31,10 @@ Published details are accessible to anyone with the link. Use the ICS address,
 not the HTML address.
 [Microsoft's instructions](https://support.microsoft.com/en-us/outlook/share-your-calendar-in-outlook-com).
 
+Halcyon recognizes Windows time zone names in published calendars. For example,
+a weekly 9 AM meeting in `Eastern Standard Time` stays at 9 AM Eastern when
+daylight saving time starts or ends.
+
 ### iCloud
 
 On iCloud.com, open Calendar and the information button beside your calendar.
@@ -295,9 +299,13 @@ or unpublish it at the provider. [Privacy details](PRIVACY.md#widget-connections
   still publishes the feed. Previous cached events remain available.
 - **No .ics calendar files in a folder:** choose the folder that holds the
   `.ics` files, or the folder right above the calendars' own folders.
+- **Unrecognized time zone:** Halcyon accepts IANA city names and Windows time
+  zone IDs. A feed can also give a custom name an IANA location using
+  `X-LIC-LOCATION` in its `VTIMEZONE`. If the feed defines its own rules
+  without a recognized location, ask the publisher for a named zone or UTC.
 - **Unsupported or oversized calendar:** Halcyon limits feed size and recurrence
-  processing. Custom time-zone definitions and some recurrence features are not
-  supported; use a smaller compatible feed when available.
+  processing. Try a smaller feed if the calendar is large or uses an
+  unsupported recurrence rule.
 
 ## Google sign-in
 
