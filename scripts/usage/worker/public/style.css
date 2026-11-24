@@ -49,12 +49,9 @@ select,.ghost{font:inherit;color:var(--ink);background:var(--surface);border:1px
 .tbl-toggle{font:inherit;font-size:12px;color:var(--ink-2);background:none;border:1px solid var(--ring);border-radius:7px;padding:2px 8px;cursor:pointer;white-space:nowrap}
 .span-12{grid-column:span 12}.span-8{grid-column:span 8}.span-7{grid-column:span 7}.span-6{grid-column:span 6}.span-5{grid-column:span 5}.span-4{grid-column:span 4}
 @media (max-width:860px){.span-8,.span-7,.span-6,.span-5,.span-4{grid-column:span 12}}
-.kpis{display:grid;grid-template-columns:1.6fr repeat(5,1fr);gap:16px}
-@media (max-width:1180px){.kpis{grid-template-columns:repeat(3,1fr)}}
-@media (max-width:860px){.kpis{grid-template-columns:1fr 1fr}.kpis .hero{grid-column:span 2}}
+.kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
 .tile .label{color:var(--ink-2);font-size:13px}
 .tile .value{font-size:28px;font-weight:620;margin-top:4px;letter-spacing:-.01em}
-.hero .value{font-size:52px;line-height:1.05}
 .delta{font-size:12.5px;margin-top:4px;color:var(--ink-2)}
 .delta b{font-weight:600}
 .delta .up{color:var(--up)}.delta .down{color:var(--down)}
@@ -100,3 +97,32 @@ footer p{margin:4px 0}
 .hm-scale .hint{margin-left:12px}
 .seglist .key-rect{margin-top:4px}
 .body>.note{margin-top:10px}
+
+.journal{padding:clamp(16px,2.4vw,30px);margin-bottom:16px;background:linear-gradient(120deg,color-mix(in srgb,var(--s1) 7%,var(--surface)),var(--surface) 65%)}
+.journal h2{font-size:clamp(20px,2.5vw,32px);line-height:1.1;letter-spacing:-.035em}
+.journal .card-head,.journal-actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px}
+.journal-actions label,.journal-date,.journal-comparison,.journal-chart .note{font-size:13px;color:var(--ink-2)}
+.journal-spread{display:grid;grid-template-columns:minmax(200px,1fr) minmax(0,2.35fr);align-items:center;gap:clamp(16px,3vw,42px);margin-top:22px}
+.journal-total{display:block;font-size:clamp(48px,7vw,84px);line-height:1;letter-spacing:-.055em;font-variant-numeric:tabular-nums}
+.journal-unit{font-size:16px;font-weight:550}
+.journal-mix{margin:12px 0 2px;font-variant-numeric:tabular-nums}
+.journal-release:not(:empty){margin-top:9px;color:var(--ink);font-weight:600}
+.journal-chart{min-width:0}
+.journal-legend{display:flex;flex-wrap:wrap;gap:6px 18px;padding-left:40px;margin-top:6px;color:var(--ink-2);font-size:12px}
+.journal-legend span{display:inline-flex;align-items:center;gap:6px}
+.journal-legend span::before{content:"";width:16px;border-top:2px solid var(--s1)}
+.journal-legend .median-key::before{border-color:var(--s2)}
+.journal-legend .partial-key::before{border-top-style:dashed}
+.journal .body .tablewrap{margin-top:16px}
+.journal tbody tr[aria-current]{background:var(--wash);box-shadow:inset 3px 0 var(--s1)}
+.status:not([hidden]){background:var(--banner);color:var(--banner-ink);padding:10px;border-radius:8px}
+@media(max-width:720px){.journal-spread{grid-template-columns:minmax(0,1fr)}.journal .card-head{align-items:flex-start}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:420px){.journal-actions{gap:6px}.journal-actions label{font-size:12px}.journal select{max-width:155px}.journal-total{font-size:52px}.journal-legend{padding-left:0;gap:6px 12px}.kpis{gap:8px}}
+.replay-control,.replay-row{display:grid;align-items:center;gap:6px 12px}
+.replay-control{grid-template-columns:auto 1fr;margin:10px 0 15px;color:var(--ink-2)}
+.replay-control input{width:100%;accent-color:var(--s1)}
+.replay-row{grid-template-columns:auto 1fr auto;margin:6px 0;font-variant-numeric:tabular-nums}
+.replay-row strong{display:inline-flex;align-items:center;gap:6px}
+.replay-row strong::before{content:"";width:16px;border-top:2px solid var(--s1)}
+.replay-row + .replay-row strong::before{border-color:var(--s3);border-top-style:dashed}
+.replay-row span{color:var(--ink-2);font-size:12px}
