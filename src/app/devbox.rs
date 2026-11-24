@@ -19,6 +19,7 @@ impl Cards {
     }
 
     pub(super) fn devbox(&self) -> Element<'_, Message> {
+        let _card = crate::widget_style::for_card(crate::drawer::Widget::Devbox);
         if let Some(recipe) = &self.config.recipes.devbox {
             return recipe::view(
                 &self.config,

@@ -8,6 +8,7 @@ const GLINT: Duration = Duration::from_millis(700);
 const FRAME: Duration = Duration::from_millis(33);
 pub struct Program {
     pub accent: Color,
+    pub backing: f32,
     pub radius: f32,
     pub animate: bool,
 }
@@ -77,7 +78,7 @@ impl<M> shader::Program<M> for Program {
                 accent[0],
                 accent[1],
                 accent[2],
-                0.,
+                self.backing,
                 0.,
                 0.,
                 0.,
@@ -387,6 +388,7 @@ mod tests {
     fn glass_is_idle_until_hover_and_obeys_reduced_motion() {
         let mut program = Program {
             accent: Color::WHITE,
+            backing: 0.,
             radius: 24.,
             animate: true,
         };
@@ -482,6 +484,14 @@ mod tests {
                 "{backend}: {}",
                 alpha(150, 150)
             );
+            // A smooth transition at the top of the card, including the former
+            // 3, 6 and 9 pixel insets. Skip the outer silhouette's coverage.
+            for y in 2..14 {
+                assert!(
+                    alpha(150, y).abs_diff(alpha(150, y + 1)) <= 16,
+                    "{backend}: abrupt change in backing opacity at y={y}"
+                );
+            }
             let pixel = (150 * 300 + 150) * 4;
             let opacity = f32::from(pixels[pixel + 3]) / 255.;
             let over_white = |channel: usize| 1. - opacity + f32::from(pixels[pixel + channel]) / 255. * opacity;

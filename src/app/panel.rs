@@ -12,6 +12,22 @@ pub(super) const BRIEF_NOTICE: Duration = Duration::from_secs(5);
 use crate::config::edge_menu::ELSEWHERE;
 
 impl Cards {
+    pub(super) fn hide_drawer(&mut self) {
+        if let Some(drag) = self.sidebar.drag.take() {
+            self.config.widget_order = drag.original_order.iter().map(|w| w.key().into()).collect();
+        }
+        self.sidebar.hide();
+    }
+
+    /// A retired surface cannot send the remaining pointer or animation events.
+    pub(super) fn retire_drawer(&mut self) {
+        self.hide_drawer();
+        self.sidebar.progress = 0.;
+        self.sidebar.hovered = false;
+        self.sidebar.edge_hovered = false;
+        self.edge.tip = None;
+    }
+
     pub(super) fn set_widget_visible(&mut self, widget: Widget, visible: bool) -> Task<Message> {
         let mut config = self.config.clone();
         self.save_config_later(
@@ -403,6 +419,7 @@ impl Cards {
                     | Widget::Music
                     | Widget::Focus
                     | Widget::Devices
+                    | Widget::Folder
                     | Widget::Markets
                     | Widget::Messages => {}
                 }
@@ -600,6 +617,7 @@ impl Cards {
             // or a new sign-in.
             "refresh-calendar" => Some(Message::RefreshCalendar),
             "close" => Some(Message::HideControls),
+            "peek" => Some(Message::Peek(None)),
             "drawer" => Some(Message::DrawerToggle),
             "rail" => Some(Message::ShowControls),
             "open" => match value["widget"].as_str() {

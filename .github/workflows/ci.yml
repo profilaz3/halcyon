@@ -130,6 +130,8 @@ jobs:
           cat "$RUNNER_TEMP/source-license-notices.txt" >> packaging/licenses/THIRD_PARTY_LICENSES.txt
       - name: Build Debian package
         run: |
+          CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" python3 companion/magnifying-dock/build.py \
+            --license-output packaging/licenses/MAGNIFYING_DOCK_LICENSES.txt
           python3 packaging/build-deb.py --development --binary target/release/halcyon \
             --version "$(dpkg-parsechangelog --file packaging/debian/changelog --show-field Version)~ci${GITHUB_RUN_NUMBER}" --out dist
       - name: Inspect Debian package

@@ -33,6 +33,7 @@ FINAL_REVIEWS={
     '0.7.0': ROOT/'companion/compatibility/evidence/reviewed-final-070.json',
     '0.7.5': ROOT/'companion/compatibility/evidence/reviewed-final-075.json',
     '0.7.6': ROOT/'companion/compatibility/evidence/reviewed-final-076.json',
+    '0.7.8': ROOT/'companion/compatibility/evidence/reviewed-final-078.json',
 }
 LIMITATIONS=['physical-hardware-not-qualified','cosmic-1.10-not-native-qualified',
              'new-family-startup-helpers-not-native-qualified','not-full-native-matrix']

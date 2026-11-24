@@ -30,6 +30,7 @@ fn sample_cards() -> Cards {
     cfg.weather.show_dew_point = true;
     let (mut cards, _) = Cards::init(Core::default(), cfg);
     cards.weather = Some(Weather {
+        timezone: None,
         current: data::Current {
             temperature_2m: 21.,
             apparent_temperature: 20.,

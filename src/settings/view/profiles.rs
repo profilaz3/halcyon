@@ -375,6 +375,7 @@ pub(in crate::settings) fn card_at<'a>(
         Widget::Notes => ("Notes", "Plan the next release"),
         Widget::Devices => ("80%", "Headphones"),
         Widget::Messages => ("Sam Rivera", "Running late"),
+        Widget::Folder => ("Recent files", "Folder"),
         Widget::Markets => ("AAPL", "Example stock chart"),
     };
     let main_size = if matches!(widget, Widget::Clock | Widget::Glance | Widget::Weather) {
@@ -1333,7 +1334,7 @@ impl Settings {
         row::with_children(vec![
             text_input(
                 if self.page == Page::Themes {
-                    "Theme name"
+                    "Style name"
                 } else {
                     "Look name"
                 },
@@ -1369,7 +1370,7 @@ impl Settings {
         let mut items: Vec<Element<'_, Message>> = vec![split(
             label(
                 if self.page == Page::Themes {
-                    "Your themes"
+                    "Your saved styles"
                 } else {
                     "Your looks"
                 },
@@ -1388,12 +1389,12 @@ impl Settings {
                     )))
                     .into(),
                 button::text(if self.page == Page::Themes {
-                    "Save style…"
+                    "Save current style…"
                 } else {
                     "Save look…"
                 })
                 .leading_icon(icon::from_name("list-add-symbolic").size(14))
-                .on_press_maybe(writable.then_some(edit(Edit::Name(Some(
+                .on_press_maybe((writable && !editor.busy()).then_some(edit(Edit::Name(Some(
                     if self.page == Page::Themes {
                         NameAction::CaptureTheme
                     } else {
@@ -1471,11 +1472,11 @@ impl Settings {
                         .into(),
                     );
                 } else {
-                    items.push(container(column::with_children(vec![
-                        icon::from_name("document-save-symbolic").size(32).into(),
-                        label("Keep a look you love", 20., FG),
-                        label("Save your current settings, then come back to them whenever you like.", 14., MUTED),
-                    ]).spacing(12)).padding([28, 16]).width(Length::Fill).into());
+                    items.push(label(
+                        "Save the style on your desktop to use it again later.",
+                        14.,
+                        MUTED,
+                    ));
                 }
             }
             Ok(entries) => {
@@ -1485,6 +1486,10 @@ impl Settings {
                         .as_ref()
                         .is_ok_and(|p| p.appearance_only != (self.page == Page::Themes))
                     {
+                        continue;
+                    }
+                    if self.page == Page::Themes {
+                        items.push(self.saved_style_row(entry));
                         continue;
                     }
                     let selected = *editor.selection() == Selection::Saved(entry.id.clone());
@@ -1538,6 +1543,83 @@ impl Settings {
             }
         }
         section(items)
+    }
+
+    fn saved_style_row(
+        &self,
+        entry: &crate::desktop::profiles::ProfileEntry,
+    ) -> Element<'_, Message> {
+        let editor = &self.profiles;
+        let id = &entry.id;
+        let name = entry
+            .profile
+            .as_ref()
+            .map_or("Unreadable style", |profile| profile.name.as_str());
+        let ready = editor.writable() && !editor.busy();
+        let readable = entry.profile.is_ok();
+        let menu = editor.style_menu.as_ref() == Some(id);
+        let apply = button::text("Apply")
+            .name(format!("Apply {name}"))
+            .id(cosmic::widget::Id::new(format!(
+                "apply-style-{}",
+                id.as_str()
+            )))
+            .on_press_maybe(
+                (ready && readable && !self.native_busy)
+                    .then(|| edit(Edit::Select(Selection::Saved(id.clone())))),
+            );
+        let more = button::icon(icon::from_name("view-more-symbolic").size(16))
+            .name(format!("Manage {name}"))
+            .id(cosmic::widget::Id::new(format!(
+                "manage-style-{}",
+                id.as_str()
+            )))
+            .on_press(edit(Edit::StyleMenu(id.clone())))
+            .apply(|control| super::tip::tip(control, "Manage saved style"));
+        let mut rows = vec![split(
+            label(name.to_owned(), 16., FG),
+            row::with_children(vec![apply.into(), more.into()])
+                .spacing(6)
+                .into(),
+        )];
+        if menu {
+            let mut actions = vec![
+                button::text("Rename…")
+                    .on_press_maybe(
+                        (ready && readable)
+                            .then(|| edit(Edit::Name(Some(NameAction::Rename(id.clone()))))),
+                    )
+                    .into(),
+                button::text("Export…")
+                    .on_press_maybe(
+                        (ready && readable).then(|| edit(Edit::ExportStyle(id.clone()))),
+                    )
+                    .into(),
+            ];
+            if id.as_str() != crate::desktop::profiles::themes::BEFORE_THEMES {
+                actions.push(
+                    button::text("Delete…")
+                        .on_press_maybe(
+                            ready.then(|| edit(Edit::ConfirmStyleDelete(id.clone(), true))),
+                        )
+                        .into(),
+                );
+            }
+            rows.push(row::with_children(actions).spacing(6).wrap().into());
+            if editor.name.as_ref().is_some_and(
+                |name| matches!(&name.action, NameAction::Rename(target) if target == id),
+            ) {
+                rows.push(self.name_field("Save"));
+            }
+            if editor.confirm_style_delete {
+                rows.push(self.delete_confirm_actions(
+                    format!("“{name}”"),
+                    Edit::ConfirmStyleDelete(id.clone(), false),
+                    Edit::DeleteStyle(id.clone()),
+                ));
+            }
+        }
+        column::with_children(rows).spacing(6).into()
     }
 
     /// The selection: miniature, name and actions, parts to include, what
@@ -1698,6 +1780,144 @@ impl Settings {
         ));
         column::with_children(content).spacing(16).into()
     }
+    pub(in crate::settings) fn workspace_apps<'a>(
+        &'a self,
+        id: &crate::desktop::profiles::ProfileId,
+        profile: &crate::desktop::profiles::Profile,
+    ) -> Element<'a, Message> {
+        use crate::settings::workspace_launch::Edit as W;
+        let action = Message::LaunchWorkspace;
+        let state = &self.workspace_launch;
+        let mut rows = Vec::new();
+        if state.edit.as_ref() == Some(id) {
+            rows.push(label(
+                "Apps open in this order when you start the workspace.",
+                13.,
+                MUTED,
+            ));
+            for (index, app) in state.selected.iter().enumerate() {
+                let info = state.catalog.as_ref().and_then(|c| c.get(app));
+                let name = info.map_or(app.as_str(), |a| a.name.as_str());
+                let glyph = info.map_or("application-x-executable-symbolic", |a| a.icon.as_str());
+                let unavailable = if info.is_none() && state.catalog.is_some() {
+                    " · Unavailable"
+                } else {
+                    ""
+                };
+                rows.push(
+                    row::with_children(vec![
+                        icon::from_name(glyph).size(20).icon().into(),
+                        container(label(format!("{name}{unavailable}"), 14., FG))
+                            .width(Length::Fill)
+                            .into(),
+                        button::text("Move up")
+                            .on_press_maybe((index > 0).then_some(action(W::Earlier(index))))
+                            .into(),
+                        button::text("Remove")
+                            .on_press(action(W::Toggle(app.clone())))
+                            .into(),
+                    ])
+                    .spacing(6)
+                    .align_y(Alignment::Center)
+                    .into(),
+                );
+            }
+            rows.push(
+                text_input("Find an installed app", &state.query)
+                    .on_input(|v| Message::LaunchWorkspace(W::Search(v)))
+                    .into(),
+            );
+            if let Some(catalog) = state.catalog.as_ref() {
+                let query = state.query.trim().to_lowercase();
+                let mut found = 0;
+                for item in state
+                    .ordered
+                    .iter()
+                    .filter_map(|id| catalog.get(id))
+                    .filter(|a| {
+                        !state.selected.contains(&a.id)
+                            && (a.name.to_lowercase().contains(&query)
+                                || a.id.to_lowercase().contains(&query))
+                    })
+                    .take(7)
+                {
+                    rows.push(
+                        button::text(item.name.clone())
+                            .leading_icon(icon::from_name(item.icon.as_str()).size(16))
+                            .on_press_maybe(
+                                (state.selected.len() < 12)
+                                    .then(|| action(W::Toggle(item.id.clone()))),
+                            )
+                            .into(),
+                    );
+                    found += 1;
+                }
+                if found == 0 {
+                    rows.push(label(
+                        if query.is_empty() && !state.selected.is_empty() {
+                            "All available apps have been added"
+                        } else {
+                            "No matching apps"
+                        },
+                        13.,
+                        MUTED,
+                    ));
+                }
+            } else {
+                rows.push(label("Reading installed apps…", 13., MUTED));
+            }
+            rows.push(
+                row::with_children(vec![
+                    button::suggested("Save apps")
+                        .on_press(action(W::Save))
+                        .into(),
+                    button::text("Cancel").on_press(action(W::Cancel)).into(),
+                ])
+                .spacing(6)
+                .into(),
+            );
+        } else {
+            let n = profile.workspace_apps.len();
+            let title = match n {
+                0 => "Choose apps to open with this Look".into(),
+                1 => "1 workspace app".into(),
+                _ => format!("{n} workspace apps"),
+            };
+            let mut controls = vec![
+                button::text("Choose apps…")
+                    .on_press_maybe(
+                        (state.running.is_none() && self.profiles.writable())
+                            .then(|| action(W::Manage(id.clone()))),
+                    )
+                    .into(),
+            ];
+            if n > 0 {
+                controls.push(
+                    button::suggested(if state.running.as_ref() == Some(id) {
+                        "Starting…"
+                    } else {
+                        "Start workspace"
+                    })
+                    .on_press_maybe(
+                        (state.running.is_none() && !self.native_busy && !self.profiles.busy())
+                            .then(|| action(W::Start(id.clone()))),
+                    )
+                    .into(),
+                );
+            }
+            rows.push(group_row(
+                "Workspace",
+                &title,
+                row::with_children(controls).spacing(6).wrap().into(),
+            ));
+        }
+        if let Some((owner, report)) = &state.report
+            && owner == id
+        {
+            rows.push(label(report.clone(), 13., FG));
+        }
+        group(None, rows)
+    }
     fn selection_details(&self) -> Element<'_, Message> {
         let editor = &self.profiles;
         let accent = self.settings_accent();
@@ -1748,6 +1968,11 @@ impl Settings {
                     )
                     .into(),
             );
+        }
+        if let Selection::Saved(id) = selection
+            && id.as_str() != "before-themes"
+        {
+            items.push(self.workspace_apps(id, profile));
         }
         if let Selection::Saved(id) = selection {
             library_actions.push(
@@ -1929,6 +2154,15 @@ impl Settings {
     }
 
     pub(super) fn delete_confirm(&self, name: String) -> Element<'_, Message> {
+        self.delete_confirm_actions(name, Edit::Delete(false), Edit::Delete(true))
+    }
+
+    fn delete_confirm_actions(
+        &self,
+        name: String,
+        cancel: Edit,
+        delete: Edit,
+    ) -> Element<'_, Message> {
         let rules = match self.profiles.rules_using {
             0 => String::new(),
             1 => " An automation rule uses it and will stop working.".into(),
@@ -1945,12 +2179,8 @@ impl Settings {
             ),
             WARN,
             vec![
-                button::text("Cancel")
-                    .on_press(edit(Edit::Delete(false)))
-                    .into(),
-                button::destructive("Delete")
-                    .on_press(edit(Edit::Delete(true)))
-                    .into(),
+                button::text("Cancel").on_press(edit(cancel)).into(),
+                button::destructive("Delete").on_press(edit(delete)).into(),
             ],
         )
     }

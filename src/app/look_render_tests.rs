@@ -78,6 +78,7 @@ fn wallpaper(path: &std::path::Path) -> (cosmic::widget::image::Handle, palette:
 pub(super) fn sample_data(cards: &mut Cards) {
     let today = Local::now().date_naive();
     cards.weather = Some(Weather {
+        timezone: None,
         current: data::Current {
             temperature_2m: 18.,
             apparent_temperature: 17.,

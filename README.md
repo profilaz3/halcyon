@@ -4,6 +4,8 @@
 
 <p align="center">
   <a href="https://github.com/profilaz3/halcyon/releases/latest"><strong>Download</strong></a> ·
+  <a href="#2-widget-design-and-placement">Widgets</a> ·
+  <a href="#7-clock-depth-and-rain-on-glass">Glass and depth</a> ·
   <a href="#install">Install</a> ·
   <a href="https://github.com/profilaz3/halcyon/releases">Release notes</a> ·
   <a href="https://github.com/profilaz3/halcyon/issues">Feedback</a>
@@ -11,29 +13,27 @@
 
 <!-- Stable product overview. See .github/README-MAINTENANCE.md. -->
 
-A native COSMIC application built with **Rust and libcosmic**. Settings and wallpaper effects use GPU rendering.
-
-*The hero and feature images are generated illustrations. [Native screenshots](docs/screenshots/055/README.md) and [image sources](docs/presentation/070-readme/README.md) are available separately.*
+Music picks up the color of its album cover. Glass widgets catch the wallpaper along their edges. The dock grows under the pointer. Halcyon brings these effects, desktop widgets and saved Looks to COSMIC with **Rust and libcosmic**. [Native screenshots](docs/screenshots/078/README.md)
 
 ## 1. Desktop appearance
 
-Wallpapers, light and dark themes, accent colors, fonts, icons and surface finishes. Appearance settings can be coordinated across widgets, dock and panel.
+Carry one finish across widgets, dock and panel. **Mica Slate** pairs blue-gray glass with shallow corners, **Tape Deck** uses smoked charcoal and amber accents, and **Porcelain** sets cobalt against light ceramic. Save your own colors, fonts and surface choices alongside the built-in styles.
 
 [![Three illustrated desktop appearances: Rainy Lake, Paper and Deep Purple](docs/presentation/070-readme/desktop-configurations.png)](docs/presentation/070-readme/desktop-configurations.png)
 
 ## 2. Widget design and placement
 
-The widget builder customizes Clock, Weather, Calendar, System monitor, Music and Focus. Notes, Git project status and Daily overview are also included. Widgets support moving, resizing, ordering and assignment to different displays.
+An album-lit Music player, a Weather forecast and a Focus timer can share a display. Resize a widget and its contents reflow. **Widget Peek** brings your chosen widgets over the current window with a button or shortcut.
 
-[Markets](docs/MARKETS.md) adds stocks and currency pairs in one watchlist with daily charts, using public data without signup, with optional Twelve Data integration.
+[![Illustration of an album-lit Music player beside Weather and Focus, over Halcyon's violet feather](docs/presentation/078-readme/widgets.webp)](docs/presentation/078-readme/widgets.webp)
 
-[![Illustration of individual Clock, Weather, System monitor, Focus, Music and Notes widgets](docs/presentation/070-readme/widgets-elements-dark.png)](docs/presentation/070-readme/widgets-elements-dark.png)
-
-[Native widget builder](docs/screenshots/055/widget-builder.png)
+Choose **Classic** or **Outlook** for Weather. **Folder** opens recent files, and **Markets** follows up to five stocks or currency pairs with optional charts. [Native widget gallery](docs/screenshots/078/README.md#desktop-widgets) · [Widget Peek in use](docs/screenshots/desktop-customization/widget-peek.png) · [Markets setup](docs/MARKETS.md)
 
 ## 3. Dock and panel customization
 
-Applet arrangement, spacing, size, opacity, corners and auto-hide. **Islands** separates applets into floating groups; **Penumbra** fades bar backgrounds into the wallpaper. Both are optional and included in the package. The **Activity island** (beta) shows music, meetings, notifications and camera or microphone use on a standard COSMIC top panel or a floating Islands panel. Open Music or Messages in the Activity island and choose **Pin to desktop**. Click to place the widget, or use the arrow keys and Enter. Esc cancels. **Show on desktop** highlights a widget you already pinned.
+Arrange applets and adjust spacing, size, opacity, corners and auto-hide. Optional **Dock magnification** enlarges icons under the pointer and follows system reduced motion. [See the dock in motion](docs/screenshots/desktop-customization/dock-motion.mp4)
+
+**Islands** separates applets into floating groups; **Penumbra** fades bar backgrounds into the wallpaper. Both are optional and included in the package. The **Activity island** (beta) shows music, meetings, notifications and camera or microphone use on a standard COSMIC top panel or a floating Islands panel. Open Music or Messages in the Activity island and choose **Pin to desktop**. Click to place the widget, or use the arrow keys and Enter. Esc cancels. **Show on desktop** highlights a widget you already pinned.
 
 [![Illustration of Islands, Penumbra, Activity island states and an icon-only edge menu with a handle](docs/presentation/070-readme/panel-elements-dark.png)](docs/presentation/070-readme/panel-elements-dark.png)
 
@@ -63,15 +63,23 @@ Save, combine, import and export wallpapers, styles and layouts. Rules can switc
 
 ## 7. Clock depth and rain on glass
 
+With **Crystal** glass, a bright line in your wallpaper bends around the widget’s edge and lends the rim its color. The wallpaper stays aligned behind the text. **Frosted** softens the view, and **Rain** adds moving droplets.
+
+[![Illustration of the Messages widget in Crystal glass with a luminous violet feather visible through it](docs/presentation/078-readme/crystal-glass.webp)](docs/presentation/078-readme/crystal-glass.webp)
+
+Open **Weather effects → Widget glass** to adjust frost, refraction, tint and corners. Share a named finish across widgets or give one its own copy. [See Crystal on the native Messages widget](docs/screenshots/desktop-customization/crystal-feather.webp) · [Compare Crystal and Frosted](docs/screenshots/078/README.md#glass-finishes)
+
 The clock can sit behind the mountains in the wallpaper, between the sky and the ridge. It stays behind the ridge when effects are on, with rain on glass in front of the clock and landscape.
 
 [![Illustration of a clock partly hidden behind a wooded ridge, with rain on glass in front of the clock and landscape](docs/presentation/070-readme/depth-clock-rain.png)](docs/presentation/070-readme/depth-clock-rain.png)
 
 ## 8. Looks
 
-Looks coordinate wallpaper, colors, widgets, bars and effects in one pick. **Rainy Lake** combines the fog wallpaper, rain, a clock behind the mountains and autohiding bars. **Deep Purple** pairs the night wallpaper with At a glance and Music. **Look Studio** adjusts icon shape and tint.
+Looks coordinate wallpaper, colors, widgets, bars and effects in one pick. **Rainy Lake** combines the fog wallpaper, rain, a clock behind the mountains and autohiding bars. **Deep Purple** pairs the night wallpaper with At a glance and Music. **Look Studio** adjusts icon shape and tint. To attach apps, select a saved Look and open **Choose apps…**. **Start workspace** applies the Look and launches the apps in your chosen order. [Workspace app picker](docs/screenshots/desktop-customization/workspace-apps.png)
 
 [![Illustration of Rainy Lake and Deep Purple desktop looks, with Look Studio icon shape and tint examples](docs/presentation/070-readme/looks.png)](docs/presentation/070-readme/looks.png)
+
+*The hero and feature panels are illustrations.* [Artwork and references](docs/presentation/078-readme/README.md) · [Native screenshots](docs/screenshots/078/README.md)
 
 ## Install
 
@@ -138,10 +146,10 @@ halcyon-ctl focus toggle    Start or pause the Focus timer
 halcyon-ctl --help          Every command, described
 ```
 
-Bind `halcyon --toggle drawer` to a key in **COSMIC Settings → Keyboard → Keyboard shortcuts** to open the edge menu without the mouse. In the menu, Tab and the arrow keys move, Enter shows or hides a widget, Alt+Up and Alt+Down reorder the right column, and Esc closes it. On a visible Music, Notes, Focus, Messages or Markets entry, Shift+Enter moves keyboard focus to the widget. Tab moves between its controls, Enter activates one, and Esc releases focus. The same action is in the widget’s right-click menu. `man halcyon` and `man halcyon-ctl` have the details.
+Bind `halcyon --toggle drawer` to a key in **COSMIC Settings → Keyboard → Keyboard shortcuts** to open the edge menu without the mouse. In the menu, Tab and the arrow keys move, Enter shows or hides a widget, Alt+Up and Alt+Down reorder the right column, and Esc closes it. On a visible Music, Notes, Focus, Messages or Markets entry, Shift+Enter moves keyboard focus to the widget. Tab moves between its controls, Enter activates one, and Esc releases focus. On Calendar, Daily Overview with an agenda, System Monitor, or Projects, Shift+Enter opens the full reading. The same actions are in each widget’s right-click menu. `man halcyon` and `man halcyon-ctl` have the details.
 
 ## Help & development
 
 [Calendar setup](docs/CALENDAR.md) · [Report a bug](https://github.com/profilaz3/halcyon/issues) · [Build & contribute](docs/DEVELOPMENT.md) · [Privacy](docs/PRIVACY.md)
 
-[GPL-3.0-or-later AND GPL-3.0-only](LICENSE) · [Third-party notices](THIRD_PARTY.md) · [Screenshots](docs/screenshots/055/README.md) · [Illustration sources](docs/presentation/070-readme/README.md)
+[GPL-3.0-or-later AND GPL-3.0-only](LICENSE) · [Third-party notices](THIRD_PARTY.md) · [Native screenshots](docs/screenshots/078/README.md) · [Illustration sources](docs/presentation/070-readme/README.md)

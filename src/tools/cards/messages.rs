@@ -6,22 +6,31 @@ use crate::drawer::Widget;
 use crate::messages::{State, Thread};
 use cosmic::Element;
 use cosmic::iced::{Alignment, Border, Color, Length};
-use cosmic::widget::{column, container, row};
+use cosmic::widget::{column, container, icon, row};
+use unicode_segmentation::UnicodeSegmentation;
 
 const GAP: f32 = 8.;
 const LINE: f32 = 1.25;
 const TITLE_HEIGHT: f32 = 24.;
 /// A name a little larger than its message.
-const NAME: f32 = crate::widget_style::SECONDARY + 1.;
+const NAME: f32 = crate::widget_style::SECONDARY + 2.;
+const AVATAR: f32 = 34.;
+const PRIVATE_ROW: f32 = 22.;
+const ROW_GAP: f32 = 9.;
 const DOT: f32 = 7.;
 /// The room a row takes: its name and its message.
 const ROW: f32 = (NAME + crate::widget_style::SECONDARY) * LINE + 2.;
 
 /// How many rows fit a card this tall.
-pub(crate) fn rows_fitting(height: f32) -> usize {
+pub(crate) fn rows_fitting(height: f32, show_text: bool) -> usize {
     let pad = 2. * f32::from(super::PADDING);
     let room = height - pad - TITLE_HEIGHT - GAP;
-    (((room + GAP) / (ROW + GAP)).floor().max(1.)) as usize
+    let row = if show_text {
+        ROW.max(AVATAR)
+    } else {
+        PRIVATE_ROW
+    };
+    ((room + ROW_GAP) / (row + ROW_GAP)).floor().max(0.) as usize
 }
 
 /// When a message came: the time today, else "Yesterday", the weekday this
@@ -41,16 +50,9 @@ pub(crate) fn when(at_ms: i64, now: chrono::DateTime<chrono::Local>, format_24h:
     }
 }
 
-/// The message line: its text, or what it was when there is none or the
-/// text is hidden. "You:" marks a message sent from the phone.
-pub(crate) fn preview(thread: &Thread, show_text: bool) -> String {
-    let what = if !show_text {
-        if thread.unread {
-            "New message".to_string()
-        } else {
-            "Message".to_string()
-        }
-    } else if thread.body.is_empty() {
+/// A visible preview, including the sender or attachment hint when appropriate.
+pub(crate) fn preview(thread: &Thread) -> String {
+    let what = if thread.body.is_empty() {
         if thread.attachment {
             "Picture or file".into()
         } else {
@@ -59,7 +61,7 @@ pub(crate) fn preview(thread: &Thread, show_text: bool) -> String {
     } else {
         thread.body.clone()
     };
-    if thread.mine && show_text {
+    if thread.mine {
         format!("You: {what}")
     } else {
         what
@@ -92,8 +94,12 @@ pub(crate) fn status(state: &State) -> Option<(String, &'static str)> {
             format!("{phone} isn't connected"),
             "Messages show when your phone and this computer are on the same network",
         ),
+        State::Stale { threads, .. } if threads.is_empty() => (
+            "Couldn’t refresh messages".into(),
+            "Halcyon will try KDE Connect again",
+        ),
         State::Ready { threads, .. } if threads.is_empty() => ("No messages yet".into(), ""),
-        State::Away { .. } | State::Ready { .. } => return None,
+        State::Away { .. } | State::Stale { .. } | State::Ready { .. } => return None,
     })
 }
 
@@ -111,6 +117,64 @@ fn dot<'a, M: 'a>(color: Option<Color>) -> Element<'a, M> {
                 ..Default::default()
             }
         }))
+        .into()
+}
+
+fn medallion<'a, M: 'a>(content: Element<'a, M>, ink: Color, size: f32) -> Element<'a, M> {
+    container(content)
+        .width(size)
+        .height(size)
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center)
+        .class(cosmic::theme::Container::custom(move |_| {
+            cosmic::iced::widget::container::Style {
+                background: Some(Color { a: 0.14, ..ink }.into()),
+                icon_color: Some(ink),
+                border: Border {
+                    radius: (size / 2.).into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        }))
+        .into()
+}
+
+fn contact_mark<'a, M: 'a>(thread: &Thread, p: Palette) -> Element<'a, M> {
+    let who = thread.who.as_str();
+    let ink = crate::widget_style::semantic(if thread.unread { p.accent } else { p.muted });
+    let mut words = who.split_whitespace();
+    let first = words.next().unwrap_or_default();
+    let content = if who.contains(", ") {
+        icon::from_name("system-users-symbolic")
+            .size(16)
+            .icon()
+            .into()
+    } else if who == "Unknown" || !first.starts_with(char::is_alphabetic) {
+        icon::from_name("avatar-default-symbolic")
+            .size(16)
+            .icon()
+            .into()
+    } else {
+        let initials = [Some(first), words.next_back()]
+            .into_iter()
+            .flatten()
+            .filter_map(|word| word.graphemes(true).next())
+            .collect::<String>();
+        line(initials, NAME, ink)
+    };
+    let mark = medallion(content, ink, AVATAR);
+    if !thread.unread {
+        return mark;
+    }
+    let unread = container(dot(Some(ink)))
+        .width(AVATAR)
+        .height(AVATAR)
+        .align_x(Alignment::End)
+        .align_y(Alignment::End);
+    cosmic::iced::widget::Stack::new()
+        .push(mark)
+        .push(unread)
         .into()
 }
 
@@ -141,38 +205,47 @@ fn thread_row<'a, M: 'a>(
             p.foreground,
         )));
     let top = row::with_children(vec![
-        dot(thread
-            .unread
-            .then_some(crate::widget_style::semantic(p.accent))),
         name.into(),
         label(
             when(thread.at_ms, now, format_24h),
-            crate::widget_style::META,
+            crate::widget_style::META + 1.,
             if thread.unread { p.accent } else { p.muted },
         ),
     ])
     .spacing(6)
-    .align_y(Alignment::Center);
-    let message = row::with_children(vec![
-        container(cosmic::iced::widget::space())
-            .width(Length::Fixed(DOT))
-            .into(),
+    .align_y(Alignment::Center)
+    .width(Length::Fill);
+    if !show_text {
+        return row::with_children(vec![
+            dot(thread
+                .unread
+                .then_some(crate::widget_style::semantic(p.accent))),
+            top.into(),
+        ])
+        .spacing(GAP)
+        .align_y(Alignment::Center)
+        .height(PRIVATE_ROW)
+        .into();
+    }
+    let details = column::with_children(vec![
+        top.into(),
         line(
-            preview(thread, show_text),
+            preview(thread),
             crate::widget_style::SECONDARY,
             if thread.unread { p.foreground } else { p.muted },
         ),
     ])
-    .spacing(6);
-    column::with_children(vec![top.into(), message.into()])
-        .spacing(2)
+    .spacing(2)
+    .width(Length::Fill);
+    row::with_children(vec![contact_mark(thread, p), details.into()])
+        .spacing(GAP)
+        .align_y(Alignment::Center)
         .width(Length::Fill)
         .into()
 }
 
-/// The Messages card. The newest conversations fill it; more than fit say
-/// how many are unread in the header. A click opens the conversations, or
-/// KDE Connect while the phone isn't ready.
+/// The newest conversations, with a count of those that did not fit.
+/// A click opens the conversations, or KDE Connect during setup.
 pub fn messages<'a, M: Clone + 'a>(
     state: &State,
     config: &Config,
@@ -181,7 +254,7 @@ pub fn messages<'a, M: Clone + 'a>(
 ) -> Element<'a, M> {
     let _style = crate::widget_style::scope(config);
     let p = config.palette();
-    let [_, height] = dimensions.unwrap_or_else(|| super::size(Widget::Messages, config));
+    let [width, height] = dimensions.unwrap_or_else(|| super::size(Widget::Messages, config));
     let show_text = config.messages.show_text;
     let mut header: Vec<Element<'a, M>> = vec![
         container(card_title("Messages", p))
@@ -189,11 +262,20 @@ pub fn messages<'a, M: Clone + 'a>(
             .into(),
     ];
     match (state, state.phone()) {
-        (State::Away { threads, .. }, Some(phone)) if !threads.is_empty() => header.push(label(
-            format!("{phone} away"),
+        (State::Stale { threads, .. }, _) if !threads.is_empty() => header.push(label(
+            "Last known messages",
             crate::widget_style::META,
             p.muted,
         )),
+        (State::Away { threads, .. }, Some(phone)) if !threads.is_empty() => header.push(
+            container(line(
+                format!("Away · {phone}"),
+                crate::widget_style::META,
+                p.muted,
+            ))
+            .max_width((width - 2. * f32::from(super::PADDING)) * 0.55)
+            .into(),
+        ),
         _ => {
             let unread = state.unread();
             if unread > 0 {
@@ -207,11 +289,30 @@ pub fn messages<'a, M: Clone + 'a>(
     }
     let body: Element<'a, M> = match status(state) {
         Some((title, hint)) => {
-            let mut lines = vec![label(title, crate::widget_style::SECONDARY, p.muted)];
+            let glyph = if matches!(state, State::Ready { .. }) {
+                "chat-symbolic"
+            } else {
+                "smartphone-symbolic"
+            };
+            let mut lines = vec![
+                medallion(
+                    icon::from_name(glyph).size(18).icon().into(),
+                    p.accent,
+                    AVATAR,
+                ),
+                cosmic::widget::text::body(title)
+                    .size(NAME)
+                    .font(super::font())
+                    .align_x(cosmic::iced::alignment::Horizontal::Center)
+                    .class(cosmic::theme::Text::Color(crate::widget_style::semantic(
+                        p.foreground,
+                    )))
+                    .into(),
+            ];
             if !hint.is_empty() {
                 lines.push(
                     cosmic::widget::text::body(hint)
-                        .size(crate::widget_style::META)
+                        .size(crate::widget_style::SECONDARY)
                         .line_height(LINE)
                         .font(super::font())
                         .align_x(cosmic::iced::alignment::Horizontal::Center)
@@ -235,7 +336,7 @@ pub fn messages<'a, M: Clone + 'a>(
         None => {
             let now = chrono::Local::now();
             let format_24h = config.clock.format_24h;
-            let away = matches!(state, State::Away { .. });
+            let away = matches!(state, State::Away { .. } | State::Stale { .. });
             let p = if away {
                 // Read earlier: quieter, so it doesn't pass for live.
                 Palette {
@@ -248,15 +349,23 @@ pub fn messages<'a, M: Clone + 'a>(
                 p
             };
             let total = state.threads().len();
-            let overflow = total > rows_fitting(height);
-            let visible = rows_fitting(height - if overflow { 22. } else { 0. });
+            let overflow = total > rows_fitting(height, show_text);
+            let visible = rows_fitting(
+                height
+                    - if overflow {
+                        ROW_GAP + crate::widget_style::META * LINE
+                    } else {
+                        0.
+                    },
+                show_text,
+            );
             let rows = state
                 .threads()
                 .iter()
                 .take(visible)
                 .map(|thread| thread_row(thread, p, show_text, now, format_24h))
                 .collect::<Vec<_>>();
-            let mut list = column::with_children(rows).spacing(GAP);
+            let mut list = column::with_children(rows).spacing(ROW_GAP);
             if total > visible {
                 list = list.push(label(
                     format!("{} more in KDE Connect", total - visible),

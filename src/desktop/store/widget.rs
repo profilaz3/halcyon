@@ -168,12 +168,16 @@ macro_rules! fields {
 }
 
 /// Every member a profile, its Undo or its recovery may write.
-pub static FIELDS: [WidgetField; 124] = fields![
+pub static FIELDS: [WidgetField; 132] = fields![
     "/recipes/music", "Music recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Music);
     "/recipes/focus", "Focus recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Focus);
     "/recipes/devbox", "System recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::System);
     "/recipes/calendar", "Calendar recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Calendar);
     "/recipes/clock", "Clock recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Clock);
+    "/weather/layout", "Weather layout", Style, |v| matches!(v.as_str(), Some("saved" | "classic" | "outlook"));
+    "/weather/outlook_artwork", "Weather artwork", Style, boolean;
+    "/weather/outlook_range", "Daily temperature range", Style, boolean;
+    "/weather/outlook_forecast", "Outlook forecast", Style, boolean;
     "/recipes/weather", "Weather recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Weather);
     "/moments/active", "Active moment", Style, |v| v.is_null() || matches!(v.as_str(), Some("day" | "night"));
     "/moments/day/family", "Day widget style", Style, |v| serde_json::from_value::<Option<crate::desktop_theme::Family>>(v.clone()).is_ok();
@@ -251,6 +255,7 @@ pub static FIELDS: [WidgetField; 124] = fields![
     "/music/show_artwork", "Music artwork", Style, boolean;
     "/music/album_light", "Album lighting", Style, boolean;
     "/music/show_progress", "Music progress", Style, boolean;
+    "/folder/show_hidden", "Hidden files", Style, boolean;
     "/markets/show_change", "Markets daily change", Style, boolean;
     "/markets/show_chart", "Markets chart", Style, boolean;
     "/markets/show_date", "Markets publication date", Style, boolean;
@@ -275,12 +280,14 @@ pub static FIELDS: [WidgetField; 124] = fields![
     "/focus/enabled", "Focus timer", Layout, boolean;
     "/devices/enabled", "Devices", Layout, boolean;
     "/messages/enabled", "Messages", Layout, boolean;
+    "/folder/enabled", "Folder", Layout, boolean;
     "/markets/enabled", "Markets", Layout, boolean;
     "/widget_positions/music", "Music position", Layout, position;
     "/widget_positions/notes", "Notes position", Layout, position;
     "/widget_positions/focus", "Focus position", Layout, position;
     "/widget_positions/devices", "Devices position", Layout, position;
     "/widget_positions/messages", "Messages position", Layout, position;
+    "/widget_positions/folder", "Folder position", Layout, position;
     "/widget_positions/markets", "Markets position", Layout, position;
     "/widget_sizes/clock", "Clock size", Layout, size;
     "/widget_sizes/weather", "Weather size", Layout, size;
@@ -293,12 +300,14 @@ pub static FIELDS: [WidgetField; 124] = fields![
     "/widget_sizes/focus", "Focus size", Layout, size;
     "/widget_sizes/devices", "Devices size", Layout, size;
     "/widget_sizes/messages", "Messages size", Layout, size;
+    "/widget_sizes/folder", "Folder size", Layout, size;
     "/widget_sizes/markets", "Markets size", Layout, size;
 ];
 
 // Local preferences participate in transactions and Undo but are never
 // captured or exported by the profile library.
 pub static LOCAL_FIELDS: &[WidgetField] = &fields![
+    "/folder/path", "Local widget folder", Style, |v| v.is_null() || v.as_str().is_some_and(|s| std::path::Path::new(s).is_absolute());
     "/markets/provider", "Market data source", Style, |v| matches!(v.as_str(), Some("public" | "twelve_data"));
     "/markets/symbols", "Markets watchlist", Style, |v| serde_json::from_value::<Vec<String>>(v.clone()).is_ok_and(|s| crate::markets::symbols(&s.join(",")).is_ok_and(|valid| valid == s));
     "/markets/selected", "Selected watchlist item", Style, |v| v.as_str().is_some_and(|s| s.is_empty() || crate::markets::symbols(s).is_ok_and(|valid| valid == [s]));
@@ -385,10 +394,13 @@ pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/widget_monitors/devices/hide_disconnected", "Disconnected widget", Layout, boolean;
     "/monitor_layouts/devices", "Display layout", Layout, monitor_layout;
     "/widget_monitors/messages/display", "Widget display", Layout, |v| v.is_null() || v.as_str().is_some_and(crate::displays::valid_name);
+    "/widget_monitors/folder/display", "Widget display", Layout, |v| v.is_null() || v.as_str().is_some_and(crate::displays::valid_name);
     "/widget_monitors/markets/display", "Widget display", Layout, |v| v.is_null() || v.as_str().is_some_and(crate::displays::valid_name);
     "/widget_monitors/messages/hide_disconnected", "Disconnected widget", Layout, boolean;
+    "/widget_monitors/folder/hide_disconnected", "Disconnected widget", Layout, boolean;
     "/widget_monitors/markets/hide_disconnected", "Disconnected widget", Layout, boolean;
     "/monitor_layouts/messages", "Display layout", Layout, monitor_layout;
+    "/monitor_layouts/folder", "Display layout", Layout, monitor_layout;
     "/monitor_layouts/markets", "Display layout", Layout, monitor_layout;
     "/widget_display", "Widget display", Layout, |v| v.is_null() || v.as_str().is_some_and(crate::displays::valid_name);
     "/appearance/match_wallpaper", "Matching wallpaper", Style, boolean;
@@ -409,6 +421,7 @@ pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/settings_animations", "Settings animation", Style, boolean;
     "/show_explanations", "Show explanations", Style, boolean;
     "/setup_dismissed", "Setup guide", Style, boolean;
+    "/islands_offer_dismissed", "Islands panel setup reminder", Style, boolean;
     "/setup_followup_weather_dismissed", "Weather setup reminder", Style, boolean;
     "/setup_followup_calendar_dismissed", "Calendar setup reminder", Style, boolean;
     "/setup_followup_projects_dismissed", "Projects setup reminder", Style, boolean;
@@ -432,14 +445,16 @@ pub fn tool_of(pointer: &str) -> Option<&'static str> {
         .or_else(|| pointer.strip_prefix("/widget_sizes/"))
         .or_else(|| pointer.strip_prefix('/'))?;
     let name = rest.split('/').next()?;
-    ["music", "notes", "focus", "devices", "messages", "markets"]
-        .into_iter()
-        .find(|tool| {
-            *tool == name
-                && (rest.contains('/')
-                    || pointer.starts_with("/widget_positions/")
-                    || pointer.starts_with("/widget_sizes/"))
-        })
+    [
+        "music", "notes", "focus", "devices", "messages", "markets", "folder",
+    ]
+    .into_iter()
+    .find(|tool| {
+        *tool == name
+            && (rest.contains('/')
+                || pointer.starts_with("/widget_positions/")
+                || pointer.starts_with("/widget_sizes/"))
+    })
 }
 
 /// The allowlisted member at `pointer`.

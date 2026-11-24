@@ -132,6 +132,7 @@ impl Settings {
         ));
         rows.push(self.appearance_looks());
         rows.push(self.theme_stage(&look));
+        rows.push(self.library_section());
         if !themes::named().is_empty() {
             rows.push(self.appearance_themes());
         }
@@ -172,15 +173,6 @@ impl Settings {
                         .into(),
                 ],
             ));
-        }
-        // Saving and sharing happen in Looks. Themes saved by earlier
-        // versions stay reachable here.
-        if editor.library().is_ok_and(|entries| {
-            entries
-                .iter()
-                .any(|entry| entry.profile.as_ref().is_ok_and(|p| p.appearance_only))
-        }) {
-            rows.push(self.library_section());
         }
         column::with_children(rows).spacing(20).into()
     }
@@ -301,7 +293,7 @@ impl Settings {
             split(
                 section_title(
                     "Style",
-                    "The shape, type and finish of your widget cards",
+                    "Shape, type and finish for widgets, dock, panel and Activity island",
                 ),
                 button::text(if all {
                     "Show fewer".to_string()
@@ -735,23 +727,11 @@ impl Settings {
                 "Save a copy",
                 writable.then_some(edit(Edit::Name(Some(NameAction::Duplicate)))),
             ));
-            if let Selection::Saved(id) = selection {
+            if !matches!(selection, Selection::Saved(_)) {
                 actions.push(action(
-                    "document-edit-symbolic",
-                    "Rename",
-                    writable.then(|| edit(Edit::Name(Some(NameAction::Rename(id.clone()))))),
-                ));
-            }
-            actions.push(action(
-                "document-save-as-symbolic",
-                "Export…",
-                (writable && !editor.busy()).then_some(edit(Edit::Export)),
-            ));
-            if matches!(selection, Selection::Saved(id) if id.as_str() != themes::BEFORE_THEMES) {
-                actions.push(action(
-                    "user-trash-symbolic",
-                    "Delete…",
-                    writable.then_some(edit(Edit::Delete(false))),
+                    "document-save-as-symbolic",
+                    "Export…",
+                    (writable && !editor.busy()).then_some(edit(Edit::Export)),
                 ));
             }
         }
@@ -768,7 +748,10 @@ impl Settings {
             .into(),
         ];
         if editor.name.as_ref().is_some_and(|name| {
-            !matches!(name.action, NameAction::Capture | NameAction::CaptureTheme)
+            !matches!(
+                name.action,
+                NameAction::Capture | NameAction::CaptureTheme | NameAction::Rename(_)
+            )
         }) {
             items.push(self.name_field("Save"));
         }
@@ -796,14 +779,14 @@ impl Settings {
         config
     }
 
-    /// A style as a small desktop: its cards in the look's color, and the
-    /// dock and panel in the style's own color (see `themes::record`).
+    /// A style as a small desktop, including the chosen accent on the bars.
     fn style_specimen(&self, family: Family, look: &Look, width: f32) -> Element<'_, Message> {
         let spec = family.spec();
+        let seed = self.look_accent(look, family).unwrap_or_else(|| family.accent());
         // The bars paint the window background, at the style's own tone.
         let tone = {
             let [r, g, b] =
-                family.window_for(family.accent(), !family.light(), self.shown_tone(family));
+                family.window_for(seed, !family.light(), self.shown_tone(family));
             Color::from_rgba8(r, g, b, spec.bar.opacity)
         };
         self.specimen(
@@ -902,8 +885,8 @@ impl Settings {
     }
 
     /// A style as a small desktop `width` wide, on a gradient wallpaper: the
-    /// panel with workspaces, clock and tray; a card with the time, date and
-    /// an event and a second card, in the style's fonts, borders and
+    /// panel with workspaces, Activity Island and tray; clock and weather
+    /// cards in the style's fonts, borders and
     /// shadows; and the dock. `tone` is the dock and panel's color.
     fn specimen(
         &self,
@@ -947,6 +930,7 @@ impl Settings {
         let text = |value: &'static str, size: f32, font, color| -> Element<'static, Message> {
             text::body(value)
                 .size((size * s).round().max(6.))
+                .line_height(1.2)
                 .font(font)
                 .wrapping(cosmic::iced::advanced::text::Wrapping::None)
                 .class(cosmic::theme::Text::Color(color))
@@ -976,6 +960,20 @@ impl Settings {
             ..Default::default()
         };
         let dot_radius = if bar.radius == 0 { 0. } else { 3. };
+        let glyph = |name, size: f32, color| -> Element<'static, Message> {
+            let pixels = (size * s).round().max(6.) as u16;
+            let Some(path) = icon::from_name(name).size(pixels).path() else {
+                return block(size, size, color, 2.);
+            };
+            icon::from_path(path)
+                .symbolic(true)
+                .icon()
+                .size(pixels)
+                .class(cosmic::theme::Svg::custom(move |_| {
+                    cosmic::iced::widget::svg::Style { color: Some(color) }
+                }))
+                .into()
+        };
         let panel = container(
             row::with_children(vec![
                 row::with_children(vec![
@@ -985,11 +983,15 @@ impl Settings {
                 .spacing(4. * s)
                 .width(Length::Fill)
                 .into(),
-                text("09:41", 9., roles.body, ink),
+                super::home_picture::island_pill(
+                    [36. * s, 11. * s],
+                    config.activity_island.style,
+                    card.accent,
+                ),
                 container(
                     row::with_children(vec![
-                        block(7., 7., Color { a: 0.7, ..ink }, dot_radius * 0.6),
-                        block(7., 7., Color { a: 0.7, ..ink }, dot_radius * 0.6),
+                        glyph("network-wireless-symbolic", 8., ink),
+                        glyph("audio-volume-high-symbolic", 8., ink),
                     ])
                     .spacing(4. * s),
                 )
@@ -1011,7 +1013,7 @@ impl Settings {
         let main = container(
             column::with_children(vec![
                 text("09:41", 30., roles.clock, card.foreground),
-                text("Wed · Sunny", 10., roles.body, card.muted),
+                text("Wednesday", 10., roles.body, card.muted),
                 event.into(),
             ])
             .spacing(4. * s),
@@ -1021,39 +1023,27 @@ impl Settings {
         .class(cosmic::theme::Container::custom(card_style));
         let side = container(
             column::with_children(vec![
-                block(52., 4., card.accent, 2.),
-                block(
-                    38.,
-                    4.,
-                    Color {
-                        a: 0.6,
-                        ..card.muted
-                    },
-                    2.,
-                ),
-                block(
-                    46.,
-                    4.,
-                    Color {
-                        a: 0.6,
-                        ..card.muted
-                    },
-                    2.,
-                ),
+                row::with_children(vec![
+                    glyph("weather-clear-symbolic", 13., card.accent),
+                    text("18°", 16., roles.body, card.foreground),
+                ])
+                .spacing(4. * s)
+                .align_y(Alignment::Center)
+                .into(),
+                text("Sunny", 10., roles.body, card.muted),
             ])
-            .spacing(6. * s),
+            .spacing(2. * s),
         )
         .padding([10. * s, 10. * s])
         .width(76. * s)
         .height(52. * s)
         .class(cosmic::theme::Container::custom(card_style));
-        let icon_radius = if bar.radius == 0 { 0. } else { 3.5 };
         let dock = container(
             row::with_children(vec![
-                block(11., 11., card.accent, icon_radius),
-                block(11., 11., Color { a: 0.8, ..ink }, icon_radius),
-                block(11., 11., Color { a: 0.55, ..ink }, icon_radius),
-                block(11., 11., Color { a: 0.55, ..ink }, icon_radius),
+                glyph("view-app-grid-symbolic", 12., card.accent),
+                glyph("folder-symbolic", 12., ink),
+                glyph("utilities-terminal-symbolic", 12., ink),
+                glyph("preferences-system-symbolic", 12., ink),
             ])
             .spacing(5. * s),
         )
@@ -1380,4 +1370,51 @@ fn section_title<'a>(title: &'a str, description: &'a str) -> Element<'a, Messag
     .spacing(2)
     .width(Length::Fill)
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native_test::Native;
+    use cosmic::{Application, iced::Size};
+
+    #[test]
+    fn surface_styles_open_from_search_and_preview_without_applying() {
+        if crate::displays::test_support::isolated(
+            "settings::view::themes::tests::surface_styles_open_from_search_and_preview_without_applying",
+        ) {
+            return;
+        }
+        if std::env::var_os("DESKTOP_CARDS_LAYOUT_EVIDENCE").is_some()
+            && std::path::Path::new("/usr/share/icons").is_dir()
+        {
+            let root = crate::test_env::assert_isolated();
+            std::os::unix::fs::symlink("/usr/share/icons", root.join("data/icons")).unwrap();
+        }
+        let (mut app, _) = Settings::init(cosmic::app::Core::default(), Page::Overview);
+        let mut page = Native::new(Size::new(1024., 720.));
+        let mut specimen = Native::new(Size::new(520., 322.));
+        let applied = app.config.appearance.family;
+        for (query, family) in [
+            ("Windows 11", Family::MicaSlate),
+            ("tape deck", Family::TapeDeck),
+            ("porcelain", Family::Porcelain),
+            ("blueprint", Family::Blueprint),
+        ] {
+            let hit = crate::settings::navigation::search(query)[0];
+            assert_eq!(hit.anchor(), format!("preset-{}", family.preset()));
+            let _ = app.handle(Message::SearchResult(hit));
+            assert!(page.try_bounds(app.settings_view(), hit.anchor()).is_some());
+            assert_eq!(app.config.appearance.family, applied);
+            let preview = || app.style_specimen(family, &app.look(), 520.);
+            let clock = specimen.text_bounds(preview(), "09:41");
+            let date = specimen.text_bounds(preview(), "Wednesday");
+            assert!(clock.y + clock.height <= date.y, "overlapping clock in {family:?}");
+            specimen.capture(
+                preview(),
+                &cosmic::Theme::dark(),
+                family.id(),
+            );
+        }
+    }
 }

@@ -1,4 +1,5 @@
 use super::*;
+#[cfg(test)]
 use cosmic::iced::mouse;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -515,29 +516,17 @@ fn badge<'a>(value: String, color: Color, p: Palette) -> Element<'a, Message> {
 }
 
 /// Refresh as a quiet round icon, like the Notes card's copy and edit controls.
-fn refresh_button<'a>(p: Palette) -> Element<'a, Message> {
-    mouse_area(
-        container(
-            cosmic::widget::icon::from_name("view-refresh-symbolic")
-                .size(14)
-                .icon(),
-        )
-        // 22px tall, so the header keeps its fixed 44px.
-        .padding(4)
-        .id(cosmic::widget::Id::new("projects-refresh"))
-        .class(cosmic::theme::Container::custom(move |_| {
-            cosmic::iced::widget::container::Style {
-                icon_color: Some(p.muted),
-                border: Border {
-                    radius: 40.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
-        })),
+fn refresh_button<'a>() -> Element<'a, Message> {
+    cosmic::widget::button::custom(
+        cosmic::widget::icon::from_name("view-refresh-symbolic")
+            .size(14)
+            .icon(),
     )
+    .name("Refresh projects")
+    .id(cosmic::widget::Id::new("projects-refresh"))
+    .class(cosmic::theme::Button::Text)
+    .padding(4)
     .on_press(Message::RefreshProjects)
-    .interaction(mouse::Interaction::Pointer)
     .into()
 }
 
@@ -548,9 +537,12 @@ fn text_action<'a>(
     message: Message,
     color: Color,
 ) -> Element<'a, Message> {
-    mouse_area(container(label(value, 12., color)).padding([2, 0]))
+    let value = value.into();
+    cosmic::widget::button::custom(label(&value, 12., color))
+        .name(value)
+        .class(cosmic::theme::Button::Text)
+        .padding([2, 0])
         .on_press(message)
-        .interaction(mouse::Interaction::Pointer)
         .into()
 }
 
@@ -1038,7 +1030,7 @@ impl Presentation<'_> {
             if self.projects_fetching {
                 label("Syncing…", crate::widget_style::SECONDARY, p.muted)
             } else {
-                refresh_button(p)
+                refresh_button()
             },
         )];
         let mut entries = Vec::new();
@@ -1182,21 +1174,17 @@ impl Presentation<'_> {
                     } else {
                         "checkouts"
                     };
-                    mouse_area(
-                        container(label(
-                            format!("{count} {noun} {}", if expanded { "↑" } else { "↓" }),
-                            11.,
-                            p.accent,
-                        ))
-                        .padding([2, 4])
+                    let title = format!("{count} {noun} {}", if expanded { "↑" } else { "↓" });
+                    cosmic::widget::button::custom(label(&title, 11., p.accent))
+                        .name(format!("{}: {title}", group.title))
                         .id(cosmic::widget::Id::new(format!(
                             "project-branches:{}",
                             group.id
-                        ))),
-                    )
-                    .on_press(Message::ToggleProject(group.id.clone()))
-                    .interaction(mouse::Interaction::Pointer)
-                    .into()
+                        )))
+                        .class(cosmic::theme::Button::Text)
+                        .padding([2, 4])
+                        .on_press(Message::ToggleProject(group.id.clone()))
+                        .into()
                 } else {
                     label("", 11., p.muted)
                 };
@@ -1214,7 +1202,7 @@ impl Presentation<'_> {
                 for ports in web.chunks(3) {
                     lines.push(
                         row::with_children(ports.iter().map(|port| {
-                            action(
+                            text_action(
                                 format!(":{port} ↗"),
                                 Message::Open(format!("http://127.0.0.1:{port}")),
                                 p.accent,
@@ -1412,6 +1400,7 @@ impl Cards {
         }
     }
     pub(super) fn projects_card(&self) -> Element<'_, Message> {
+        let _card = crate::widget_style::for_card(crate::drawer::Widget::Projects);
         self.projects_presentation().view(
             self.card_height(Widget::Projects),
             !self.custom_layout() || self.explicit_size(Widget::Projects).is_some(),

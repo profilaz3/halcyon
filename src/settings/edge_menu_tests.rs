@@ -196,9 +196,9 @@ fn edge_menu_picker_lists_apps_and_a_missing_app_is_unavailable() {
     assert_eq!(app.edge_menu.matching_apps().len(), 1);
     assert!(
         app.edge_menu
-            .looks
+            .entries
             .as_ref()
-            .is_some_and(|looks| !looks.is_empty()),
+            .is_some_and(|entries| !entries.looks.is_empty()),
         "built-in Looks are offered"
     );
     let items = vec![
@@ -240,6 +240,107 @@ fn edge_menu_picker_lists_apps_and_a_missing_app_is_unavailable() {
     let text = native.all_text(app.settings_view()).join(" ");
     assert!(text.contains("App · Unavailable"), "{text}");
     assert!(native.duplicate_ids(app.settings_view()).is_empty());
+}
+
+#[test]
+fn edge_menu_background_reads_preserve_search_drafts_and_reject_old_results() {
+    let name = "edge_menu_background_reads_preserve_search_drafts_and_reject_old_results";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let mut app = edge_page();
+    let old_picker = app.update(Message::EdgeMenu(EdgeEdit::Picker(true)));
+    assert!(app.edge_menu.entries.is_none());
+    edge_send(&mut app, EdgeEdit::Picker(false));
+    let picker = app.update(Message::EdgeMenu(EdgeEdit::Picker(true)));
+    edge_send(&mut app, EdgeEdit::AppSearch("late".into()));
+    settle_settings(&mut app, old_picker);
+    assert!(
+        app.edge_menu.entries.is_none(),
+        "a closed picker's result was discarded"
+    );
+    edge_fixture_app(
+        "org.example.Late",
+        "Late install",
+        "application-x-executable",
+    );
+    settle_settings(&mut app, picker);
+    assert_eq!(app.edge_menu.matching_apps()[0].name, "Late install");
+    assert_eq!(app.edge_menu.search, "late");
+
+    let root = isolated_root();
+    let folder = root.join("created-after-navigation");
+    let missing = root.join("missing");
+    let items = vec![Item::title("Places"), edge_menu::folder_item(&missing)];
+    app.config = Config::save_edge_menu(serde_json::json!({"items": items})).unwrap();
+    let obsolete = app.update(Message::Page(Page::EdgeMenu));
+    assert!(app.edge_menu.available.is_empty());
+    send_settings(&mut app, Message::Page(Page::Home));
+    let items = vec![Item::title("Places"), edge_menu::folder_item(&folder)];
+    app.config = Config::save_edge_menu(serde_json::json!({"items": items})).unwrap();
+    let new_scan = app.update(Message::Page(Page::EdgeMenu));
+    std::fs::create_dir(&folder).unwrap();
+    settle_settings(&mut app, new_scan);
+    assert_eq!(app.edge_menu.available, [true, true]);
+    edge_send(&mut app, EdgeEdit::TitleText(0, "Still typing".into()));
+    settle_settings(&mut app, obsolete);
+    assert_eq!(app.edge_menu.available, [true, true]);
+    assert_eq!(app.edge_menu.title.as_ref().unwrap().1, "Still typing");
+    assert_eq!(edge_saved()["items"][0]["text"], "Places");
+
+    std::fs::remove_dir(&folder).unwrap();
+    edge_send(&mut app, EdgeEdit::Commit);
+    // The title changed the item list and triggered a fresh availability read.
+    assert_eq!(app.edge_menu.available, [true, false]);
+    std::fs::create_dir(&folder).unwrap();
+    let opposite = match app.config.edge_menu.side {
+        Side::Left => Side::Right,
+        Side::Right => Side::Left,
+    };
+    edge_send(&mut app, EdgeEdit::Side(opposite));
+    assert_eq!(
+        app.edge_menu.available,
+        [true, false],
+        "strip-only edits reuse the result"
+    );
+    send_settings(&mut app, Message::Page(Page::EdgeMenu));
+    assert_eq!(app.edge_menu.available, [true, true]);
+
+    let app_item = |id: &str| {
+        Item::new(Kind::App {
+            app: id.into(),
+            name: id.into(),
+            icon: String::new(),
+        })
+    };
+    let apps = vec![app_item("org.example.Late"), app_item("org.example.Gone")];
+    app.config = Config::save_edge_menu(serde_json::json!({"items": apps})).unwrap();
+    let scan_before_move = app.update(Message::Page(Page::EdgeMenu));
+    let mut native = crate::native_test::Native::new(Size::new(820., 600.));
+    assert!(
+        native
+            .all_text(app.samples.edge_menu_view().0)
+            .iter()
+            .any(|s| s == "Checking…")
+    );
+    edge_send(&mut app, EdgeEdit::MoveDown(0));
+    assert!(app.edge_menu.available.is_empty());
+    settle_settings(&mut app, scan_before_move);
+    assert_eq!(
+        app.edge_menu.available,
+        [false, true],
+        "the reordered app IDs own their results"
+    );
+    let shown = native.all_text(app.samples.edge_menu_view().0);
+    assert!(shown.iter().any(|s| s == "Unavailable"));
+    assert!(!shown.iter().any(|s| s == "Checking…"));
 }
 
 /// The page with the strip off, the list beside its preview, and the Add

@@ -89,6 +89,13 @@ def files(binary, prefix, google_client):
         (share / 'metainfo' / f'{APP_ID}.metainfo.xml',
          (SOURCE / 'packaging' / f'{APP_ID}.metainfo.xml').read_bytes(), 0o644),
     ]
+    magnifier = binary.with_name('halcyon-magnifying-app-list')
+    if magnifier.is_file():
+        out.extend([
+            (prefix / 'bin' / magnifier.name, magnifier.read_bytes(), 0o755),
+            (share / 'applications' / f'{APP_ID}.MagnifyingDock.desktop',
+             launcher(prefix, '.MagnifyingDock').encode(), 0o644),
+        ])
     for name in ('calendar-sync.py', 'project-status.py'):
         out.append((prefix / 'lib' / PACKAGE / name, (SOURCE / 'scripts' / name).read_bytes(), 0o755))
     for wallpaper in sorted((SOURCE / 'assets/wallpapers').glob('*.jpg')):

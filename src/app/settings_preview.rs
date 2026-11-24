@@ -79,7 +79,7 @@ pub(crate) fn settings_weather_preview_at(
     size: [f32; 2],
     now: chrono::DateTime<Local>,
 ) -> Element<'static, Message> {
-    let weather = weather_sample(now.date_naive());
+    let weather = weather_sample(weather::forecast_day(now, None, config));
     weather::Presentation::new(
         config,
         weather::Snapshot {
@@ -93,6 +93,7 @@ pub(crate) fn settings_weather_preview_at(
 }
 pub(super) fn weather_sample(today: NaiveDate) -> Weather {
     let weather = Weather {
+        timezone: None,
         current: data::Current {
             temperature_2m: 21.,
             apparent_temperature: 20.,
@@ -103,13 +104,13 @@ pub(super) fn weather_sample(today: NaiveDate) -> Weather {
             is_day: 1,
         },
         daily: data::Daily {
-            time: (0..3)
+            time: (0..4)
                 .map(|offset| (today + Days::days(offset)).format("%Y-%m-%d").to_string())
                 .collect(),
-            temperature_2m_max: vec![23., 22., 24.],
-            temperature_2m_min: vec![14., 13., 15.],
-            weather_code: vec![2, 3, 0],
-            precipitation_probability_max: vec![Some(10.), Some(25.), Some(0.)],
+            temperature_2m_max: vec![23., 22., 24., 19.],
+            temperature_2m_min: vec![14., 13., 15., 12.],
+            weather_code: vec![2, 3, 0, 61],
+            precipitation_probability_max: vec![Some(10.), Some(25.), Some(0.), Some(75.)],
         },
     };
     weather
@@ -117,9 +118,10 @@ pub(super) fn weather_sample(today: NaiveDate) -> Weather {
 
 /// The desktop's own latest reading for the chosen city, as its card shows
 /// it, its age included once it is old. Nothing is fetched.
-pub(crate) fn settings_weather_reading(
+pub(crate) fn settings_weather_reading_sized(
     config: &Config,
     reading: &WeatherSnapshot,
+    size: [f32; 2],
 ) -> Element<'static, Message> {
     weather::Presentation::new(
         config,
@@ -130,10 +132,7 @@ pub(crate) fn settings_weather_reading(
         },
         Local::now(),
     )
-    .view(
-        crate::widget_presentation::Context::LocalPreview,
-        crate::widget_presentation::WEATHER_SIZE,
-    )
+    .view(crate::widget_presentation::Context::LocalPreview, size)
 }
 /// Projects preview needs only immutable sample readings and the chosen style.
 /// The caller maps every action to Preview, so links and refresh stay inactive.
@@ -225,6 +224,8 @@ impl SettingsSamples {
             display_generation: 0,
             surface_inputs: None,
             updating: false,
+            activity_dirty: false,
+            config_writes: Default::default(),
             rebuild_pending: false,
             controls_open: false,
             work_area: [None; 2],
@@ -238,6 +239,7 @@ impl SettingsSamples {
             projects_error: false,
             projects_reserved: None,
             next_projects: Instant::now(),
+            peek: None,
             reading_window: None,
             interacting_tool: None,
             expanded_projects: Default::default(),
@@ -367,7 +369,7 @@ impl SettingsSamples {
                 overview.weather_at = Some(reading.updated_at.clone());
             }
             None => {
-                overview.weather = Some(weather_sample(today));
+                overview.weather = Some(weather_sample(weather::forecast_day(Local::now(), None, config)));
                 overview.weather_at = None;
             }
         }
@@ -395,9 +397,15 @@ impl SettingsSamples {
     }
     /// The edge menu with `config`'s items; `available` says which of
     /// them can run.
-    pub fn update_edge(&mut self, config: &Config, available: Vec<bool>) {
+    pub fn update_edge(
+        &mut self,
+        config: &Config,
+        available: Vec<bool>,
+        checking: Option<std::sync::Arc<Vec<crate::config::edge_menu::Item>>>,
+    ) {
         self.edge.config = config.clone();
         self.edge.edge.available = available;
+        self.edge.edge.checking = checking;
     }
     /// The open edge menu, as on the desktop, and its size.
     pub fn edge_menu_view(&self) -> (Element<'_, Message>, [f32; 2]) {

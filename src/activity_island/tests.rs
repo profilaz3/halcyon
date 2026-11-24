@@ -329,6 +329,108 @@ fn click_only_cancels_pending_hover_and_keeps_direct_and_keyboard_opening() {
 }
 
 #[test]
+fn closing_devices_resets_the_card_before_reopening() {
+    let mut app = app();
+    app.snapshot.reduced_motion = true;
+    let _ = app.update(Message::Devices(devices::Msg::Open));
+    assert!(app.devices.card && app.popup.is_some());
+    let _ = app.update(Message::Close);
+    assert!(app.popup.is_none() && !app.devices.card);
+    let _ = app.update(Message::Hold);
+    assert!(app.kind == Kind::Idle && !app.devices.card);
+}
+
+#[test]
+fn external_dismissal_retires_finished_timer_wakes() {
+    let (mut app, mut snapshot) = revealing();
+    let now = chrono::Utc::now().timestamp_millis();
+    let mut timer = timer::Timer::start(60_000, now - 120_000);
+    assert!(timer.expire(now));
+    snapshot.timer = Some(timer);
+    let _ = app.update(Message::Backend(ClientEvent::Snapshot(snapshot)));
+    assert!(app.reveal_deadline.is_some());
+    let id = app.popup.expect("a finished timer reveals");
+    let _ = app.update(Message::PopupGone(id));
+    assert!(app.popup.is_none() && app.reveal_deadline.is_none());
+    wake(&mut app, NOTE_REVEAL + Duration::from_secs(1));
+    assert!(app.popup.is_none() && app.reveal_deadline.is_none());
+}
+
+#[test]
+fn activities_survives_a_vanishing_notification_and_recent_returns_to_activities() {
+    let mut app = app();
+    app.snapshot.music = Some(music());
+    app.snapshot.reduced_motion = true;
+    notify(&mut app, note(5, "Mail", "", "Hello", ""));
+    let _ = app.update(Message::Hold);
+    let _ = app.update(Message::Choose);
+    let _ = app.update(Message::Notes(notifications::Event::Closed(5)));
+    assert!(app.chooser && app.popup.is_some() && app.held);
+    assert_ne!(app.kind, Kind::Notification(5));
+    assert!(app.has_recent());
+    let _ = app.update(Message::ShowRecent);
+    assert!(app.listing() && app.recent_open);
+    let _ = app.update(Message::Key(keyboard::Key::Named(keyboard::key::Named::Escape)));
+    assert!(app.chooser && app.popup.is_some() && app.held);
+}
+
+#[test]
+fn selecting_music_from_notification_rules_drops_the_previous_menu_and_height() {
+    let mut app = app();
+    app.snapshot.music = Some(music());
+    app.snapshot.reduced_motion = true;
+    notify(&mut app, note(4, "Mail", "", "Hello", ""));
+    let _ = app.update(Message::Hold);
+    let _ = app.update(Message::NoteMenu(4));
+    assert!(app.menu.is_some());
+    let _ = app.update(Message::Choose);
+    let _ = app.update(Message::Select(Kind::Music));
+    if let Some(old) = app.promote_popup {
+        let _ = app.update(Message::PopupGone(old));
+    }
+    assert!(app.menu.is_none() && !app.list && !app.chooser);
+    assert_eq!((app.popup_extra, app.popup_wide), (0., 0.));
+    let _ = app.update(Message::Key(keyboard::Key::Named(keyboard::key::Named::Escape)));
+    assert!(app.chooser);
+}
+
+#[test]
+fn held_notification_list_fits_arrivals_and_returns_to_card_size_when_offline() {
+    let mut app = listed();
+    app.snapshot.reduced_motion = true;
+    let _ = open_list(&mut app);
+    let before = app.popup_height();
+    notify(&mut app, note(4, "Calendar", "", "Meeting", ""));
+    let old = app.promote_popup.expect("the fourth notification needs another row");
+    let _ = app.update(Message::PopupGone(old));
+    assert!(app.held && app.listing() && app.popup_height() > before);
+    let mut ui = crate::native_test::Native::new(cosmic::iced::Size::new(app.popup_width(), app.popup_height()));
+    assert!(ui.bounds(app.capsule(true), "activity-note-row-4").height > 0.);
+    let _ = app.update(Message::Backend(ClientEvent::Offline));
+    let old = app.promote_popup.expect("the offline card uses a small popup");
+    let _ = app.update(Message::PopupGone(old));
+    assert!(app.held && !app.listing());
+    assert_eq!((app.popup_wide, app.popup_extra), (0., 0.));
+}
+
+#[test]
+fn the_clock_sleeps_behind_the_chooser_but_focus_still_expires() {
+    let mut app = app();
+    app.kind = Kind::Focus;
+    app.snapshot.focus.running = true;
+    app.snapshot.focus.ends_at_ms = Some(app.now_ms + 60_000);
+    app.snapshot.reduced_motion = true;
+    assert_eq!(app.visible_clock_interval(), Some(Duration::from_secs(1)));
+    let _ = app.update(Message::Hold);
+    let _ = app.update(Message::Choose);
+    app.refresh_deadline(Instant::now());
+    assert_eq!(app.visible_clock_interval(), None);
+    assert!(app.priority_deadline.is_some());
+    let _ = app.update(Message::Choose);
+    assert_eq!(app.visible_clock_interval(), Some(Duration::from_secs(1)));
+}
+
+#[test]
 fn active_chooser_keeps_controls_accessible_without_permanent_tabs() {
     use cosmic::iced::Size;
     let mut app = app();
@@ -4413,7 +4515,7 @@ fn music_seek_moves_by_keyboard_within_the_track() {
     timed(&mut app, 2_000);
     app.popup = Some(window::Id::unique());
     app.held = true;
-    assert!(app.scrubbing());
+    assert!(app.scrub_position().is_some());
     let left = keyboard::Key::Named(keyboard::key::Named::ArrowLeft);
     let right = keyboard::Key::Named(keyboard::key::Named::ArrowRight);
     let _ = app.update(Message::Key(left));
@@ -4442,9 +4544,23 @@ fn music_seek_moves_by_keyboard_within_the_track() {
     ));
     // A player that cannot seek shows no scrubber and takes no keys.
     app.snapshot.music_seek = false;
-    assert!(!app.scrubbing());
+    assert!(app.scrub_position().is_none());
     let _ = app.update(Message::Key(right));
     assert!(rx.try_recv().is_err());
+}
+#[test]
+fn the_file_shelf_does_not_seek_the_song_behind_it() {
+    let (mut app, mut commands) = listening();
+    timed(&mut app, 2_000);
+    app.snapshot.reduced_motion = true;
+    let _ = app.update(Message::Hold);
+    let _ = app.update(Message::Shelf(shelf::Msg::Show));
+    let right = keyboard::Key::Named(keyboard::key::Named::ArrowRight);
+    let _ = app.update(Message::Key(right.clone()));
+    assert!(app.scrub_position().is_none() && commands.try_recv().is_err());
+    let _ = app.update(Message::Shelf(shelf::Msg::Back));
+    let _ = app.update(Message::Key(right));
+    assert!(matches!(commands.try_recv(), Ok(Command::Seek { .. })));
 }
 #[test]
 fn output_list_regrows_the_open_island_to_fit() {

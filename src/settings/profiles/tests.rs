@@ -1716,6 +1716,42 @@ fn themes_editor(desk: &Desk) -> ProfilesEditor {
 }
 
 #[test]
+fn managing_a_saved_style_keeps_the_current_selection_and_desktop() {
+    let desk = Desk::new("manage-saved-style");
+    let mut editor = themes_editor(&desk);
+    name(&mut editor, NameAction::CaptureTheme, "First style");
+    let Selection::Saved(first) = editor.selection().clone() else {
+        panic!("first style")
+    };
+    name(&mut editor, NameAction::CaptureTheme, "Second style");
+    let selected = editor.selection().clone();
+    let before = desk.desktop();
+    editor.update(Message::StyleMenu(first.clone()));
+    name(
+        &mut editor,
+        NameAction::Rename(first.clone()),
+        "Renamed first",
+    );
+    assert_eq!(editor.selected_name().as_deref(), Some("Second style"));
+    let Outcome::Dialog(Request::Export { id, bytes, .. }) =
+        editor.update(Message::ExportStyle(first.clone()))
+    else {
+        panic!("export")
+    };
+    assert_eq!(profiles::import(&bytes).unwrap().name, "Renamed first");
+    editor.update(Message::Exported(id, Ok(None)));
+    editor.update(Message::ConfirmStyleDelete(first.clone(), true));
+    editor.update(Message::ConfirmStyleDelete(first.clone(), false));
+    editor.update(Message::DeleteStyle(first.clone()));
+    assert!(editor.saved_profile(&first).is_some());
+    editor.update(Message::ConfirmStyleDelete(first.clone(), true));
+    editor.update(Message::DeleteStyle(first.clone()));
+    assert!(editor.saved_profile(&first).is_none());
+    assert_eq!(*editor.selection(), selected);
+    assert_eq!(desk.desktop(), before);
+}
+
+#[test]
 fn first_theme_keeps_the_existing_color_choice_or_starts_from_the_wallpaper() {
     let cases = [
         // Following the wallpaper stays on.

@@ -218,6 +218,10 @@ class RecordTests(unittest.TestCase):
                                        'host_sha256', 'rust', 'locked', 'offline'})
         self.assertEqual(record['format'], 'halcyon-fedora-build')
         self.assertEqual(record['app_sha256'], digest(b'app'))
+        (self.root/'dock').write_bytes(b'dock')
+        with_dock = acceptance.provenance_record('43', self.root/'app', self.root/'host',
+                                                 '1.93.0', self.root/'dock')
+        self.assertEqual(with_dock, {**record, 'dock_sha256': digest(b'dock')})
 
     def test_snapshot_reports_enrollment_files_phase_and_removed_copies(self):
         self.assertEqual(acceptance.snapshot(self.root),

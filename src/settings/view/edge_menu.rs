@@ -6,7 +6,7 @@ use crate::config::edge_menu::{
     MAX_ROUNDNESS, MIN_COLUMNS, MIN_HANDLE, MIN_HANDLE_OPACITY, MIN_OPACITY, OpenOn, Side, Speed,
     Style,
 };
-use crate::settings::edge_menu::{Edit, Field, common_folders, folder_item, listed};
+use crate::settings::edge_menu::{Edit, Field, folder_item, listed};
 
 fn edit(message: Edit) -> Message {
     Message::EdgeMenu(message)
@@ -15,6 +15,7 @@ fn edit(message: Edit) -> Message {
 /// What kind of item a row is, under its name.
 fn kind_title(item: &Item) -> &'static str {
     match &item.kind {
+        Kind::Peek { .. } => "Widget Peek",
         Kind::Widget { .. } => "Widget",
         Kind::Action { .. } => "Action",
         Kind::Look { .. } => "Look",
@@ -824,6 +825,80 @@ impl Settings {
         .on_press(edit(Edit::DragStart(index)))
         .interaction(cosmic::iced::mouse::Interaction::Grab);
         let name: Element<'_, Message> = match (&item.kind, &page.title) {
+            (
+                Kind::Peek {
+                    name,
+                    icon: selected_icon,
+                    widgets,
+                },
+                draft,
+            ) => {
+                let title = draft
+                    .as_ref()
+                    .filter(|(at, _)| *at == index)
+                    .map_or(name, |(_, v)| v);
+                let mut elements = vec![
+                    text_input("Button label", title.clone())
+                        .on_input(move |v| edit(Edit::TitleText(index, v)))
+                        .on_submit(move |_| edit(Edit::Commit))
+                        .into(),
+                ];
+                let glyphs = [
+                    ("view-grid-symbolic", "Grid"),
+                    ("user-desktop-symbolic", "Desktop"),
+                    ("starred-symbolic", "Star"),
+                ];
+                elements.push(
+                    row::with_children(
+                        glyphs
+                            .into_iter()
+                            .map(|(glyph, name)| {
+                                button::text(name)
+                                    .on_press_maybe(
+                                        (glyph != selected_icon)
+                                            .then(|| edit(Edit::PeekIcon(index, glyph.into()))),
+                                    )
+                                    .into()
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                    .spacing(4)
+                    .wrap()
+                    .into(),
+                );
+                elements.push(
+                    row::with_children(
+                        Widget::ALL
+                            .into_iter()
+                            .map(|w| {
+                                let on = widgets.contains(&w);
+                                let b = if on {
+                                    button::suggested(w.title())
+                                } else {
+                                    button::standard(w.title())
+                                };
+                                b.on_press_maybe(
+                                    (!on || widgets.len() > 1)
+                                        .then(|| edit(Edit::PeekWidget(index, w))),
+                                )
+                                .into()
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                    .spacing(4)
+                    .wrap()
+                    .into(),
+                );
+                elements.push(
+                    button::text("Set keyboard shortcut…")
+                        .on_press(Message::PeekShortcut)
+                        .into(),
+                );
+                column::with_children(elements)
+                    .spacing(6)
+                    .width(Length::Fill)
+                    .into()
+            }
             (Kind::Title { .. }, Some((at, text))) if *at == index => {
                 text_input("Section title", text.clone())
                     .on_input(move |text| edit(Edit::TitleText(index, text)))
@@ -845,7 +920,11 @@ impl Settings {
                     .class(text_style(if available { FG } else { MUTED }))
                     .into(),
                 label(
-                    if available {
+                    if page.available.get(index).is_none()
+                        && matches!(item.kind, Kind::App { .. } | Kind::Folder { .. })
+                    {
+                        format!("{} · Checking…", kind_title(item))
+                    } else if available {
                         kind_title(item).to_string()
                     } else {
                         format!("{} · Unavailable", kind_title(item))
@@ -974,11 +1053,12 @@ impl Settings {
         let actions = Action::ALL
             .into_iter()
             .map(|action| tile(Item::action(action), None))
+            .chain(std::iter::once_with(|| tile(Item::peek(), None)))
             .collect();
         let looks = page
-            .looks
+            .entries
             .iter()
-            .flatten()
+            .flat_map(|entries| &entries.looks)
             .map(|(look, name)| {
                 tile(
                     Item::new(Kind::Look {
@@ -1006,14 +1086,24 @@ impl Settings {
             })
             .collect();
         if apps.is_empty() {
-            apps.push(label("No apps match", CAPTION, MUTED));
+            apps.push(label(
+                if page.entries.is_none() {
+                    "Loading apps…"
+                } else {
+                    "No apps match"
+                },
+                CAPTION,
+                MUTED,
+            ));
         }
-        let mut folders: Vec<Element<'_, Message>> = common_folders()
-            .into_iter()
+        let mut folders: Vec<Element<'_, Message>> = page
+            .entries
+            .iter()
+            .flat_map(|entries| &entries.folders)
             .map(|(name, path)| {
-                let mut item = folder_item(&path);
+                let mut item = folder_item(path);
                 if let Kind::Folder { name: own, .. } = &mut item.kind {
-                    *own = name;
+                    own.clone_from(name);
                 }
                 tile(item, None)
             })

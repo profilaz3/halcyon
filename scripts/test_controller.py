@@ -105,19 +105,17 @@ class ControllerTests(unittest.TestCase):
                     settings.assert_called_once_with(page)
 
     def test_tool_pages_toggles_and_focus_commands_reach_the_desktop(self):
-        for page in ('music', 'notes', 'focus', 'devices'):
+        for page in ('music', 'notes', 'focus', 'devices', 'messages', 'markets', 'folder'):
             with patch.object(controller.sys, 'argv', ['desktop-cards', 'settings', '--page', page]):
                 with patch.object(controller, 'settings') as settings:
                     controller.main()
                     settings.assert_called_once_with(page)
         with patch.dict(controller.os.environ, {'XDG_RUNTIME_DIR': self.directory.name}):
             command = Path(self.directory.name) / 'halcyon/command.json'
-            with patch.object(controller.sys, 'argv', ['desktop-cards', 'toggle', 'notes']):
-                controller.main()
-            self.assertEqual(json.loads(command.read_text()), {'action': 'toggle', 'widget': 'notes'})
-            with patch.object(controller.sys, 'argv', ['desktop-cards', 'toggle', 'devices']):
-                controller.main()
-            self.assertEqual(json.loads(command.read_text()), {'action': 'toggle', 'widget': 'devices'})
+            for widget in ('notes', 'devices', 'messages', 'markets', 'folder'):
+                with self.subTest(widget=widget), patch.object(controller.sys, 'argv', ['desktop-cards', 'toggle', widget]):
+                    controller.main()
+                    self.assertEqual(json.loads(command.read_text()), {'action': 'toggle', 'widget': widget})
             with patch.object(controller.sys, 'argv', ['desktop-cards', 'focus', 'toggle']):
                 controller.main()
             self.assertEqual(json.loads(command.read_text()), {'action': 'focus', 'do': 'toggle'})

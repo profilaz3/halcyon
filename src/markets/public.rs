@@ -18,7 +18,7 @@ pub(super) async fn fetch(
         ))
         .header(
             reqwest::header::USER_AGENT,
-            "Halcyon/0.7.6 (desktop markets widget)",
+            concat!("Halcyon/", env!("CARGO_PKG_VERSION"), " (desktop markets widget)"),
         )
         .query(&[("range", "3mo"), ("interval", "1d")])
         .send()
@@ -72,15 +72,19 @@ fn parse(value: &serde_json::Value, symbol: &str) -> Result<(Quote, Vec<Point>),
     let price = number(meta, "regularMarketPrice")
         .filter(|n| *n > 0.)
         .ok_or(Problem::InvalidData)?;
-    let times = data
-        .get("timestamp")
-        .and_then(|v| v.as_array())
-        .ok_or(Problem::InvalidData)?;
-    let closes = data
-        .pointer("/indicators/quote/0/close")
-        .and_then(|v| v.as_array())
-        .filter(|v| v.len() == times.len() && v.len() <= 200)
-        .ok_or(Problem::InvalidData)?;
+    // A newly listed instrument may have a current quote before its daily history exists.
+    let samples = |path| -> Result<&[serde_json::Value], Problem> {
+        match data.pointer(path) {
+            None | Some(serde_json::Value::Null) => Ok(&[]),
+            Some(serde_json::Value::Array(items)) if items.len() <= 200 => Ok(items),
+            _ => Err(Problem::InvalidData),
+        }
+    };
+    let times = samples("/timestamp")?;
+    let closes = samples("/indicators/quote/0/close")?;
+    if times.len() != closes.len() {
+        return Err(Problem::InvalidData);
+    }
     let mut points = Vec::new();
     for (time, close) in times.iter().zip(closes) {
         // Missing sessions stay missing; never manufacture a zero price.
@@ -100,9 +104,8 @@ fn parse(value: &serde_json::Value, symbol: &str) -> Result<(Quote, Vec<Point>),
         points.push(Point { date, close });
     }
     points.sort_by_key(|p| p.date);
-    if points.len() < 2
-        || points.windows(2).any(|p| p[0].date == p[1].date)
-        || points.last().unwrap().date > quoted_at
+    if points.windows(2).any(|p| p[0].date == p[1].date)
+        || points.last().is_some_and(|p| p.date > quoted_at)
     {
         return Err(Problem::InvalidData);
     }
@@ -182,5 +185,33 @@ mod tests {
         let mut gap = sample();
         gap["chart"]["result"][0]["indicators"]["quote"][0]["close"][0] = serde_json::Value::Null;
         assert_eq!(parse(&gap, "AAPL").unwrap().1.len(), 2);
+    }
+
+    #[test]
+    fn public_quote_survives_first_trading_session() {
+        let one = serde_json::json!({"chart": {"error": null, "result": [{
+            "meta": {
+                "symbol": "NEW",
+                "currency": "USD",
+                "regularMarketPrice": 10.0,
+                "regularMarketTime": 1700254800_i64,
+                "exchangeTimezoneName": "America/New_York"
+            },
+            "timestamp": [1700254800_i64],
+            "indicators": {"quote": [{"close": [10.0]}]}
+        }]}});
+        let (quote, points) = parse(&one, "NEW").unwrap();
+        assert_eq!(
+            (quote.price, quote.change, quote.percent),
+            (10., None, None)
+        );
+        assert_eq!(points.len(), 1);
+        let mut live_only = one;
+        let result = live_only["chart"]["result"][0].as_object_mut().unwrap();
+        result.remove("timestamp");
+        result.remove("indicators");
+        let (latest, points) = parse(&live_only, "NEW").unwrap();
+        assert_eq!(latest, quote);
+        assert!(points.is_empty());
     }
 }

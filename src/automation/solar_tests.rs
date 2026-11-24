@@ -275,7 +275,7 @@ fn solar_weather_change_between_plan_and_commit_writes_nothing() {
     let result = crate::desktop::actions::scheduled_epoch(
         store.restore_epoch().unwrap(),
         store.manual_at(),
-        || profiles::apply_as(&store, &plan, "Solar"),
+        || profiles::apply_as(&store, &plan, "Solar", crate::desktop::store::Source::Scheduled),
     );
     assert!(
         matches!(

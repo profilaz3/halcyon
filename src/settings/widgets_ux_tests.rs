@@ -352,7 +352,9 @@ fn wid11_previews_say_sample_and_weather_shows_the_desktops_reading() {
         .expect("the desktop's reading");
     let card = crate::widget_presentation::WEATHER_SIZE;
     let shown = Native::new(Size::new(card[0], card[1]))
-        .all_text(crate::app::settings_weather_reading(&app.config, reading));
+        .all_text(crate::app::settings_weather_reading_sized(
+            &app.config, reading, crate::widget_presentation::WEATHER_SIZE,
+        ));
     assert!(shown.iter().any(|text| text == "7°"), "{shown:?}");
     assert!(!shown.iter().any(|text| text == "21°"), "not the sample");
     capture(&app, &mut native, "wid11-weather-reading");

@@ -433,14 +433,13 @@ impl Applet {
             View::Card => None,
         }
     }
-    /// The Music card shows a scrubber the keyboard can move.
-    pub(super) fn scrubbing(&self) -> bool {
-        self.kind == Kind::Music
-            && self.ui.view == View::Card
-            && !self.chooser
-            && self.snapshot.music_seek
-            && !self.snapshot.music_problem
-            && self.music_progress().is_some()
+    /// Position and duration of the Music scrubber currently on screen.
+    pub(super) fn scrub_position(&self) -> Option<(i64, i64)> {
+        if self.kind == Kind::Music && self.showing_activity_card() && self.snapshot.music_seek {
+            self.music_progress()
+        } else {
+            None
+        }
     }
     /// The chooser's way to a new timer.
     pub(super) fn timer_choice<'a>(
@@ -1275,11 +1274,8 @@ impl Applet {
         accent: Color,
         reveal: f32,
     ) -> Option<Element<'a, Message>> {
-        if self.kind != Kind::Music || !self.snapshot.music_seek || self.snapshot.music_problem {
-            return None;
-        }
+        let reported = self.scrub_position()?;
         let m = self.snapshot.music.as_ref()?;
-        let reported = self.music_progress()?;
         let (at, total) = shown_position(
             self.ui.seek.as_ref(),
             &m.key,

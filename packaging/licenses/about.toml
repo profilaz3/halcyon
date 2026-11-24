@@ -72,3 +72,23 @@ license = "GPL-3.0-only"
 [[xdg-shell-wrapper-config.clarify.files]]
 path = "../LICENSE.md"
 checksum = "6ea843d9f221a2a7cb757d65c86368b9f207584ed0f2653e4b215a7702a7e1c7"
+
+# The pinned dock applet also uses these workspace crates. The settings
+# configuration crate declares MPL-2.0 in its source files.
+[cosmic-app-list-config.clarify]
+license = "GPL-3.0-only"
+[[cosmic-app-list-config.clarify.files]]
+path = "../../LICENSE"
+checksum = "28de5ca4fa18fbdc2d7eeb06ba7afdd43c5e80a015d7901a76ccd6c591b97eae"
+
+[cosmic-launch.clarify]
+license = "MPL-2.0"
+[[cosmic-launch.clarify.files]]
+path = "../LICENSE"
+checksum = "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+
+[cosmic-settings-config.clarify]
+license = "MPL-2.0"
+[[cosmic-settings-config.clarify.files]]
+path = "src/lib.rs"
+checksum = "9ec7e1de670c9205c27061491853a0dceb5010236b3b2a5f93595b4cbcd2a434"

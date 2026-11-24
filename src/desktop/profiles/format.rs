@@ -1,4 +1,4 @@
-//! The profile record (`desktop-cards-profile`, up to version 22).
+//! The profile record (`desktop-cards-profile`, up to version 26).
 //!
 //! Version 2 adds the `windows` and `workspaces` sections and per-variant
 //! window `gaps` under Appearance; version 3 adds `wallpaper` and
@@ -54,7 +54,16 @@ pub const FORMAT: &str = "desktop-cards-profile";
 /// Clock scene lighting requires version 20; wallpaper rain keeps 19.
 /// A one-line description requires version 21.
 /// The app icon shape and folder tint require version 22.
-pub const VERSION: u32 = 22;
+/// Weather layout and Outlook presentation choices require version 23.
+/// Rain confined to widget glass requires version 24. Editable glass finishes use version 25.
+/// Following the current theme for glass tint requires version 26.
+pub const VERSION: u32 = 28;
+pub const VERSION_27: u32 = 27;
+pub const VERSION_26: u32 = 26;
+pub const VERSION_25: u32 = 25;
+pub const VERSION_24: u32 = 24;
+pub const VERSION_23: u32 = 23;
+pub const VERSION_22: u32 = 22;
 pub const VERSION_21: u32 = 21;
 pub const VERSION_20: u32 = 20;
 pub const VERSION_19: u32 = 19;
@@ -913,6 +922,9 @@ pub struct Profile {
     pub composition: Option<super::mix::Provenance>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub appearance_only: bool,
+    /// Desktop-entry IDs only. Review, import, Apply and automation never launch these.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workspace_apps: Vec<String>,
     pub format: String,
     pub version: u32,
     pub name: String,
@@ -963,6 +975,18 @@ pub fn valid_description(text: &str) -> bool {
         && !text.chars().any(char::is_control)
 }
 
+pub fn valid_workspace_apps(apps: &[String]) -> bool {
+    apps.len() <= 12
+        && apps.iter().collect::<std::collections::BTreeSet<_>>().len() == apps.len()
+        && apps.iter().all(|id| {
+            id.len() <= 255
+                && id.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
+                && id
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b"._+-".contains(&c))
+        })
+}
+
 fn is_false(value: &bool) -> bool {
     !*value
 }
@@ -974,6 +998,7 @@ impl Profile {
             package: None,
             composition: None,
             appearance_only: false,
+            workspace_apps: Vec::new(),
             format: FORMAT.into(),
             version: VERSION,
             name: name.to_string(),
@@ -1047,6 +1072,45 @@ impl Profile {
             .find(|(pointer, _)| widget::tool_of(pointer).is_some())
             .map(|(pointer, _)| widget::field(pointer).map_or(pointer, |field| field.label))
     }
+    fn has_folder_widget(&self) -> bool {
+        self.widget_style
+            .iter()
+            .chain(&self.widget_layout)
+            .any(|v| {
+                ["folder", "widget_positions/folder", "widget_sizes/folder"]
+                    .iter()
+                    .any(|key| v.pointer(&format!("/{key}")).is_some())
+            })
+    }
+    fn has_finish_library(&self) -> bool {
+        self.widget_style
+            .as_ref()
+            .and_then(|v| v.pointer("/rain/finishes"))
+            .is_some()
+    }
+    fn has_theme_glass_tint(&self) -> bool {
+        self.widget_style
+            .as_ref()
+            .and_then(|v| v.pointer("/rain/glass/color"))
+            .is_some_and(Value::is_null)
+    }
+    fn has_glass_finish(&self) -> bool {
+        self.widget_style
+            .as_ref()
+            .and_then(|v| v.pointer("/rain/glass"))
+            .is_some_and(Value::is_object)
+    }
+    fn has_widget_glass(&self) -> bool {
+        self.widget_style.as_ref().is_some_and(|v| {
+            v.pointer("/rain/widget_glass").is_some()
+                || v.pointer("/rain/effect").and_then(Value::as_str) == Some("lens")
+        })
+    }
+    fn has_weather_layout(&self) -> bool {
+        self.widget_style
+            .as_ref()
+            .is_some_and(|v| v.get("weather").is_some())
+    }
     fn has_icon_style(&self) -> bool {
         self.appearance
             .as_ref()
@@ -1054,8 +1118,26 @@ impl Profile {
     }
     /// The version this record is written as.
     pub fn written_version(&self) -> u32 {
-        if self.has_icon_style() {
+        if !self.workspace_apps.is_empty() {
             return VERSION;
+        }
+        if self.has_finish_library() || self.has_folder_widget() {
+            return VERSION_27;
+        }
+        if self.has_theme_glass_tint() {
+            return VERSION_26;
+        }
+        if self.has_glass_finish() {
+            return VERSION_25;
+        }
+        if self.has_widget_glass() {
+            return VERSION_24;
+        }
+        if self.has_weather_layout() {
+            return VERSION_23;
+        }
+        if self.has_icon_style() {
+            return VERSION_22;
         }
         if self.description.is_some() {
             return VERSION_21;
@@ -1331,7 +1413,40 @@ impl Profile {
                 ));
             }
         }
-        if self.has_icon_style() && self.version < VERSION {
+        if !self.workspace_apps.is_empty()
+            && (self.version < VERSION || !valid_workspace_apps(&self.workspace_apps))
+        {
+            return Err(ProfileError::Invalid("Workspace apps need look format version 28 and up to 12 distinct desktop-entry IDs.".into()));
+        }
+        if self.has_folder_widget() && self.version < VERSION_27 {
+            return Err(ProfileError::Invalid(
+                "The Folder widget needs look format version 27.".into(),
+            ));
+        }
+        if self.has_finish_library() && self.version < 27 {
+            return Err(ProfileError::Invalid(
+                "Linked glass finishes need look format version 27".into(),
+            ));
+        }
+        if self.has_theme_glass_tint() && self.version < VERSION_26 {
+            return Err(ProfileError::Invalid(
+                "Theme-linked widget glass tint needs look format version 26".into(),
+            ));
+        }
+        if self.has_glass_finish() && self.version < VERSION_25 {
+            return Err(ProfileError::Invalid(
+                "Editable widget glass needs look format version 25".into(),
+            ));
+        }
+        if self.has_widget_glass() && self.version < VERSION_24 {
+            return Err(ProfileError::Invalid(
+                "Rain on widget glass needs look format version 24".into(),
+            ));
+        }
+        if self.has_weather_layout() && self.version < VERSION_23 {
+            return Err(ProfileError::Invalid("Weather layout needs look format version 23".into()));
+        }
+        if self.has_icon_style() && self.version < VERSION_22 {
             return Err(ProfileError::Invalid(
                 "An app icon shape or folder tint needs look format version 22".into(),
             ));
@@ -1541,7 +1656,9 @@ pub fn import_local(bytes: &[u8]) -> Result<Profile, ProfileError> {
     };
     // The version a section first appears in.
     let since = |key: &str| {
-        if key == "description" {
+        if key == "workspace_apps" {
+            Some(VERSION)
+        } else if key == "description" {
             Some(VERSION_21)
         } else if key == "package" {
             Some(VERSION_14)

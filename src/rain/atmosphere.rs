@@ -8,6 +8,7 @@ pub enum Effect {
     Snow,
     Fog,
     Clouds,
+    Lens,
 }
 impl Effect {
     pub fn is_default(&self) -> bool {
@@ -19,6 +20,7 @@ impl Effect {
             Self::Snow => "Snow",
             Self::Fog => "Fog",
             Self::Clouds => "Cloud shadows",
+            Self::Lens => "Liquid lens",
         }
     }
 }

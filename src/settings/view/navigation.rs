@@ -288,7 +288,18 @@ impl Settings {
             if !self.search_query.is_empty() {
                 search = search.on_clear(Message::SearchSettings(String::new()));
             }
-            rows.push(search.into());
+            rows.push(
+                row::with_children(vec![
+                    search.into(),
+                    button::text("Close search")
+                        .id("close-settings-search".into())
+                        .on_press(Message::Back)
+                        .into(),
+                ])
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .into(),
+            );
         }
         if matches.is_empty() && !self.search_query.trim().is_empty() {
             rows.push(label(

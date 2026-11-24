@@ -116,8 +116,8 @@ exactly as it was saved: unlike choosing a style, it doesn't keep the
 desktop's own color or bar changes.
 
 1. Make the theme on Appearance: choose a style, a color, the mode and the
-   dock and panel you want, and save it as a theme (**Save style…** under
-   **Your themes**). Saved themes are files in
+   dock and panel you want, and save it as a theme (**Save current style…** under
+   **Your saved styles**). Saved themes are files in
    `$XDG_DATA_HOME/halcyon/profiles/`.
 2. Copy it to `resources/themes/<id>.json`. The file name is the theme's
    stable ID (lowercase letters, digits and single hyphens); the app knows

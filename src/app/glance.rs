@@ -588,7 +588,8 @@ impl Cards {
         let mut rows = Vec::new();
         match (&self.config.location, &self.weather) {
             (_, Some(weather)) => {
-                let forecast = forecast_index(&weather.daily, Local::now().date_naive());
+                let today = weather::forecast_day(Local::now(), weather.timezone.as_deref(), &self.config);
+                let forecast = forecast_index(&weather.daily, today);
                 let temperature_size = if block {
                     28.
                 } else if compact {
@@ -1070,6 +1071,7 @@ impl Cards {
             .into()
     }
     pub(super) fn glance(&self) -> Element<'_, Message> {
+        let _card = crate::widget_style::for_card(crate::drawer::Widget::Glance);
         let _style = crate::widget_style::scope(&self.config);
         let _fonts = crate::widget_style::fonts(
             self.config.glance.font.as_deref(),
@@ -1327,7 +1329,7 @@ pub(super) fn overview_clock(
         .height(height);
     let body: Element<'static, Message> = if panel {
         let background = palette.background;
-        let radius = f32::from(config.appearance.corner_radius);
+        let radius = crate::widget_style::corner_radius(config);
         body.class(cosmic::theme::Container::custom(move |_| {
             cosmic::iced::widget::container::Style {
                 background: Some(background.into()),

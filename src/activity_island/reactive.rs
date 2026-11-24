@@ -1037,13 +1037,19 @@ impl Applet {
                 self.forget_note(id);
                 self.arm_expiry();
                 if shown {
-                    match self
-                        .eligible_kinds()
-                        .into_iter()
-                        .find(|k| matches!(k, Kind::Notification(_)))
-                    {
-                        Some(next) => self.kind = next,
-                        None => return self.update(Message::Close),
+                    if self.chooser || self.shelf_shown() {
+                        // The notification behind the open view has ended.
+                        self.kind = self.automatic_kind();
+                    } else {
+                        match self
+                            .eligible_kinds()
+                            .into_iter()
+                            .find(|k| matches!(k, Kind::Notification(_)))
+                        {
+                            Some(next) => self.kind = next,
+                            None if self.list && self.recent_open && self.has_recent() => {}
+                            None => return self.update(Message::Close),
+                        }
                     }
                 }
                 Task::none()

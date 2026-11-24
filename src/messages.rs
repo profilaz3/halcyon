@@ -79,6 +79,10 @@ pub enum State {
     Asking {
         phone: String,
     },
+    Stale {
+        phone: String,
+        threads: Vec<Thread>,
+    },
     Ready {
         phone: String,
         threads: Vec<Thread>,
@@ -91,13 +95,16 @@ impl State {
             Self::Away { phone, .. }
             | Self::NoSms { phone }
             | Self::Asking { phone }
+            | Self::Stale { phone, .. }
             | Self::Ready { phone, .. } => Some(phone),
             _ => None,
         }
     }
     pub fn threads(&self) -> &[Thread] {
         match self {
-            Self::Away { threads, .. } | Self::Ready { threads, .. } => threads,
+            Self::Away { threads, .. }
+            | Self::Stale { threads, .. }
+            | Self::Ready { threads, .. } => threads,
             _ => &[],
         }
     }
@@ -459,12 +466,12 @@ async fn read_phones(c: &Connection) -> Option<Vec<Phone>> {
     Some(phones)
 }
 
-async fn read_messages(c: &Connection, id: &str) -> Vec<Message> {
+async fn read_messages(c: &Connection, id: &str) -> Option<Vec<Message>> {
     let path = format!("{DAEMON}/devices/{id}");
-    let list: Vec<OwnedValue> = call(c, SERVICE, &path, CONVERSATIONS, "activeConversations", &())
-        .await
-        .unwrap_or_default();
-    list.iter().filter_map(|value| message(value)).collect()
+    let list: Vec<OwnedValue> =
+        call(c, SERVICE, &path, CONVERSATIONS, "activeConversations", &()).await?;
+    let messages: Vec<_> = list.iter().filter_map(|value| message(value)).collect();
+    (list.is_empty() || !messages.is_empty()).then_some(messages)
 }
 
 async fn ask(c: &Connection, id: &str) {
@@ -608,11 +615,16 @@ impl Follower {
             .asked
             .as_ref()
             .is_some_and(|(_, at)| now.duration_since(*at) < ANSWER);
+        let Some(messages) = messages else {
+            return State::Stale {
+                threads: self.kept.get(&phone.id).cloned().unwrap_or_default(),
+                phone: phone.name,
+            };
+        };
         if messages.is_empty() && waiting && !self.kept.contains_key(&phone.id) {
             return State::Asking { phone: phone.name };
         }
-        let contacts = self.contacts(&phone.id).clone();
-        let list = threads(messages, &contacts);
+        let list = threads(messages, self.contacts(&phone.id));
         if list.is_empty() {
             // Keep what was shown rather than blank the card while the
             // phone reconnects and the daemon's cache refills.
@@ -622,9 +634,8 @@ impl Follower {
                     threads: kept.clone(),
                 };
             }
-        } else {
-            self.kept.insert(phone.id.clone(), list.clone());
         }
+        self.kept.insert(phone.id.clone(), list.clone());
         State::Ready {
             phone: phone.name,
             threads: list,

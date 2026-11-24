@@ -574,7 +574,10 @@ fn make_built_in_keeps_the_icon_shape_and_tint() {
     assert!(text.contains("\"icon_shape\": \"circle\""), "{text}");
     assert!(!text.contains("Halcyon-Shaped"));
     let shipped = profiles::parse_built_in("shaped-harbor", &text).unwrap();
-    assert_eq!(shipped.version, profiles::VERSION);
+    assert_eq!(
+        shipped.version, 22,
+        "an icon-only change stays portable to version 22"
+    );
     let look = shipped.appearance.as_ref().unwrap();
     assert_eq!(look.icon_theme.as_deref(), Some("Cosmic"));
     assert_eq!(look.icon_shape, Some(Shape::Circle));

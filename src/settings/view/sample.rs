@@ -13,6 +13,19 @@ pub(super) fn fit<'a>(child: Element<'a, Message>, height: f32) -> Element<'a, M
     })
 }
 
+/// Fit a preview rendered at the desktop widget's logical dimensions.
+pub(super) fn fit_sized<'a>(
+    child: Element<'a, Message>,
+    source: [f32; 2],
+    height: f32,
+) -> Element<'a, Message> {
+    Element::new(Sample {
+        child,
+        height,
+        source: Some(Size::new(source[0], source[1])),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -26,12 +26,12 @@ pub fn dark_glass<'a, Message: 'a>(
     Element::new(Sheen {
         content,
         animate: false,
-        // Three nested translucent fills feather the edge of the reading area.
-        backing: (backing > 0.).then(|| (radius, 1. - (1. - backing).cbrt())),
+        backing: (backing > 0.).then_some((radius, backing)),
         album: None,
         glass: Some(
             cosmic::iced::widget::shader(super::dark_glass::Program {
                 accent,
+                backing,
                 radius,
                 animate,
             })
@@ -78,6 +78,7 @@ impl Operation for FindArtwork<'_> {
 #[derive(Default)]
 struct State {
     hover: bool,
+    software_mask: std::cell::RefCell<Option<([f32; 3], cosmic::iced::advanced::svg::Handle)>>,
     start: Option<std::time::Instant>,
 }
 impl State {
@@ -230,36 +231,41 @@ impl<Message> Widget<Message, Theme, Renderer> for Sheen<'_, Message> {
                 viewport,
             );
         }
-        if let Some((radius, alpha)) = self.backing {
-            use cosmic::iced::advanced::Renderer as _;
-            let outer = layout.bounds();
-            for inset in [3., 6., 9.] {
-                if outer.width <= inset * 2. || outer.height <= inset * 2. { break; }
-                renderer.fill_quad(
-                    renderer::Quad {
-                        bounds: Rectangle {
-                            x: outer.x + inset, y: outer.y + inset,
-                            width: outer.width - 2. * inset, height: outer.height - 2. * inset,
-                        },
-                        border: cosmic::iced::Border {
-                            radius: (radius - inset).max(0.).into(),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    },
-                    cosmic::iced::Color::from_rgba(0., 0., 0., alpha),
-                );
+        if let Some((radius, alpha)) = self.backing
+            && matches!(renderer, Renderer::Secondary(_))
+        {
+            use cosmic::iced::advanced::svg::{Handle, Renderer as _, Svg};
+            let bounds = layout.bounds();
+            if let Some(clip) = bounds.intersection(viewport) {
+                let (w, h) = (bounds.width, bounds.height);
+                let shape = [w, h, radius];
+                let mut mask = tree.state.downcast_ref::<State>().software_mask.borrow_mut();
+                if mask.as_ref().is_none_or(|(key, _)| *key != shape) {
+                    let inset = 6_f32.min(0.25 * w.min(h));
+                    let (iw, ih, r) = (w - 2. * inset, h - 2. * inset, (radius - inset).max(0.));
+                    let svg = format!(r##"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}"><defs><filter id="f" filterUnits="userSpaceOnUse" x="0" y="0" width="{w}" height="{h}"><feGaussianBlur stdDeviation="3"/></filter><clipPath id="c"><rect width="{w}" height="{h}" rx="{radius}"/></clipPath></defs><g clip-path="url(#c)"><rect x="{inset}" y="{inset}" width="{iw}" height="{ih}" rx="{r}" filter="url(#f)"/></g></svg>"##);
+                    *mask = Some((shape, Handle::from_memory(svg.into_bytes())));
+                }
+                if let Some((_, handle)) = mask.as_ref() {
+                    let mut svg = Svg::new(handle.clone());
+                    svg.opacity = alpha;
+                    renderer.draw_svg(svg, bounds, clip);
+                }
             }
         }
-        self.content.as_widget().draw(
-            &tree.children[0],
-            renderer,
-            theme,
-            style,
-            layout,
-            cursor,
-            viewport,
-        );
+        let draw_content = |renderer: &mut Renderer| {
+            self.content.as_widget().draw(
+                &tree.children[0], renderer, theme, style, layout, cursor, viewport,
+            );
+        };
+        if self.backing.is_some() {
+            // Keep the backing below every foreground quad, image and text run.
+            // The native renderer batches each primitive type within a layer.
+            use cosmic::iced::advanced::Renderer as _;
+            renderer.with_layer(*viewport, draw_content);
+        } else {
+            draw_content(renderer);
+        }
         let strength = if self.animate {
             tree.state.downcast_ref::<State>().strength()
         } else {

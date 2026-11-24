@@ -28,6 +28,15 @@ Release packages include the full license text of every dependency
 
 Artwork is described in `ASSETS.md`.
 
+The calendar reader's Windows time zone table in `src/calendar/windows_zones.rs`
+uses the worldwide defaults (`territory="001"`) from Unicode CLDR 49. The
+Windows identifiers are folded to lowercase and the IANA names are compiled as
+`chrono-tz` zones. The mapping data is copyright © 1991-2013, 2001-2026
+Unicode, Inc., licensed under Unicode-3.0. The full Unicode License v3
+permission notice is included in `packaging/licenses/THIRD_PARTY_LICENSES.txt`.
+[Source mapping](https://github.com/unicode-org/cldr/blob/96e54b273d2da4ec6fbad350ba19ff23fa24a588/common/supplemental/windowsZones.xml)
+· [Unicode license](https://github.com/unicode-org/cldr/blob/96e54b273d2da4ec6fbad350ba19ff23fa24a588/LICENSE)
+
 The clock's scene model runs with [tract](https://github.com/sonos/tract)
 (`tract-onnx` 0.23.10, MIT OR Apache-2.0) and its dependencies, all under
 licenses in the table above. The model itself, Depth Anything V2 Small
@@ -43,6 +52,11 @@ adapts the renderer and configuration schema from
 System76's COSMIC Panel. The native patch retains its SPDX license notice;
 the full GPL version 3 text is in `LICENSE`. Halcyon's Penumbra controls retain
 the original preference format for interoperability.
+
+The optional magnifying dock applet builds System76's COSMIC App List at
+revision `779f920c34d7a309acc12d9bba5bc0c53b0abc53` with Halcyon's icon
+magnification patch. The applet is licensed under GPL-3.0-only. The build
+recipe and modifications are in `companion/magnifying-dock/`. [Upstream source and license](https://github.com/pop-os/cosmic-applets/tree/779f920c34d7a309acc12d9bba5bc0c53b0abc53).
 
 The rain-on-glass wallpaper effect's water lens outline and lighting
 (`lens_shape` and `lens_light` in `src/rain/glass.wgsl`) are adapted from the

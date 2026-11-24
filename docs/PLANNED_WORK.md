@@ -1,5 +1,9 @@
 # Planned work
 
+## Desktop customization research — 2026-11-19
+
+The [desktop customization tracker](DESKTOP-CUSTOMIZATION-PLAN.md) covers reusable glass finishes, a custom Widget Peek button, the Folder widget, dock magnification and workspace launch. Each feature has research, a first prototype and resource and visual acceptance checks.
+
 ## Next work — accepted 2026-11-01
 
 The [next-work plan](future-builder/NEXT-WORK.md) adds six planned features after

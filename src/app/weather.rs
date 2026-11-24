@@ -14,7 +14,10 @@ pub(super) struct Snapshot<'a> {
 struct Forecast {
     title: String,
     icon: &'static str,
-    temperatures: String,
+    low: String,
+    high: String,
+    range: Option<(f64, f64)>,
+    condition: Option<&'static str>,
     /// `None` without a reading: the line is left out, not filled in.
     rain: Option<String>,
 }
@@ -37,6 +40,7 @@ enum Content {
 #[derive(Clone)]
 pub(super) struct Presentation {
     recipe_config: Option<Config>,
+    outlook: Option<outlook::Outlook>,
     now: chrono::NaiveDateTime,
     title: String,
     content: Content,
@@ -46,16 +50,40 @@ pub(super) struct Presentation {
     style: crate::widget_style::Context,
 }
 
+pub(super) fn forecast_day(
+    now: chrono::DateTime<Local>,
+    provider: Option<&str>,
+    config: &Config,
+) -> NaiveDate {
+    provider
+        .into_iter()
+        .chain(
+            config
+                .location
+                .as_ref()
+                .and_then(|loc| loc.timezone.as_deref()),
+        )
+        .find_map(|name| name.parse::<chrono_tz::Tz>().ok())
+        .map_or_else(
+            || now.date_naive(),
+            |zone| now.with_timezone(&zone).date_naive(),
+        )
+}
+
 impl Presentation {
     pub fn new(config: &Config, snapshot: Snapshot<'_>, now: chrono::DateTime<Local>) -> Self {
         let _scope = crate::widget_style::scope(config);
         let resolved = crate::widget_style::presentation(config, config.palette(), false);
         let palette = resolved.palette();
+        let today = forecast_day(
+            now,
+            snapshot.weather.and_then(|w| w.timezone.as_deref()),
+            config,
+        );
         let content = match snapshot.weather {
             Some(w) => {
-                let today = now.date_naive();
                 let forecast = weather_forecast_days(&w.daily, today)
-                    .take(3)
+                    .take(4)
                     .map(|(i, day)| Forecast {
                         title: if day == today {
                             "Today".into()
@@ -65,17 +93,20 @@ impl Presentation {
                             day.format("%a %-d").to_string()
                         },
                         icon: data::weather_icon(*w.daily.weather_code.get(i).unwrap_or(&3), true),
-                        temperatures: format!(
-                            "{} / {}",
-                            forecast_temperature_in(
-                                config.weather,
-                                w.daily.temperature_2m_max.get(i)
-                            ),
-                            forecast_temperature_in(
-                                config.weather,
-                                w.daily.temperature_2m_min.get(i)
-                            )
+                        condition: w
+                            .daily
+                            .weather_code
+                            .get(i)
+                            .map(|code| data::weather_description(*code)),
+                        low: forecast_temperature_in(
+                            config.weather,
+                            w.daily.temperature_2m_min.get(i),
                         ),
+                        high: forecast_temperature_in(
+                            config.weather,
+                            w.daily.temperature_2m_max.get(i),
+                        ),
+                        range: outlook::limits(w, i),
                         rain: w
                             .daily
                             .precipitation_probability_max
@@ -117,7 +148,16 @@ impl Presentation {
             None => Content::Loading,
         };
         Self {
-            recipe_config: config.recipes.weather.as_ref().map(|_| config.clone()),
+            recipe_config: config
+                .recipes
+                .weather
+                .as_ref()
+                .filter(|_| config.weather.layout == crate::config::WeatherLayout::Saved)
+                .map(|_| config.clone()),
+            outlook: snapshot
+                .weather
+                .filter(|_| config.weather.layout == crate::config::WeatherLayout::Outlook)
+                .map(|w| outlook::Outlook::new(config, w, today)),
             now: now.naive_local(),
             title: config
                 .location
@@ -174,7 +214,7 @@ impl Presentation {
                         forecast
                             .iter()
                             .take(2)
-                            .map(|d| format!("{} {}", d.title, d.temperatures))
+                            .map(|d| format!("{} {} / {}", d.title, d.high, d.low))
                             .collect::<Vec<_>>()
                             .join(" · ")
                     };
@@ -204,18 +244,40 @@ impl Presentation {
         }
         let p = self.palette;
         let size = crate::widget_presentation::viewport(size, self.metrics().natural);
-        let title = self.label(self.title.clone(), crate::widget_style::TITLE, p.foreground);
-        let mut rows = vec![match &self.content {
+        if let (
+            Some(outlook),
             Content::Reading {
-                status: Some(status),
+                temperature,
+                description,
+                status,
                 ..
-            } => spread(
-                title,
-                container(self.label(status.clone(), 11., p.muted))
-                    .id(cosmic::widget::Id::new("weather-status"))
-                    .into(),
+            },
+        ) = (&self.outlook, &self.content)
+        {
+            return outlook.view(self, size, temperature, description, status.as_deref());
+        }
+        let title = super::widget_details::summary_line(
+            self.title.clone(),
+            crate::widget_style::TITLE,
+            crate::widget_style::semantic(p.foreground),
+        );
+        let (wide, mut warning) = match &self.content {
+            Content::Reading {
+                forecast, status, ..
+            } => (
+                size[0] >= 510. && !forecast.is_empty(),
+                status.as_ref().map(|status| {
+                    container(self.label(status.clone(), 11., p.muted))
+                        .id(cosmic::widget::Id::new("weather-status"))
+                        .into()
+                }),
             ),
-            _ => title,
+            _ => (false, None),
+        };
+        let mut rows = vec![if !wide && let Some(status) = warning.take() {
+            spread(title, status)
+        } else {
+            title
         }];
         match &self.content {
             Content::Reading {
@@ -227,30 +289,60 @@ impl Presentation {
                 forecast,
                 ..
             } => {
+                let padded_height = size[1] - 2. * f32::from(crate::widget_style::PADDING);
+                // A fourth day is already in the provider response. Reveal it only
+                // when there is room for another full forecast row.
+                let count = if (wide && size[1] >= 224.) || size[1] >= 320. {
+                    4
+                } else {
+                    3
+                };
+                let forecast = &forecast[..forecast.len().min(count)];
+                let conditions = column::with_children(vec![
+                    self.label(*description, 14., p.foreground),
+                    self.label(summary.clone(), crate::widget_style::SECONDARY, p.muted),
+                    container(self.label(details.clone(), crate::widget_style::SECONDARY, p.muted))
+                        .id(cosmic::widget::Id::new("weather-details"))
+                        .into(),
+                ])
+                .spacing(2);
+                let reading = row::with_children(vec![
+                    self.label(*icon, if wide { 40. } else { 32. }, p.accent),
+                    self.label(
+                        temperature.clone(),
+                        if wide { 52. } else { 44. },
+                        p.foreground,
+                    ),
+                ])
+                .spacing(8)
+                .align_y(Alignment::Center);
+
+                if wide {
+                    rows.push(reading.into());
+                    rows.push(conditions.into());
+                    let current = column::with_children(rows)
+                        .spacing(3)
+                        .width(Length::FillPortion(2));
+                    let forecast = container(self.forecast_list(forecast, padded_height, warning))
+                        .width(Length::FillPortion(3));
+                    let body =
+                        row::with_children(vec![current.into(), forecast.into()]).spacing(18);
+                    return card_frame_width(
+                        container(body)
+                            .height(Length::Fill)
+                            .align_y(Alignment::Center)
+                            .into(),
+                        p,
+                        self.appearance,
+                        Length::Fixed(size[1]),
+                        Length::Fixed(size[0]),
+                    );
+                }
+
                 rows.push(
                     row::with_children(vec![
-                        self.label(*icon, 32., p.accent),
-                        self.label(temperature.clone(), 44., p.foreground),
-                        container(
-                            column::with_children(vec![
-                                self.label(*description, 12., p.foreground),
-                                self.label(
-                                    summary.clone(),
-                                    crate::widget_style::SECONDARY,
-                                    p.muted,
-                                ),
-                                container(self.label(
-                                    details.clone(),
-                                    crate::widget_style::SECONDARY,
-                                    p.muted,
-                                ))
-                                .id(cosmic::widget::Id::new("weather-details"))
-                                .into(),
-                            ])
-                            .spacing(2),
-                        )
-                        .width(Length::Fill)
-                        .into(),
+                        reading.into(),
+                        container(conditions).width(Length::Fill).into(),
                     ])
                     .spacing(10)
                     .align_y(Alignment::Center)
@@ -262,54 +354,72 @@ impl Presentation {
                         crate::widget_style::SECONDARY,
                         p.muted,
                     ));
-                } else {
-                    rows.push(
-                        row::with_children(
-                            forecast
-                                .iter()
-                                .map(|day| {
-                                    container(
-                                        column::with_children(
-                                            [
-                                                // The icon sits beside its own day,
-                                                // not at the column's far edge.
-                                                Some(
-                                                    row::with_children(vec![
-                                                        self.label(day.icon, 16., p.accent),
-                                                        self.label(
-                                                            day.title.clone(),
-                                                            crate::widget_style::SECONDARY,
-                                                            p.muted,
-                                                        ),
-                                                    ])
-                                                    .spacing(6)
-                                                    .align_y(Alignment::Center)
-                                                    .into(),
-                                                ),
-                                                Some(self.label(
-                                                    day.temperatures.clone(),
-                                                    13.,
-                                                    p.foreground,
-                                                )),
-                                                // 11px, not 12: a 12px line would
-                                                // overflow the 180px card by a pixel.
-                                                day.rain
-                                                    .clone()
-                                                    .map(|rain| self.label(rain, 11., p.muted)),
-                                            ]
-                                            .into_iter()
-                                            .flatten(),
-                                        )
-                                        .spacing(2),
-                                    )
-                                    .width(Length::Fill)
-                                    .into()
-                                })
-                                .collect::<Vec<_>>(),
-                        )
-                        .spacing(12)
-                        .into(),
+                } else if size[1] >= 260. {
+                    rows.push(self.forecast_list(forecast, padded_height - 99., None));
+                    let body = column::with_children(rows).spacing(12).width(Length::Fill);
+                    return card_frame_width(
+                        container(body)
+                            .height(Length::Fill)
+                            .align_y(Alignment::Center)
+                            .into(),
+                        p,
+                        self.appearance,
+                        Length::Fixed(size[1]),
+                        Length::Fixed(size[0]),
                     );
+                } else {
+                    let roomy = size[1] >= 205.;
+                    if roomy {
+                        rows.push(self.label("Forecast", crate::widget_style::TITLE, p.foreground));
+                    }
+                    let days = forecast
+                        .iter()
+                        .map(|day| {
+                            let mut lines = vec![
+                                row::with_children(vec![
+                                    self.label(day.icon, 16., p.accent),
+                                    self.label(
+                                        day.title.clone(),
+                                        crate::widget_style::SECONDARY,
+                                        p.muted,
+                                    ),
+                                ])
+                                .spacing(6)
+                                .align_y(Alignment::Center)
+                                .into(),
+                                self.label(
+                                    format!("{} / {}", day.high, day.low),
+                                    13.,
+                                    p.foreground,
+                                ),
+                            ];
+                            if size[1] >= 226.
+                                && let Some(condition) = day.condition
+                            {
+                                lines.push(self.label(condition, 12., p.muted));
+                            }
+                            if let Some(rain) = &day.rain {
+                                lines.push(self.label(rain.clone(), 11., p.muted));
+                            }
+                            column::with_children(lines)
+                                .spacing(2)
+                                .width(Length::Fill)
+                                .into()
+                        })
+                        .collect::<Vec<_>>();
+                    rows.push(row::with_children(days).spacing(12).into());
+                    if roomy {
+                        return card_frame_width(
+                            container(column::with_children(rows).spacing(7))
+                                .height(Length::Fill)
+                                .align_y(Alignment::Center)
+                                .into(),
+                            p,
+                            self.appearance,
+                            Length::Fixed(size[1]),
+                            Length::Fixed(size[0]),
+                        );
+                    }
                 }
             }
             Content::ChooseLocation => {
@@ -344,7 +454,99 @@ impl Presentation {
             Length::Fixed(size[0]),
         )
     }
+    /// The bars share the coldest low and warmest high among the visible days.
+    fn forecast_list(
+        &self,
+        forecast: &[Forecast],
+        height: f32,
+        warning: Option<Element<'static, Message>>,
+    ) -> Element<'static, Message> {
+        let p = self.palette;
+        let limits = forecast
+            .iter()
+            .filter_map(|d| d.range)
+            .reduce(|(lo, hi), (next_lo, next_hi)| (lo.min(next_lo), hi.max(next_hi)));
+        // Reserve the same width for endpoint labels on every day, including
+        // mixed one-digit and below-zero readings, so the rails share an axis.
+        let endpoint_width = |label: &str| 8. * label.chars().count() as f32 + 4.;
+        let low_width = forecast
+            .iter()
+            .map(|day| endpoint_width(&day.low))
+            .fold(0., f32::max);
+        let high_width = forecast
+            .iter()
+            .map(|day| endpoint_width(&day.high))
+            .fold(0., f32::max);
+        let mut rows = vec![spread(
+            self.label("Forecast", crate::widget_style::TITLE, p.foreground),
+            warning.unwrap_or_else(|| self.label("Low – High", 12., p.muted)),
+        )];
+        for day in forecast {
+            let mut name =
+                column::with_children(vec![self.label(day.title.clone(), 15., p.foreground)]);
+            if let Some(condition) = day.condition {
+                name = name.push(self.label(condition, 12., p.muted));
+            }
+            let mut range = vec![
+                container(self.label(day.low.clone(), 14., p.foreground))
+                    .width(low_width)
+                    .align_x(Alignment::End)
+                    .into(),
+            ];
+            if let (Some((low, high)), Some((floor, ceiling))) = (day.range, limits)
+                && ceiling > floor
+            {
+                let position = |v| ((v - floor) / (ceiling - floor)) as f32;
+                range.push(outlook::rail(position(low), position(high), None, p));
+            } else {
+                range.push(
+                    container(cosmic::widget::Space::new())
+                        .width(Length::Fill)
+                        .align_x(Alignment::Center)
+                        .into(),
+                );
+            }
+            range.push(
+                container(self.label(day.high.clone(), 14., p.foreground))
+                    .width(high_width)
+                    .align_x(Alignment::End)
+                    .into(),
+            );
+            let mut values = column::with_children(vec![
+                row::with_children(range)
+                    .spacing(5)
+                    .align_y(Alignment::Center)
+                    .into(),
+            ])
+            .width(Length::FillPortion(1))
+            .align_x(Alignment::End);
+            if let Some(rain) = &day.rain {
+                values = values.push(self.label(rain.clone(), 12., p.muted));
+            }
+            rows.push(
+                row::with_children(vec![
+                    container(self.label(day.icon, 21., p.accent))
+                        .width(25)
+                        .into(),
+                    name.width(Length::FillPortion(1)).into(),
+                    values.into(),
+                ])
+                .spacing(7)
+                .align_y(Alignment::Center)
+                .into(),
+            );
+        }
+        let days = forecast.len() as f32;
+        // City and forecast headings align. Distribute surplus space between
+        // the days, with a cap to keep adjacent rows visually related.
+        let spacing = ((height - 23. - 35. * days) / days).clamp(2., 14.);
+        column::with_children(rows)
+            .spacing(spacing)
+            .width(Length::Fill)
+            .into()
+    }
 }
 
+mod outlook;
 #[cfg(test)]
 mod tests;

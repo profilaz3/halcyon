@@ -70,6 +70,33 @@ fn click(app: &mut Settings, native: &mut Native, id: &str) {
 }
 
 #[test]
+fn opening_setup_preserves_its_calling_page_and_section() {
+    if child("opening_setup_preserves_its_calling_page_and_section") {
+        return;
+    }
+    let (mut app, _) = Settings::init(Core::default(), Page::Home);
+    for page in [Page::Home, Page::General] {
+        let _ = app.update(Message::Page(page));
+        if page == Page::General {
+            let _ = app.update(Message::AppSettingsPage(AppSettingsPage::Operation));
+        }
+        let _ = app.update(Message::OpenWizard);
+        let _ = app.update(Message::Wizard(wizard::Message::Leave));
+        assert!(app.wizard.is_none());
+        assert_eq!(app.page, page);
+        if page == Page::General {
+            assert_eq!(app.app_settings_page, AppSettingsPage::Operation);
+        }
+    }
+    let _ = app.update(Message::OpenWizard);
+    let _ = app.update(Message::Wizard(wizard::Message::Start));
+    let _ = app.update(Message::Wizard(wizard::Message::KeepForLater));
+    assert!(app.wizard.is_none() && app.setup_kept);
+    assert_eq!(app.page, Page::General);
+    assert_eq!(app.app_settings_page, AppSettingsPage::Operation);
+}
+
+#[test]
 fn fresh_user_home_offers_setup_once_and_says_when_widgets_are_stopped() {
     if child("fresh_user_home_offers_setup_once_and_says_when_widgets_are_stopped") {
         return;
@@ -155,7 +182,7 @@ fn fresh_user_home_offers_setup_once_and_says_when_widgets_are_stopped() {
         // Skipping leaves setup unfinished, so Home still offers it.
         click(&mut app, &mut native, "wizard-leave");
         assert!(app.wizard.is_none());
-        assert_eq!(app.page, Page::Overview);
+        assert_eq!(app.page, Page::DesktopProfiles);
         assert!(!Config::load().onboarded);
         assert!(app.needs_setup());
         let _ = app.update(Message::Service(Ok(ServiceState {

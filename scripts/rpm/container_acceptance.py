@@ -264,6 +264,10 @@ def plan(args, engine):
         f'git -C {shlex.quote(str(ROOT))} archive --format=tar HEAD | tar -x -C {out}/source/main',
         f'python3 packaging/source_closure.py vendor --tree {out}/source/main '
         f'--into {out}/source/dependencies/main --offline-check',
+        f'python3 companion/magnifying-dock/build.py --prepare-source {out}/source/magnifying-dock '
+        f'--license-output {out}/source/main/packaging/licenses/MAGNIFYING_DOCK_LICENSES.txt',
+        f'python3 packaging/source_closure.py vendor --tree {out}/source/magnifying-dock '
+        f'--into {out}/source/dependencies/magnifying-dock --offline-check',
         '# Add the dependency license bundle (--licenses, or cargo-about as in CI)',
     ]
     for fedora in args.fedora:
@@ -296,6 +300,13 @@ def run(args):
     closure = load('halcyon_source_closure', ROOT/'packaging/source_closure.py')
     source = closure.vendor(main, out/'source/dependencies/main')
     source['offline_packages'] = closure.offline(main)
+    dock = out/'source/magnifying-dock'
+    if (main/'companion/magnifying-dock/build.py').is_file():
+        subprocess.run([sys.executable, str(main/'companion/magnifying-dock/build.py'),
+                        '--prepare-source', str(dock),
+                        '--license-output', str(main/'packaging/licenses/MAGNIFYING_DOCK_LICENSES.txt')], check=True)
+        source['magnifying_dock'] = closure.vendor(dock, out/'source/dependencies/magnifying-dock')
+        source['magnifying_dock']['offline_packages'] = closure.offline(dock)
     license_bundle = licenses(main, args.licenses)
     tools = out/'tools'
     tools.mkdir()
@@ -339,10 +350,13 @@ def run(args):
     return 0 if report['passed'] else 1
 
 
-def provenance_record(fedora, app, host, rust):
+def provenance_record(fedora, app, host, rust, dock=None):
     """The checksummed Fedora build record packaging/build-rpm.py requires."""
-    return dict(format='halcyon-fedora-build', version=1, fedora=fedora, architecture='x86_64',
-                app_sha256=sha256(app), host_sha256=sha256(host), rust=rust, locked=True, offline=True)
+    record = dict(format='halcyon-fedora-build', version=1, fedora=fedora, architecture='x86_64',
+                  app_sha256=sha256(app), host_sha256=sha256(host), rust=rust, locked=True, offline=True)
+    if dock:
+        record['dock_sha256'] = sha256(dock)
+    return record
 
 
 def snapshot(root):
@@ -376,6 +390,7 @@ def main(argv=None):
     for name in ('app', 'host', 'out'):
         record.add_argument('--' + name, type=Path, required=True)
     record.add_argument('--rust', default=RUST)
+    record.add_argument('--dock', type=Path)
     state = commands.add_parser('snapshot', help=argparse.SUPPRESS)
     state.add_argument('--root', type=Path, default=Path('/'))
     args = parser.parse_args(argv)
@@ -383,7 +398,7 @@ def main(argv=None):
         if args.command == 'run':
             return run(args)
         if args.command == 'provenance':
-            record = provenance_record(args.fedora, args.app, args.host, args.rust)
+            record = provenance_record(args.fedora, args.app, args.host, args.rust, args.dock)
             args.out.write_text(json.dumps(record, indent=2, sort_keys=True) + '\n')
         else:
             print(json.dumps(snapshot(args.root), sort_keys=True))

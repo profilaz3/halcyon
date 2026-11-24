@@ -528,6 +528,8 @@ pub struct Regions {
     pub end: Vec<String>,
 }
 
+pub const STOCK_APP_LIST: &str = "com.system76.CosmicAppList";
+pub const MAGNIFYING_APP_LIST: &str = "io.github.profilaz3.Halcyon.MagnifyingDock";
 impl Regions {
     pub fn list(&self, region: Region) -> &[String] {
         match region {

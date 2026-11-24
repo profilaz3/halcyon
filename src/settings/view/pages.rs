@@ -86,6 +86,7 @@ fn widget_page(widget: Widget) -> Page {
         Widget::Focus => Page::Focus,
         Widget::Devices => Page::Devices,
         Widget::Messages => Page::Messages,
+        Widget::Folder => Page::Folder,
         Widget::Markets => Page::Markets,
     }
 }
@@ -109,6 +110,7 @@ impl Settings {
             Widget::Focus => "A timer for focused work and breaks.",
             Widget::Devices => "The battery of your headphones, mouse and phone.",
             Widget::Messages => "Your phone’s newest text messages, through KDE Connect.",
+            Widget::Folder => "Recent files from a folder you choose.",
             Widget::Markets => "Stocks and currency pairs with daily charts.",
             Widget::Projects => "For people who write code: what changed in each project.",
             Widget::Devbox => "How busy your computer is.",
@@ -537,6 +539,7 @@ impl Settings {
             .into(),
         ));
         let controls = vec![
+            self.weather_layout_controls(),
             self.search_target("weather-location", group(Some("Location"), location_controls)),
             self.page_settings_advanced(
                 Page::Weather,
@@ -563,8 +566,16 @@ impl Settings {
         // The desktop's latest reading for the city, when there is one;
         // otherwise made-up conditions, which say so and how to see yours.
         let mut controls = controls;
+        let size = self
+            .config
+            .widget_sizes
+            .get("weather")
+            .copied()
+            .unwrap_or(crate::widget_presentation::WEATHER_SIZE);
         let preview = match &self.weather_reading.snapshot {
-            Some(reading) => crate::app::settings_weather_reading(&self.config, reading),
+            Some(reading) => {
+                crate::app::settings_weather_reading_sized(&self.config, reading, size)
+            }
             None => {
                 controls.insert(
                     0,
@@ -577,11 +588,116 @@ impl Settings {
                         }),
                     ),
                 );
-                crate::app::settings_weather_preview(&self.config)
+                crate::app::settings_weather_preview_sized(&self.config, size)
             }
         };
-        let preview = Some(super::sample::fit(preview.map(|_| Message::Preview), 220.));
+        let preview = Some(super::sample::fit_sized(
+            preview.map(|_| Message::Preview),
+            size,
+            220.,
+        ));
         self.widget_template(Widget::Weather, "Weather", preview, controls)
+    }
+
+    fn weather_layout_controls(&self) -> Element<'_, Message> {
+        use crate::config::WeatherLayout;
+        let prefs = self.config.weather;
+        let custom = self.config.recipes.weather.as_ref();
+        let classic = prefs.layout == WeatherLayout::Classic
+            || (prefs.layout == WeatherLayout::Saved && custom.is_none());
+        let mut choices = vec![
+            (
+                "Classic".into(),
+                classic,
+                Some(Message::WeatherLayout(WeatherLayout::Classic)),
+            ),
+            (
+                "Outlook".into(),
+                prefs.layout == WeatherLayout::Outlook,
+                Some(Message::WeatherLayout(WeatherLayout::Outlook)),
+            ),
+        ];
+        if custom.is_some() {
+            choices.push((
+                "My design".into(),
+                prefs.layout == WeatherLayout::Saved,
+                Some(Message::WeatherLayout(WeatherLayout::Saved)),
+            ));
+        }
+        let compare = self.open_sections.contains("weather-compare");
+        let description = if classic {
+            "Current conditions, humidity, wind and the daily forecast.".to_owned()
+        } else if prefs.layout == WeatherLayout::Outlook {
+            "Current conditions and today’s range, with a forecast on larger widgets.".to_owned()
+        } else {
+            custom.map(|recipe| recipe.name.clone()).unwrap_or_default()
+        };
+        let mut items = vec![
+            segmented(choices, self.settings_accent()),
+            label(description, 12., MUTED),
+            button::text(if compare {
+                "Hide comparison"
+            } else {
+                "Compare layouts"
+            })
+            .id("weather-compare".into())
+            .on_press(Message::ToggleSection("weather-compare"))
+            .into(),
+        ];
+        if compare {
+            let size = [540., 180.];
+            let mut examples = Vec::new();
+            for (name, layout) in [
+                ("Classic", WeatherLayout::Classic),
+                ("Outlook", WeatherLayout::Outlook),
+            ] {
+                let mut config = self.config.clone();
+                config.weather.layout = layout;
+                let card = match &self.weather_reading.snapshot {
+                    Some(reading) => {
+                        crate::app::settings_weather_reading_sized(&config, reading, size)
+                    }
+                    None => crate::app::settings_weather_preview_sized(&config, size),
+                };
+                examples.push(
+                    column::with_children(vec![
+                        label(name, 14., FG),
+                        super::sample::fit_sized(card.map(|_| Message::Preview), size, 180.),
+                    ])
+                    .spacing(4)
+                    .width(Length::Fill)
+                    .into(),
+                );
+            }
+            items.push(column::with_children(examples).spacing(12).into());
+        }
+        if prefs.layout == WeatherLayout::Outlook {
+            for (name, part, on) in [
+                (
+                    "Condition artwork",
+                    WeatherOutlookPart::Artwork,
+                    prefs.outlook_artwork,
+                ),
+                (
+                    "Daily temperature range",
+                    WeatherOutlookPart::Range,
+                    prefs.outlook_range,
+                ),
+                (
+                    "Forecast when space allows",
+                    WeatherOutlookPart::Forecast,
+                    prefs.outlook_forecast,
+                ),
+            ] {
+                items.push(split(
+                    label(name, 14., FG),
+                    container(toggler(on).on_toggle(move |v| Message::WeatherOutlookPart(part, v)))
+                        .id(cosmic::widget::Id::new(format!("weather-{}", part.key())))
+                        .into(),
+                ));
+            }
+        }
+        self.search_target("weather-layout", group(Some("Widget layout"), items))
     }
 
     pub(super) fn projects_page(&self) -> Element<'_, Message> {

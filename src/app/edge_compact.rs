@@ -219,7 +219,7 @@ impl Cards {
     pub(super) fn item_label(&self, index: usize, item: &Item) -> (String, Option<String>) {
         let title = item_title(item);
         if !self.edge_available(index) {
-            return (title, Some("Unavailable".into()));
+            return (title, Some(self.unavailable_label(index, item).into()));
         }
         if self.item_held(item) {
             return (title, Some("Hidden".into()));
