@@ -1,4 +1,5 @@
 // Halcyon public dashboard. Plain JS and SVG; reads /api/summary.json only.
+import {journalDays, releaseReplay, snapshotState} from './journal.js';
 (() => {
 'use strict';
 const $ = id => document.getElementById(id);
@@ -7,6 +8,7 @@ const DAY = 864e5;
 const parseDay = s => new Date(s + 'T00:00:00Z');
 const fmtDay = s => parseDay(s).toLocaleDateString('en-GB', {day: 'numeric', month: 'short', timeZone: 'UTC'});
 const fmt = n => n >= 10000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K' : Math.round(n).toLocaleString('en-US');
+const count = new Intl.NumberFormat('en-US').format;
 const pct = v => (v * 100).toFixed(v > 0 && v < .1 ? 1 : 0) + '%';
 const css = name => getComputedStyle(document.documentElement).getPropertyValue('--' + name).trim();
 const el = (tag, attrs = {}, parent) => {
@@ -16,6 +18,11 @@ const el = (tag, attrs = {}, parent) => {
   return e;
 };
 const txt = (parent, x, y, s, attrs = {}) => { const t = el('text', {x, y, ...attrs}, parent); t.textContent = s; return t; };
+// A zero-length segment with a round cap keeps an isolated observation visible.
+const linePoint = (x, y, start) => {
+  const point = x.toFixed(1) + ',' + y.toFixed(1);
+  return start ? 'M' + point + 'l0,0' : 'L' + point;
+};
 const html = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
 // Axis maximum whose quarter ticks are round numbers.
 const niceMax = v => {
@@ -27,6 +34,9 @@ const SLOTS = ['s1', 's2', 's3', 's4'];
 const METHOD_SLOT = {deb: 's1', rpm: 's2', source: 's3', unknown: 'gray'};
 
 let data = null;
+let journalDate = null; // Follow the latest snapshot until a historical day is selected.
+let refreshJournalDate;
+let replayAge = null;
 const state = {range: 30, segment: 'all'};
 const tableMode = {};
 const seg = () => data.by_segment[state.segment] || data.by_segment.all;
@@ -77,7 +87,7 @@ function view() {
 
 function timeChart(body, opts) {
   const {days, height, label, stacked, series, right = 12} = opts;
-  const W = Math.max(280, body.clientWidth), H = height, narrow = W < 520;
+  const W = Math.max(200, body.clientWidth), H = height, narrow = W < 520;
   const svg = el('svg', {width: W, height: H, role: 'img', 'aria-label': label}, body);
   // Stacked charts name each band at the right edge; leave room for the longest.
   const ends = stacked && !narrow ? series.map(ser => txt(svg, 0, -100, ser.name + ' 100%', {class: 'lbl'}).getComputedTextLength()) : [];
@@ -85,7 +95,7 @@ function timeChart(body, opts) {
   const m = {t: 30, r: stacked && narrow ? 12 : Math.max(right, ...ends.map(w => w + 12)), b: 24, l: 40};
   const iw = W - m.l - m.r, ih = H - m.t - m.b, n = days.length;
   const x = i => m.l + (n === 1 ? iw / 2 : i / (n - 1) * iw);
-  const max = stacked ? 1 : niceMax(Math.max(1, ...series[0].values) * 1.08);
+  const max = stacked ? 1 : niceMax(Math.max(1, ...series[0].values, ...(opts.medians || [])) * 1.08);
   const y = v => m.t + ih - v / max * ih;
   const ticks = [0, .25, .5, .75, 1].map(f => f * max);
   for (const v of ticks) {
@@ -94,7 +104,7 @@ function timeChart(body, opts) {
   }
   const step = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(iw / 80))));
   const dateLabel = i => fmtDay(days[i]) + (opts.partial && i === n - 1 ? ' · partial' : '');
-  for (let i = n - 1; i >= 0; i -= step) txt(svg, x(i), H - 6, dateLabel(i), {'text-anchor': i === n - 1 && n > 1 ? 'end' : 'middle'});
+  for (let i = n - 1; i >= 0; i -= step) txt(svg, x(i), H - 6, fmtDay(days[i]), {'text-anchor': i === n - 1 && n > 1 ? 'end' : 'middle'});
   // One marker per day: releases shipped the same day share a line and a label.
   const marks = new Map();
   for (const r of data.releases) {
@@ -144,17 +154,35 @@ function timeChart(body, opts) {
       el('path', {d: line + `L${x(completed - 1)},${y(0)}L${x(0)},${y(0)}Z`, fill: css('s1'), 'fill-opacity': .1}, svg);
       el('path', {d: line, fill: 'none', stroke: css('s1'), 'stroke-width': 2, 'stroke-linejoin': 'round'}, svg);
     }
+    if (opts.medians) {
+      let reference = '';
+      opts.medians.forEach((value, i) => {
+        if (value == null) return;
+        const start = !i || opts.medians[i - 1] == null;
+        reference += linePoint(x(i), y(value), start);
+      });
+      if (reference) el('path', {d: reference, fill: 'none', stroke: css('s2'), 'stroke-width': 1.7, 'stroke-linejoin': 'round', 'stroke-linecap': 'round'}, svg);
+    }
     if (opts.partial && n > 1) el('line', {x1: x(n - 2), y1: y(values[n - 2]), x2: x(n - 1), y2: y(values[n - 1]), stroke: css('s1'), 'stroke-width': 2, 'stroke-dasharray': '4 4'}, svg);
     el('circle', {cx: x(n - 1), cy: y(values[n - 1]), r: 4, fill: css('s1'), stroke: css('surface'), 'stroke-width': 2}, svg);
     txt(svg, x(n - 1) - 8, y(values[n - 1]) - 10, fmt(values[n - 1]), {class: 'lbl-strong', 'text-anchor': 'end'});
-    opts.tipRows = i => series.map((ser, k) => ({label: ser.name, value: ser.values[i] == null ? 'Pending' : fmt(ser.values[i]), color: k ? null : css('s1')}));
+    opts.tipRows = i => series.map((ser, k) => ({label: ser.name, value: ser.values[i] == null ? 'Pending' : count(ser.values[i]), color: k ? null : css('s1')}));
   }
   const cross = el('line', {y1: m.t, y2: m.t + ih, stroke: css('muted'), 'stroke-width': 1, visibility: 'hidden'}, svg);
   const dot = el('circle', {r: 4, fill: css('s1'), stroke: css('surface'), 'stroke-width': 2, visibility: 'hidden'}, svg);
   const hit = el('rect', {x: m.l, y: m.t, width: iw, height: ih, fill: 'transparent', tabindex: 0, 'aria-label': label + '. Use the arrow keys to read values.'}, svg);
-  let cur = n - 1;
-  const show = (i, cx, cy) => {
+  let cur = opts.selectedIndex ?? n - 1;
+  const marker = opts.onSelect ? el('circle', {r: 6, fill: css('surface'), stroke: css('s1'), 'stroke-width': 3, 'pointer-events': 'none'}, svg) : null;
+  const select = i => {
     cur = i;
+    if (marker) {
+      marker.setAttribute('cx', x(i));
+      marker.setAttribute('cy', y(series[0].values[i]));
+      opts.onSelect(i);
+    }
+  };
+  select(cur);
+  const show = (i, cx, cy) => {
     cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i)); cross.setAttribute('visibility', 'visible');
     if (!stacked) { dot.setAttribute('cx', x(i)); dot.setAttribute('cy', y(series[0].values[i])); dot.setAttribute('visibility', 'visible'); }
     showTip(cx, cy, dateLabel(i), opts.tipRows(i));
@@ -162,15 +190,63 @@ function timeChart(body, opts) {
   const hide = () => { cross.setAttribute('visibility', 'hidden'); dot.setAttribute('visibility', 'hidden'); hideTip(); };
   const index = clientX => { const r = svg.getBoundingClientRect(); return Math.max(0, Math.min(n - 1, Math.round((clientX - r.left - m.l) / iw * (n - 1)))); };
   hit.addEventListener('pointermove', e => show(index(e.clientX), e.clientX, e.clientY));
+  if (marker) hit.addEventListener('click', e => select(index(e.clientX)));
   hit.addEventListener('pointerleave', hide);
   hit.addEventListener('blur', hide);
   const keyShow = i => { const r = svg.getBoundingClientRect(); show(i, r.left + x(i), r.top + m.t + 20); };
   hit.addEventListener('focus', () => keyShow(cur));
   hit.addEventListener('keydown', e => {
-    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const moves = {ArrowLeft: cur - 1, ArrowRight: cur + 1, Home: 0, End: n - 1};
+    if (!Object.hasOwn(moves, e.key)) return;
     e.preventDefault();
-    keyShow(Math.max(0, Math.min(n - 1, cur + (e.key === 'ArrowRight' ? 1 : -1))));
+    select(Math.max(0, Math.min(n - 1, moves[e.key])));
+    keyShow(cur);
   });
+  return select;
+}
+
+const releaseAgeLabel = age => age === 0 ? 'Launch day' : 'Day ' + age;
+const releaseShare = entry => entry.total
+  ? pct(entry.count / entry.total) + ' · ' + count(entry.count) + ' of ' + count(entry.total)
+  : 'No known versions';
+
+function releaseChart(body, frames) {
+  const width = body.clientWidth, left = 36, right = width - 10, top = 12, bottom = 86;
+  const first = frames[0].age, last = frames.at(-1).age;
+  const x = age => first === last ? (left + right) / 2 : left + (right - left) * (age - first) / (last - first);
+  const y = share => bottom - share * (bottom - top);
+  const svg = el('svg', {width, height: 107, role: 'img', 'aria-label': 'Daily share of installations on each release by days since launch'}, body);
+  for (const share of [0, .5, 1]) {
+    el('line', {x1: left, x2: right, y1: y(share), y2: y(share), stroke: css('grid')}, svg);
+    txt(svg, left - 6, y(share) + 3, pct(share), {'text-anchor': 'end'});
+  }
+  txt(svg, x(first), 103, releaseAgeLabel(first), {'text-anchor': first === last ? 'middle' : 'start'});
+  if (first !== last) txt(svg, right, 103, releaseAgeLabel(last), {'text-anchor': 'end'});
+  const colors = [css('s1'), css('s3')];
+  colors.forEach((color, k) => {
+    let line = '', previousAge;
+    for (const {age, entries} of frames) {
+      const entry = entries[k];
+      if (!entry.total) continue;
+      const start = previousAge !== age - 1;
+      line += linePoint(x(age), y(entry.count / entry.total), start);
+      previousAge = age;
+    }
+    if (line) el('path', {d: line, fill: 'none', stroke: color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round', 'stroke-dasharray': k ? '4 4' : 'none'}, svg);
+  });
+  const cursor = el('line', {y1: top, y2: bottom, stroke: css('ink-2'), 'stroke-opacity': .65}, svg);
+  const dots = colors.map(color => el('circle', {r: 4, fill: css('surface'), stroke: color, 'stroke-width': 2}, svg));
+  return frame => {
+    cursor.setAttribute('x1', x(frame.age));
+    cursor.setAttribute('x2', x(frame.age));
+    frame.entries.forEach((entry, k) => {
+      dots[k].setAttribute('visibility', entry.total ? 'visible' : 'hidden');
+      if (entry.total) {
+        dots[k].setAttribute('cx', x(frame.age));
+        dots[k].setAttribute('cy', y(entry.count / entry.total));
+      }
+    });
+  };
 }
 
 function hbars(body, rows, label, valueText) {
@@ -233,9 +309,7 @@ function kpis() {
   const delta = (cur, prev) => prev ? cur / prev - 1 : null;
   const partial = !w.complete && data.history_start ? `since ${fmtDay(data.history_start)}, when reporting began` : null;
   const currentDay = new Date().toISOString().slice(0, 10) === data.today;
-  const cutoff = new Date(data.generated_at).toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit', timeZone: 'UTC'});
-  tiles.push({hero: true, label: currentDay ? 'Active today so far' : `Active on ${fmtDay(data.today)} so far`, value: fmt(s.today),
-    note: `${fmtDay(data.today)} through ${cutoff} UTC`});
+  const allMethods = state.segment === 'all' ? '' : ' · all install methods';
   tiles.push({label: `Active installations, last ${state.range} days`, value: fmt(w.active),
     delta: delta(w.active, w.previous), vs: `previous ${state.range} days`, note: partial || 'not enough history to compare yet'});
   const lastDay = data.days.at(-1);
@@ -244,18 +318,18 @@ function kpis() {
   tiles.push({label: `New, last ${state.range} days`, value: fmt(w.new), delta: delta(w.new, w.previous_new), vs: `previous ${state.range} days`,
     note: 'first report received in this period'});
   tiles.push({label: 'Still active after 4 weeks', value: data.retention_4w === null ? 'n/a' : pct(data.retention_4w), delta: null,
-    note: data.retention_4w === null ? 'needs five complete weeks of data' : 'of new installations, reporting in their fifth week'});
+    note: (data.retention_4w === null ? 'needs five complete weeks of data' : 'of new installations, reporting in their fifth week') + allMethods});
   const baseline = data.latest_release && data.latest_release.version === data.since_version;
   tiles.push({label: 'On the latest version', value: s.latest_share === null ? 'n/a' : pct(s.latest_share), delta: null,
     note: baseline ? `counting starts at ${data.since_version}; shown from the next release`
       : data.latest_release ? `${data.latest_release.version}, released ${fmtDay(data.latest_release.date)}; last 7 days` : 'no release data yet'});
   const sharing = data.sharing, seen = sharing ? sharing.on + sharing.off : 0;
   tiles.push({label: 'Turned sharing off', value: seen ? pct(sharing.off / seen) : 'n/a', delta: null,
-    note: seen ? `${fmt(sharing.off)} of ${fmt(seen)} installations seen in 90 days` : 'no choices received yet'});
+    note: (seen ? `${fmt(sharing.off)} of ${fmt(seen)} installations seen in 90 days` : 'no choices received yet') + allMethods});
   const box = $('kpis');
   box.replaceChildren();
   for (const t of tiles) {
-    const c = html('div', 'card tile' + (t.hero ? ' hero' : ''));
+    const c = html('div', 'card tile');
     const d = html('div', 'delta');
     if (t.delta !== null && Number.isFinite(t.delta)) {
       const b = html('b', t.delta >= 0 ? 'up' : 'down', (t.delta >= 0 ? '▲ +' : '▼ ') + (t.delta * 100).toFixed(0) + '%');
@@ -268,19 +342,81 @@ function kpis() {
 
 const renderers = {
   'c-active'(body) {
-    const s = seg(), days = [...data.days, data.today].slice(-state.range);
-    const active = [...s.active, s.today].slice(-state.range), fresh = [...s.new, s.today_new].slice(-state.range);
-    if (tableMode['c-active']) return body.appendChild(table(['Date (UTC)', 'Active', 'New'], days.map((d, i) => [fmtDay(d) + (d === data.today ? ' · partial' : ''), fmt(active[i]), fresh[i] == null ? 'Pending' : fmt(fresh[i])]).reverse()));
-    timeChart(body, {days, height: 260, label: 'Daily active installations, final day partial', partial: true,
-      series: [{name: 'Active', values: active}, {name: 'New', values: fresh}]});
+    const days = journalDays(data, state.segment, state.range);
+    const latest = days.length - 1;
+    const found = days.findIndex(day => day.date === journalDate);
+    const selected = found < 0 ? latest : found;
+    const picker = $('journal-date');
+    picker.replaceChildren();
+    for (let i = latest; i >= 0; i--) {
+      const day = days[i], releases = day.releases.map(version => 'v' + version).join(', ');
+      const option = html('option', '', fmtDay(day.date) + (day.partial ? ' · partial' : '') + (releases ? ' · ' + releases : ''));
+      option.value = day.date;
+      picker.appendChild(option);
+    }
+    picker.value = days[selected].date;
+    if (tableMode['c-active']) {
+      refreshJournalDate = null;
+      const wrap = table(['Date (UTC)', 'Active', 'First reports', 'Returning', 'Prior 7-day median', 'Released'],
+        days.slice().reverse().map(d => [fmtDay(d.date) + (d.partial ? ' · partial' : ''), count(d.active),
+          d.first == null ? 'Pending' : count(d.first), d.returning == null ? 'Pending' : count(d.returning),
+          d.median == null ? '—' : count(d.median), d.releases.join(', ')]));
+      body.appendChild(wrap);
+      const rows = wrap.querySelectorAll('tbody tr');
+      const highlight = () => {
+        const i = picker.selectedIndex, day = days[latest - i];
+        journalDate = day.partial ? null : day.date;
+        wrap.querySelector('[aria-current]')?.removeAttribute('aria-current');
+        rows[i].setAttribute('aria-current', 'true');
+        const top = rows[i].getBoundingClientRect().top - wrap.getBoundingClientRect().top;
+        if (top < 0 || top + rows[i].offsetHeight > wrap.clientHeight) wrap.scrollTop += top - wrap.clientHeight / 2;
+      };
+      picker.onchange = highlight;
+      highlight();
+      return;
+    }
+    const spread = html('div', 'journal-spread'), detail = html('div', 'journal-detail'), chart = html('div', 'journal-chart');
+    body.appendChild(spread); spread.append(detail, chart);
+    const dateLine = html('div', 'journal-date'), total = html('strong', 'journal-total'), mix = html('div', 'journal-mix');
+    const comparison = html('div', 'journal-comparison'), release = html('div', 'journal-release');
+    detail.append(dateLine, total, html('div', 'journal-unit', 'active installations'), mix, comparison, release);
+    const cutoff = new Date(data.generated_at).toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit', timeZone: 'UTC'});
+    const selectDay = i => {
+      const d = days[i];
+      journalDate = d.partial ? null : d.date;
+      picker.value = d.date;
+      refreshJournalDate = () => {
+        const {current, delayed} = snapshotState(data);
+        dateLine.textContent = d.partial
+          ? (current ? 'Today' : fmtDay(d.date)) + ' through ' + cutoff + ' UTC'
+          : fmtDay(d.date) + ' · complete UTC day';
+        if (d.partial && delayed) dateLine.textContent += ' · update overdue';
+      };
+      refreshJournalDate();
+      total.textContent = fmt(d.active);
+      mix.textContent = d.first == null ? 'First-report count pending' : count(d.first) + ' new · ' + count(d.returning) + ' returning';
+      comparison.textContent = d.median == null ? 'Typical activity appears after seven complete days.'
+        : count(d.median) + ' active on a typical day';
+      comparison.title = 'Median of the previous seven complete UTC days';
+      release.textContent = d.releases.length ? 'Released ' + d.releases.map(v => 'v' + v).join(', ') : '';
+    };
+    const choose = timeChart(chart, {days: days.map(d => d.date), height: 205, selectedIndex: selected,
+      onSelect: selectDay, label: 'Daily active installations. Select a point to inspect that day.', partial: true, medians: days.map(d => d.median),
+      series: [{name: 'Active', values: days.map(d => d.active)}, {name: 'New', values: days.map(d => d.first)}]});
+    picker.onchange = () => choose(days.findIndex(d => d.date === picker.value));
+    const legend = html('div', 'journal-legend');
+    legend.appendChild(html('span', 'active-key', 'Daily active'));
+    if (days.some(d => d.median != null)) legend.appendChild(html('span', 'median-key', 'Previous 7-day median'));
+    legend.appendChild(html('span', 'partial-key', 'Partial day'));
+    chart.appendChild(legend);
   },
   'c-versions'(body) {
     const {days, from} = view(), s = seg();
     if (!days.length || !s.versions.names.length) return empty(body, 'Not enough data yet.');
-    // Four newest named versions; anything older joins the last series.
     // Only versions present in the selected range; the four newest get colors.
     const inRange = n => s.versions.counts[n].slice(from).some(Boolean);
     const names = s.versions.names.filter(inRange), named = names.filter(n => /^\d/.test(n)).slice(0, 4);
+    if (!names.length) return empty(body, 'No version reports for this install method in the selected period.');
     const series = named.map((name, i) => ({name, slot: SLOTS[i], values: s.versions.counts[name].slice(from)}));
     const rest = names.filter(n => !named.includes(n));
     if (rest.length) series.push({name: rest.length === 1 ? rest[0] : 'Older or not reported', slot: 'gray',
@@ -298,17 +434,52 @@ const renderers = {
   },
   'c-speed'(body) {
     const s = seg();
-    const rows = data.releases.filter(r => !r.baseline).map(r => ({name: `${r.version} · ${fmtDay(r.date)}`, value: r.days_to_half ?? 0, days: r.days_to_half, tipLabel: 'Days to half'}));
-    const text = r => r.days === null ? 'not yet' : r.days === 0 ? 'same day' : r.days + (r.days === 1 ? ' day' : ' days');
+    const releases = data.releases.filter(r => !r.baseline);
+    const timeToHalf = days => days == null ? 'Not yet' : days === 0 ? 'Launch day' : days + (days === 1 ? ' day' : ' days');
+    const frames = releaseReplay(data, state.segment, state.range);
     if (tableMode['c-speed']) {
-      body.appendChild(table(['Release', 'Days to half'], rows.map(r => [r.name, text(r)])));
+      if (!releases.length && !s.updates) return empty(body, 'Release and update counts will appear here as reports arrive.');
+      if (frames.length) body.appendChild(table(['Age', ...frames[0].entries.map(e => 'v' + e.version)], frames.map(frame =>
+        [releaseAgeLabel(frame.age), ...frame.entries.map(e => fmtDay(e.date) + ' · ' + releaseShare(e))])));
+      if (releases.length) body.appendChild(table(['Release (all methods)', 'Days until half ran this or newer'],
+        releases.map(r => ['v' + r.version + ' · ' + fmtDay(r.date), timeToHalf(r.days_to_half)])));
       if (s.updates) body.appendChild(table(['Package installs', 'Installations'], [['Signed updates on', fmt(s.updates.on)], ['Updates off, manual or not reported', fmt(s.updates.other)]]));
       return;
     }
-    if (rows.length) {
-      hbars(body, rows, 'Days until half of installations updated', text);
-      body.appendChild(html('div', 'note', 'Shorter is better.'));
-    } else empty(body, `Shown once a release after ${data.since_version || 'the first counted one'} is out.`);
+    if (frames.length) {
+      const mark = releaseChart(body, frames);
+      const control = html('label', 'replay-control'), age = html('strong'), slider = html('input');
+      slider.type = 'range'; slider.min = 0; slider.max = frames.length - 1;
+      slider.disabled = frames.length === 1;
+      const selected = frames.findIndex(frame => frame.age === replayAge);
+      slider.value = selected < 0 ? frames.length - 1 : selected;
+      slider.setAttribute('aria-label', 'Days since release');
+      control.append(age, slider);
+      const rows = html('div', 'replay-rows');
+      const values = frames[0].entries.map(entry => {
+        const row = html('div', 'replay-row'), date = html('span'), share = html('b');
+        row.append(html('strong', '', 'v' + entry.version), date, share);
+        rows.appendChild(row);
+        return {date, share};
+      });
+      const draw = () => {
+        const frame = frames[Number(slider.value)];
+        age.textContent = releaseAgeLabel(frame.age);
+        slider.setAttribute('aria-valuetext', age.textContent + '. ' + frame.entries.map(e => 'v' + e.version + ', ' + releaseShare(e)).join('. '));
+        mark(frame);
+        frame.entries.forEach((entry, k) => {
+          values[k].date.textContent = fmtDay(entry.date);
+          values[k].share.textContent = releaseShare(entry);
+        });
+      };
+      slider.addEventListener('input', () => { replayAge = frames[Number(slider.value)].age; draw(); });
+      body.append(control, rows); draw();
+    } else empty(body, 'A comparison appears when both releases have a completed reporting day.');
+    const latest = releases[0];
+    if (latest?.days_to_half != null) {
+      const when = latest.days_to_half === 0 ? 'on launch day' : 'after ' + timeToHalf(latest.days_to_half);
+      body.appendChild(html('div', 'note replay-milestone', 'Across all install methods, half of installations reporting a version ran v' + latest.version + ' or newer ' + when + '.'));
+    }
     if (s.updates) {
       const sub = html('div', 'note', 'Signed updates through APT and DNF, DEB and RPM installs');
       sub.classList.add('spaced');
@@ -540,10 +711,15 @@ async function refresh() {
       $('content').hidden = false;
       updateFilters();
       renderAll();
-    } else kpis(); // At UTC midnight the latest snapshot may still belong to yesterday.
-    $('status').hidden = true;
+    } else { kpis(); refreshJournalDate?.(); }
+    const {current, delayed} = snapshotState(data);
+    const status = $('status');
+    if (delayed) status.textContent = 'Hourly summary overdue. Showing counts from the last published update.';
+    else if (!current) status.textContent = 'Waiting for the first summary of the new UTC day. The latest counts are for ' + fmtDay(data.today) + '.';
+    else status.textContent = '';
+    status.hidden = current && !delayed;
   } catch (error) {
-    if (data) kpis();
+    if (data) { kpis(); refreshJournalDate?.(); }
     $('status').textContent = data ? 'Could not refresh. Showing the last available update.' : error.message;
     $('status').hidden = false;
   } finally {

@@ -16,6 +16,19 @@ forwarded, and the dashboard counts 0.6.1 and later only (`DIRECT_SINCE` in
 `src/stats.js`). Changing that value rebuilds every frozen daily total from
 retained activity on the next hourly run.
 
+The **Activity journal** opens on the latest UTC day and shows the snapshot
+cutoff. Select a date or a chart point to see active, first-time and returning
+installations. The comparison line is the median of the seven preceding
+completed UTC days. The page refreshes while visible and keeps the last counts
+on screen if a refresh fails. It marks a snapshot overdue at two hours old.
+
+**Release replay** lines up the two latest releases by days since launch.
+The date range controls how many days after launch to explore. Each line counts
+installations on that exact release out of those reporting a known version for
+the selected install method that day. Only completed dates available for both
+releases can be compared. The separate time-to-half milestone includes
+installations running newer versions and covers all install methods.
+
 ## Data
 
 `migrations/0001_initial.sql` defines five tables; `0002_features.sql` adds the schema 6 feature snapshot to `activity` and `0003_details.sql` the schema 7 details:
