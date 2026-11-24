@@ -435,6 +435,39 @@ fn merged_objects_keep_components_inside_one_calendar() {
 }
 
 #[tokio::test]
+async fn outlook_link_keeps_wall_time_and_applies_exceptions() {
+    let (port, _) = serve(Arc::new(|request, _| {
+        if request.method == "GET" && request.path == "/calendar.ics" {
+            answer(200, include_str!("fixtures/outlook-series.ics"))
+        } else {
+            answer(404, "")
+        }
+    }))
+    .await;
+    let feed = Feed {
+        kind: SourceKind::Link,
+        url: SecretText(format!("http://127.0.0.1:{port}/calendar.ics")),
+        choice: choice(),
+        login: None,
+    };
+    let events = parsed(&feed, "2026-03").await.unwrap();
+    let times: Vec<_> = events
+        .iter()
+        .map(|e| (e.start.as_str(), e.end.as_str()))
+        .collect();
+    assert_eq!(
+        times,
+        [
+            ("2026-03-04T09:00:00-05:00", "2026-03-04T09:30:00-05:00"),
+            ("2026-03-11T09:00:00-04:00", "2026-03-11T09:30:00-04:00"),
+            ("2026-03-26T11:30:00-04:00", "2026-03-26T12:00:00-04:00"),
+            ("2026-03-27T09:00:00-04:00", "2026-03-27T09:30:00-04:00"),
+        ]
+    );
+    assert_eq!(events[2].title, "Rescheduled office hours");
+}
+
+#[tokio::test]
 async fn password_feeds_send_basic_auth_and_report_a_wrong_password() {
     let handler: Handler = Arc::new(|seen: &Seen, _| {
         if seen.authorization.as_deref() == Some(basic().as_str()) {

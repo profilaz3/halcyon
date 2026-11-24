@@ -11,6 +11,7 @@ mod http;
 mod keyring;
 mod store;
 mod subscription;
+mod windows_zones;
 pub use caldav::{CalDavCalendar, discover as discover_caldav};
 pub use folder::{FolderCalendar, discover as discover_folder};
 pub use http::{Login, plain_local};
@@ -257,7 +258,7 @@ impl Problem {
             }
             Self::FeedUrl => "Use an HTTPS or webcal calendar subscription link.",
             Self::FeedTimezone => {
-                "This calendar uses an unsupported time zone. Choose a feed using a standard city time zone, such as Europe/Zagreb."
+                "This calendar uses an unrecognized time zone. Ask the calendar owner to publish it using a city such as Europe/Zagreb, a Windows time zone, or UTC."
             }
             Self::FeedLimit => {
                 "This calendar is too large or has an unsupported recurrence. Your previous events were kept."
