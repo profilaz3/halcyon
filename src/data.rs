@@ -172,8 +172,8 @@ pub struct Metrics {
     pub network: Option<hardware::NetworkMetrics>,
     pub gpus: Vec<hardware::GpuMetrics>,
     pub uptime: String,
-    pub t3: bool,
-    pub dictation: String,
+    /// Each watched service and how it is (ADR 0014).
+    pub services: Vec<(crate::config::Watched, ServiceState)>,
     /// A sample has been taken. Until then the card says it is measuring
     /// rather than that readings are unavailable.
     pub measured: bool,
@@ -302,13 +302,6 @@ impl Sampler {
             } else {
                 format!("{}h {}m", mins / 60, mins % 60)
             };
-        }
-        if preferences.services {
-            m.dictation = std::env::var("XDG_RUNTIME_DIR")
-                .ok()
-                .and_then(|p| std::fs::read_to_string(format!("{p}/voxtype/state")).ok())
-                .map(|s| s.trim().to_string())
-                .unwrap_or_else(|| "offline".into());
         }
         m.measured = true;
         m
@@ -1435,26 +1428,275 @@ pub fn cpu_usage(old: (u64, u64), now: (u64, u64)) -> f32 {
     (100. * (total.saturating_sub(now.1.saturating_sub(old.1))) as f32 / total as f32)
         .clamp(0., 100.)
 }
-pub async fn t3_active() -> bool {
-    tokio::task::spawn_blocking(|| {
-        std::process::Command::new("/usr/bin/timeout")
-            .args([
-                "3s",
-                "systemctl",
-                "--user",
-                "is-active",
-                "--quiet",
-                "t3code.service",
-            ])
-            .status()
-            .is_ok_and(|s| s.success())
+/// How a watched service is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ServiceState {
+    Running,
+    Starting,
+    Stopped,
+    Failed,
+    /// Not there, or it couldn't be asked.
+    Missing,
+}
+impl ServiceState {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Starting => "starting",
+            Self::Stopped => "stopped",
+            Self::Failed => "failed",
+            Self::Missing => "not found",
+        }
+    }
+    /// The word for this state of `watched`: a port is open or closed.
+    pub fn word(self, watched: &crate::config::Watched) -> &'static str {
+        match (watched, self) {
+            (crate::config::Watched::Port { .. }, Self::Running) => "open",
+            (crate::config::Watched::Port { .. }, _) => "closed",
+            _ => self.label(),
+        }
+    }
+    pub fn up(self) -> bool {
+        matches!(self, Self::Running | Self::Starting)
+    }
+    /// A unit's block of `systemctl show --property=LoadState,ActiveState`:
+    /// a unit systemd doesn't know is missing, not merely stopped.
+    fn of_unit_block(block: &str) -> Self {
+        let value = |key: &str| {
+            block
+                .lines()
+                .find_map(|line| line.strip_prefix(key)?.strip_prefix('='))
+                .unwrap_or_default()
+        };
+        if value("LoadState") == "not-found" {
+            return Self::Missing;
+        }
+        Self::of_unit(value("ActiveState"))
+    }
+    /// A unit's `ActiveState`.
+    fn of_unit(word: &str) -> Self {
+        match word.trim() {
+            "active" | "reloading" | "refreshing" => Self::Running,
+            "activating" => Self::Starting,
+            "inactive" | "deactivating" => Self::Stopped,
+            "failed" => Self::Failed,
+            _ => Self::Missing,
+        }
+    }
+    /// What a container runtime reports as `.State.Status`.
+    fn of_container(word: &str) -> Self {
+        match word.trim() {
+            "running" => Self::Running,
+            "restarting" | "created" => Self::Starting,
+            "exited" | "paused" | "stopped" | "configured" => Self::Stopped,
+            "dead" => Self::Failed,
+            _ => Self::Missing,
+        }
+    }
+}
+
+/// The container runtime here: Podman, else Docker.
+fn container_runtime() -> Option<std::path::PathBuf> {
+    ["podman", "docker"].into_iter().find_map(|name| {
+        std::env::split_paths(&std::env::var_os("PATH")?)
+            .map(|dir| dir.join(name))
+            .find(|path| path.is_file())
+    })
+}
+
+/// A program's output within three seconds, or nothing.
+fn output(program: &std::path::Path, args: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("/usr/bin/timeout")
+        .arg("3s")
+        .arg(program)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Each watched service's state: one `systemctl` call per bus for every
+/// unit, one runtime call per container, and a short connect per port.
+pub async fn watched_states(
+    list: Vec<crate::config::Watched>,
+) -> Vec<(crate::config::Watched, ServiceState)> {
+    use crate::config::Watched;
+    let ports: Vec<u16> = list
+        .iter()
+        .filter_map(|w| match w {
+            Watched::Port { port } => Some(*port),
+            _ => None,
+        })
+        .collect();
+    let mut open = std::collections::HashMap::new();
+    for port in ports {
+        let reached = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            tokio::net::TcpStream::connect(("127.0.0.1", port)),
+        )
+        .await
+        .is_ok_and(|result| result.is_ok());
+        open.insert(port, reached);
+    }
+    let checked = list.clone();
+    let mut known = tokio::task::spawn_blocking(move || {
+        let systemctl = std::path::Path::new("systemctl");
+        let mut states = std::collections::HashMap::new();
+        for user in [true, false] {
+            let names: Vec<&str> = checked
+                .iter()
+                .filter_map(|w| match w {
+                    Watched::UserUnit { name } if user => Some(name.as_str()),
+                    Watched::SystemUnit { name } if !user => Some(name.as_str()),
+                    _ => None,
+                })
+                .collect();
+            if names.is_empty() {
+                continue;
+            }
+            let mut args: Vec<&str> = if user { vec!["--user"] } else { vec![] };
+            args.extend(["show", "--property=LoadState,ActiveState", "--"]);
+            args.extend(&names);
+            // One block per unit, in order, a blank line between.
+            let printed = output(systemctl, &args).unwrap_or_default();
+            let mut blocks = printed.split("\n\n");
+            for name in names {
+                let state = blocks
+                    .next()
+                    .map_or(ServiceState::Missing, ServiceState::of_unit_block);
+                let key = if user {
+                    Watched::UserUnit { name: name.into() }
+                } else {
+                    Watched::SystemUnit { name: name.into() }
+                };
+                states.insert(key, state);
+            }
+        }
+        let runtime = container_runtime();
+        for watched in &checked {
+            if let Watched::Container { name } = watched {
+                let state = runtime
+                    .as_deref()
+                    .and_then(|runtime| {
+                        output(
+                            runtime,
+                            &["inspect", "--format", "{{.State.Status}}", "--", name],
+                        )
+                    })
+                    .map_or(ServiceState::Missing, |word| {
+                        ServiceState::of_container(&word)
+                    });
+                states.insert(watched.clone(), state);
+            }
+        }
+        states
     })
     .await
-    .unwrap_or(false)
+    .unwrap_or_default();
+    list.into_iter()
+        .map(|watched| {
+            let state = match &watched {
+                Watched::Port { port } => {
+                    if open.get(port).copied().unwrap_or(false) {
+                        ServiceState::Running
+                    } else {
+                        ServiceState::Stopped
+                    }
+                }
+                _ => known.remove(&watched).unwrap_or(ServiceState::Missing),
+            };
+            (watched, state)
+        })
+        .collect()
+}
+
+/// Starts a stopped service, else restarts it: this session's services and
+/// containers only.
+pub async fn service_action(watched: crate::config::Watched, restart: bool) -> Result<(), String> {
+    use crate::config::Watched;
+    if !watched.valid() || !watched.controllable() {
+        return Err("Halcyon can't start or restart this one.".into());
+    }
+    tokio::task::spawn_blocking(move || {
+        let verb = if restart { "restart" } else { "start" };
+        let (program, args): (std::path::PathBuf, Vec<String>) = match &watched {
+            Watched::UserUnit { name } => (
+                "systemctl".into(),
+                vec!["--user".into(), verb.into(), "--".into(), name.clone()],
+            ),
+            Watched::Container { name } => (
+                container_runtime().ok_or("No container runtime is installed.")?,
+                vec![verb.into(), "--".into(), name.clone()],
+            ),
+            _ => return Err("Halcyon can't start or restart this one.".into()),
+        };
+        let status = std::process::Command::new("/usr/bin/timeout")
+            .arg("20s")
+            .arg(&program)
+            .args(&args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map_err(|e| e.to_string())?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("{} didn't {verb}.", watched.label()))
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn service_states_read_like_systemd_and_container_runtimes() {
+        assert_eq!(ServiceState::of_unit("active\n"), ServiceState::Running);
+        assert_eq!(ServiceState::of_unit("activating"), ServiceState::Starting);
+        assert_eq!(ServiceState::of_unit("inactive"), ServiceState::Stopped);
+        assert_eq!(ServiceState::of_unit("failed"), ServiceState::Failed);
+        assert_eq!(ServiceState::of_unit(""), ServiceState::Missing);
+        assert_eq!(
+            ServiceState::of_unit_block("LoadState=loaded\nActiveState=active"),
+            ServiceState::Running
+        );
+        assert_eq!(
+            ServiceState::of_unit_block("LoadState=not-found\nActiveState=inactive"),
+            ServiceState::Missing,
+            "a misspelt unit isn't merely stopped"
+        );
+        assert_eq!(ServiceState::of_container("running"), ServiceState::Running);
+        assert_eq!(ServiceState::of_container("exited"), ServiceState::Stopped);
+        assert_eq!(
+            ServiceState::of_container("Error: no such container"),
+            ServiceState::Missing
+        );
+        // A real port: open while something listens, closed once it stops.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let check =
+            || runtime.block_on(watched_states(vec![crate::config::Watched::Port { port }]))[0].1;
+        assert_eq!(check(), ServiceState::Running);
+        drop(listener);
+        assert_eq!(check(), ServiceState::Stopped);
+        // Nothing Halcyon may not control is started.
+        let refused = runtime.block_on(service_action(
+            crate::config::Watched::SystemUnit {
+                name: "docker.service".into(),
+            },
+            true,
+        ));
+        assert!(refused.is_err());
+    }
 
     #[test]
     fn project_helper_receives_resolved_config_path() {
