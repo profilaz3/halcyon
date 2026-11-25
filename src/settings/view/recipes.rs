@@ -225,27 +225,31 @@ impl Settings {
         }
         let wide = editor.wide;
         let arrangement = if wide { recipe.wide } else { recipe.compact };
-        let mut parts = vec![group_row_state(
-            "Layout",
-            if wide {
-                "When the widget is wide"
-            } else {
-                "When the widget is small"
-            },
-            segmented(
-                Arrangement::ALL
-                    .into_iter()
-                    .map(|value| {
-                        (
-                            value.title().into(),
-                            value == arrangement,
-                            Some(edit(Edit::Arrangement(wide, value))),
-                        )
-                    })
-                    .collect(),
-                accent,
-            ),
-        )];
+        let mut parts = Vec::new();
+        // A Notes design is always stacked (ADR 0017).
+        if recipe.kind != Kind::Notes {
+            parts.push(group_row_state(
+                "Layout",
+                if wide {
+                    "When the widget is wide"
+                } else {
+                    "When the widget is small"
+                },
+                segmented(
+                    Arrangement::ALL
+                        .into_iter()
+                        .map(|value| {
+                            (
+                                value.title().into(),
+                                value == arrangement,
+                                Some(edit(Edit::Arrangement(wide, value))),
+                            )
+                        })
+                        .collect(),
+                    accent,
+                ),
+            ));
+        }
         // Every row has the same three buttons in the same place; a move
         // that can't happen is dimmed.
         let tool = |name: &'static str, tip: &'static str, message: Option<Message>| {

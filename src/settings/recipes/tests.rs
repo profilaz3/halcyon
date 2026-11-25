@@ -310,7 +310,7 @@ fn tool_recipe_library_apply_undo_preserves_live_session_and_preferences() {
     let session_bytes = std::fs::read(crate::tools::focus::Session::path().unwrap()).unwrap();
     let preferences = std::fs::read(Config::path().unwrap()).unwrap();
     let (mut app, _) = Settings::init(Core::default(), Page::Builder);
-    for kind in [Kind::Music, Kind::Focus] {
+    for kind in [Kind::Music, Kind::Focus, Kind::Notes] {
         let send =
             |app: &mut Settings, edit| send_settings(app, super::super::Message::Recipe(edit));
         send(&mut app, Message::New(kind));
@@ -322,18 +322,20 @@ fn tool_recipe_library_apply_undo_preserves_live_session_and_preferences() {
         assert!(!app.recipe_editor.error, "{:?}", app.recipe_editor.notice);
         assert_eq!(
             app.config.recipes.get(kind).unwrap().name,
-            if kind == Kind::Music {
-                "Player"
-            } else {
-                "Type"
+            match kind {
+                Kind::Music => "Player",
+                Kind::Focus => "Type",
+                _ => "Sticky",
             }
         );
         let exported = crate::desktop::profiles::capture(&store, "Tool design")
             .unwrap()
             .profile;
-        assert_eq!(exported.written_version(), 17);
+        // Notes designs arrived in format 29 (ADR 0017).
+        let version = if kind == Kind::Notes { 29 } else { 17 };
+        assert_eq!(exported.written_version(), version);
         let mut downgrade = exported.clone();
-        downgrade.version = 16;
+        downgrade.version = version - 1;
         assert!(downgrade.validate().is_err());
         for (width, height) in [(820., 600.), (1280., 800.)] {
             send_settings(
@@ -342,10 +344,10 @@ fn tool_recipe_library_apply_undo_preserves_live_session_and_preferences() {
             );
             send_settings(
                 &mut app,
-                super::super::Message::Page(if kind == Kind::Music {
-                    Page::Music
-                } else {
-                    Page::Focus
+                super::super::Message::Page(match kind {
+                    Kind::Music => Page::Music,
+                    Kind::Focus => Page::Focus,
+                    _ => Page::Notes,
                 }),
             );
             let mut native = crate::native_test::Native::new(Size::new(width, height));

@@ -254,7 +254,9 @@ pub(super) fn view(
             | Part::Playback
             | Part::Timer
             | Part::TimerControls
-            | Part::SessionDots => cosmic::widget::space().into(),
+            | Part::SessionDots
+            | Part::NoteHeader
+            | Part::Note => cosmic::widget::space().into(),
             Part::Space => cosmic::widget::space().height(h).into(),
             Part::Settings => {
                 let button = cosmic::widget::button::text("Widget settings")
@@ -269,7 +271,7 @@ pub(super) fn view(
                             Kind::Weather => Message::WeatherSettings,
                             Kind::Calendar => Message::CalendarSettings,
                             Kind::System => Message::DevboxSettings,
-                            Kind::Music | Kind::Focus => Message::Preview,
+                            Kind::Music | Kind::Focus | Kind::Notes => Message::Preview,
                         })
                         .into()
                 } else {

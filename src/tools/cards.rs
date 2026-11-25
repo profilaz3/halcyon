@@ -14,6 +14,7 @@ pub(crate) mod recipe;
 use super::{focus, music, notes};
 use crate::config::{Config, Palette};
 use crate::drawer::Widget;
+use crate::recipes::Part;
 use cosmic::Element;
 use cosmic::iced::advanced::text as advanced_text;
 use cosmic::iced::{Alignment, Background, Border, Color, Font, Length};
@@ -901,9 +902,25 @@ pub fn notes<'a, M: Clone + 'a>(
     on: Option<fn(Action) -> M>,
     dimensions: Option<[f32; 2]>,
 ) -> Element<'a, M> {
+    designed_notes(view, config, config.recipes.notes.as_ref(), on, dimensions)
+}
+
+/// The Notes card in `design`, a Widget Builder design that orders the
+/// card's own parts and gives them its finish (ADR 0017), or plain.
+pub(crate) fn designed_notes<'a, M: Clone + 'a>(
+    view: NotesView<'a>,
+    config: &Config,
+    design: Option<&crate::recipes::Recipe>,
+    on: Option<fn(Action) -> M>,
+    dimensions: Option<[f32; 2]>,
+) -> Element<'a, M> {
     let _style = crate::widget_style::scope(config);
-    let p = config.palette();
+    let p = design.map_or_else(|| config.palette(), |r| recipe::palette(config, r));
     let [width, height] = dimensions.unwrap_or_else(|| size(Widget::Notes, config));
+    let finish = |content: Element<'a, M>| match design {
+        Some(r) => recipe::surface(content, config, r, p, [width, height]),
+        None => frame(content, config, height),
+    };
     let act = |action: Action| on.map(|on| on(action));
     if let Some(content) = view.editing {
         let editor = text_editor(content)
@@ -978,7 +995,7 @@ pub fn notes<'a, M: Clone + 'a>(
                 p.muted
             },
         );
-        return frame(
+        return finish(
             column::with_children(vec![
                 header.into(),
                 container(editor).height(Length::Fill).into(),
@@ -987,8 +1004,6 @@ pub fn notes<'a, M: Clone + 'a>(
             .spacing(10)
             .height(Length::Fill)
             .into(),
-            config,
-            height,
         );
     }
     let readable = view.note.is_ok();
@@ -1060,7 +1075,19 @@ pub fn notes<'a, M: Clone + 'a>(
         }
         Ok(note) => {
             let lines = notes::lines(&note.text);
-            let mut space = (height - 104.).max(20.);
+            // Room the design's other parts take from the note.
+            let extra: f32 = design.map_or(0., |r| {
+                r.parts
+                    .iter()
+                    .map(|part| match part {
+                        Part::Caption => 26.,
+                        Part::Divider => 9.,
+                        Part::Space => 16.,
+                        _ => 0.,
+                    })
+                    .sum()
+            });
+            let mut space = (height - 104. - extra).max(20.);
             for entry in lines {
                 let (value, size, inset) = match entry {
                     notes::Line::Heading(title) => (title, 15., 0.),
@@ -1141,8 +1168,7 @@ pub fn notes<'a, M: Clone + 'a>(
                 });
         }
     }
-    let mut parts = vec![
-        header.into(),
+    let mut note = vec![
         column::with_children(body)
             .spacing(6)
             .height(Length::Fill)
@@ -1150,13 +1176,13 @@ pub fn notes<'a, M: Clone + 'a>(
             .into(),
     ];
     if let Some(problem) = view.problem {
-        parts.push(label(
+        note.push(label(
             problem.to_string(),
             crate::widget_style::SECONDARY,
             WARN,
         ));
     } else if view.discarded {
-        parts.push(
+        note.push(
             row::with_children(vec![
                 label("Changes discarded", crate::widget_style::SECONDARY, p.muted),
                 fill(),
@@ -1173,21 +1199,38 @@ pub fn notes<'a, M: Clone + 'a>(
             .into(),
         );
     } else if overflow {
-        parts.push(press(
+        note.push(press(
             line("Open full note →", 12., p.accent),
             act(Action::NoteEdit),
             "Open full note",
         ));
     } else if let Some(footer) = footer {
-        parts.push(label(footer, crate::widget_style::SECONDARY, p.muted));
+        note.push(label(footer, crate::widget_style::SECONDARY, p.muted));
     }
-    frame(
-        column::with_children(parts)
+    let mut header = Some(header.into());
+    let mut note = Some(
+        column::with_children(note)
             .spacing(8)
             .height(Length::Fill)
             .into(),
-        config,
-        height,
+    );
+    let parts = match design {
+        None => vec![header.take(), note.take()],
+        Some(r) => r
+            .parts
+            .iter()
+            .map(|part| match part {
+                Part::NoteHeader => header.take(),
+                Part::Note => note.take(),
+                other => Some(recipe::spare(*other, r, p)),
+            })
+            .collect(),
+    };
+    finish(
+        column::with_children(parts.into_iter().flatten().collect::<Vec<_>>())
+            .spacing(8)
+            .height(Length::Fill)
+            .into(),
     )
 }
 

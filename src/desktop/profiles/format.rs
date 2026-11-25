@@ -57,7 +57,9 @@ pub const FORMAT: &str = "desktop-cards-profile";
 /// Weather layout and Outlook presentation choices require version 23.
 /// Rain confined to widget glass requires version 24. Editable glass finishes use version 25.
 /// Following the current theme for glass tint requires version 26.
-pub const VERSION: u32 = 28;
+/// Workspace apps require version 28; a Notes design requires version 29.
+pub const VERSION: u32 = 29;
+pub const VERSION_28: u32 = 28;
 pub const VERSION_27: u32 = 27;
 pub const VERSION_26: u32 = 26;
 pub const VERSION_25: u32 = 25;
@@ -1118,8 +1120,11 @@ impl Profile {
     }
     /// The version this record is written as.
     pub fn written_version(&self) -> u32 {
-        if !self.workspace_apps.is_empty() {
+        if self.has_notes_recipe() {
             return VERSION;
+        }
+        if !self.workspace_apps.is_empty() {
+            return VERSION_28;
         }
         if self.has_finish_library() || self.has_folder_widget() {
             return VERSION_27;
@@ -1264,6 +1269,13 @@ impl Profile {
         self.widget_style
             .as_ref()
             .is_some_and(|v| v.pointer("/music/visualizer").is_some())
+    }
+    /// A Widget Builder design for Notes, or its explicit reset (ADR 0017).
+    fn has_notes_recipe(&self) -> bool {
+        self.widget_style
+            .as_ref()
+            .and_then(|v| v.pointer("/recipes/notes"))
+            .is_some()
     }
     fn has_tool_recipes(&self) -> bool {
         self.widget_style
@@ -1414,9 +1426,14 @@ impl Profile {
             }
         }
         if !self.workspace_apps.is_empty()
-            && (self.version < VERSION || !valid_workspace_apps(&self.workspace_apps))
+            && (self.version < VERSION_28 || !valid_workspace_apps(&self.workspace_apps))
         {
             return Err(ProfileError::Invalid("Workspace apps need look format version 28 and up to 12 distinct desktop-entry IDs.".into()));
+        }
+        if self.has_notes_recipe() && self.version < VERSION {
+            return Err(ProfileError::Invalid(
+                "A Notes design needs look format version 29.".into(),
+            ));
         }
         if self.has_folder_widget() && self.version < VERSION_27 {
             return Err(ProfileError::Invalid(

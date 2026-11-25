@@ -15,15 +15,17 @@ pub enum Kind {
     System,
     Music,
     Focus,
+    Notes,
 }
 impl Kind {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Clock,
         Self::Weather,
         Self::Calendar,
         Self::System,
         Self::Music,
         Self::Focus,
+        Self::Notes,
     ];
     pub fn widget(self) -> Widget {
         match self {
@@ -33,6 +35,7 @@ impl Kind {
             Self::System => Widget::Devbox,
             Self::Music => Widget::Music,
             Self::Focus => Widget::Focus,
+            Self::Notes => Widget::Notes,
         }
     }
     pub fn title(self) -> &'static str {
@@ -43,6 +46,7 @@ impl Kind {
             Self::System => "System monitor",
             Self::Music => "Music",
             Self::Focus => "Focus",
+            Self::Notes => "Notes",
         }
     }
     pub fn pointer(self) -> &'static str {
@@ -53,10 +57,19 @@ impl Kind {
             Self::System => "/recipes/devbox",
             Self::Music => "/recipes/music",
             Self::Focus => "/recipes/focus",
+            Self::Notes => "/recipes/notes",
         }
     }
     pub fn parts(self) -> &'static [Part] {
         match self {
+            // The note and its buttons always stay (ADR 0017).
+            Self::Notes => &[
+                Part::NoteHeader,
+                Part::Note,
+                Part::Caption,
+                Part::Divider,
+                Part::Space,
+            ],
             Self::Music => &[
                 Part::Track,
                 Part::Artwork,
@@ -134,6 +147,7 @@ impl Kind {
             Self::System => Part::Cpu,
             Self::Music => Part::Track,
             Self::Focus => Part::Timer,
+            Self::Notes => Part::Note,
         }
     }
 }
@@ -164,6 +178,8 @@ pub enum Part {
     Divider,
     Space,
     Settings,
+    NoteHeader,
+    Note,
 }
 impl Part {
     pub fn is_metric(self) -> bool {
@@ -198,6 +214,8 @@ impl Part {
             Self::Divider => "Divider",
             Self::Space => "Space",
             Self::Settings => "Shortcut to settings",
+            Self::NoteHeader => "Title and buttons",
+            Self::Note => "Note",
         }
     }
 }
@@ -291,6 +309,7 @@ impl Recipe {
                 Kind::Calendar => vec![Part::Date, Part::Agenda, Part::Settings],
                 Kind::Clock => vec![Part::Face, Part::Date],
                 Kind::Weather => vec![Part::City, Part::Reading, Part::Conditions],
+                Kind::Notes => vec![Part::NoteHeader, Part::Note],
             },
             caption: "Make room for today".into(),
             compact: Arrangement::Stack,
@@ -307,6 +326,11 @@ impl Recipe {
         if kind == Kind::Focus {
             recipe.name = "Orbit".into();
         }
+        if kind == Kind::Notes {
+            recipe.name = "Sheet".into();
+            recipe.caption = "Today".into();
+            recipe.wide = Arrangement::Stack;
+        }
         recipe.seal();
         recipe
     }
@@ -314,6 +338,7 @@ impl Recipe {
         match kind {
             Kind::Music => &["Sleeve", "Player", "Quiet"],
             Kind::Focus => &["Orbit", "Type", "Edge"],
+            Kind::Notes => &["Sheet", "Sticky", "Index card"],
             _ => &[],
         }
     }
@@ -337,6 +362,14 @@ impl Recipe {
                 r.parts = vec![Part::Timer, Part::TimerControls];
                 r.compact = Arrangement::Split;
             }
+            (Kind::Notes, 1) => {
+                r.finish = Some(Finish::Paper);
+                r.parts = vec![Part::Note, Part::NoteHeader];
+            }
+            (Kind::Notes, 2) => {
+                r.finish = Some(Finish::Carbon);
+                r.parts = vec![Part::NoteHeader, Part::Divider, Part::Note, Part::Caption];
+            }
             _ => {}
         }
         r.seal();
@@ -353,11 +386,12 @@ impl Recipe {
             Kind::Focus if self.timer_face == Some(TimerFace::Ring) => [280., 320.],
             Kind::Focus if self.compact == Arrangement::Split => [320., 160.],
             Kind::Focus => [280., 240.],
+            Kind::Notes => [300., 260.],
             _ => [320., self.natural_height()],
         }
     }
     pub fn tool(&self) -> bool {
-        matches!(self.kind, Kind::Music | Kind::Focus)
+        matches!(self.kind, Kind::Music | Kind::Focus | Kind::Notes)
     }
     /// The first selected metric stays visible when a system widget is small.
     pub fn primary(&self) -> Part {
@@ -375,6 +409,8 @@ impl Recipe {
         self.parts.get(index).is_some_and(|part| {
             if self.kind == Kind::System {
                 !part.is_metric() || self.parts.iter().filter(|p| p.is_metric()).count() > 1
+            } else if self.kind == Kind::Notes {
+                !matches!(part, Part::Note | Part::NoteHeader)
             } else {
                 *part != self.kind.primary()
             }
@@ -429,6 +465,13 @@ impl Recipe {
         if self.parts.is_empty() || self.parts.len() > 8 || !self.parts.contains(&self.primary()) {
             return Err("Keep the main content in the widget".into());
         }
+        if self.kind == Kind::Notes
+            && (!self.parts.contains(&Part::NoteHeader)
+                || self.compact != Arrangement::Stack
+                || self.wide != Arrangement::Stack)
+        {
+            return Err("A Notes design keeps its buttons and stays stacked".into());
+        }
         for (i, p) in self.parts.iter().enumerate() {
             if !self.kind.parts().contains(p) || self.parts[..i].contains(p) {
                 return Err("A native part can appear once in its supported widget".into());
@@ -465,6 +508,8 @@ pub struct Applied {
     pub music: Option<Recipe>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub focus: Option<Recipe>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<Recipe>,
 }
 impl Applied {
     pub fn get(&self, kind: Kind) -> Option<&Recipe> {
@@ -475,6 +520,7 @@ impl Applied {
             Kind::System => self.devbox.as_ref(),
             Kind::Music => self.music.as_ref(),
             Kind::Focus => self.focus.as_ref(),
+            Kind::Notes => self.notes.as_ref(),
         }
     }
     pub fn set(&mut self, kind: Kind, value: Option<Recipe>) {
@@ -485,6 +531,7 @@ impl Applied {
             Kind::System => self.devbox = value,
             Kind::Music => self.music = value,
             Kind::Focus => self.focus = value,
+            Kind::Notes => self.notes = value,
         }
     }
     pub fn validate(&self) -> Result<(), String> {
