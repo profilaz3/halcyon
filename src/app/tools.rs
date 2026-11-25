@@ -84,6 +84,8 @@ pub(super) struct Tools {
     /// The subfolder the Folder card shows, inside the chosen folder; the
     /// chosen folder itself when `None`. Kept in memory only.
     pub folder_view: Option<std::path::PathBuf>,
+    /// Every entry of the shown folder, while its full reading is open.
+    pub folder_reading: Option<crate::folder::Listing>,
 }
 
 impl Tools {
@@ -112,6 +114,7 @@ impl Tools {
             markets: crate::markets::State::default(),
             folder: Default::default(),
             folder_view: None,
+            folder_reading: None,
         }
     }
     pub(super) fn sample() -> Self {
@@ -139,6 +142,7 @@ impl Tools {
             markets: crate::markets::State::default(),
             folder: Default::default(),
             folder_view: None,
+            folder_reading: None,
         }
     }
     /// No note being written, saved, checked or waiting for Undo.
@@ -311,6 +315,7 @@ impl Cards {
                     },
                     |p| Some(Message::FolderBrowse(Some(p.to_path_buf()))),
                     back,
+                    Some(Message::ReadingDetails(Widget::Folder)),
                     Some(Message::SettingsPage("folder")),
                 )
             }
@@ -439,6 +444,46 @@ impl Cards {
         }
     }
 
+    /// Reads every entry of the shown folder for its full reading.
+    pub(super) fn read_folder(&self) -> Task<Message> {
+        let Some(path) = self.folder_shown() else {
+            return Task::none();
+        };
+        let hidden = self.config.folder.show_hidden;
+        cosmic::task::future(async move {
+            Message::FolderReading(crate::folder::read_all(path, hidden).await)
+        })
+    }
+
+    /// A terminal in `dir`: COSMIC's own with its working directory, else
+    /// the session's default terminal started there. It outlives the widgets
+    /// like anything else they open.
+    pub(super) fn open_terminal(&self, dir: std::path::PathBuf) -> Task<Message> {
+        let opened = super::Opened {
+            name: "a terminal".into(),
+            hint: "Install a terminal app, then try again.",
+        };
+        cosmic::task::future(async move {
+            let result = tokio::task::spawn_blocking(move || {
+                let (program, args) = terminal_command(&dir)?;
+                let in_service = crate::settings_lifecycle::in_widget_service_now();
+                let mut child =
+                    crate::settings_lifecycle::independent_command(&program, &args, in_service)
+                        .current_dir(&dir)
+                        .spawn()
+                        .map_err(|e| format!("{}: {e}", program.display()))?;
+                // Reaped when it closes, without holding anything up.
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+                Ok::<(), String>(())
+            })
+            .await
+            .unwrap_or_else(|e| Err(e.to_string()));
+            Message::ControlFinished(opened, result)
+        })
+    }
+
     /// The folder the Folder card shows: the subfolder browsed into while it
     /// is still inside the chosen folder, else the chosen folder.
     pub(super) fn folder_shown(&self) -> Option<std::path::PathBuf> {
@@ -461,7 +506,7 @@ impl Cards {
                 | Widget::Projects
                 | Widget::Devices
                 | Widget::Weather
-        )
+        ) || (widget == Widget::Folder && self.config.folder.path.is_some())
             || (widget == Widget::Glance && self.config.glance.show_calendar)
     }
 
@@ -1212,6 +1257,19 @@ impl Cards {
             _ => return Task::none(),
         };
         self.update_tool(action)
+    }
+}
+
+/// The terminal for `dir`: COSMIC's own with its working directory, else
+/// the session's default terminal, which starts in the folder it is run from.
+pub(super) fn terminal_command(
+    dir: &std::path::Path,
+) -> Result<(std::path::PathBuf, Vec<String>), String> {
+    match super::program_path("cosmic-term") {
+        Some(term) => Ok((term, vec!["-w".into(), dir.to_string_lossy().into_owned()])),
+        None => super::program_path("x-terminal-emulator")
+            .map(|term| (term, Vec::new()))
+            .ok_or_else(|| "No terminal app is installed".to_string()),
     }
 }
 
