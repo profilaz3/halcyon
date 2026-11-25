@@ -84,6 +84,8 @@ pub(super) struct Tools {
     /// The subfolder the Folder card shows, inside the chosen folder; the
     /// chosen folder itself when `None`. Kept in memory only.
     pub folder_view: Option<std::path::PathBuf>,
+    /// The page of the note the card shows, when it is split into pages.
+    pub note_page: usize,
 }
 
 impl Tools {
@@ -112,6 +114,7 @@ impl Tools {
             markets: crate::markets::State::default(),
             folder: Default::default(),
             folder_view: None,
+            note_page: 0,
         }
     }
     pub(super) fn sample() -> Self {
@@ -139,6 +142,7 @@ impl Tools {
             markets: crate::markets::State::default(),
             folder: Default::default(),
             folder_view: None,
+            note_page: 0,
         }
     }
     /// No note being written, saved, checked or waiting for Undo.
@@ -276,6 +280,7 @@ impl Cards {
                     paused: self.tools.draft.as_ref().is_some_and(|draft| !draft.typing),
                     problem: self.tools.note_problem.as_deref(),
                     discarded: self.tools.discarded.is_some(),
+                    page: self.tools.note_page,
                 },
                 &self.config,
                 (!self.tools.checking_note).then_some(on_desktop as fn(Action) -> Message),
@@ -905,6 +910,10 @@ impl Cards {
                 {
                     self.tools.discarded = None;
                 }
+            }
+            Action::NotePage(page) => {
+                self.tools.note_page = page;
+                return Task::none();
             }
             Action::NoteToggle(line) => {
                 if self.tools.draft.is_none()
