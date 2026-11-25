@@ -191,8 +191,13 @@ pub fn early_command(command: Option<&str>, argument: Option<&str>) -> Option<i3
             Some(0)
         }
         "--looks" => {
+            use std::io::Write;
+            // A reader that stops early (`| head`) ends the list, not the program.
+            let mut out = std::io::stdout().lock();
             for (_, name) in crate::automation::look_choices() {
-                println!("{name}");
+                if writeln!(out, "{name}").is_err() {
+                    break;
+                }
             }
             Some(0)
         }
