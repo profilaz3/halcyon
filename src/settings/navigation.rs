@@ -1530,6 +1530,14 @@ pub(super) const NOT_INDEXED: &[(&str, &str)] = &[
 /// Labels the screen draws only in a state the test fixture lacks, and why.
 #[cfg(test)]
 pub(super) const UNCHECKED_LABELS: &[(&str, &str)] = &[
+    (
+        "Smallest value",
+        "in Data tiles' Add a tile, shown once Gauge is chosen",
+    ),
+    (
+        "Largest value",
+        "in Data tiles' Add a tile, shown once Progress bar or Gauge is chosen",
+    ),
     ("Tomorrow", "in Calendar, shown once a calendar is connected"),
     ("Days shown", "in Calendar, shown once a calendar is connected"),
     ("All-day events", "in Calendar, shown once a calendar is connected"),
