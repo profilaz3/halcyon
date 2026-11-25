@@ -1674,7 +1674,7 @@ pub fn import_local(bytes: &[u8]) -> Result<Profile, ProfileError> {
     // The version a section first appears in.
     let since = |key: &str| {
         if key == "workspace_apps" {
-            Some(VERSION)
+            Some(VERSION_28)
         } else if key == "description" {
             Some(VERSION_21)
         } else if key == "package" {
