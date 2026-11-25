@@ -137,26 +137,6 @@ fn catalog() -> AppCatalog {
     }
 }
 
-/// Every Look a menu item can switch to: built in, then saved.
-fn looks() -> Vec<(ProfileRef, String)> {
-    let mut looks: Vec<(ProfileRef, String)> = crate::desktop::profiles::presets()
-        .into_iter()
-        .chain(crate::desktop::profiles::adaptive::presets())
-        .map(|preset| (ProfileRef::Preset(preset.id.into()), preset.profile.name))
-        .collect();
-    if let Ok(store) = crate::desktop::DesktopStore::from_env()
-        && let Ok(entries) = crate::desktop::profiles::ProfileLibrary::new(&store).list()
-    {
-        looks.extend(entries.into_iter().filter_map(|entry| {
-            Some((
-                ProfileRef::Saved(entry.id.as_str().into()),
-                entry.profile.ok()?.name,
-            ))
-        }));
-    }
-    looks
-}
-
 /// The folders offered before "Choose a folder": home and the usual ones.
 fn common_folders() -> Vec<(String, std::path::PathBuf)> {
     [
@@ -228,7 +208,7 @@ impl EdgeMenuPage {
         cosmic::task::future(async move {
             let entries = tokio::task::spawn_blocking(|| PickerEntries {
                 apps: catalog().sorted().into_iter().cloned().collect(),
-                looks: looks(),
+                looks: crate::automation::look_choices(),
                 folders: common_folders(),
             })
             .await

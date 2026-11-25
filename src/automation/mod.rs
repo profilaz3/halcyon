@@ -44,6 +44,63 @@ pub const FILE: &str = "automation.json";
 pub const STATE_FILE: &str = "automation-state.json";
 pub const HOLD_FILE: &str = "automation-hold.json";
 
+/// Every Look one can switch to, built in then saved, with its name: what
+/// the edge menu's picker and `halcyon --looks` list.
+pub fn look_choices() -> Vec<(ProfileRef, String)> {
+    let mut looks: Vec<(ProfileRef, String)> = crate::desktop::profiles::presets()
+        .into_iter()
+        .chain(crate::desktop::profiles::adaptive::presets())
+        .map(|preset| (ProfileRef::Preset(preset.id.into()), preset.profile.name))
+        .collect();
+    if let Ok(store) = DesktopStore::from_env()
+        && let Ok(entries) = crate::desktop::profiles::ProfileLibrary::new(&store).list()
+    {
+        looks.extend(entries.into_iter().filter_map(|entry| {
+            Some((
+                ProfileRef::Saved(entry.id.as_str().into()),
+                entry.profile.ok()?.name,
+            ))
+        }));
+    }
+    looks
+}
+
+/// The Look `wanted` names, by name without regard to case or by id. A name
+/// two Looks share is refused, naming both.
+pub fn find_look(
+    looks: &[(ProfileRef, String)],
+    wanted: &str,
+) -> Result<(ProfileRef, String), String> {
+    let wanted = wanted.trim();
+    let id = |look: &ProfileRef| match look {
+        ProfileRef::Preset(id) | ProfileRef::Saved(id) => Some(id.clone()),
+        ProfileRef::Moment(_) => None,
+    };
+    let by_name: Vec<_> = looks
+        .iter()
+        .filter(|(_, name)| name.trim().eq_ignore_ascii_case(wanted))
+        .collect();
+    match by_name.as_slice() {
+        [one] => return Ok((*one).clone()),
+        [] => {}
+        many => {
+            return Err(format!(
+                "{} Looks are called {wanted}. Use one's id instead: {}",
+                many.len(),
+                many.iter()
+                    .filter_map(|(look, _)| id(look))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+    }
+    looks
+        .iter()
+        .find(|(look, _)| id(look).as_deref() == Some(wanted))
+        .cloned()
+        .ok_or_else(|| format!("No Look is called {wanted}. See: halcyon --looks"))
+}
+
 /// Where `name` is read from (reading needs no write access).
 pub fn path(store: &DesktopStore, name: &str) -> PathBuf {
     store.state_dir().join(name)

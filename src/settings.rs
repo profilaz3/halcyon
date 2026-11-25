@@ -5136,11 +5136,7 @@ impl Settings {
                         }
                         let store =
                             crate::desktop::DesktopStore::from_env().map_err(|e| e.to_string())?;
-                        let mut domains = crate::desktop::recovery::RecoveryDomain::ALL.to_vec();
-                        domains.push(crate::desktop::recovery::RecoveryDomain::AppAnimations);
-                        let plan = crate::desktop::recovery::plan_restore(&store, &domains)
-                            .map_err(|e| e.to_string())?;
-                        crate::desktop::recovery::apply_restore(&store, &plan)
+                        crate::desktop::recovery::restore_everything(&store)
                             .map(|_| true)
                             .map_err(|e| e.to_string())
                     })
@@ -5196,10 +5192,11 @@ impl Settings {
                     let result = tokio::task::spawn_blocking(|| {
                         let store =
                             crate::desktop::DesktopStore::from_env().map_err(|e| e.to_string())?;
-                        let mut domains = crate::desktop::recovery::RecoveryDomain::ALL.to_vec();
-                        domains.push(crate::desktop::recovery::RecoveryDomain::AppAnimations);
-                        crate::desktop::recovery::plan_restore(&store, &domains)
-                            .map_err(|e| e.to_string())
+                        crate::desktop::recovery::plan_restore(
+                            &store,
+                            &crate::desktop::recovery::every_domain(),
+                        )
+                        .map_err(|e| e.to_string())
                     })
                     .await
                     .map_err(|e| e.to_string())

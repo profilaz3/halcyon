@@ -153,6 +153,22 @@ fn main() -> cosmic::iced::Result {
         }
         return Ok(());
     }
+    if command.as_deref() == Some("--restore-desktop") {
+        // Stop using Halcyon's restore: the desktop from before Halcyon.
+        let result = desktop::DesktopStore::from_env()
+            .map_err(|e| e.to_string())
+            .and_then(|store| {
+                desktop::recovery::restore_everything(&store).map_err(|e| e.to_string())
+            });
+        match result {
+            Ok(_) => println!("Desktop from before Halcyon restored"),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
+    }
     if command.as_deref() == Some("--restore-background") {
         let result = args
             .next()

@@ -618,6 +618,11 @@ impl Cards {
             "refresh-calendar" => Some(Message::RefreshCalendar),
             "close" => Some(Message::HideControls),
             "peek" => Some(Message::Peek(None)),
+            // `halcyon --look`: the same switch as an edge menu Look item.
+            "look" => Some(Message::ApplyLook(
+                serde_json::from_value(value["look"].clone()).ok()?,
+                value["name"].as_str().unwrap_or_default().to_string(),
+            )),
             "drawer" => Some(Message::DrawerToggle),
             "rail" => Some(Message::ShowControls),
             "open" => match value["widget"].as_str() {

@@ -46,6 +46,10 @@ WIDGETS = {'calendar': 'Calendar — today and meeting links', 'projects': 'Proj
            'markets': 'Markets — watchlist and price charts',
            'folder': 'Folder — recent local files'}
 FOCUS_ACTIONS = ('start', 'pause', 'toggle', 'reset', 'skip')
+# Everything `halcyon --toggle` takes besides the widgets, by the name it takes.
+TOGGLE_OTHERS = {'peek': 'peek', 'drawer': 'drawer', 'menu': 'drawer',
+                 'system-monitor': 'devbox', 'daily-overview': 'glance'}
+NOT_RUNNING = 'Halcyon isn\u2019t running. Start it with: halcyon-ctl start'
 
 def atomic(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -248,13 +252,52 @@ def weather_picker():
     settings('weather')
 
 
+def widgets_running(folder):
+    """Whether the running widgets hold their lock, checked as `halcyon --toggle` does."""
+    try:
+        fd = os.open(folder / 'widgets.lock', os.O_RDWR | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    finally:
+        os.close(fd)
+
 def desktop_command(payload):
     folder = Path(os.environ.get('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}')) / 'halcyon'
+    # A command nobody reads would look like it worked.
+    if not widgets_running(folder):
+        raise RuntimeError(NOT_RUNNING)
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     atomic(folder / 'command.json', json.dumps(payload))
 
 def open_panel(widget='open', *, toggle=False):
     desktop_command({'action': 'toggle' if toggle else widget if widget in ('close', 'rail') else 'open', 'widget': widget})
+
+def toggle(target):
+    """Show or hide a widget, or open Peek or the edge menu, as `halcyon --toggle` does."""
+    target = TOGGLE_OTHERS.get(target, target)
+    if target in ('peek', 'drawer'):
+        desktop_command({'action': target})
+    else:
+        open_panel(target, toggle=True)
+
+def looks():
+    """Print the Looks one can switch to, as `halcyon --looks` lists them."""
+    result = subprocess.run([str(BINARY), '--looks'], text=True, capture_output=True)
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or 'Could not list the Looks.')
+    print(result.stdout, end='')
+
+def look(name):
+    """Switch to a Look by its name or id, through the running widgets."""
+    helper('--look', name, failure='Could not switch the Look.')
+    print('Switching to ' + name)
 
 def focus(action):
     """Start, pause, toggle, reset or skip the Focus timer (for keyboard shortcuts)."""
@@ -302,11 +345,18 @@ def restore_wallpaper():
 RESTORED = ('Restored your wallpaper and stopped Halcyon. '
             'It won\u2019t start at sign-in until you run: halcyon-ctl start')
 
-def restore():
+RESTORED_DESKTOP = ('Restored your desktop from before Halcyon and stopped Halcyon. '
+                    'It won\u2019t start at sign-in until you run: halcyon-ctl start')
+
+def restore(desktop=False):
     # Keep the original command's stop-and-disable behavior for existing callers.
-    restore_background()
+    if desktop:
+        # Settings' Stop using Halcyon: panels, dock, wallpaper and the rest.
+        helper('--restore-desktop', failure='Could not restore your desktop from before Halcyon.')
+    else:
+        restore_background()
     service('stop')
-    print(RESTORED)
+    print(RESTORED_DESKTOP if desktop else RESTORED)
 
 # Every page the native Settings window accepts (`Page::key` in src/settings.rs), plus the old
 # `layout` alias for Widgets.
@@ -337,8 +387,12 @@ def main():
     command('panel', 'Open the edge menu, or open it on one widget').add_argument(
         'widget', choices=[*WIDGETS, 'open', 'close', 'rail'], nargs='?', default='open',
         help='A widget, or open, close or rail')
-    command('toggle', 'Show or hide one widget').add_argument(
-        'widget', choices=WIDGETS, help='One of: ' + ', '.join(WIDGETS))
+    command('toggle', 'Show or hide one widget, or open Peek or the edge menu').add_argument(
+        'widget', choices=[*WIDGETS, *TOGGLE_OTHERS], metavar='TARGET',
+        help='A widget, or peek, drawer, system-monitor or daily-overview')
+    command('looks', 'List the Looks you can switch to')
+    command('look', 'Switch to a Look, by its name or id').add_argument(
+        'name', help='For example: Night (see: halcyon-ctl looks)')
     command('focus', 'Control the Focus timer, for example from a keyboard shortcut').add_argument(
         'action', choices=FOCUS_ACTIONS, help='One of: ' + ', '.join(FOCUS_ACTIONS))
     command('timer', 'Start a quick timer in the Activity island, or cancel, pause or resume it').add_argument(
@@ -350,7 +404,9 @@ def main():
     command('weather', 'Set the weather city by name').add_argument('city')
     command('weather-picker', 'Choose the weather city in Settings')
     command('restore', 'Put back your wallpaper from before Halcyon and stop the widgets, '
-            'including at sign-in')
+            'including at sign-in').add_argument(
+        '--desktop', action='store_true',
+        help='Put back the whole desktop from before Halcyon, as Settings\u2019 Stop using Halcyon does')
     command('restore-wallpaper', 'Put back only your wallpaper from before Halcyon')
     command('wallpapers-install', 'Check that Halcyon\u2019s built-in wallpapers are installed')
     args = parser.parse_args()
@@ -367,7 +423,11 @@ def main():
     elif args.command == 'panel':
         open_panel(args.widget)
     elif args.command == 'toggle':
-        open_panel(args.widget, toggle=True)
+        toggle(args.widget)
+    elif args.command == 'looks':
+        looks()
+    elif args.command == 'look':
+        look(args.name)
     elif args.command == 'focus':
         focus(args.action)
     elif args.command == 'timer':
@@ -375,7 +435,7 @@ def main():
     elif args.command in ('start', 'stop', 'restart', 'status'):
         service(args.command)
     elif args.command == 'restore':
-        restore()
+        restore(desktop=args.desktop)
     elif args.command == 'restore-wallpaper':
         restore_wallpaper()
     elif args.command == 'wallpapers-install':
