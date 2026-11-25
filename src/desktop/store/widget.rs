@@ -168,7 +168,7 @@ macro_rules! fields {
 }
 
 /// Every member a profile, its Undo or its recovery may write.
-pub static FIELDS: [WidgetField; 132] = fields![
+pub static FIELDS: [WidgetField; 133] = fields![
     "/recipes/music", "Music recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Music);
     "/recipes/focus", "Focus recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Focus);
     "/recipes/devbox", "System recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::System);
@@ -260,6 +260,7 @@ pub static FIELDS: [WidgetField; 132] = fields![
     "/markets/show_chart", "Markets chart", Style, boolean;
     "/markets/show_date", "Markets publication date", Style, boolean;
     "/markets/show_details", "Markets source and chart details", Style, boolean;
+    "/markets/chart_range", "Markets chart range", Style, |v| matches!(v.as_str(), Some("week" | "month" | "quarter"));
     "/notes/size", "Notes size", Style, notes_size;
     "/enabled_widgets", "Visible widgets", Layout, widget_list;
     "/widget_order", "Widget order", Layout, widget_list;
@@ -312,6 +313,7 @@ pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/markets/symbols", "Markets watchlist", Style, |v| serde_json::from_value::<Vec<String>>(v.clone()).is_ok_and(|s| crate::markets::symbols(&s.join(",")).is_ok_and(|valid| valid == s));
     "/markets/selected", "Selected watchlist item", Style, |v| v.as_str().is_some_and(|s| s.is_empty() || crate::markets::symbols(s).is_ok_and(|valid| valid == [s]));
     "/markets/credential_revision", "Markets connection", Style, |v| v.as_u64().is_some();
+    "/markets/alerts", "Markets price alerts", Style, crate::markets::valid_alerts;
     "/edge_menu/enabled", "Edge menu", Style, boolean;
     "/edge_menu/side", "Edge menu side", Style, |v| matches!(v.as_str(), Some("left" | "right"));
     "/edge_menu/position", "Edge menu position", Style, |v| int_in(v,0,100);

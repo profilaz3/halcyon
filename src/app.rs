@@ -761,7 +761,11 @@ impl cosmic::Application for Cards {
         }
         if self.provider_visible(Widget::Markets) {
             subscriptions.push(
-                crate::markets::subscription(self.config.markets.clone(), self.tools.markets.clone())
+                crate::markets::subscription(
+                    self.config.markets.clone(),
+                    self.tools.markets.clone(),
+                    self.tools.markets_refresh,
+                )
                     .map(Message::Markets),
             );
         }
@@ -2355,6 +2359,7 @@ impl Cards {
                     && state.source.as_ref().is_some_and(|p| p.feed_key() == self.config.markets.feed_key())
                 {
                     self.tools.markets = state;
+                    return self.market_alerts();
                 }
                 return Task::none();
             }

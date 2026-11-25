@@ -80,6 +80,11 @@ pub(super) struct Tools {
     /// The phone's conversations, while the widget or island needs them.
     pub messages: crate::messages::State,
     pub markets: crate::markets::State,
+    /// Counts refreshes asked for, restarting the Markets feed each time.
+    pub markets_refresh: u64,
+    /// The side each alerted symbol last notified for, so a crossing
+    /// notifies once until the price is back inside. Memory only.
+    pub market_alerted: std::collections::BTreeMap<String, crate::markets::Crossed>,
     pub folder: crate::folder::Listing,
     /// The subfolder the Folder card shows, inside the chosen folder; the
     /// chosen folder itself when `None`. Kept in memory only.
@@ -110,6 +115,8 @@ impl Tools {
             devices: Vec::new(),
             messages: crate::messages::State::default(),
             markets: crate::markets::State::default(),
+            markets_refresh: 0,
+            market_alerted: Default::default(),
             folder: Default::default(),
             folder_view: None,
         }
@@ -137,6 +144,8 @@ impl Tools {
             devices: Vec::new(),
             messages: crate::messages::State::default(),
             markets: crate::markets::State::default(),
+            markets_refresh: 0,
+            market_alerted: Default::default(),
             folder: Default::default(),
             folder_view: None,
         }
@@ -451,6 +460,53 @@ impl Cards {
                 .unwrap_or(root)
                 .clone(),
         )
+    }
+
+    /// Asks every Markets source again now: the feed restarts with its last
+    /// reading marked old.
+    pub(super) fn refresh_markets(&mut self) {
+        self.tools.markets.mark_old();
+        self.tools.markets_refresh = self.tools.markets_refresh.wrapping_add(1);
+    }
+
+    /// Notifies once for each price that crossed its alert since it was last
+    /// inside it (ADR 0012).
+    pub(super) fn market_alerts(&mut self) -> Task<Message> {
+        let alerts = &self.config.markets.alerts;
+        let mut notices = Vec::new();
+        for quote in &self.tools.markets.quotes {
+            let crossed = alerts
+                .get(&quote.symbol)
+                .and_then(|alert| Some((alert, alert.crossed(quote.price)?)));
+            match crossed {
+                None => {
+                    self.tools.market_alerted.remove(&quote.symbol);
+                }
+                Some((alert, side)) => {
+                    if self.tools.market_alerted.insert(quote.symbol.clone(), side) == Some(side) {
+                        continue;
+                    }
+                    let (word, level) = match side {
+                        crate::markets::Crossed::Above => ("above", alert.above),
+                        crate::markets::Crossed::Below => ("below", alert.below),
+                    };
+                    let level = level.unwrap_or(quote.price);
+                    notices.push((
+                        format!("{} is {word} {level} {}", quote.symbol, quote.currency),
+                        format!("Now {:.4} {}", quote.price, quote.currency)
+                            .replace(".0000 ", " "),
+                    ));
+                }
+            }
+        }
+        if crate::tools::preview() {
+            return Task::none();
+        }
+        Task::batch(notices.into_iter().map(|(summary, body)| {
+            cosmic::task::future(async move {
+                Message::ToolDone(crate::tools::notify(summary, body).await)
+            })
+        }))
     }
 
     pub(super) fn has_reading(&self, widget: Widget) -> bool {
@@ -777,6 +833,25 @@ impl Cards {
                     return Task::batch([save, self.music_art_task()]);
                 }
                 return self.music_art_task();
+            }
+            Action::MarketsRefresh => {
+                self.refresh_markets();
+                return Task::none();
+            }
+            Action::MarketRange(range) => {
+                return self.save_config_later(
+                    "Markets chart range",
+                    super::config_writes::Failure::notice(
+                        "Couldn’t change the chart range",
+                        "Your choice wasn’t saved.",
+                        None,
+                    ),
+                    None,
+                    move || {
+                        let range = serde_json::json!({ "chart_range": range });
+                        Config::save_tool(Widget::Markets, range)
+                    },
+                );
             }
             Action::MarketsOpen => {
                 return self

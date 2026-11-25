@@ -57,6 +57,9 @@ pub enum Action {
     MessagesOpen,
     MarketsOpen,
     MarketSelect(String),
+    /// Ask every Markets source again now.
+    MarketsRefresh,
+    MarketRange(crate::markets::Range),
 }
 
 pub const NOTE_EDITOR: &str = "desktop-cards-note-editor";

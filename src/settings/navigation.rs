@@ -833,6 +833,15 @@ const SEARCH: &[SearchHit] = &[
     hit(Page::Markets, "Show on widget", "markets display options", false).at("markets-display"),
     hit(Page::Markets, "Daily change", "markets percentage previous quote", false).at("markets-change"),
     hit(Page::Markets, "Price chart", "markets graph price history", false).at("markets-chart"),
+    hit(Page::Markets, "Chart range", "markets week month 3 months history period timeframe", false)
+        .at("markets-range"),
+    hit(
+        Page::Markets,
+        "Price alerts",
+        "markets alert notify notification target price above below",
+        false,
+    )
+    .at("markets-alerts"),
     hit(Page::Markets, "Publication date", "markets quote time timestamp", false).at("markets-date"),
     hit(Page::Markets, "Source and chart details", "markets provider chart dates low high prices", false).at("markets-details"),
     MARKETS_WATCHLIST,
