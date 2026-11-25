@@ -19,6 +19,10 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuPick {
     Interact,
+    /// Check the widget's source again now.
+    Refresh,
+    /// Show the widget on the menu's `n`th other display.
+    Display(usize),
     Settings,
     Arrange,
     Hide,
@@ -2163,7 +2167,11 @@ impl Cards {
         };
         let id = window::Id::unique();
         self.menu = Some((id, widget));
-        let height = MENU_ROW * (3 + u32::from(self.can_interact_with_tool(widget))) + MENU_PADDING * 2;
+        let rows = 3
+            + u32::from(self.can_interact_with_tool(widget))
+            + u32::from(self.can_refresh(widget))
+            + self.menu_displays(widget).len() as u32;
+        let height = MENU_ROW * rows + MENU_PADDING * 2;
         let popup = get_popup(SctkPopupSettings {
             parent,
             id,
@@ -2192,6 +2200,57 @@ impl Cards {
         });
         Task::batch([close, popup])
     }
+    /// Whether the widget reads a source it can check again on request.
+    pub(super) fn can_refresh(&self, widget: Widget) -> bool {
+        match widget {
+            Widget::Weather => self.config.location.is_some(),
+            Widget::Calendar | Widget::Devbox => true,
+            Widget::Projects => !self.config.project_roots.is_empty(),
+            Widget::Glance => self.config.glance.show_weather || self.config.glance.show_calendar,
+            _ => false,
+        }
+    }
+    /// Brings the widget's next check forward to now.
+    pub(super) fn refresh_now(&mut self, widget: Widget) {
+        let now = Instant::now();
+        let weather = matches!(widget, Widget::Weather)
+            || (widget == Widget::Glance && self.config.glance.show_weather);
+        let calendar = matches!(widget, Widget::Calendar)
+            || (widget == Widget::Glance && self.config.glance.show_calendar);
+        if weather {
+            self.weather_hub.due_now(now);
+        }
+        if calendar {
+            self.retry_calendar_now();
+            self.next_calendar_view = now;
+        }
+        match widget {
+            Widget::Projects => self.next_projects = now,
+            Widget::Devbox => {
+                self.next_metrics = now;
+                self.next_service = now;
+            }
+            _ => {}
+        }
+    }
+    /// The other connected displays the widget can move to, by connector
+    /// name and title: only ones with a name of their own, at most three.
+    pub(super) fn menu_displays(&self, widget: Widget) -> Vec<(String, String)> {
+        let outputs = self.displays.outputs();
+        if outputs.len() < 2 {
+            return Vec::new();
+        }
+        let here = self.widget_output(widget).and_then(|o| o.name());
+        outputs
+            .iter()
+            .filter_map(|output| {
+                let name = output.name()?;
+                (Some(name) != here && self.displays.unique(name).is_some())
+                    .then(|| (name.to_string(), output.display_name()))
+            })
+            .take(3)
+            .collect()
+    }
     pub(super) fn close_widget_menu(&mut self) -> Task<Message> {
         match self.menu.take() {
             Some((id, _)) => destroy_popup(id),
@@ -2205,6 +2264,28 @@ impl Cards {
         let close = self.close_widget_menu();
         let next = self.update(match pick {
             MenuPick::Interact => return close.chain(self.interact_with_tool(widget)),
+            MenuPick::Refresh => {
+                self.refresh_now(widget);
+                return close;
+            }
+            MenuPick::Display(index) => {
+                let Some((name, _)) = self.menu_displays(widget).into_iter().nth(index) else {
+                    return close;
+                };
+                let save = self.save_config_later(
+                    "Widget display",
+                    super::config_writes::Failure::notice(
+                        "Couldn’t move the widget",
+                        "It stays on this display.",
+                        None,
+                    ),
+                    None,
+                    move || {
+                        Config::save_monitor_field(widget, "display", serde_json::json!(name))
+                    },
+                );
+                return Task::batch([close, save]);
+            }
             MenuPick::Settings => Message::WidgetSettings(widget),
             MenuPick::Arrange => Message::Arrange,
             MenuPick::Hide => return Task::batch([close, self.hide_from_menu(widget)]),
@@ -2227,7 +2308,23 @@ impl Cards {
             .into()
         };
         let (settings, hide) = widget_menu_labels(widget);
-        let mut choices = vec![
+        let mut choices = Vec::new();
+        if self.can_refresh(widget) {
+            choices.push(item("Refresh now".into(), "widget-menu-refresh", MenuPick::Refresh));
+        }
+        for (index, (_, title)) in self.menu_displays(widget).into_iter().enumerate() {
+            const IDS: [&str; 3] = [
+                "widget-menu-display-0",
+                "widget-menu-display-1",
+                "widget-menu-display-2",
+            ];
+            choices.push(item(
+                format!("Move to {title}"),
+                IDS[index.min(2)],
+                MenuPick::Display(index),
+            ));
+        }
+        choices.extend([
             item(settings, "widget-menu-settings", MenuPick::Settings),
             item(
                 "Arrange widgets".into(),
@@ -2235,7 +2332,7 @@ impl Cards {
                 MenuPick::Arrange,
             ),
             item(hide, "widget-menu-hide", MenuPick::Hide),
-        ];
+        ]);
         if self.can_interact_with_tool(widget) {
             let label = if self.has_reading(widget) { "Open full reading" } else { "Use widget controls" };
             choices.insert(0, item(label.into(), "widget-menu-interact", MenuPick::Interact));

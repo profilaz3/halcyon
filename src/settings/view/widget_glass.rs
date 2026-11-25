@@ -437,7 +437,7 @@ impl Settings {
                 crate::app::settings_projects_preview(&cfg).map(|_| Message::Preview)
             }
             Widget::Markets => cards::markets(&self.tools.market_preview, &cfg, None, size),
-            Widget::Devices => cards::devices(&cards::sample_devices(), &cfg, size),
+            Widget::Devices => cards::devices(&cards::sample_devices(), &cfg, None, size),
             Widget::Focus => cards::focus(
                 &Default::default(),
                 &cfg,

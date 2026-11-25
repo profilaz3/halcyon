@@ -5,7 +5,7 @@
 mod devices;
 mod folder;
 mod markets;
-pub use folder::folder;
+pub use folder::{folder, folder_in};
 pub use markets::{markets, sample_for as sample_markets_for};
 #[cfg(test)]
 pub use markets::sample as sample_markets;
@@ -19,7 +19,7 @@ use cosmic::iced::advanced::text as advanced_text;
 use cosmic::iced::{Alignment, Background, Border, Color, Font, Length};
 use cosmic::widget::image::Handle;
 use cosmic::widget::{column, container, icon, row, text, text_editor};
-pub(crate) use devices::charging_icon;
+pub(crate) use devices::{SOURCES as DEVICE_SOURCES, charging_icon};
 pub use devices::{devices, sample as sample_devices};
 pub use messages::{messages, sample as sample_messages};
 #[cfg(test)]

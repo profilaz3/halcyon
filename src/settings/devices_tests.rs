@@ -131,7 +131,7 @@ fn devices_widget_is_off_until_chosen_and_renders_full_and_empty() {
         ] {
             let config = styled(shade == "light");
             let card = |list: &[crate::devices::Device]| {
-                crate::tools::cards::devices::<Message>(list, &config, Some(dims))
+                crate::tools::cards::devices::<Message>(list, &config, None, Some(dims))
             };
             let none = native.text_bounds(card(&empty), "No devices connected");
             assert!(none.width > 0. && none.x + none.width <= dims[0]);

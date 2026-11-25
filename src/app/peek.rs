@@ -98,6 +98,26 @@ impl Cards {
         peek.widgets.len()
     }
 
+    /// Where the page before this one starts, if there is one.
+    pub(super) fn peek_previous(&self, peek: &Peek) -> Option<usize> {
+        let first = peek.page.min(peek.widgets.len().saturating_sub(1));
+        (first > 0).then(|| {
+            let mut previous = 0;
+            while self.peek_page_end(peek, previous) < first {
+                previous = self.peek_page_end(peek, previous);
+            }
+            previous
+        })
+    }
+
+    /// Where the page after this one starts, if there is one.
+    pub(super) fn peek_next(&self, peek: &Peek) -> Option<usize> {
+        let end = peek.widgets.len();
+        let first = peek.page.min(end.saturating_sub(1));
+        let next = self.peek_page_end(peek, first);
+        (next < end).then_some(next)
+    }
+
     pub(super) fn peek_note_surface(&self) -> Option<window::Id> {
         let peek = self.peek.as_ref()?;
         let end = self.peek_page_end(peek, peek.page);
@@ -132,18 +152,14 @@ impl Cards {
                 .into(),
             cosmic::widget::Space::new().width(Length::Fill).into(),
         ];
-        if first > 0 {
-            let mut previous = 0;
-            while self.peek_page_end(peek, previous) < first {
-                previous = self.peek_page_end(peek, previous);
-            }
+        if let Some(previous) = self.peek_previous(peek) {
             header.push(
                 button::text("Previous")
                     .on_press(Message::PeekPage(previous))
                     .into(),
             );
         }
-        if next < end {
+        if let Some(next) = self.peek_next(peek) {
             header.push(
                 button::text("More widgets")
                     .on_press(Message::PeekPage(next))

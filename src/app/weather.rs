@@ -171,6 +171,87 @@ impl Presentation {
         }
     }
 
+    /// The place the reading is for, as the card titles it.
+    pub fn title(&self) -> String {
+        self.title.clone()
+    }
+
+    /// Everything the card can cut for room: each current reading on its
+    /// own line, how fresh it is, and every forecast day with its
+    /// conditions and chance of rain. In `p`, the reading window's colors.
+    pub fn full_reading(&self, p: Palette) -> Element<'static, Message> {
+        let Content::Reading {
+            icon,
+            temperature,
+            description,
+            summary,
+            details,
+            forecast,
+            status,
+        } = &self.content
+        else {
+            let note = match self.content {
+                Content::ChooseLocation => "Choose a city in Settings › Weather",
+                Content::Loading => "Checking the skies…",
+                _ => "Weather unavailable",
+            };
+            return self.label(note, 14., p.muted);
+        };
+        let mut rows = vec![
+            row::with_children(vec![
+                self.label(*icon, 40., p.accent),
+                self.label(temperature.clone(), 52., p.foreground),
+                column::with_children(vec![
+                    self.label(*description, 16., p.foreground),
+                    self.label(summary.clone(), 13., p.muted),
+                    self.label(details.clone(), 13., p.muted),
+                ])
+                .spacing(3)
+                .into(),
+            ])
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .into(),
+        ];
+        if let Some(status) = status {
+            rows.push(self.label(status.clone(), 12., p.muted));
+        }
+        rows.push(self.label("Forecast", 16., p.foreground));
+        if forecast.is_empty() {
+            rows.push(self.label("Forecast unavailable", 13., p.muted));
+        }
+        for day in forecast {
+            let mut about = vec![self.label(day.title.clone(), 14., p.foreground)];
+            if let Some(condition) = day.condition {
+                about.push(self.label(condition, 12., p.muted));
+            }
+            let mut range =
+                vec![self.label(format!("{} / {}", day.high, day.low), 14., p.foreground)];
+            if let Some(rain) = &day.rain {
+                range.push(self.label(rain.clone(), 12., p.muted));
+            }
+            rows.push(
+                row::with_children(vec![
+                    container(self.label(day.icon, 22., p.accent))
+                        .width(32.)
+                        .into(),
+                    column::with_children(about)
+                        .spacing(2)
+                        .width(Length::Fill)
+                        .into(),
+                    column::with_children(range)
+                        .spacing(2)
+                        .align_x(Alignment::End)
+                        .into(),
+                ])
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .into(),
+            );
+        }
+        column::with_children(rows).spacing(12).into()
+    }
+
     pub fn metrics(&self) -> Metrics {
         crate::widget_presentation::metrics(Widget::Weather)
     }
