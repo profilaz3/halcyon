@@ -145,6 +145,14 @@ impl Palette {
 fn alpha(color: Color, a: f32) -> Color {
     Color { a, ..color }
 }
+/// The pin glyph: COSMIC's own, else the freedesktop name other themes use.
+fn pin_glyph() -> widget::icon::Named {
+    widget::icon::from_name("pin-symbolic")
+        .symbolic(true)
+        .fallback(Some(widget::icon::IconFallback::Names(vec![
+            "view-pin-symbolic".into(),
+        ])))
+}
 fn capsule_button(palette: Palette, tint: Color, reveal: f32, role: Role) -> cosmic::theme::Button {
     let style = move |focused: bool, level: usize, disabled: bool| {
         let ink = match role {
@@ -1435,7 +1443,14 @@ impl Applet {
                 return self.hold_popup();
             }
             Message::Control(command) => {
-                let pin = matches!(command, Command::PinMusic | Command::PinMessages);
+                let pin = matches!(
+                    command,
+                    Command::PinMusic
+                        | Command::PinMessages
+                        | Command::PinFocus
+                        | Command::PinCalendar
+                        | Command::PinDevices
+                );
                 if let Some(tx) = &self.commands {
                     if tx.try_send(command).is_err() {
                         self.problem = Some("Please try again".into());
@@ -2237,6 +2252,37 @@ impl Applet {
             },
         }
     }
+    /// The pin icon that puts a card's widget on the desktop, or shows it
+    /// where it already is.
+    fn pin_icon<'a>(
+        &self,
+        palette: Palette,
+        tint: Color,
+        reveal: f32,
+        id: &'static str,
+        pinned: bool,
+        command: Command,
+    ) -> Element<'a, Message> {
+        let label = if pinned {
+            "Show on desktop"
+        } else {
+            "Pin to desktop"
+        };
+        self.tip(
+            palette,
+            widget::button::icon(pin_glyph())
+                .id(widget::Id::new(id))
+                .name(label)
+                .icon_size(16)
+                .padding(12)
+                .width(40)
+                .height(44)
+                .class(capsule_button(palette, tint, reveal, Role::Quiet))
+                .on_press(Message::Control(command)),
+            label,
+            widget::tooltip::Position::Top,
+        )
+    }
     fn label_button<'a>(
         &self,
         palette: Palette,
@@ -2511,7 +2557,7 @@ impl Applet {
                     Some(Message::Control(Command::OpenMessages)),
                 );
             }
-            // The open device list has no buttons of its own.
+            // The open device list is the live view, with its own buttons.
             Kind::Devices => {}
             Kind::System(source) => {
                 return self.label_button(
@@ -2655,26 +2701,13 @@ impl Applet {
                         self.tip(palette, button, label, widget::tooltip::Position::Top)
                     };
                     let key = || m.key.clone();
-                    let pin_label = if self.snapshot.music_pinned {
-                        "Show on desktop"
-                    } else {
-                        "Pin to desktop"
-                    };
-                    let pin = self.tip(
+                    let pin = self.pin_icon(
                         palette,
-                        widget::button::icon(
-                            widget::icon::from_name("view-pin-symbolic").symbolic(true),
-                        )
-                        .id(widget::Id::new("activity-pin-music"))
-                        .name(pin_label)
-                        .icon_size(16)
-                        .padding(12)
-                        .width(40)
-                        .height(44)
-                        .class(capsule_button(palette, tint, reveal, Role::Quiet))
-                        .on_press(Message::Control(Command::PinMusic)),
-                        pin_label,
-                        widget::tooltip::Position::Top,
+                        tint,
+                        reveal,
+                        "activity-pin-music",
+                        self.snapshot.music_pinned,
+                        Command::PinMusic,
                     );
                     row = row
                         .width(Length::Fill)
@@ -2743,15 +2776,24 @@ impl Applet {
                 } else {
                     "Resume"
                 };
-                row = row.push(self.label_button(
-                    palette,
-                    "activity-focus-action",
-                    label,
-                    tint,
-                    reveal,
-                    Role::Primary,
-                    (!elapsed).then(|| Message::Control(Command::Focus { key: f.key.clone() })),
-                ));
+                row = row
+                    .push(self.pin_icon(
+                        palette,
+                        tint,
+                        reveal,
+                        "activity-pin-focus",
+                        self.snapshot.focus_pinned,
+                        Command::PinFocus,
+                    ))
+                    .push(self.label_button(
+                        palette,
+                        "activity-focus-action",
+                        label,
+                        tint,
+                        reveal,
+                        Role::Primary,
+                        (!elapsed).then(|| Message::Control(Command::Focus { key: f.key.clone() })),
+                    ));
             }
             Kind::Timer => return self.timer_actions(palette, tint, reveal),
             Kind::Transfer => return self.transfer_actions(palette, tint, reveal),
@@ -2787,6 +2829,14 @@ impl Applet {
                         Some(Message::Dismiss),
                     ));
                 }
+                row = row.push(self.pin_icon(
+                    palette,
+                    tint,
+                    reveal,
+                    "activity-pin-calendar",
+                    self.snapshot.calendar_pinned,
+                    Command::PinCalendar,
+                ));
                 row = row.push(match join {
                     Some(url) => self.label_button(
                         palette,

@@ -5700,3 +5700,128 @@ fn pin_actions_reach_the_desktop_from_both_open_cards() {
         assert!(!app.held);
     }
 }
+
+/// Opens `kind`'s card as the pin test does, with every card's data.
+fn open_card(kind: Kind) -> (Applet, tokio::sync::mpsc::Receiver<Command>) {
+    let mut app = app();
+    let (tx, rx) = tokio::sync::mpsc::channel(8);
+    app.commands = Some(tx);
+    app.snapshot.preferences.calendar = true;
+    app.snapshot.preferences.system = true;
+    app.snapshot.calendar = Some(bridge::Calendar {
+        key: "meeting".into(),
+        title: "Design review".into(),
+        starts_at_ms: app.now_ms + 180_000,
+        ends_at_ms: app.now_ms + 900_000,
+        all_day: false,
+        join: None,
+        color: None,
+    });
+    app.snapshot.devices = vec![crate::devices::Device {
+        id: "bt:1".into(),
+        name: "Sony WH-1000XM5".into(),
+        kind: crate::devices::Kind::Headphones,
+        battery: Some(80),
+        ..Default::default()
+    }];
+    if kind == Kind::Devices {
+        app.devices.card = true;
+    }
+    app.kind = kind;
+    app.held = true;
+    app.popup = Some(window::Id::unique());
+    app.motion.retarget(1., false, Instant::now());
+    app.popup_extra = if kind == Kind::Devices {
+        app.devices_extra()
+    } else {
+        app.live_extra()
+    };
+    (app, rx)
+}
+
+/// Presses `id` on the open card, inside it, and returns what reached the desktop.
+fn press(app: &mut Applet, rx: &mut tokio::sync::mpsc::Receiver<Command>, id: &str) -> Command {
+    let size = cosmic::iced::Size::new(app.frame().popup_width(), app.popup_height());
+    let mut ui = crate::native_test::Native::new(size);
+    let bounds = ui.bounds(app.capsule(true), id);
+    assert!(
+        bounds.x >= 0. && bounds.x + bounds.width <= size.width + 1.,
+        "{id} {bounds:?} in {size:?}"
+    );
+    assert!(bounds.y >= 0. && bounds.y + bounds.height <= size.height + 1.);
+    for message in click(&mut ui, app, id) {
+        let _ = app.update(message);
+    }
+    rx.try_recv().unwrap_or_else(|_| panic!("{id} sent nothing"))
+}
+
+#[test]
+fn focus_calendar_and_devices_pin_to_the_desktop() {
+    for (kind, id) in [
+        (Kind::Focus, "activity-pin-focus"),
+        (Kind::Calendar, "activity-pin-calendar"),
+        (Kind::Devices, "activity-pin-devices"),
+    ] {
+        let (mut app, mut rx) = open_card(kind);
+        let sent = press(&mut app, &mut rx, id);
+        assert!(
+            matches!(
+                (kind, &sent),
+                (Kind::Focus, Command::PinFocus)
+                    | (Kind::Calendar, Command::PinCalendar)
+                    | (Kind::Devices, Command::PinDevices)
+            ),
+            "{id} sent {sent:?}"
+        );
+        assert!(!app.held, "pinning closes the island");
+    }
+    // The open device list also leads to pairing.
+    let (mut app, mut rx) = open_card(Kind::Devices);
+    let size = cosmic::iced::Size::new(app.frame().popup_width(), app.popup_height());
+    let mut ui = crate::native_test::Native::new(size);
+    ui.capture(app.capsule(true), &cosmic::Theme::dark(), "island-devices-list");
+    let messages = click(&mut ui, &app, "activity-system-settings");
+    assert!(
+        messages
+            .iter()
+            .any(|m| matches!(m, Message::SystemSettings(system::Source::Bluetooth))),
+        "{messages:?}"
+    );
+    for message in messages {
+        let _ = app.update(message);
+    }
+    assert!(rx.try_recv().is_err(), "settings opens on its own, not through the desktop");
+}
+
+#[test]
+fn island_focus_offers_the_desktop_cards_controls() {
+    // Ready: the card's other lengths; the ring already shows the current one.
+    let (mut app, mut rx) = open_card(Kind::Focus);
+    let size = cosmic::iced::Size::new(app.frame().popup_width(), app.popup_height());
+    let mut ui = crate::native_test::Native::new(size);
+    ui.capture(app.capsule(true), &cosmic::Theme::dark(), "island-focus-ready");
+    assert!(ui.try_bounds(app.capsule(true), "activity-focus-25").is_none(), "25 is current");
+    assert!(ui.try_bounds(app.capsule(true), "activity-focus-15").is_some());
+    let sent = press(&mut app, &mut rx, "activity-focus-50");
+    assert!(
+        matches!(&sent, Command::FocusMinutes { key, minutes: 50 } if key == "focus-1"),
+        "{sent:?}"
+    );
+    // Running: Skip and Stop, for this session.
+    let (mut app, mut rx) = open_card(Kind::Focus);
+    app.snapshot.focus.ready = false;
+    app.snapshot.focus.running = true;
+    app.snapshot.focus.ends_at_ms = Some(app.now_ms + 600_000);
+    let sent = press(&mut app, &mut rx, "activity-focus-skip");
+    assert!(matches!(&sent, Command::FocusSkip { key } if key == "focus-1"), "{sent:?}");
+    let (mut app, mut rx) = open_card(Kind::Focus);
+    app.snapshot.focus.ready = false;
+    app.snapshot.focus.running = false;
+    let sent = press(&mut app, &mut rx, "activity-focus-stop");
+    assert!(matches!(&sent, Command::FocusStop { key } if key == "focus-1"), "{sent:?}");
+    let size = cosmic::iced::Size::new(app.frame().popup_width(), app.popup_height());
+    let mut ui = crate::native_test::Native::new(size);
+    for theme in [cosmic::Theme::dark()] {
+        ui.capture(app.capsule(true), &theme, "island-focus-paused");
+    }
+}

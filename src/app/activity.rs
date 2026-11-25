@@ -109,6 +109,9 @@ impl Cards {
         Snapshot {
             music_pinned: self.config.widget_visible(Widget::Music),
             messages_pinned: self.config.widget_visible(Widget::Messages),
+            focus_pinned: self.config.widget_visible(Widget::Focus),
+            calendar_pinned: self.config.widget_visible(Widget::Calendar),
+            devices_pinned: self.config.widget_visible(Widget::Devices),
             calendar_minute: if calendar.is_some() {
                 now.div_euclid(60_000)
             } else {
@@ -290,6 +293,13 @@ impl Cards {
             Event::Command(Command::PinMessages) if self.config.activity_island.messages => {
                 return self.pin_from_island(Widget::Messages);
             }
+            Event::Command(Command::PinFocus) => return self.pin_from_island(Widget::Focus),
+            Event::Command(Command::PinCalendar) if self.config.activity_island.calendar => {
+                return self.pin_from_island(Widget::Calendar);
+            }
+            Event::Command(Command::PinDevices) if self.config.activity_island.system => {
+                return self.pin_from_island(Widget::Devices);
+            }
             Event::Command(Command::OpenMessages) => {
                 if self.config.activity_island.messages {
                     return self.update_tool(crate::tools::cards::Action::MessagesOpen);
@@ -317,13 +327,14 @@ impl Cards {
                 }
             }
             Event::Command(command) => {
-                let music_command = match command {
-                    Command::Focus { key } => {
-                        if key == focus_key(&self.tools.focus) {
-                            return self.update_tool(crate::tools::cards::Action::FocusToggle);
-                        }
+                if let Some((key, action)) = island_focus(&command) {
+                    // A click on a card the desktop has since replaced does nothing.
+                    if key != focus_key(&self.tools.focus) {
                         return Task::none();
                     }
+                    return action.map_or_else(Task::none, |action| self.update_tool(action));
+                }
+                let music_command = match command {
                     Command::Play { key } => (key, music::Command::Play),
                     Command::Pause { key } => (key, music::Command::Pause),
                     Command::Next { key } => (key, music::Command::Next),
@@ -416,6 +427,22 @@ fn music_key(p: &music::Player) -> String {
         p.bus, p.owner, p.track_id, p.title
     ))
 }
+/// A Focus command's session key and the desktop card action it stands
+/// for; no action for a length the card doesn't offer.
+fn island_focus(command: &Command) -> Option<(&str, Option<crate::tools::cards::Action>)> {
+    use crate::tools::cards::Action;
+    Some(match command {
+        Command::Focus { key } => (key, Some(Action::FocusToggle)),
+        Command::FocusSkip { key } => (key, Some(Action::FocusSkip)),
+        Command::FocusStop { key } => (key, Some(Action::FocusReset)),
+        Command::FocusMinutes { key, minutes } => (
+            key,
+            matches!(minutes, 15 | 25 | 50).then_some(Action::FocusMinutes(*minutes)),
+        ),
+        _ => return None,
+    })
+}
+
 fn focus_key(s: &focus::Session) -> String {
     key(&format!("{s:?}"))
 }
@@ -423,6 +450,26 @@ fn focus_key(s: &focus::Session) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn island_focus_commands_map_to_the_desktop_cards_actions() {
+        use crate::tools::cards::Action;
+        let key = || "focus-1".to_string();
+        let cases = [
+            (Command::Focus { key: key() }, Some(Action::FocusToggle)),
+            (Command::FocusSkip { key: key() }, Some(Action::FocusSkip)),
+            (Command::FocusStop { key: key() }, Some(Action::FocusReset)),
+            (Command::FocusMinutes { key: key(), minutes: 25 }, Some(Action::FocusMinutes(25))),
+            // Only the card's own lengths.
+            (Command::FocusMinutes { key: key(), minutes: 30 }, None),
+        ];
+        for (command, action) in cases {
+            let (sent, mapped) = island_focus(&command).unwrap();
+            assert_eq!(sent, "focus-1");
+            assert_eq!(format!("{mapped:?}"), format!("{action:?}"), "{command:?}");
+        }
+        assert!(island_focus(&Command::PinFocus).is_none());
+    }
+
     #[test]
     fn activity_island_raise_needs_only_the_players_own_permission() {
         let mut player = music::Player {
