@@ -338,15 +338,43 @@ impl Applet {
     ) -> Element<'a, Message> {
         widget::column([
             self.devices_list(palette, accent, reveal),
-            self.label_button(
-                palette,
-                "activity-devices-back",
-                "Back to activities",
-                accent,
-                reveal,
-                Role::Quiet,
-                Some(Message::Devices(Msg::Back)),
-            ),
+            widget::row([
+                self.label_button(
+                    palette,
+                    "activity-devices-back",
+                    // Short, so the pin and Bluetooth settings fit beside it.
+                    "Back",
+                    accent,
+                    reveal,
+                    Role::Quiet,
+                    Some(Message::Devices(Msg::Back)),
+                ),
+                widget::Space::new().width(Length::Fill).into(),
+                self.pin_icon(
+                    palette,
+                    accent,
+                    reveal,
+                    "activity-pin-devices",
+                    self.snapshot.devices_pinned,
+                    Command::PinDevices,
+                ),
+                self.label_button(
+                    palette,
+                    "activity-system-settings",
+                    if self.frame().attached {
+                        "Settings"
+                    } else {
+                        "Bluetooth settings"
+                    },
+                    accent,
+                    reveal,
+                    Role::Quiet,
+                    Some(Message::SystemSettings(system::Source::Bluetooth)),
+                ),
+            ])
+            .spacing(4)
+            .align_y(cosmic::iced::Alignment::Center)
+            .into(),
         ])
         .spacing(BACK_GAP)
         .width(Length::Fill)

@@ -39,6 +39,12 @@ pub struct Snapshot {
     pub music_pinned: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub messages_pinned: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub focus_pinned: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub calendar_pinned: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub devices_pinned: bool,
     /// The quick timer. The desktop owns it so `halcyon-ctl` reaches it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timer: Option<super::timer::Timer>,
@@ -116,6 +122,12 @@ pub enum Command {
     /// Bring the player's window forward.
     Raise { key: String },
     Focus { key: String },
+    /// End this Focus or break phase and go on to the next one.
+    FocusSkip { key: String },
+    /// Stop the Focus session and go back to the first round.
+    FocusStop { key: String },
+    /// Focus for 15, 25 or 50 minutes from now on.
+    FocusMinutes { key: String, minutes: u16 },
     /// Set, or with no rule reset, what the island does with an app's
     /// notifications. Only the app's name and desktop entry cross.
     NoteRule {
@@ -139,6 +151,9 @@ pub enum Command {
     OpenMessages,
     PinMusic,
     PinMessages,
+    PinFocus,
+    PinCalendar,
+    PinDevices,
 }
 #[derive(Clone, Debug)]
 pub enum Event {

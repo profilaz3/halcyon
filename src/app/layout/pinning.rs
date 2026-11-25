@@ -90,19 +90,37 @@ impl Cards {
             }
             return self.highlight_pin(widget);
         }
+        let shown_elsewhere = format!(
+            "{} is already on the desktop and appears when it has something to show.",
+            widget.title()
+        );
         let problem = if !self.config.widgets_visible {
-            Some("Turn on desktop widgets in Halcyon Settings first.")
+            Some("Turn on desktop widgets in Halcyon Settings first.".to_string())
+        } else if self.config.glance.enabled
+            && matches!(widget, Widget::Clock | Widget::Weather | Widget::Calendar)
+        {
+            // Pinning would add a second copy beside the overview's own.
+            Some("The Daily overview already shows it. Turn the overview off in Settings to pin it on its own.".to_string())
         } else if !self.output_known || !self.widget_available(widget) {
             Some(
-                "The widget’s display is unavailable. Reconnect it or choose another display in Settings.",
+                "The widget’s display is unavailable. Reconnect it or choose another display in Settings."
+                    .to_string(),
             )
         } else if self.layout_editor.active
             || self.paused_layout.is_some()
             || self.pending_arrange.is_some()
         {
-            Some("Finish the current widget arrangement, then choose Pin to desktop again.")
+            Some(
+                "Finish the current widget arrangement, then choose Pin to desktop again."
+                    .to_string(),
+            )
+        } else if widget == Widget::Music && self.config.widget_visible(widget) {
+            Some(
+                "Music is already on the desktop and appears when a player has a track."
+                    .to_string(),
+            )
         } else if self.config.widget_visible(widget) {
-            Some("Music is already on the desktop and appears when a player has a track.")
+            Some(shown_elsewhere)
         } else {
             None
         };

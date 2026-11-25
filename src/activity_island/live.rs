@@ -1195,7 +1195,85 @@ impl Applet {
         } else {
             ("media-playback-start-symbolic", "Resume")
         };
-        let action = self.round(
+        let key = || f.key.clone();
+        let pin_label = if self.snapshot.focus_pinned {
+            "Show on desktop"
+        } else {
+            "Pin to desktop"
+        };
+        let pin_color = alpha(palette.ink, reveal);
+        let mut controls = vec![self.round(
+            palette,
+            accent,
+            reveal,
+            "activity-pin-focus",
+            super::pin_glyph()
+                .size(16)
+                .icon()
+                .class(cosmic::theme::Svg::custom(move |_| {
+                    cosmic::iced::widget::svg::Style {
+                        color: Some(pin_color),
+                    }
+                }))
+                .into(),
+            40.,
+            false,
+            pin_label,
+            Message::Control(Command::PinFocus),
+        )];
+        if f.ready {
+            // The desktop card's other lengths: the ring already shows this
+            // one, and two fit beside the pin and Start.
+            let lengths = [
+                ("activity-focus-15", 15u16),
+                ("activity-focus-25", 25),
+                ("activity-focus-50", 50),
+            ];
+            for (id, minutes) in lengths
+                .into_iter()
+                .filter(|(_, minutes)| f.remaining_ms != i64::from(*minutes) * 60_000)
+                .take(2)
+            {
+                controls.push(self.round(
+                    palette,
+                    accent,
+                    reveal,
+                    id,
+                    self.text(minutes.to_string(), 13., alpha(palette.ink, reveal)),
+                    40.,
+                    false,
+                    &format!("Focus for {minutes} minutes"),
+                    Message::Control(Command::FocusMinutes {
+                        key: key(),
+                        minutes,
+                    }),
+                ));
+            }
+        } else {
+            controls.push(self.round(
+                palette,
+                accent,
+                reveal,
+                "activity-focus-skip",
+                Self::tinted("media-skip-forward-symbolic", 16, alpha(palette.ink, reveal)),
+                40.,
+                false,
+                "Skip",
+                Message::Control(Command::FocusSkip { key: key() }),
+            ));
+            controls.push(self.round(
+                palette,
+                accent,
+                reveal,
+                "activity-focus-stop",
+                Self::tinted("media-playback-stop-symbolic", 16, alpha(palette.ink, reveal)),
+                40.,
+                false,
+                "Stop",
+                Message::Control(Command::FocusStop { key: key() }),
+            ));
+        }
+        controls.push(self.round(
             palette,
             accent,
             reveal,
@@ -1204,10 +1282,14 @@ impl Applet {
             48.,
             true,
             label,
-            Message::Control(Command::Focus { key: f.key.clone() }),
-        );
+            Message::Control(Command::Focus { key: key() }),
+        ));
+        let controls = widget::row(controls)
+            .spacing(6)
+            .align_y(cosmic::iced::Alignment::Center)
+            .into();
         let ring = ring_clock(palette, accent, reveal, fraction, left);
-        self.ring_panel(palette, reveal, line, ring, action)
+        self.ring_panel(palette, reveal, line, ring, controls)
     }
     fn outputs_view<'a>(
         &'a self,
