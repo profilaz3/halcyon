@@ -390,10 +390,41 @@ pub fn devices<'a, M: Clone + 'a>(
     more: Option<M>,
     dimensions: Option<[f32; 2]>,
 ) -> Element<'a, M> {
+    designed(
+        list,
+        config,
+        config.recipes.devices.as_ref(),
+        more,
+        dimensions,
+    )
+}
+
+/// The Devices card in `design`, a Widget Builder design that orders the
+/// card's own parts and gives them its finish (ADR 0018), or plain.
+pub(crate) fn designed<'a, M: Clone + 'a>(
+    list: &[Device],
+    config: &Config,
+    design: Option<&crate::recipes::Recipe>,
+    more: Option<M>,
+    dimensions: Option<[f32; 2]>,
+) -> Element<'a, M> {
+    use crate::recipes::Part;
     let _style = crate::widget_style::scope(config);
-    let p = config.palette();
+    let p = design.map_or_else(|| config.palette(), |r| super::recipe::palette(config, r));
     let [width, height] = dimensions.unwrap_or_else(|| super::size(Widget::Devices, config));
-    let g = grid(list, width, height);
+    // Room the design's other parts take from the rings.
+    let extra: f32 = design.map_or(0., |r| {
+        r.parts
+            .iter()
+            .map(|part| match part {
+                Part::Caption => 26.,
+                Part::Divider => 9.,
+                Part::Space => 16.,
+                _ => 0.,
+            })
+            .sum()
+    });
+    let g = grid(list, width, height - extra);
     let shown = list.len().min(g.shown);
     let mut header: Vec<Element<'a, M>> = vec![
         container(card_title("Devices", p))
@@ -466,21 +497,34 @@ pub fn devices<'a, M: Clone + 'a>(
         .align_y(Alignment::Center)
         .into()
     };
-    frame(
-        column::with_children(vec![
-            row::with_children(header)
-                .spacing(8)
-                .align_y(Alignment::Center)
-                .height(Length::Fixed(TITLE_HEIGHT))
-                .into(),
-            body,
-        ])
+    let mut header = Some(
+        row::with_children(header)
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .height(Length::Fixed(TITLE_HEIGHT))
+            .into(),
+    );
+    let mut body = Some(body);
+    let parts = match design {
+        None => vec![header.take(), body.take()],
+        Some(r) => r
+            .parts
+            .iter()
+            .map(|part| match part {
+                Part::DevicesHeader => header.take(),
+                Part::Batteries => body.take(),
+                other => Some(super::recipe::spare(*other, r, p)),
+            })
+            .collect(),
+    };
+    let content = column::with_children(parts.into_iter().flatten().collect::<Vec<_>>())
         .spacing(GAP)
         .height(Length::Fill)
-        .into(),
-        config,
-        height,
-    )
+        .into();
+    match design {
+        Some(r) => super::recipe::surface(content, config, r, p, [width, height]),
+        None => frame(content, config, height),
+    }
 }
 
 /// Three devices for previews: headphones charging, a mouse running low

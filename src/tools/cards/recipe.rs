@@ -1,4 +1,4 @@
-//! Music, Focus and Notes presentation only. Player capabilities, timer and
+//! Music, Focus, Notes and Devices presentation only. Player capabilities, timer and
 //! note ownership stay in their existing engines; sample cards never receive
 //! an action mapper.
 use super::*;
@@ -37,6 +37,9 @@ pub enum PreviewState {
     /// A note with a checklist.
     Note,
     Empty,
+    /// Three sample devices.
+    Connected,
+    NoDevices,
 }
 impl PreviewState {
     /// The state a new or newly loaded design of `kind` is previewed in.
@@ -44,7 +47,9 @@ impl PreviewState {
         Self::choices(kind)[0]
     }
     pub fn choices(kind: Kind) -> &'static [Self] {
-        if kind == Kind::Notes {
+        if kind == Kind::Devices {
+            &[Self::Connected, Self::NoDevices]
+        } else if kind == Kind::Notes {
             &[Self::Note, Self::Empty]
         } else if kind == Kind::Music {
             &[
@@ -78,6 +83,8 @@ impl PreviewState {
             Self::Complete => "Complete",
             Self::Note => "Holding a note",
             Self::Empty => "Empty",
+            Self::Connected => "Devices are connected",
+            Self::NoDevices => "Nothing is connected",
         }
     }
 }
@@ -872,11 +879,7 @@ pub(crate) fn miniature(
     recipe: &Recipe,
     size: [f32; 2],
 ) -> Element<'static, Action> {
-    let state = if recipe.kind == Kind::Notes {
-        PreviewState::Note
-    } else {
-        PreviewState::Active
-    };
+    let state = PreviewState::first(recipe.kind);
     sample_with_ids(config, recipe, state, size, ControlIds::Local)
 }
 
@@ -902,6 +905,17 @@ fn sample_with_ids(
     size: [f32; 2],
     ids: ControlIds,
 ) -> Element<'static, Action> {
+    if recipe.kind == Kind::Devices {
+        static SAMPLE: std::sync::OnceLock<Vec<crate::devices::Device>> =
+            std::sync::OnceLock::new();
+        let list = SAMPLE.get_or_init(super::sample_devices);
+        let shown: &[crate::devices::Device] = if state == PreviewState::NoDevices {
+            &[]
+        } else {
+            list
+        };
+        return super::devices::designed(shown, config, Some(recipe), None, Some(size));
+    }
     if recipe.kind == Kind::Notes {
         return super::designed_notes(
             NotesView {

@@ -57,8 +57,10 @@ pub const FORMAT: &str = "desktop-cards-profile";
 /// Weather layout and Outlook presentation choices require version 23.
 /// Rain confined to widget glass requires version 24. Editable glass finishes use version 25.
 /// Following the current theme for glass tint requires version 26.
-/// Workspace apps require version 28; a Notes design requires version 29.
-pub const VERSION: u32 = 29;
+/// Workspace apps require version 28; a Notes design requires version 29;
+/// a Devices design requires version 30.
+pub const VERSION: u32 = 30;
+pub const VERSION_29: u32 = 29;
 pub const VERSION_28: u32 = 28;
 pub const VERSION_27: u32 = 27;
 pub const VERSION_26: u32 = 26;
@@ -1120,8 +1122,11 @@ impl Profile {
     }
     /// The version this record is written as.
     pub fn written_version(&self) -> u32 {
-        if self.has_notes_recipe() {
+        if self.has_recipe("devices") {
             return VERSION;
+        }
+        if self.has_recipe("notes") {
+            return VERSION_29;
         }
         if !self.workspace_apps.is_empty() {
             return VERSION_28;
@@ -1270,11 +1275,13 @@ impl Profile {
             .as_ref()
             .is_some_and(|v| v.pointer("/music/visualizer").is_some())
     }
-    /// A Widget Builder design for Notes, or its explicit reset (ADR 0017).
-    fn has_notes_recipe(&self) -> bool {
+    /// A Widget Builder design for `kind`, or its explicit reset: Notes
+    /// (ADR 0017) and Devices (ADR 0018) each need their own version.
+    fn has_recipe(&self, kind: &str) -> bool {
         self.widget_style
             .as_ref()
-            .and_then(|v| v.pointer("/recipes/notes"))
+            .and_then(|v| v.get("recipes"))
+            .and_then(|v| v.get(kind))
             .is_some()
     }
     fn has_tool_recipes(&self) -> bool {
@@ -1430,7 +1437,12 @@ impl Profile {
         {
             return Err(ProfileError::Invalid("Workspace apps need look format version 28 and up to 12 distinct desktop-entry IDs.".into()));
         }
-        if self.has_notes_recipe() && self.version < VERSION {
+        if self.has_recipe("devices") && self.version < VERSION {
+            return Err(ProfileError::Invalid(
+                "A Devices design needs look format version 30.".into(),
+            ));
+        }
+        if self.has_recipe("notes") && self.version < VERSION_29 {
             return Err(ProfileError::Invalid(
                 "A Notes design needs look format version 29.".into(),
             ));
