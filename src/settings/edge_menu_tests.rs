@@ -633,3 +633,84 @@ fn edge_menu_groups_and_style_picker_captures() {
         }
     }
 }
+
+/// A Peek button can wear eight glyphs, and its widgets can be put in the
+/// order Peek shows them, which choosing them only appends to.
+#[test]
+fn edge_menu_peek_icons_and_order() {
+    let name = "edge_menu_peek_icons_and_order";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            icons: Icons::Shown,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let _root = isolated_root();
+    let mut app = edge_page();
+    edge_send(&mut app, EdgeEdit::Add(Item::peek()));
+    let peek = |items: &[Item]| {
+        items
+            .iter()
+            .position(|item| matches!(item.kind, Kind::Peek { .. }))
+            .unwrap()
+    };
+    let widgets = || match &Config::load().edge_items()[peek(&Config::load().edge_items())].kind {
+        Kind::Peek { widgets, .. } => widgets.clone(),
+        _ => unreachable!(),
+    };
+    let at = peek(&Config::load().edge_items());
+    edge_send(&mut app, EdgeEdit::PeekWidget(at, Widget::Weather));
+    assert_eq!(
+        widgets(),
+        [Widget::Music, Widget::Calendar, Widget::Weather]
+    );
+    // Earlier and later, and nothing past either end.
+    edge_send(&mut app, EdgeEdit::PeekMove(at, Widget::Weather, true));
+    assert_eq!(
+        widgets(),
+        [Widget::Music, Widget::Weather, Widget::Calendar]
+    );
+    edge_send(&mut app, EdgeEdit::PeekMove(at, Widget::Music, true));
+    assert_eq!(
+        widgets(),
+        [Widget::Music, Widget::Weather, Widget::Calendar]
+    );
+    edge_send(&mut app, EdgeEdit::PeekMove(at, Widget::Calendar, false));
+    assert_eq!(
+        widgets(),
+        [Widget::Music, Widget::Weather, Widget::Calendar]
+    );
+    edge_send(&mut app, EdgeEdit::PeekMove(at, Widget::Music, false));
+    assert_eq!(
+        widgets(),
+        [Widget::Weather, Widget::Music, Widget::Calendar]
+    );
+    // The editor names the order and offers every glyph.
+    let mut native = crate::native_test::Native::new(Size::new(1280., 900.));
+    let shown = native.all_text(app.settings_view());
+    assert!(
+        shown.iter().any(|t| t == "Shown in this order"),
+        "{shown:?}"
+    );
+    for glyph in [
+        "Grid", "Desktop", "Star", "Calendar", "Music", "Weather", "Timer", "Folder",
+    ] {
+        assert!(shown.iter().any(|t| t == glyph), "{glyph} in {shown:?}");
+    }
+    edge_send(&mut app, EdgeEdit::PeekIcon(at, "alarm-symbolic".into()));
+    assert!(matches!(
+        &Config::load().edge_items()[at].kind,
+        Kind::Peek { icon, .. } if icon == "alarm-symbolic"
+    ));
+    super::tests::native_reveal(&app, &mut native, &format!("edge-row-{at}-up"));
+    native.capture(
+        app.settings_view(),
+        &cosmic::Theme::dark(),
+        "edge-menu-peek-order",
+    );
+}

@@ -41,6 +41,8 @@ pub enum Edit {
     /// Typing a section title; saved with Enter or the next change.
     TitleText(usize, String),
     PeekWidget(usize, crate::drawer::Widget),
+    /// Show a Peek button's widget one place earlier (`true`) or later.
+    PeekMove(usize, crate::drawer::Widget, bool),
     PeekIcon(usize, String),
     Reset,
     /// The Add picker open or closed.
@@ -374,6 +376,25 @@ impl Settings {
                     self.save_edge_items(items);
                 }
             }
+            Edit::PeekMove(index, w, earlier) => {
+                let mut items = self.config.edge_items();
+                if let Some(Item {
+                    kind: Kind::Peek { widgets, .. },
+                    ..
+                }) = items.get_mut(index)
+                    && let Some(at) = widgets.iter().position(|v| *v == w)
+                {
+                    let to = if earlier {
+                        at.checked_sub(1)
+                    } else {
+                        Some(at + 1).filter(|to| *to < widgets.len())
+                    };
+                    if let Some(to) = to {
+                        widgets.swap(at, to);
+                        self.save_edge_items(items);
+                    }
+                }
+            }
             Edit::PeekIcon(index, value) => {
                 let mut items = self.config.edge_items();
                 if let Some(Item {
@@ -530,6 +551,7 @@ pub(super) fn scope(page: &EdgeMenuPage, edit: &Edit) -> Option<&'static str> {
         Edit::Output(..) => "outputs",
         Edit::Commit => page.draft?.0.key(),
         Edit::PeekWidget(..)
+        | Edit::PeekMove(..)
         | Edit::PeekIcon(..)
         | Edit::Add(_)
         | Edit::Remove(_)

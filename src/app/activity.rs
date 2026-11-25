@@ -401,7 +401,7 @@ fn rule_failure(
 }
 /// What the player says it can do. Raising asks nothing of playback, as on
 /// the cards.
-fn transport_allowed(player: &music::Player, command: music::Command) -> bool {
+pub(super) fn transport_allowed(player: &music::Player, command: music::Command) -> bool {
     match command {
         music::Command::Raise => player.can_raise,
         music::Command::Play => player.can_control && player.can_play,

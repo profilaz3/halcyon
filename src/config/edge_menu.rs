@@ -416,9 +416,13 @@ pub enum Action {
     Focus,
     /// The wallpaper effect on or off (Effects).
     WeatherEffect,
+    /// Play or pause the player the Music widget follows.
+    PlayPause,
+    /// Skip that player to its next track.
+    NextTrack,
 }
 impl Action {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 9] = [
         Self::ShowWidgets,
         Self::Arrange,
         Self::Settings,
@@ -426,6 +430,8 @@ impl Action {
         Self::Timer,
         Self::Focus,
         Self::WeatherEffect,
+        Self::PlayPause,
+        Self::NextTrack,
     ];
     pub fn key(self) -> &'static str {
         match self {
@@ -436,6 +442,8 @@ impl Action {
             Self::Timer => "timer",
             Self::Focus => "focus",
             Self::WeatherEffect => "weather_effect",
+            Self::PlayPause => "play_pause",
+            Self::NextTrack => "next_track",
         }
     }
     pub fn parse(key: &str) -> Option<Self> {
@@ -450,6 +458,8 @@ impl Action {
             Self::Timer => "Timer",
             Self::Focus => "Focus timer",
             Self::WeatherEffect => "Weather effect",
+            Self::PlayPause => "Play or pause",
+            Self::NextTrack => "Next track",
         }
     }
     /// What it does, for the Add picker.
@@ -462,6 +472,8 @@ impl Action {
             Self::Timer => "Start, pause or resume a countdown",
             Self::Focus => "Start or pause a focus session",
             Self::WeatherEffect => "Turn the wallpaper effect on or off",
+            Self::PlayPause => "Play or pause the music that’s playing",
+            Self::NextTrack => "Skip to the next track",
         }
     }
     pub fn icon(self) -> &'static str {
@@ -473,6 +485,8 @@ impl Action {
             Self::Timer => "alarm-symbolic",
             Self::Focus => "task-due-symbolic",
             Self::WeatherEffect => "weather-showers-symbolic",
+            Self::PlayPause => "media-playback-start-symbolic",
+            Self::NextTrack => "media-skip-forward-symbolic",
         }
     }
     /// Shown with an on or off switch: the state it changes is known.

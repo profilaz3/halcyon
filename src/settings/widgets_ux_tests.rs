@@ -115,6 +115,7 @@ fn wid07_the_widgets_page_links_to_how_widgets_look() {
             "Glass and transparency",
             glass.as_str(),
         ),
+        ("widgets-look-lens", "Widget glass", "Off"),
         ("widgets-look-font", "Widget font", "Match style"),
         ("widgets-look-styles", "Day and night styles", "Off"),
     ] {
@@ -145,6 +146,11 @@ fn wid07_the_widgets_page_links_to_how_widgets_look() {
     click(&mut app, &mut native, "widgets-look-glass");
     assert_eq!(app.page, Page::Appearance);
     assert_eq!(app.material_target, crate::materials::Target::Widgets);
+    // Widget glass opens its own editor, not the effects list.
+    super::tests::send_settings(&mut app, Message::Page(Page::Overview));
+    click(&mut app, &mut native, "widgets-look-lens");
+    assert_eq!(app.page, Page::WeatherEffects);
+    assert!(app.rain.glass_editor);
     // The styles open Time of day ready for widget styles.
     super::tests::send_settings(&mut app, Message::Page(Page::Overview));
     click(&mut app, &mut native, "widgets-look-styles");

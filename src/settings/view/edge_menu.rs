@@ -157,6 +157,17 @@ fn style_sketch<'a>(style: Style) -> Element<'a, Message> {
         .into()
 }
 
+/// The glyphs a Peek button can wear, with their names in the editor.
+const PEEK_ICONS: [(&str, &str); 8] = [
+    ("view-grid-symbolic", "Grid"),
+    ("user-desktop-symbolic", "Desktop"),
+    ("starred-symbolic", "Star"),
+    ("x-office-calendar-symbolic", "Calendar"),
+    ("audio-x-generic-symbolic", "Music"),
+    ("weather-few-clouds-symbolic", "Weather"),
+    ("alarm-symbolic", "Timer"),
+    ("folder-symbolic", "Folder"),
+];
 impl Settings {
     pub(super) fn edge_menu_page(&self) -> Element<'_, Message> {
         let menu = &self.config.edge_menu;
@@ -843,17 +854,13 @@ impl Settings {
                         .on_submit(move |_| edit(Edit::Commit))
                         .into(),
                 ];
-                let glyphs = [
-                    ("view-grid-symbolic", "Grid"),
-                    ("user-desktop-symbolic", "Desktop"),
-                    ("starred-symbolic", "Star"),
-                ];
                 elements.push(
                     row::with_children(
-                        glyphs
+                        PEEK_ICONS
                             .into_iter()
                             .map(|(glyph, name)| {
                                 button::text(name)
+                                    .leading_icon(icon::from_name(glyph).symbolic(true))
                                     .on_press_maybe(
                                         (glyph != selected_icon)
                                             .then(|| edit(Edit::PeekIcon(index, glyph.into()))),
@@ -889,6 +896,43 @@ impl Settings {
                     .wrap()
                     .into(),
                 );
+                // The order Peek shows them in, which the choice above only
+                // appends to.
+                if widgets.len() > 1 {
+                    let last = widgets.len() - 1;
+                    let mut order: Vec<Element<'_, Message>> =
+                        vec![label("Shown in this order", 13., MUTED)];
+                    for (at, w) in widgets.iter().enumerate() {
+                        let w = *w;
+                        order.push(
+                            row::with_children(vec![
+                                button::icon(icon::from_name("go-previous-symbolic"))
+                                    .tooltip(format!("Show {} earlier", w.title()))
+                                    .on_press_maybe(
+                                        (at > 0).then(|| edit(Edit::PeekMove(index, w, true))),
+                                    )
+                                    .into(),
+                                label(w.title(), 13., FG),
+                                button::icon(icon::from_name("go-next-symbolic"))
+                                    .tooltip(format!("Show {} later", w.title()))
+                                    .on_press_maybe(
+                                        (at < last).then(|| edit(Edit::PeekMove(index, w, false))),
+                                    )
+                                    .into(),
+                            ])
+                            .spacing(2)
+                            .align_y(Alignment::Center)
+                            .into(),
+                        );
+                    }
+                    elements.push(
+                        row::with_children(order)
+                            .spacing(8)
+                            .align_y(Alignment::Center)
+                            .wrap()
+                            .into(),
+                    );
+                }
                 elements.push(
                     button::text("Set keyboard shortcut…")
                         .on_press(Message::PeekShortcut)
