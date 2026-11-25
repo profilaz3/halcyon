@@ -177,13 +177,31 @@ fn devices_and_weather_open_a_full_reading() {
                 "wind_speed_10m": 14.0, "relative_humidity_2m": 71.0, "is_day": 1},
             "daily": {"time": days, "temperature_2m_max": [14.0, 16.0, 11.0, 9.0],
                 "temperature_2m_min": [6.0, 7.0, 4.0, 2.0], "weather_code": [3, 61, 2, 71],
-                "precipitation_probability_max": [10.0, 80.0, null, 40.0]}
+                "precipitation_probability_max": [10.0, 80.0, null, 40.0]},
+            "hourly": {
+                "time": (0..25)
+                    .map(|n| (Local::now().naive_local() + chrono::Duration::hours(n))
+                        .format("%Y-%m-%dT%H:00").to_string())
+                    .collect::<Vec<_>>(),
+                "temperature_2m": (0..25).map(|n| 10.0 + f64::from(n % 5)).collect::<Vec<_>>(),
+                "weather_code": vec![3; 25],
+                "precipitation_probability": (0..25).map(|n| f64::from(n * 4)).collect::<Vec<_>>(),
+                "is_day": vec![1; 25]
+            }
         }))
         .unwrap(),
     );
     let shown = native.all_text(cards.reading_view(Widget::Weather));
     for text in [
-        "Zagreb", "Forecast", "Today", "Tomorrow", "Rain 80%", "Rain 40%",
+        "Zagreb",
+        "Next hours",
+        "Now",
+        "92%",
+        "Forecast",
+        "Today",
+        "Tomorrow",
+        "Rain 80%",
+        "Rain 40%",
     ] {
         assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
     }
