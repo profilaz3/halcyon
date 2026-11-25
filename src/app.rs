@@ -2380,41 +2380,13 @@ impl Cards {
             }
             Message::Switched(results) => self.automation_done(results),
             Message::EdgeMedia(next) => {
-                use crate::tools::music;
-                // The player the Music card would follow, asked for now: the
-                // card's own watcher runs only while it shows.
                 let pinned = self.tools.pinned.clone();
                 let preferred = self.config.music.player.clone();
                 let recent = self.tools.recent.clone();
                 cosmic::task::future(async move {
-                    let result = async {
-                        let connection = music::connection().await?;
-                        let players = music::snapshot(&connection).await?;
-                        let player = music::choose(
-                            &players,
-                            pinned.as_deref(),
-                            preferred.as_deref(),
-                            &recent,
-                        )
-                        .ok_or("No media player is open.")?;
-                        let command = if next {
-                            music::Command::Next
-                        } else if player.status == music::Playback::Playing {
-                            music::Command::Pause
-                        } else {
-                            music::Command::Play
-                        };
-                        if !activity::transport_allowed(player, command) {
-                            return Err(format!("{} can’t do that right now.", player.name()));
-                        }
-                        music::perform(music::Control::Transport(music::TransportRequest {
-                            bus: player.bus.clone(),
-                            command,
-                        }))
-                        .await
-                    }
-                    .await;
-                    Message::EdgeMediaDone(result)
+                    Message::EdgeMediaDone(
+                        crate::tools::music::press(next, pinned, preferred, recent).await,
+                    )
                 })
             }
             Message::EdgeMediaDone(result) => match result {
