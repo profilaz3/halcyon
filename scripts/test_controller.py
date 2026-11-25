@@ -139,7 +139,8 @@ class ControllerTests(unittest.TestCase):
             for args, sent in [(['timer', '5'], {'action': 'timer', 'minutes': 5.0}),
                                (['timer', '2.5'], {'action': 'timer', 'minutes': 2.5}),
                                (['timer', 'cancel'], {'action': 'timer', 'do': 'cancel'}),
-                               (['timer', 'pause'], {'action': 'timer', 'do': 'pause'})]:
+                               (['timer', 'pause'], {'action': 'timer', 'do': 'pause'}),
+                               (['timer', 'focus'], {'action': 'timer', 'do': 'focus'})]:
                 with patch.object(controller.sys, 'argv', ['desktop-cards', *args]):
                     controller.main()
                 self.assertEqual(json.loads(command.read_text()), sent)
