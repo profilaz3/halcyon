@@ -81,6 +81,9 @@ pub(super) struct Tools {
     pub messages: crate::messages::State,
     pub markets: crate::markets::State,
     pub folder: crate::folder::Listing,
+    /// The subfolder the Folder card shows, inside the chosen folder; the
+    /// chosen folder itself when `None`. Kept in memory only.
+    pub folder_view: Option<std::path::PathBuf>,
 }
 
 impl Tools {
@@ -108,6 +111,7 @@ impl Tools {
             messages: crate::messages::State::default(),
             markets: crate::markets::State::default(),
             folder: Default::default(),
+            folder_view: None,
         }
     }
     pub(super) fn sample() -> Self {
@@ -134,6 +138,7 @@ impl Tools {
             messages: crate::messages::State::default(),
             markets: crate::markets::State::default(),
             folder: Default::default(),
+            folder_view: None,
         }
     }
     /// No note being written, saved, checked or waiting for Undo.
@@ -279,19 +284,36 @@ impl Cards {
             Widget::Devices => cards::devices(
                 &self.tools.devices,
                 &self.config,
+                Some(Message::ReadingDetails(Widget::Devices)),
                 Some(size),
             ),
-            Widget::Folder => cards::folder(
-                &self.tools.folder,
-                &self.config,
-                size,
-                |p| {
-                    reqwest::Url::from_file_path(p)
-                        .ok()
-                        .map(|url| Message::Open(url.into()))
-                },
-                Some(Message::SettingsPage("folder")),
-            ),
+            Widget::Folder => {
+                let shown = self.folder_shown();
+                let back = self
+                    .tools
+                    .folder_view
+                    .as_ref()
+                    .filter(|_| shown != self.config.folder.path)
+                    .map(|view| {
+                        let up = view.parent().map(std::path::Path::to_path_buf);
+                        let root = self.config.folder.path.as_ref();
+                        Message::FolderBrowse(up.filter(|up| Some(up) != root))
+                    });
+                cards::folder_in(
+                    &self.tools.folder,
+                    &self.config,
+                    size,
+                    shown.as_deref(),
+                    |p| {
+                        reqwest::Url::from_file_path(p)
+                            .ok()
+                            .map(|url| Message::Open(url.into()))
+                    },
+                    |p| Some(Message::FolderBrowse(Some(p.to_path_buf()))),
+                    back,
+                    Some(Message::SettingsPage("folder")),
+                )
+            }
             Widget::Markets => cards::markets(
                 &self.tools.markets,
                 &self.config,
@@ -417,8 +439,29 @@ impl Cards {
         }
     }
 
+    /// The folder the Folder card shows: the subfolder browsed into while it
+    /// is still inside the chosen folder, else the chosen folder.
+    pub(super) fn folder_shown(&self) -> Option<std::path::PathBuf> {
+        let root = self.config.folder.path.as_ref()?;
+        Some(
+            self.tools
+                .folder_view
+                .as_ref()
+                .filter(|view| *view != root && view.starts_with(root))
+                .unwrap_or(root)
+                .clone(),
+        )
+    }
+
     pub(super) fn has_reading(&self, widget: Widget) -> bool {
-        matches!(widget, Widget::Calendar | Widget::Devbox | Widget::Projects)
+        matches!(
+            widget,
+            Widget::Calendar
+                | Widget::Devbox
+                | Widget::Projects
+                | Widget::Devices
+                | Widget::Weather
+        )
             || (widget == Widget::Glance && self.config.glance.show_calendar)
     }
 

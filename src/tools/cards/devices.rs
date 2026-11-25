@@ -383,10 +383,11 @@ fn tile<'a, M: 'a>(device: &Device, p: Palette, g: Grid) -> Element<'a, M> {
 
 /// The Devices card. Rings grow with the card and the tiles sit centred in
 /// its body. Nothing connected says so; more devices than fit say how many
-/// more in the header.
+/// more in the header, which opens every device when `more` is given.
 pub fn devices<'a, M: Clone + 'a>(
     list: &[Device],
     config: &Config,
+    more: Option<M>,
     dimensions: Option<[f32; 2]>,
 ) -> Element<'a, M> {
     let _style = crate::widget_style::scope(config);
@@ -400,11 +401,23 @@ pub fn devices<'a, M: Clone + 'a>(
             .into(),
     ];
     if list.len() > shown {
-        header.push(label(
-            format!("{} more", list.len() - shown),
-            crate::widget_style::SECONDARY,
-            p.muted,
-        ));
+        let hidden = list.len() - shown;
+        header.push(match more {
+            // The same "N more →" the System monitor card opens its reading with.
+            Some(more) => cosmic::widget::mouse_area(label(
+                format!("{hidden} more →"),
+                crate::widget_style::SECONDARY,
+                p.accent,
+            ))
+            .on_press(more)
+            .interaction(cosmic::iced::mouse::Interaction::Pointer)
+            .into(),
+            None => label(
+                format!("{hidden} more"),
+                crate::widget_style::SECONDARY,
+                p.muted,
+            ),
+        });
     }
     let body: Element<'a, M> = if list.is_empty() {
         container(

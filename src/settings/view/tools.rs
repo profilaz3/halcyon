@@ -779,6 +779,7 @@ impl Settings {
         let preview = cards::devices(
             &cards::sample_devices(),
             &self.config,
+            None,
             Some(self.tool_preview_size(Widget::Devices)),
         );
         let note = self.sample_note("devices-sample-note", Some(DEVICES_SAMPLE));

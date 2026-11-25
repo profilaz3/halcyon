@@ -162,6 +162,8 @@ mod theme_tests;
 mod tools;
 #[cfg(test)]
 mod utility_tests;
+#[cfg(test)]
+mod widget_reach_tests;
 mod visualizer;
 mod wallpaper_colors;
 mod weather;
@@ -309,6 +311,9 @@ pub enum Message {
     Messages(crate::messages::State),
     Markets(crate::markets::State),
     Folder(crate::folder::Listing),
+    /// Show this subfolder of the chosen folder in the Folder card, or the
+    /// chosen folder again with `None`.
+    FolderBrowse(Option<std::path::PathBuf>),
     MusicArt(String, Result<crate::tools::music::Art, String>),
     ToolDone(Result<(), String>),
     MusicControlDone(Result<Vec<crate::tools::music::Player>, String>),
@@ -739,7 +744,7 @@ impl cosmic::Application for Cards {
             subscriptions.push(crate::devices::subscription().map(Message::Devices));
         }
         if self.provider_visible(Widget::Folder)
-            && let Some(path) = self.config.folder.path.clone()
+            && let Some(path) = self.folder_shown()
         {
             subscriptions.push(
                 crate::folder::subscription(
@@ -1914,8 +1919,26 @@ impl Cards {
             Message::KeyInput(id, key, modifiers) => {
                 if self.peek.as_ref().is_some_and(|peek| peek.id == id) {
                     use cosmic::iced::keyboard::{Key, key::Named};
+                    // A focused note keeps its arrow keys: only keys no
+                    // control took reach here.
+                    let page = |next: bool| {
+                        let peek = self.peek.as_ref()?;
+                        if next {
+                            self.peek_next(peek)
+                        } else {
+                            self.peek_previous(peek)
+                        }
+                    };
                     return match key {
                         Key::Named(Named::Escape) => self.close_peek(),
+                        Key::Named(Named::ArrowRight | Named::PageDown) => match page(true) {
+                            Some(at) => self.update(Message::PeekPage(at)),
+                            None => Task::none(),
+                        },
+                        Key::Named(Named::ArrowLeft | Named::PageUp) => match page(false) {
+                            Some(at) => self.update(Message::PeekPage(at)),
+                            None => Task::none(),
+                        },
                         Key::Named(Named::Tab) => {
                             use cosmic::iced::advanced::widget::operation::{focusable, scoped};
                             if modifiers.shift() {
@@ -2303,11 +2326,24 @@ impl Cards {
             }
             Message::Folder(listing) => {
                 if self.provider_visible(Widget::Folder)
-                    && self.config.folder.path.as_ref() == Some(&listing.source)
+                    && self.folder_shown().as_ref() == Some(&listing.source)
                     && self.config.folder.show_hidden == listing.show_hidden
                 {
                     self.tools.folder = listing;
                 }
+                Task::none()
+            }
+            Message::FolderBrowse(view) => {
+                // Only folders inside the chosen one open in the card.
+                let inside = |view: &std::path::PathBuf| {
+                    self.config
+                        .folder
+                        .path
+                        .as_ref()
+                        .is_some_and(|root| view.starts_with(root) && view != root)
+                        && view.is_dir()
+                };
+                self.tools.folder_view = view.filter(inside);
                 Task::none()
             }
             Message::Markets(state) => {

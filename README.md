@@ -146,7 +146,7 @@ halcyon-ctl focus toggle    Start or pause the Focus timer
 halcyon-ctl --help          Every command, described
 ```
 
-Bind `halcyon --toggle drawer` to a key in **COSMIC Settings → Keyboard → Keyboard shortcuts** to open the edge menu without the mouse. In the menu, Tab and the arrow keys move, Enter shows or hides a widget, Alt+Up and Alt+Down reorder the right column, and Esc closes it. On a visible Music, Notes, Focus, Messages or Markets entry, Shift+Enter moves keyboard focus to the widget. Tab moves between its controls, Enter activates one, and Esc releases focus. On Calendar, Daily Overview with an agenda, System Monitor, or Projects, Shift+Enter opens the full reading. The same actions are in each widget’s right-click menu. `man halcyon` and `man halcyon-ctl` have the details.
+Bind `halcyon --toggle drawer` to a key in **COSMIC Settings → Keyboard → Keyboard shortcuts** to open the edge menu without the mouse. In the menu, Tab and the arrow keys move, Enter shows or hides a widget, Alt+Up and Alt+Down reorder the right column, and Esc closes it. On a visible Music, Notes, Focus, Messages or Markets entry, Shift+Enter moves keyboard focus to the widget. Tab moves between its controls, Enter activates one, and Esc releases focus. On Calendar, Daily Overview with an agenda, System Monitor, Projects, Weather or Devices, Shift+Enter opens the full reading. The same actions are in each widget’s right-click menu, with Refresh now for widgets that read a source, and Move to another display when more than one is connected. `man halcyon` and `man halcyon-ctl` have the details.
 
 ## Help & development
 

@@ -2,6 +2,9 @@
 use super::*;
 use cosmic::ApplicationExt;
 
+/// A low battery, in the amber the cards warn in.
+const LOW_BATTERY: Color = Color::from_rgb(233. / 255., 192. / 255., 124. / 255.);
+
 pub(super) fn summary_line(
     value: impl Into<String>,
     size: f32,
@@ -75,6 +78,20 @@ impl Cards {
                 self.devbox_natural_height(),
             ),
             Widget::Projects => self.full_projects(),
+            Widget::Devices => self.devices_reading(p),
+            Widget::Weather => {
+                let _card = crate::widget_style::for_card(Widget::Weather);
+                let presentation = weather::Presentation::new(
+                    &self.config,
+                    weather::Snapshot {
+                        weather: self.weather.as_ref(),
+                        updated_at: self.weather_at.as_deref(),
+                        failed: self.weather_error,
+                    },
+                    Local::now(),
+                );
+                return self.reading_frame(&presentation.title(), presentation.full_reading(p));
+            }
             Widget::Calendar | Widget::Glance => {
                 if self.calendar_details.is_some()
                     && !self.config.calendar_private
@@ -207,6 +224,77 @@ impl Cards {
             }
         }))
         .into()
+    }
+
+    /// Every connected device, each with its kind and battery: what the card
+    /// leaves out when more are connected than its rings fit.
+    fn devices_reading(&self, p: Palette) -> Element<'static, Message> {
+        let list = &self.tools.devices;
+        if list.is_empty() {
+            return column::with_children(vec![
+                label("No devices connected", 15., p.foreground),
+                label(crate::tools::cards::DEVICE_SOURCES, 13., p.muted),
+            ])
+            .spacing(6)
+            .into();
+        }
+        let rows = list
+            .iter()
+            .map(|device| {
+                let low = device.low();
+                let (battery, color) = match device.percent() {
+                    Some(percent) => (
+                        percent,
+                        if low.is_some() { LOW_BATTERY } else { p.foreground },
+                    ),
+                    None => ("–".to_string(), p.muted),
+                };
+                let state = if device.charging() {
+                    "Charging"
+                } else if low.is_some_and(|level| level <= crate::devices::LOW[1]) {
+                    "Battery very low"
+                } else if low.is_some() {
+                    "Battery low"
+                } else if device.battery.is_none() {
+                    "Battery not reported"
+                } else {
+                    ""
+                };
+                let mut reading = vec![label(battery, 15., color)];
+                if !state.is_empty() {
+                    reading.push(label(state, 12., p.muted));
+                }
+                row::with_children(vec![
+                    container(
+                        cosmic::widget::icon::from_name(device.kind.icon())
+                            .size(24)
+                            .icon(),
+                    )
+                    .class(cosmic::theme::Container::custom(move |_| {
+                        cosmic::iced::widget::container::Style {
+                            icon_color: Some(p.foreground),
+                            ..Default::default()
+                        }
+                    }))
+                    .into(),
+                    column::with_children(vec![
+                        label(device.name.clone(), 15., p.foreground),
+                        label(device.kind.label(), 12., p.muted),
+                    ])
+                    .spacing(2)
+                    .width(Length::Fill)
+                    .into(),
+                    column::with_children(reading)
+                        .spacing(2)
+                        .align_x(Alignment::End)
+                        .into(),
+                ])
+                .spacing(12)
+                .align_y(Alignment::Center)
+                .into()
+            })
+            .collect::<Vec<_>>();
+        column::with_children(rows).spacing(14).into()
     }
 
     fn missing_agenda(&self, p: Palette) -> Element<'static, Message> {

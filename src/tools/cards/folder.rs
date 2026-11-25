@@ -18,21 +18,58 @@ pub fn folder<'a, M: Clone + 'static>(
     open: impl Fn(&Path) -> Option<M>,
     choose: Option<M>,
 ) -> Element<'a, M> {
+    folder_in(listing, config, size, None, open, |_| None, None, choose)
+}
+
+/// The card showing `shown`, a folder inside the chosen one (the chosen
+/// folder itself when `None`). A subfolder opens in the card through
+/// `into` when it gives a message, else like a file through `open`; `back`
+/// goes up a level, and is given only below the chosen folder.
+#[allow(clippy::too_many_arguments)]
+pub fn folder_in<'a, M: Clone + 'static>(
+    listing: &Listing,
+    config: &Config,
+    size: [f32; 2],
+    shown: Option<&Path>,
+    open: impl Fn(&Path) -> Option<M>,
+    into: impl Fn(&Path) -> Option<M>,
+    back: Option<M>,
+    choose: Option<M>,
+) -> Element<'a, M> {
     let _card = crate::widget_style::for_card(crate::drawer::Widget::Folder);
     let _style = crate::widget_style::scope(config);
     let palette = config.palette();
     let (cols, rows) = layout(size);
-    let path = config.folder.path.as_deref();
+    let path = shown.or(config.folder.path.as_deref());
     let current = path.is_some_and(|p| p == listing.source)
         && listing.show_hidden == config.folder.show_hidden;
     let can_open = path.is_some() && !(current && listing.problem.is_some());
     let title = path
         .and_then(Path::file_name)
         .map_or_else(|| "Folder".into(), |n| n.to_string_lossy().into_owned());
-    let head = row::with_children(vec![
+    let mut head = Vec::new();
+    if let Some(back) = back {
+        head.push(
+            button::icon(icon::from_name("go-previous-symbolic"))
+                .id(cosmic::widget::Id::new("folder-back"))
+                .tooltip("Back")
+                .on_press(back)
+                .into(),
+        );
+    }
+    head.push(
         container(line(title, 17., palette.foreground))
             .width(Length::Fill)
             .into(),
+    );
+    // What the card has no room for, so a folder never looks emptier than it is.
+    let hidden = listing
+        .count
+        .saturating_sub(listing.entries.len().min(cols * rows));
+    if current && listing.problem.is_none() && hidden > 0 {
+        head.push(line(format!("{hidden} more"), 12., palette.muted));
+    }
+    head.push(
         button::text(if can_open {
             "Open folder"
         } else {
@@ -44,9 +81,10 @@ pub fn folder<'a, M: Clone + 'static>(
             choose
         })
         .into(),
-    ])
-    .spacing(6)
-    .align_y(Alignment::Center);
+    );
+    let head = row::with_children(head)
+        .spacing(6)
+        .align_y(Alignment::Center);
     let mut body = vec![head.into()];
     let message = if path.is_none() {
         Some("Choose a folder to see its recent files.")
@@ -134,7 +172,11 @@ pub fn folder<'a, M: Clone + 'static>(
                         .width(Length::FillPortion(1))
                         .height(if cols > 1 { 80. } else { 32. })
                         .padding([4, 8])
-                        .on_press_maybe(open(&entry.path))
+                        .on_press_maybe(if entry.directory {
+                            into(&entry.path).or_else(|| open(&entry.path))
+                        } else {
+                            open(&entry.path)
+                        })
                         .into(),
                 );
             }
