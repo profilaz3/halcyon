@@ -283,6 +283,100 @@ pub fn record(family: Family) -> Profile {
     p
 }
 
+/// The colors a first style takes, when no style was applied before: the
+/// color policy chosen in setup, else the wallpaper's colors when they are
+/// followed (or there is no accent and `wallpaper_offers` colors), else the
+/// chosen accent. Nothing once a style is applied.
+pub fn first_colors(
+    config: &crate::config::Config,
+    wallpaper_offers: impl FnOnce() -> bool,
+    p: &mut Profile,
+) {
+    if config.appearance.family.is_some() {
+        return;
+    }
+    if let Some(policy) = config.appearance.color_policy {
+        let choice = match policy {
+            crate::config::ColorPolicy::Wallpaper => LookColor::Wallpaper,
+            crate::config::ColorPolicy::Theme => LookColor::Style,
+            crate::config::ColorPolicy::Custom => {
+                LookColor::Fixed(config.appearance.accent.unwrap_or_else(|| {
+                    desktop_theme::bytes(crate::config::Palette::named(&config.theme).accent)
+                }))
+            }
+        };
+        choice.set(p);
+        return;
+    }
+    let follow = config.appearance.wallpaper_colors
+        || (config.appearance.accent.is_none() && wallpaper_offers());
+    if follow {
+        LookColor::Wallpaper.set(p);
+    } else if let Some(rgb) = config.appearance.accent {
+        LookColor::Fixed(rgb).set(p);
+    }
+}
+
+/// Every style one can apply by name, built in then ready-made, by id
+/// (`theme-soft`, a ready-made theme's own id) and name.
+pub fn style_choices() -> Vec<(String, String)> {
+    Family::ALL
+        .into_iter()
+        .map(|family| (family.preset().to_string(), family.title().to_string()))
+        .chain(
+            named()
+                .iter()
+                .map(|preset| (preset.id.to_string(), preset.profile.name.clone())),
+        )
+        .collect()
+}
+
+/// The style `wanted` names, by name without regard to case or by id.
+pub fn find_style(wanted: &str) -> Result<String, String> {
+    let wanted = wanted.trim();
+    style_choices()
+        .into_iter()
+        .find(|(id, name)| name.eq_ignore_ascii_case(wanted) || id == wanted)
+        .map(|(id, _)| id)
+        .ok_or_else(|| format!("No style is called {wanted}. See: halcyon --styles"))
+}
+
+/// The style `id` as Settings › Appearance applies it when chosen: a
+/// built-in style keeps your own colors, overrides and Window tone, and the
+/// dock and panel keep their shape unless `own_bars` asks for the style's.
+/// A ready-made theme applies as made, with the same bar choice.
+pub fn style_profile(
+    store: &DesktopStore,
+    installed: &Installed,
+    id: &str,
+    own_bars: bool,
+) -> Result<Profile, String> {
+    let record = match Family::parse(id) {
+        Some(family) => record(family),
+        None => named()
+            .iter()
+            .find(|preset| preset.id == id)
+            .map(|preset| preset.profile.clone())
+            .ok_or_else(|| format!("No style is called {id}."))?,
+    };
+    let mut p = record.clone();
+    if !is_named(id) && family(&p).is_some() {
+        preserve_custom(store, installed, &mut p)
+            .map_err(|e| crate::desktop::UserMessage::user_message(&e))?;
+        let (_, config) = crate::desktop::wallpaper::automatic::read_config(store)
+            .map_err(|e| e.to_string())?;
+        // Without Settings' look at the wallpaper, a wallpaper with no
+        // accent chosen is assumed to offer colors; the desktop works them out.
+        first_colors(&config, || true, &mut p);
+    }
+    if own_bars {
+        use_bar_shape(&mut p, &record);
+    } else {
+        keep_bar_shape(&mut p);
+    }
+    Ok(p)
+}
+
 /// Leaves the dock and panel's shape as it is on the desktop: floating or
 /// attached, margin, corners, padding, spacing and the island gap. Their
 /// colors and see-through still follow the record. Choosing a style or
@@ -1264,6 +1358,9 @@ mod window_tone_tests;
 #[cfg(test)]
 #[path = "bar_style_tests.rs"]
 mod bar_style_tests;
+#[cfg(test)]
+#[path = "style_command_tests.rs"]
+mod style_command_tests;
 
 #[cfg(test)]
 pub(crate) mod tests {
