@@ -1459,6 +1459,7 @@ pub(super) const NOT_INDEXED: &[(&str, &str)] = &[
     ("Move or resize", "on every widget page; the widget’s name finds it"),
     ("Widget font", "also the Widgets page's link to the row on Fonts and icons, which search opens"),
     ("Day and night styles", "the Widgets page's link to Time of day, which search finds"),
+    ("Widget glass", "the Widgets page's link to the glass editor, which search opens"),
     ("Make your own design", "a link on every widget page; “Widget builder” finds it"),
     ("More in COSMIC Settings", "a link out of Halcyon"),
     ("Dock and panel", "Appearance's link to the bars' See-through; “see-through” finds it"),

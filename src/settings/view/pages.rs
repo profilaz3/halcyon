@@ -212,7 +212,9 @@ impl Settings {
     /// Glass, font and the day and night styles, as they are now, each a
     /// link to the section that sets it.
     fn widget_look_rows(&self) -> Vec<Element<'_, Message>> {
-        use crate::settings::navigation::{DAY_AND_NIGHT_STYLES, SEE_THROUGH, WIDGET_FONT};
+        use crate::settings::navigation::{
+            DAY_AND_NIGHT_STYLES, SEE_THROUGH, WIDGET_FONT, WIDGET_GLASS,
+        };
         let glass = self.finish_summary(self.config.materials.widgets());
         let font = self
             .config
@@ -223,12 +225,28 @@ impl Settings {
             Some(phase) => format!("Showing the {} style", phase.title().to_lowercase()),
             None => "Off".into(),
         };
+        // The wallpaper seen through the widgets: a wallpaper effect, so it
+        // lives with the effects, but it is part of how the widgets look.
+        let rain = &self.config.rain;
+        let lens = if rain.enabled && rain.effect == crate::rain::Effect::Lens {
+            rain.glass
+                .map_or("Classic", |g| g.mode.title())
+                .to_string()
+        } else {
+            "Off".into()
+        };
         vec![
             self.link_row_state(
                 "Glass and transparency",
                 glass,
                 Message::SearchResult(SEE_THROUGH),
                 "widgets-look-glass".into(),
+            ),
+            self.link_row_state(
+                "Widget glass",
+                lens,
+                Message::SearchResult(WIDGET_GLASS),
+                "widgets-look-lens".into(),
             ),
             self.link_row_state(
                 "Widget font",

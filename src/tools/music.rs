@@ -143,6 +143,16 @@ impl Player {
         app_key(&self.key)
     }
     /// A short name for the player: its identity, else its bus key.
+    /// Whether the player says it takes `command` now.
+    pub fn allows(&self, command: Command) -> bool {
+        match command {
+            Command::Raise => self.can_raise,
+            Command::Play => self.can_control && self.can_play,
+            Command::Pause => self.can_control && self.can_pause,
+            Command::Next => self.can_control && self.can_next,
+            Command::Previous => self.can_control && self.can_previous,
+        }
+    }
     pub fn name(&self) -> &str {
         if self.identity.is_empty() {
             &self.key
@@ -241,6 +251,37 @@ pub enum Control {
 }
 /// Query after a control as well as listening for signals: browsers need not
 /// emit Position changes, and some players don't emit transport changes promptly.
+/// Plays or pauses, or with `next` skips, the player the Music card would
+/// follow, found on the bus now: for a control that works while the card,
+/// and its watcher, are hidden. `pinned`, `preferred` and `recent` are the
+/// card's own choice, as `choose` takes them.
+pub async fn press(
+    next: bool,
+    pinned: Option<String>,
+    preferred: Option<String>,
+    recent: Vec<String>,
+) -> Result<Vec<Player>, String> {
+    let connection = connection().await?;
+    let players = snapshot(&connection).await?;
+    let player = choose(&players, pinned.as_deref(), preferred.as_deref(), &recent)
+        .ok_or("No media player is open.")?;
+    let command = if next {
+        Command::Next
+    } else if player.status == Playback::Playing {
+        Command::Pause
+    } else {
+        Command::Play
+    };
+    if !player.allows(command) {
+        return Err(format!("{} can’t do that right now.", player.name()));
+    }
+    perform(Control::Transport(TransportRequest {
+        bus: player.bus.clone(),
+        command,
+    }))
+    .await
+}
+
 pub async fn perform(request: Control) -> Result<Vec<Player>, String> {
     let connection = connection().await?;
     let (bus, done) = match request {
@@ -1150,6 +1191,46 @@ fn percent_decode(text: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn press_plays_pauses_and_skips_the_player_the_card_follows() {
+        fixture::isolated(
+            "tools::music::tests::press_plays_pauses_and_skips_the_player_the_card_follows",
+            || {
+                use std::sync::atomic::Ordering;
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(async {
+                        // Nothing playing says so.
+                        let none = press(false, None, None, Vec::new()).await;
+                        assert_eq!(none.unwrap_err(), "No media player is open.");
+                        let address = std::env::var("DBUS_SESSION_BUS_ADDRESS").unwrap();
+                        let state = fixture::State::new();
+                        let _service = fixture::serve(
+                            &address,
+                            "org.mpris.MediaPlayer2.firefox",
+                            state.clone(),
+                        )
+                        .await;
+                        // Paused, then playing: the same press toggles it.
+                        press(false, None, None, Vec::new()).await.unwrap();
+                        assert!(state.playing.load(Ordering::SeqCst));
+                        press(false, None, None, Vec::new()).await.unwrap();
+                        assert!(!state.playing.load(Ordering::SeqCst));
+                        let track = state.track.load(Ordering::SeqCst);
+                        press(true, None, None, Vec::new()).await.unwrap();
+                        assert_eq!(state.track.load(Ordering::SeqCst), track + 1);
+                        // A player that can't skip says so instead of skipping.
+                        state.can_skip.store(false, Ordering::SeqCst);
+                        let refused = press(true, None, None, Vec::new()).await.unwrap_err();
+                        assert!(refused.ends_with("can’t do that right now."), "{refused}");
+                        assert_eq!(state.track.load(Ordering::SeqCst), track + 1);
+                    });
+            },
+        );
+    }
 
     fn value<'a>(v: impl Into<Value<'a>>) -> OwnedValue {
         OwnedValue::try_from(Value::Value(Box::new(v.into()))).unwrap()

@@ -791,6 +791,8 @@ impl Cards {
                 })),
                 Action::Focus => Message::FocusCommand("toggle".into()),
                 Action::WeatherEffect => Message::SetWeatherEffect(!self.config.rain.enabled),
+                Action::PlayPause => Message::EdgeMedia(false),
+                Action::NextTrack => Message::EdgeMedia(true),
             },
             Kind::Peek { name, widgets, .. } => {
                 Message::Peek(Some((name.clone(), widgets.clone())))

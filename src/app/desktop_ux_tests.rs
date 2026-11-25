@@ -855,6 +855,8 @@ fn edge_items_trigger_their_existing_actions_and_missing_apps_are_unavailable() 
     assert!(
         matches!(message(at(Action::WeatherEffect)), Some(Message::SetWeatherEffect(v)) if v == !rain)
     );
+    assert!(matches!(message(at(Action::PlayPause)), Some(Message::EdgeMedia(false))));
+    assert!(matches!(message(at(Action::NextTrack)), Some(Message::EdgeMedia(true))));
     let look = items.len() - 2;
     assert!(matches!(
         message(look),

@@ -346,7 +346,7 @@ impl Cards {
                     .current_player()
                     .filter(|p| music_key(p) == music_command.0)
                 {
-                    if transport_allowed(player, music_command.1) {
+                    if player.allows(music_command.1) {
                         return self.update_tool(crate::tools::cards::Action::Music(
                             music::TransportRequest {
                                 bus: player.bus.clone(),
@@ -412,15 +412,6 @@ fn rule_failure(
 }
 /// What the player says it can do. Raising asks nothing of playback, as on
 /// the cards.
-fn transport_allowed(player: &music::Player, command: music::Command) -> bool {
-    match command {
-        music::Command::Raise => player.can_raise,
-        music::Command::Play => player.can_control && player.can_play,
-        music::Command::Pause => player.can_control && player.can_pause,
-        music::Command::Next => player.can_control && player.can_next,
-        music::Command::Previous => player.can_control && player.can_previous,
-    }
-}
 fn music_key(p: &music::Player) -> String {
     key(&format!(
         "{:?}:{:?}:{:?}:{}",
@@ -497,12 +488,12 @@ mod tests {
             can_control: false,
             can_raise: true,
         };
-        assert!(transport_allowed(&player, music::Command::Raise));
-        assert!(!transport_allowed(&player, music::Command::Pause));
+        assert!(player.allows(music::Command::Raise));
+        assert!(!player.allows(music::Command::Pause));
         player.can_control = true;
         player.can_raise = false;
-        assert!(!transport_allowed(&player, music::Command::Raise));
-        assert!(transport_allowed(&player, music::Command::Pause));
+        assert!(!player.allows(music::Command::Raise));
+        assert!(player.allows(music::Command::Pause));
     }
     #[test]
     fn activity_island_privacy_revision_and_provider_demand() {

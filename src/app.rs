@@ -317,6 +317,10 @@ pub enum Message {
     MusicArt(String, Result<crate::tools::music::Art, String>),
     ToolDone(Result<(), String>),
     MusicControlDone(Result<Vec<crate::tools::music::Player>, String>),
+    /// The edge menu's Play or pause, or Next track with `true`.
+    EdgeMedia(bool),
+    /// What the player said after the edge menu's media action.
+    EdgeMediaDone(Result<Vec<crate::tools::music::Player>, String>),
     NoteCopyDone(Result<(), String>),
     NoteChecked(Result<crate::tools::notes::Note, crate::tools::notes::SaveError>),
     /// A note save finished: the text it saved, and the result. (Tests
@@ -2411,6 +2415,23 @@ impl Cards {
                 ])
             }
             Message::Switched(results) => self.automation_done(results),
+            Message::EdgeMedia(next) => {
+                let pinned = self.tools.pinned.clone();
+                let preferred = self.config.music.player.clone();
+                let recent = self.tools.recent.clone();
+                cosmic::task::future(async move {
+                    Message::EdgeMediaDone(
+                        crate::tools::music::press(next, pinned, preferred, recent).await,
+                    )
+                })
+            }
+            Message::EdgeMediaDone(result) => match result {
+                Ok(players) => self.update(Message::MusicControlDone(Ok(players))),
+                Err(error) => {
+                    self.raise_notice("Music", error, String::new(), None);
+                    Task::none()
+                }
+            },
             Message::MusicControlDone(result) => match result {
                 Ok(players) => {
                     self.tools.music_problem = false;
