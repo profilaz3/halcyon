@@ -30,6 +30,8 @@ Usage:
   halcyon                    Show the desktop widgets. Only one copy runs at a time.
   halcyon --settings [PAGE]  Open Settings, on PAGE if given (for example clock)
   halcyon --toggle TARGET    Open or close the edge menu, or show or hide a widget
+  halcyon --looks            List the Looks you can switch to
+  halcyon --look NAME        Switch to a Look, by its name or id
   halcyon --help             Show this help
   halcyon --version          Show the version
 
@@ -140,11 +142,16 @@ pub fn acquire() -> Lock {
 
 /// Hands a command to the running widgets.
 pub fn send(toggle: &Toggle) -> Result<(), String> {
+    send_payload(&toggle.payload())
+}
+
+/// Hands any desktop command to the running widgets, once they are running.
+fn send_payload(payload: &serde_json::Value) -> Result<(), String> {
     if !matches!(acquire(), Lock::Busy) {
         return Err(NOT_RUNNING.into());
     }
     let path = command_path().ok_or_else(|| "No runtime folder".to_string())?;
-    write_atomic(&path, toggle.payload().to_string().as_bytes()).map_err(|e| e.to_string())
+    write_atomic(&path, payload.to_string().as_bytes()).map_err(|e| e.to_string())
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -182,6 +189,28 @@ pub fn early_command(command: Option<&str>, argument: Option<&str>) -> Option<i3
         "-V" | "--version" => {
             println!("halcyon {}", env!("CARGO_PKG_VERSION"));
             Some(0)
+        }
+        "--looks" => {
+            for (_, name) in crate::automation::look_choices() {
+                println!("{name}");
+            }
+            Some(0)
+        }
+        "--look" => {
+            let looks = crate::automation::look_choices();
+            let found = argument
+                .ok_or_else(|| "Name the Look to switch to. See: halcyon --looks".to_string())
+                .and_then(|wanted| crate::automation::find_look(&looks, wanted))
+                .and_then(|(look, name)| {
+                    send_payload(&serde_json::json!({"action": "look", "look": look, "name": name}))
+                });
+            match found {
+                Ok(()) => Some(0),
+                Err(error) => {
+                    eprintln!("{error}");
+                    Some(1)
+                }
+            }
         }
         "--toggle" => {
             let Some(toggle) = argument.and_then(Toggle::parse) else {
@@ -247,6 +276,8 @@ mod tests {
         for needle in [
             "--settings",
             "--toggle",
+            "--looks",
+            "--look",
             "--help",
             "--version",
             "drawer",
@@ -289,5 +320,32 @@ mod tests {
             1
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_look_is_found_by_name_or_id_and_switched_by_the_running_widgets() {
+        use crate::automation::{ProfileRef, find_look};
+        let looks = vec![
+            (ProfileRef::Preset("night".into()), "Night".to_string()),
+            (ProfileRef::Preset("dawn".into()), "Morning".to_string()),
+            (ProfileRef::Saved("a1".into()), "Morning".to_string()),
+            (ProfileRef::Saved("b2".into()), "Studio".to_string()),
+        ];
+        assert_eq!(
+            find_look(&looks, " night ").unwrap(),
+            (ProfileRef::Preset("night".into()), "Night".into())
+        );
+        assert_eq!(find_look(&looks, "b2").unwrap().1, "Studio");
+        // Two Looks share a name: their ids tell them apart.
+        let shared = find_look(&looks, "morning").unwrap_err();
+        assert!(shared.contains("dawn") && shared.contains("a1"), "{shared}");
+        assert_eq!(find_look(&looks, "dawn").unwrap().1, "Morning");
+        let missing = find_look(&looks, "Noon").unwrap_err();
+        assert!(missing.contains("halcyon --looks"), "{missing}");
+        // What `halcyon --look` sends is what the edge menu's Look item runs.
+        let (look, name) = find_look(&looks, "Studio").unwrap();
+        let payload = serde_json::json!({"action": "look", "look": look, "name": name});
+        let parsed: ProfileRef = serde_json::from_value(payload["look"].clone()).unwrap();
+        assert_eq!(parsed, ProfileRef::Saved("b2".into()));
     }
 }

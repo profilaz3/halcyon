@@ -1030,7 +1030,10 @@ mod restore;
 pub(crate) use restore::{
     NativeBatch, read_native, record_created_all, write_native, write_scoped,
 };
-pub use restore::{RestorePlan, apply_restore, export_baseline, plan_restore, write_export};
+pub use restore::{
+    RestorePlan, apply_restore, every_domain, export_baseline, plan_restore, restore_everything,
+    write_export,
+};
 pub(super) use restore::{save_pre_restore, verify_plan};
 
 #[cfg(test)]

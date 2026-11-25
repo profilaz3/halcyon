@@ -1945,3 +1945,19 @@ fn peek_reuses_data_and_closes_every_overlay() {
         assert!(!cards.config.music.enabled);
     }
 }
+
+/// `halcyon --look` reaches the running widgets as the edge menu's Look item.
+#[test]
+fn a_look_command_switches_like_the_edge_menu() {
+    let message = Cards::command(&serde_json::json!({
+        "action": "look",
+        "look": {"preset": "night"},
+        "name": "Night",
+    }));
+    assert!(matches!(
+        message,
+        Some(Message::ApplyLook(crate::automation::ProfileRef::Preset(id), name))
+            if id == "night" && name == "Night"
+    ));
+    assert!(Cards::command(&serde_json::json!({"action": "look", "look": "?"})).is_none());
+}

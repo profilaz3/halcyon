@@ -12,6 +12,8 @@ Run with no command to open Settings.
 .I command
 .B --help
 describes one command.
+Commands that ask the running widgets for something fail with exit status 1
+and say so when the widgets aren't running.
 .SH COMMANDS
 .TP
 .B start
@@ -39,8 +41,20 @@ Open or close the edge menu, the same as
 .BI "panel \fR[\fIwidget\fR|\fBopen\fR|\fBclose\fR|\fBrail\fR]"
 Open the edge menu, or open it on one widget.
 .TP
-.BI toggle " widget"
-Show or hide one widget.
+.BI toggle " target"
+Show or hide one widget, or open Peek
+.RB ( peek )
+or the edge menu
+.RB ( drawer ),
+as
+.B halcyon --toggle
+does.
+.TP
+.B looks
+List the Looks you can switch to.
+.TP
+.BI look " name"
+Switch to a Look, by its name or id, the way the edge menu does.
 .TP
 .BI focus " action"
 Control the Focus timer, for example from a keyboard shortcut.
@@ -60,11 +74,15 @@ Set the weather city by name.
 .B weather-picker
 Choose the weather city in Settings.
 .TP
-.B restore
+.BR restore " [" --desktop ]
 Put back your wallpaper from before Halcyon and stop the widgets.
 This also stops them starting at sign-in; run
 .B halcyon-ctl start
 to turn them back on.
+With
+.BR --desktop ,
+put back the whole desktop from before Halcyon instead, as
+Settings' Stop using Halcyon does.
 .TP
 .B restore-wallpaper
 Put back only your wallpaper from before Halcyon.

@@ -19,6 +19,18 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 controller = importlib.util.module_from_spec(spec)
 loader.exec_module(controller)
 
+class running_widgets:
+    """Holds the widgets' lock in `folder`, as the running widgets do."""
+    def __init__(self, folder):
+        self.path = Path(folder) / 'halcyon/widgets.lock'
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.file = open(self.path, 'a+')
+        fcntl.flock(self.file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return self
+    def __exit__(self, *_):
+        self.file.close()
+
 class ControllerTests(unittest.TestCase):
     def test_geocoding_reads_and_results_are_bounded(self):
         with self.assertRaisesRegex(RuntimeError, 'too large'):
@@ -110,7 +122,8 @@ class ControllerTests(unittest.TestCase):
                 with patch.object(controller, 'settings') as settings:
                     controller.main()
                     settings.assert_called_once_with(page)
-        with patch.dict(controller.os.environ, {'XDG_RUNTIME_DIR': self.directory.name}):
+        with patch.dict(controller.os.environ, {'XDG_RUNTIME_DIR': self.directory.name}), \
+                running_widgets(self.directory.name):
             command = Path(self.directory.name) / 'halcyon/command.json'
             for widget in ('notes', 'devices', 'messages', 'markets', 'folder'):
                 with self.subTest(widget=widget), patch.object(controller.sys, 'argv', ['desktop-cards', 'toggle', widget]):
@@ -284,12 +297,81 @@ class ControllerTests(unittest.TestCase):
                 controller.main()
         text = output.getvalue()
         for name in ('start', 'stop', 'restart', 'status', 'settings', 'drawer', 'panel', 'toggle',
-                     'focus', 'timer', 'theme', 'cosmic-colors', 'weather', 'weather-picker', 'restore',
-                     'restore-wallpaper', 'wallpapers-install'):
+                     'looks', 'look', 'focus', 'timer', 'theme', 'cosmic-colors', 'weather',
+                     'weather-picker', 'restore', 'restore-wallpaper', 'wallpapers-install'):
             line = next((line for line in text.splitlines() if line.strip().startswith(name + ' ')
                          or line.strip() == name), None)
             self.assertIsNotNone(line, name)
         self.assertIn('including at sign-in', text)
+
+    def test_commands_say_when_the_widgets_are_not_running(self):
+        command = Path(self.directory.name) / 'halcyon/command.json'
+        with patch.dict(controller.os.environ, {'XDG_RUNTIME_DIR': self.directory.name}):
+            for args in (['focus', 'toggle'], ['timer', '5'], ['drawer'], ['toggle', 'notes'],
+                         ['panel']):
+                with self.subTest(args=args), patch.object(controller.sys, 'argv',
+                                                           ['halcyon-ctl', *args]):
+                    with self.assertRaisesRegex(RuntimeError, 'isn\u2019t running'):
+                        controller.main()
+                    self.assertFalse(command.exists(), 'nothing waits for a reader')
+            # A lock file left by widgets that have stopped is not a running process.
+            command.parent.mkdir(parents=True, exist_ok=True)
+            (command.parent / 'widgets.lock').write_text('')
+            with patch.object(controller.sys, 'argv', ['halcyon-ctl', 'drawer']):
+                with self.assertRaisesRegex(RuntimeError, 'isn\u2019t running'):
+                    controller.main()
+            with running_widgets(self.directory.name), \
+                    patch.object(controller.sys, 'argv', ['halcyon-ctl', 'drawer']):
+                controller.main()
+            self.assertEqual(json.loads(command.read_text()), {'action': 'drawer'})
+
+    def test_toggle_takes_every_halcyon_toggle_target(self):
+        command = Path(self.directory.name) / 'halcyon/command.json'
+        with patch.dict(controller.os.environ, {'XDG_RUNTIME_DIR': self.directory.name}), \
+                running_widgets(self.directory.name):
+            for target, sent in [('peek', {'action': 'peek'}), ('drawer', {'action': 'drawer'}),
+                                 ('menu', {'action': 'drawer'}),
+                                 ('system-monitor', {'action': 'toggle', 'widget': 'devbox'}),
+                                 ('daily-overview', {'action': 'toggle', 'widget': 'glance'}),
+                                 ('clock', {'action': 'toggle', 'widget': 'clock'})]:
+                with self.subTest(target=target), patch.object(controller.sys, 'argv',
+                                                               ['halcyon-ctl', 'toggle', target]):
+                    controller.main()
+                    self.assertEqual(json.loads(command.read_text()), sent)
+
+    def test_looks_are_listed_and_switched_through_the_halcyon_program(self):
+        self.run.return_value = subprocess.CompletedProcess([], 0, 'Night\nMorning\n', '')
+        output = io.StringIO()
+        with patch.object(controller.sys, 'argv', ['halcyon-ctl', 'looks']), redirect_stdout(output):
+            controller.main()
+        self.assertEqual(output.getvalue(), 'Night\nMorning\n')
+        self.run.assert_called_once_with([self.helper, '--looks'], text=True, capture_output=True)
+        self.run.reset_mock()
+        with patch.object(controller.sys, 'argv', ['halcyon-ctl', 'look', 'Night']), \
+                redirect_stdout(io.StringIO()):
+            controller.main()
+        self.run.assert_called_once_with([self.helper, '--look', 'Night'], text=True,
+                                         capture_output=True)
+        self.run.return_value = subprocess.CompletedProcess([], 1, '', 'No Look is called Noon.')
+        with patch.object(controller.sys, 'argv', ['halcyon-ctl', 'look', 'Noon']):
+            with self.assertRaisesRegex(RuntimeError, 'No Look is called Noon'):
+                controller.main()
+
+    def test_restore_desktop_matches_stop_using_halcyon(self):
+        output = io.StringIO()
+        with patch.object(controller, 'service') as service, redirect_stdout(output):
+            with patch.object(controller.sys, 'argv', ['halcyon-ctl', 'restore', '--desktop']):
+                controller.main()
+        self.run.assert_called_once_with([self.helper, '--restore-desktop'], text=True,
+                                         capture_output=True)
+        service.assert_called_once_with('stop')
+        self.assertIn('desktop from before Halcyon', output.getvalue())
+        # A restore that fails stops nothing.
+        self.run.return_value = subprocess.CompletedProcess([], 1, '', 'no desktop snapshot yet')
+        with patch.object(controller, 'service') as service:
+            with self.assertRaisesRegex(RuntimeError, 'no desktop snapshot yet'):
+                controller.restore(desktop=True)
+            service.assert_not_called()
 
     def test_ax04_drawer_reaches_the_running_widgets(self):
         with patch.object(controller, 'desktop_command') as command:

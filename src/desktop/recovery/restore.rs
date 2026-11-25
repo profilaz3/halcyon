@@ -18,6 +18,19 @@ impl RestorePlan {
     }
 }
 
+/// Every domain Stop using Halcyon puts back, app animations included.
+pub fn every_domain() -> Vec<RecoveryDomain> {
+    let mut domains = RecoveryDomain::ALL.to_vec();
+    domains.push(RecoveryDomain::AppAnimations);
+    domains
+}
+
+/// Stop using Halcyon's restore: the whole desktop from before Halcyon.
+pub fn restore_everything(store: &DesktopStore) -> Result<LatestChange, DesktopError> {
+    let plan = plan_restore(store, &every_domain())?;
+    apply_restore(store, &plan)
+}
+
 pub fn plan_restore(
     store: &DesktopStore,
     domains: &[RecoveryDomain],
