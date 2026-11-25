@@ -866,7 +866,8 @@ fn last_played<'a, M: Clone + 'static>(
 }
 
 /// A note line with its inline Markdown set: bold, italic and code runs in
-/// one paragraph, cut after `lines`.
+/// one paragraph, cut after `lines`. A line without any stays plain text,
+/// which, unlike rich text, reports its words to accessibility and tests.
 fn note_paragraph<'a, M: 'a>(
     value: &str,
     size: f32,
@@ -876,7 +877,21 @@ fn note_paragraph<'a, M: 'a>(
     use cosmic::iced::font::{Style, Weight};
     let ink = crate::widget_style::semantic(color);
     let base = font();
-    let runs: Vec<cosmic::iced::widget::text::Span<'a, (), Font>> = notes::spans(value)
+    let spans = notes::spans(value);
+    if spans.iter().all(|(emphasis, _)| *emphasis == notes::Emphasis::Plain) {
+        return text::body(notes::shown(value))
+            .size(size)
+            .font(base)
+            .line_height(1.25)
+            .wrapping(advanced_text::Wrapping::WordOrGlyph)
+            .ellipsize(advanced_text::Ellipsize::End(
+                advanced_text::EllipsizeHeightLimit::Lines(lines),
+            ))
+            .class(cosmic::theme::Text::Color(ink))
+            .width(Length::Fill)
+            .into();
+    }
+    let runs: Vec<cosmic::iced::widget::text::Span<'a, (), Font>> = spans
         .into_iter()
         .map(|(emphasis, run)| {
             let font = match emphasis {
