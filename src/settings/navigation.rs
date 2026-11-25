@@ -814,6 +814,29 @@ const SEARCH: &[SearchHit] = &[
     .names_page(),
     LOCAL_FOLDER,
     hit(Page::Folder, "Show hidden files", "dotfiles folder visibility", false),
+    hit(
+        Page::Tiles,
+        "Data tiles",
+        "custom data json file status build download progress goal gauge graph number value",
+        false,
+    )
+    .names_page(),
+    hit(Page::Tiles, "Your tiles", "data tiles list remove", false).at("tiles-list"),
+    hit(Page::Tiles, "Add a tile", "data tile json file field template gauge progress graph", false)
+        .at("tiles-add"),
+    hit(Page::Tiles, "Start from", "data tile template server status build download goal", false)
+        .at("tiles-add"),
+    hit(Page::Tiles, "File", "data tile json file path choose", false).at("tiles-add"),
+    hit(Page::Tiles, "Field", "data tile json key path value", false).at("tiles-add"),
+    hit(Page::Tiles, "Name", "data tile label title", false).at("tiles-add"),
+    hit(Page::Tiles, "Show as", "data tile text progress bar gauge dial graph", false)
+        .at("tiles-add"),
+    hit(Page::Tiles, "Smallest value", "data tile gauge minimum range", false).at("tiles-add"),
+    hit(Page::Tiles, "Largest value", "data tile progress gauge maximum range", false)
+        .at("tiles-add"),
+    hit(Page::Tiles, "Unit", "data tile unit percent suffix", false).at("tiles-add"),
+    hit(Page::Tiles, "Read every", "data tile refresh interval how often", false)
+        .at("tiles-add"),
     hit(Page::Appearance, "Widget glass", "crystal shared finish", false),
     hit(Page::WeatherEffects, "Rain on widget glass", "raindrops wallpaper widgets only", false),
     finish_hit(Page::Calendar),
@@ -828,6 +851,7 @@ const SEARCH: &[SearchHit] = &[
     finish_hit(Page::Music),
     finish_hit(Page::Notes),
     finish_hit(Page::Projects),
+    finish_hit(Page::Tiles),
     finish_hit(Page::Weather),
     hit(Page::Markets, "Data source", "public yahoo ECB exchange rates free no key provider", false),
     hit(Page::Markets, "Show on widget", "markets display options", false).at("markets-display"),
@@ -2700,6 +2724,7 @@ pub(super) fn widget_of(page: Page) -> Option<crate::drawer::Widget> {
         Page::Messages => Widget::Messages,
         Page::Markets => Widget::Markets,
         Page::Folder => Widget::Folder,
+        Page::Tiles => Widget::Tiles,
         _ => return None,
     })
 }
@@ -2719,6 +2744,7 @@ pub(super) fn widget_page(widget: crate::drawer::Widget) -> Page {
         Widget::Messages => Page::Messages,
         Widget::Markets => Page::Markets,
         Widget::Folder => Page::Folder,
+        Widget::Tiles => Page::Tiles,
     }
 }
 

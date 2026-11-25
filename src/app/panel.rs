@@ -421,6 +421,7 @@ impl Cards {
                     | Widget::Devices
                     | Widget::Folder
                     | Widget::Markets
+                    | Widget::Tiles
                     | Widget::Messages => {}
                 }
             }

@@ -472,6 +472,14 @@ impl Settings {
             Widget::Messages => {
                 cards::messages::<Message>(&crate::messages::sample(), &cfg, None, size)
             }
+            Widget::Tiles => {
+                static SAMPLE: std::sync::OnceLock<(
+                    Vec<crate::tiles::Tile>,
+                    crate::tiles::State,
+                )> = std::sync::OnceLock::new();
+                let (tiles, state) = SAMPLE.get_or_init(crate::tiles::sample);
+                cards::tiles(state, tiles, &cfg, size, None)
+            }
         };
         layers.push(
             container(container(card).width(cw))

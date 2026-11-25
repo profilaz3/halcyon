@@ -310,6 +310,7 @@ pub enum Message {
     /// The phone's conversations, from `crate::messages`.
     Messages(crate::messages::State),
     Markets(crate::markets::State),
+    Tiles(crate::tiles::State),
     Folder(crate::folder::Listing),
     /// Show this subfolder of the chosen folder in the Folder card, or the
     /// chosen folder again with `None`.
@@ -431,7 +432,7 @@ static POINTER: std::sync::Mutex<Option<(window::Id, cosmic::iced::Point)>> =
 pub struct Cards {
     activity: crate::activity_island::bridge::Owner,
     core: Core,
-    ids: [window::Id; 17],
+    ids: [window::Id; 18],
     layout_editor: layout::LayoutEditor,
     surface_geometry: Option<layout::SurfaceGeometry>,
     displays: crate::displays::Registry,
@@ -765,6 +766,11 @@ impl cosmic::Application for Cards {
                     .map(Message::Markets),
             );
         }
+        if self.provider_visible(Widget::Tiles) && !self.config.tiles.tiles.is_empty() {
+            let tiles = self.config.tiles.tiles.clone();
+            let feed = crate::tiles::subscription(tiles, self.tools.tiles.clone());
+            subscriptions.push(feed.map(Message::Tiles));
+        }
         if self.messages_demand() {
             subscriptions.push(crate::messages::subscription().map(Message::Messages));
         }
@@ -1078,6 +1084,9 @@ impl cosmic::Application for Cards {
                 && !self.tools.markets.same_watchlist(&self.config.markets))
         {
             self.tools.markets = crate::markets::State::default();
+        }
+        if !self.provider_visible(Widget::Tiles) && !self.tools.tiles.tiles.is_empty() {
+            self.tools.tiles = Default::default();
         }
         if !self.messages_demand() {
             self.tools.messages = crate::messages::State::default();
@@ -2355,6 +2364,13 @@ impl Cards {
                     && state.source.as_ref().is_some_and(|p| p.feed_key() == self.config.markets.feed_key())
                 {
                     self.tools.markets = state;
+                }
+                return Task::none();
+            }
+            Message::Tiles(state) => {
+                // A round read for tiles since edited is dropped.
+                if self.provider_visible(Widget::Tiles) && state.tiles == self.config.tiles.tiles {
+                    self.tools.tiles = state;
                 }
                 return Task::none();
             }

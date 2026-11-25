@@ -84,6 +84,8 @@ pub(super) struct Tools {
     /// The subfolder the Folder card shows, inside the chosen folder; the
     /// chosen folder itself when `None`. Kept in memory only.
     pub folder_view: Option<std::path::PathBuf>,
+    /// The Data tiles' readings, while the widget shows.
+    pub tiles: crate::tiles::State,
 }
 
 impl Tools {
@@ -112,6 +114,7 @@ impl Tools {
             markets: crate::markets::State::default(),
             folder: Default::default(),
             folder_view: None,
+            tiles: Default::default(),
         }
     }
     pub(super) fn sample() -> Self {
@@ -139,6 +142,7 @@ impl Tools {
             markets: crate::markets::State::default(),
             folder: Default::default(),
             folder_view: None,
+            tiles: Default::default(),
         }
     }
     /// No note being written, saved, checked or waiting for Undo.
@@ -326,6 +330,13 @@ impl Cards {
                 Some(on_desktop as fn(Action) -> Message),
                 Some(size),
             ),
+            Widget::Tiles => cards::tiles(
+                &self.tools.tiles,
+                &self.config.tiles.tiles,
+                &self.config,
+                Some(size),
+                Some(Message::SettingsPage("tiles")),
+            ),
             _ => cards::focus(
                 &self.tools.focus,
                 &self.config,
@@ -478,6 +489,7 @@ impl Cards {
                 | Widget::Notes
                 | Widget::Markets
                 | Widget::Folder
+                | Widget::Tiles
                 | Widget::Messages
         ) && self.tool_shown(widget)
             && !self.layout_editor.active

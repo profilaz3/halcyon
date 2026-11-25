@@ -103,6 +103,7 @@ pub struct Config {
     pub messages: MessagesPreferences,
     pub markets: crate::markets::Preferences,
     pub folder: crate::folder::Preferences,
+    pub tiles: crate::tiles::Preferences,
     /// The edge sidebar slides in and out; off, it appears and hides at
     /// once (Pop!_OS › Motion).
     pub sidebar_slide: bool,
@@ -174,6 +175,7 @@ impl Default for Config {
             messages: MessagesPreferences::default(),
             markets: crate::markets::Preferences::default(),
             folder: Default::default(),
+            tiles: Default::default(),
             sidebar_slide: true,
             edge_menu: edge_menu::EdgeMenu::default(),
             settings_animations: true,
@@ -425,6 +427,7 @@ impl Config {
             Widget::Messages => return self.messages.enabled,
             Widget::Markets => return self.markets.enabled,
             Widget::Folder => return self.folder.enabled,
+            Widget::Tiles => return self.tiles.enabled,
             _ => {}
         }
         self.enabled_widgets.iter().any(|key| key == widget.key())
@@ -1861,6 +1864,7 @@ impl RefreshIntervals {
             | Widget::Devices
             | Widget::Folder
             | Widget::Markets
+            | Widget::Tiles
             | Widget::Messages => self.clock,
         }
     }
@@ -1879,6 +1883,7 @@ impl RefreshIntervals {
             | Widget::Devices
             | Widget::Folder
             | Widget::Markets
+            | Widget::Tiles
             | Widget::Messages => (1, 60),
             Widget::Weather => (300, 10800),
             Widget::Calendar => (60, 3600),
@@ -1899,6 +1904,7 @@ impl RefreshIntervals {
             | Widget::Devices
             | Widget::Folder
             | Widget::Markets
+            | Widget::Tiles
             | Widget::Messages => &[1, 15, 30, 60],
         }
     }
