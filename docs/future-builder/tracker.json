@@ -666,6 +666,10 @@
   "log": [
     {
       "date": "2026-11-25",
+      "change": "FB35 web sources (ADR 0016): Data tiles also read JSON from web addresses through the calendar HTTP client: HTTPS anywhere, plain HTTP only on the local network with pinned addresses, checked redirects, 256 KB answers, every 30 s at most, no sign-in yet. Settings takes a path or an address in one field."
+    },
+    {
+      "date": "2026-11-25",
       "change": "FB35 first slice (ADR 0015): a Data tiles widget shows up to six values from local JSON files as text, a progress bar, a gauge or a graph, with reading, stale and error states. Settings lists a chosen file's fields to pick from. Regular files of at most 256 KB are read without blocking and only while shown; paths stay local and out of usage reports. HTTP(S) sources remain."
     },
     {

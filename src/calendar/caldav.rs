@@ -149,6 +149,7 @@ async fn propfind(
         login: Some(login),
         headers: &[("Depth", depth), ("Accept", "application/xml, text/xml")],
         body: Some(DISCOVER.into()),
+        limit: http::MAX_BYTES,
     })
     .await?;
     status(&reply)?;
@@ -370,6 +371,7 @@ pub(super) async fn month(
         login: Some(login),
         headers: &[("Depth", "1"), ("Accept", "application/xml, text/xml")],
         body: Some(report_body(month)?),
+        limit: http::MAX_BYTES,
     })
     .await?;
     status(&reply)?;

@@ -63,12 +63,9 @@ impl Settings {
 
         let mut list = Vec::new();
         for (index, tile) in saved.iter().enumerate() {
-            let file = tile.path().file_name().map_or_else(
-                || tile.path().display().to_string(),
-                |n| n.to_string_lossy().into_owned(),
-            );
+            let file = tile.source.name();
             let field = if tile.field.is_empty() {
-                "whole file".to_owned()
+                "whole answer".to_owned()
             } else {
                 tile.field.clone()
             };
@@ -123,14 +120,20 @@ impl Settings {
             ),
         )];
         form.push(group_row(
-            "File",
-            "A JSON file another program writes",
+            "Source",
+            "A JSON file another program writes, or a web address that answers with JSON",
             row::with_children(vec![
-                text_input("/home/you/status.json", &draft.path)
-                    .id("tile-path".into())
-                    .on_input(|s| edit(Tile::Path(s)))
-                    .on_submit(|_| edit(Tile::ReadPath))
+                text_input("/home/you/status.json or https://…", &draft.source)
+                    .id("tile-source".into())
+                    .on_input(|s| edit(Tile::Source(s)))
+                    .on_submit(|_| edit(Tile::ReadSource))
                     .width(Length::Fixed(240.))
+                    .into(),
+                button::text("Read")
+                    .id("tile-read".into())
+                    .on_press_maybe(
+                        (!draft.source.trim().is_empty()).then(|| edit(Tile::ReadSource)),
+                    )
                     .into(),
                 button::standard("Choose file…")
                     .on_press_maybe((!editor.choosing).then(|| edit(Tile::Choose)))
@@ -143,10 +146,10 @@ impl Settings {
         match &editor.fields {
             Some((_, Err(problem))) => form.push(label(problem.clone(), 13., WARN)),
             Some((_, Ok(fields))) if fields.is_empty() => {
-                form.push(label("This file holds no single values.", 13., WARN));
+                form.push(label("It holds no single values to show.", 13., WARN));
             }
             Some((_, Ok(fields))) => {
-                let mut rows = vec![label("Fields in this file", 13., MUTED)];
+                let mut rows = vec![label("Fields it holds", 13., MUTED)];
                 for (index, (path, value)) in fields.iter().take(LISTED).enumerate() {
                     let chosen = draft.field == *path;
                     rows.push(
@@ -249,8 +252,9 @@ impl Settings {
         form.push(
             row::with_children(vec![
                 container(label(
-                    "Halcyon reads the file only while the widget shows and never runs it. \
-                     Paths stay on this computer, out of shared Looks.",
+                    "Halcyon reads sources only while the widget shows and never runs them. \
+                     They stay on this computer, out of shared Looks. Sign-in isn’t supported, \
+                     so don’t use an address with a key in it.",
                     12.,
                     MUTED,
                 ))

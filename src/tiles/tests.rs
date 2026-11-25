@@ -183,14 +183,14 @@ fn tiles_reading_one_file_share_a_read_and_keep_readings_across_edits() {
     assert_eq!(
         sources(&[a.clone(), b.clone(), c.clone()]),
         BTreeMap::from([
-            (PathBuf::from("/a.json"), Duration::from_secs(30)),
-            (PathBuf::from("/c.json"), Duration::from_secs(3600)),
+            (Source::typed("/a.json"), Duration::from_secs(30)),
+            (Source::typed("/c.json"), Duration::from_secs(3600)),
         ])
     );
     let mut state = State::carried(&[a.clone(), b.clone()], &State::default());
     let now = SystemTime::now();
     state.apply(
-        Path::new("/a.json"),
+        &Source::typed("/a.json"),
         &Ok(Document {
             value: json!({"x": "on", "y": 3}),
             changed: Some(now),
@@ -203,4 +203,112 @@ fn tiles_reading_one_file_share_a_read_and_keep_readings_across_edits() {
     let next = State::carried(&[c, b], &state);
     assert_eq!(next.readings[0], Reading::default());
     assert_eq!(next.readings[1].history, [3.]);
+}
+
+/// Answers each request on 127.0.0.1 by its path, counting them.
+async fn serve() -> (u16, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = count.clone();
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let mut head = Vec::new();
+            let mut byte = [0u8; 1];
+            while !head.ends_with(b"\r\n\r\n") && socket.read(&mut byte).await.unwrap_or(0) == 1 {
+                head.push(byte[0]);
+            }
+            let head = String::from_utf8_lossy(&head).to_string();
+            let path = head.split(' ').nth(1).unwrap_or_default().to_owned();
+            let big = format!("[{}0]", "0,".repeat(150_000));
+            let (status, extra, body) = match path.as_str() {
+                "/ok" => ("200 OK", "", r#"{"state": "green", "n": 5}"#.to_owned()),
+                "/moved" => ("301 Moved", "Location: /ok\r\n", String::new()),
+                "/big" => ("200 OK", "", big),
+                "/text" => ("200 OK", "", "all good".to_owned()),
+                _ => ("404 Not Found", "", String::new()),
+            };
+            let reply = format!(
+                "HTTP/1.1 {status}\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = socket.write_all(reply.as_bytes()).await;
+        }
+    });
+    (port, count)
+}
+
+#[test]
+fn web_addresses_follow_the_calendar_rules_and_answer_like_files() {
+    let web = |url: &str, every| Tile {
+        source: Source::typed(url),
+        ..tile("/a.json", "state", Show::Text, every)
+    };
+    assert!(web("https://example.com/status.json", 60).valid());
+    assert!(web("http://192.168.1.10:8123/api/states", 30).valid());
+    assert!(web("http://nas.local/status", 30).valid());
+    assert!(!web("https://example.com/s.json", 10).valid(), "too often");
+    assert!(
+        !web("http://example.com/s.json", 60).valid(),
+        "plain http off the network"
+    );
+    assert!(
+        !web("https://me:secret@example.com/s.json", 60).valid(),
+        "a login"
+    );
+    assert!(
+        !web("https://example.com/s.json#top", 60).valid(),
+        "a fragment"
+    );
+    assert_eq!(Source::typed("HTTPS://Example.com/a").name(), "example.com");
+    assert_eq!(
+        Source::typed("https://example.com/a"),
+        Source::typed(" https://EXAMPLE.com/a "),
+        "one address, one source"
+    );
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (port, count) = serve().await;
+        let at = |path: &str| format!("http://127.0.0.1:{port}{path}");
+        let ok = fetch(&at("/ok")).await.unwrap();
+        assert_eq!(ok.value, json!({"state": "green", "n": 5}));
+        assert_eq!(ok.changed, None, "a web answer has no file time");
+        assert_eq!(fetch(&at("/moved")).await.unwrap().value["n"], 5);
+        assert_eq!(
+            fetch(&at("/nothing")).await.err(),
+            Some(Problem::Status(404))
+        );
+        assert_eq!(fetch(&at("/big")).await.err(), Some(Problem::AnswerTooBig));
+        assert_eq!(fetch(&at("/text")).await.err(), Some(Problem::NotJson(1)));
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let gone = format!(
+            "http://127.0.0.1:{}/ok",
+            closed.local_addr().unwrap().port()
+        );
+        drop(closed);
+        assert_eq!(fetch(&gone).await.err(), Some(Problem::Unreachable));
+        assert_eq!(
+            fetch("http://example.com/s.json").await.err(),
+            Some(Problem::PlainHttp)
+        );
+        // Two tiles on one address: one request.
+        let before = count.load(std::sync::atomic::Ordering::SeqCst);
+        let tiles = vec![
+            web(&at("/ok"), 30),
+            Tile {
+                field: "n".into(),
+                show: Show::Graph,
+                ..web(&at("/ok"), 60)
+            },
+        ];
+        let state = read_all(tiles, State::default()).await;
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), before + 1);
+        assert_eq!(state.readings[0].value, Some(Value::Text("green".into())));
+        assert_eq!(state.readings[1].history, [5.]);
+    });
 }

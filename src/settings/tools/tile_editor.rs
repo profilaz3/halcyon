@@ -12,13 +12,14 @@ pub enum Message {
     /// Fill the form from a starting point in [`tiles::TEMPLATES`].
     Template(usize),
     Label(String),
-    Path(String),
-    /// Read the typed file and list its fields.
-    ReadPath,
+    /// A file path or web address, as typed.
+    Source(String),
+    /// Read the typed source and list its fields.
+    ReadSource,
     Choose,
     Chosen(Result<Option<PathBuf>, String>),
-    /// A file read for the form: the fields it holds, or why not.
-    Read(PathBuf, Result<Vec<(String, Value)>, String>),
+    /// A source read for the form: the fields it holds, or why not.
+    Read(Source, Result<Vec<(String, Value)>, String>),
     Field(String),
     Show(u8),
     Unit(String),
@@ -36,7 +37,8 @@ pub enum Message {
 #[derive(Clone, Debug)]
 pub struct Draft {
     pub label: String,
-    pub path: String,
+    /// A file path or a web address.
+    pub source: String,
     pub field: String,
     /// Text, progress bar, gauge or graph.
     pub show: u8,
@@ -49,7 +51,7 @@ impl Default for Draft {
     fn default() -> Self {
         Self {
             label: String::new(),
-            path: String::new(),
+            source: String::new(),
             field: String::new(),
             show: 0,
             unit: String::new(),
@@ -64,23 +66,34 @@ pub const SHOWS: [&str; 4] = ["Text", "Progress bar", "Gauge", "Graph"];
 #[derive(Default)]
 pub struct Editor {
     pub draft: Draft,
-    /// The fields of the draft's file, once read.
-    pub fields: Option<(PathBuf, Result<Vec<(String, Value)>, String>)>,
+    /// The fields of the draft's source, once read.
+    pub fields: Option<(Source, Result<Vec<(String, Value)>, String>)>,
     pub error: Option<String>,
     pub choosing: bool,
     pub preview: tiles::State,
     reading: bool,
 }
 
-/// What a file holds, for the form, in a sentence when it can't be used.
-fn listed(path: PathBuf) -> Task<crate::settings::Message> {
+/// What a source holds, for the form, in a sentence when it can't be used.
+fn listed(source: Source) -> Task<crate::settings::Message> {
     cosmic::task::future(async move {
-        let result = tiles::read(path.clone())
+        let result = tiles::read(source.clone())
             .await
             .map(|document| tiles::fields(&document.value))
             .map_err(|problem| problem.text());
-        crate::settings::Message::Tools(super::Message::Tile(Message::Read(path, result)))
+        crate::settings::Message::Tools(super::Message::Tile(Message::Read(source, result)))
     })
+}
+
+/// Why a typed source can't be used, in a sentence.
+fn unusable(source: &Source) -> &'static str {
+    match source {
+        Source::File { .. } => "Choose a file, or type its full path.",
+        Source::Http { url } if url.to_ascii_lowercase().starts_with("http://") => {
+            "Plain http works only on your own network. Use https."
+        }
+        Source::Http { .. } => "Use a whole web address, like https://example.com/status.json.",
+    }
 }
 
 impl Editor {
@@ -101,9 +114,7 @@ impl Editor {
         };
         let tile = Tile {
             label: d.label.trim().to_owned(),
-            source: Source::File {
-                path: PathBuf::from(d.path.trim()),
-            },
+            source: Source::typed(&d.source),
             field: d.field.trim().to_owned(),
             show,
             unit: d.unit.trim().to_owned(),
@@ -112,8 +123,11 @@ impl Editor {
         if tile.label.is_empty() {
             return Err("Give the tile a name.");
         }
-        if !tile.path().is_absolute() {
-            return Err("Choose a file, or type its full path.");
+        if !tile.source.valid() {
+            return Err(unusable(&tile.source));
+        }
+        if tile.source.web() && tile.every < tiles::WEB_EVERY {
+            return Err("Web addresses are read every 30 s at most.");
         }
         if !tile.valid() {
             return Err(match show {
@@ -163,16 +177,16 @@ impl Editor {
                 }
             }
             Message::Label(value) => draft.label = value.chars().take(40).collect(),
-            Message::Path(value) => {
-                draft.path = value.chars().take(4096).collect();
+            Message::Source(value) => {
+                draft.source = value.chars().take(4096).collect();
                 self.error = None;
             }
-            Message::ReadPath => {
-                let path = PathBuf::from(draft.path.trim());
-                if path.is_absolute() {
-                    return (listed(path), None);
+            Message::ReadSource => {
+                let source = Source::typed(&draft.source);
+                if source.valid() {
+                    return (listed(source), None);
                 }
-                self.error = Some("Type the file’s full path, starting with /.".into());
+                self.error = Some(unusable(&source).into());
             }
             Message::Choose => {
                 if self.choosing {
@@ -203,18 +217,18 @@ impl Editor {
                 self.choosing = false;
                 match result {
                     Ok(Some(path)) => {
-                        draft.path = path.display().to_string();
-                        return (listed(path), None);
+                        draft.source = path.display().to_string();
+                        return (listed(Source::File { path }), None);
                     }
                     Ok(None) => {}
                     Err(error) => self.error = Some(error),
                 }
             }
-            Message::Read(path, result) => {
-                // Only the file the form still names.
-                if PathBuf::from(draft.path.trim()) == path {
+            Message::Read(source, result) => {
+                // Only the source the form still names.
+                if Source::typed(&draft.source) == source {
                     self.error = None;
-                    self.fields = Some((path, result));
+                    self.fields = Some((source, result));
                 }
             }
             Message::Field(field) => {
