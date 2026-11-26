@@ -27,13 +27,13 @@ An album-lit Music player, a Weather forecast and a Focus timer can share a disp
 
 [![Illustration of an album-lit Music player beside Weather and Focus, over Halcyon's violet feather](docs/presentation/078-readme/widgets.webp)](docs/presentation/078-readme/widgets.webp)
 
-Choose **Classic** or **Outlook** for Weather. **Folder** opens recent files, and **Markets** follows up to five stocks or currency pairs with optional charts. [Native widget gallery](docs/screenshots/078/README.md#desktop-widgets) · [Widget Peek in use](docs/screenshots/desktop-customization/widget-peek.png) · [Markets setup](docs/MARKETS.md)
+**Data tiles** shows values that other programs write to JSON files or serve on your network, as text, a bar, a dial or a graph. **System monitor** watches the services, containers and ports you choose. Choose **Classic** or **Outlook** for Weather. **Folder** opens recent files and lists every entry in its full reading. **Markets** follows up to five stocks or currency pairs, with chart ranges and price alerts. [Native widget gallery](docs/screenshots/078/README.md#desktop-widgets) · [Widget Peek in use](docs/screenshots/desktop-customization/widget-peek.png) · [Markets setup](docs/MARKETS.md)
 
 ## 3. Dock and panel customization
 
 Arrange applets and adjust spacing, size, opacity, corners and auto-hide. Optional **Dock magnification** enlarges icons under the pointer and follows system reduced motion. [See the dock in motion](docs/screenshots/desktop-customization/dock-motion.mp4)
 
-**Islands** separates applets into floating groups; **Penumbra** fades bar backgrounds into the wallpaper. Both are optional and included in the package. The **Activity island** (beta) shows music, meetings, notifications and camera or microphone use on a standard COSMIC top panel or a floating Islands panel. Open Music or Messages in the Activity island and choose **Pin to desktop**. Click to place the widget, or use the arrow keys and Enter. Esc cancels. **Show on desktop** highlights a widget you already pinned.
+**Islands** separates applets into floating groups; **Penumbra** fades bar backgrounds into the wallpaper. Both are optional and included in the package. The **Activity island** (beta) shows music, meetings, notifications and camera or microphone use on a standard COSMIC top panel or a floating Islands panel. Open Music, Messages, Focus, Calendar or Devices in the Activity island and choose **Pin to desktop**. Click to place the widget, or use the arrow keys and Enter. Esc cancels. **Show on desktop** highlights a widget you already pinned.
 
 [![Illustration of Islands, Penumbra, Activity island states and an icon-only edge menu with a handle](docs/presentation/070-readme/panel-elements-dark.png)](docs/presentation/070-readme/panel-elements-dark.png)
 
@@ -143,10 +143,12 @@ halcyon --settings [PAGE]   Open Settings, on PAGE if given (for example clock)
 halcyon --toggle TARGET     Open or close the edge menu (drawer), or show or hide a widget
 halcyon-ctl start | stop    Show or hide the widgets, now and at sign-in
 halcyon-ctl focus toggle    Start or pause the Focus timer
+halcyon-ctl look NAME       Switch to a Look by its name
+halcyon-ctl style NAME      Apply a style from Appearance
 halcyon-ctl --help          Every command, described
 ```
 
-Bind `halcyon --toggle drawer` to a key in **COSMIC Settings → Keyboard → Keyboard shortcuts** to open the edge menu without the mouse. In the menu, Tab and the arrow keys move, Enter shows or hides a widget, Alt+Up and Alt+Down reorder the right column, and Esc closes it. On a visible Music, Notes, Focus, Messages or Markets entry, Shift+Enter moves keyboard focus to the widget. Tab moves between its controls, Enter activates one, and Esc releases focus. On Calendar, Daily Overview with an agenda, System Monitor, Projects, Weather or Devices, Shift+Enter opens the full reading. The same actions are in each widget’s right-click menu, with Refresh now for widgets that read a source, and Move to another display when more than one is connected. `man halcyon` and `man halcyon-ctl` have the details.
+Bind `halcyon --toggle drawer` to a key in **COSMIC Settings → Keyboard → Keyboard shortcuts** to open the edge menu without the mouse. In the menu, Tab and the arrow keys move, Enter shows or hides a widget, Alt+Up and Alt+Down reorder the right column, and Esc closes it. On a visible Music, Notes, Focus, Messages or Markets entry, Shift+Enter moves keyboard focus to the widget. Tab moves between its controls, Enter activates one, and Esc releases focus. On Calendar, Daily Overview with an agenda, System Monitor, Projects, Weather, Devices or Folder, Shift+Enter opens the full reading. The same actions are in each widget’s right-click menu, with Refresh now for widgets that read a source, and Move to another display when more than one is connected. `man halcyon` and `man halcyon-ctl` have the details.
 
 ## Help & development
 

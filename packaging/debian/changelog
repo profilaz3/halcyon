@@ -1,3 +1,16 @@
+cosmic-ext-halcyon (0.8.0) unstable; urgency=medium
+
+  * Add Data tiles, which show values from JSON files and web addresses.
+  * Watch chosen services, containers and ports in System monitor.
+  * Add Markets price alerts and chart ranges, the next 24 hours in Weather,
+    a full Folder reading and pages in Notes.
+  * Design Notes and Devices in the Widget builder, turn a quick timer into a
+    Focus session and pin more widgets from the Activity island.
+  * Apply styles and switch Looks from the command line.
+  * Read Outlook calendars that name Windows time zones.
+
+ -- profilaz3 <261673162+profilaz3@users.noreply.github.com>  Thu, 26 Nov 2026 02:06:44 +0000
+
 cosmic-ext-halcyon (0.7.8) unstable; urgency=medium
 
   * Add Markets with public stock quotes, ECB exchange rates and optional charts.

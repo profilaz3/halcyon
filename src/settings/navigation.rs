@@ -513,6 +513,41 @@ pub(super) const WEATHER_EFFECTS: SearchHit = hit(
     false,
 )
 .names_page();
+pub(super) const DATA_TILES: SearchHit = hit(
+    Page::Tiles,
+    "Data tiles",
+    "custom data json file web address url status build download progress goal gauge graph",
+    false,
+)
+.names_page();
+pub(super) const BACKGROUND_SERVICES: SearchHit = hit(
+    Page::Devbox,
+    "Background services",
+    "system monitor watch service unit systemd container podman docker port restart start",
+    false,
+)
+.at("devbox-watched");
+pub(super) const PRICE_ALERTS: SearchHit = hit(
+    Page::Markets,
+    "Price alerts",
+    "markets alert notify notification target price above below",
+    false,
+)
+.at("markets-alerts");
+pub(super) const NOTE_PAGES: SearchHit = hit(
+    Page::Notes,
+    "Pages",
+    "notes pages tabs several notes headings sections",
+    false,
+)
+.at("notes-pages");
+pub(super) const WIDGET_BUILDER: SearchHit = hit(
+    Page::Builder,
+    "Widget builder",
+    "make your own widget recipe custom clock weather calendar agenda cpu memory disk network gpu uptime system readings native parts compose notes devices batteries",
+    false,
+)
+.names_page();
 pub(super) const EDGE_MENU: SearchHit = hit(
     Page::EdgeMenu,
     "Edge menu",
@@ -814,13 +849,7 @@ const SEARCH: &[SearchHit] = &[
     .names_page(),
     LOCAL_FOLDER,
     hit(Page::Folder, "Show hidden files", "dotfiles folder visibility", false),
-    hit(
-        Page::Tiles,
-        "Data tiles",
-        "custom data json file web address url status build download progress goal gauge graph",
-        false,
-    )
-    .names_page(),
+    DATA_TILES,
     hit(Page::Tiles, "Your tiles", "data tiles list remove", false).at("tiles-list"),
     hit(Page::Tiles, "Add a tile", "data tile json file field template gauge progress graph", false)
         .at("tiles-add"),
@@ -860,13 +889,7 @@ const SEARCH: &[SearchHit] = &[
     hit(Page::Markets, "Price chart", "markets graph price history", false).at("markets-chart"),
     hit(Page::Markets, "Chart range", "markets week month 3 months history period timeframe", false)
         .at("markets-range"),
-    hit(
-        Page::Markets,
-        "Price alerts",
-        "markets alert notify notification target price above below",
-        false,
-    )
-    .at("markets-alerts"),
+    PRICE_ALERTS,
     hit(Page::Markets, "Publication date", "markets quote time timestamp", false).at("markets-date"),
     hit(Page::Markets, "Source and chart details", "markets provider chart dates low high prices", false).at("markets-details"),
     MARKETS_WATCHLIST,
@@ -1083,13 +1106,7 @@ const SEARCH: &[SearchHit] = &[
         false,
     ),
     LOOKS,
-    hit(
-        Page::Builder,
-        "Widget builder",
-        "make your own widget recipe custom clock weather calendar agenda cpu memory disk network gpu uptime system readings native parts compose",
-        false,
-    )
-    .names_page(),
+    WIDGET_BUILDER,
     TIME_OF_DAY,
     STARTUP,
     EDGE_MENU,
@@ -1341,7 +1358,7 @@ const ROWS: &[SearchHit] = &[
     hit(Page::DesktopWindows, "When you start typing", "", false),
     hit(Page::DesktopWindows, "Wrap around", "", false),
     hit(Page::DesktopWindowRules, "Your apps", "", false),
-    hit(Page::Devbox, "Background services", "", false),
+    BACKGROUND_SERVICES,
     hit(Page::Devbox, "How often it updates", "", false),
     hit(
         Page::Devbox,
@@ -1403,8 +1420,7 @@ const ROWS: &[SearchHit] = &[
     hit(Page::Messages, "Names", "contacts", false),
     hit(Page::Music, "Progress bar", "", false),
     hit(Page::Notes, "Card size", "", false),
-    hit(Page::Notes, "Pages", "notes pages tabs several notes headings sections", false)
-        .at("notes-pages"),
+    NOTE_PAGES,
     hit(Page::Notes, "Your note", "", false),
     hit(Page::Overview, "Set up your desktop", "", false),
     hit(Page::Overview, "Show widgets", "", false),

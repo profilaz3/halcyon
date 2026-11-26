@@ -43,6 +43,15 @@
   </provides>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.8.0" date="2026-11-26">
+      <description><ul>
+        <li>Add Data tiles to show values from JSON files and web addresses as text, a bar, a dial or a graph.</li>
+        <li>Watch the services, containers and ports you choose in System monitor.</li>
+        <li>Set price alerts and chart a week, a month or three months in Markets.</li>
+        <li>Split Notes into pages at its headings, see the next 24 hours in Weather and act on every Folder entry.</li>
+        <li>Design Notes and Devices in the Widget builder and turn a quick timer into a Focus session.</li>
+      </ul></description>
+    </release>
     <release version="0.7.8" date="2026-11-19">
       <description><ul>
         <li>Follow stocks and ECB currency pairs in Markets. Turn on price charts for individual symbols.</li>
