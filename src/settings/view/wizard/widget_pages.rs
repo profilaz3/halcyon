@@ -45,7 +45,7 @@ fn description(widget: Widget) -> &'static str {
         Widget::Messages => "Your phone’s texts",
         Widget::Folder => "Recent files from a local folder",
         Widget::Markets => "Stocks, currency pairs and charts",
-        Widget::Tiles => "Values from your own files",
+        Widget::Tiles => "Values from files and web addresses",
     }
 }
 impl Settings {

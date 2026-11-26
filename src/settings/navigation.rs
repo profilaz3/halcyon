@@ -817,7 +817,7 @@ const SEARCH: &[SearchHit] = &[
     hit(
         Page::Tiles,
         "Data tiles",
-        "custom data json file status build download progress goal gauge graph number value",
+        "custom data json file web address url status build download progress goal gauge graph",
         false,
     )
     .names_page(),
@@ -826,7 +826,8 @@ const SEARCH: &[SearchHit] = &[
         .at("tiles-add"),
     hit(Page::Tiles, "Start from", "data tile template server status build download goal", false)
         .at("tiles-add"),
-    hit(Page::Tiles, "File", "data tile json file path choose", false).at("tiles-add"),
+    hit(Page::Tiles, "Source", "data tile json file path choose web address url http https", false)
+        .at("tiles-add"),
     hit(Page::Tiles, "Field", "data tile json key path value", false).at("tiles-add"),
     hit(Page::Tiles, "Name", "data tile label title", false).at("tiles-add"),
     hit(Page::Tiles, "Show as", "data tile text progress bar gauge dial graph", false)

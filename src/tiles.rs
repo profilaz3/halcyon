@@ -1,6 +1,6 @@
-//! Data tiles: values from local JSON files the person chooses, shown as
-//! text, a progress bar, a gauge or a small graph (ADR 0015). Files are read
-//! only while the widget shows; nothing is run.
+//! Data tiles: values from JSON files or web addresses the person chooses,
+//! shown as text, a progress bar, a gauge or a small graph (ADRs 0015 and
+//! 0016). Sources are read only while the widget shows; nothing is run.
 use cosmic::iced::{Subscription, futures::SinkExt};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
@@ -52,7 +52,56 @@ pub struct Tile {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Source {
-    File { path: PathBuf },
+    File {
+        path: PathBuf,
+    },
+    /// HTTPS anywhere, plain HTTP on the local network only (ADR 0016).
+    Http {
+        url: String,
+    },
+}
+/// Web tiles are read no more often than this.
+pub const WEB_EVERY: u32 = 30;
+const MAX_URL: usize = 2048;
+impl Source {
+    /// A path or an address as typed: an address when it starts with
+    /// `http://` or `https://`, a path otherwise.
+    pub fn typed(text: &str) -> Self {
+        let text = text.trim();
+        let lower = text.to_ascii_lowercase();
+        if lower.starts_with("http://") || lower.starts_with("https://") {
+            // Stored as the parsed address, so one address is one source.
+            let url = crate::calendar::http::parse(text, false)
+                .map_or_else(|_| text.to_owned(), |url| url.to_string());
+            Self::Http { url }
+        } else {
+            Self::File { path: text.into() }
+        }
+    }
+    pub fn valid(&self) -> bool {
+        match self {
+            Self::File { path } => path.is_absolute() && path.as_os_str().len() <= 4096,
+            Self::Http { url } => {
+                url.len() <= MAX_URL && crate::calendar::http::parse(url, false).is_ok()
+            }
+        }
+    }
+    /// What the tile list calls it: the file's name, or the address's host.
+    pub fn name(&self) -> String {
+        match self {
+            Self::File { path } => path.file_name().map_or_else(
+                || path.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            ),
+            Self::Http { url } => reqwest::Url::parse(url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_owned))
+                .unwrap_or_else(|| url.clone()),
+        }
+    }
+    pub fn web(&self) -> bool {
+        matches!(self, Self::Http { .. })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -98,20 +147,15 @@ fn short(value: &str, limit: usize) -> bool {
 
 impl Tile {
     pub fn valid(&self) -> bool {
-        let Source::File { path } = &self.source;
         short(&self.label, MAX_LABEL)
             && !self.label.trim().is_empty()
-            && path.is_absolute()
-            && path.as_os_str().len() <= 4096
+            && self.source.valid()
+            && (!self.source.web() || self.every >= WEB_EVERY)
             && short(&self.field, MAX_FIELD)
             && (self.field.is_empty() || self.field.split('.').all(|s| !s.trim().is_empty()))
             && short(&self.unit, MAX_UNIT)
             && EVERY.contains(&self.every)
             && self.show.valid()
-    }
-    pub fn path(&self) -> &Path {
-        let Source::File { path } = &self.source;
-        path
     }
     pub fn every(&self) -> Duration {
         Duration::from_secs(u64::from(self.every))
@@ -195,6 +239,17 @@ pub enum Problem {
     /// A list, a group of fields or null where one value belongs.
     NotValue,
     NotNumber,
+    /// An address Halcyon won't ask: not http(s), or with a login in it.
+    Address,
+    /// Plain HTTP to a server outside the local network.
+    PlainHttp,
+    Unreachable,
+    /// A status other than success.
+    Status(u16),
+    /// A redirect from HTTPS to plain HTTP.
+    Downgrade,
+    AnswerTooBig,
+    BadAnswer,
 }
 impl Problem {
     pub fn text(&self) -> String {
@@ -207,6 +262,13 @@ impl Problem {
             Self::NoField => "No such field".into(),
             Self::NotValue => "The field holds a list or group".into(),
             Self::NotNumber => "Not a number".into(),
+            Self::Address => "Use an http or https address".into(),
+            Self::PlainHttp => "Plain http only on your own network".into(),
+            Self::Unreachable => "Can’t reach the server".into(),
+            Self::Status(code) => format!("The server answered {code}"),
+            Self::Downgrade => "Redirected to plain http".into(),
+            Self::AnswerTooBig => "Answer is over 256 KB".into(),
+            Self::BadAnswer => "The server’s answer can’t be used".into(),
         }
     }
 }
@@ -253,10 +315,45 @@ pub fn read_file(path: &Path) -> Result<Document, Problem> {
     })
 }
 
-pub async fn read(path: PathBuf) -> Result<Document, Problem> {
-    tokio::task::spawn_blocking(move || read_file(&path))
-        .await
-        .unwrap_or(Err(Problem::Unreadable))
+/// Asks a web address for its JSON through the calendar client's rules
+/// (ADR 0016). A web answer has no file time.
+pub async fn fetch(url: &str) -> Result<Document, Problem> {
+    use crate::calendar::{Problem as Refused, http};
+    let refused = |problem| match problem {
+        Refused::PublicHttp => Problem::PlainHttp,
+        Refused::FeedUrl => Problem::Address,
+        Refused::Network => Problem::Unreachable,
+        Refused::FeedLimit => Problem::AnswerTooBig,
+        Refused::InsecureRedirect => Problem::Downgrade,
+        _ => Problem::BadAnswer,
+    };
+    let reply = http::send(http::Request {
+        method: reqwest::Method::GET,
+        url: http::parse(url, false).map_err(refused)?,
+        login: None,
+        headers: &[("Accept", "application/json")],
+        body: None,
+        limit: MAX_BYTES as usize,
+    })
+    .await
+    .map_err(refused)?;
+    if !reply.status.is_success() {
+        return Err(Problem::Status(reply.status.as_u16()));
+    }
+    let value = serde_json::from_slice(&reply.bytes).map_err(|e| Problem::NotJson(e.line()))?;
+    Ok(Document {
+        value,
+        changed: None,
+    })
+}
+
+pub async fn read(source: Source) -> Result<Document, Problem> {
+    match source {
+        Source::File { path } => tokio::task::spawn_blocking(move || read_file(&path))
+            .await
+            .unwrap_or(Err(Problem::Unreadable)),
+        Source::Http { url } => fetch(&url).await,
+    }
 }
 
 /// The value at `field`, as `show` needs it.
@@ -411,32 +508,32 @@ impl State {
     pub fn reading(&self, index: usize) -> Option<&Reading> {
         self.readings.get(index)
     }
-    fn apply(&mut self, path: &Path, document: &Result<Document, Problem>, now: SystemTime) {
+    fn apply(&mut self, source: &Source, document: &Result<Document, Problem>, now: SystemTime) {
         for (tile, reading) in self.tiles.iter().zip(self.readings.iter_mut()) {
-            if tile.path() == path {
+            if tile.source == *source {
                 reading.apply(tile, document, now);
             }
         }
     }
 }
 
-/// Each file once, at the shortest interval of the tiles reading it.
-pub fn sources(tiles: &[Tile]) -> BTreeMap<PathBuf, Duration> {
-    let mut out = BTreeMap::<PathBuf, Duration>::new();
+/// Each source once, at the shortest interval of the tiles reading it.
+pub fn sources(tiles: &[Tile]) -> BTreeMap<Source, Duration> {
+    let mut out = BTreeMap::<Source, Duration>::new();
     for tile in tiles {
-        out.entry(tile.path().to_owned())
+        out.entry(tile.source.clone())
             .and_modify(|every| *every = (*every).min(tile.every()))
             .or_insert(tile.every());
     }
     out
 }
 
-/// One read of every file: what Settings shows while its page is open.
+/// One read of every source: what Settings shows while its page is open.
 pub async fn read_all(tiles: Vec<Tile>, previous: State) -> State {
     let mut state = State::carried(&tiles, &previous);
-    for path in sources(&tiles).into_keys() {
-        let document = read(path.clone()).await;
-        state.apply(&path, &document, SystemTime::now());
+    for source in sources(&tiles).into_keys() {
+        let document = read(source.clone()).await;
+        state.apply(&source, &document, SystemTime::now());
     }
     state
 }
@@ -453,22 +550,24 @@ impl std::hash::Hash for Feed {
     }
 }
 
-/// Reads each file when due and publishes the state after each round.
+/// Reads each source when due and publishes the state after each round.
 pub fn subscription(tiles: Vec<Tile>, seed: State) -> Subscription<State> {
     Subscription::run_with(Feed { tiles, seed }, |feed| {
         let mut state = State::carried(&feed.tiles, &feed.seed);
         let sources = sources(&feed.tiles);
         cosmic::iced::stream::channel::<State>(4, async move |mut output| {
             let start = tokio::time::Instant::now();
-            let mut due: BTreeMap<PathBuf, tokio::time::Instant> =
-                sources.keys().map(|path| (path.clone(), start)).collect();
+            let mut due: BTreeMap<Source, tokio::time::Instant> = sources
+                .keys()
+                .map(|source| (source.clone(), start))
+                .collect();
             loop {
                 let now = tokio::time::Instant::now();
-                for (path, every) in &sources {
-                    if due[path] <= now {
-                        let document = read(path.clone()).await;
-                        state.apply(path, &document, SystemTime::now());
-                        due.insert(path.clone(), now + *every);
+                for (source, every) in &sources {
+                    if due[source] <= now {
+                        let document = read(source.clone()).await;
+                        state.apply(source, &document, SystemTime::now());
+                        due.insert(source.clone(), now + *every);
                     }
                 }
                 if output.send(state.clone()).await.is_err() {

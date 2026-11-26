@@ -286,7 +286,7 @@ pub fn tiles<'a, M: Clone + 'static>(
     ];
     if tiles.is_empty() {
         body.push(label(
-            "Show numbers and words from JSON files other programs write.",
+            "Show numbers and words from JSON files and web addresses.",
             13.,
             p.muted,
         ));

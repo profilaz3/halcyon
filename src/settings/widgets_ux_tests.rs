@@ -446,12 +446,12 @@ fn data_tiles_are_added_from_the_fields_a_file_holds() {
     let shown = native.all_text(app.settings_view());
     assert!(shown.iter().any(|t| t == "Sample · add a tile below"), "{shown:?}");
     // The file is read once and its fields offered, with what each holds.
-    send(&mut app, Tile::Path(file.display().to_string()));
-    send(&mut app, Tile::ReadPath);
+    send(&mut app, Tile::Source(file.display().to_string()));
+    send(&mut app, Tile::ReadSource);
     super::tests::native_reveal(&app, &mut native, "tile-field-0");
     let shown = native.all_text(app.settings_view());
     for text in [
-        "Fields in this file", "disk.used_percent", "71.5", "disk.health", "good", "uptime_days",
+        "Fields it holds", "disk.used_percent", "71.5", "disk.health", "good", "uptime_days",
     ] {
         assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
     }
@@ -465,7 +465,7 @@ fn data_tiles_are_added_from_the_fields_a_file_holds() {
     click(&mut app, &mut native, "tile-add");
     let saved = Config::load().tiles.tiles;
     assert_eq!(saved.len(), 1);
-    assert_eq!(saved[0].path(), file);
+    assert_eq!(saved[0].source, crate::tiles::Source::File { path: file.clone() });
     assert_eq!(saved[0].show, Show::Progress { max: 100. });
     assert_eq!((saved[0].unit.as_str(), saved[0].every), ("%", 60));
     // The preview reads the saved tile instead of the sample.
@@ -480,13 +480,13 @@ fn data_tiles_are_added_from_the_fields_a_file_holds() {
     send(&mut app, Tile::Add);
     assert_eq!(app.tools.tiles.error.as_deref(), Some("Give the tile a name."));
     send(&mut app, Tile::Label("Health".into()));
-    send(&mut app, Tile::Path("nas.json".into()));
+    send(&mut app, Tile::Source("nas.json".into()));
     send(&mut app, Tile::Add);
     assert_eq!(
         app.tools.tiles.error.as_deref(),
         Some("Choose a file, or type its full path.")
     );
-    send(&mut app, Tile::Path(file.display().to_string()));
+    send(&mut app, Tile::Source(file.display().to_string()));
     send(&mut app, Tile::Show(2));
     send(&mut app, Tile::Min("5".into()));
     send(&mut app, Tile::Max("5".into()));
@@ -507,4 +507,68 @@ fn data_tiles_are_added_from_the_fields_a_file_holds() {
     let left = Config::load().tiles.tiles;
     assert_eq!(left.len(), 1);
     assert_eq!(left[0].field, "disk.health");
+}
+
+#[test]
+fn data_tiles_read_a_web_address_on_your_network() {
+    if child("data_tiles_read_a_web_address_on_your_network") {
+        return;
+    }
+    use crate::settings::tools::{Message as Edit, tile_editor::Message as Tile};
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let _ = stream.read(&mut [0u8; 4096]);
+            let body = r#"{"printer": {"state": "printing", "progress": 42}}"#;
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    let address = format!("http://127.0.0.1:{port}/printer");
+    let (mut app, mut native) = open(Page::Tiles);
+    let send = |app: &mut Settings, message| {
+        super::tests::send_settings(app, Message::Tools(Edit::Tile(message)))
+    };
+    send(&mut app, Tile::Source(address.clone()));
+    // Read runs a request; its answer is settled like the app would.
+    for message in press(&app, &mut native, "tile-read") {
+        super::tests::send_settings(&mut app, message);
+    }
+    super::tests::native_reveal(&app, &mut native, "tile-field-0");
+    let shown = native.all_text(app.settings_view());
+    for text in ["printer.state", "printing", "printer.progress", "42"] {
+        assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
+    }
+    send(&mut app, Tile::Field("printer.progress".into()));
+    send(&mut app, Tile::Show(1));
+    send(&mut app, Tile::Every(10));
+    send(&mut app, Tile::Add);
+    assert_eq!(
+        app.tools.tiles.error.as_deref(),
+        Some("Web addresses are read every 30 s at most.")
+    );
+    send(&mut app, Tile::Every(30));
+    send(&mut app, Tile::Add);
+    let saved = Config::load().tiles.tiles;
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].source, crate::tiles::Source::Http { url: address });
+    let shown = native.all_text(app.settings_view());
+    assert!(shown.iter().any(|t| t == "42"), "the preview reads it: {shown:?}");
+    let described = "Progress bar · 127.0.0.1 · printer.progress · every 30 s";
+    assert!(shown.iter().any(|t| t == described), "{shown:?}");
+    super::tests::native_reveal(&app, &mut native, "tile-source");
+    capture(&app, &mut native, "tiles-settings-web");
+    // Plain http to a server off the local network is refused before asking.
+    send(&mut app, Tile::Source("http://example.com/status.json".into()));
+    send(&mut app, Tile::ReadSource);
+    assert_eq!(
+        app.tools.tiles.error.as_deref(),
+        Some("Plain http works only on your own network. Use https.")
+    );
 }

@@ -365,11 +365,15 @@ Do not post installation tokens, credentials or private widget contents there.
   socket. Turning off Show message text removes message bodies from that
   snapshot. The cache is cleared when neither surface needs messages.
   Nothing is sent to the phone, paired or started by the reader.
-- **Data tiles:** read only the JSON files you add, and only while the widget
-  is shown or its Settings page is open. Files are read, never run, and
-  values stay in memory. The paths stay in local preferences, out of exported
-  Looks, and neither paths nor values go into activity reports. The widget is
-  left out of the reported widget list.
+- **Data tiles:** read only the JSON files and web addresses you add, and only
+  while the widget is shown or its Settings page is open. Files are read,
+  never run, and values stay in memory. A web address is asked with a plain
+  `GET` and no sign-in: HTTPS anywhere, plain HTTP only to servers on your own
+  network, after checking every address the name resolves to, and redirects
+  never move from HTTPS to HTTP. That server receives a normal request and
+  the connection IP. Paths and addresses stay in local preferences, out of
+  exported Looks, and neither they nor values go into activity reports. The
+  widget is left out of the reported widget list.
 - **Projects, notes and settings:** remain local; activity reports do not include
   their contents.
 

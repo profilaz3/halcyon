@@ -49,6 +49,7 @@ async fn download(value: &SecretText, login: Option<&Login>) -> Result<Vec<u8>, 
         login,
         headers: &[("Accept", "text/calendar")],
         body: None,
+        limit: http::MAX_BYTES,
     })
     .await?;
     match reply.status.as_u16() {
