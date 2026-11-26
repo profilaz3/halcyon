@@ -113,7 +113,7 @@ const OFF_DESKTOP: [f32; 2] = [-10000., 0.];
 
 /// Who keeps their spot when two widgets would overlap: earlier ones stay,
 /// later ones move clear.
-const PLACEMENT_ORDER: [Widget; 13] = [
+const PLACEMENT_ORDER: [Widget; 14] = [
     Widget::Glance,
     Widget::Clock,
     Widget::Weather,
@@ -125,6 +125,7 @@ const PLACEMENT_ORDER: [Widget; 13] = [
     Widget::Messages,
     Widget::Markets,
     Widget::Folder,
+    Widget::Tiles,
     Widget::Notes,
     Widget::Music,
 ];
@@ -355,6 +356,7 @@ impl Cards {
                 Widget::Messages => 14,
                 Widget::Markets => 15,
                 Widget::Folder => 16,
+                Widget::Tiles => 17,
             }],
         )
     }
@@ -2207,6 +2209,7 @@ impl Cards {
             Widget::Calendar | Widget::Devbox => true,
             Widget::Projects => !self.config.project_roots.is_empty(),
             Widget::Glance => self.config.glance.show_weather || self.config.glance.show_calendar,
+            Widget::Markets => true,
             _ => false,
         }
     }
@@ -2226,6 +2229,7 @@ impl Cards {
         }
         match widget {
             Widget::Projects => self.next_projects = now,
+            Widget::Markets => self.refresh_markets(),
             Widget::Devbox => {
                 self.next_metrics = now;
                 self.next_service = now;
@@ -2358,9 +2362,8 @@ impl Cards {
             | Widget::Devices
             | Widget::Folder
             | Widget::Markets
-            | Widget::Messages => {
-                self.tool_card(widget)
-            }
+            | Widget::Tiles
+            | Widget::Messages => self.tool_card(widget),
         }
     }
     pub(super) fn individual_widget(&self, widget: Widget) -> Element<'_, Message> {

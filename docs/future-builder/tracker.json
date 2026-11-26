@@ -2,7 +2,7 @@
   "title": "Halcyon future builder",
   "working_target": "next release (version unassigned)",
   "target_is_release_commitment": false,
-  "updated": "2026-11-08",
+  "updated": "2026-11-25",
   "phase": "FB31 reactive Activity island implemented and validated locally, including shared system adapters, quiet-policy-gated reveals and native keyboard focus. Remaining placement, stationary-hover and packaged-artifact qualification stay open. No release assigned.",
   "implementation_started": true,
   "status_source": "This file is the canonical task status; roadmap and archived proposals do not override it.",
@@ -627,7 +627,7 @@
     {
       "id": "FB35",
       "title": "Custom data tiles",
-      "status": "planned",
+      "status": "in_progress",
       "depends_on": [
         "FB07",
         "FB17",
@@ -664,6 +664,14 @@
   ],
   "evidence_policy": "Validated design tasks FB01–FB04 qualify documentation/contracts/current baseline and scoped capability probes only. They do not validate future behavior. Implementation tasks require exact source/artifact, environment and reproducible results.",
   "log": [
+    {
+      "date": "2026-11-25",
+      "change": "FB35 web sources (ADR 0016): Data tiles also read JSON from web addresses through the calendar HTTP client: HTTPS anywhere, plain HTTP only on the local network with pinned addresses, checked redirects, 256 KB answers, every 30 s at most, no sign-in yet. Settings takes a path or an address in one field."
+    },
+    {
+      "date": "2026-11-25",
+      "change": "FB35 first slice (ADR 0015): a Data tiles widget shows up to six values from local JSON files as text, a progress bar, a gauge or a graph, with reading, stale and error states. Settings lists a chosen file's fields to pick from. Regular files of at most 256 KB are read without blocking and only while shown; paths stay local and out of usage reports. HTTP(S) sources remain."
+    },
     {
       "date": "2026-10-30",
       "change": "Planned FB25 for issue #17: Fedora COSMIC RPM, signed DNF, shared update presentation and preserved enrollment/activation. Planned FB26 for readable channel/version history with minimal proposed schema-5 fields and unchanged reporting choice. Recorded implementation order and acceptance; no app, collector, package, live Sheet or release changes. Updated the top-level baseline to published 0.5.0."

@@ -1601,34 +1601,14 @@ impl ProfilesEditor {
         let Ok((_, config)) = wallpaper::automatic::read_config(store) else {
             return;
         };
-        if config.appearance.family.is_some() {
-            return;
-        }
-        if let Some(policy) = config.appearance.color_policy {
-            let choice = match policy {
-                crate::config::ColorPolicy::Wallpaper => LookColor::Wallpaper,
-                crate::config::ColorPolicy::Theme => LookColor::Style,
-                crate::config::ColorPolicy::Custom => {
-                    LookColor::Fixed(config.appearance.accent.unwrap_or_else(|| {
-                        crate::desktop_theme::bytes(
-                            crate::config::Palette::named(&config.theme).accent,
-                        )
-                    }))
-                }
-            };
-            choice.set(p);
-            return;
-        }
-        let follow = config.appearance.wallpaper_colors
-            || (config.appearance.accent.is_none()
-                && self
-                    .suggestion()
-                    .is_some_and(|suggestion| !suggestion.swatches.is_empty()));
-        if follow {
-            LookColor::Wallpaper.set(p);
-        } else if let Some(rgb) = config.appearance.accent {
-            LookColor::Fixed(rgb).set(p);
-        }
+        profiles::themes::first_colors(
+            &config,
+            || {
+                self.suggestion()
+                    .is_some_and(|suggestion| !suggestion.swatches.is_empty())
+            },
+            p,
+        );
     }
     /// A pending Reset of one surface to the applied style that makes no
     /// color choice of its own (see `reset_surface`): the page shows the

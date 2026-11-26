@@ -924,6 +924,7 @@ fn sample_with_ids(
                 paused: false,
                 problem: None,
                 discarded: false,
+                page: 0,
             },
             config,
             Some(recipe),

@@ -11,6 +11,58 @@ pub struct Weather {
     pub timezone: Option<String>,
     pub current: Current,
     pub daily: Daily,
+    /// The coming hours, from the current one. Older caches have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hourly: Option<Hourly>,
+}
+/// Open-Meteo's hourly lists, side by side: one entry per hour.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct Hourly {
+    /// Local times, `2026-11-25T14:00`.
+    pub time: Vec<String>,
+    pub temperature_2m: Vec<Option<f64>>,
+    pub weather_code: Vec<Option<u32>>,
+    pub precipitation_probability: Vec<Option<f64>>,
+    pub is_day: Vec<Option<u8>>,
+}
+/// One hour of `Hourly` with every reading it needs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Hour {
+    pub at: chrono::NaiveDateTime,
+    pub temperature: f64,
+    pub code: u32,
+    pub rain: Option<f64>,
+    pub day: bool,
+}
+impl Hourly {
+    /// The hours from `from` on, at most `count`, leaving out any hour whose
+    /// time, temperature or conditions are missing rather than drawing a zero.
+    pub fn hours(&self, from: chrono::NaiveDateTime, count: usize) -> Vec<Hour> {
+        self.time
+            .iter()
+            .enumerate()
+            .filter_map(|(i, time)| {
+                let at = chrono::NaiveDateTime::parse_from_str(time, "%Y-%m-%dT%H:%M").ok()?;
+                Some(Hour {
+                    at,
+                    temperature: (*self.temperature_2m.get(i)?)?,
+                    code: (*self.weather_code.get(i)?)?,
+                    rain: self
+                        .precipitation_probability
+                        .get(i)
+                        .copied()
+                        .flatten()
+                        .filter(|v| v.is_finite()),
+                    day: self.is_day.get(i).copied().flatten() != Some(0),
+                })
+            })
+            .filter(|hour| hour.temperature.is_finite())
+            // The current hour counts until it is over.
+            .filter(|hour| hour.at + chrono::Duration::hours(1) > from)
+            .take(count)
+            .collect()
+    }
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Current {
@@ -96,6 +148,12 @@ async fn fetch_weather_from(
                 "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m,dew_point_2m,is_day".into(),
             ),
             ("daily", "temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max".into()),
+            // The reading's next 24 hours, from the current one (ADR 0011).
+            (
+                "hourly",
+                "temperature_2m,weather_code,precipitation_probability,is_day".into(),
+            ),
+            ("forecast_hours", "25".into()),
             ("timezone", "auto".into()),
             // Today supplies the range; Outlook can show the following three days.
             ("forecast_days", "4".into()),
@@ -172,8 +230,8 @@ pub struct Metrics {
     pub network: Option<hardware::NetworkMetrics>,
     pub gpus: Vec<hardware::GpuMetrics>,
     pub uptime: String,
-    pub t3: bool,
-    pub dictation: String,
+    /// Each watched service and how it is (ADR 0014).
+    pub services: Vec<(crate::config::Watched, ServiceState)>,
     /// A sample has been taken. Until then the card says it is measuring
     /// rather than that readings are unavailable.
     pub measured: bool,
@@ -302,13 +360,6 @@ impl Sampler {
             } else {
                 format!("{}h {}m", mins / 60, mins % 60)
             };
-        }
-        if preferences.services {
-            m.dictation = std::env::var("XDG_RUNTIME_DIR")
-                .ok()
-                .and_then(|p| std::fs::read_to_string(format!("{p}/voxtype/state")).ok())
-                .map(|s| s.trim().to_string())
-                .unwrap_or_else(|| "offline".into());
         }
         m.measured = true;
         m
@@ -1435,26 +1486,312 @@ pub fn cpu_usage(old: (u64, u64), now: (u64, u64)) -> f32 {
     (100. * (total.saturating_sub(now.1.saturating_sub(old.1))) as f32 / total as f32)
         .clamp(0., 100.)
 }
-pub async fn t3_active() -> bool {
-    tokio::task::spawn_blocking(|| {
-        std::process::Command::new("/usr/bin/timeout")
-            .args([
-                "3s",
-                "systemctl",
-                "--user",
-                "is-active",
-                "--quiet",
-                "t3code.service",
-            ])
-            .status()
-            .is_ok_and(|s| s.success())
+/// How a watched service is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ServiceState {
+    Running,
+    Starting,
+    Stopped,
+    Failed,
+    /// Not there, or it couldn't be asked.
+    Missing,
+}
+impl ServiceState {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Starting => "starting",
+            Self::Stopped => "stopped",
+            Self::Failed => "failed",
+            Self::Missing => "not found",
+        }
+    }
+    /// The word for this state of `watched`: a port is open or closed.
+    pub fn word(self, watched: &crate::config::Watched) -> &'static str {
+        match (watched, self) {
+            (crate::config::Watched::Port { .. }, Self::Running) => "open",
+            (crate::config::Watched::Port { .. }, _) => "closed",
+            _ => self.label(),
+        }
+    }
+    pub fn up(self) -> bool {
+        matches!(self, Self::Running | Self::Starting)
+    }
+    /// A unit's block of `systemctl show --property=LoadState,ActiveState`:
+    /// a unit systemd doesn't know is missing, not merely stopped.
+    fn of_unit_block(block: &str) -> Self {
+        let value = |key: &str| {
+            block
+                .lines()
+                .find_map(|line| line.strip_prefix(key)?.strip_prefix('='))
+                .unwrap_or_default()
+        };
+        if value("LoadState") == "not-found" {
+            return Self::Missing;
+        }
+        Self::of_unit(value("ActiveState"))
+    }
+    /// A unit's `ActiveState`.
+    fn of_unit(word: &str) -> Self {
+        match word.trim() {
+            "active" | "reloading" | "refreshing" => Self::Running,
+            "activating" => Self::Starting,
+            "inactive" | "deactivating" => Self::Stopped,
+            "failed" => Self::Failed,
+            _ => Self::Missing,
+        }
+    }
+    /// What a container runtime reports as `.State.Status`.
+    fn of_container(word: &str) -> Self {
+        match word.trim() {
+            "running" => Self::Running,
+            "restarting" | "created" => Self::Starting,
+            "exited" | "paused" | "stopped" | "configured" => Self::Stopped,
+            "dead" => Self::Failed,
+            _ => Self::Missing,
+        }
+    }
+}
+
+/// The container runtime here: Podman, else Docker.
+fn container_runtime() -> Option<std::path::PathBuf> {
+    ["podman", "docker"].into_iter().find_map(|name| {
+        std::env::split_paths(&std::env::var_os("PATH")?)
+            .map(|dir| dir.join(name))
+            .find(|path| path.is_file())
+    })
+}
+
+/// A program's output within three seconds, or nothing.
+fn output(program: &std::path::Path, args: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("/usr/bin/timeout")
+        .arg("3s")
+        .arg(program)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Each watched service's state: one `systemctl` call per bus for every
+/// unit, one runtime call per container, and a short connect per port.
+pub async fn watched_states(
+    list: Vec<crate::config::Watched>,
+) -> Vec<(crate::config::Watched, ServiceState)> {
+    use crate::config::Watched;
+    let ports: Vec<u16> = list
+        .iter()
+        .filter_map(|w| match w {
+            Watched::Port { port } => Some(*port),
+            _ => None,
+        })
+        .collect();
+    let mut open = std::collections::HashMap::new();
+    for port in ports {
+        let reached = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            tokio::net::TcpStream::connect(("127.0.0.1", port)),
+        )
+        .await
+        .is_ok_and(|result| result.is_ok());
+        open.insert(port, reached);
+    }
+    let checked = list.clone();
+    let mut known = tokio::task::spawn_blocking(move || {
+        let systemctl = std::path::Path::new("systemctl");
+        let mut states = std::collections::HashMap::new();
+        for user in [true, false] {
+            let names: Vec<&str> = checked
+                .iter()
+                .filter_map(|w| match w {
+                    Watched::UserUnit { name } if user => Some(name.as_str()),
+                    Watched::SystemUnit { name } if !user => Some(name.as_str()),
+                    _ => None,
+                })
+                .collect();
+            if names.is_empty() {
+                continue;
+            }
+            let mut args: Vec<&str> = if user { vec!["--user"] } else { vec![] };
+            args.extend(["show", "--property=LoadState,ActiveState", "--"]);
+            args.extend(&names);
+            // One block per unit, in order, a blank line between.
+            let printed = output(systemctl, &args).unwrap_or_default();
+            let mut blocks = printed.split("\n\n");
+            for name in names {
+                let state = blocks
+                    .next()
+                    .map_or(ServiceState::Missing, ServiceState::of_unit_block);
+                let key = if user {
+                    Watched::UserUnit { name: name.into() }
+                } else {
+                    Watched::SystemUnit { name: name.into() }
+                };
+                states.insert(key, state);
+            }
+        }
+        let runtime = container_runtime();
+        for watched in &checked {
+            if let Watched::Container { name } = watched {
+                let state = runtime
+                    .as_deref()
+                    .and_then(|runtime| {
+                        output(
+                            runtime,
+                            &["inspect", "--format", "{{.State.Status}}", "--", name],
+                        )
+                    })
+                    .map_or(ServiceState::Missing, |word| {
+                        ServiceState::of_container(&word)
+                    });
+                states.insert(watched.clone(), state);
+            }
+        }
+        states
     })
     .await
-    .unwrap_or(false)
+    .unwrap_or_default();
+    list.into_iter()
+        .map(|watched| {
+            let state = match &watched {
+                Watched::Port { port } => {
+                    if open.get(port).copied().unwrap_or(false) {
+                        ServiceState::Running
+                    } else {
+                        ServiceState::Stopped
+                    }
+                }
+                _ => known.remove(&watched).unwrap_or(ServiceState::Missing),
+            };
+            (watched, state)
+        })
+        .collect()
+}
+
+/// Starts a stopped service, else restarts it: this session's services and
+/// containers only.
+pub async fn service_action(watched: crate::config::Watched, restart: bool) -> Result<(), String> {
+    use crate::config::Watched;
+    if !watched.valid() || !watched.controllable() {
+        return Err("Halcyon can't start or restart this one.".into());
+    }
+    tokio::task::spawn_blocking(move || {
+        let verb = if restart { "restart" } else { "start" };
+        let (program, args): (std::path::PathBuf, Vec<String>) = match &watched {
+            Watched::UserUnit { name } => (
+                "systemctl".into(),
+                vec!["--user".into(), verb.into(), "--".into(), name.clone()],
+            ),
+            Watched::Container { name } => (
+                container_runtime().ok_or("No container runtime is installed.")?,
+                vec![verb.into(), "--".into(), name.clone()],
+            ),
+            _ => return Err("Halcyon can't start or restart this one.".into()),
+        };
+        let status = std::process::Command::new("/usr/bin/timeout")
+            .arg("20s")
+            .arg(&program)
+            .args(&args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map_err(|e| e.to_string())?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("{} didn't {verb}.", watched.label()))
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hours_start_with_the_current_one_and_skip_missing_readings() {
+        let hourly: Hourly = serde_json::from_value(serde_json::json!({
+            "time": ["2026-11-25T13:00", "2026-11-25T14:00", "2026-11-25T15:00",
+                     "2026-11-25T16:00", "bad"],
+            "temperature_2m": [9.0, 10.0, null, 12.0, 13.0],
+            "weather_code": [3, 61, 2, 0, 0],
+            "precipitation_probability": [10.0, 80.0, 5.0, null, 0.0],
+            "is_day": [1, 1, 1, 0, 0]
+        }))
+        .unwrap();
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 11, 25)
+            .unwrap()
+            .and_hms_opt(14, 20, 0)
+            .unwrap();
+        let hours = hourly.hours(now, 24);
+        // 13:00 is over; 14:00 is the current hour; 15:00 has no temperature.
+        let at: Vec<_> = hours
+            .iter()
+            .map(|h| h.at.format("%H:%M").to_string())
+            .collect();
+        assert_eq!(at, ["14:00", "16:00"]);
+        assert_eq!(hours[0].rain, Some(80.0));
+        assert_eq!(hours[1].rain, None);
+        assert!(!hours[1].day);
+        assert_eq!(hourly.hours(now, 1).len(), 1);
+        // A cache from before hours loads, without them.
+        let old: Weather = serde_json::from_value(serde_json::json!({
+            "current": {"temperature_2m": 1.0, "apparent_temperature": 1.0, "weather_code": 0,
+                "wind_speed_10m": 1.0, "relative_humidity_2m": 50.0, "is_day": 1},
+            "daily": {"time": [], "temperature_2m_max": [], "temperature_2m_min": [],
+                "weather_code": [], "precipitation_probability_max": []}
+        }))
+        .unwrap();
+        assert!(old.hourly.is_none());
+    }
+
+    #[test]
+    fn service_states_read_like_systemd_and_container_runtimes() {
+        assert_eq!(ServiceState::of_unit("active\n"), ServiceState::Running);
+        assert_eq!(ServiceState::of_unit("activating"), ServiceState::Starting);
+        assert_eq!(ServiceState::of_unit("inactive"), ServiceState::Stopped);
+        assert_eq!(ServiceState::of_unit("failed"), ServiceState::Failed);
+        assert_eq!(ServiceState::of_unit(""), ServiceState::Missing);
+        assert_eq!(
+            ServiceState::of_unit_block("LoadState=loaded\nActiveState=active"),
+            ServiceState::Running
+        );
+        assert_eq!(
+            ServiceState::of_unit_block("LoadState=not-found\nActiveState=inactive"),
+            ServiceState::Missing,
+            "a misspelt unit isn't merely stopped"
+        );
+        assert_eq!(ServiceState::of_container("running"), ServiceState::Running);
+        assert_eq!(ServiceState::of_container("exited"), ServiceState::Stopped);
+        assert_eq!(
+            ServiceState::of_container("Error: no such container"),
+            ServiceState::Missing
+        );
+        // A real port: open while something listens, closed once it stops.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let check =
+            || runtime.block_on(watched_states(vec![crate::config::Watched::Port { port }]))[0].1;
+        assert_eq!(check(), ServiceState::Running);
+        drop(listener);
+        assert_eq!(check(), ServiceState::Stopped);
+        // Nothing Halcyon may not control is started.
+        let refused = runtime.block_on(service_action(
+            crate::config::Watched::SystemUnit {
+                name: "docker.service".into(),
+            },
+            true,
+        ));
+        assert!(refused.is_err());
+    }
 
     #[test]
     fn project_helper_receives_resolved_config_path() {
@@ -1617,6 +1954,7 @@ print(json.dumps({'updated_at': json.dumps(observed), 'projects': [row, slow], '
             location: location.clone(),
             updated_at: "2026-10-17T16:00:00+02:00".into(),
             weather: Weather {
+                hourly: None,
                 timezone: None,
                 current: Current {
                     temperature_2m: 14.,

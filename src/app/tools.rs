@@ -80,10 +80,21 @@ pub(super) struct Tools {
     /// The phone's conversations, while the widget or island needs them.
     pub messages: crate::messages::State,
     pub markets: crate::markets::State,
+    /// Counts refreshes asked for, restarting the Markets feed each time.
+    pub markets_refresh: u64,
+    /// The side each alerted symbol last notified for, so a crossing
+    /// notifies once until the price is back inside. Memory only.
+    pub market_alerted: std::collections::BTreeMap<String, crate::markets::Crossed>,
     pub folder: crate::folder::Listing,
     /// The subfolder the Folder card shows, inside the chosen folder; the
     /// chosen folder itself when `None`. Kept in memory only.
     pub folder_view: Option<std::path::PathBuf>,
+    /// Every entry of the shown folder, while its full reading is open.
+    pub folder_reading: Option<crate::folder::Listing>,
+    /// The page of the note the card shows, when it is split into pages.
+    pub note_page: usize,
+    /// The Data tiles' readings, while the widget shows.
+    pub tiles: crate::tiles::State,
 }
 
 impl Tools {
@@ -110,8 +121,13 @@ impl Tools {
             devices: Vec::new(),
             messages: crate::messages::State::default(),
             markets: crate::markets::State::default(),
+            markets_refresh: 0,
+            market_alerted: Default::default(),
             folder: Default::default(),
             folder_view: None,
+            folder_reading: None,
+            note_page: 0,
+            tiles: Default::default(),
         }
     }
     pub(super) fn sample() -> Self {
@@ -137,8 +153,13 @@ impl Tools {
             devices: Vec::new(),
             messages: crate::messages::State::default(),
             markets: crate::markets::State::default(),
+            markets_refresh: 0,
+            market_alerted: Default::default(),
             folder: Default::default(),
             folder_view: None,
+            folder_reading: None,
+            note_page: 0,
+            tiles: Default::default(),
         }
     }
     /// No note being written, saved, checked or waiting for Undo.
@@ -276,6 +297,7 @@ impl Cards {
                     paused: self.tools.draft.as_ref().is_some_and(|draft| !draft.typing),
                     problem: self.tools.note_problem.as_deref(),
                     discarded: self.tools.discarded.is_some(),
+                    page: self.tools.note_page,
                 },
                 &self.config,
                 (!self.tools.checking_note).then_some(on_desktop as fn(Action) -> Message),
@@ -311,6 +333,7 @@ impl Cards {
                     },
                     |p| Some(Message::FolderBrowse(Some(p.to_path_buf()))),
                     back,
+                    Some(Message::ReadingDetails(Widget::Folder)),
                     Some(Message::SettingsPage("folder")),
                 )
             }
@@ -325,6 +348,13 @@ impl Cards {
                 &self.config,
                 Some(on_desktop as fn(Action) -> Message),
                 Some(size),
+            ),
+            Widget::Tiles => cards::tiles(
+                &self.tools.tiles,
+                &self.config.tiles.tiles,
+                &self.config,
+                Some(size),
+                Some(Message::SettingsPage("tiles")),
             ),
             _ => cards::focus(
                 &self.tools.focus,
@@ -439,6 +469,46 @@ impl Cards {
         }
     }
 
+    /// Reads every entry of the shown folder for its full reading.
+    pub(super) fn read_folder(&self) -> Task<Message> {
+        let Some(path) = self.folder_shown() else {
+            return Task::none();
+        };
+        let hidden = self.config.folder.show_hidden;
+        cosmic::task::future(async move {
+            Message::FolderReading(crate::folder::read_all(path, hidden).await)
+        })
+    }
+
+    /// A terminal in `dir`: COSMIC's own with its working directory, else
+    /// the session's default terminal started there. It outlives the widgets
+    /// like anything else they open.
+    pub(super) fn open_terminal(&self, dir: std::path::PathBuf) -> Task<Message> {
+        let opened = super::Opened {
+            name: "a terminal".into(),
+            hint: "Install a terminal app, then try again.",
+        };
+        cosmic::task::future(async move {
+            let result = tokio::task::spawn_blocking(move || {
+                let (program, args) = terminal_command(&dir)?;
+                let in_service = crate::settings_lifecycle::in_widget_service_now();
+                let mut child =
+                    crate::settings_lifecycle::independent_command(&program, &args, in_service)
+                        .current_dir(&dir)
+                        .spawn()
+                        .map_err(|e| format!("{}: {e}", program.display()))?;
+                // Reaped when it closes, without holding anything up.
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+                Ok::<(), String>(())
+            })
+            .await
+            .unwrap_or_else(|e| Err(e.to_string()));
+            Message::ControlFinished(opened, result)
+        })
+    }
+
     /// The folder the Folder card shows: the subfolder browsed into while it
     /// is still inside the chosen folder, else the chosen folder.
     pub(super) fn folder_shown(&self) -> Option<std::path::PathBuf> {
@@ -453,6 +523,53 @@ impl Cards {
         )
     }
 
+    /// Asks every Markets source again now: the feed restarts with its last
+    /// reading marked old.
+    pub(super) fn refresh_markets(&mut self) {
+        self.tools.markets.mark_old();
+        self.tools.markets_refresh = self.tools.markets_refresh.wrapping_add(1);
+    }
+
+    /// Notifies once for each price that crossed its alert since it was last
+    /// inside it (ADR 0012).
+    pub(super) fn market_alerts(&mut self) -> Task<Message> {
+        let alerts = &self.config.markets.alerts;
+        let mut notices = Vec::new();
+        for quote in &self.tools.markets.quotes {
+            let crossed = alerts
+                .get(&quote.symbol)
+                .and_then(|alert| Some((alert, alert.crossed(quote.price)?)));
+            match crossed {
+                None => {
+                    self.tools.market_alerted.remove(&quote.symbol);
+                }
+                Some((alert, side)) => {
+                    if self.tools.market_alerted.insert(quote.symbol.clone(), side) == Some(side) {
+                        continue;
+                    }
+                    let (word, level) = match side {
+                        crate::markets::Crossed::Above => ("above", alert.above),
+                        crate::markets::Crossed::Below => ("below", alert.below),
+                    };
+                    let level = level.unwrap_or(quote.price);
+                    notices.push((
+                        format!("{} is {word} {level} {}", quote.symbol, quote.currency),
+                        format!("Now {:.4} {}", quote.price, quote.currency)
+                            .replace(".0000 ", " "),
+                    ));
+                }
+            }
+        }
+        if crate::tools::preview() {
+            return Task::none();
+        }
+        Task::batch(notices.into_iter().map(|(summary, body)| {
+            cosmic::task::future(async move {
+                Message::ToolDone(crate::tools::notify(summary, body).await)
+            })
+        }))
+    }
+
     pub(super) fn has_reading(&self, widget: Widget) -> bool {
         matches!(
             widget,
@@ -461,7 +578,7 @@ impl Cards {
                 | Widget::Projects
                 | Widget::Devices
                 | Widget::Weather
-        )
+        ) || (widget == Widget::Folder && self.config.folder.path.is_some())
             || (widget == Widget::Glance && self.config.glance.show_calendar)
     }
 
@@ -478,6 +595,7 @@ impl Cards {
                 | Widget::Notes
                 | Widget::Markets
                 | Widget::Folder
+                | Widget::Tiles
                 | Widget::Messages
         ) && self.tool_shown(widget)
             && !self.layout_editor.active
@@ -778,6 +896,25 @@ impl Cards {
                 }
                 return self.music_art_task();
             }
+            Action::MarketsRefresh => {
+                self.refresh_markets();
+                return Task::none();
+            }
+            Action::MarketRange(range) => {
+                return self.save_config_later(
+                    "Markets chart range",
+                    super::config_writes::Failure::notice(
+                        "Couldn’t change the chart range",
+                        "Your choice wasn’t saved.",
+                        None,
+                    ),
+                    None,
+                    move || {
+                        let range = serde_json::json!({ "chart_range": range });
+                        Config::save_tool(Widget::Markets, range)
+                    },
+                );
+            }
             Action::MarketsOpen => {
                 return self
                     .leave_tool()
@@ -905,6 +1042,10 @@ impl Cards {
                 {
                     self.tools.discarded = None;
                 }
+            }
+            Action::NotePage(page) => {
+                self.tools.note_page = page;
+                return Task::none();
             }
             Action::NoteToggle(line) => {
                 if self.tools.draft.is_none()
@@ -1212,6 +1353,19 @@ impl Cards {
             _ => return Task::none(),
         };
         self.update_tool(action)
+    }
+}
+
+/// The terminal for `dir`: COSMIC's own with its working directory, else
+/// the session's default terminal, which starts in the folder it is run from.
+pub(super) fn terminal_command(
+    dir: &std::path::Path,
+) -> Result<(std::path::PathBuf, Vec<String>), String> {
+    match super::program_path("cosmic-term") {
+        Some(term) => Ok((term, vec!["-w".into(), dir.to_string_lossy().into_owned()])),
+        None => super::program_path("x-terminal-emulator")
+            .map(|term| (term, Vec::new()))
+            .ok_or_else(|| "No terminal app is installed".to_string()),
     }
 }
 

@@ -377,6 +377,7 @@ pub(in crate::settings) fn card_at<'a>(
         Widget::Messages => ("Sam Rivera", "Running late"),
         Widget::Folder => ("Recent files", "Folder"),
         Widget::Markets => ("AAPL", "Example stock chart"),
+        Widget::Tiles => ("Server", "All systems normal"),
     };
     let main_size = if matches!(widget, Widget::Clock | Widget::Glance | Widget::Weather) {
         (52. * scale).clamp(4., 32.)

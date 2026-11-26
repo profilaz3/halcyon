@@ -7,7 +7,7 @@ mod eds;
 mod folder;
 mod google;
 pub mod holidays;
-mod http;
+pub(crate) mod http;
 mod keyring;
 mod store;
 mod subscription;

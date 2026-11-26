@@ -47,6 +47,7 @@ pub(super) mod slider_completion;
 mod support;
 mod system_appearance;
 mod themes;
+mod tiles;
 mod tip;
 mod tools;
 mod updates;
@@ -692,6 +693,7 @@ impl Settings {
             Page::Messages => self.messages_page(),
             Page::Folder => self.folder_page(),
             Page::Markets => self.markets_page(),
+            Page::Tiles => self.tiles_page(),
             Page::General => self.general_page(),
             Page::Home => self.home_page(),
             Page::DesktopDock | Page::DesktopPanel => {
