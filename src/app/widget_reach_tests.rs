@@ -239,6 +239,7 @@ fn folder_card_counts_what_it_leaves_out_and_opens_subfolders_inside() {
             |p| Some(Message::Open(format!("file://{}", p.display()))),
             |p| Some(Message::FolderBrowse(Some(p.to_path_buf()))),
             back,
+            Some(Message::ReadingDetails(Widget::Folder)),
             None,
         )
     };
@@ -246,9 +247,9 @@ fn folder_card_counts_what_it_leaves_out_and_opens_subfolders_inside() {
     let shown = native.all_text(card(None));
     let more = shown
         .iter()
-        .find(|t| t.ends_with(" more"))
+        .find(|t| t.ends_with(" more →"))
         .unwrap_or_else(|| panic!("an overflow count in {shown:?}"));
-    let visible: usize = more.trim_end_matches(" more").parse().unwrap();
+    let visible: usize = more.trim_end_matches(" more →").parse().unwrap();
     let (cols, rows) = crate::folder::layout(size);
     assert_eq!(visible, 11 - listing.entries.len().min(cols * rows));
     native.capture(
@@ -487,4 +488,96 @@ fn markets_alert_once_per_crossing_refresh_and_choose_a_range() {
             .any(|a| matches!(a, crate::tools::cards::Action::MarketsRefresh))
     );
     native.capture(card(), &cosmic::Theme::dark(), "markets-card-ranges");
+}
+
+#[test]
+fn the_folder_reading_lists_everything_and_acts_on_each_entry() {
+    if isolated("the_folder_reading_lists_everything_and_acts_on_each_entry") {
+        return;
+    }
+    let root = crate::test_env::TempPath::new("folder-reading");
+    std::fs::create_dir_all(root.join("Sketches/Old")).unwrap();
+    for (i, name) in ["notes.txt", "plan.md", "photo.png"].iter().enumerate() {
+        std::fs::write(root.join(name), vec![b'x'; 2048 * (i + 1)]).unwrap();
+    }
+    let mut cards = cards();
+    assert!(!cards.has_reading(Widget::Folder), "no folder chosen yet");
+    cards.config.folder.path = Some(root.to_path_buf());
+    assert!(cards.has_reading(Widget::Folder));
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let listing = runtime.block_on(crate::folder::read_all(root.to_path_buf(), false));
+    assert_eq!(listing.count, 4);
+    assert_eq!(listing.entries.len(), 4);
+    let _ = cards.update(Message::FolderReading(listing));
+    let mut native = Native::new(Size::new(520., 480.));
+    let shown = native.all_text(cards.reading_view(Widget::Folder));
+    for text in [
+        "4 items",
+        "Sketches",
+        "notes.txt",
+        "Open in Files",
+        "Terminal here",
+        "Copy path",
+    ] {
+        assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
+    }
+    assert!(
+        shown.iter().any(|t| t.starts_with("6.0 KB · ")),
+        "{shown:?}"
+    );
+    native.capture(
+        cards.reading_view(Widget::Folder),
+        &cosmic::Theme::dark(),
+        "reading-folder",
+    );
+    // A listing for another folder never shows here.
+    let stale = runtime.block_on(crate::folder::read_all(root.join("Sketches"), false));
+    let _ = cards.update(Message::FolderReading(stale));
+    assert_eq!(cards.tools.folder_reading.as_ref().unwrap().count, 4);
+    // Into a subfolder, the trail leads back.
+    let _ = cards.update(Message::FolderBrowse(Some(root.join("Sketches"))));
+    let inner = runtime.block_on(crate::folder::read_all(root.join("Sketches"), false));
+    let _ = cards.update(Message::FolderReading(inner));
+    let shown = native.all_text(cards.reading_view(Widget::Folder));
+    assert!(shown.iter().any(|t| t == "›"), "{shown:?}");
+    assert!(shown.iter().any(|t| t == "Old") && shown.iter().any(|t| t == "1 item"));
+    // A terminal opens in the folder: COSMIC's with its working directory,
+    // else the session's default terminal, else it says none is installed.
+    let bin = crate::test_env::TempPath::new("folder-terminal");
+    let fake = |name: &str| {
+        use std::os::unix::fs::PermissionsExt;
+        let path = bin.join(name);
+        std::fs::write(&path, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    };
+    // SAFETY: an isolated test child, before any thread reads PATH.
+    unsafe { std::env::set_var("PATH", bin.root()) };
+    let dir = root.join("Sketches");
+    assert!(super::tools::terminal_command(&dir).is_err());
+    let default = fake("x-terminal-emulator");
+    assert_eq!(
+        super::tools::terminal_command(&dir).unwrap(),
+        (default, vec![])
+    );
+    let cosmic = fake("cosmic-term");
+    assert_eq!(
+        super::tools::terminal_command(&dir).unwrap(),
+        (
+            cosmic,
+            vec!["-w".to_string(), dir.to_string_lossy().into_owned()]
+        )
+    );
+}
+
+#[test]
+fn file_sizes_read_like_a_file_manager() {
+    use super::widget_details::size_text;
+    assert_eq!(size_text(512), "512 B");
+    assert_eq!(size_text(3_500), "3.4 KB");
+    assert_eq!(size_text(12 * 1024 * 1024 + 1), "12 MB");
+    assert_eq!(size_text(5 * 1024 * 1024 * 1024), "5.0 GB");
 }
