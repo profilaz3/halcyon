@@ -546,8 +546,9 @@ impl Cards {
                         .refresh_intervals
                         .duration(Widget::Devbox)
                         .max(Duration::from_secs(15));
-                tasks.push(cosmic::task::future(async {
-                    Message::Service(data::t3_active().await)
+                let watched = self.config.devbox.watched.clone();
+                tasks.push(cosmic::task::future(async move {
+                    Message::Service(data::watched_states(watched).await)
                 }));
             }
         }

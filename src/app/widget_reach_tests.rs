@@ -639,3 +639,73 @@ fn a_note_split_into_pages_shows_one_with_its_markdown() {
             .any(|t| t == "Home")
     );
 }
+
+#[test]
+fn the_system_monitor_sums_up_services_and_its_reading_controls_them() {
+    if isolated("the_system_monitor_sums_up_services_and_its_reading_controls_them") {
+        return;
+    }
+    use crate::config::Watched;
+    use crate::data::ServiceState;
+    let mut cards = cards();
+    cards.config.devbox.services = true;
+    let sync = Watched::UserUnit {
+        name: "syncthing.service".into(),
+    };
+    let db = Watched::Container {
+        name: "postgres".into(),
+    };
+    let port = Watched::Port { port: 11434 };
+    cards.config.devbox.watched = vec![sync.clone(), db.clone(), port.clone()];
+    cards.metrics.services = vec![
+        (sync.clone(), ServiceState::Running),
+        (db.clone(), ServiceState::Stopped),
+        (port, ServiceState::Running),
+    ];
+    let mut native = Native::new(Size::new(520., 900.));
+    let card = native.all_text(devbox::view(
+        &cards.config,
+        &cards.metrics,
+        &cards.histories,
+        700.,
+    ));
+    assert!(
+        card.iter()
+            .any(|t| t == "2 of 3 running · postgres stopped"),
+        "{card:?}"
+    );
+    let reading = native.all_text(cards.reading_view(Widget::Devbox));
+    for text in [
+        "Services",
+        "syncthing",
+        "Service · running",
+        "Container · stopped",
+        "Port · open",
+    ] {
+        assert!(reading.iter().any(|t| t == text), "{text} in {reading:?}");
+    }
+    // A running service restarts, a stopped container starts; a port has neither.
+    assert!(reading.iter().any(|t| t == "Restart") && reading.iter().any(|t| t == "Start"));
+    assert_eq!(
+        reading
+            .iter()
+            .filter(|t| *t == "Restart" || *t == "Start")
+            .count(),
+        2
+    );
+    let at = native
+        .text_bounds(cards.reading_view(Widget::Devbox), "Start")
+        .center();
+    let pressed = click(&mut native, || cards.reading_view(Widget::Devbox), at);
+    assert!(
+        pressed
+            .iter()
+            .any(|m| matches!(m, Message::ServiceAction(w, false) if *w == db)),
+        "{pressed:?}"
+    );
+    native.capture(
+        cards.reading_view(Widget::Devbox),
+        &cosmic::Theme::dark(),
+        "reading-devbox-services",
+    );
+}

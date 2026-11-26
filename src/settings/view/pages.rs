@@ -979,12 +979,107 @@ impl Settings {
             vec![
                 self.sample_note("devbox-sample-note", Some(DEVBOX_SAMPLE)),
                 readings,
+                self.watched_services(),
                 self.page_settings_advanced(
                     Page::Devbox,
                     vec![self.refresh_control(Widget::Devbox)],
                 ),
             ],
         )
+    }
+
+    /// What Background services watches: each with a way to remove it, and
+    /// a row to add another by kind and name (ADR 0014).
+    fn watched_services(&self) -> Element<'_, Message> {
+        use crate::config::Watched;
+        let watched = &self.config.devbox.watched;
+        let mut rows = vec![label(
+            if self.config.devbox.services {
+                "Choose up to six services, containers or ports to watch. Halcyon can start \
+                 or restart your own services and containers from the full reading."
+            } else {
+                "Turn on Background services above to see these on the card."
+            },
+            13.,
+            FG,
+        )];
+        for (index, item) in watched.iter().enumerate() {
+            let kind = match item {
+                Watched::UserUnit { .. } => "Your service",
+                Watched::SystemUnit { .. } => "System service",
+                Watched::Container { .. } => "Container",
+                Watched::Port { .. } => "Port",
+            };
+            let name = match item {
+                Watched::UserUnit { name }
+                | Watched::SystemUnit { name }
+                | Watched::Container { name } => name.clone(),
+                Watched::Port { port } => port.to_string(),
+            };
+            rows.push(
+                row::with_children(vec![
+                    container(
+                        column::with_children(vec![
+                            label(name.clone(), 14., FG),
+                            label(kind, 12., MUTED),
+                        ])
+                        .spacing(1),
+                    )
+                    .width(Length::Fill)
+                    .into(),
+                    button::icon(icon::from_name("list-remove-symbolic").size(16))
+                        .extra_small()
+                        .name(format!("Stop watching {name}"))
+                        .id(format!("watch-remove-{index}").into())
+                        .on_press(Message::WatchRemove(index))
+                        .into(),
+                ])
+                .spacing(6)
+                .align_y(Alignment::Center)
+                .into(),
+            );
+        }
+        let (kind, text) = &self.watch_draft;
+        let kinds = segmented(
+            ["Your service", "System service", "Container", "Port"]
+                .into_iter()
+                .enumerate()
+                .map(|(i, name)| {
+                    (name.into(), usize::from(*kind) == i, Some(Message::WatchKind(i as u8)))
+                })
+                .collect(),
+            self.settings_accent(),
+        );
+        let placeholder = match kind {
+            0 => "syncthing",
+            1 => "docker",
+            2 => "postgres",
+            _ => "8080",
+        };
+        rows.push(kinds);
+        rows.push(
+            row::with_children(vec![
+                text_input(placeholder, text)
+                    .id("watch-name".into())
+                    .on_input(Message::WatchName)
+                    .on_submit(|_| Message::WatchAdd)
+                    .width(Length::Fill)
+                    .into(),
+                button::text("Watch")
+                    .on_press_maybe(
+                        (!text.trim().is_empty() && watched.len() < crate::config::MAX_WATCHED)
+                            .then_some(Message::WatchAdd),
+                    )
+                    .into(),
+            ])
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .into(),
+        );
+        if let Some(error) = &self.watch_error {
+            rows.push(label(error, 13., super::desktop::WARN));
+        }
+        self.search_target("devbox-watched", group(Some("Background services"), rows))
     }
 
     fn devbox_metric_row(

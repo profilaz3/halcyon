@@ -71,12 +71,21 @@ impl Cards {
     pub(super) fn reading_view(&self, widget: Widget) -> Element<'_, Message> {
         let p = self.config.surface_palette();
         let content = match widget {
-            Widget::Devbox => devbox::view(
-                &self.config,
-                &self.metrics,
-                &self.histories,
-                self.devbox_natural_height(),
-            ),
+            Widget::Devbox => {
+                let monitor = devbox::view(
+                    &self.config,
+                    &self.metrics,
+                    &self.histories,
+                    self.devbox_natural_height(),
+                );
+                if self.config.devbox_sampling().services && !self.metrics.services.is_empty() {
+                    column::with_children(vec![monitor, self.services_reading(p)])
+                        .spacing(16)
+                        .into()
+                } else {
+                    monitor
+                }
+            }
             Widget::Projects => self.full_projects(),
             Widget::Devices => self.devices_reading(p),
             Widget::Folder => {
@@ -232,6 +241,45 @@ impl Cards {
             }
         }))
         .into()
+    }
+
+    /// Each watched service with its state, and Start or Restart for the
+    /// ones this session may control (ADR 0014).
+    fn services_reading(&self, p: Palette) -> Element<'static, Message> {
+        let mut rows = vec![label("Services", 16., p.foreground)];
+        for (watched, state) in &self.metrics.services {
+            let kind = match watched {
+                crate::config::Watched::UserUnit { .. } => "Service",
+                crate::config::Watched::SystemUnit { .. } => "System service",
+                crate::config::Watched::Container { .. } => "Container",
+                crate::config::Watched::Port { .. } => "Port",
+            };
+            let mut line = vec![
+                label("●", 9., if state.up() { p.accent } else { p.muted }),
+                column::with_children(vec![
+                    label(watched.label(), 14., p.foreground),
+                    label(format!("{kind} · {}", state.word(watched)), 12., p.muted),
+                ])
+                .spacing(1)
+                .width(Length::Fill)
+                .into(),
+            ];
+            if watched.controllable() && *state != crate::data::ServiceState::Missing {
+                let restart = state.up();
+                line.push(
+                    cosmic::widget::button::text(if restart { "Restart" } else { "Start" })
+                        .on_press(Message::ServiceAction(watched.clone(), restart))
+                        .into(),
+                );
+            }
+            rows.push(
+                row::with_children(line)
+                    .spacing(10)
+                    .align_y(Alignment::Center)
+                    .into(),
+            );
+        }
+        column::with_children(rows).spacing(8).into()
     }
 
     /// Every connected device, each with its kind and battery: what the card

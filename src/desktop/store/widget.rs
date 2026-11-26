@@ -310,6 +310,7 @@ pub static FIELDS: [WidgetField; 134] = fields![
 // captured or exported by the profile library.
 pub static LOCAL_FIELDS: &[WidgetField] = &fields![
     "/folder/path", "Local widget folder", Style, |v| v.is_null() || v.as_str().is_some_and(|s| std::path::Path::new(s).is_absolute());
+    "/devbox/watched", "Watched services", Style, crate::config::valid_watched;
     "/markets/provider", "Market data source", Style, |v| matches!(v.as_str(), Some("public" | "twelve_data"));
     "/markets/symbols", "Markets watchlist", Style, |v| serde_json::from_value::<Vec<String>>(v.clone()).is_ok_and(|s| crate::markets::symbols(&s.join(",")).is_ok_and(|valid| valid == s));
     "/markets/selected", "Selected watchlist item", Style, |v| v.as_str().is_some_and(|s| s.is_empty() || crate::markets::symbols(s).is_ok_and(|valid| valid == [s]));
