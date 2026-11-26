@@ -842,7 +842,9 @@ impl ToolsEditor {
             // The preview's conversations are samples; nothing to open.
             | Action::MarketsOpen | Action::MarketSelect(_)
             | Action::MarketsRefresh | Action::MarketRange(_)
-            | Action::MessagesOpen => Task::none(),
+            | Action::MessagesOpen
+            // The preview shows the first page.
+            | Action::NotePage(_) => Task::none(),
         }
     }
 }

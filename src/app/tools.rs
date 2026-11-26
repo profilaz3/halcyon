@@ -91,6 +91,8 @@ pub(super) struct Tools {
     pub folder_view: Option<std::path::PathBuf>,
     /// Every entry of the shown folder, while its full reading is open.
     pub folder_reading: Option<crate::folder::Listing>,
+    /// The page of the note the card shows, when it is split into pages.
+    pub note_page: usize,
 }
 
 impl Tools {
@@ -122,6 +124,7 @@ impl Tools {
             folder: Default::default(),
             folder_view: None,
             folder_reading: None,
+            note_page: 0,
         }
     }
     pub(super) fn sample() -> Self {
@@ -152,6 +155,7 @@ impl Tools {
             folder: Default::default(),
             folder_view: None,
             folder_reading: None,
+            note_page: 0,
         }
     }
     /// No note being written, saved, checked or waiting for Undo.
@@ -289,6 +293,7 @@ impl Cards {
                     paused: self.tools.draft.as_ref().is_some_and(|draft| !draft.typing),
                     problem: self.tools.note_problem.as_deref(),
                     discarded: self.tools.discarded.is_some(),
+                    page: self.tools.note_page,
                 },
                 &self.config,
                 (!self.tools.checking_note).then_some(on_desktop as fn(Action) -> Message),
@@ -1025,6 +1030,10 @@ impl Cards {
                 {
                     self.tools.discarded = None;
                 }
+            }
+            Action::NotePage(page) => {
+                self.tools.note_page = page;
+                return Task::none();
             }
             Action::NoteToggle(line) => {
                 if self.tools.draft.is_none()

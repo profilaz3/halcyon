@@ -581,3 +581,61 @@ fn file_sizes_read_like_a_file_manager() {
     assert_eq!(size_text(12 * 1024 * 1024 + 1), "12 MB");
     assert_eq!(size_text(5 * 1024 * 1024 * 1024), "5.0 GB");
 }
+
+#[test]
+fn a_note_split_into_pages_shows_one_with_its_markdown() {
+    use crate::tools::cards::{Action, NotesView, notes};
+    let note = crate::tools::notes::Note {
+        text: concat!(
+            "# Work\n1. **Ship** the *release*\n[x] Review `cargo test`\n",
+            "# Home\n[ ] Groceries\n[ ] Call Mum\n"
+        )
+        .into(),
+        updated_at: None,
+    };
+    let mut config = Config::default();
+    let dims = [300., 260.];
+    let card = |config: &Config, page: usize| {
+        notes::<Action>(
+            NotesView {
+                note: Ok(&note),
+                editing: None,
+                paused: false,
+                problem: None,
+                discarded: false,
+                page,
+            },
+            config,
+            Some(|a| a),
+            Some(dims),
+        )
+    };
+    let mut native = Native::new(Size::new(dims[0], dims[1]));
+    // Off: one note, every line, under Notes.
+    let shown = native.all_text(card(&config, 0));
+    assert!(shown.iter().any(|t| t == "Notes"), "{shown:?}");
+    assert!(shown.iter().any(|t| t == "1 of 3 done"), "{shown:?}");
+    // On: the first page, named by its heading, its own count, and a way on.
+    config.notes.pages = true;
+    let shown = native.all_text(card(&config, 0));
+    for text in ["Work", "1/2", "1 of 1 done", "1."] {
+        assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
+    }
+    assert!(!shown.iter().any(|t| t.contains("Groceries")), "{shown:?}");
+    native.capture(
+        card(&config, 0),
+        &cosmic::Theme::dark(),
+        "notes-pages-markdown",
+    );
+    let shown = native.all_text(card(&config, 1));
+    for text in ["Home", "2/2", "0 of 2 done"] {
+        assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
+    }
+    // A page past the end shows the last one.
+    assert!(
+        native
+            .all_text(card(&config, 9))
+            .iter()
+            .any(|t| t == "Home")
+    );
+}

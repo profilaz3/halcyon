@@ -1378,6 +1378,8 @@ const ROWS: &[SearchHit] = &[
     hit(Page::Messages, "Names", "contacts", false),
     hit(Page::Music, "Progress bar", "", false),
     hit(Page::Notes, "Card size", "", false),
+    hit(Page::Notes, "Pages", "notes pages tabs several notes headings sections", false)
+        .at("notes-pages"),
     hit(Page::Notes, "Your note", "", false),
     hit(Page::Overview, "Set up your desktop", "", false),
     hit(Page::Overview, "Show widgets", "", false),

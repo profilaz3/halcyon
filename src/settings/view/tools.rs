@@ -689,6 +689,7 @@ impl Settings {
                 paused: false,
                 problem: None,
                 discarded: false,
+                page: 0,
             },
             &self.config,
             (!dirty && !tools.saving() && !example)
@@ -723,7 +724,13 @@ impl Settings {
                     detail("Card size", "Grows with your note, up to this size")
                 },
                 sizes,
-            )],
+            ),
+            self.search_target("notes-pages", switch(
+                "Pages",
+                "Each heading line starting with # begins a page the card shows on its own",
+                self.config.notes.pages,
+                |value| option(Widget::Notes, "pages", value),
+            ))],
         );
         // The card as it looks on the desktop leads, like every widget page;
         // the editor for its text follows.

@@ -1751,6 +1751,8 @@ impl NotesSize {
 pub struct NotesPreferences {
     pub enabled: bool,
     pub size: NotesSize,
+    /// Each top-level heading starts a page the card shows on its own.
+    pub pages: bool,
 }
 
 /// The Devices widget: connected devices and their battery. Off until chosen.
