@@ -6,6 +6,68 @@
   "public_key_sha256": "bc0db85de8d205c56526c7c5dd439e50f9558c47450f57aa47dd7bf1467b772f",
   "releases": [
     {
+      "tag": "v0.8.0",
+      "release": "0.8.0",
+      "policy": "cosmic-1.10-1.11-startup-v5",
+      "assets": {
+        "cosmic-ext-halcyon_0.8.0_amd64.deb": {
+          "kind": "main-deb",
+          "sha256": "c4216db6ebce8d39071465abb3f710f7fbf15ac45085fc70779386d65c1b3b78",
+          "bytes": 63054982
+        },
+        "cosmic-ext-halcyon-islands_0.8.0_amd64.deb": {
+          "kind": "transition-deb",
+          "sha256": "5a20bf66d876d5baf73230dbfb7bd730fdd5c397f5a8b692ae0dd40fb366d2e2",
+          "bytes": 656
+        },
+        "halcyon-0.8.0-corresponding-source.tar.gz": {
+          "kind": "corresponding-source",
+          "sha256": "4a58b93de6e8616b0caa2b628823a84e053e8c49af1a02ea3a738d8b9de2873a",
+          "bytes": 365597948
+        },
+        "halcyon-0.8.0-validation-evidence.zip": {
+          "kind": "native-evidence",
+          "sha256": "142dfef40875c1a1051faac1c342d41cb5c5da315d94408ceeb4f9e165c9529f",
+          "bytes": 1302929
+        },
+        "RELEASE-NOTES.md": {
+          "kind": "release-notes",
+          "sha256": "7bbc4126d0fb8cfb4ba8ebcd080297a48e77d3249190ed17ca274b2062b06166",
+          "bytes": 4011
+        },
+        "release-provenance.json": {
+          "kind": "source-provenance",
+          "sha256": "4b4f66735ac54be355b8850220cd23c454b1e0810b035ad7d87e8339990f4f1f",
+          "bytes": 8924
+        },
+        "halcyon-0.8.0-rpm-repository.tar.gz": {
+          "kind": "rpm-repository",
+          "sha256": "6a4f363b6c085575cdb48ad47394c575c0e25d1b52655a00cd174f9716e8dc53",
+          "bytes": 125251665
+        },
+        "cosmic-ext-halcyon-0.8.0-1.fc43.x86_64.rpm": {
+          "kind": "main-rpm",
+          "sha256": "17dc951c9fa82e3e16fd610d8dbc202807309cd97f946f904084e6b0b7f595a2",
+          "bytes": 62680929
+        },
+        "cosmic-ext-halcyon-0.8.0-1.fc44.x86_64.rpm": {
+          "kind": "main-rpm",
+          "sha256": "32316fa64aff1da0a7951cd95edbc1187629c376ee638ac8ae26eb90c94519a4",
+          "bytes": 62676508
+        },
+        "release-manifest.json": {
+          "kind": "release-manifest",
+          "sha256": "df96f77062651aa0efe7b74c7cccb645930e269ca3813632da72701dedb320f8",
+          "bytes": 1947
+        },
+        "approval.json": {
+          "kind": "release-approval",
+          "sha256": "0e1e398383525f0ef11cbf5ad1c69caddfebde5cd5fbd743572af967961f41a4",
+          "bytes": 2221
+        }
+      }
+    },
+    {
       "tag": "v0.7.8",
       "release": "0.7.8",
       "policy": "cosmic-1.10-1.11-startup-v5",
@@ -634,9 +696,9 @@
   },
   "approval": "The protected halcyon-apt environment must separately pin this file SHA256 after parent review. No native acceptance is added by this distribution manifest.",
   "rpm_repository": {
-    "tag": "v0.7.8",
-    "file": "halcyon-0.7.8-rpm-repository.tar.gz",
-    "manifest_sha256": "d8cda3d8719d4f39458fdf9b3fc557f1e2bc7902e2670c687b515c8342626d64",
+    "tag": "v0.8.0",
+    "file": "halcyon-0.8.0-rpm-repository.tar.gz",
+    "manifest_sha256": "afeff9f0d8b2a772b7a616a822ac0097adc2cd6820de61979558bb563ba89605",
     "signer": "610B73343D6F40603553A295A4658CCECBC306AB"
   }
 }
