@@ -1231,6 +1231,7 @@ fn timer_command(value: &serde_json::Value) -> Option<crate::activity_island::br
         Some("cancel") => Command::TimerCancel,
         Some("pause") => Command::TimerPause,
         Some("resume") => Command::TimerResume,
+        Some("focus") => Command::TimerToFocus,
         Some(_) => return None,
         None => {
             let minutes = value["minutes"]

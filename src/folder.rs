@@ -74,6 +74,39 @@ pub fn layout(size: [f32; 2]) -> (usize, usize) {
         ((size[1] - 64.) / row_height).floor().clamp(0., 6.) as usize,
     )
 }
+/// The most entries the full reading lists, newest first.
+pub const READING_LIMIT: usize = 500;
+
+/// Every entry of `path`, newest first, up to `READING_LIMIT`, without
+/// thumbnails: what the full reading lists.
+pub async fn read_all(path: PathBuf, hidden: bool) -> Listing {
+    let fallback = path.clone();
+    tokio::task::spawn_blocking(move || {
+        scan(
+            &path,
+            hidden,
+            READING_LIMIT,
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+    })
+    .await
+    .unwrap_or_else(|_| Listing {
+        source: fallback,
+        show_hidden: hidden,
+        problem: Some("This folder is unavailable.".into()),
+        ..Default::default()
+    })
+}
+
+/// When `entry` changed, for the reading's list.
+pub fn modified(entry: &Entry) -> SystemTime {
+    entry.modified
+}
+/// How big a file `entry` is, in bytes.
+pub fn bytes(entry: &Entry) -> u64 {
+    entry.bytes
+}
+
 fn scan(
     path: &Path,
     hidden: bool,

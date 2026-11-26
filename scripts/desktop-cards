@@ -287,6 +287,27 @@ def toggle(target):
     else:
         open_panel(target, toggle=True)
 
+def styles():
+    """Print the styles one can apply, as `halcyon --styles` lists them."""
+    result = subprocess.run([str(BINARY), '--styles'], text=True, capture_output=True)
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or 'Could not list the styles.')
+    print(result.stdout, end='')
+
+def style(name, own_bars=False):
+    """Apply a style by name or id, as Settings > Appearance does."""
+    if 'DESKTOP_CARDS_CONFIG' in os.environ:
+        raise RuntimeError('Desktop changes are disabled in an isolated preview.')
+    helper('--style', name, *(['--own-bars'] * own_bars), failure='Could not apply the style.')
+    print('Applied the ' + name + ' style')
+
+def theme(name):
+    """A palette by its short name, else a style by its name."""
+    if name in THEMES:
+        apply_theme(name)
+    else:
+        style(name)
+
 def looks():
     """Print the Looks one can switch to, as `halcyon --looks` lists them."""
     result = subprocess.run([str(BINARY), '--looks'], text=True, capture_output=True)
@@ -303,7 +324,7 @@ def focus(action):
     """Start, pause, toggle, reset or skip the Focus timer (for keyboard shortcuts)."""
     desktop_command({'action': 'focus', 'do': action})
 
-TIMER_ACTIONS = ('cancel', 'pause', 'resume')
+TIMER_ACTIONS = ('cancel', 'pause', 'resume', 'focus')
 
 def timer_length(value):
     """A quick timer's length in minutes, up to a day, or cancel, pause or resume."""
@@ -395,10 +416,18 @@ def main():
         'name', help='For example: Night (see: halcyon-ctl looks)')
     command('focus', 'Control the Focus timer, for example from a keyboard shortcut').add_argument(
         'action', choices=FOCUS_ACTIONS, help='One of: ' + ', '.join(FOCUS_ACTIONS))
-    command('timer', 'Start a quick timer in the Activity island, or cancel, pause or resume it').add_argument(
-        'length', type=timer_length, metavar='MINUTES|cancel|pause|resume',
+    command('timer', 'Start a quick timer in the Activity island, cancel, pause or resume it, '
+            'or make it a Focus session').add_argument(
+        'length', type=timer_length, metavar='MINUTES|cancel|pause|resume|focus',
         help='Minutes, for example 5 or 2.5, or one of: ' + ', '.join(TIMER_ACTIONS))
-    command('theme', 'Apply a Halcyon theme').add_argument('name', choices=THEMES)
+    command('theme', 'Apply a palette, or a style by its name').add_argument(
+        'name', metavar='NAME',
+        help='A palette (' + ', '.join(THEMES) + ') or a style (see: halcyon-ctl styles)')
+    command('styles', 'List the styles you can apply')
+    apply_style = command('style', 'Apply a style, as Settings \u203a Appearance does')
+    apply_style.add_argument('name', help='For example: Porcelain (see: halcyon-ctl styles)')
+    apply_style.add_argument('--with-dock-and-panel', action='store_true',
+                             help='Take the style\u2019s own dock and panel shape too')
     command('cosmic-colors', 'Turn matching the COSMIC accent color on or off').add_argument(
         'state', choices=['on', 'off'])
     command('weather', 'Set the weather city by name').add_argument('city')
@@ -411,7 +440,11 @@ def main():
     command('wallpapers-install', 'Check that Halcyon\u2019s built-in wallpapers are installed')
     args = parser.parse_args()
     if args.command == 'theme':
-        apply_theme(args.name)
+        theme(args.name)
+    elif args.command == 'styles':
+        styles()
+    elif args.command == 'style':
+        style(args.name, args.with_dock_and_panel)
     elif args.command == 'cosmic-colors':
         set_cosmic_colors(args.state == 'on')
     elif args.command == 'weather':

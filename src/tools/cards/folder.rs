@@ -18,13 +18,24 @@ pub fn folder<'a, M: Clone + 'static>(
     open: impl Fn(&Path) -> Option<M>,
     choose: Option<M>,
 ) -> Element<'a, M> {
-    folder_in(listing, config, size, None, open, |_| None, None, choose)
+    folder_in(
+        listing,
+        config,
+        size,
+        None,
+        open,
+        |_| None,
+        None,
+        None,
+        choose,
+    )
 }
 
 /// The card showing `shown`, a folder inside the chosen one (the chosen
 /// folder itself when `None`). A subfolder opens in the card through
 /// `into` when it gives a message, else like a file through `open`; `back`
-/// goes up a level, and is given only below the chosen folder.
+/// goes up a level, and is given only below the chosen folder. `more` opens
+/// every entry when the card has no room for them all.
 #[allow(clippy::too_many_arguments)]
 pub fn folder_in<'a, M: Clone + 'static>(
     listing: &Listing,
@@ -34,6 +45,7 @@ pub fn folder_in<'a, M: Clone + 'static>(
     open: impl Fn(&Path) -> Option<M>,
     into: impl Fn(&Path) -> Option<M>,
     back: Option<M>,
+    more: Option<M>,
     choose: Option<M>,
 ) -> Element<'a, M> {
     let _card = crate::widget_style::for_card(crate::drawer::Widget::Folder);
@@ -67,7 +79,14 @@ pub fn folder_in<'a, M: Clone + 'static>(
         .count
         .saturating_sub(listing.entries.len().min(cols * rows));
     if current && listing.problem.is_none() && hidden > 0 {
-        head.push(line(format!("{hidden} more"), 12., palette.muted));
+        head.push(match more {
+            Some(more) => button::custom(line(format!("{hidden} more →"), 12., palette.accent))
+                .class(cosmic::theme::Button::Text)
+                .padding([2, 4])
+                .on_press(more)
+                .into(),
+            None => line(format!("{hidden} more"), 12., palette.muted),
+        });
     }
     head.push(
         button::text(if can_open {

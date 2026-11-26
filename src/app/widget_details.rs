@@ -88,6 +88,14 @@ impl Cards {
             }
             Widget::Projects => self.full_projects(),
             Widget::Devices => self.devices_reading(p),
+            Widget::Folder => {
+                let heading = self
+                    .folder_shown()
+                    .as_deref()
+                    .and_then(std::path::Path::file_name)
+                    .map_or_else(|| "Folder".into(), |n| n.to_string_lossy().into_owned());
+                return self.reading_frame(&heading, self.folder_reading(p));
+            }
             Widget::Weather => {
                 let _card = crate::widget_style::for_card(Widget::Weather);
                 let presentation = weather::Presentation::new(
@@ -345,6 +353,167 @@ impl Cards {
         column::with_children(rows).spacing(14).into()
     }
 
+    /// Every entry of the shown folder, newest first, with what one can do
+    /// with each: open it (a folder opens here), copy its path, or start a
+    /// terminal in a folder. The path back up the chosen folder leads the way.
+    fn folder_reading(&self, p: Palette) -> Element<'static, Message> {
+        let (Some(root), Some(shown)) = (self.config.folder.path.clone(), self.folder_shown())
+        else {
+            return label("Choose a folder in Settings › Folder", 14., p.muted);
+        };
+        let link = |text: String, message: Message| -> Element<'static, Message> {
+            cosmic::widget::button::custom(label(text, 13., p.accent))
+                .class(cosmic::theme::Button::Text)
+                .padding([2, 4])
+                .on_press(message)
+                .into()
+        };
+        let icon_button = |icon: &'static str,
+                           tip: String,
+                           message: Message|
+         -> Element<'static, Message> {
+            cosmic::widget::button::icon(cosmic::widget::icon::from_name(icon).size(16))
+                .extra_small()
+                .tooltip(tip.clone())
+                .name(tip)
+                .on_press(message)
+                .into()
+        };
+        let url = |path: &std::path::Path| {
+            reqwest::Url::from_file_path(path)
+                .ok()
+                .map(|url| Message::Open(url.into()))
+        };
+        // The chosen folder, then each folder down to the one shown.
+        let mut crumbs = vec![link(
+            root.file_name()
+                .map_or_else(|| root.to_string_lossy(), |n| n.to_string_lossy())
+                .into_owned(),
+            Message::FolderBrowse(None),
+        )];
+        if let Ok(rest) = shown.strip_prefix(&root) {
+            let mut at = root.clone();
+            for part in rest.components() {
+                at.push(part);
+                crumbs.push(label("›", 13., p.muted));
+                crumbs.push(link(
+                    part.as_os_str().to_string_lossy().into_owned(),
+                    Message::FolderBrowse(Some(at.clone())),
+                ));
+            }
+        }
+        let mut here = vec![
+            row::with_children(crumbs)
+                .spacing(2)
+                .align_y(Alignment::Center)
+                .wrap()
+                .into(),
+        ];
+        let mut tools: Vec<Element<'static, Message>> = Vec::new();
+        if let Some(open) = url(&shown) {
+            tools.push(
+                cosmic::widget::button::text("Open in Files")
+                    .on_press(open)
+                    .into(),
+            );
+        }
+        tools.push(
+            cosmic::widget::button::text("Terminal here")
+                .on_press(Message::Terminal(shown.clone()))
+                .into(),
+        );
+        tools.push(
+            cosmic::widget::button::text("Copy path")
+                .on_press(Message::CopyPath(shown.clone()))
+                .into(),
+        );
+        here.push(row::with_children(tools).spacing(6).wrap().into());
+        let Some(listing) = self
+            .tools
+            .folder_reading
+            .as_ref()
+            .filter(|listing| listing.source == shown)
+        else {
+            here.push(label("Reading folder…", 13., p.muted));
+            return column::with_children(here).spacing(10).into();
+        };
+        if let Some(problem) = &listing.problem {
+            here.push(label(problem.clone(), 13., p.muted));
+            return column::with_children(here).spacing(10).into();
+        }
+        here.push(label(
+            match listing.count {
+                0 => "This folder is empty.".to_string(),
+                1 => "1 item".to_string(),
+                n if n > listing.entries.len() => {
+                    format!("{n} items · the newest {} shown", listing.entries.len())
+                }
+                n => format!("{n} items"),
+            },
+            12.,
+            p.muted,
+        ));
+        for entry in &listing.entries {
+            let path = entry.path.clone();
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            let when = chrono::DateTime::<Local>::from(crate::folder::modified(entry))
+                .format("%b %-d, %H:%M")
+                .to_string();
+            let detail = if entry.directory {
+                format!("Folder · {when}")
+            } else {
+                format!("{} · {when}", size_text(crate::folder::bytes(entry)))
+            };
+            let mut actions = Vec::new();
+            if entry.directory {
+                actions.push(icon_button(
+                    "go-next-symbolic",
+                    format!("Open {name} here"),
+                    Message::FolderBrowse(Some(path.clone())),
+                ));
+                actions.push(icon_button(
+                    "utilities-terminal-symbolic",
+                    format!("Terminal in {name}"),
+                    Message::Terminal(path.clone()),
+                ));
+            } else if let Some(open) = url(&path) {
+                actions.push(icon_button("document-open-symbolic", format!("Open {name}"), open));
+            }
+            actions.push(icon_button(
+                "edit-copy-symbolic",
+                format!("Copy the path of {name}"),
+                Message::CopyPath(path.clone()),
+            ));
+            here.push(
+                row::with_children(vec![
+                    cosmic::widget::icon::from_name(if entry.directory {
+                        "folder-symbolic"
+                    } else {
+                        "text-x-generic-symbolic"
+                    })
+                    .size(18)
+                    .into(),
+                    column::with_children(vec![
+                        label(name, 14., p.foreground),
+                        label(detail, 11., p.muted),
+                    ])
+                    .spacing(1)
+                    .width(Length::Fill)
+                    .into(),
+                    row::with_children(actions).spacing(2).into(),
+                ])
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .into(),
+            );
+        }
+        column::with_children(here).spacing(10).into()
+    }
+
     fn missing_agenda(&self, p: Palette) -> Element<'static, Message> {
         let action = if let Some((reason, fix)) = self.calendar_needs_you() {
             format!("{reason} · {fix} →")
@@ -435,5 +604,24 @@ impl Cards {
             .spacing(3)
             .width(Length::Fill)
             .into()
+    }
+}
+
+/// A file size as people read it: 512 B, 3.4 KB, 12 MB.
+pub(super) fn size_text(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
+    let mut value = bytes as f64 / 1024.;
+    let mut unit = 0;
+    while value >= 1024. && unit + 1 < UNITS.len() {
+        value /= 1024.;
+        unit += 1;
+    }
+    if value < 10. {
+        format!("{value:.1} {}", UNITS[unit])
+    } else {
+        format!("{value:.0} {}", UNITS[unit])
     }
 }

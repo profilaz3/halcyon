@@ -2207,6 +2207,7 @@ impl Cards {
             Widget::Calendar | Widget::Devbox => true,
             Widget::Projects => !self.config.project_roots.is_empty(),
             Widget::Glance => self.config.glance.show_weather || self.config.glance.show_calendar,
+            Widget::Markets => true,
             _ => false,
         }
     }
@@ -2226,6 +2227,7 @@ impl Cards {
         }
         match widget {
             Widget::Projects => self.next_projects = now,
+            Widget::Markets => self.refresh_markets(),
             Widget::Devbox => {
                 self.next_metrics = now;
                 self.next_service = now;

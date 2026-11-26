@@ -317,6 +317,12 @@ pub enum Message {
     /// Show this subfolder of the chosen folder in the Folder card, or the
     /// chosen folder again with `None`.
     FolderBrowse(Option<std::path::PathBuf>),
+    /// Every entry of the shown folder, for its full reading.
+    FolderReading(crate::folder::Listing),
+    /// Copy a file's or folder's path.
+    CopyPath(std::path::PathBuf),
+    /// A terminal in this folder.
+    Terminal(std::path::PathBuf),
     MusicArt(String, Result<crate::tools::music::Art, String>),
     ToolDone(Result<(), String>),
     MusicControlDone(Result<Vec<crate::tools::music::Player>, String>),
@@ -764,7 +770,11 @@ impl cosmic::Application for Cards {
         }
         if self.provider_visible(Widget::Markets) {
             subscriptions.push(
-                crate::markets::subscription(self.config.markets.clone(), self.tools.markets.clone())
+                crate::markets::subscription(
+                    self.config.markets.clone(),
+                    self.tools.markets.clone(),
+                    self.tools.markets_refresh,
+                )
                     .map(Message::Markets),
             );
         }
@@ -2003,7 +2013,13 @@ impl Cards {
             Message::PointerLeft(_) => self.note_pointer_left(),
             Message::ReadingDetails(widget) => {
                 self.calendar_details = None;
-                self.open_reading(widget)
+                let read = if widget == Widget::Folder {
+                    self.tools.folder_reading = None;
+                    self.read_folder()
+                } else {
+                    Task::none()
+                };
+                Task::batch([self.open_reading(widget), read])
             }
             Message::CloseReading => {
                 self.calendar_details = None;
@@ -2364,13 +2380,28 @@ impl Cards {
                         && view.is_dir()
                 };
                 self.tools.folder_view = view.filter(inside);
+                // An open reading follows the card into the folder.
+                if self.reading_window.is_some_and(|(_, w)| w == Widget::Folder) {
+                    return self.read_folder();
+                }
                 Task::none()
             }
+            Message::FolderReading(listing) => {
+                if self.folder_shown().as_ref() == Some(&listing.source) {
+                    self.tools.folder_reading = Some(listing);
+                }
+                Task::none()
+            }
+            Message::CopyPath(path) => {
+                cosmic::iced::clipboard::write(path.to_string_lossy().into_owned())
+            }
+            Message::Terminal(dir) => self.open_terminal(dir),
             Message::Markets(state) => {
                 if self.provider_visible(Widget::Markets)
                     && state.source.as_ref().is_some_and(|p| p.feed_key() == self.config.markets.feed_key())
                 {
                     self.tools.markets = state;
+                    return self.market_alerts();
                 }
                 return Task::none();
             }
