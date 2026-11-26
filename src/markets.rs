@@ -164,7 +164,8 @@ async fn request(
         .map_err(|_| Problem::Setup)?;
     auth.set_sensitive(true);
     if endpoint == "time_series" {
-        query.extend([("interval", "1day"), ("outputsize", "30"), ("order", "asc")]);
+        // About three months, for every chart range (ADR 0012).
+        query.extend([("interval", "1day"), ("outputsize", "92"), ("order", "asc")]);
     }
     let mut response = client
         .get(format!("https://api.twelvedata.com/{endpoint}"))
@@ -195,16 +196,26 @@ async fn request(
 struct Feed {
     preferences: Preferences,
     seed: State,
+    asked: u64,
 }
 impl std::hash::Hash for Feed {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::hash::Hash::hash(&self.preferences.feed_key(), state);
+        self.asked.hash(state);
     }
 }
 
-pub fn subscription(mut preferences: Preferences, seed: State) -> Subscription<State> {
+/// The watchlist's quotes. A new `asked` count restarts the feed, which
+/// asks again at once for a `seed` marked old (`State::mark_old`).
+pub fn subscription(mut preferences: Preferences, seed: State, asked: u64) -> Subscription<State> {
     preferences.normalize();
-    Subscription::run_with(Feed { preferences, seed }, |feed| {
+    Subscription::run_with(
+        Feed {
+            preferences,
+            seed,
+            asked,
+        },
+        |feed| {
         let preferences = feed.preferences.clone();
         let seed = if feed.seed.same_watchlist(&preferences) {
             feed.seed.clone()
@@ -236,7 +247,8 @@ pub fn subscription(mut preferences: Preferences, seed: State) -> Subscription<S
                 tokio::time::sleep(state.next_refresh(std::time::Instant::now())).await;
             }
         })
-    })
+        },
+    )
 }
 
 async fn refresh(
@@ -360,6 +372,112 @@ pub fn currency_pair(symbol: &str) -> Option<(&str, &str)> {
 
 pub const MAX_SYMBOLS: usize = 5;
 
+/// How much of the history the chart shows (ADR 0012).
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum Range {
+    Week,
+    #[default]
+    Month,
+    Quarter,
+}
+impl Range {
+    pub const ALL: [Self; 3] = [Self::Week, Self::Month, Self::Quarter];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Week => "1W",
+            Self::Month => "1M",
+            Self::Quarter => "3M",
+        }
+    }
+    pub fn caption(self) -> &'static str {
+        match self {
+            Self::Week => "Last week",
+            Self::Month => "Last month",
+            Self::Quarter => "Last 3 months",
+        }
+    }
+    /// The points within the range, counted back from the last one.
+    pub fn of(self, points: &[Point]) -> &[Point] {
+        let days = match self {
+            Self::Week => 7,
+            Self::Month => 31,
+            Self::Quarter => 92,
+        };
+        let Some(last) = points.last() else {
+            return points;
+        };
+        let start = points
+            .iter()
+            .position(|p| (last.date - p.date).num_days() < days)
+            .unwrap_or(0);
+        &points[start..]
+    }
+}
+
+/// Prices a watchlist item is watched for. A price of zero or below, or not
+/// a number, is no alert.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Alert {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub above: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub below: Option<f64>,
+}
+// Only finite, positive prices are kept (`Alert::valid`), so equality and
+// hashing by bits are sound.
+impl Eq for Alert {}
+impl std::hash::Hash for Alert {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.above.map(f64::to_bits).hash(state);
+        self.below.map(f64::to_bits).hash(state);
+    }
+}
+/// Which side of its alert a price is past.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Crossed {
+    Above,
+    Below,
+}
+impl Alert {
+    fn price(value: Option<f64>) -> bool {
+        value.is_none_or(|v| v.is_finite() && v > 0.)
+    }
+    pub fn valid(&self) -> bool {
+        Self::price(self.above)
+            && Self::price(self.below)
+            && (self.above.is_some() || self.below.is_some())
+            && match (self.above, self.below) {
+                (Some(above), Some(below)) => below < above,
+                _ => true,
+            }
+    }
+    /// The side `price` is past, if any.
+    pub fn crossed(&self, price: f64) -> Option<Crossed> {
+        if self.above.is_some_and(|above| price >= above) {
+            Some(Crossed::Above)
+        } else if self.below.is_some_and(|below| price <= below) {
+            Some(Crossed::Below)
+        } else {
+            None
+        }
+    }
+}
+
+/// Saved alerts as `markets.alerts` holds them: only valid ones, for
+/// symbols the watchlist may hold.
+pub fn valid_alerts(value: &serde_json::Value) -> bool {
+    serde_json::from_value::<std::collections::BTreeMap<String, Alert>>(value.clone()).is_ok_and(
+        |alerts| {
+            alerts.len() <= MAX_SYMBOLS
+                && alerts.iter().all(|(symbol, alert)| {
+                    alert.valid() && symbols(symbol).is_ok_and(|s| s == [symbol.clone()])
+                })
+        },
+    )
+}
+
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum Provider {
@@ -387,6 +505,9 @@ pub struct Preferences {
     pub show_chart: bool,
     pub show_date: bool,
     pub show_details: bool,
+    pub chart_range: Range,
+    /// Price alerts by watchlist symbol. Personal: never exported.
+    pub alerts: std::collections::BTreeMap<String, Alert>,
     /// Changes after explicit keyring setup, restarting the desktop feed.
     pub credential_revision: u64,
 }
@@ -404,6 +525,8 @@ impl Default for Preferences {
             show_chart: false,
             show_date: false,
             show_details: false,
+            chart_range: Range::default(),
+            alerts: Default::default(),
             credential_revision: 0,
         }
     }
@@ -473,6 +596,9 @@ impl Preferences {
 
     pub fn normalize(&mut self) {
         self.symbols = symbols(&self.symbols.join(",")).unwrap_or_default();
+        let watched = self.symbols.clone();
+        self.alerts
+            .retain(|symbol, alert| watched.contains(symbol) && alert.valid());
         if !self.symbols.contains(&self.selected) {
             self.selected = self.symbols.first().cloned().unwrap_or_default();
         }
@@ -574,6 +700,12 @@ impl State {
             && self
                 .received_at
                 .is_some_and(|at| at.elapsed() < REFRESH_INTERVAL)
+    }
+
+    /// Marks the readings old, so the next feed asks every source again now.
+    pub fn mark_old(&mut self) {
+        self.received_at = None;
+        self.ecb_checked_at = None;
     }
 
     fn store_quote(&mut self, quote: Quote) {
@@ -678,6 +810,68 @@ pub fn parse_chart(value: &serde_json::Value, requested: &str) -> Result<Vec<Poi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ranges_count_back_from_the_last_point() {
+        let day = |d: u32| Point {
+            date: chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap()
+                + chrono::Days::new(u64::from(d)),
+            close: f64::from(d),
+        };
+        let points: Vec<Point> = (0..=90).map(day).collect();
+        assert_eq!(Range::Week.of(&points).len(), 7);
+        assert_eq!(Range::Month.of(&points).len(), 31);
+        assert_eq!(Range::Quarter.of(&points).len(), 91);
+        assert_eq!(Range::Week.of(&points).first().unwrap().close, 84.);
+        assert!(Range::Week.of(&[]).is_empty());
+        assert_eq!(Preferences::default().chart_range, Range::Month);
+    }
+
+    #[test]
+    fn alerts_fire_past_their_level_and_are_kept_only_when_sound() {
+        let alert = Alert {
+            above: Some(200.),
+            below: Some(150.),
+        };
+        assert!(alert.valid());
+        assert_eq!(alert.crossed(200.), Some(Crossed::Above));
+        assert_eq!(alert.crossed(149.9), Some(Crossed::Below));
+        assert_eq!(alert.crossed(175.), None);
+        for bad in [
+            Alert::default(),
+            Alert {
+                above: Some(0.),
+                below: None,
+            },
+            Alert {
+                above: Some(f64::NAN),
+                below: None,
+            },
+            Alert {
+                above: Some(100.),
+                below: Some(120.),
+            },
+        ] {
+            assert!(!bad.valid(), "{bad:?}");
+        }
+        assert!(valid_alerts(&serde_json::json!({"AAPL": {"above": 200.0}})));
+        assert!(!valid_alerts(&serde_json::json!({"AAPL": {"above": -1.0}})));
+        assert!(!valid_alerts(&serde_json::json!({"not a symbol!": {"above": 1.0}})));
+        assert!(!valid_alerts(&serde_json::json!({"AAPL": {"above": 1.0, "sound": true}})));
+        // A symbol leaving the watchlist drops its alert; old settings load.
+        let mut preferences: Preferences =
+            serde_json::from_value(serde_json::json!({"symbols": ["AAPL", "MSFT"]})).unwrap();
+        assert!(preferences.alerts.is_empty());
+        preferences.alerts.insert("TSLA".into(), alert);
+        preferences.alerts.insert("AAPL".into(), alert);
+        preferences.normalize();
+        assert_eq!(preferences.alerts.keys().collect::<Vec<_>>(), ["AAPL"]);
+        // Only the feed's own inputs restart it; ranges and alerts don't.
+        let mut other = preferences.clone();
+        other.chart_range = Range::Week;
+        other.alerts.clear();
+        assert!(preferences.feed_key() == other.feed_key());
+    }
     use serde_json::json;
 
     #[test]

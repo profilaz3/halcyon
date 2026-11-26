@@ -68,6 +68,8 @@ pub enum Msg {
     TimerPause,
     TimerResume,
     TimerCancel,
+    /// Make the timer a focus round on the desktop.
+    TimerFocus,
     Outputs,
     OutputsLoaded(Result<Vec<outputs::Sink>, String>),
     OutputPick(outputs::Sink),
@@ -1074,9 +1076,20 @@ impl Applet {
                 palette,
                 accent,
                 reveal,
+                "activity-timer-focus",
+                Self::tinted("task-due-symbolic", 16, alpha(palette.ink, reveal)),
+                40.,
+                false,
+                "Make it a Focus session",
+                Message::Live(Msg::TimerFocus),
+            ),
+            self.round(
+                palette,
+                accent,
+                reveal,
                 "activity-timer-add",
                 self.text("+1", 13., alpha(palette.ink, reveal)),
-                44.,
+                40.,
                 false,
                 "+1 min",
                 Message::Live(Msg::TimerAdd),
@@ -1087,7 +1100,7 @@ impl Applet {
                 reveal,
                 "activity-timer-cancel",
                 Self::tinted("window-close-symbolic", 16, alpha(palette.ink, reveal)),
-                44.,
+                40.,
                 false,
                 "Cancel",
                 Message::Live(Msg::TimerCancel),
@@ -1494,6 +1507,10 @@ impl Applet {
             Msg::TimerCancel => {
                 self.snapshot.timer = None;
                 let sent = self.send(Command::TimerCancel);
+                Task::batch([sent, self.update(Message::Close)])
+            }
+            Msg::TimerFocus => {
+                let sent = self.send(Command::TimerToFocus);
                 Task::batch([sent, self.update(Message::Close)])
             }
             Msg::Outputs => {

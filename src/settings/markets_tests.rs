@@ -184,7 +184,7 @@ fn markets_widget_settings_preserve_watchlist_and_render_native_charts() {
         let card = || crate::tools::cards::markets::<Message>(&sample, &config, None, Some(dims));
         let text = native.all_text(card());
         assert!(text.iter().any(|s| s.contains("190.12 USD")));
-        assert!(text.iter().any(|s| s.contains("30 trading sessions")));
+        assert!(text.iter().any(|s| s.contains("Last month")), "{text:?}");
         assert!(text.iter().any(|s| s.ends_with("UTC")));
         assert!(!text.iter().any(|s| s.contains("Market closed") || s.contains("Status unavailable")));
         assert!(native.scrollables(card()).is_empty());
@@ -222,17 +222,15 @@ fn markets_resize_keeps_every_stock_and_chart_visible_without_scrolling() {
     config.markets.symbols = ["AAPL", "MSFT", "NVDA", "AMZN", "TSLA"].map(String::from).into();
     config.markets.selected = "AAPL".into();
     let mut state = crate::tools::cards::sample_markets_for(&config.markets);
+    // The chart shows its chosen range of the history.
+    let shown = config
+        .markets
+        .chart_range
+        .of(&state.charts[&config.markets.selected])
+        .to_vec();
     let date_ranges = ["%b %-d", "%b %-d, %Y"].map(|format| {
-        let first = state.charts[&config.markets.selected]
-            .first()
-            .unwrap()
-            .date
-            .format(format);
-        let last = state.charts[&config.markets.selected]
-            .last()
-            .unwrap()
-            .date
-            .format(format);
+        let first = shown.first().unwrap().date.format(format);
+        let last = shown.last().unwrap().date.format(format);
         format!("{first} to {last}")
     });
     for dims in [[280., 300.], [300., 360.], [360., 420.], [520., 600.]] {
@@ -259,7 +257,7 @@ fn markets_resize_keeps_every_stock_and_chart_visible_without_scrolling() {
             let text = native.all_text(card());
             let caption = text
                 .iter()
-                .find(|t| t.contains("30 trading sessions"))
+                .find(|t| t.contains("Last month"))
                 .unwrap();
             let dates = date_ranges
                 .iter()
@@ -314,7 +312,7 @@ fn markets_currency_resizes_and_cycles_the_mixed_watchlist() {
         let text = native.all_text(view());
         assert!(text.iter().any(|s| s == "1 EUR = 1.0854 USD"));
         assert!(text.iter().any(|s| s.starts_with("Published ") && !s.contains("UTC")));
-        assert!(text.iter().any(|s| s == "Last 30 days"));
+        assert!(text.iter().any(|s| s == "Last month"));
         assert!(native.scrollables(view()).is_empty());
         for (label, rect) in native.placed_text(view()) {
             assert!(rect.x >= 0. && rect.y >= 0. && rect.x + rect.width <= dims[0] + 0.5
@@ -421,4 +419,66 @@ fn markets_quote_precision_survives_resize() {
         let labels = n.all_text(markets(&state, &config, Some(|a| a), Some(size)));
         assert!(labels.iter().any(|s| s == expected), "{labels:?}");
     }
+}
+
+/// Price alerts are typed per watchlist item, checked and saved with Enter;
+/// an empty item clears them. The chart range is a choice on the page.
+#[test]
+fn markets_price_alerts_and_chart_range_save_from_the_page() {
+    let name = "markets_price_alerts_and_chart_range_save_from_the_page";
+    if desktop_test_child(
+        name,
+        DesktopEnv {
+            app_config: true,
+            fixture: true,
+            ..Default::default()
+        },
+    ) {
+        return;
+    }
+    let _root = isolated_root();
+    use crate::drawer::Widget;
+    use crate::settings::tools::Message as Edit;
+    let (mut app, task) = Settings::init(Core::default(), Page::Markets);
+    settle_settings(&mut app, task);
+    let symbol = app.config.markets.symbols[2].clone();
+    let alert = |field: bool, text: &str| {
+        Message::Tools(Edit::MarketAlert(symbol.clone(), field, text.into()))
+    };
+    let save = || Message::Tools(Edit::MarketAlertSave(symbol.clone()));
+    send_settings(&mut app, alert(true, "200,5"));
+    send_settings(&mut app, save());
+    let saved = Config::load().markets.alerts[&symbol];
+    assert_eq!((saved.above, saved.below), (Some(200.5), None));
+    // Not a price, or below above the other side: nothing saved, and why.
+    send_settings(&mut app, alert(false, "cheap"));
+    send_settings(&mut app, save());
+    assert!(app.tools.alert_error.is_some());
+    send_settings(&mut app, alert(false, "300"));
+    send_settings(&mut app, save());
+    assert!(app.tools.alert_error.is_some());
+    assert_eq!(Config::load().markets.alerts[&symbol].below, None);
+    send_settings(&mut app, alert(false, "150"));
+    send_settings(&mut app, save());
+    assert!(app.tools.alert_error.is_none());
+    assert_eq!(Config::load().markets.alerts[&symbol].below, Some(150.));
+    let mut native = crate::native_test::Native::new(Size::new(1100., 900.));
+    let shown = native.all_text(app.settings_view());
+    for text in ["Price alerts", "Chart range", "1W", "3M"] {
+        assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
+    }
+    // Both empty clears the alert.
+    send_settings(&mut app, alert(true, ""));
+    send_settings(&mut app, alert(false, " "));
+    send_settings(&mut app, save());
+    assert!(!Config::load().markets.alerts.contains_key(&symbol));
+    send_settings(
+        &mut app,
+        Message::Tools(Edit::Option(
+            Widget::Markets,
+            "chart_range",
+            serde_json::json!("quarter"),
+        )),
+    );
+    assert_eq!(Config::load().markets.chart_range, crate::markets::Range::Quarter);
 }

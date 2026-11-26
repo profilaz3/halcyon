@@ -49,7 +49,7 @@ fn cards() -> Cards {
 }
 
 /// Presses and releases at `point`, as a click.
-fn click<M>(native: &mut Native, view: impl Fn() -> Element<'static, M>, point: Point) -> Vec<M> {
+fn click<'a, M>(native: &mut Native, view: impl Fn() -> Element<'a, M>, point: Point) -> Vec<M> {
     let mut messages = Vec::new();
     for input in [
         mouse::Event::CursorMoved { position: point },
@@ -177,13 +177,31 @@ fn devices_and_weather_open_a_full_reading() {
                 "wind_speed_10m": 14.0, "relative_humidity_2m": 71.0, "is_day": 1},
             "daily": {"time": days, "temperature_2m_max": [14.0, 16.0, 11.0, 9.0],
                 "temperature_2m_min": [6.0, 7.0, 4.0, 2.0], "weather_code": [3, 61, 2, 71],
-                "precipitation_probability_max": [10.0, 80.0, null, 40.0]}
+                "precipitation_probability_max": [10.0, 80.0, null, 40.0]},
+            "hourly": {
+                "time": (0..25)
+                    .map(|n| (Local::now().naive_local() + chrono::Duration::hours(n))
+                        .format("%Y-%m-%dT%H:00").to_string())
+                    .collect::<Vec<_>>(),
+                "temperature_2m": (0..25).map(|n| 10.0 + f64::from(n % 5)).collect::<Vec<_>>(),
+                "weather_code": vec![3; 25],
+                "precipitation_probability": (0..25).map(|n| f64::from(n * 4)).collect::<Vec<_>>(),
+                "is_day": vec![1; 25]
+            }
         }))
         .unwrap(),
     );
     let shown = native.all_text(cards.reading_view(Widget::Weather));
     for text in [
-        "Zagreb", "Forecast", "Today", "Tomorrow", "Rain 80%", "Rain 40%",
+        "Zagreb",
+        "Next hours",
+        "Now",
+        "92%",
+        "Forecast",
+        "Today",
+        "Tomorrow",
+        "Rain 80%",
+        "Rain 40%",
     ] {
         assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
     }
@@ -386,6 +404,90 @@ fn peek_pages_with_the_arrow_keys() {
         Modifiers::empty(),
     ));
     assert!(cards.peek.is_none());
+}
+
+#[test]
+fn markets_alert_once_per_crossing_refresh_and_choose_a_range() {
+    if isolated("markets_alert_once_per_crossing_refresh_and_choose_a_range") {
+        return;
+    }
+    use crate::markets::{Alert, Crossed, Range};
+    let mut cards = cards();
+    cards.config.markets.symbols = vec!["AAPL".into(), "MSFT".into()];
+    cards.config.markets.alerts.insert(
+        "AAPL".into(),
+        Alert {
+            above: Some(200.),
+            below: None,
+        },
+    );
+    let quote = |price: f64| crate::markets::Quote {
+        symbol: "AAPL".into(),
+        name: "Apple".into(),
+        currency: "USD".into(),
+        price,
+        change: None,
+        percent: None,
+        timestamp: 1,
+        market_open: None,
+    };
+    let mut see = |cards: &mut Cards, price| {
+        cards.tools.markets.quotes = vec![quote(price)];
+        let _ = cards.market_alerts();
+        cards.tools.market_alerted.get("AAPL").copied()
+    };
+    assert_eq!(see(&mut cards, 190.), None);
+    assert_eq!(see(&mut cards, 201.), Some(Crossed::Above));
+    // Still past it: no second notice is due; back inside re-arms it.
+    assert_eq!(see(&mut cards, 205.), Some(Crossed::Above));
+    assert_eq!(see(&mut cards, 199.), None);
+    assert_eq!(see(&mut cards, 202.), Some(Crossed::Above));
+
+    // Refresh marks the reading old and restarts the feed.
+    cards.tools.markets.received_at = Some(Instant::now());
+    let before = cards.tools.markets_refresh;
+    let _ = cards.update_tool(crate::tools::cards::Action::MarketsRefresh);
+    assert!(cards.tools.markets.received_at.is_none());
+    assert_eq!(cards.tools.markets_refresh, before + 1);
+    assert!(cards.can_refresh(Widget::Markets));
+
+    // The card's own controls: refresh, the ranges and the alert's mark.
+    let mut config = cards.config.clone();
+    config.markets.show_chart = true;
+    config.markets.chart_range = Range::Month;
+    config.markets.selected = "AAPL".into();
+    let mut state = crate::tools::cards::sample_markets_for(&config.markets);
+    if let Some(q) = state.quotes.iter_mut().find(|q| q.symbol == "AAPL") {
+        q.price = 250.;
+    }
+    let dims = [360., 420.];
+    let card = || {
+        crate::tools::cards::markets::<crate::tools::cards::Action>(
+            &state,
+            &config,
+            Some(|a| a),
+            Some(dims),
+        )
+    };
+    let mut native = Native::new(Size::new(dims[0], dims[1]));
+    let shown = native.all_text(card());
+    assert!(shown.iter().any(|t| t.starts_with("▲ ")), "{shown:?}");
+    for label in ["1W", "1M", "3M"] {
+        assert!(shown.iter().any(|t| t == label), "{label} in {shown:?}");
+    }
+    let at = native.bounds(card(), "markets-range-week").center();
+    assert!(
+        click(&mut native, card, at)
+            .iter()
+            .any(|a| matches!(a, crate::tools::cards::Action::MarketRange(Range::Week)))
+    );
+    let at = native.bounds(card(), "markets-refresh").center();
+    assert!(
+        click(&mut native, card, at)
+            .iter()
+            .any(|a| matches!(a, crate::tools::cards::Action::MarketsRefresh))
+    );
+    native.capture(card(), &cosmic::Theme::dark(), "markets-card-ranges");
 }
 
 #[test]

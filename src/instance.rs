@@ -32,6 +32,9 @@ Usage:
   halcyon --toggle TARGET    Open or close the edge menu, or show or hide a widget
   halcyon --looks            List the Looks you can switch to
   halcyon --look NAME        Switch to a Look, by its name or id
+  halcyon --styles           List the styles you can apply
+  halcyon --style NAME       Apply a style, as Settings › Appearance does
+                             (add --own-bars for the style's dock and panel shape)
   halcyon --help             Show this help
   halcyon --version          Show the version
 

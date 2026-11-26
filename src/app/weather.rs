@@ -21,6 +21,14 @@ struct Forecast {
     /// `None` without a reading: the line is left out, not filled in.
     rain: Option<String>,
 }
+/// One hour of the reading's strip, written as it shows.
+#[derive(Debug, Clone, PartialEq)]
+struct HourView {
+    time: String,
+    icon: &'static str,
+    temperature: String,
+    rain: Option<String>,
+}
 #[derive(Debug, Clone, PartialEq)]
 enum Content {
     ChooseLocation,
@@ -44,6 +52,8 @@ pub(super) struct Presentation {
     now: chrono::NaiveDateTime,
     title: String,
     content: Content,
+    /// The next hours, for the full reading.
+    hours: Vec<HourView>,
     palette: Palette,
     font: Font,
     appearance: Appearance,
@@ -55,6 +65,16 @@ pub(super) fn forecast_day(
     provider: Option<&str>,
     config: &Config,
 ) -> NaiveDate {
+    location_now(now, provider, config).date()
+}
+
+/// The time now where the weather is: the provider's zone, else the city's,
+/// else this computer's.
+fn location_now(
+    now: chrono::DateTime<Local>,
+    provider: Option<&str>,
+    config: &Config,
+) -> chrono::NaiveDateTime {
     provider
         .into_iter()
         .chain(
@@ -65,9 +85,34 @@ pub(super) fn forecast_day(
         )
         .find_map(|name| name.parse::<chrono_tz::Tz>().ok())
         .map_or_else(
-            || now.date_naive(),
-            |zone| now.with_timezone(&zone).date_naive(),
+            || now.naive_local(),
+            |zone| now.with_timezone(&zone).naive_local(),
         )
+}
+
+/// The next 24 hours as the reading writes them: "Now", then each hour as
+/// the clock writes times.
+fn hour_views(config: &Config, weather: &Weather, now: chrono::NaiveDateTime) -> Vec<HourView> {
+    let Some(hourly) = &weather.hourly else {
+        return Vec::new();
+    };
+    hourly
+        .hours(now, 24)
+        .into_iter()
+        .enumerate()
+        .map(|(i, hour)| HourView {
+            time: if i == 0 && hour.at <= now {
+                "Now".into()
+            } else if config.clock.format_24h {
+                hour.at.format("%H:%M").to_string()
+            } else {
+                hour.at.format("%-I %p").to_string()
+            },
+            icon: data::weather_icon(hour.code, hour.day),
+            temperature: forecast_temperature_in(config.weather, Some(&hour.temperature)),
+            rain: hour.rain.map(|n| format!("{n:.0}%")),
+        })
+        .collect()
 }
 
 impl Presentation {
@@ -147,7 +192,11 @@ impl Presentation {
             None if snapshot.failed => Content::Unavailable,
             None => Content::Loading,
         };
+        let hours = snapshot.weather.map_or_else(Vec::new, |w| {
+            hour_views(config, w, location_now(now, w.timezone.as_deref(), config))
+        });
         Self {
+            hours,
             recipe_config: config
                 .recipes
                 .weather
@@ -215,6 +264,34 @@ impl Presentation {
         ];
         if let Some(status) = status {
             rows.push(self.label(status.clone(), 12., p.muted));
+        }
+        if !self.hours.is_empty() {
+            rows.push(self.label("Next hours", 16., p.foreground));
+            // Wrapped rather than scrolled sideways: every hour is in view.
+            let hours = self
+                .hours
+                .iter()
+                .map(|hour| {
+                    let mut cell = vec![
+                        self.label(hour.time.clone(), 12., p.muted),
+                        self.label(hour.icon, 20., p.accent),
+                        self.label(hour.temperature.clone(), 14., p.foreground),
+                    ];
+                    cell.push(self.label(hour.rain.clone().unwrap_or_default(), 11., p.muted));
+                    container(
+                        column::with_children(cell)
+                            .spacing(2)
+                            .align_x(Alignment::Center),
+                    )
+                    .width(Length::Fixed(56.))
+                    .into()
+                })
+                .collect::<Vec<_>>();
+            rows.push(
+                container(row::with_children(hours).spacing(4).wrap())
+                    .id(cosmic::widget::Id::new("weather-hours"))
+                    .into(),
+            );
         }
         rows.push(self.label("Forecast", 16., p.foreground));
         if forecast.is_empty() {
