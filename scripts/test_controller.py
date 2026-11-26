@@ -183,6 +183,39 @@ class ControllerTests(unittest.TestCase):
         self.run.assert_not_called()
         self.assertFalse(self.config.exists())
 
+    def test_styles_apply_through_the_halcyon_program_and_theme_takes_them(self):
+        self.run.return_value = subprocess.CompletedProcess([], 0, 'Soft\nPorcelain\n', '')
+        output = io.StringIO()
+        with patch.object(controller.sys, 'argv', ['halcyon-ctl', 'styles']), redirect_stdout(output):
+            controller.main()
+        self.assertEqual(output.getvalue(), 'Soft\nPorcelain\n')
+        for args, sent in [(['style', 'Porcelain'], ['--style', 'Porcelain']),
+                           (['style', 'Tape Deck', '--with-dock-and-panel'],
+                            ['--style', 'Tape Deck', '--own-bars']),
+                           # theme takes a style by name; a palette stays a palette.
+                           (['theme', 'Mica Slate'], ['--style', 'Mica Slate'])]:
+            self.run.reset_mock()
+            with self.subTest(args=args), redirect_stdout(io.StringIO()), \
+                    patch.object(controller.sys, 'argv', ['halcyon-ctl', *args]):
+                controller.main()
+                self.run.assert_called_once_with([self.helper, *sent], text=True,
+                                                 capture_output=True)
+        self.run.reset_mock()
+        with patch.object(controller.sys, 'argv', ['halcyon-ctl', 'theme', 'teal']):
+            controller.main()
+        self.run.assert_called_once_with([self.helper, '--select-palette', 'teal'], text=True,
+                                         capture_output=True)
+        self.run.return_value = subprocess.CompletedProcess([], 1, '', 'No style is called Neon.')
+        with patch.object(controller.sys, 'argv', ['halcyon-ctl', 'style', 'Neon']):
+            with self.assertRaisesRegex(RuntimeError, 'No style is called Neon'):
+                controller.main()
+        # An isolated preview never reaches the desktop.
+        self.run.reset_mock()
+        with patch.dict(controller.os.environ, {'DESKTOP_CARDS_CONFIG': str(self.config)}):
+            with self.assertRaisesRegex(RuntimeError, 'isolated preview'):
+                controller.style('Porcelain')
+        self.run.assert_not_called()
+
     def test_capture_helper_sees_original_preferences_and_no_parent_lock(self):
         original = '{"theme":"teal","appearance":{"match_wallpaper":false,"match_cosmic_colors":true}}\n'
         self.config.write_text(original)
@@ -297,7 +330,8 @@ class ControllerTests(unittest.TestCase):
                 controller.main()
         text = output.getvalue()
         for name in ('start', 'stop', 'restart', 'status', 'settings', 'drawer', 'panel', 'toggle',
-                     'looks', 'look', 'focus', 'timer', 'theme', 'cosmic-colors', 'weather',
+                     'looks', 'look', 'styles', 'style', 'focus', 'timer', 'theme',
+                     'cosmic-colors', 'weather',
                      'weather-picker', 'restore', 'restore-wallpaper', 'wallpapers-install'):
             line = next((line for line in text.splitlines() if line.strip().startswith(name + ' ')
                          or line.strip() == name), None)
