@@ -85,7 +85,7 @@ helper bytes. The old download pin remains solely for historical split-package
 verification; the app no longer downloads a companion.
 
 Prefer `python3 scripts/install.py` for per-user source work; it adds no APT source.
-The 0.7.8 release packages include the pinned COSMIC app-list companion and its
+Release packages since 0.7.8 include the pinned COSMIC app-list companion and its
 license notices. Build them before packaging. The builders pick up the executable
 next to `target/release/halcyon` or accept `--magnifying-dock PATH`. For a per-user
 install the applet is optional. Enable it in **Dock → Dock magnification**.

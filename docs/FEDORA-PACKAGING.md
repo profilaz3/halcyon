@@ -90,8 +90,8 @@ its own executable and package bytes.
 network access and podman or docker usable without sudo:
 
 ```sh
-python3 scripts/rpm/container_acceptance.py run --previous 0.7.6 --out ../fedora-acceptance
-python3 scripts/rpm/container_acceptance.py run --previous 0.7.6 --out ../fedora-acceptance --dry-run
+python3 scripts/rpm/container_acceptance.py run --previous 0.7.8 --out ../fedora-acceptance
+python3 scripts/rpm/container_acceptance.py run --previous 0.7.8 --out ../fedora-acceptance --dry-run
 ```
 
 It tests the committed tree only. It vendors the dependencies with

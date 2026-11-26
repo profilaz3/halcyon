@@ -19,6 +19,59 @@ pub(super) struct Release {
 
 pub(super) const RELEASES: &[Release] = &[
     Release {
+        version: "0.8.0",
+        notes: &[
+            Note {
+                title: "Data tiles",
+                body: "Show values from JSON files or web addresses as text, a bar, a dial or a graph.",
+                place: Some(navigation::DATA_TILES),
+                link: None,
+            },
+            Note {
+                title: "Watch your services",
+                body: "System monitor follows the services, containers and ports you choose.",
+                place: Some(navigation::BACKGROUND_SERVICES),
+                link: None,
+            },
+            Note {
+                title: "Price alerts and chart ranges",
+                body: "Get one notice when a price crosses your level. Charts show a week, a month or three.",
+                place: Some(navigation::PRICE_ALERTS),
+                link: None,
+            },
+            Note {
+                title: "Notes in pages",
+                body: "Split a note into pages at its headings. Bold, italic and code show on the card.",
+                place: Some(navigation::NOTE_PAGES),
+                link: None,
+            },
+            Note {
+                title: "More in each reading",
+                body: "Weather shows the next 24 hours. Folder and Devices list everything, with actions.",
+                place: None,
+                link: None,
+            },
+            Note {
+                title: "Design Notes and Devices",
+                body: "The Widget builder now makes designs for the Notes and Devices cards.",
+                place: Some(navigation::WIDGET_BUILDER),
+                link: None,
+            },
+            Note {
+                title: "Focus from the island",
+                body: "Turn a quick timer into a Focus session, and pin Focus, Calendar or Devices.",
+                place: Some(navigation::ACTIVITY_ISLAND),
+                link: None,
+            },
+            Note {
+                title: "Music in the edge menu",
+                body: "Add Play or pause and Next track. Peek buttons take an icon and keep your order.",
+                place: Some(navigation::EDGE_MENU),
+                link: None,
+            },
+        ],
+    },
+    Release {
         version: "0.7.8",
         notes: &[
             Note {
