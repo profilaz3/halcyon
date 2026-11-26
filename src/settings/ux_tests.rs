@@ -2423,6 +2423,7 @@ fn ux_native_nine_roots_and_every_old_route_resolves() {
         (Page::Messages, Page::Overview),
         (Page::Markets, Page::Overview),
         (Page::Folder, Page::Overview),
+        (Page::Tiles, Page::Overview),
         (Page::EdgeMenu, Page::Overview),
         (Page::Builder, Page::Overview),
         (Page::DesktopWallpaper, Page::DesktopWallpaper),

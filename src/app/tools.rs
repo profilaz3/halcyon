@@ -93,6 +93,8 @@ pub(super) struct Tools {
     pub folder_reading: Option<crate::folder::Listing>,
     /// The page of the note the card shows, when it is split into pages.
     pub note_page: usize,
+    /// The Data tiles' readings, while the widget shows.
+    pub tiles: crate::tiles::State,
 }
 
 impl Tools {
@@ -125,6 +127,7 @@ impl Tools {
             folder_view: None,
             folder_reading: None,
             note_page: 0,
+            tiles: Default::default(),
         }
     }
     pub(super) fn sample() -> Self {
@@ -156,6 +159,7 @@ impl Tools {
             folder_view: None,
             folder_reading: None,
             note_page: 0,
+            tiles: Default::default(),
         }
     }
     /// No note being written, saved, checked or waiting for Undo.
@@ -344,6 +348,13 @@ impl Cards {
                 &self.config,
                 Some(on_desktop as fn(Action) -> Message),
                 Some(size),
+            ),
+            Widget::Tiles => cards::tiles(
+                &self.tools.tiles,
+                &self.config.tiles.tiles,
+                &self.config,
+                Some(size),
+                Some(Message::SettingsPage("tiles")),
             ),
             _ => cards::focus(
                 &self.tools.focus,
@@ -584,6 +595,7 @@ impl Cards {
                 | Widget::Notes
                 | Widget::Markets
                 | Widget::Folder
+                | Widget::Tiles
                 | Widget::Messages
         ) && self.tool_shown(widget)
             && !self.layout_editor.active

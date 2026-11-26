@@ -96,6 +96,8 @@ pub enum Page {
     Messages,
     Markets,
     Folder,
+    /// Data tiles: values read from JSON files.
+    Tiles,
     General,
     Desktop,
     /// The dock's editor. The panel's is the same page on the other bar.
@@ -163,7 +165,7 @@ impl Page {
     ];
     /// Pinned below the roots, at the bottom of the sidebar.
     const PINNED: Self = Self::Changes;
-    const ALL: [Self; 41] = [
+    const ALL: [Self; 42] = [
         Self::Home,
         Self::Overview,
         Self::WidgetLayout,
@@ -183,6 +185,7 @@ impl Page {
         Self::Messages,
         Self::Markets,
         Self::Folder,
+        Self::Tiles,
         Self::General,
         Self::Desktop,
         Self::DesktopDock,
@@ -347,6 +350,7 @@ impl Page {
             Self::Messages => Some(Widget::Messages),
             Self::Markets => Some(Widget::Markets),
             Self::Folder => Some(Widget::Folder),
+            Self::Tiles => Some(Widget::Tiles),
             _ => None,
         }
     }
@@ -371,6 +375,7 @@ impl Page {
             Self::Messages => "messages",
             Self::Markets => "markets",
             Self::Folder => "folder",
+            Self::Tiles => "tiles",
             Self::General => "general",
             Self::Desktop => "desktop",
             Self::DesktopDock => "desktop-dock",
@@ -416,6 +421,7 @@ impl Page {
             Self::Messages => "Messages",
             Self::Markets => "Markets",
             Self::Folder => "Folder",
+            Self::Tiles => "Data tiles",
             Self::General => "Halcyon",
             Self::Desktop => "Desktop",
             Self::DesktopDock => "Dock",
@@ -551,6 +557,7 @@ impl Page {
             Self::Messages => "chat-symbolic",
             Self::Markets => "utilities-system-monitor-symbolic",
             Self::Folder => "folder-symbolic",
+            Self::Tiles => "x-office-spreadsheet-symbolic",
             Self::General => "preferences-system-symbolic",
             Self::DesktopWallpaper => "preferences-desktop-wallpaper-symbolic",
             Self::WeatherEffects => "weather-showers-symbolic",
@@ -2051,6 +2058,12 @@ impl cosmic::Application for Settings {
                     crate::tools::music::Feed::Players(players) => Ok(players),
                     crate::tools::music::Feed::Unavailable(error) => Err(error),
                 }))
+            }));
+        }
+        // The preview reads the tiles' files again while their page is open.
+        if self.page == Page::Tiles && !self.config.tiles.tiles.is_empty() {
+            subscriptions.push(cosmic::iced::time::every(Duration::from_secs(10)).map(|_| {
+                Message::Tools(tools::Message::Tile(tools::tile_editor::Message::Refresh))
             }));
         }
         // A live preview redraws once a second while it counts.
@@ -6449,6 +6462,9 @@ impl Settings {
                         self.placement.refresh(&self.config);
                         self.refresh_canvas();
                         self.saved();
+                        if widget == Widget::Tiles {
+                            return Task::batch([task, self.tools.tiles.refresh(&self.config)]);
+                        }
                     }
                     Err(error) => self.failed(error),
                 }

@@ -709,3 +709,137 @@ fn the_system_monitor_sums_up_services_and_its_reading_controls_them() {
         "reading-devbox-services",
     );
 }
+
+#[test]
+fn data_tiles_show_what_their_files_hold_and_say_when_it_is_old_or_missing() {
+    use crate::tiles::{Show, Source, State, Tile};
+    let dir = crate::test_env::TempPath::new("tiles-card");
+    let status = dir.root().join("status.json");
+    std::fs::write(&status, r#"{"status": "up", "queue": 3, "percent": "40"}"#).unwrap();
+    std::fs::write(dir.root().join("broken.json"), "{status: up}").unwrap();
+    let tile = |label: &str, file: &str, field: &str, show| Tile {
+        label: label.into(),
+        source: Source::File {
+            path: dir.root().join(file),
+        },
+        field: field.into(),
+        show,
+        unit: if field == "percent" {
+            "%".into()
+        } else {
+            String::new()
+        },
+        every: 60,
+    };
+    let tiles: &'static [Tile] = Box::leak(Box::new([
+        tile("Server", "status.json", "status", Show::Text),
+        tile(
+            "Download",
+            "status.json",
+            "percent",
+            Show::Progress { max: 100. },
+        ),
+        tile("Queue", "status.json", "queue", Show::Graph),
+        tile("Backup", "backup.json", "", Show::Text),
+        tile(
+            "Disk",
+            "broken.json",
+            "used",
+            Show::Gauge { min: 0., max: 100. },
+        ),
+    ]));
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let read = |previous: &State| {
+        runtime.block_on(crate::tiles::read_all(tiles.to_vec(), previous.clone()))
+    };
+    let config = Config::default();
+    let size = crate::tools::cards::size(Widget::Tiles, &{
+        let mut c = Config::default();
+        c.tiles.tiles = tiles.to_vec();
+        c
+    });
+    let mut native = Native::new(Size::new(size[0], size[1]));
+    let shown = |native: &mut Native, state: &State| {
+        let state: &'static State = Box::leak(Box::new(state.clone()));
+        native.all_text(crate::tools::cards::tiles::<Message>(
+            state,
+            tiles,
+            &config,
+            Some(size),
+            None,
+        ))
+    };
+    let first = read(&State::default());
+    let text = shown(&mut native, &first);
+    for want in [
+        "Data tiles",
+        "Server",
+        "up",
+        "Download",
+        "40",
+        "%",
+        "Queue",
+        "3",
+        "Backup",
+        "File not found",
+        "Disk",
+        "Not valid JSON (line 1)",
+    ] {
+        assert!(text.iter().any(|t| t == want), "{want} in {text:?}");
+    }
+    let state: &'static State = Box::leak(Box::new(first.clone()));
+    native.capture(
+        crate::tools::cards::tiles::<Message>(state, tiles, &config, Some(size), None),
+        &cosmic::Theme::dark(),
+        "tiles-card",
+    );
+    // A file nobody has written for two hours says so; its value stays.
+    std::fs::File::options()
+        .write(true)
+        .open(&status)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(7200))
+        .unwrap();
+    let old = read(&first);
+    let text = shown(&mut native, &old);
+    assert!(text.iter().any(|t| t == "Unchanged for 2 h"), "{text:?}");
+    assert!(text.iter().any(|t| t == "up"), "{text:?}");
+    // A read that fails after a good one keeps the value and says why.
+    std::fs::remove_file(&status).unwrap();
+    let gone = read(&old);
+    let text = shown(&mut native, &gone);
+    assert!(text.iter().any(|t| t == "up"), "{text:?}");
+    assert!(
+        text.iter()
+            .any(|t| t == "File not found · under a minute old"),
+        "{text:?}"
+    );
+    assert_eq!(
+        gone.readings[2].history.len(),
+        2,
+        "the graph kept both readings"
+    );
+    // With no tiles, the card's button opens its Settings page.
+    let empty = || {
+        crate::tools::cards::tiles(
+            Box::leak(Box::default()),
+            &[],
+            &config,
+            None,
+            Some(Message::SettingsPage("tiles")),
+        )
+    };
+    let [w, h] = crate::tools::cards::size(Widget::Tiles, &config);
+    let mut native = Native::new(Size::new(w, h));
+    let at = native.text_bounds(empty(), "Add a tile").center();
+    let pressed = click(&mut native, empty, at);
+    assert!(
+        pressed
+            .iter()
+            .any(|m| matches!(m, Message::SettingsPage("tiles"))),
+        "{pressed:?}"
+    );
+}

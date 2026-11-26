@@ -32,6 +32,7 @@ mod settings_lifecycle;
 mod system_theme;
 #[cfg(test)]
 mod test_env;
+mod tiles;
 mod tools;
 mod upgrade;
 mod usage;

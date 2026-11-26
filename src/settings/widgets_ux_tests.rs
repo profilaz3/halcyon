@@ -424,3 +424,87 @@ fn background_services_watch_what_you_choose() {
     send(&mut app, Message::WatchRemove(0));
     assert_eq!(Config::load().devbox.watched, [Watched::Port { port: 11434 }]);
 }
+
+#[test]
+fn data_tiles_are_added_from_the_fields_a_file_holds() {
+    if child("data_tiles_are_added_from_the_fields_a_file_holds") {
+        return;
+    }
+    use crate::settings::tools::{Message as Edit, tile_editor::Message as Tile};
+    use crate::tiles::Show;
+    let dir = crate::test_env::TempPath::new("tiles-settings");
+    let file = dir.root().join("nas.json");
+    std::fs::write(
+        &file,
+        r#"{"disk": {"used_percent": 71.5, "health": "good"}, "uptime_days": 12}"#,
+    )
+    .unwrap();
+    let (mut app, mut native) = open(Page::Tiles);
+    let send = |app: &mut Settings, message| {
+        super::tests::send_settings(app, Message::Tools(Edit::Tile(message)))
+    };
+    let shown = native.all_text(app.settings_view());
+    assert!(shown.iter().any(|t| t == "Sample · add a tile below"), "{shown:?}");
+    // The file is read once and its fields offered, with what each holds.
+    send(&mut app, Tile::Path(file.display().to_string()));
+    send(&mut app, Tile::ReadPath);
+    super::tests::native_reveal(&app, &mut native, "tile-field-0");
+    let shown = native.all_text(app.settings_view());
+    for text in [
+        "Fields in this file", "disk.used_percent", "71.5", "disk.health", "good", "uptime_days",
+    ] {
+        assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
+    }
+    // A click picks a field and names the tile after it.
+    click(&mut app, &mut native, "tile-field-0");
+    assert_eq!(app.tools.tiles.draft.field, "disk.used_percent");
+    assert_eq!(app.tools.tiles.draft.label, "Used percent");
+    send(&mut app, Tile::Show(1));
+    send(&mut app, Tile::Unit("%".into()));
+    capture(&app, &mut native, "tiles-settings-form");
+    click(&mut app, &mut native, "tile-add");
+    let saved = Config::load().tiles.tiles;
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].path(), file);
+    assert_eq!(saved[0].show, Show::Progress { max: 100. });
+    assert_eq!((saved[0].unit.as_str(), saved[0].every), ("%", 60));
+    // The preview reads the saved tile instead of the sample.
+    let shown = native.all_text(app.settings_view());
+    assert!(!shown.iter().any(|t| t == "Sample · add a tile below"));
+    assert!(shown.iter().any(|t| t == "71.5"), "{shown:?}");
+    let described = "Progress bar · nas.json · disk.used_percent · every 1 min";
+    assert!(shown.iter().any(|t| t == described), "{shown:?}");
+    // Refused: no name, a relative path and an empty range.
+    send(&mut app, Tile::Template(0));
+    send(&mut app, Tile::Label(String::new()));
+    send(&mut app, Tile::Add);
+    assert_eq!(app.tools.tiles.error.as_deref(), Some("Give the tile a name."));
+    send(&mut app, Tile::Label("Health".into()));
+    send(&mut app, Tile::Path("nas.json".into()));
+    send(&mut app, Tile::Add);
+    assert_eq!(
+        app.tools.tiles.error.as_deref(),
+        Some("Choose a file, or type its full path.")
+    );
+    send(&mut app, Tile::Path(file.display().to_string()));
+    send(&mut app, Tile::Show(2));
+    send(&mut app, Tile::Min("5".into()));
+    send(&mut app, Tile::Max("5".into()));
+    send(&mut app, Tile::Add);
+    assert_eq!(
+        app.tools.tiles.error.as_deref(),
+        Some("The largest value must be above the smallest.")
+    );
+    send(&mut app, Tile::Show(0));
+    send(&mut app, Tile::Field("disk.health".into()));
+    send(&mut app, Tile::Every(300));
+    send(&mut app, Tile::Add);
+    assert_eq!(app.tools.tiles.error, None);
+    assert_eq!(Config::load().tiles.tiles.len(), 2);
+    super::tests::native_reveal(&app, &mut native, "tiles-list");
+    capture(&app, &mut native, "tiles-settings-list");
+    click(&mut app, &mut native, "tile-remove-0");
+    let left = Config::load().tiles.tiles;
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].field, "disk.health");
+}

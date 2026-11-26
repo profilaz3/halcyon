@@ -44,7 +44,8 @@ WIDGETS = {'calendar': 'Calendar — today and meeting links', 'projects': 'Proj
            'devices': 'Devices — battery of headphones, mice and phones',
            'messages': 'Messages — conversations from your phone',
            'markets': 'Markets — watchlist and price charts',
-           'folder': 'Folder — recent local files'}
+           'folder': 'Folder — recent local files',
+           'tiles': 'Data tiles — numbers and words from your own data'}
 FOCUS_ACTIONS = ('start', 'pause', 'toggle', 'reset', 'skip')
 # Everything `halcyon --toggle` takes besides the widgets, by the name it takes.
 TOGGLE_OTHERS = {'peek': 'peek', 'drawer': 'drawer', 'menu': 'drawer',
@@ -382,7 +383,7 @@ def restore(desktop=False):
 # Every page the native Settings window accepts (`Page::key` in src/settings.rs), plus the old
 # `layout` alias for Widgets.
 SETTINGS_PAGES = ('home', 'adaptive', 'builder', 'moments', 'overview', 'pending', 'themes', 'presets', 'schedules', 'widget-style', 'system-monitor', 'daily-overview', 'focus-timer', 'app-settings', 'appearance', 'widgets', 'layout', 'glance', 'calendar', 'weather', 'devbox', 'clock',
-                  'projects', 'music', 'notes', 'focus', 'devices', 'messages', 'markets', 'folder', 'general', 'desktop', 'desktop-panel', 'desktop-dock', 'activity-island',
+                  'projects', 'music', 'notes', 'focus', 'devices', 'messages', 'markets', 'folder', 'tiles', 'general', 'desktop', 'desktop-panel', 'desktop-dock', 'activity-island',
                   'panel', 'dock', 'island', 'effects', 'looks',
                   'desktop-appearance', 'desktop-wallpaper', 'weather-effects', 'desktop-icons', 'desktop-profiles',
                   'desktop-windows', 'desktop-workspaces', 'desktop-motion', 'desktop-window-rules',

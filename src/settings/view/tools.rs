@@ -330,7 +330,7 @@ impl Settings {
         self.widget_template(Widget::Markets, "Markets", None, vec![editor])
     }
 
-    fn tool_preview_size(&self, widget: Widget) -> [f32; 2] {
+    pub(super) fn tool_preview_size(&self, widget: Widget) -> [f32; 2] {
         let [width, height] = self
             .config
             .widget_sizes

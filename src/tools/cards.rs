@@ -5,12 +5,14 @@
 mod devices;
 mod folder;
 mod markets;
+mod tiles;
 pub use folder::{folder, folder_in};
 pub use markets::{markets, sample_for as sample_markets_for};
 #[cfg(test)]
 pub use markets::sample as sample_markets;
 pub(crate) mod messages;
 pub(crate) mod recipe;
+pub use tiles::tiles;
 use super::{focus, music, notes};
 use crate::config::{Config, Palette};
 use crate::drawer::Widget;
@@ -96,6 +98,7 @@ pub fn size(widget: Widget, config: &Config) -> [f32; 2] {
         // Room for the four newest conversations.
         Widget::Messages => [320., 260.],
         Widget::Folder => [344., 234.],
+        Widget::Tiles => tiles::size(&config.tiles.tiles),
         Widget::Markets => [
             if !config.markets.show_chart && config.markets.symbols.len() == 1 { 280. } else { 360. },
             config.markets.height_limit().unwrap_or(420.),

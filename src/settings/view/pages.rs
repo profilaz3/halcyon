@@ -88,6 +88,7 @@ fn widget_page(widget: Widget) -> Page {
         Widget::Messages => Page::Messages,
         Widget::Folder => Page::Folder,
         Widget::Markets => Page::Markets,
+        Widget::Tiles => Page::Tiles,
     }
 }
 
@@ -112,6 +113,7 @@ impl Settings {
             Widget::Messages => "Your phone’s newest text messages, through KDE Connect.",
             Widget::Folder => "Recent files from a folder you choose.",
             Widget::Markets => "Stocks and currency pairs with daily charts.",
+            Widget::Tiles => "Numbers and words from files other programs write.",
             Widget::Projects => "For people who write code: what changed in each project.",
             Widget::Devbox => "How busy your computer is.",
         };

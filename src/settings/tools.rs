@@ -14,6 +14,7 @@ use cosmic::app::Task;
 use cosmic::widget::image::Handle;
 use cosmic::widget::text_editor;
 mod note_history;
+pub mod tile_editor;
 
 #[derive(Clone, Debug)]
 pub enum Message {
@@ -60,6 +61,8 @@ pub enum Message {
     MarketSaveKey,
     MarketRemoveKey,
     MarketKeyDone(bool, Result<(), crate::markets::Problem>),
+    /// The Data tiles page.
+    Tile(tile_editor::Message),
 }
 
 pub struct ToolsEditor {
@@ -73,6 +76,7 @@ pub struct ToolsEditor {
     /// Why the last alert typed wasn't saved, by symbol.
     pub alert_error: Option<(String, String)>,
     pub market_preview: crate::markets::State,
+    pub tiles: tile_editor::Editor,
     /// What this window sees on the session bus; `None` until asked.
     pub feed: Option<music::Feed>,
     pub visualizer_draft: Option<crate::tools::visualizer::Preferences>,
@@ -120,6 +124,7 @@ impl Default for ToolsEditor {
             market_status: None,
             watchlist_error: None,
             market_preview: crate::markets::State::default(),
+            tiles: Default::default(),
             feed: None,
             visualizer_draft: None,
             recent: Vec::new(),
@@ -323,6 +328,9 @@ impl ToolsEditor {
             self.sync_markets(&config.markets);
         }
         self.refresh();
+        if tab == Widget::Tiles {
+            return self.tiles.refresh(config);
+        }
         if tab == Widget::Music {
             return self.query();
         }
@@ -687,6 +695,7 @@ impl ToolsEditor {
             Message::Option(widget, key, value) => {
                 return (Task::none(), Some(Saved::Tool(widget, key, value)));
             }
+            Message::Tile(message) => return self.tiles.update(message, config),
             Message::OpenKdeConnect => {
                 return (
                     crate::settings::run_command(
