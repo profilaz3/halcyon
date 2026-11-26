@@ -15,6 +15,11 @@ from version_policy import verify_main_package
 # deliberately independent of distribution.json and candidate-supplied policy.
 # New artifacts must pass verify() with the current policy and fresh approval.
 PUBLISHED_RELEASES = {
+    'df96f77062651aa0efe7b74c7cccb645930e269ca3813632da72701dedb320f8': {
+        'release': '0.8.0',
+        'policy': 'cosmic-1.10-1.11-startup-v5',
+        'approval_sha256': '0e1e398383525f0ef11cbf5ad1c69caddfebde5cd5fbd743572af967961f41a4',
+    },
     '52ce0d67d894ee8f012050c76e49a0b407b005bce2bf692bcc54d8adebdbccd5': {
         'release': '0.7.8',
         'policy': 'cosmic-1.10-1.11-startup-v5',
