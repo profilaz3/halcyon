@@ -5825,3 +5825,19 @@ fn island_focus_offers_the_desktop_cards_controls() {
         ui.capture(app.capsule(true), &theme, "island-focus-paused");
     }
 }
+
+#[test]
+fn the_timer_card_turns_the_timer_into_a_focus_session() {
+    let (mut app, mut rx) = open_card(Kind::Timer);
+    app.snapshot.timer = Some(super::timer::Timer::start(600_000, app.now_ms));
+    app.popup_extra = app.live_extra();
+    let size = cosmic::iced::Size::new(app.frame().popup_width(), app.popup_height());
+    crate::native_test::Native::new(size).capture(
+        app.capsule(true),
+        &cosmic::Theme::dark(),
+        "island-timer-focus",
+    );
+    let sent = press(&mut app, &mut rx, "activity-timer-focus");
+    assert!(matches!(sent, Command::TimerToFocus), "{sent:?}");
+    assert!(!app.held, "the island closes for the desktop to place Focus");
+}

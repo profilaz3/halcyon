@@ -324,7 +324,7 @@ def focus(action):
     """Start, pause, toggle, reset or skip the Focus timer (for keyboard shortcuts)."""
     desktop_command({'action': 'focus', 'do': action})
 
-TIMER_ACTIONS = ('cancel', 'pause', 'resume')
+TIMER_ACTIONS = ('cancel', 'pause', 'resume', 'focus')
 
 def timer_length(value):
     """A quick timer's length in minutes, up to a day, or cancel, pause or resume."""
@@ -416,8 +416,9 @@ def main():
         'name', help='For example: Night (see: halcyon-ctl looks)')
     command('focus', 'Control the Focus timer, for example from a keyboard shortcut').add_argument(
         'action', choices=FOCUS_ACTIONS, help='One of: ' + ', '.join(FOCUS_ACTIONS))
-    command('timer', 'Start a quick timer in the Activity island, or cancel, pause or resume it').add_argument(
-        'length', type=timer_length, metavar='MINUTES|cancel|pause|resume',
+    command('timer', 'Start a quick timer in the Activity island, cancel, pause or resume it, '
+            'or make it a Focus session').add_argument(
+        'length', type=timer_length, metavar='MINUTES|cancel|pause|resume|focus',
         help='Minutes, for example 5 or 2.5, or one of: ' + ', '.join(TIMER_ACTIONS))
     command('theme', 'Apply a palette, or a style by its name').add_argument(
         'name', metavar='NAME',
