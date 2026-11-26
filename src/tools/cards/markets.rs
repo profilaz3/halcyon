@@ -161,6 +161,14 @@ pub fn markets<'a, M: Clone + 'static>(
         );
     }
     if let Some(action) = action {
+        // Asks every source now; waits while a request is out.
+        title = title.push(
+            button::icon(cosmic::widget::icon::from_name("view-refresh-symbolic").size(14))
+                .extra_small()
+                .tooltip("Refresh now")
+                .id(cosmic::widget::Id::new("markets-refresh"))
+                .on_press_maybe((!state.loading).then(|| action(Action::MarketsRefresh))),
+        );
         title = title.push(
             button::custom(line("Edit", 12., p.foreground))
                 .class(cosmic::theme::Button::Text)
@@ -275,11 +283,23 @@ pub fn markets<'a, M: Clone + 'static>(
             } else {
                 p.foreground
             };
+            // A price past its alert says which way, in the warning ink.
+            let crossed = quote.and_then(|q| options.alerts.get(symbol)?.crossed(q.price));
+            let price = match crossed {
+                Some(crate::markets::Crossed::Above) => format!("▲ {price}"),
+                Some(crate::markets::Crossed::Below) => format!("▼ {price}"),
+                None => price,
+            };
+            let price_ink = if crossed.is_some() {
+                crate::widget_style::semantic(super::WARN)
+            } else {
+                p.foreground
+            };
             let mut cells = row::with_children(vec![
                 container(line(symbol, 13., ink))
                     .width(Length::FillPortion(3))
                     .into(),
-                container(line(price, 12., p.foreground))
+                container(line(price, 12., price_ink))
                     .width(Length::FillPortion(5))
                     .align_x(cosmic::iced::Alignment::End)
                     .into(),
@@ -318,19 +338,48 @@ pub fn markets<'a, M: Clone + 'static>(
             };
             content = content.push(line(summary, 15., p.foreground));
         }
+        let range = options.chart_range;
         if let Some(chart) = state
             .charts
             .get(&quote.symbol)
+            .map(|points| range.of(points))
             .filter(|points| points.len() > 1)
         {
             let caption = if pair.is_some() {
-                "Last 30 days".into()
+                range.caption().into()
             } else if detailed {
-                format!("Last {} trading sessions · daily prices", chart.len())
+                format!("{} · {} trading sessions", range.caption(), chart.len())
             } else {
-                format!("{} · {} trading sessions", quote.symbol, chart.len())
+                format!("{} · {}", quote.symbol, range.caption())
             };
-            content = content.push(line(caption, 12., p.foreground));
+            let mut head = row::with_children(vec![
+                container(line(caption, 12., p.foreground))
+                    .width(Length::Fill)
+                    .into(),
+            ])
+            .spacing(2)
+            .align_y(cosmic::iced::Alignment::Center);
+            if let Some(action) = action {
+                for choice in crate::markets::Range::ALL {
+                    let chosen = choice == range;
+                    head = head.push(
+                        button::custom(line(
+                            choice.label(),
+                            11.,
+                            if chosen { p.accent } else { p.foreground },
+                        ))
+                        .class(cosmic::theme::Button::Text)
+                        .padding([1, 5])
+                        .id(cosmic::widget::Id::new(match choice {
+                            crate::markets::Range::Week => "markets-range-week",
+                            crate::markets::Range::Month => "markets-range-month",
+                            crate::markets::Range::Quarter => "markets-range-quarter",
+                        }))
+                        .on_press_maybe((!chosen).then(|| action(Action::MarketRange(choice)))),
+                    );
+                }
+            }
+            content = content.push(head);
             content = content.push(
                 canvas::Canvas::new(Chart {
                     points: chart,

@@ -206,6 +206,7 @@ impl Config {
             gpu: has(Part::Gpu),
             uptime: has(Part::Uptime),
             services: false,
+            watched: Vec::new(),
             history: Default::default(),
             order: Vec::new(),
         })
@@ -1537,6 +1538,66 @@ impl DevboxSection {
     }
 }
 
+/// The most services the System monitor watches.
+pub const MAX_WATCHED: usize = 6;
+
+/// Something the System monitor's Services row watches (ADR 0014).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Watched {
+    /// A systemd service of this session, by unit name.
+    UserUnit { name: String },
+    /// A systemd service of the computer, by unit name.
+    SystemUnit { name: String },
+    /// A Docker or Podman container, by name.
+    Container { name: String },
+    /// A TCP port on this computer.
+    Port { port: u16 },
+}
+impl Watched {
+    /// Names that can't be mistaken for an option or reach a shell.
+    pub fn valid(&self) -> bool {
+        let name_ok = |name: &str, extra: &[u8], max: usize| {
+            !name.is_empty()
+                && name.len() <= max
+                && name.as_bytes()[0].is_ascii_alphanumeric()
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || extra.contains(&b))
+        };
+        match self {
+            Self::UserUnit { name } | Self::SystemUnit { name } => {
+                name_ok(name, b"@._:-\\", 256) && name.contains('.')
+            }
+            Self::Container { name } => name_ok(name, b"_.-", 128),
+            Self::Port { port } => *port > 0,
+        }
+    }
+    /// How the card names it: a unit without `.service`, a port as `:8080`.
+    pub fn label(&self) -> String {
+        match self {
+            Self::UserUnit { name } | Self::SystemUnit { name } => {
+                name.strip_suffix(".service").unwrap_or(name).to_string()
+            }
+            Self::Container { name } => name.clone(),
+            Self::Port { port } => format!(":{port}"),
+        }
+    }
+    /// Whether Halcyon may start or restart it: this session's services and
+    /// containers; the computer's services need an administrator.
+    pub fn controllable(&self) -> bool {
+        matches!(self, Self::UserUnit { .. } | Self::Container { .. })
+    }
+}
+/// Saved watched items as `devbox.watched` holds them.
+pub fn valid_watched(value: &serde_json::Value) -> bool {
+    serde_json::from_value::<Vec<Watched>>(value.clone()).is_ok_and(|list| {
+        list.len() <= MAX_WATCHED
+            && list.iter().all(Watched::valid)
+            && list.iter().collect::<std::collections::HashSet<_>>().len() == list.len()
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(from = "SavedDevboxPreferences")]
 pub struct DevboxPreferences {
@@ -1549,6 +1610,8 @@ pub struct DevboxPreferences {
     pub gpu: bool,
     pub uptime: bool,
     pub services: bool,
+    /// What the Services row watches; personal, never exported.
+    pub watched: Vec<Watched>,
     pub history: DevboxHistoryPreferences,
     pub order: Vec<String>,
 }
@@ -1569,6 +1632,7 @@ struct SavedDevboxPreferences {
     gpu: bool,
     uptime: bool,
     services: bool,
+    watched: Option<Vec<Watched>>,
     history: DevboxHistoryPreferences,
     order: Vec<String>,
 }
@@ -1585,6 +1649,7 @@ impl Default for SavedDevboxPreferences {
             gpu: d.gpu,
             uptime: d.uptime,
             services: d.services,
+            watched: None,
             history: d.history,
             order: d.order,
         }
@@ -1602,6 +1667,18 @@ impl From<SavedDevboxPreferences> for DevboxPreferences {
             gpu: saved.gpu,
             uptime: saved.uptime,
             services: saved.services,
+            // Before the list, Services on showed these two (ADR 0014).
+            watched: match saved.watched {
+                Some(list) => list
+                    .into_iter()
+                    .filter(Watched::valid)
+                    .take(MAX_WATCHED)
+                    .collect(),
+                None if saved.services => ["t3code.service", "voxtype.service"]
+                    .map(|name| Watched::UserUnit { name: name.into() })
+                    .into(),
+                None => Vec::new(),
+            },
             history: saved.history,
             order: saved.order,
         }
@@ -1651,6 +1728,7 @@ impl Default for DevboxPreferences {
             gpu: true,
             uptime: true,
             services: false,
+            watched: Vec::new(),
             history: DevboxHistoryPreferences::default(),
             order: DevboxSection::ALL
                 .into_iter()
@@ -1754,6 +1832,8 @@ impl NotesSize {
 pub struct NotesPreferences {
     pub enabled: bool,
     pub size: NotesSize,
+    /// Each top-level heading starts a page the card shows on its own.
+    pub pages: bool,
 }
 
 /// The Devices widget: connected devices and their battery. Off until chosen.
@@ -2261,6 +2341,41 @@ mod palette_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn watched_services_are_checked_and_old_settings_keep_their_two() {
+        let unit = |name: &str| Watched::UserUnit { name: name.into() };
+        assert!(unit("syncthing.service").valid());
+        assert!(unit("app@1.service").valid());
+        for bad in ["", "-x.service", "no-kind", "a b.service", "x;rm.service"] {
+            assert!(!unit(bad).valid(), "{bad}");
+        }
+        assert!(Watched::Container { name: "postgres-16".into() }.valid());
+        assert!(!Watched::Container { name: "--rm".into() }.valid());
+        assert!(!Watched::Port { port: 0 }.valid());
+        assert_eq!(unit("syncthing.service").label(), "syncthing");
+        assert_eq!(Watched::Port { port: 8080 }.label(), ":8080");
+        assert!(unit("x.service").controllable());
+        assert!(!Watched::SystemUnit { name: "docker.service".into() }.controllable());
+        assert!(!Watched::Port { port: 80 }.controllable());
+        assert!(valid_watched(&serde_json::json!([{"kind": "port", "port": 8080}])));
+        let port = serde_json::json!({"kind": "port", "port": 8080});
+        let twice = serde_json::json!([port, port]);
+        assert!(!valid_watched(&twice));
+        assert!(!valid_watched(&serde_json::json!([{"kind": "command", "name": "sh"}])));
+        // Services on before the list: the two it showed come along.
+        let saved: DevboxPreferences =
+            serde_json::from_value(serde_json::json!({"services": true})).unwrap();
+        assert_eq!(saved.watched, [unit("t3code.service"), unit("voxtype.service")]);
+        let off: DevboxPreferences = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert!(off.watched.is_empty());
+        let chosen: DevboxPreferences = serde_json::from_value(serde_json::json!({
+            "services": true,
+            "watched": [{"kind": "port", "port": 5432}, {"kind": "user_unit", "name": "-bad"}]
+        }))
+        .unwrap();
+        assert_eq!(chosen.watched, [Watched::Port { port: 5432 }], "a bad entry is dropped");
+    }
 
     #[test]
     fn size_draft_merges_per_widget_and_rejects_invalid_dimensions_atomically() {

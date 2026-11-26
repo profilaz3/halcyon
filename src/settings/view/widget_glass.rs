@@ -463,6 +463,7 @@ impl Settings {
                         paused: false,
                         problem: None,
                         discarded: false,
+                        page: 0,
                     },
                     &cfg,
                     None,

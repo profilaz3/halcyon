@@ -154,6 +154,50 @@ fn main() -> cosmic::iced::Result {
         }
         return Ok(());
     }
+    if command.as_deref() == Some("--styles") {
+        use std::io::Write;
+        let mut out = std::io::stdout().lock();
+        for (_, name) in desktop::profiles::themes::style_choices() {
+            if writeln!(out, "{name}").is_err() {
+                break;
+            }
+        }
+        return Ok(());
+    }
+    if command.as_deref() == Some("--style") {
+        // A style as Settings › Appearance applies it: written to the
+        // desktop, which the running widgets follow.
+        let wanted = args.next().unwrap_or_default();
+        let own_bars = args.any(|arg| arg == "--own-bars");
+        let result = desktop::profiles::themes::find_style(&wanted).and_then(|id| {
+            let store = desktop::DesktopStore::from_env().map_err(|e| e.to_string())?;
+            let installed = desktop::profiles::Installed::discover(&store);
+            let held = automation::read_hold(&store);
+            Ok(automation::run::run_style(
+                &store, &installed, &id, own_bars, &held,
+            ))
+        });
+        use automation::run::Ran;
+        match result {
+            Ok(Ran::Applied { .. }) => println!("Style applied"),
+            Ok(Ran::AlreadySet) => println!("That style is already applied"),
+            Ok(Ran::Waiting(parts)) => {
+                let names: Vec<&str> = parts.iter().map(|part| part.title()).collect();
+                eprintln!(
+                    "Settings has changes to {} that aren’t applied yet, so nothing was changed. \
+                     Apply or discard them, then try again.",
+                    names.join(", ")
+                );
+                std::process::exit(1);
+            }
+            Ok(Ran::Failed(error)) | Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+            Ok(Ran::KeptManual(_)) => println!("Style applied"),
+        }
+        return Ok(());
+    }
     if command.as_deref() == Some("--restore-desktop") {
         // Stop using Halcyon's restore: the desktop from before Halcyon.
         let result = desktop::DesktopStore::from_env()

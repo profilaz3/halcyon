@@ -844,6 +844,13 @@ pub enum Message {
     DevboxHistory(&'static str, bool),
     DevboxDetails(DevboxSection),
     DevboxReorder(bool),
+    /// The kind of the next watched service: unit, system unit, container
+    /// or port (0 to 3).
+    WatchKind(u8),
+    /// Typing the next watched service's name or port.
+    WatchName(String),
+    WatchAdd,
+    WatchRemove(usize),
     GlanceSection(&'static str, bool),
     GlanceTomorrow(bool),
     GlanceStyle(GlanceStyle),
@@ -1163,6 +1170,10 @@ pub struct Settings {
     reorder: Reorder<Widget>,
     devbox_reorder: Reorder<DevboxSection>,
     devbox_reordering: bool,
+    /// The watched service being added: its kind (`Message::WatchKind`) and
+    /// what was typed, and why the last one wasn't added.
+    watch_draft: (u8, String),
+    watch_error: Option<String>,
     devbox_details: Vec<DevboxSection>,
     placement: placement::PlacementEditor,
     canvas: Option<canvas::Draft>,
@@ -1509,6 +1520,8 @@ impl cosmic::Application for Settings {
             reorder: Reorder::new(),
             devbox_reorder: Reorder::new(),
             devbox_reordering: false,
+            watch_draft: (0, String::new()),
+            watch_error: None,
             devbox_details: Vec::new(),
             calendar: calendar::Editor::default(),
             folder_input: String::new(),
@@ -4252,6 +4265,71 @@ impl Settings {
             Message::DevboxReorder(on) => {
                 self.devbox_reordering = on;
                 self.devbox_reorder.cancel();
+            }
+            Message::WatchKind(kind) => {
+                self.watch_draft.0 = kind.min(3);
+                self.watch_error = None;
+            }
+            Message::WatchName(text) => {
+                self.watch_draft.1 = text.chars().take(256).collect();
+                self.watch_error = None;
+            }
+            Message::WatchAdd => {
+                use crate::config::Watched;
+                let text = self.watch_draft.1.trim().to_string();
+                // A unit typed without its kind is a service.
+                let unit = |name: &str| {
+                    if name.contains('.') {
+                        name.to_string()
+                    } else {
+                        format!("{name}.service")
+                    }
+                };
+                let watched = match self.watch_draft.0 {
+                    0 => Some(Watched::UserUnit { name: unit(&text) }),
+                    1 => Some(Watched::SystemUnit { name: unit(&text) }),
+                    2 => Some(Watched::Container { name: text.clone() }),
+                    _ => text.parse().ok().map(|port| Watched::Port { port }),
+                }
+                .filter(Watched::valid);
+                let mut list = self.config.devbox.watched.clone();
+                self.watch_error = match watched {
+                    None => Some(
+                        "Use a service or container name (letters, digits, . _ -) or a port \
+                         from 1 to 65535."
+                            .into(),
+                    ),
+                    Some(_) if list.len() >= crate::config::MAX_WATCHED => Some(
+                        "The System monitor watches six at most. Remove one to add another."
+                            .into(),
+                    ),
+                    Some(watched) if list.contains(&watched) => Some("Already watched.".into()),
+                    Some(watched) => {
+                        list.push(watched);
+                        match Config::save_devbox(json!({"watched": list})) {
+                            Ok(config) => {
+                                self.config = config;
+                                self.watch_draft.1.clear();
+                                self.saved();
+                                None
+                            }
+                            Err(error) => Some(error),
+                        }
+                    }
+                };
+            }
+            Message::WatchRemove(index) => {
+                let mut list = self.config.devbox.watched.clone();
+                if index < list.len() {
+                    list.remove(index);
+                    match Config::save_devbox(json!({"watched": list})) {
+                        Ok(config) => {
+                            self.config = config;
+                            self.saved();
+                        }
+                        Err(error) => self.failed(error),
+                    }
+                }
             }
             Message::DevboxDetails(section) => {
                 if self.devbox_details.contains(&section) {

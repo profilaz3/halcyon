@@ -100,7 +100,8 @@ impl History {
         };
         let chart = points
             .into_iter()
-            .filter(|p| (published - p.date).num_days() < 30)
+            // The whole 90 days, for every chart range (ADR 0012).
+            .filter(|p| (published - p.date).num_days() < 92)
             .collect();
         Ok((quote, chart))
     }
@@ -117,14 +118,16 @@ mod tests {
           <Cube time="2026-11-13"><Cube currency="USD" rate="1.2"/><Cube currency="GBP" rate="0.75"/></Cube>
           <Cube time="2026-10-14"><Cube currency="USD" rate="1"/><Cube currency="GBP" rate="0.7"/></Cube>
           <Cube time="2026-11-12"><Cube currency="USD" rate="1.1"/><Cube currency="GBP" rate="0.8"/></Cube>
+          <Cube time="2026-08-01"><Cube currency="USD" rate="1.3"/><Cube currency="GBP" rate="0.9"/></Cube>
         </Cube>"#
         );
         let history = History::parse(&xml).unwrap();
         let (quote, points) = history.quote("GBP/USD").unwrap();
         assert!((quote.price - 1.6).abs() < 1e-12);
         assert!((quote.percent.unwrap() - (1.6 / 1.375 - 1.) * 100.).abs() < 1e-10);
-        assert_eq!(points.len(), 2);
-        assert_eq!(points[0].date.to_string(), "2026-11-12");
+        // The chart keeps the whole 90 days for every range, not older.
+        assert_eq!(points.len(), 3);
+        assert_eq!(points[0].date.to_string(), "2026-10-14");
         assert_eq!(
             chrono::DateTime::from_timestamp(quote.timestamp, 0)
                 .unwrap()

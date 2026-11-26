@@ -49,7 +49,7 @@ fn cards() -> Cards {
 }
 
 /// Presses and releases at `point`, as a click.
-fn click<M>(native: &mut Native, view: impl Fn() -> Element<'static, M>, point: Point) -> Vec<M> {
+fn click<'a, M>(native: &mut Native, view: impl Fn() -> Element<'a, M>, point: Point) -> Vec<M> {
     let mut messages = Vec::new();
     for input in [
         mouse::Event::CursorMoved { position: point },
@@ -177,13 +177,31 @@ fn devices_and_weather_open_a_full_reading() {
                 "wind_speed_10m": 14.0, "relative_humidity_2m": 71.0, "is_day": 1},
             "daily": {"time": days, "temperature_2m_max": [14.0, 16.0, 11.0, 9.0],
                 "temperature_2m_min": [6.0, 7.0, 4.0, 2.0], "weather_code": [3, 61, 2, 71],
-                "precipitation_probability_max": [10.0, 80.0, null, 40.0]}
+                "precipitation_probability_max": [10.0, 80.0, null, 40.0]},
+            "hourly": {
+                "time": (0..25)
+                    .map(|n| (Local::now().naive_local() + chrono::Duration::hours(n))
+                        .format("%Y-%m-%dT%H:00").to_string())
+                    .collect::<Vec<_>>(),
+                "temperature_2m": (0..25).map(|n| 10.0 + f64::from(n % 5)).collect::<Vec<_>>(),
+                "weather_code": vec![3; 25],
+                "precipitation_probability": (0..25).map(|n| f64::from(n * 4)).collect::<Vec<_>>(),
+                "is_day": vec![1; 25]
+            }
         }))
         .unwrap(),
     );
     let shown = native.all_text(cards.reading_view(Widget::Weather));
     for text in [
-        "Zagreb", "Forecast", "Today", "Tomorrow", "Rain 80%", "Rain 40%",
+        "Zagreb",
+        "Next hours",
+        "Now",
+        "92%",
+        "Forecast",
+        "Today",
+        "Tomorrow",
+        "Rain 80%",
+        "Rain 40%",
     ] {
         assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
     }
@@ -221,6 +239,7 @@ fn folder_card_counts_what_it_leaves_out_and_opens_subfolders_inside() {
             |p| Some(Message::Open(format!("file://{}", p.display()))),
             |p| Some(Message::FolderBrowse(Some(p.to_path_buf()))),
             back,
+            Some(Message::ReadingDetails(Widget::Folder)),
             None,
         )
     };
@@ -228,9 +247,9 @@ fn folder_card_counts_what_it_leaves_out_and_opens_subfolders_inside() {
     let shown = native.all_text(card(None));
     let more = shown
         .iter()
-        .find(|t| t.ends_with(" more"))
+        .find(|t| t.ends_with(" more →"))
         .unwrap_or_else(|| panic!("an overflow count in {shown:?}"));
-    let visible: usize = more.trim_end_matches(" more").parse().unwrap();
+    let visible: usize = more.trim_end_matches(" more →").parse().unwrap();
     let (cols, rows) = crate::folder::layout(size);
     assert_eq!(visible, 11 - listing.entries.len().min(cols * rows));
     native.capture(
@@ -385,6 +404,310 @@ fn peek_pages_with_the_arrow_keys() {
         Modifiers::empty(),
     ));
     assert!(cards.peek.is_none());
+}
+
+#[test]
+fn markets_alert_once_per_crossing_refresh_and_choose_a_range() {
+    if isolated("markets_alert_once_per_crossing_refresh_and_choose_a_range") {
+        return;
+    }
+    use crate::markets::{Alert, Crossed, Range};
+    let mut cards = cards();
+    cards.config.markets.symbols = vec!["AAPL".into(), "MSFT".into()];
+    cards.config.markets.alerts.insert(
+        "AAPL".into(),
+        Alert {
+            above: Some(200.),
+            below: None,
+        },
+    );
+    let quote = |price: f64| crate::markets::Quote {
+        symbol: "AAPL".into(),
+        name: "Apple".into(),
+        currency: "USD".into(),
+        price,
+        change: None,
+        percent: None,
+        timestamp: 1,
+        market_open: None,
+    };
+    let mut see = |cards: &mut Cards, price| {
+        cards.tools.markets.quotes = vec![quote(price)];
+        let _ = cards.market_alerts();
+        cards.tools.market_alerted.get("AAPL").copied()
+    };
+    assert_eq!(see(&mut cards, 190.), None);
+    assert_eq!(see(&mut cards, 201.), Some(Crossed::Above));
+    // Still past it: no second notice is due; back inside re-arms it.
+    assert_eq!(see(&mut cards, 205.), Some(Crossed::Above));
+    assert_eq!(see(&mut cards, 199.), None);
+    assert_eq!(see(&mut cards, 202.), Some(Crossed::Above));
+
+    // Refresh marks the reading old and restarts the feed.
+    cards.tools.markets.received_at = Some(Instant::now());
+    let before = cards.tools.markets_refresh;
+    let _ = cards.update_tool(crate::tools::cards::Action::MarketsRefresh);
+    assert!(cards.tools.markets.received_at.is_none());
+    assert_eq!(cards.tools.markets_refresh, before + 1);
+    assert!(cards.can_refresh(Widget::Markets));
+
+    // The card's own controls: refresh, the ranges and the alert's mark.
+    let mut config = cards.config.clone();
+    config.markets.show_chart = true;
+    config.markets.chart_range = Range::Month;
+    config.markets.selected = "AAPL".into();
+    let mut state = crate::tools::cards::sample_markets_for(&config.markets);
+    if let Some(q) = state.quotes.iter_mut().find(|q| q.symbol == "AAPL") {
+        q.price = 250.;
+    }
+    let dims = [360., 420.];
+    let card = || {
+        crate::tools::cards::markets::<crate::tools::cards::Action>(
+            &state,
+            &config,
+            Some(|a| a),
+            Some(dims),
+        )
+    };
+    let mut native = Native::new(Size::new(dims[0], dims[1]));
+    let shown = native.all_text(card());
+    assert!(shown.iter().any(|t| t.starts_with("▲ ")), "{shown:?}");
+    for label in ["1W", "1M", "3M"] {
+        assert!(shown.iter().any(|t| t == label), "{label} in {shown:?}");
+    }
+    let at = native.bounds(card(), "markets-range-week").center();
+    assert!(
+        click(&mut native, card, at)
+            .iter()
+            .any(|a| matches!(a, crate::tools::cards::Action::MarketRange(Range::Week)))
+    );
+    let at = native.bounds(card(), "markets-refresh").center();
+    assert!(
+        click(&mut native, card, at)
+            .iter()
+            .any(|a| matches!(a, crate::tools::cards::Action::MarketsRefresh))
+    );
+    native.capture(card(), &cosmic::Theme::dark(), "markets-card-ranges");
+}
+
+#[test]
+fn the_folder_reading_lists_everything_and_acts_on_each_entry() {
+    if isolated("the_folder_reading_lists_everything_and_acts_on_each_entry") {
+        return;
+    }
+    let root = crate::test_env::TempPath::new("folder-reading");
+    std::fs::create_dir_all(root.join("Sketches/Old")).unwrap();
+    for (i, name) in ["notes.txt", "plan.md", "photo.png"].iter().enumerate() {
+        std::fs::write(root.join(name), vec![b'x'; 2048 * (i + 1)]).unwrap();
+    }
+    let mut cards = cards();
+    assert!(!cards.has_reading(Widget::Folder), "no folder chosen yet");
+    cards.config.folder.path = Some(root.to_path_buf());
+    assert!(cards.has_reading(Widget::Folder));
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let listing = runtime.block_on(crate::folder::read_all(root.to_path_buf(), false));
+    assert_eq!(listing.count, 4);
+    assert_eq!(listing.entries.len(), 4);
+    let _ = cards.update(Message::FolderReading(listing));
+    let mut native = Native::new(Size::new(520., 480.));
+    let shown = native.all_text(cards.reading_view(Widget::Folder));
+    for text in [
+        "4 items",
+        "Sketches",
+        "notes.txt",
+        "Open in Files",
+        "Terminal here",
+        "Copy path",
+    ] {
+        assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
+    }
+    assert!(
+        shown.iter().any(|t| t.starts_with("6.0 KB · ")),
+        "{shown:?}"
+    );
+    native.capture(
+        cards.reading_view(Widget::Folder),
+        &cosmic::Theme::dark(),
+        "reading-folder",
+    );
+    // A listing for another folder never shows here.
+    let stale = runtime.block_on(crate::folder::read_all(root.join("Sketches"), false));
+    let _ = cards.update(Message::FolderReading(stale));
+    assert_eq!(cards.tools.folder_reading.as_ref().unwrap().count, 4);
+    // Into a subfolder, the trail leads back.
+    let _ = cards.update(Message::FolderBrowse(Some(root.join("Sketches"))));
+    let inner = runtime.block_on(crate::folder::read_all(root.join("Sketches"), false));
+    let _ = cards.update(Message::FolderReading(inner));
+    let shown = native.all_text(cards.reading_view(Widget::Folder));
+    assert!(shown.iter().any(|t| t == "›"), "{shown:?}");
+    assert!(shown.iter().any(|t| t == "Old") && shown.iter().any(|t| t == "1 item"));
+    // A terminal opens in the folder: COSMIC's with its working directory,
+    // else the session's default terminal, else it says none is installed.
+    let bin = crate::test_env::TempPath::new("folder-terminal");
+    let fake = |name: &str| {
+        use std::os::unix::fs::PermissionsExt;
+        let path = bin.join(name);
+        std::fs::write(&path, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    };
+    // SAFETY: an isolated test child, before any thread reads PATH.
+    unsafe { std::env::set_var("PATH", bin.root()) };
+    let dir = root.join("Sketches");
+    assert!(super::tools::terminal_command(&dir).is_err());
+    let default = fake("x-terminal-emulator");
+    assert_eq!(
+        super::tools::terminal_command(&dir).unwrap(),
+        (default, vec![])
+    );
+    let cosmic = fake("cosmic-term");
+    assert_eq!(
+        super::tools::terminal_command(&dir).unwrap(),
+        (
+            cosmic,
+            vec!["-w".to_string(), dir.to_string_lossy().into_owned()]
+        )
+    );
+}
+
+#[test]
+fn file_sizes_read_like_a_file_manager() {
+    use super::widget_details::size_text;
+    assert_eq!(size_text(512), "512 B");
+    assert_eq!(size_text(3_500), "3.4 KB");
+    assert_eq!(size_text(12 * 1024 * 1024 + 1), "12 MB");
+    assert_eq!(size_text(5 * 1024 * 1024 * 1024), "5.0 GB");
+}
+
+#[test]
+fn a_note_split_into_pages_shows_one_with_its_markdown() {
+    use crate::tools::cards::{Action, NotesView, notes};
+    let note = crate::tools::notes::Note {
+        text: concat!(
+            "# Work\n1. **Ship** the *release*\n[x] Review `cargo test`\n",
+            "# Home\n[ ] Groceries\n[ ] Call Mum\n"
+        )
+        .into(),
+        updated_at: None,
+    };
+    let mut config = Config::default();
+    let dims = [300., 260.];
+    let card = |config: &Config, page: usize| {
+        notes::<Action>(
+            NotesView {
+                note: Ok(&note),
+                editing: None,
+                paused: false,
+                problem: None,
+                discarded: false,
+                page,
+            },
+            config,
+            Some(|a| a),
+            Some(dims),
+        )
+    };
+    let mut native = Native::new(Size::new(dims[0], dims[1]));
+    // Off: one note, every line, under Notes.
+    let shown = native.all_text(card(&config, 0));
+    assert!(shown.iter().any(|t| t == "Notes"), "{shown:?}");
+    assert!(shown.iter().any(|t| t == "1 of 3 done"), "{shown:?}");
+    // On: the first page, named by its heading, its own count, and a way on.
+    config.notes.pages = true;
+    let shown = native.all_text(card(&config, 0));
+    for text in ["Work", "1/2", "1 of 1 done", "1."] {
+        assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
+    }
+    assert!(!shown.iter().any(|t| t.contains("Groceries")), "{shown:?}");
+    native.capture(
+        card(&config, 0),
+        &cosmic::Theme::dark(),
+        "notes-pages-markdown",
+    );
+    let shown = native.all_text(card(&config, 1));
+    for text in ["Home", "2/2", "0 of 2 done"] {
+        assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
+    }
+    // A page past the end shows the last one.
+    assert!(
+        native
+            .all_text(card(&config, 9))
+            .iter()
+            .any(|t| t == "Home")
+    );
+}
+
+#[test]
+fn the_system_monitor_sums_up_services_and_its_reading_controls_them() {
+    if isolated("the_system_monitor_sums_up_services_and_its_reading_controls_them") {
+        return;
+    }
+    use crate::config::Watched;
+    use crate::data::ServiceState;
+    let mut cards = cards();
+    cards.config.devbox.services = true;
+    let sync = Watched::UserUnit {
+        name: "syncthing.service".into(),
+    };
+    let db = Watched::Container {
+        name: "postgres".into(),
+    };
+    let port = Watched::Port { port: 11434 };
+    cards.config.devbox.watched = vec![sync.clone(), db.clone(), port.clone()];
+    cards.metrics.services = vec![
+        (sync.clone(), ServiceState::Running),
+        (db.clone(), ServiceState::Stopped),
+        (port, ServiceState::Running),
+    ];
+    let mut native = Native::new(Size::new(520., 900.));
+    let card = native.all_text(devbox::view(
+        &cards.config,
+        &cards.metrics,
+        &cards.histories,
+        700.,
+    ));
+    assert!(
+        card.iter()
+            .any(|t| t == "2 of 3 running · postgres stopped"),
+        "{card:?}"
+    );
+    let reading = native.all_text(cards.reading_view(Widget::Devbox));
+    for text in [
+        "Services",
+        "syncthing",
+        "Service · running",
+        "Container · stopped",
+        "Port · open",
+    ] {
+        assert!(reading.iter().any(|t| t == text), "{text} in {reading:?}");
+    }
+    // A running service restarts, a stopped container starts; a port has neither.
+    assert!(reading.iter().any(|t| t == "Restart") && reading.iter().any(|t| t == "Start"));
+    assert_eq!(
+        reading
+            .iter()
+            .filter(|t| *t == "Restart" || *t == "Start")
+            .count(),
+        2
+    );
+    let at = native
+        .text_bounds(cards.reading_view(Widget::Devbox), "Start")
+        .center();
+    let pressed = click(&mut native, || cards.reading_view(Widget::Devbox), at);
+    assert!(
+        pressed
+            .iter()
+            .any(|m| matches!(m, Message::ServiceAction(w, false) if *w == db)),
+        "{pressed:?}"
+    );
+    native.capture(
+        cards.reading_view(Widget::Devbox),
+        &cosmic::Theme::dark(),
+        "reading-devbox-services",
+    );
 }
 
 #[test]

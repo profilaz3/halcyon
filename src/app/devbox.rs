@@ -261,30 +261,30 @@ pub(super) fn view<'a>(
                 neutral_rule(p),
             ),
             DevboxSection::Services => {
-                let dictation = match m.dictation.as_str() {
-                    "idle" => "Ready",
-                    "recording" => "Recording",
-                    "transcribing" => "Transcribing",
-                    _ => "Offline",
+                // One line: how many are up, and the first one that isn't.
+                let up = m.services.iter().filter(|(_, state)| state.up()).count();
+                let (summary, all_up) = match m.services.len() {
+                    0 if config.devbox.watched.is_empty() => {
+                        ("Choose in Settings".to_string(), false)
+                    }
+                    0 => ("Checking…".to_string(), false),
+                    total => {
+                        let down = m.services.iter().find(|(_, state)| !state.up());
+                        let mut text = format!("{up} of {total} running");
+                        if let Some((watched, state)) = down {
+                            text.push_str(&format!(
+                                " · {} {}",
+                                watched.label(),
+                                state.word(watched)
+                            ));
+                        }
+                        (text, down.is_none())
+                    }
                 };
                 metric_section(
                     spread(
                         metric_name(section, "Services", p),
-                        row::with_children(vec![
-                            service_status("T3", if m.t3 { "On" } else { "Off" }, m.t3, p),
-                            service_status(
-                                "Dictation",
-                                dictation,
-                                matches!(
-                                    m.dictation.as_str(),
-                                    "idle" | "recording" | "transcribing"
-                                ),
-                                p,
-                            ),
-                        ])
-                        .spacing(10)
-                        .align_y(Alignment::Center)
-                        .into(),
+                        service_status(&summary, all_up, p),
                     ),
                     neutral_rule(p),
                 )
@@ -544,10 +544,10 @@ fn neutral_rule<'a>(p: Palette) -> Element<'a, Message> {
         .into()
 }
 
-fn service_status<'a>(name: &str, status: &str, active: bool, p: Palette) -> Element<'a, Message> {
+fn service_status<'a>(status: &str, active: bool, p: Palette) -> Element<'a, Message> {
     row::with_children(vec![
         metric_text("●", 7., if active { p.accent } else { p.muted }),
-        metric_text(format!("{name} {status}"), 12., p.foreground),
+        metric_text(status.to_string(), 12., p.foreground),
     ])
     .spacing(4)
     .align_y(Alignment::Center)

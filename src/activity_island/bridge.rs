@@ -146,6 +146,8 @@ pub enum Command {
     TimerResume,
     /// Cancel, and Dismiss once done.
     TimerCancel,
+    /// Turn the quick timer into a focus round on the desktop.
+    TimerToFocus,
     /// Try the calendar again now.
     RefreshCalendar,
     OpenMessages,

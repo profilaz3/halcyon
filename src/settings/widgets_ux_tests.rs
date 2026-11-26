@@ -382,6 +382,49 @@ fn wid11_previews_say_sample_and_weather_shows_the_desktops_reading() {
     native.bounds(app.settings_view(), "glance-sample-note");
 }
 
+/// Background services watches what you choose: a service, a system
+/// service, a container or a port, checked before it is saved and at most
+/// six; each can be removed again (ADR 0014).
+#[test]
+fn background_services_watch_what_you_choose() {
+    if child("background_services_watch_what_you_choose") {
+        return;
+    }
+    use crate::config::Watched;
+    let (mut app, mut native) = open(Page::Devbox);
+    let send = |app: &mut Settings, message| super::tests::send_settings(app, message);
+    send(&mut app, Message::WatchName("syncthing".into()));
+    send(&mut app, Message::WatchAdd);
+    send(&mut app, Message::WatchKind(3));
+    send(&mut app, Message::WatchName("11434".into()));
+    send(&mut app, Message::WatchAdd);
+    assert_eq!(
+        Config::load().devbox.watched,
+        [
+            Watched::UserUnit {
+                name: "syncthing.service".into()
+            },
+            Watched::Port { port: 11434 }
+        ]
+    );
+    // Not a port, a duplicate, and a name that could be an option: refused.
+    for (kind, text) in [(3, "70000"), (3, "11434"), (2, "--privileged")] {
+        send(&mut app, Message::WatchKind(kind));
+        send(&mut app, Message::WatchName(text.into()));
+        send(&mut app, Message::WatchAdd);
+        assert!(app.watch_error.is_some(), "{text}");
+    }
+    assert_eq!(Config::load().devbox.watched.len(), 2);
+    super::tests::native_reveal(&app, &mut native, "devbox-watched");
+    let shown = native.all_text(app.settings_view());
+    for text in ["Background services", "syncthing.service", "Your service", "11434", "Port"] {
+        assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
+    }
+    capture(&app, &mut native, "devbox-watched");
+    send(&mut app, Message::WatchRemove(0));
+    assert_eq!(Config::load().devbox.watched, [Watched::Port { port: 11434 }]);
+}
+
 #[test]
 fn data_tiles_are_added_from_the_fields_a_file_holds() {
     if child("data_tiles_are_added_from_the_fields_a_file_holds") {
