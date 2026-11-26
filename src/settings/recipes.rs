@@ -172,7 +172,7 @@ impl Editor {
         match edit {
             Message::New(kind) => {
                 self.draft = Recipe::starter(kind);
-                self.preview_state = Default::default();
+                self.preview_state = crate::tools::cards::recipe::PreviewState::first(kind);
                 self.expected = None;
                 self.notice = None;
             }
@@ -223,7 +223,8 @@ impl Editor {
             Message::Load(id) => {
                 if let Some(r) = self.library.entries.get(&id) {
                     if self.draft.kind != r.kind {
-                        self.preview_state = Default::default();
+                        self.preview_state =
+                            crate::tools::cards::recipe::PreviewState::first(r.kind);
                     }
                     self.draft = r.clone();
                     self.expected = Some(r.clone());

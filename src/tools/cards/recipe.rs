@@ -1,5 +1,6 @@
-//! Music and Focus presentation only. Player capabilities and timer ownership stay
-//! in their existing engines; sample cards never receive an action mapper.
+//! Music, Focus and Notes presentation only. Player capabilities, timer and
+//! note ownership stay in their existing engines; sample cards never receive
+//! an action mapper.
 use super::*;
 use crate::recipes::{Arrangement, Finish, Kind, Part, Recipe, TimerFace};
 use cosmic::widget::{button, slider, svg};
@@ -33,10 +34,19 @@ pub enum PreviewState {
     Ready,
     Break,
     Complete,
+    /// A note with a checklist.
+    Note,
+    Empty,
 }
 impl PreviewState {
+    /// The state a new or newly loaded design of `kind` is previewed in.
+    pub fn first(kind: Kind) -> Self {
+        Self::choices(kind)[0]
+    }
     pub fn choices(kind: Kind) -> &'static [Self] {
-        if kind == Kind::Music {
+        if kind == Kind::Notes {
+            &[Self::Note, Self::Empty]
+        } else if kind == Kind::Music {
             &[
                 Self::Active,
                 Self::Paused,
@@ -66,10 +76,12 @@ impl PreviewState {
             Self::Ready => "Ready",
             Self::Break => "Break",
             Self::Complete => "Complete",
+            Self::Note => "Holding a note",
+            Self::Empty => "Empty",
         }
     }
 }
-fn palette(config: &Config, recipe: &Recipe) -> Palette {
+pub(super) fn palette(config: &Config, recipe: &Recipe) -> Palette {
     let rgb = |hex: u32| Color::from_rgb8((hex >> 16) as u8, (hex >> 8) as u8, hex as u8);
     let (accent, background, foreground, muted) = match recipe.finish {
         None => return config.palette(),
@@ -84,7 +96,7 @@ fn palette(config: &Config, recipe: &Recipe) -> Palette {
         muted: rgb(muted),
     }
 }
-fn surface<'a, M: 'a>(
+pub(super) fn surface<'a, M: 'a>(
     content: Element<'a, M>,
     config: &Config,
     recipe: &Recipe,
@@ -228,7 +240,7 @@ fn centered<'a, M: 'a>(child: Element<'a, M>) -> Element<'a, M> {
         .align_x(Alignment::Center)
         .into()
 }
-fn spare<'a, M: 'a>(part: Part, recipe: &Recipe, p: Palette) -> Element<'a, M> {
+pub(super) fn spare<'a, M: 'a>(part: Part, recipe: &Recipe, p: Palette) -> Element<'a, M> {
     match part {
         Part::Caption => line(recipe.caption.clone(), 13., p.muted),
         Part::Divider => container(cosmic::widget::space())
@@ -860,13 +872,27 @@ pub(crate) fn miniature(
     recipe: &Recipe,
     size: [f32; 2],
 ) -> Element<'static, Action> {
-    sample_with_ids(
-        config,
-        recipe,
-        PreviewState::Active,
-        size,
-        ControlIds::Local,
-    )
+    let state = if recipe.kind == Kind::Notes {
+        PreviewState::Note
+    } else {
+        PreviewState::Active
+    };
+    sample_with_ids(config, recipe, state, size, ControlIds::Local)
+}
+
+/// The note the builder shows: a heading, a line and a checklist.
+fn sample_note(empty: bool) -> &'static notes::Note {
+    static NOTE: std::sync::OnceLock<notes::Note> = std::sync::OnceLock::new();
+    static EMPTY: std::sync::OnceLock<notes::Note> = std::sync::OnceLock::new();
+    if empty {
+        return EMPTY.get_or_init(notes::Note::default);
+    }
+    NOTE.get_or_init(|| notes::Note {
+        text: "Studio day\nBring the field recorder.\n[x] Book the room\n[ ] Charge batteries\n\
+               [ ] Label the takes"
+            .into(),
+        ..Default::default()
+    })
 }
 
 fn sample_with_ids(
@@ -876,6 +902,22 @@ fn sample_with_ids(
     size: [f32; 2],
     ids: ControlIds,
 ) -> Element<'static, Action> {
+    if recipe.kind == Kind::Notes {
+        return super::designed_notes(
+            NotesView {
+                note: Ok(sample_note(state == PreviewState::Empty)),
+                editing: None,
+                paused: false,
+                problem: None,
+                discarded: false,
+                page: 0,
+            },
+            config,
+            Some(recipe),
+            None,
+            Some(size),
+        );
+    }
     if recipe.kind == Kind::Music {
         let now = Instant::now();
         let mut player = sample_player(now);

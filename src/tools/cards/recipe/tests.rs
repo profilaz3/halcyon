@@ -290,3 +290,78 @@ fn tool_recipe_seek_requests_keep_track_identity_and_unsupported_seeks_are_inert
         ));
     }
 }
+
+#[test]
+fn notes_designs_order_the_cards_own_parts_and_keep_editing() {
+    use cosmic::iced::{Event, Point, Size, mouse};
+    let note = notes::Note {
+        text: "Studio day\n[ ] Charge batteries".into(),
+        updated_at: None,
+    };
+    let size = [300., 260.];
+    let card = |design: &Recipe| {
+        super::designed_notes(
+            NotesView {
+                note: Ok(&note),
+                editing: None,
+                paused: false,
+                problem: None,
+                discarded: false,
+                page: 0,
+            },
+            &Config::default(),
+            Some(design),
+            Some(std::convert::identity as fn(Action) -> Action),
+            Some(size),
+        )
+    };
+    let mut native = crate::native_test::Native::new(Size::new(size[0], size[1]));
+    // Sheet: the title above the note. Sticky: the note above its buttons.
+    let sheet = Recipe::template(Kind::Notes, 0);
+    let title = native.text_bounds(card(&sheet), "Notes").y;
+    assert!(title < native.text_bounds(card(&sheet), "Studio day").y);
+    let sticky = Recipe::template(Kind::Notes, 1);
+    assert_eq!(sticky.finish, Some(Finish::Paper));
+    let title = native.text_bounds(card(&sticky), "Notes").y;
+    assert!(title > native.text_bounds(card(&sticky), "Studio day").y);
+    native.capture(card(&sticky), &cosmic::Theme::dark(), "notes-design-sticky");
+    // Index card adds its caption; the checklist and Edit still answer.
+    let index = Recipe::template(Kind::Notes, 2);
+    let shown = native.all_text(card(&index));
+    assert!(shown.iter().any(|t| t == &index.caption), "{shown:?}");
+    native.capture(card(&index), &cosmic::Theme::dark(), "notes-design-index");
+    let click = |native: &mut crate::native_test::Native, at: Point| {
+        let mut sent = Vec::new();
+        for input in [
+            mouse::Event::CursorMoved { position: at },
+            mouse::Event::ButtonPressed(mouse::Button::Left),
+            mouse::Event::ButtonReleased(mouse::Button::Left),
+        ] {
+            sent.extend(native.event(card(&index), Event::Mouse(input), at).0);
+        }
+        sent
+    };
+    let at = native
+        .text_bounds(card(&index), "Charge batteries")
+        .center();
+    let sent = click(&mut native, at);
+    assert!(
+        sent.iter().any(|a| matches!(a, Action::NoteToggle(1))),
+        "{sent:?}"
+    );
+    // A design can't drop the note or its buttons, or lay them side by side.
+    for (i, part) in index.parts.iter().enumerate() {
+        assert_eq!(
+            index.can_remove(i),
+            !matches!(part, Part::Note | Part::NoteHeader)
+        );
+    }
+    let mut bare = index.clone();
+    bare.parts.retain(|p| *p != Part::NoteHeader);
+    bare.seal();
+    assert!(bare.validate().is_err());
+    let mut split = index.clone();
+    split.compact = Arrangement::Split;
+    split.seal();
+    assert!(split.validate().is_err());
+}

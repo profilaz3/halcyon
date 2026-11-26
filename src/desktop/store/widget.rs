@@ -168,9 +168,10 @@ macro_rules! fields {
 }
 
 /// Every member a profile, its Undo or its recovery may write.
-pub static FIELDS: [WidgetField; 137] = fields![
+pub static FIELDS: [WidgetField; 138] = fields![
     "/recipes/music", "Music recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Music);
     "/recipes/focus", "Focus recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Focus);
+    "/recipes/notes", "Notes recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Notes);
     "/recipes/devbox", "System recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::System);
     "/recipes/calendar", "Calendar recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Calendar);
     "/recipes/clock", "Clock recipe", Style, |v| crate::recipes::accepts(v, crate::recipes::Kind::Clock);
