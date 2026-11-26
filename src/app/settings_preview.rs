@@ -93,6 +93,7 @@ pub(crate) fn settings_weather_preview_at(
 }
 pub(super) fn weather_sample(today: NaiveDate) -> Weather {
     let weather = Weather {
+        hourly: None,
         timezone: None,
         current: data::Current {
             temperature_2m: 21.,
