@@ -365,3 +365,66 @@ fn notes_designs_order_the_cards_own_parts_and_keep_editing() {
     split.seal();
     assert!(split.validate().is_err());
 }
+
+#[test]
+fn devices_designs_keep_the_count_of_what_does_not_fit() {
+    use cosmic::iced::Size;
+    let mut many = crate::tools::cards::sample_devices();
+    let template = many[0].clone();
+    for i in 0..9 {
+        let mut extra = template.clone();
+        extra.id = format!("extra-{i}");
+        extra.name = format!("Speaker {i}");
+        many.push(extra);
+    }
+    let size = [280., 200.];
+    let mut native = crate::native_test::Native::new(Size::new(size[0], size[1]));
+    let card = |design: &Recipe, list: &[crate::devices::Device]| {
+        super::super::devices::designed::<Action>(
+            list,
+            &Config::default(),
+            Some(design),
+            Some(Action::FocusSkip),
+            Some(size),
+        )
+    };
+    // Shelf: the rings above the title, which still counts the rest.
+    let shelf = Recipe::template(Kind::Devices, 1);
+    assert_eq!(shelf.finish, Some(Finish::Tidal));
+    let shown = native.all_text(card(&shelf, &many));
+    let more = shown
+        .iter()
+        .find(|t| t.ends_with(" more →"))
+        .unwrap_or_else(|| panic!("a count in {shown:?}"));
+    assert_eq!(more, "8 more →");
+    let title = native.text_bounds(card(&shelf, &many), "Devices").y;
+    assert!(title > native.text_bounds(card(&shelf, &many), "Pixel 8").y);
+    native.capture(
+        card(&shelf, &many),
+        &cosmic::Theme::dark(),
+        "devices-design-shelf",
+    );
+    // Label adds its caption, and an empty list still says where devices come from.
+    let label = Recipe::template(Kind::Devices, 2);
+    let shown = native.all_text(card(&label, &[]));
+    assert!(shown.iter().any(|t| t == &label.caption), "{shown:?}");
+    assert!(
+        shown.iter().any(|t| t == "No devices connected"),
+        "{shown:?}"
+    );
+    native.capture(
+        card(&label, &many[..3]),
+        &cosmic::Theme::dark(),
+        "devices-design-label",
+    );
+    for (i, part) in label.parts.iter().enumerate() {
+        assert_eq!(
+            label.can_remove(i),
+            !matches!(part, Part::Batteries | Part::DevicesHeader)
+        );
+    }
+    let mut bare = label.clone();
+    bare.parts.retain(|p| *p != Part::DevicesHeader);
+    bare.seal();
+    assert!(bare.validate().is_err());
+}

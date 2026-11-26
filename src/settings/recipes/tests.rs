@@ -310,7 +310,7 @@ fn tool_recipe_library_apply_undo_preserves_live_session_and_preferences() {
     let session_bytes = std::fs::read(crate::tools::focus::Session::path().unwrap()).unwrap();
     let preferences = std::fs::read(Config::path().unwrap()).unwrap();
     let (mut app, _) = Settings::init(Core::default(), Page::Builder);
-    for kind in [Kind::Music, Kind::Focus, Kind::Notes] {
+    for kind in [Kind::Music, Kind::Focus, Kind::Notes, Kind::Devices] {
         let send =
             |app: &mut Settings, edit| send_settings(app, super::super::Message::Recipe(edit));
         send(&mut app, Message::New(kind));
@@ -325,14 +325,19 @@ fn tool_recipe_library_apply_undo_preserves_live_session_and_preferences() {
             match kind {
                 Kind::Music => "Player",
                 Kind::Focus => "Type",
-                _ => "Sticky",
+                Kind::Notes => "Sticky",
+                _ => "Shelf",
             }
         );
         let exported = crate::desktop::profiles::capture(&store, "Tool design")
             .unwrap()
             .profile;
-        // Notes designs arrived in format 29 (ADR 0017).
-        let version = if kind == Kind::Notes { 29 } else { 17 };
+        // Notes designs arrived in format 29, Devices in 30 (ADRs 0017, 0018).
+        let version = match kind {
+            Kind::Notes => 29,
+            Kind::Devices => 30,
+            _ => 17,
+        };
         assert_eq!(exported.written_version(), version);
         let mut downgrade = exported.clone();
         downgrade.version = version - 1;
@@ -347,7 +352,8 @@ fn tool_recipe_library_apply_undo_preserves_live_session_and_preferences() {
                 super::super::Message::Page(match kind {
                     Kind::Music => Page::Music,
                     Kind::Focus => Page::Focus,
-                    _ => Page::Notes,
+                    Kind::Notes => Page::Notes,
+                    _ => Page::Devices,
                 }),
             );
             let mut native = crate::native_test::Native::new(Size::new(width, height));

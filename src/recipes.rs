@@ -16,9 +16,10 @@ pub enum Kind {
     Music,
     Focus,
     Notes,
+    Devices,
 }
 impl Kind {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Clock,
         Self::Weather,
         Self::Calendar,
@@ -26,6 +27,7 @@ impl Kind {
         Self::Music,
         Self::Focus,
         Self::Notes,
+        Self::Devices,
     ];
     pub fn widget(self) -> Widget {
         match self {
@@ -36,6 +38,7 @@ impl Kind {
             Self::Music => Widget::Music,
             Self::Focus => Widget::Focus,
             Self::Notes => Widget::Notes,
+            Self::Devices => Widget::Devices,
         }
     }
     pub fn title(self) -> &'static str {
@@ -47,6 +50,7 @@ impl Kind {
             Self::Music => "Music",
             Self::Focus => "Focus",
             Self::Notes => "Notes",
+            Self::Devices => "Devices",
         }
     }
     pub fn pointer(self) -> &'static str {
@@ -58,6 +62,7 @@ impl Kind {
             Self::Music => "/recipes/music",
             Self::Focus => "/recipes/focus",
             Self::Notes => "/recipes/notes",
+            Self::Devices => "/recipes/devices",
         }
     }
     pub fn parts(self) -> &'static [Part] {
@@ -66,6 +71,14 @@ impl Kind {
             Self::Notes => &[
                 Part::NoteHeader,
                 Part::Note,
+                Part::Caption,
+                Part::Divider,
+                Part::Space,
+            ],
+            // The rings and the count of hidden devices always stay (ADR 0018).
+            Self::Devices => &[
+                Part::DevicesHeader,
+                Part::Batteries,
                 Part::Caption,
                 Part::Divider,
                 Part::Space,
@@ -148,6 +161,7 @@ impl Kind {
             Self::Music => Part::Track,
             Self::Focus => Part::Timer,
             Self::Notes => Part::Note,
+            Self::Devices => Part::Batteries,
         }
     }
 }
@@ -180,6 +194,8 @@ pub enum Part {
     Settings,
     NoteHeader,
     Note,
+    DevicesHeader,
+    Batteries,
 }
 impl Part {
     pub fn is_metric(self) -> bool {
@@ -216,6 +232,8 @@ impl Part {
             Self::Settings => "Shortcut to settings",
             Self::NoteHeader => "Title and buttons",
             Self::Note => "Note",
+            Self::DevicesHeader => "Title and count",
+            Self::Batteries => "Batteries",
         }
     }
 }
@@ -310,6 +328,7 @@ impl Recipe {
                 Kind::Clock => vec![Part::Face, Part::Date],
                 Kind::Weather => vec![Part::City, Part::Reading, Part::Conditions],
                 Kind::Notes => vec![Part::NoteHeader, Part::Note],
+                Kind::Devices => vec![Part::DevicesHeader, Part::Batteries],
             },
             caption: "Make room for today".into(),
             compact: Arrangement::Stack,
@@ -326,6 +345,11 @@ impl Recipe {
         if kind == Kind::Focus {
             recipe.name = "Orbit".into();
         }
+        if kind == Kind::Devices {
+            recipe.name = "Rings".into();
+            recipe.caption = "Charge overnight".into();
+            recipe.wide = Arrangement::Stack;
+        }
         if kind == Kind::Notes {
             recipe.name = "Sheet".into();
             recipe.caption = "Today".into();
@@ -339,6 +363,7 @@ impl Recipe {
             Kind::Music => &["Sleeve", "Player", "Quiet"],
             Kind::Focus => &["Orbit", "Type", "Edge"],
             Kind::Notes => &["Sheet", "Sticky", "Index card"],
+            Kind::Devices => &["Rings", "Shelf", "Label"],
             _ => &[],
         }
     }
@@ -370,6 +395,19 @@ impl Recipe {
                 r.finish = Some(Finish::Carbon);
                 r.parts = vec![Part::NoteHeader, Part::Divider, Part::Note, Part::Caption];
             }
+            (Kind::Devices, 1) => {
+                r.finish = Some(Finish::Tidal);
+                r.parts = vec![Part::Batteries, Part::DevicesHeader];
+            }
+            (Kind::Devices, 2) => {
+                r.finish = Some(Finish::Carbon);
+                r.parts = vec![
+                    Part::DevicesHeader,
+                    Part::Divider,
+                    Part::Batteries,
+                    Part::Caption,
+                ];
+            }
             _ => {}
         }
         r.seal();
@@ -387,11 +425,15 @@ impl Recipe {
             Kind::Focus if self.compact == Arrangement::Split => [320., 160.],
             Kind::Focus => [280., 240.],
             Kind::Notes => [300., 260.],
+            Kind::Devices => [280., 200.],
             _ => [320., self.natural_height()],
         }
     }
     pub fn tool(&self) -> bool {
-        matches!(self.kind, Kind::Music | Kind::Focus | Kind::Notes)
+        matches!(
+            self.kind,
+            Kind::Music | Kind::Focus | Kind::Notes | Kind::Devices
+        )
     }
     /// The first selected metric stays visible when a system widget is small.
     pub fn primary(&self) -> Part {
@@ -411,6 +453,8 @@ impl Recipe {
                 !part.is_metric() || self.parts.iter().filter(|p| p.is_metric()).count() > 1
             } else if self.kind == Kind::Notes {
                 !matches!(part, Part::Note | Part::NoteHeader)
+            } else if self.kind == Kind::Devices {
+                !matches!(part, Part::Batteries | Part::DevicesHeader)
             } else {
                 *part != self.kind.primary()
             }
@@ -472,6 +516,13 @@ impl Recipe {
         {
             return Err("A Notes design keeps its buttons and stays stacked".into());
         }
+        if self.kind == Kind::Devices
+            && (!self.parts.contains(&Part::DevicesHeader)
+                || self.compact != Arrangement::Stack
+                || self.wide != Arrangement::Stack)
+        {
+            return Err("A Devices design keeps its title and count and stays stacked".into());
+        }
         for (i, p) in self.parts.iter().enumerate() {
             if !self.kind.parts().contains(p) || self.parts[..i].contains(p) {
                 return Err("A native part can appear once in its supported widget".into());
@@ -510,6 +561,8 @@ pub struct Applied {
     pub focus: Option<Recipe>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<Recipe>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub devices: Option<Recipe>,
 }
 impl Applied {
     pub fn get(&self, kind: Kind) -> Option<&Recipe> {
@@ -521,6 +574,7 @@ impl Applied {
             Kind::Music => self.music.as_ref(),
             Kind::Focus => self.focus.as_ref(),
             Kind::Notes => self.notes.as_ref(),
+            Kind::Devices => self.devices.as_ref(),
         }
     }
     pub fn set(&mut self, kind: Kind, value: Option<Recipe>) {
@@ -532,6 +586,7 @@ impl Applied {
             Kind::Music => self.music = value,
             Kind::Focus => self.focus = value,
             Kind::Notes => self.notes = value,
+            Kind::Devices => self.devices = value,
         }
     }
     pub fn validate(&self) -> Result<(), String> {

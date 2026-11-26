@@ -226,8 +226,8 @@ impl Settings {
         let wide = editor.wide;
         let arrangement = if wide { recipe.wide } else { recipe.compact };
         let mut parts = Vec::new();
-        // A Notes design is always stacked (ADR 0017).
-        if recipe.kind != Kind::Notes {
+        // Notes and Devices designs are always stacked (ADRs 0017 and 0018).
+        if !matches!(recipe.kind, Kind::Notes | Kind::Devices) {
             parts.push(group_row_state(
                 "Layout",
                 if wide {
